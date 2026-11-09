@@ -2423,6 +2423,11 @@ bool PointMassArmIsHonestAndForcesNoFiber(ImGuiTestContext* ctx) {
 // the two-lambda min-deviation row with red inside blue and the closed-form certificate behind
 // it. The assertions read the same model the region draws, so the screenshot a human reads and
 // the checks below cannot both be mock; the picture is the evidence of the block being VISIBLE.
+// The frame-text capture helpers are defined further down (with the map face's tests); the
+// summary-projection assertions below are their first users.
+std::string CaptureFrameText(ImGuiTestContext* ctx);
+std::string CaptureWindowFrameText(ImGuiTestContext* ctx, const char* window_name);
+std::string CaptureMapFrameText(ImGuiTestContext* ctx);
 bool SurveyOverviewShowsDispersionAndProfile(ImGuiTestContext* ctx) {
   ScopedServerGuard guard;
   IM_CHECK_RETV(BringUpScene(ctx, kFullyRandomJson, /*infinite=*/false, /*gpu=*/false), false);
@@ -2468,20 +2473,65 @@ bool SurveyOverviewShowsDispersionAndProfile(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(
       SaveWindowPng(ctx, "//##AnalyzeDetails", GuiTestTempPath("analysis_survey_overview_dispersion.png").string()),
       false);
-  // The profile block, expanded: the reference curve on screen is the human-readable half of
+  // The summary projection (§16.2): the main window carries the default layer — the
+  // conclusions, the limits, the premises and the H1 gap readings (tint, colour verdict, TIR
+  // share) — plus the pointer to the complete answer, and none of the fold-only L4 facts (the
+  // counts line's "member(s)", the probe's kept events). Read from the region's own submitted
+  // frame, not a second rendering of what the tests expect. The row click opened the Raypath
+  // view (§16.3's content shortcut) — its class-answer section would pollute a whole-frame
+  // read, so it closes first.
+  ctx->WindowClose("//Raypath view");
+  ctx->Yield(1);
+  {
+    const std::string frame_text = CaptureFrameText(ctx);
+    IM_CHECK_RETV(!frame_text.empty(), false);
+    IM_CHECK_RETV(frame_text.find("Support:") != std::string::npos, false);
+    IM_CHECK_RETV(frame_text.find("Sharp edge") != std::string::npos, false);
+    IM_CHECK_RETV(frame_text.find("Wavelength dispersion:") != std::string::npos, false);
+    IM_CHECK_RETV(frame_text.find("Weight tint:") != std::string::npos, false);
+    IM_CHECK_RETV(frame_text.find("Weight colour:") != std::string::npos, false);
+    IM_CHECK_RETV(frame_text.find("All-TIR share") != std::string::npos, false);
+    IM_CHECK_RETV(frame_text.find("The complete answer is in the Raypath view.") != std::string::npos, false);
+    IM_CHECK_RETV(frame_text.find("member(s)") == std::string::npos, false);
+    IM_CHECK_RETV(frame_text.find("kept lattice events") == std::string::npos, false);
+    IM_CHECK_RETV(frame_text.find("Physics details") == std::string::npos, false);
+  }
+  // The complete answer lives in the Raypath view: open it and the class answer section draws
+  // the same document through the full renderer — fold groups present, both closed by default.
+  // The closed state is proven mechanically: a closed CollapsingHeader submits no body, so the
+  // counts line ("member(s)") and the profile section label are absent from the frame text
+  // while both groups stand unopened.
+  ctx->ItemClick("**/Raypath view###main_raypath_open");
+  ctx->Yield(2);
+  IM_CHECK_RETV(gui::g_state.analyze_raypath_view_open, false);
+  const std::string report_text = CaptureMapFrameText(ctx);
+  IM_CHECK_RETV(report_text.find("Class answer") != std::string::npos, false);
+  IM_CHECK_RETV(report_text.find("member(s)") == std::string::npos, false);
+  IM_CHECK_RETV(report_text.find("Reference profile") == std::string::npos, false);
+  const ImGuiID physics_fold = ctx->ItemInfo("**/Physics details##sv_answer", ImGuiTestOpFlags_NoError).ID;
+  const ImGuiID calculation_fold = ctx->ItemInfo("**/Calculation details##sv_answer", ImGuiTestOpFlags_NoError).ID;
+  IM_CHECK_RETV(physics_fold != 0 && calculation_fold != 0, false);
+  // The Physics group, expanded: the reference curve on screen is the human-readable half of
   // the probe block's evidence (the samples and their gap rule are the model test's). The
-  // header lives inside the details child, so the item is addressed through the child wildcard
-  // (the GUI test engine-addressing rule for items inside a named child).
-  ctx->ItemClick("**/Reference profile — 550 nm##ov_prof");
+  // group header lives inside the map report child, so the item is addressed through the
+  // wildcard (the GUI test engine-addressing rule for items inside a named child).
+  ctx->ItemClick("**/Physics details##sv_answer");
   ctx->Yield(2);
-  // Bring the curve into the frame: the readings sit above it, and the panel's own height ends
-  // right at them (the block ordering is readings first, curve behind). ScrollToItemY — the
-  // programmatic scroll, not the wheel: the right panel declines user-wheel scrolling.
-  ctx->ScrollToItemY("**/Internal-reflection share##ov_tir");
+  if (ImGuiWindow* report = MapReportWindow()) {
+    report->Scroll.y = report->ScrollMax.y;
+  }
   ctx->Yield(2);
-  IM_CHECK_RETV(
-      SaveWindowPng(ctx, "//##AnalyzeDetails", GuiTestTempPath("analysis_survey_overview_profile.png").string()),
-      false);
+  IM_CHECK_RETV(SaveWindowPng(ctx, "//Raypath view", GuiTestTempPath("analysis_survey_overview_profile.png").string()),
+                false);
+  // And the Calculation group: the L4 facts are one fold away, present in the same window.
+  ctx->ItemClick("**/Calculation details##sv_answer");
+  ctx->Yield(2);
+  {
+    const std::string opened_text = CaptureMapFrameText(ctx);
+    IM_CHECK_RETV(opened_text.find("member(s)") != std::string::npos, false);
+  }
+  ctx->WindowClose("//Raypath view");
+  ctx->Yield(1);
   return true;
 }
 
@@ -3840,6 +3890,51 @@ bool IdentityClassShowsTheMassArmAndTheMapAnswers(ImGuiTestContext* ctx) {
     ctx->LogInfo("[v1 c15] point MASS at the sun image: %zu named line(s), no component, no trace intent",
                  mass_lines.size());
   }
+
+  // The summary projection and the complete answer, on the fast arm (the identity survey
+  // answers in milliseconds — this leg carries the §16.2 shape checks the dispersion case's
+  // real-timing window cannot prove under pool load): the main window carries the default
+  // layer plus the pointer and no fold of its own; the Raypath view hosts the class answer
+  // with both groups present and closed by default. The row click opened the Raypath view
+  // (§16.3's content shortcut) — close it so the summary read is the main window's alone.
+  ctx->WindowClose("//Raypath view");
+  ctx->Yield(1);
+  {
+    const std::string frame_text = CaptureFrameText(ctx);
+    IM_CHECK_RETV(!frame_text.empty(), false);
+    IM_CHECK_RETV(frame_text.find("Source image") != std::string::npos, false);
+    IM_CHECK_RETV(frame_text.find("Weight tint:") != std::string::npos, false);
+    IM_CHECK_RETV(frame_text.find("The complete answer is in the Raypath view.") != std::string::npos, false);
+    IM_CHECK_RETV(frame_text.find("member(s)") == std::string::npos, false);
+    IM_CHECK_RETV(frame_text.find("Physics details") == std::string::npos, false);
+  }
+  ctx->ItemClick("**/Raypath view###main_raypath_open");
+  ctx->Yield(2);
+  IM_CHECK_RETV(gui::g_state.analyze_raypath_view_open, false);
+  const std::string identity_report = CaptureMapFrameText(ctx);
+  IM_CHECK_RETV(identity_report.find("Class answer") != std::string::npos, false);
+  IM_CHECK_RETV(identity_report.find("member(s)") == std::string::npos, false);
+  IM_CHECK_RETV(ctx->ItemInfo("**/Physics details##sv_answer", ImGuiTestOpFlags_NoError).ID != 0, false);
+  IM_CHECK_RETV(ctx->ItemInfo("**/Calculation details##sv_answer", ImGuiTestOpFlags_NoError).ID != 0, false);
+  ctx->ItemClick("**/Calculation details##sv_answer");
+  ctx->Yield(2);
+  {
+    const std::string opened_text = CaptureMapFrameText(ctx);
+    IM_CHECK_RETV(opened_text.find("member(s)") != std::string::npos, false);
+  }
+  // The expansion is the window-storage's own state: close the window and reopen it, and the
+  // group is still open (session-sticky); a fresh GuiState would start closed, but this leg's
+  // session stands — the reopen rides the same window storage.
+  ctx->WindowClose("//Raypath view");
+  ctx->Yield(1);
+  ctx->ItemClick("**/Raypath view###main_raypath_open");
+  ctx->Yield(2);
+  {
+    const std::string reopened_text = CaptureMapFrameText(ctx);
+    IM_CHECK_RETV(reopened_text.find("member(s)") != std::string::npos, false);
+  }
+  ctx->WindowClose("//Raypath view");
+  ctx->Yield(1);
   return true;
 }
 
@@ -7603,10 +7698,14 @@ bool BringUpBothWindows(ImGuiTestContext* ctx) {
 
 namespace {
 
-// Capture one submitted application frame, before LogFinish clears its buffer. LogWindow is
-// deliberately unbound from the fallback window: child/window End() must not clear this read.
-// Keep normal item clipping; screenshots below are taken on ordinary, non-logging frames.
-std::string CaptureWindowFrameText(ImGuiTestContext* ctx, const char* window_name) {
+// Capture one submitted application frame's whole log, before LogFinish clears its buffer.
+// LogWindow is deliberately unbound from the fallback window: child/window End() must not
+// clear this read. Keep normal item clipping; screenshots below are taken on ordinary,
+// non-logging frames. Callers slice windows out of the returned text — or, when the region of
+// interest lives in a window whose name renders empty (imgui logs a window name up to
+// FindRenderedTextEnd, so a ##-prefixed name contributes an empty line), assert on content
+// markers unique to the frame instead.
+std::string CaptureFrameText(ImGuiTestContext* ctx) {
   struct Capture {
     std::string text;
     int frame = -1;
@@ -7640,21 +7739,30 @@ std::string CaptureWindowFrameText(ImGuiTestContext* ctx, const char* window_nam
   const int before = ImGui::GetFrameCount();
   ctx->Yield(2);
   if (capture.frame <= before) {
-    ctx->LogError("[map text] no submitted frame after %d", before);
+    ctx->LogError("[frame text] no submitted frame after %d", before);
     return {};
   }
-  ctx->LogInfo("[map text] captured frame %d, %zu bytes", capture.frame, capture.text.size());
+  ctx->LogInfo("[frame text] captured frame %d, %zu bytes", capture.frame, capture.text.size());
   if (g_export_dir) {
     std::ofstream output(GuiTestTempPath("map_text_frame_" + std::to_string(capture.frame) + ".txt"));
     output << capture.text;
   }
-  const std::string window_marker = std::string(window_name) + '\n';
-  const size_t window_at = capture.text.find(window_marker);
-  if (window_at == std::string::npos || capture.text.find(window_marker, window_at + 1) != std::string::npos) {
-    ctx->LogError("[frame text] expected exactly one %s submission in frame %d", window_name, capture.frame);
+  return capture.text;
+}
+
+// The frame's text from the named (titled) window on: the slice the map face's assertions read.
+std::string CaptureWindowFrameText(ImGuiTestContext* ctx, const char* window_name) {
+  const std::string text = CaptureFrameText(ctx);
+  if (text.empty()) {
     return {};
   }
-  return capture.text.substr(window_at);
+  const std::string window_marker = std::string(window_name) + '\n';
+  const size_t window_at = text.find(window_marker);
+  if (window_at == std::string::npos || text.find(window_marker, window_at + 1) != std::string::npos) {
+    ctx->LogError("[frame text] expected exactly one %s submission in the captured frame", window_name);
+    return {};
+  }
+  return text.substr(window_at);
 }
 
 std::string CaptureMapFrameText(ImGuiTestContext* ctx) {

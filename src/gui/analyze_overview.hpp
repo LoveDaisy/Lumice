@@ -230,9 +230,17 @@ struct SurveyOverviewModel {
 // never throws, never computes optics.
 SurveyOverviewModel BuildSurveyOverviewModel(const LUMICE_PathSurvey& result);
 
-// The ImGui half: the model as the details region draws it. Assumes the region's four-state
-// shell already dispatched here (a completed, adopted document).
+// The ImGui half: the model as the complete answer draws it — the default layer (the answers
+// and their limits), then the two fold groups (contract §16.1: Physics details, Calculation
+// details, both closed by default). Assumes the region's four-state shell already dispatched
+// here (a completed, adopted document). This is the Raypath view's class-answer host.
 void RenderSurveyOverviewModel(const SurveyOverviewModel& model);
+
+// The main window's summary projection (contract §16.2): the SAME model read through the SAME
+// default-layer renderer the complete answer uses — the summary is a read of it, never a second
+// wording — closed with the pointer to the window hosting the complete answer. The main window
+// draws no fold groups of its own; the omitted detail lives in the Raypath view.
+void RenderSurveySummary(const SurveyOverviewModel& model);
 
 }  // namespace lumice::gui
 

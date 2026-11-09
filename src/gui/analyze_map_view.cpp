@@ -1552,6 +1552,18 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   }
 
   ImGui::BeginChild("##MapReport", RemainingReportSize());
+  // The class answer (contract §16.2): the adopted survey document, drawn by the
+  // complete-answer renderer — the same default layer and fold groups the renderer gives every
+  // host, read back from the SAME adopted result the main window's summary reads (no second
+  // model, no second session; opening or closing this window changes no query lifetime). The
+  // four-state shell stays in the main window (§16.2's split): while the survey computes, is
+  // cancelled or refused, this section draws nothing here — the answer region carries answers.
+  if (state.analysis.survey.adopted_result) {
+    const SurveyOverviewModel survey_model = BuildSurveyOverviewModel(*state.analysis.survey.adopted_result);
+    ImGui::TextDisabled("Class answer");
+    RenderSurveyOverviewModel(survey_model);
+    ImGui::Separator();
+  }
   if (map.adopted_result) {
     LUMICE_PathMapInfo info{};
     info.struct_size = sizeof(info);

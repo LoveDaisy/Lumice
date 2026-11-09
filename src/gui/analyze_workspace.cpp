@@ -524,13 +524,12 @@ void RenderSurveyOverview(const SelectedClassIdentity& identity) {
       // reported to the render-feedback field: what the test reads is what was drawn (AC4).
       // The poll snapshot rides along: the stage clause appears only while the SURVEY face
       // itself is computing, named from the engine's own ledger (742's wait grammar + 751).
+      // The interface-thread self-description that used to sit under it is gone (the
+      // disposition ledger's L4 — an execution self-narrative is not a wait answer).
       const std::string wait_line =
           SurveyWaitLineFor(survey, ImGui::GetTime(), g_survey_executor.InflightPollSnapshot());
       g_state.analysis.wait_feedback_texts.survey_wait_line = wait_line;
       ImGui::TextWrapped("%s", wait_line.c_str());
-      ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-      ImGui::TextWrapped("An engine-typed summary of this class is computed off the interface thread.");
-      ImGui::PopStyleColor();
       ImGui::Spacing();
       if (ImGui::SmallButton("Cancel survey")) {
         // R6's cancel row: request the cancel and withdraw the intent — no re-issue while this
@@ -558,7 +557,11 @@ void RenderSurveyOverview(const SelectedClassIdentity& identity) {
       ImGui::PopStyleColor();
       break;
     case SurveyOverviewState::kCompleted:
-      RenderSurveyOverviewModel(BuildSurveyOverviewModel(*survey.adopted_result));
+      // The main window's summary projection (§16.2): the same model read through the same
+      // default-layer renderer the Raypath view's complete answer uses, closed with the
+      // pointer to it. The full report's fold groups live over there — the summary hosts no
+      // folds of its own.
+      RenderSurveySummary(BuildSurveyOverviewModel(*survey.adopted_result));
       break;
   }
   // The M1-0 disposition's honesty label: an intermediate P/B/D read position has NO survey

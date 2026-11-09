@@ -293,16 +293,11 @@ void BuildConclusions(const LUMICE_PathSurvey& result, SurveyOverviewModel* mode
       break;
     }
     case SurveyArm::kFamily: {
-      if (!model->family.levels.empty()) {
-        std::string ladder = "Freezing ladder:";
-        for (const SurveyFamilyLevelView& level : model->family.levels) {
-          if (level.frozen_dims.empty()) {
-            continue;
-          }
-          ladder += " L" + std::to_string(level.level) + " freezes " + level.frozen_dims.front() + ";";
-        }
-        lines.push_back(ladder);
-      }
+      // The freezing ladder's mechanism text (which level froze which dim at what width) is
+      // the owner's own example of presentation noise at the default layer — the enumeration
+      // lives in Physics details, the per-level sample/survival counts in Calculation details.
+      // What floats here is the ladder's consequence in one user sentence: how many images
+      // the class holds after the survival filter had its say.
       int surviving = 0;
       int killed = 0;
       for (const SurveyFamilyLevelView& level : model->family.levels) {
@@ -565,284 +560,45 @@ void DisabledWrapped(const char* fmt, ...) {
   ImGui::PopStyleColor();
 }
 
-// The chromatic dispersion block: the min-deviation row with both lambdas named, the followed
-// onsets behind an expander, and the basis — the engine's own geometry string plus the certified
-// edge's closed-form certificate — readable in place (AC2's 依据可查).
-void DispersionBlock(const SurveyDispersionView& d) {
-  if (!ImGui::CollapsingHeader("Chromatic dispersion##ov_disp", ImGuiTreeNodeFlags_DefaultOpen)) {
-    return;
-  }
-  if (!d.min_row_available) {
-    DisabledWrapped("No minimum-deviation fold in this class — the followed onsets are the positional facts.");
-  } else {
-    ImGui::TextWrapped("%s inner edge %s — %s %s", d.red_label.c_str(), FormatDeg(d.value_red_deg).c_str(),
-                       d.blue_label.c_str(), FormatDeg(d.value_blue_deg).c_str());
-    ImGui::TextWrapped("Displacement %s (%s).", FormatDeg(d.displacement_deg).c_str(),
-                       DirectionProse(d.direction).c_str());
-    DisabledWrapped("Refractive indices n(%s) = %.4f, n(%s) = %.4f — the engine's dispersion table at this pair.",
-                    d.red_label.c_str(), d.n_red, d.blue_label.c_str(), d.n_blue);
-  }
-  if (!d.followed.empty()) {
-    if (ImGui::TreeNode("##ov_disp_followed", "Followed onsets (%zu)", d.followed.size())) {
-      for (const SurveyFollowedOnsetView& row : d.followed) {
-        // Keep these multi-part diagnostics in readable ASCII prose. The body font loads
-        // the observed map delta/lambda, not arbitrary mathematical relations or arrows;
-        // the analysis list's arrow is a separately merged icon.
-        ImGui::Bullet();
-        ImGui::TextWrapped("%s/%s: %s to %s (shift %s, %s)", row.source.c_str(), row.profile.c_str(),
-                           FormatDeg(row.value_red_deg).c_str(), FormatDeg(row.value_blue_deg).c_str(),
-                           FormatDeg(row.displacement_deg).c_str(), DirectionProse(row.direction).c_str());
-      }
-      ImGui::TreePop();
-    }
-  }
-  if (!d.evidence_basis.empty()) {
-    DisabledWrapped("Basis: %s", d.evidence_basis.c_str());
-  }
-  if (d.certificate_available) {
-    DisabledWrapped("Edge certificate: %s with A = %.3f° (cross-check %.1e° against tolerance %.1e°).",
-                    d.certificate_formula.c_str(), d.certificate_apex_deg, d.certificate_cross_check_deg,
-                    d.certificate_tolerance_deg);
-  }
+// A fold group's header: the display spelling comes from the ONE label constant; the ID suffix
+// keeps same-label groups apart inside one window (the Raypath view hosts the survey answer and
+// the point answer side by side, each with its own Physics/Calculation pair — identical visible
+// labels would collide in the window's ID space and share one expansion state). No
+// DefaultOpen: closed by default, expansion in the host window's storage — session-sticky,
+// restart-reset (io.IniFilename is null), independent per window.
+bool FoldOpen(const char* label, const char* suffix_id) {
+  const std::string id = std::string(label) + "##" + suffix_id;
+  return ImGui::CollapsingHeader(id.c_str());
 }
 
-// The diagnose block: the weight-side colour reading, kept separate from the positional
-// dispersion above (different kernel paths, different mechanisms — AC3's separation).
-void DiagnoseBlock(const SurveyDiagnoseView& dg) {
-  char header[96];
-  std::snprintf(header, sizeof(header), "Weight colour reading (%s)##ov_diag", dg.verdict_kind.c_str());
-  if (!ImGui::CollapsingHeader(header)) {
-    return;
+// The default layer (the disposition ladder's L1/L2): the answers, their limits and their
+// premises — everything that must stay readable with the fold groups closed (the coverage law:
+// an L1 fact is never demoted into a fold for space). Shared verbatim by the complete answer
+// (the Raypath view's class-answer host) and the main window's summary projection (§16.2: the
+// summary is a read of the same layer, not a second wording). H1's gap readings — the diagnose
+// verdict, the tint and TIR readings the conclusions don't already carry — read the same model
+// fields here, so both hosts see them without a second model.
+void RenderSurveyDefaultLayer(const SurveyOverviewModel& model) {
+  // The limits first (§16.1: state honesty covers both layers; the disabled block the header
+  // used to carry keeps its content, minus the counts line that moved into Calculation
+  // details).
+  ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+  if (model.execution == LUMICE_PATH_OUTCOME_DEADLINE_EXCEEDED || model.early_stopped) {
+    ImGui::TextWrapped("The survey stopped inside its budget — the facts on show are partial.");
   }
-  ImGui::TextWrapped("Verdict: %s, %s, %s.", dg.verdict_kind.c_str(), dg.color.c_str(),
-                     dg.visible ? "visible" : "not visible");
-  if (dg.position_available) {
-    TextDeg("Position:", dg.position_deg);
+  if (model.unevaluated_count > 0) {
+    ImGui::TextWrapped("%zu object(s) unevaluated.", model.unevaluated_count);
   }
-  if (!dg.coverage_complete) {
-    DisabledWrapped("Coverage incomplete — the verdict names what it read, not the whole class.");
-  }
-  for (const std::string& note : dg.notes) {
-    DisabledWrapped("%s", note.c_str());
-  }
-  if (!dg.evidence_basis.empty()) {
-    DisabledWrapped("Basis: %s", dg.evidence_basis.c_str());
-  }
-}
-
-// The reference profile: the class's brightness along the solar radial line at the document's
-// reference wavelength. Readings first, the curve behind them; empty samples stay gaps.
-void ProbeBlock(const SurveyProbeView& p) {
-  char header[96];
-  std::snprintf(header, sizeof(header), "Reference profile — %.0f nm##ov_prof", p.wavelength_nm);
-  if (!ImGui::CollapsingHeader(header)) {
-    return;
-  }
-  if (p.state == LUMICE_PATH_STATE_REFUSED) {
-    DisabledWrapped("Probe refused (%s) — no readings claimed.", p.mode.c_str());
-    return;
-  }
-  if (p.edge_available) {
-    ImGui::TextWrapped("Edge %s", FormatDeg(p.edge_deg).c_str());
-  }
-  if (p.peak_available) {
-    ImGui::TextWrapped("Peak %s", FormatDeg(p.peak_deg).c_str());
-  }
-  if (p.separation_available) {
-    ImGui::TextWrapped("Peak–edge separation %s", FormatDeg(p.separation_deg).c_str());
-  }
-  ImGui::TextWrapped("%lld kept lattice events.", static_cast<long long>(p.kept_count));
-  if (p.sample_delta_deg.size() < 2) {
-    return;
-  }
-  double max_value = 0.0;
-  for (const double v : p.sample_value) {
-    if (!std::isnan(v) && v > max_value) {
-      max_value = v;
+  // The λ/sun premise rides the answer (§16.2: 必要 λ/太阳前提随答案) — one line each, the same
+  // read-back the header block carried.
+  if (model.scope_available) {
+    ImGui::TextWrapped("Reference wavelength %.1f nm (source: %s, n = %.4f).", model.wavelength_nm,
+                       model.wavelength_source.c_str(), model.refractive_index);
+    if (model.sun_available) {
+      ImGui::TextWrapped("Sun at altitude %.1f°, azimuth %.1f°.", model.sun_altitude_deg, model.sun_azimuth_deg);
     }
   }
-  if (max_value <= 0.0) {
-    return;
-  }
-  const float w = ImGui::GetContentRegionAvail().x;
-  const float h = UiPx(64.0f);
-  const ImVec2 origin = ImGui::GetCursorScreenPos();
-  ImGui::Dummy(ImVec2(w, h));
-  ImDrawList* dl = ImGui::GetWindowDrawList();
-  const double d0 = p.sample_delta_deg.front();
-  const double d1 = p.sample_delta_deg.back();
-  const float plot_w = w - 2.0f;
-  auto to_screen = [&](double delta, double value) {
-    const float x = origin.x + 1.0f + static_cast<float>((delta - d0) / (d1 - d0)) * plot_w;
-    const float y = origin.y + h - static_cast<float>(value / max_value) * (h - 2.0f) - 1.0f;
-    return ImVec2(x, y);
-  };
-  bool pen_down = false;
-  ImVec2 prev(0.0f, 0.0f);
-  const ImU32 line_col = ImGui::GetColorU32(ImGuiCol_PlotLines);
-  for (size_t i = 0; i < p.sample_value.size(); ++i) {
-    const double v = p.sample_value[i];
-    if (std::isnan(v)) {  // an empty bin: lift the pen, never draw a zero
-      pen_down = false;
-      continue;
-    }
-    const ImVec2 pt = to_screen(p.sample_delta_deg[i], v);
-    if (pen_down) {
-      dl->AddLine(prev, pt, line_col, 1.0f);
-    }
-    prev = pt;
-    pen_down = true;
-  }
-  // The readings' positions on the same ruler: the edge dim, the peak accented.
-  if (p.edge_available && p.edge_deg >= d0 && p.edge_deg <= d1) {
-    const ImVec2 a = to_screen(p.edge_deg, 0.0);
-    const ImVec2 b = to_screen(p.edge_deg, max_value);
-    dl->AddLine(a, b, ImGui::GetColorU32(ImGuiCol_Separator), 1.0f);
-  }
-  if (p.peak_available && p.peak_deg >= d0 && p.peak_deg <= d1) {
-    const ImVec2 a = to_screen(p.peak_deg, 0.0);
-    const ImVec2 b = to_screen(p.peak_deg, max_value);
-    dl->AddLine(a, b, ImGui::GetColorU32(ImGuiCol_PlotHistogram), 1.0f);
-  }
-  DisabledWrapped("Deviation from %s to %s — empty bins are gaps, not zeros; n = %.4f at this wavelength.",
-                  FormatDeg(d0).c_str(), FormatDeg(d1).c_str(), p.refractive_index);
-}
-
-void TintBlock(const SurveyTintView& tint, SurveyArm arm) {
-  if (!ImGui::CollapsingHeader("Weight tint##ov_tint",
-                               arm == SurveyArm::kIdentity ? ImGuiTreeNodeFlags_DefaultOpen : 0)) {
-    return;
-  }
-  if (!tint.reading_available) {
-    DisabledWrapped("No reading (%s).", SurveyStateName(tint.state));
-    return;
-  }
-  ImGui::TextWrapped("Blue/red ratio %.3f — %s.", tint.ratio, DirectionProse(tint.direction).c_str());
-  if (!tint.caliber.empty()) {
-    DisabledWrapped("Caliber: %s", tint.caliber.c_str());
-  }
-}
-
-void WitnessBlock(const SurveyWitnessView& w) {
-  if (!ImGui::CollapsingHeader("Independent witness##ov_wit", ImGuiTreeNodeFlags_DefaultOpen)) {
-    return;
-  }
-  if (!w.value_available) {
-    DisabledWrapped("No readable witness value.");
-    return;
-  }
-  ImGui::TextWrapped("Positive events kept: %lld of %lld lattice samples (max kept weight %.4g).",
-                     static_cast<long long>(w.kept_count), static_cast<long long>(w.sample_count), w.weight);
-  DisabledWrapped("Read on the declared source's own lattice — independent of the refused delta axis.");
-}
-
-void TirBlock(const SurveyTirView& tir) {
-  if (!ImGui::CollapsingHeader("Internal-reflection share##ov_tir")) {
-    return;
-  }
-  if (!tir.value_available) {
-    if (tir.mode.empty()) {
-      DisabledWrapped("Share %s — no value and no named mode.", SurveyStateName(tir.state));
-    } else {
-      DisabledWrapped("Share %s (%s).", SurveyStateName(tir.state), tir.mode.c_str());
-    }
-    return;
-  }
-  ImGui::TextWrapped("All-TIR share %.3f (red) / %.3f (blue) across %zu interface(s).", tir.share_all_tir_red,
-                     tir.share_all_tir_blue, tir.interface_count);
-}
-
-void FamilyBlock(const SurveyFamilyView& family) {
-  if (!ImGui::CollapsingHeader("Freezing ladder##ov_family", ImGuiTreeNodeFlags_DefaultOpen)) {
-    return;
-  }
-  if (!family.refusal_mode.empty()) {
-    DisabledWrapped("Ladder refused at level 0 (%s).", family.refusal_mode.c_str());
-  }
-  for (const SurveyFamilyLevelView& level : family.levels) {
-    ImGui::Bullet();
-    ImGui::TextWrapped("L%d — %d sample(s), %d valid, %d proposed, %d killed by the survival filter.", level.level,
-                       level.samples, level.valid_samples, level.objects_proposed, level.objects_killed);
-    if (!level.frozen_dims.empty()) {
-      std::string frozen = "frozen: ";
-      for (const std::string& dim : level.frozen_dims) {
-        frozen += dim + "; ";
-      }
-      DisabledWrapped("%s", frozen.c_str());
-    }
-    if (!level.free_dims.empty()) {
-      std::string free_dims = "free: ";
-      for (const std::string& dim : level.free_dims) {
-        free_dims += dim + "; ";
-      }
-      DisabledWrapped("%s", free_dims.c_str());
-    }
-  }
-}
-
-void ObjectsBlock(const SurveyOverviewModel& model) {
-  char header[96];
-  std::snprintf(header, sizeof(header), "Objects (%zu)##ov_obj", model.objects.size());
-  if (!ImGui::CollapsingHeader(header)) {
-    return;
-  }
-  const size_t shown = std::min<size_t>(model.objects.size(), kSurveyOverviewMaxObjects);
-  for (size_t i = 0; i < shown; ++i) {
-    const SurveyObjectRow& row = model.objects[i];
-    std::string label = row.kind_name;
-    if (row.family_level >= 0) {
-      label = "L" + std::to_string(row.family_level) + " " + label;
-    }
-    label += std::string(" — ") + row.state_name;
-    if (row.position_available) {
-      char pos[96];
-      std::snprintf(pos, sizeof(pos), " at %.2f°/%.2f°", row.position_altitude_deg, row.position_azimuth_deg);
-      label += pos;
-    }
-    if (row.blur_deg > 0.0) {
-      char blur[48];
-      std::snprintf(blur, sizeof(blur), ", blur %s", FormatDeg(row.blur_deg).c_str());
-      label += blur;
-    }
-    ImGui::Bullet();
-    ImGui::TextWrapped("%s", label.c_str());
-    if (!row.reason.empty()) {
-      DisabledWrapped("%s", row.reason.c_str());
-    }
-  }
-  if (model.objects.size() > shown) {
-    DisabledWrapped("+ %zu more object(s) — beyond this view.", model.objects.size() - shown);
-  }
-}
-
-}  // namespace
-
-void RenderSurveyOverviewModel(const SurveyOverviewModel& model) {
-  if (!model.valid) {
-    ImGui::TextUnformatted("Survey document unreadable.");
-    return;
-  }
-  ImGui::Bullet();
-  ImGui::TextWrapped("%s — %zu member(s), %zu object(s), budget %d ms%s", SurveyOutcomeName(model.execution),
-                     model.member_count, model.object_count, model.budget_ms,
-                     model.early_stopped ? ", early-stopped" : "");
-  {
-    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-    if (model.execution == LUMICE_PATH_OUTCOME_DEADLINE_EXCEEDED || model.early_stopped) {
-      ImGui::TextWrapped("The survey stopped inside its budget — the facts on show are partial.");
-    }
-    if (model.unevaluated_count > 0) {
-      ImGui::TextWrapped("%zu object(s) unevaluated.", model.unevaluated_count);
-    }
-    if (model.scope_available) {
-      ImGui::TextWrapped("Reference wavelength %.1f nm (source: %s, n = %.4f).", model.wavelength_nm,
-                         model.wavelength_source.c_str(), model.refractive_index);
-      if (model.sun_available) {
-        ImGui::TextWrapped("Sun at altitude %.1f°, azimuth %.1f°.", model.sun_altitude_deg, model.sun_azimuth_deg);
-      }
-    }
-    ImGui::PopStyleColor();
-  }
+  ImGui::PopStyleColor();
   // The main conclusions wrap: they are the region's primary content, and a 400px panel must
   // show every word of them — BulletText would clip at the panel edge exactly where a sentence
   // gets interesting (the screenshot that caught this reads "...certified by the closed-form
@@ -856,39 +612,299 @@ void RenderSurveyOverviewModel(const SurveyOverviewModel& model) {
   if (!model.dispersion.available && !model.diagnose.available && !model.chromatic_note.empty()) {
     DisabledWrapped("Chromatic layer (%s): %s", SurveyStateName(model.chromatic_state), model.chromatic_note.c_str());
   }
+  // The colour verdict's main conclusion, default (the Dispersion/Diagnose row: 边位置、可见性/
+  // 色彩主结论默认；coverage 不完整默认). Its notes and evidence basis stay in Physics details.
+  if (model.diagnose.available) {
+    ImGui::Bullet();
+    ImGui::TextWrapped("Weight colour: %s, %s, %s.", model.diagnose.verdict_kind.c_str(), model.diagnose.color.c_str(),
+                       model.diagnose.visible ? "visible" : "not visible");
+    if (model.diagnose.position_available) {
+      TextDeg("Position:", model.diagnose.position_deg);
+    }
+    if (!model.diagnose.coverage_complete) {
+      DisabledWrapped("Coverage incomplete — the verdict names what it read, not the whole class.");
+    }
+  }
+  // The tint reading for the arms whose conclusions don't already carry it (the identity arm's
+  // conclusions quote the ratio; the caliber stays a Physics detail).
+  if (model.tint.available && model.tint.reading_available && model.arm != SurveyArm::kIdentity) {
+    ImGui::Bullet();
+    ImGui::TextWrapped("Blue/red ratio %.3f — %s.", model.tint.ratio, DirectionProse(model.tint.direction).c_str());
+  }
+  // The probe's readings for the arms whose conclusions don't carry the edge/peak facts (the
+  // full-dimensional arm's object cards name both); a refused probe's named mode is a limit.
+  if (model.probe.available && model.arm != SurveyArm::kFullDimensional) {
+    if (model.probe.state == LUMICE_PATH_STATE_REFUSED) {
+      DisabledWrapped("Probe refused (%s) — no readings claimed.", model.probe.mode.c_str());
+    } else {
+      if (model.probe.edge_available) {
+        ImGui::Bullet();
+        ImGui::TextWrapped("Profile edge %s", FormatDeg(model.probe.edge_deg).c_str());
+      }
+      if (model.probe.peak_available) {
+        ImGui::Bullet();
+        ImGui::TextWrapped("Profile peak %s", FormatDeg(model.probe.peak_deg).c_str());
+      }
+      if (model.probe.separation_available) {
+        ImGui::Bullet();
+        ImGui::TextWrapped("Peak–edge separation %s", FormatDeg(model.probe.separation_deg).c_str());
+      }
+    }
+  }
+  // The witness's quantitative reading on the arms whose conclusions don't carry the witness
+  // sentence (the refused arm's do — with the ≠-support qualification verbatim).
+  if (model.witness.available && model.witness.value_available && model.arm != SurveyArm::kRefused) {
+    ImGui::Bullet();
+    ImGui::TextWrapped("Independent witness reads positive: max kept weight %.4g.", model.witness.weight);
+  }
+  // The family ladder's level-0 refusal is a limit — default (the TIR/Family/Objects row:
+  // 拒答/未评估限制默认).
+  if (model.family.available && !model.family.refusal_mode.empty()) {
+    DisabledWrapped("Freezing ladder refused at level 0 (%s).", model.family.refusal_mode.c_str());
+  }
+  // The TIR share: the document-level reading and its refusal state, default; the interface
+  // count is a Physics detail. Zero-shares read as the finite values they are.
+  if (model.tir.available) {
+    if (model.tir.value_available) {
+      ImGui::Bullet();
+      ImGui::TextWrapped("All-TIR share %.3f (red) / %.3f (blue).", model.tir.share_all_tir_red,
+                         model.tir.share_all_tir_blue);
+    } else if (model.tir.mode.empty()) {
+      DisabledWrapped("Internal-reflection share %s — no value and no named mode.", SurveyStateName(model.tir.state));
+    } else {
+      DisabledWrapped("Internal-reflection share %s (%s).", SurveyStateName(model.tir.state), model.tir.mode.c_str());
+    }
+  }
+}
 
+// The Physics details group (the ladder's L3): the optical premises, evidence methods and
+// complete definitions behind the default layer's answers. One closed-by-default fold; each
+// former block keeps a small section label so the group stays navigable.
+void RenderSurveyPhysicsDetails(const SurveyOverviewModel& model) {
   if (model.dispersion.available) {
-    ImGui::Spacing();
-    DispersionBlock(model.dispersion);
+    ImGui::TextDisabled("Chromatic dispersion");
+    const SurveyDispersionView& d = model.dispersion;
+    if (!d.min_row_available) {
+      DisabledWrapped("No minimum-deviation fold in this class — the followed onsets are the positional facts.");
+    } else {
+      ImGui::TextWrapped("%s inner edge %s — %s %s", d.red_label.c_str(), FormatDeg(d.value_red_deg).c_str(),
+                         d.blue_label.c_str(), FormatDeg(d.value_blue_deg).c_str());
+      DisabledWrapped("Refractive indices n(%s) = %.4f, n(%s) = %.4f — the engine's dispersion table at this pair.",
+                      d.red_label.c_str(), d.n_red, d.blue_label.c_str(), d.n_blue);
+    }
+    if (!d.followed.empty()) {
+      if (ImGui::TreeNode("##ov_disp_followed", "Followed onsets (%zu)", d.followed.size())) {
+        for (const SurveyFollowedOnsetView& row : d.followed) {
+          // Keep these multi-part diagnostics in readable ASCII prose. The body font loads
+          // the observed map delta/lambda, not arbitrary mathematical relations or arrows;
+          // the analysis list's arrow is a separately merged icon.
+          ImGui::Bullet();
+          ImGui::TextWrapped("%s/%s: %s to %s (shift %s, %s)", row.source.c_str(), row.profile.c_str(),
+                             FormatDeg(row.value_red_deg).c_str(), FormatDeg(row.value_blue_deg).c_str(),
+                             FormatDeg(row.displacement_deg).c_str(), DirectionProse(row.direction).c_str());
+        }
+        ImGui::TreePop();
+      }
+    }
+    if (!d.evidence_basis.empty()) {
+      DisabledWrapped("Basis: %s", d.evidence_basis.c_str());
+    }
+    if (d.certificate_available) {
+      DisabledWrapped("Edge certificate: %s with A = %.3f°.", d.certificate_formula.c_str(), d.certificate_apex_deg);
+    }
   }
   if (model.diagnose.available) {
-    ImGui::Spacing();
-    DiagnoseBlock(model.diagnose);
+    ImGui::TextDisabled("Weight colour reading");
+    for (const std::string& note : model.diagnose.notes) {
+      DisabledWrapped("%s", note.c_str());
+    }
+    if (!model.diagnose.evidence_basis.empty()) {
+      DisabledWrapped("Basis: %s", model.diagnose.evidence_basis.c_str());
+    }
   }
-  if (model.tint.available) {
-    ImGui::Spacing();
-    TintBlock(model.tint, model.arm);
+  // The reference profile's curve — the class's brightness along the solar radial line. The
+  // readings themselves ride the default layer (or the full-dimensional conclusions); empty
+  // samples stay gaps.
+  if (model.probe.available && model.probe.state != LUMICE_PATH_STATE_REFUSED) {
+    const SurveyProbeView& p = model.probe;
+    ImGui::TextDisabled("Reference profile — %.0f nm", p.wavelength_nm);
+    if (p.sample_delta_deg.size() >= 2) {
+      double max_value = 0.0;
+      for (const double v : p.sample_value) {
+        if (!std::isnan(v) && v > max_value) {
+          max_value = v;
+        }
+      }
+      if (max_value > 0.0) {
+        const float w = ImGui::GetContentRegionAvail().x;
+        const float h = UiPx(64.0f);
+        const ImVec2 origin = ImGui::GetCursorScreenPos();
+        ImGui::Dummy(ImVec2(w, h));
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        const double d0 = p.sample_delta_deg.front();
+        const double d1 = p.sample_delta_deg.back();
+        const float plot_w = w - 2.0f;
+        auto to_screen = [&](double delta, double value) {
+          const float x = origin.x + 1.0f + static_cast<float>((delta - d0) / (d1 - d0)) * plot_w;
+          const float y = origin.y + h - static_cast<float>(value / max_value) * (h - 2.0f) - 1.0f;
+          return ImVec2(x, y);
+        };
+        bool pen_down = false;
+        ImVec2 prev(0.0f, 0.0f);
+        const ImU32 line_col = ImGui::GetColorU32(ImGuiCol_PlotLines);
+        for (size_t i = 0; i < p.sample_value.size(); ++i) {
+          const double v = p.sample_value[i];
+          if (std::isnan(v)) {  // an empty bin: lift the pen, never draw a zero
+            pen_down = false;
+            continue;
+          }
+          const ImVec2 pt = to_screen(p.sample_delta_deg[i], v);
+          if (pen_down) {
+            dl->AddLine(prev, pt, line_col, 1.0f);
+          }
+          prev = pt;
+          pen_down = true;
+        }
+        // The readings' positions on the same ruler: the edge dim, the peak accented.
+        if (p.edge_available && p.edge_deg >= d0 && p.edge_deg <= d1) {
+          const ImVec2 a = to_screen(p.edge_deg, 0.0);
+          const ImVec2 b = to_screen(p.edge_deg, max_value);
+          dl->AddLine(a, b, ImGui::GetColorU32(ImGuiCol_Separator), 1.0f);
+        }
+        if (p.peak_available && p.peak_deg >= d0 && p.peak_deg <= d1) {
+          const ImVec2 a = to_screen(p.peak_deg, 0.0);
+          const ImVec2 b = to_screen(p.peak_deg, max_value);
+          dl->AddLine(a, b, ImGui::GetColorU32(ImGuiCol_PlotHistogram), 1.0f);
+        }
+        DisabledWrapped("Deviation from %s to %s — empty bins are gaps, not zeros; n = %.4f at this wavelength.",
+                        FormatDeg(d0).c_str(), FormatDeg(d1).c_str(), p.refractive_index);
+      }
+    }
   }
-  if (model.probe.available) {
-    ImGui::Spacing();
-    ProbeBlock(model.probe);
+  if (model.tint.available && !model.tint.caliber.empty()) {
+    ImGui::TextDisabled("Weight tint");
+    DisabledWrapped("Caliber: %s", model.tint.caliber.c_str());
   }
   if (model.witness.available) {
-    ImGui::Spacing();
-    WitnessBlock(model.witness);
+    ImGui::TextDisabled("Independent witness");
+    if (model.witness.value_available) {
+      ImGui::TextWrapped("Max kept weight %.4g.", model.witness.weight);
+      DisabledWrapped("Read on the declared source's own lattice — independent of the refused delta axis.");
+    } else {
+      DisabledWrapped("No readable witness value.");
+    }
   }
-  if (model.tir.available) {
-    ImGui::Spacing();
-    TirBlock(model.tir);
+  if (model.tir.available && model.tir.value_available) {
+    ImGui::TextDisabled("Internal-reflection share");
+    ImGui::TextWrapped("Read across %zu interface(s).", model.tir.interface_count);
   }
   if (model.family.available) {
-    ImGui::Spacing();
-    FamilyBlock(model.family);
+    ImGui::TextDisabled("Freezing ladder");
+    for (const SurveyFamilyLevelView& level : model.family.levels) {
+      if (!level.frozen_dims.empty()) {
+        std::string frozen = "L" + std::to_string(level.level) + " frozen: ";
+        for (const std::string& dim : level.frozen_dims) {
+          frozen += dim + "; ";
+        }
+        DisabledWrapped("%s", frozen.c_str());
+      }
+      if (!level.free_dims.empty()) {
+        std::string free_dims = "L" + std::to_string(level.level) + " free: ";
+        for (const std::string& dim : level.free_dims) {
+          free_dims += dim + "; ";
+        }
+        DisabledWrapped("%s", free_dims.c_str());
+      }
+    }
   }
   if (!model.objects.empty()) {
-    ImGui::Spacing();
-    ObjectsBlock(model);
+    ImGui::TextDisabled("Objects");
+    const size_t shown = std::min<size_t>(model.objects.size(), kSurveyOverviewMaxObjects);
+    for (size_t i = 0; i < shown; ++i) {
+      const SurveyObjectRow& row = model.objects[i];
+      std::string label = row.kind_name;
+      if (row.family_level >= 0) {
+        label = "L" + std::to_string(row.family_level) + " " + label;
+      }
+      label += std::string(" — ") + row.state_name;
+      if (row.position_available) {
+        char pos[96];
+        std::snprintf(pos, sizeof(pos), " at %.2f°/%.2f°", row.position_altitude_deg, row.position_azimuth_deg);
+        label += pos;
+      }
+      if (row.blur_deg > 0.0) {
+        char blur[48];
+        std::snprintf(blur, sizeof(blur), ", blur %s", FormatDeg(row.blur_deg).c_str());
+        label += blur;
+      }
+      ImGui::Bullet();
+      ImGui::TextWrapped("%s", label.c_str());
+      if (!row.reason.empty()) {
+        DisabledWrapped("%s", row.reason.c_str());
+      }
+    }
+    // The cap's truncation note stays AT the truncated list (the ladder's L2: the +N hint
+    // lives where the cut happened).
+    if (model.objects.size() > shown) {
+      DisabledWrapped("+ %zu more object(s) — beyond this view.", model.objects.size() - shown);
+    }
   }
+}
+
+// The Calculation details group (the ladder's L4): the numeric and execution facts a check
+// reads — counts, budgets, tolerances — none of them a default answer.
+void RenderSurveyCalculationDetails(const SurveyOverviewModel& model) {
+  ImGui::TextWrapped("%s — %zu member(s), %zu object(s), budget %d ms%s", SurveyOutcomeName(model.execution),
+                     model.member_count, model.object_count, model.budget_ms,
+                     model.early_stopped ? ", early-stopped" : "");
+  if (model.dispersion.certificate_available) {
+    DisabledWrapped("Edge certificate cross-check %.1e° against tolerance %.1e°.",
+                    model.dispersion.certificate_cross_check_deg, model.dispersion.certificate_tolerance_deg);
+  }
+  if (model.probe.available) {
+    ImGui::TextWrapped("Probe: %lld kept lattice events.", static_cast<long long>(model.probe.kept_count));
+  }
+  if (model.witness.available && model.witness.value_available) {
+    ImGui::TextWrapped("Witness lattice: %lld positive of %lld samples.",
+                       static_cast<long long>(model.witness.kept_count),
+                       static_cast<long long>(model.witness.sample_count));
+  }
+  if (model.family.available) {
+    for (const SurveyFamilyLevelView& level : model.family.levels) {
+      ImGui::Bullet();
+      ImGui::TextWrapped("L%d — %d sample(s), %d valid, %d proposed, %d killed by the survival filter.", level.level,
+                         level.samples, level.valid_samples, level.objects_proposed, level.objects_killed);
+    }
+  }
+}
+
+}  // namespace
+
+void RenderSurveyOverviewModel(const SurveyOverviewModel& model) {
+  if (!model.valid) {
+    ImGui::TextUnformatted("Survey document unreadable.");
+    return;
+  }
+  RenderSurveyDefaultLayer(model);
+  ImGui::Spacing();
+  if (FoldOpen(kSurveyPhysicsDetailsLabel, "sv_answer")) {
+    RenderSurveyPhysicsDetails(model);
+    ImGui::Spacing();
+  }
+  if (FoldOpen(kSurveyCalculationDetailsLabel, "sv_answer")) {
+    RenderSurveyCalculationDetails(model);
+  }
+}
+
+void RenderSurveySummary(const SurveyOverviewModel& model) {
+  if (!model.valid) {
+    ImGui::TextUnformatted("Survey document unreadable.");
+    return;
+  }
+  RenderSurveyDefaultLayer(model);
+  // §16.2: once physical entries are omitted, the pointer must say where the complete answer
+  // lives — never a silent trim read as the whole report.
+  DisabledWrapped("The complete answer is in the %s.", kRaypathViewWindowTitle);
 }
 
 }  // namespace lumice::gui
