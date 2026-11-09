@@ -72,11 +72,27 @@ def test_identifiers_rejected_on_added_lines(repo: Path, source: str) -> None:
     "#undef near\n#define far\n#ifdef near\n#endif",
     "#define NAME \\\n near far\n",
     'const char* text = "near\\\nfar";',
+    'int n = 100\'000; Log("so far");',
+    'int n = 0xAB\'CD; Log("near");',
+    'const char* doc = R"JSON({"caliber":"a class near-TIR weight"})JSON";',
+    'const char* doc = u8R"tag(near " // far\nnear)tag";',
 ])
 def test_exempt_regions_do_not_block_commits(repo: Path, source: str) -> None:
     (repo / "sample.cpp").write_text(source + "\n", encoding="utf-8")
     git(repo, "add", ".")
     assert gate.diff_verdict(["--cached"], "")[0] == []
+
+
+@pytest.mark.parametrize("prefix", [
+    "int n = 100'000;", "int n = 0xAB'CD;",
+    'Log(R"tag(// " far\nnear)tag");',
+    'Log(u8R"tag(// " far\nnear)tag");',
+])
+def test_lexical_regions_cannot_hide_following_identifiers(repo: Path, prefix: str) -> None:
+    text = prefix + "\nint near;\n"
+    assert [v.line for v in gate.find_violations_in_text("x.cpp", text)] == [
+        text.count("\n")
+    ]
 
 
 def test_multiline_literals_and_comments_preserve_hit_line(repo: Path) -> None:

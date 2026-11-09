@@ -21,11 +21,12 @@ The scope is deliberately limited to the twice-observed empty-macro family:
 min/max are function-like macros neutralized by the MSVC NOMINMAX build define;
 RGB is function-like and has no recorded incident. Neither is added speculatively.
 
-Lexical limits: this shares strip_comments' ordinary-string state machine.
-C++ raw strings containing embedded quotes can desynchronize it; that inherited
-limitation is accepted here, not a promise of full C++ parsing. Inactive #if
-branches are still scanned. Only added lines are gated; --root is a diagnostic
-scan of tracked worktree files, not part of the hook/CI steady-state path.
+Lexical scope: comments, ordinary/escaped literals, C++ raw strings (including
+encoding prefixes) and digit-separated numbers are recognized in one pass.
+This is not a C++ parser: inactive #if branches are still scanned, and translation
+phase line-splicing outside literals is not modeled. Only added lines are gated;
+--root is a diagnostic scan of tracked worktree files, not part of the hook/CI
+steady-state path.
 
 Usage: --staged (also the default), --range BASE..HEAD, or --root [DIR].
 Exit 0 when clean, 1 on violations, 2 on invalid arguments.
@@ -41,7 +42,7 @@ from pathlib import Path, PurePosixPath
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from check_new_refs import C_FAMILY_SUFFIXES, added_lines, blob  # noqa: E402
-from check_policies import REPO_ROOT, Violation, strip_comments  # noqa: E402
+from check_policies import REPO_ROOT, Violation  # noqa: E402
 
 RULE = "near-far-macro"
 IDENTIFIER = re.compile(r"\b(?:near|far)\b")
@@ -51,27 +52,26 @@ FIX_HINT = (
 )
 
 
+# Match lexical regions together: a comment marker inside a string (and a quote
+# inside a comment) cannot change the interpretation of the following source.
+# pp-numbers must precede char literals, otherwise 100'000 opens a bogus char.
+LEXICAL_REGION = re.compile(
+    r"(?P<number>\b[0-9](?:[\w.']|[eEpP][+-])*)"
+    r"|//[^\n]*|/\*.*?\*/"
+    r'|(?:u8|u|U|L)?R"(?P<delimiter>[^\s()\\]{0,16})\(.*?\)(?P=delimiter)"'
+    r'|"(?:\\.|[^"\\])*"'
+    r"|'(?:\\.|[^'\\])*'",
+    re.DOTALL,
+)
+
+
 def identifier_code(text: str) -> str:
-    """Blank comments and ordinary literals without changing offsets/newlines."""
-    text = strip_comments(text)
-    out = list(text)
-    quote: str | None = None
-    i = 0
-    while i < len(text):
-        ch = text[i]
-        if quote is None:
-            if ch in "\"'":
-                quote = ch
-                out[i] = " "
-        else:
-            out[i] = "\n" if ch == "\n" else " "
-            if ch == "\\" and i + 1 < len(text):
-                i += 1
-                out[i] = "\n" if text[i] == "\n" else " "
-            elif ch == quote:
-                quote = None
-        i += 1
-    return "".join(out)
+    """Blank non-code regions without changing offsets/newlines."""
+    return LEXICAL_REGION.sub(
+        lambda match: match.group(0) if match.group("number") is not None
+        else re.sub(r"[^\n]", " ", match.group(0)),
+        text,
+    )
 
 
 def find_violations_in_text(rel: str, text: str) -> list[Violation]:
