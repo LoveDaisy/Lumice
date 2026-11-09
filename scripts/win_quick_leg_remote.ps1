@@ -18,13 +18,16 @@ if ($TestBuild) {
         foreach ($exe in $executables) {
             & cmd.exe /d /c "`"$exe`" --help >nul 2>&1"
             if ($LASTEXITCODE -eq 4551) {
-                Write-Host "win-leg: SAC blocked $exe; relinking once"
+                $beforeHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $exe).Hash
+                Write-Host "win-leg: SAC blocked $exe hash=$beforeHash; relinking once"
                 Remove-Item -LiteralPath $exe
                 & cmake.exe --build $TestBuild
                 if ($LASTEXITCODE -ne 0) {
                     Write-Host 'WIN_LEG_RESULT: FAIL stage=build reason=sac-relink'
                     exit 1
                 }
+                $afterHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $exe).Hash
+                Write-Host "win-leg: SAC relink hash=$afterHash"
                 & cmd.exe /d /c "`"$exe`" --help >nul 2>&1"
             }
             if ($LASTEXITCODE -ne 0) {

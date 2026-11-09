@@ -100,6 +100,9 @@ Parameters:
 
 ## See Also
 
+- [Test-scope contract §7.11](testing-architecture.md#711-optional-native-windows-closing-leg)
+  — optional headless Windows build/CTest closing leg; separate from this physical-desktop watcher.
+
 - [Performance Testing Guide](performance-testing.md) — comprehensive perf testing overview
 - [Remote CUDA Build / Test Recipe](gpu-remote-cuda-build-testing.md) — **different concern**:
   headless CUDA compile + parity/correctness on the current Linux and Windows CUDA reference roles.

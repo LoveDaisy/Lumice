@@ -1692,6 +1692,7 @@ of their layers inside this `pr` run, not separately timed invocations.
 | `quick` | `ctest -L "unit-correctness\|composition-correctness\|parity\|golden-analytic"` (8/8 passed) | 67s | ctest default |
 | `quick` | fast e2e (`-m "not slow"` via `pyproject.toml` `addopts`, 219 passed) | 88s | `-n auto` → 12 workers |
 | `quick` | `gui_test` correctness pool (`--fixed-dt`, 513/513 passed) | 151s | single process |
+| `quick` only, opt-in | native Windows full build + the same CTest labels (§7.11; no GUI execution) | machine/cache dependent, 3600s build/test backstop + bounded lock queue | parallel with all local layers; wall time is max(local, Windows), not their sum |
 | | (742.7 adds seven fixed-dt lifecycle/identity legs — three from the first pass, four from the review revisions: the pool re-measured 548/548, 2026-10-31; the two C17 refused-arm legs live in the real-timing pool — the class's 24-member witness/TIR survey tail outlives its cooperative deadline on a loaded machine, see raypath-analysis.md §5.1.8) | | |
 | | **`quick` layer subtotal** | **306s** | |
 | `full` | `gui_test` real-timing pool (no `--fixed-dt`, 6/6 passed) | +11s | single process |
@@ -2699,3 +2700,80 @@ are a different term from *eliminating duplicate executions* in the mixed plan;
 adding them twice would overstate the benefit. The earlier 920s mixed observation
 included a script-test layer absent from this scenario, so it is not a matched
 before/after arm.
+
+### §7.11 Optional native-Windows closing leg
+
+`LUMICE_WIN_QUICK_LEG=1 ./scripts/test.sh quick` starts a Windows **build + CTest**
+child after preflight, before the local layers, then joins it before the one summary.
+It is opt-in and disabled in `CI=1`; disabled quick always prints an explicit
+`[SKIP] win-quick-leg (not-enabled ...)`, preserving the existing `RESULT:` shape.
+`full`, `pr` and `inner` do not dispatch this leg. The local scopes remain nested
+for their local tests; this cross-machine pre-push interceptor is a quick-only adjunct.
+It does **not** replace the Windows CI hard gate or expand §4.6's GUI execution matrix.
+
+The role/SSH alias, dedicated workspace and toolchain binding live only in
+[`machines.md`](machines.md). `LUMICE_WIN_QUICK_HOST` and `LUMICE_WIN_QUICK_WS`
+override the defaults for a probe or a separately owned dedicated workspace. The latter
+must be a `ws-winleg*` leaf, with no `.git`; an existing directory without the leg's
+ownership sentinel is refused, never cleared. Do not aim it at a daily clone or a watcher
+workspace. The control scripts are a Bash packager, a `.cmd` MSVC environment/build
+entrypoint, and a PowerShell 5.1 file/lock/test controller; all travel as files via SCP,
+not binary stdin through the Windows login shell.
+
+**What is tested.** One pinned HEAD is archived, with the clean worktree's LFS contents
+substituted only for `resources/` and `test/fixtures/li-parity/`, verified against their
+HEAD pointer hashes. Other LFS paths remain pointers (no GUI reference materialization).
+The remote full default target graph is built with Release, `BUILD_TEST=ON`, `BUILD_GUI=ON`,
+CUDA OFF and IPO OFF, matching the CI MSVC correctness build rather than release packaging.
+CTest receives `QUICK_CTEST_LABELS` from test.sh, shared with its local/inner selectors:
+`unit-correctness|composition-correctness|parity|golden-analytic`. A JSON enumeration must
+select at least one test; empty selection is `FAIL stage=ctest reason=no-tests`, not green.
+The selected executables are SAC-probed under `cmd /c`; code 4551 gets exactly one
+relink/reprobe, then remains a hard failure. No GUI functional/visual pool or pytest/E2E
+is executed on Windows. Python is still a build/native-sharding dependency.
+
+**Tree identity and incrementality.** The workspace is single-writer and owns its build
+subtree; machine-level CPM sources stay reusable. A stamp is eligible for incremental
+sync only if it is an ancestor of HEAD and `git diff --no-renames` succeeds. The complete
+archive travels on each invocation, but the incremental path extracts/touches only its
+changed files and explicitly deletes removed files. The stamp is checked again under the
+remote lock; a changed stamp forces full recovery. Missing/damaged/non-forward stamps
+also choose full recovery: clear the source tree, preserve only `build/` and the leg's two
+metadata files, extract, touch all source files. Thus archive commit mtimes cannot make
+old objects look fresh. Both paths assert **the entire non-build file set and SHA256
+contents equal the HEAD manifest**, excluding only those two metadata files. A stray or
+changed file in the incremental path yields `FAIL stage=sync reason=tree-mismatch`;
+full recovery clears it. The stamp advances only after this assertion passes. Cache flags
+are reasserted on every build; Ninja handles ordinary CMake graph changes incrementally.
+
+**One physical-box lock.** The shared slot (binding and WSL path in machines.md) covers
+sync, build and tests. A short OS-handle guard serializes acquisition/stale reclamation;
+the owner holds an exclusive lease and writes host/PID/time/scope/token metadata.
+Contenders wait at most `LUMICE_WIN_QUICK_LOCK_WAIT` seconds (default 600, 30s polling),
+then return `SKIPPED busy`. An abandoned slot older than 90 minutes is reclaimed with
+`stale-lock-broken` printed; a live exclusive lease is not evicted by age. The Windows
+leg always obeys the slot. WSL heavy work must take the same slot through `/mnt/c`:
+that direction is an operating convention, not a retrofit to out-of-repository WSL
+scripts. Work that ignores the slot is outside this mutual-exclusion guarantee.
+
+**Judgment, limits and ownership.** The person closing the change owns this machine/cache
+cost (§7.3); steady-state cost is incremental compilation plus CTest, cold/rebase recovery
+pays a full MSVC rebuild. The build/test deadline is `LUMICE_WIN_QUICK_TIMEOUT` seconds
+(default 3600), in addition to the bounded lock queue. On expiry only the owned build PID
+and its descendants are killed. A failed cancellation retains the lock; an orphaned lock
+is recovered only by the stale-lock protocol. Dependency downloads have a 20s low-speed
+guard; populate missing CPM sources through the file-transfer channel before retrying a
+cold run. Do not disable SAC or substitute CI success for this invocation's evidence.
+
+Enabled quick appends a parseable `(win: PASS)`, `(win: FAIL stage=... reason=...)` or
+`(win: SKIPPED reason)` to the **single** `RESULT:` line. PASS/skip require both a
+well-formed result and exit 0; missing/duplicate output, a nonzero exit or a transport loss
+after dispatch is red. Build/test failures are always red, never an infrastructure skip.
+Skip reasons are `unreachable` (preflight only), `busy`, and `lfs-dirty <path>`; the last
+refuses a non-reproducible LFS substitution. Non-LFS tracked dirt is permitted but logged
+as `synced=HEAD (worktree dirty)` — commit before closing so local and Windows certify the
+same tree. `stale-lock-broken` is a recovery note, **not** a skip. Failure stages include
+`sync`, `build`, `sac`, `ctest`, `timeout`, and `transport`; `tree-mismatch` and `no-tests`
+are stable reasons. Full diagnostics persist remotely first and in
+`build/win_quick_leg.last.log` locally (single-slot overwrite); a failure prints the last
+50 local-log lines before the summary.
