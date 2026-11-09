@@ -11,13 +11,15 @@ set "WS=%~1"
 set "LABELS=%~2"
 cd /d "%WS%"
 if errorlevel 1 goto build_fail
+rem CI has no pytest in its native build jobs; suppress host-dependent CUDA pytest registration.
 rem Reassert the standing flags, including after a CMake option/default change.
 rem IPO matches the CI build matrix, not the release packaging configuration.
 cmake -S . -B build\cmake_build\static -G Ninja ^
  -DCMAKE_BUILD_TYPE=Release -DBUILD_TEST=ON -DBUILD_GUI=ON ^
  -DBUILD_BENCH=OFF -DBUILD_SHARED_LIBS=OFF -DLUMICE_CUDA_ENABLED=OFF ^
  -DLUMICE_IPO=OFF -DPython3_EXECUTABLE="%LOCALAPPDATA%\Programs\Python\Python312\python.exe" ^
- -DCMAKE_INSTALL_PREFIX="%WS%\build\cmake_install\static"
+ -DCMAKE_INSTALL_PREFIX="%WS%\build\cmake_install\static" ^
+ -DPYTEST_EXECUTABLE:FILEPATH=OFF
 if errorlevel 1 goto build_fail
 cmake --build build\cmake_build\static
 if errorlevel 1 goto build_fail

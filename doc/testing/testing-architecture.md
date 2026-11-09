@@ -2730,7 +2730,10 @@ CTest receives `QUICK_CTEST_LABELS` from test.sh, shared with its local/inner se
 select at least one test; empty selection is `FAIL stage=ctest reason=no-tests`, not green.
 The selected executables are SAC-probed under `cmd /c`; code 4551 gets exactly one
 relink/reprobe, then remains a hard failure. No GUI functional/visual pool or pytest/E2E
-is executed on Windows. Python is still a build/native-sharding dependency.
+is executed on Windows. Pytest discovery is explicitly OFF in this build, matching the
+CI native build jobs where pytest is absent; installing pytest on the host must not
+silently register the optional CUDA parity wrappers. Python remains required for the
+build/native-sharding wrapper.
 
 **Tree identity and incrementality.** The workspace is single-writer and owns its build
 subtree; machine-level CPM sources stay reusable. A stamp is eligible for incremental
