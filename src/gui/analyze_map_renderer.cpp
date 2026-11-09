@@ -37,7 +37,6 @@ struct SourceTexture {
 };
 struct DisplayCache {
   SourceTexture reference;
-  SourceTexture detail;
   unsigned int program = 0;
   unsigned int vao = 0;
   unsigned int target = 0;
@@ -138,17 +137,10 @@ const float PI = 3.14159265358979323846;
 )glsl";
 const char* kMapFragment = R"glsl(
 uniform sampler2D u_reference;
-uniform sampler2D u_detail;
 uniform mat3 u_reference_frame;
-uniform mat3 u_detail_frame;
 uniform vec4 u_reference_bounds;
-uniform vec4 u_detail_bounds;
 uniform ivec2 u_reference_size;
-uniform ivec2 u_detail_size;
 uniform int u_have_reference;
-uniform int u_have_detail;
-uniform int u_source_mode;
-uniform int u_compatible;
 layout(location=0) out vec4 frag_color;
 layout(location=1) out vec4 probe_near;
 layout(location=2) out vec4 probe_far;
@@ -169,13 +161,7 @@ vec4 sampleMap(vec3 d, out vec3 identity) {
   ivec2 cell;
   vec4 value;
   identity = vec3(0,-1,0);
-  bool detail_selected = u_source_mode == 2 || (u_source_mode == 0 && (u_compatible != 0 || u_have_reference == 0));
-  if (detail_selected && u_have_detail != 0 && cellAt(d,u_detail_frame,u_detail_bounds,u_detail_size,cell)) {
-    value = texelFetch(u_detail,packedIndex(cell.y*u_detail_size.x+cell.x,textureSize(u_detail,0).x),0);
-    identity = vec3(2,cell.y*u_detail_size.x+cell.x,value.a);
-    return value;
-  }
-  if (u_source_mode != 2 && u_have_reference != 0 &&
+  if (u_have_reference != 0 &&
       cellAt(d,u_reference_frame,u_reference_bounds,u_reference_size,cell)) {
     value = texelFetch(u_reference,packedIndex(cell.y*u_reference_size.x+cell.x,textureSize(u_reference,0).x),0);
     identity = vec3(1,cell.y*u_reference_size.x+cell.x,value.a);
@@ -327,8 +313,7 @@ bool UploadSource(SourceTexture& slot, const MapHandle& source, SurveyQueryId id
     return false;
   }
   prepared.bytes = static_cast<size_t>(allocated_width) * allocated_height * 4 * sizeof(float);
-  frame->source_gpu_peak_bytes =
-      std::max(frame->source_gpu_peak_bytes, g_display.reference.bytes + g_display.detail.bytes + prepared.bytes);
+  frame->source_gpu_peak_bytes = std::max(frame->source_gpu_peak_bytes, g_display.reference.bytes + prepared.bytes);
   if (glGetError() != GL_NO_ERROR) {
     DestroySource(prepared);
     return false;
@@ -398,18 +383,7 @@ std::optional<MapCellReading> ReadFrozenMapDirection(const MapQuerySession& map,
   MapCellReading reference;
   reference.source = map.adopted_result;
   const bool have_reference = ReadSource(reference.source, &reference.info, &reference.pixels);
-  MapCellReading detail;
-  detail.source = map.detail_result;
-  detail.detail = true;
-  const bool have_detail = ReadSource(detail.source, &detail.info, &detail.pixels);
-  const bool composed = have_reference && have_detail && MapSourcesCompatible(reference.info, detail.info);
-  if (have_detail && (map.source_mode == 2 || (map.source_mode == 0 && (composed || !have_reference)))) {
-    if (const auto index = MapCellIndex(detail.info, travel)) {
-      detail.index = *index;
-      return detail;
-    }
-  }
-  if (have_reference && map.source_mode != 2) {
+  if (have_reference) {
     if (const auto index = MapCellIndex(reference.info, travel)) {
       reference.index = *index;
       return reference;
@@ -446,7 +420,7 @@ bool InitializeFrozenMapDisplay() {
   return InitProgram();
 }
 
-bool PrepareFrozenMapSource(const MapHandle& source, SurveyQueryId id, bool detail) {
+bool PrepareFrozenMapSource(const MapHandle& source, SurveyQueryId id) {
   ScopedMapTransferState transfer;
   if (!InitProgram())
     return false;
@@ -454,9 +428,9 @@ bool PrepareFrozenMapSource(const MapHandle& source, SurveyQueryId id, bool deta
   while (glGetError() != GL_NO_ERROR) {
   }
   MapDisplayFrame frame;
-  const bool ok = UploadSource(detail ? g_display.detail : g_display.reference, source, id, &frame);
+  const bool ok = UploadSource(g_display.reference, source, id, &frame);
   if (ok) {
-    frame.source_gpu_bytes = g_display.reference.bytes + g_display.detail.bytes;
+    frame.source_gpu_bytes = g_display.reference.bytes;
     g_last_adoption = frame;
   }
   return ok;
@@ -473,14 +447,10 @@ void PruneFrozenMapDisplay(const MapQuerySession& map) {
   if (!map.adopted_result || g_display.reference.id != map.adopted_id) {
     DestroySource(g_display.reference);
   }
-  if (!map.detail_result || g_display.detail.id != map.detail_id) {
-    DestroySource(g_display.detail);
-  }
 }
 
 void DestroyFrozenMapDisplay() {
   DestroySource(g_display.reference);
-  DestroySource(g_display.detail);
   if (g_display.target)
     glDeleteTextures(1, &g_display.target);
   if (g_display.fbo)
@@ -522,10 +492,7 @@ MapDisplayFrame DrawFrozenMap(const MapQuerySession& map, const ViewProjection& 
   glActiveTexture(GL_TEXTURE0);
   while (glGetError() != GL_NO_ERROR) {
   }
-  const bool sources_ok = UploadSource(g_display.reference, map.adopted_result, map.adopted_id, &frame) &&
-                          UploadSource(g_display.detail, map.detail_result, map.detail_id, &frame);
-  frame.compatible = g_display.reference.texture && g_display.detail.texture &&
-                     MapSourcesCompatible(g_display.reference.info, g_display.detail.info);
+  const bool sources_ok = UploadSource(g_display.reference, map.adopted_result, map.adopted_id, &frame);
   if (g_display.width != frame.width || g_display.height != frame.height) {
     if (g_display.target) {
       // Geometry-only replacement: do not accumulate driver-retained targets across resizes.
@@ -559,16 +526,12 @@ MapDisplayFrame DrawFrozenMap(const MapQuerySession& map, const ViewProjection& 
     const unsigned int buffer = GL_COLOR_ATTACHMENT0;
     glDrawBuffers(1, &buffer);
   }
-  const auto& selected_source =
-      map.source_mode == 2 || !g_display.reference.texture ? g_display.detail : g_display.reference;
-  if (selected_source.texture) {
-    frame.members_evaluated = selected_source.info.members_evaluated;
-    frame.member_count = selected_source.info.member_count;
-    frame.partial = selected_source.info.truncated || frame.members_evaluated < frame.member_count;
-    if (map.source_mode == 0 && frame.compatible)
-      frame.partial = frame.partial || g_display.detail.info.truncated;
+  if (g_display.reference.texture) {
+    frame.members_evaluated = g_display.reference.info.members_evaluated;
+    frame.member_count = g_display.reference.info.member_count;
+    frame.partial = g_display.reference.info.truncated || frame.members_evaluated < frame.member_count;
   }
-  frame.fit = map.source_mode == 2 || !g_display.reference.texture ? g_display.detail.fit : g_display.reference.fit;
+  frame.fit = g_display.reference.fit;
   const auto start = Clock::now();
   glBindFramebuffer(GL_FRAMEBUFFER, g_display.fbo);
   if (sources_ok && glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE) {
@@ -584,18 +547,11 @@ MapDisplayFrame DrawFrozenMap(const MapQuerySession& map, const ViewProjection& 
     glUniform1i(uniform("u_visible"), view.visible);
     glUniform1i(uniform("u_front"), view.front ? 1 : 0);
     glUniform1f(uniform("u_globe_back_fade"), view.globe_back_fade);
-    glUniform1i(uniform("u_source_mode"), map.source_mode);
-    glUniform1i(uniform("u_compatible"), frame.compatible ? 1 : 0);
     glUniform1i(uniform("u_have_reference"), g_display.reference.texture ? 1 : 0);
-    glUniform1i(uniform("u_have_detail"), g_display.detail.texture ? 1 : 0);
     SetSourceUniforms(g_display.reference, "u_reference_frame", "u_reference_bounds", "u_reference_size");
-    SetSourceUniforms(g_display.detail, "u_detail_frame", "u_detail_bounds", "u_detail_size");
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, g_display.reference.texture);
     glUniform1i(uniform("u_reference"), 0);
-    glActiveTexture(GL_TEXTURE1);
-    glBindTexture(GL_TEXTURE_2D, g_display.detail.texture);
-    glUniform1i(uniform("u_detail"), 1);
     glBindVertexArray(g_display.vao);
     glDrawArrays(GL_TRIANGLES, 0, 3);
     if (glGetError() == GL_NO_ERROR)
@@ -619,7 +575,7 @@ MapDisplayFrame DrawFrozenMap(const MapQuerySession& map, const ViewProjection& 
       frame.texture = 0;
   }
   frame.observation_ms = Milliseconds(start);
-  frame.source_gpu_bytes = g_display.reference.bytes + g_display.detail.bytes;
+  frame.source_gpu_bytes = g_display.reference.bytes;
   frame.target_gpu_bytes = static_cast<size_t>(frame.width) * frame.height * 4;
   glBindFramebuffer(GL_FRAMEBUFFER, old_fbo);
   glViewport(old_viewport[0], old_viewport[1], old_viewport[2], old_viewport[3]);

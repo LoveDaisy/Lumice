@@ -155,19 +155,12 @@ enum class QueryFace { kSurvey, kMap, kPoint, kRay };
 // heavier classes.
 inline constexpr int kPointQueryBudgetMs = 2000;
 
-// A captured calculation intent, not the observation camera. The initial intent is all sky;
-// explicit quality actions capture a cap. Only selection/capture or wavelength changes invalidate
-// the source identity; observation never rekeys this value. POSITION becomes a sky label in the
-// request builder. The current reference and latest detail share this captured identity.
+// A full-sky data intent. Observation camera fields never enter this identity.
 struct MapIntentKey {
   SurveySelectionKey selection;
-  float centre_pos[3] = { 0.0f, 0.0f, 1.0f };
-  float radius_deg = 180.0f;   // >= kMapFullSkyRadiusDeg is the named all-sky view
   double wavelength_nm = 0.0;  // 0 = the engine's reference resolution
   bool operator==(const MapIntentKey& other) const {
-    return selection == other.selection && centre_pos[0] == other.centre_pos[0] &&
-           centre_pos[1] == other.centre_pos[1] && centre_pos[2] == other.centre_pos[2] &&
-           radius_deg == other.radius_deg && wavelength_nm == other.wavelength_nm;
+    return selection == other.selection && wavelength_nm == other.wavelength_nm;
   }
   bool operator!=(const MapIntentKey& other) const { return !(*this == other); }
 };
@@ -177,27 +170,20 @@ struct MapQuerySession {
   bool intent_valid = false;
   SurveyQueryId intent_id;  // meaningful only while intent_valid
   // The wait displays' elapsed-time epoch — the survey session's own field, same rules (the
-  // pump writes it at both issue sites: the first issue and the view/wavelength supersession,
-  // so a refinement re-ask restarts the wait clock with the intent it belongs to).
+  // pump stamps every new data intent and explicit Retry).
   double intent_start_s = 0.0;
-  // The captured request. The pump compares only its data identity with the current selection.
-  // Refine/Retry are the only writers of its spatial target.
+  // The full-sky request identity, independent of the observation camera.
   MapIntentKey key;
   // Cancel/Revert latch: observation does not clear it; an explicit quality action or a real
   // data identity change does.
   bool cancelled_for_key = false;
   // The newest gate-passed outcome: a completed map, or the engine's named refusal. Kept across
-  // view supersession (the display decides what an older map is allowed to claim); dropped with
+  // an explicit Retry (the display labels the older answer); dropped with
   // the whole session on a selection change. adopted_id says which intent it answers.
   MapHandle adopted_result;
   std::string adopted_error;
   SurveyQueryId adopted_id;
-  // The reference and the latest detail are the only persistent map results. Both belong to
-  // key.selection and key.wavelength_nm; changing either clears the entire session.
-  MapHandle detail_result;
-  SurveyQueryId detail_id;
   SurveyQueryId answered_id;  // includes refused outcomes; an error must end waiting too
-  int source_mode = 0;        // 0 = compatible composition, 1 = reference, 2 = detail only
 };
 
 // The map region's four visible states — the survey vocabulary, over the map session (R7: the
@@ -205,10 +191,8 @@ struct MapQuerySession {
 enum class MapQueryState { kNoSelection, kWaiting, kCompleted, kRefused, kCancelled };
 MapQueryState MapQueryStateFor(const MapQuerySession& map);
 
-// Whether the adopted map on show answers an OLDER intent than the one standing: a newer view
-// (or wavelength) has been asked for and has not answered yet. The display shows the old picture
-// anchored on the sky with a "refining" note — never as the newest answer (AC2).
-bool MapRefiningFor(const MapQuerySession& map);
+// An explicit Retry is waiting while the previous finite map remains on show.
+bool MapSupersededFor(const MapQuerySession& map);
 
 // ---- The point face's session (742.6) --------------------------------------------------------------
 
@@ -309,11 +293,11 @@ std::string SurveyWaitLineFor(const SurveyQuerySession& survey, double now_s, co
 std::string MapWaitLineFor(const MapQuerySession& map, bool survey_outstanding, double now_s,
                            const InflightPoll& poll = {});
 
-// The map's refining note — the "old picture anchored on the sky" annotation plus the poll's
-// stage clause and the elapsed suffix (the refinement intent's own wait, same epoch
-// semantics: a re-ask restarts it). Same precondition discipline, now with MapRefiningFor.
+// The map's supersession note — the old picture annotation plus the poll's
+// stage clause and the elapsed suffix (the Retry intent's own wait, same epoch
+// semantics: a re-ask restarts it). Same precondition discipline, now with MapSupersededFor.
 // Pure.
-std::string MapRefiningNoteFor(const MapQuerySession& map, double now_s, const InflightPoll& poll = {});
+std::string MapSupersedingNoteFor(const MapQuerySession& map, double now_s, const InflightPoll& poll = {});
 
 // The point block's kWaiting line (the fiber region and the details region draw the same
 // sentence — one function, two consumers, so the duplication cannot drift). Plus the poll's
@@ -333,7 +317,7 @@ std::string PointWaitLineFor(const PointQuerySession& point, double now_s, const
 struct WaitFeedbackTexts {
   std::string survey_wait_line;          // analyze_workspace.cpp, the overview's kWaiting line
   std::string map_wait_line;             // analyze_map_view.cpp, the kWaiting branch's one text
-  std::string map_refining_note;         // analyze_map_view.cpp, the refining note
+  std::string map_superseding_note;      // analyze_map_view.cpp, the Retry supersession note
   std::string point_wait_line_fiber;     // analyze_point_view.cpp, the fiber region's kWaiting
   std::string point_wait_line_details;   // analyze_point_view.cpp, the details' kWaiting
   std::string share_list_busy_dots;      // analysis_panel.cpp, the selected row's activity dots

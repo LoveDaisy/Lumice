@@ -198,8 +198,7 @@ bool SkySunAnchorFor(const GuiState& state, SkySunAnchor* out) {
   // The adopted map's own echo is the best anchor (the picture's sun). Then the adopted
   // survey's scope (the digest's sun). The live document last — an edited scene's sun may
   // differ from what any adopted document described.
-  const auto& source =
-      state.analysis.map.adopted_result ? state.analysis.map.adopted_result : state.analysis.map.detail_result;
+  const auto& source = state.analysis.map.adopted_result;
   if (source != nullptr) {
     LUMICE_PathMapInfo info{};
     info.struct_size = sizeof(info);
@@ -220,15 +219,15 @@ bool SkySunAnchorFor(const GuiState& state, SkySunAnchor* out) {
     }
   }
   // Last resort: the sun the frozen scene binding was built with — the engine evaluates the
-  // request against ITS sun, never the live document's (an edited-but-not-re-analyzed sun must
-  // not steer the window geometry). Same source as the binding, captured at DoAnalyze.
+  // request against ITS sun, never the live document's. Keep the picture's anchors on that
+  // same binding, frozen at DoAnalyze.
   out->altitude_deg = state.analysis.frozen_sun_valid ? state.analysis.frozen_sun_altitude : state.sun.altitude;
   out->azimuth_deg = 0.0;  // the GUI's sun is always due north
   return true;
 }
 
-LUMICE_PathMapRequest MakeMapRequestForKey(const MapIntentKey& key, const SkySunAnchor& sun, std::vector<int>* faces,
-                                           std::vector<int>* counts, std::vector<double>* wavelengths) {
+LUMICE_PathMapRequest MakeMapRequestForKey(const MapIntentKey& key, std::vector<int>* faces, std::vector<int>* counts,
+                                           std::vector<double>* wavelengths) {
   *faces = key.selection.faces;
   *counts = key.selection.layer_face_counts;
   LUMICE_PathMapRequest request{};
@@ -402,13 +401,11 @@ namespace {
 // The issuing half of the pump (the survey pump's IssueSurveyQuery shape): build the request for
 // `key` and hand it to the executor with the id the pump already assigned. Buffers move into the
 // executor's job.
-void IssueMapIntent(GuiState& state, SurveyExecutor& executor, const SurveyQueryId& id, const MapIntentKey& key) {
-  SkySunAnchor sun;
-  SkySunAnchorFor(state, &sun);
+void IssueMapIntent(SurveyExecutor& executor, const SurveyQueryId& id, const MapIntentKey& key) {
   std::vector<int> faces;
   std::vector<int> counts;
   std::vector<double> wavelengths;
-  const LUMICE_PathMapRequest request = MakeMapRequestForKey(key, sun, &faces, &counts, &wavelengths);
+  const LUMICE_PathMapRequest request = MakeMapRequestForKey(key, &faces, &counts, &wavelengths);
   executor.IssueMapQuery(id, request, std::move(faces), std::move(counts), std::move(wavelengths));
 }
 
@@ -446,18 +443,13 @@ void PumpMapQuery(GuiState& state, SurveyExecutor& executor, double now_s, MapSo
       }
       continue;  // a refusal never replaces an existing finite source with zero
     }
-    if (prepare && !prepare(finished->map_result, finished->id, map.key.radius_deg < kMapFullSkyRadiusDeg)) {
-      map.adopted_error = "Display preparation failed; previous finite sources kept. Retry the captured target.";
+    if (prepare && !prepare(finished->map_result, finished->id)) {
+      map.adopted_error = "Display preparation failed; previous finite map kept. Retry the full-sky request.";
       continue;
     }
     map.adopted_error.clear();
-    if (map.key.radius_deg >= kMapFullSkyRadiusDeg) {
-      map.adopted_result = std::move(finished->map_result);
-      map.adopted_id = finished->id;
-    } else {
-      map.detail_result = std::move(finished->map_result);
-      map.detail_id = finished->id;
-    }
+    map.adopted_result = std::move(finished->map_result);
+    map.adopted_id = finished->id;
   }
   executor.CompleteMapDrain();  // all temporary results and previous-source readers have left scope
   if (selected && !map.intent_valid) {
@@ -466,7 +458,7 @@ void PumpMapQuery(GuiState& state, SurveyExecutor& executor, double now_s, MapSo
     map.key.wavelength_nm = state.analysis.map_wavelength_nm;
     map.intent_id = executor.NextId(selection.generation);
     map.intent_start_s = now_s;
-    IssueMapIntent(state, executor, map.intent_id, map.key);  // once, all sky
+    IssueMapIntent(executor, map.intent_id, map.key);  // once, all sky
   }
 }
 
@@ -480,38 +472,12 @@ void RetryMap(GuiState& state, SurveyExecutor& executor, double now_s) {
   map.adopted_error.clear();
   map.intent_id = executor.NextId(map.key.selection.generation);
   map.intent_start_s = now_s;
-  IssueMapIntent(state, executor, map.intent_id, map.key);
+  IssueMapIntent(executor, map.intent_id, map.key);
 }
 
 void CancelMap(GuiState& state, SurveyExecutor& executor) {
   executor.CancelInFlight(QueryFace::kMap);
   state.analysis.map.cancelled_for_key = true;
-}
-
-bool MapSourcesCompatible(const LUMICE_PathMapInfo& reference, const LUMICE_PathMapInfo& detail) {
-  // Session ownership already establishes the SAME captured scene and ordered class expansion.
-  // These echoes additionally guard the evaluated prefix, quantity and coordinate frame.
-  if (reference.state != LUMICE_PATH_STATE_FINITE || detail.state != LUMICE_PATH_STATE_FINITE ||
-      reference.crystal_id != detail.crystal_id || reference.wavelength_nm != detail.wavelength_nm ||
-      reference.refractive_index != detail.refractive_index || reference.sample_count != detail.sample_count ||
-      reference.member_count != detail.member_count || reference.members_evaluated != detail.members_evaluated ||
-      reference.face_count != detail.face_count || reference.shape_count != detail.shape_count ||
-      reference.shape_is_nominal != detail.shape_is_nominal || reference.sun_altitude_deg != detail.sun_altitude_deg ||
-      reference.sun_azimuth_deg != detail.sun_azimuth_deg) {
-    return false;
-  }
-  for (size_t i = 0; i < reference.face_count; ++i) {
-    if (reference.faces[i] != detail.faces[i]) {
-      return false;
-    }
-  }
-  for (int k = 0; k < 3; ++k) {
-    if (reference.view_incident[k] != detail.view_incident[k] || reference.view_e1[k] != detail.view_e1[k] ||
-        reference.view_e2[k] != detail.view_e2[k]) {
-      return false;
-    }
-  }
-  return true;
 }
 
 MapObservationTiming LastMapObservationTiming() {
@@ -951,33 +917,6 @@ void DrawSurveyOverlays(ImDrawList* dl, GuiState& state, const MapCanvasProjecti
   }
 }
 
-void DrawDetailCoverage(ImDrawList* dl, const MapCanvasProjection& view, const LUMICE_PathMapInfo& info,
-                        const ImVec2& pic_min, float pic_px) {
-  for (int edge = 0; edge < 4; ++edge) {
-    bool have_previous = false;
-    double previous_x = 0.0, previous_y = 0.0;
-    for (int step = 0; step <= kOverlaySegments; ++step) {
-      const double t = static_cast<double>(step) / kOverlaySegments;
-      const double delta = edge < 2 ? (edge == 0 ? info.view_delta_min_deg : info.view_delta_max_deg) :
-                                      info.view_delta_min_deg + t * (info.view_delta_max_deg - info.view_delta_min_deg);
-      const double az = edge >= 2 ? (edge == 2 ? info.view_az_min_deg : info.view_az_max_deg) :
-                                    info.view_az_min_deg + t * (info.view_az_max_deg - info.view_az_min_deg);
-      double position[3];
-      CellPosition(info, delta, az, position);
-      double x = 0.0, y = 0.0;
-      const bool visible = ProjectToRect(view, position, pic_min, pic_px, &x, &y);
-      if (visible && have_previous && step % 2 == 0 && std::abs(x - previous_x) < view.width_pt * 0.5f &&
-          std::abs(y - previous_y) < view.height_pt * 0.5f) {
-        dl->AddLine(ImVec2(previous_x, previous_y), ImVec2(x, y), IM_COL32(0, 0, 0, 230), 3.0f);
-        dl->AddLine(ImVec2(previous_x, previous_y), ImVec2(x, y), IM_COL32(220, 225, 235, 230), 1.0f);
-      }
-      have_previous = visible;
-      previous_x = x;
-      previous_y = y;
-    }
-  }
-}
-
 void DrawSkyPointMarker(ImDrawList* dl, const MapCanvasProjection& view, const SkyPointIntent& intent,
                         const ImVec2& pic_min, float pic_px, float* out_marker_px, float* out_marker_py) {
   if (!intent.valid || !intent.from_map_pick) {
@@ -1121,7 +1060,7 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   // The frame anchors (sun / zenith / horizon) need the adopted map's own sun echo.
   LUMICE_PathMapInfo anchor_info{};
   anchor_info.struct_size = sizeof(anchor_info);
-  const auto& caliber_source = map.source_mode == 2 || !map.adopted_result ? map.detail_result : map.adopted_result;
+  const auto& caliber_source = map.adopted_result;
   const bool have_anchor_info =
       caliber_source && LUMICE_PathMapGetInfo(caliber_source.get(), &anchor_info) == LUMICE_PATH_READ_OK;
   // What this frame drew — the legend's input (the legend describes the drawn picture; absent
@@ -1134,12 +1073,7 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   if (overlays) {
     DrawSurveyOverlays(dl, state, view, pic_min, pic_px, &legend);
   }
-  if (map.detail_result && (map.source_mode == 2 || (map.source_mode == 0 && display.compatible))) {
-    LUMICE_PathMapInfo detail_info{};
-    detail_info.struct_size = sizeof(detail_info);
-    if (LUMICE_PathMapGetInfo(map.detail_result.get(), &detail_info) == LUMICE_PATH_READ_OK)
-      DrawDetailCoverage(dl, view, detail_info, pic_min, pic_px);
-  }
+
   float marker_px = -1.0f;
   float marker_py = -1.0f;
   DrawSkyPointMarker(dl, view, intent, pic_min, pic_px, &marker_px, &marker_py);
@@ -1231,8 +1165,8 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
         if (cell) {
           const auto i = cell->index;
           const auto& info = cell->info;
-          ImGui::Text("%s r%zu c%zu · status %u", cell->detail ? "Detail" : "Reference", i / info.view_cols,
-                      i % info.view_cols, static_cast<unsigned>(cell->pixels.status[i]));
+          ImGui::Text("Reference r%zu c%zu · status %u", i / info.view_cols, i % info.view_cols,
+                      static_cast<unsigned>(cell->pixels.status[i]));
           ImGui::Text("%.17g per sr · count %d", cell->pixels.values[i], cell->pixels.counts[i]);
           ImGui::Text("cell δ %.7g° × az %.7g° · %d/%d · λ %.1f · n=%d",
                       (info.view_delta_max_deg - info.view_delta_min_deg) / info.view_rows,
@@ -1259,27 +1193,9 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   // picture's own query state, so it stays with the picture; the controls it names — the
   // wavelength, the view buttons, the sky-point input — live in the info region beside it.
   if (display.partial)
-    ImGui::TextWrapped("Partial sources: %d/%d completed members%s", display.members_evaluated, display.member_count,
-                       display.compatible ? " · same-prefix composition" : "");
-  if (map.detail_result) {
-    float centre_dir[3]{};
-    int centre_valid = 0;
-    LUMICE_UnprojectPixel(&pick_view, view.width / 2, view.height / 2, centre_dir, &centre_valid);
-    if (centre_valid) {
-      const double direction[3] = { centre_dir[0], centre_dir[1], centre_dir[2] };
-      LUMICE_PathMapInfo detail_info{};
-      detail_info.struct_size = sizeof(detail_info);
-      if (LUMICE_PathMapGetInfo(map.detail_result.get(), &detail_info) == LUMICE_PATH_READ_OK) {
-        const bool covered = MapCellIndex(detail_info, direction).has_value();
-        const auto reading = ReadFrozenMapDirection(map, direction);
-        ImGui::TextWrapped("Detail centre: %s · shown %s", covered ? "covered" : "outside",
-                           reading ? (reading->detail ? "Detail" : "Reference") : "unknown");
-      }
-    } else
-      ImGui::TextWrapped("Canvas centre near side clipped; far side is only a hint.");
-  }
+    ImGui::TextWrapped("Partial map: %d/%d completed members", display.members_evaluated, display.member_count);
   const MapQueryState st = MapQueryStateFor(map);
-  const bool refining = MapRefiningFor(map);
+  const bool superseded = MapSupersededFor(map);
   if (st == MapQueryState::kNoSelection) {
     ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
     ImGui::TextWrapped(
@@ -1289,9 +1205,9 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   } else if (st == MapQueryState::kCancelled) {
     ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
     ImGui::TextWrapped(
-        "Map cancelled. Frozen sources remain; Retry repeats the captured request. Observation never retries.");
+        "Map cancelled. Frozen map remains; Retry repeats the full-sky request. Observation never retries.");
     ImGui::PopStyleColor();
-  } else if (st == MapQueryState::kRefused && !refining) {
+  } else if (st == MapQueryState::kRefused && !superseded) {
     ImGui::TextUnformatted("Map refused:");
     ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
     ImGui::TextWrapped("%s", map.adopted_error.c_str());
@@ -1308,13 +1224,13 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
     state.analysis.wait_feedback_texts.map_wait_line = wait_line;
     ImGui::TextWrapped("%s", wait_line.c_str());
     ImGui::PopStyleColor();
-  } else if (refining) {
-    // The refining note carries its own elapsed — the refinement intent's wait, same epoch the
-    // pump stamps on every re-ask — and the poll's stage clause while the refinement's map
+  } else if (superseded) {
+    // The supersession note carries the Retry intent's elapsed wait and the poll's stage
+    // clause while the map
     // query itself is computing (751; face-matched, so a queued survey's stage never lands here).
     ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-    const std::string note = MapRefiningNoteFor(map, ImGui::GetTime(), g_survey_executor.InflightPollSnapshot());
-    state.analysis.wait_feedback_texts.map_refining_note = note;
+    const std::string note = MapSupersedingNoteFor(map, ImGui::GetTime(), g_survey_executor.InflightPollSnapshot());
+    state.analysis.wait_feedback_texts.map_superseding_note = note;
     ImGui::TextWrapped("%s", note.c_str());
     ImGui::PopStyleColor();
   }
@@ -1363,8 +1279,8 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   // the content that decides the measure (the same ladder rung the old single-column region
   // reached through its manual route).
   ImGui::BeginChild("##AnalyzeRaypathInfo", ImVec2(info_w, size.y), ImGuiChildFlags_Borders);
-  const bool quality_busy = map.intent_valid && !map.cancelled_for_key && map.answered_id != map.intent_id &&
-                            map.adopted_id != map.intent_id && map.detail_id != map.intent_id;
+  const bool quality_busy =
+      map.intent_valid && !map.cancelled_for_key && map.answered_id != map.intent_id && map.adopted_id != map.intent_id;
   const bool quality_retry = map.cancelled_for_key || !map.adopted_error.empty();
   const char* quality_label = quality_busy ? "Cancel###map_quality" : "Retry###map_quality";
   const float quality_width = std::max(ImGui::CalcTextSize("Retry").x, ImGui::CalcTextSize("Cancel").x) +
@@ -1451,8 +1367,8 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   ImGui::EndDisabled();
   if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
     ImGui::SetTooltip(
-        "Fit sampled map — changes BOTH pictures. Composition fits reference only; select Detail to fit it."
-        "\nPartial/narrow samples are not a full-class support certificate. No map calculation.");
+        "Fit sampled map — changes BOTH pictures using the frozen full-sky reference."
+        "\nPartial samples are not a full-class support certificate. No map calculation.");
   if (fits_on_line(full_sky_w))
     ImGui::SameLine();
   if (ImGui::SmallButton("Full sky##map")) {
@@ -1463,7 +1379,7 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
     ClampRendererViewInvariants(state.renderer);
   }
   if (ImGui::IsItemHovered())
-    ImGui::SetTooltip("Shared full-sky preset — changes BOTH pictures, keeps frozen detail.");
+    ImGui::SetTooltip("Shared full-sky preset — changes BOTH pictures, keeps the frozen map.");
 
   // ---- The sky-point input: always available (AC3: no map required to name a target) ----------
   ImGui::Separator();
@@ -1565,31 +1481,17 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   ImGui::PopStyleColor();
 
   ImGui::BeginChild("##MapReport", RemainingReportSize());
-  ImGui::SetNextItemWidth(-1.0f);
-  ImGui::Combo("##map_source", &map.source_mode, "Composition\0Reference only\0Detail only\0");
-  if (map.detail_result && map.adopted_result && !display.compatible)
-    ImGui::TextWrapped(
-        "Different completed member prefixes: composition keeps Reference. Select Detail explicitly; outside is "
-        "unknown.");
-  for (int slot = 0; slot < 2; ++slot) {
-    const auto& source = slot == 0 ? map.adopted_result : map.detail_result;
+  if (map.adopted_result) {
     LUMICE_PathMapInfo info{};
     info.struct_size = sizeof(info);
-    if (!source || LUMICE_PathMapGetInfo(source.get(), &info) != LUMICE_PATH_READ_OK)
-      continue;
-    ImGui::TextWrapped("%s cell δ %.7g° × az %.7g° · %d/%d%s · λ %.1f · n=%d", slot == 0 ? "Reference" : "Detail",
-                       (info.view_delta_max_deg - info.view_delta_min_deg) / info.view_rows,
-                       (info.view_az_max_deg - info.view_az_min_deg) / info.view_cols, info.members_evaluated,
-                       info.member_count, info.truncated ? " partial" : "", info.wavelength_nm, info.sample_count);
-    if (slot == 1)
-      ImGui::TextWrapped(
-          "Detail coverage δ [%.5g,%.5g]° · az [%.5g,%.5g]°. Outside uses reference only in compatible composition; "
-          "never a second historical patch.",
-          info.view_delta_min_deg, info.view_delta_max_deg, info.view_az_min_deg, info.view_az_max_deg);
+    if (LUMICE_PathMapGetInfo(map.adopted_result.get(), &info) == LUMICE_PATH_READ_OK) {
+      ImGui::TextWrapped("Reference cell δ %.7g° × az %.7g° · %d/%d%s · λ %.1f · n=%d",
+                         (info.view_delta_max_deg - info.view_delta_min_deg) / info.view_rows,
+                         (info.view_az_max_deg - info.view_az_min_deg) / info.view_cols, info.members_evaluated,
+                         info.member_count, info.truncated ? " partial" : "", info.wavelength_nm, info.sample_count);
+    }
   }
-  ImGui::TextWrapped(
-      "Source-fixed scales; cells do not interpolate across coverage. Stripes = unknown, purple = singular (not zero). "
-      "A new Detail replaces the previous one.");
+  ImGui::TextWrapped("Source-fixed scale; cells do not interpolate. Stripes = unknown, purple = singular (not zero).");
   // The identity line (contract §6's status summary): the selected class named WHERE it is read.
   // The list that carries the same label can be off-screen while this window is open (Render
   // workspace, an occluding float), so the window re-states the list's own text — the one chain
@@ -1613,7 +1515,7 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   // The caliber block: every fact read back through the result's own readers into the pure
   // composer (the unit layer holds it to the readback), then drawn (AC1).
   if (caliber_source && have_anchor_info) {
-    ImGui::TextDisabled("%s caliber", caliber_source == map.detail_result ? "Detail" : "Reference");
+    ImGui::TextDisabled("Reference caliber");
     MapCaliberInput in;
     in.info = anchor_info;
     LUMICE_PathSurveyEvidence evidence{};
@@ -1753,7 +1655,7 @@ void RenderAnalyzeRaypathViewWindow(GuiState& state) {
   if (state.workspace.mode != GuiState::WorkspaceMode::kAnalyze) {
     WaitFeedbackTexts& feedback = state.analysis.wait_feedback_texts;
     feedback.map_wait_line.clear();
-    feedback.map_refining_note.clear();
+    feedback.map_superseding_note.clear();
   }
   // The Colors window's size recipe (the four-tier table's free-form row): FirstUseEver at the
   // contract's suggested default, re-applied on a UI-scale change (WindowResizeCondForScale,

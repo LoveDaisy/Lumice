@@ -607,7 +607,7 @@ void RenderAnalyzeWorkspace(GLFWwindow* window, float window_width, float window
     WaitFeedbackTexts& feedback = g_state.analysis.wait_feedback_texts;
     feedback.survey_wait_line.clear();
     feedback.map_wait_line.clear();
-    feedback.map_refining_note.clear();
+    feedback.map_superseding_note.clear();
     feedback.point_wait_line_fiber.clear();
     feedback.point_wait_line_details.clear();
     feedback.share_list_busy_dots.clear();

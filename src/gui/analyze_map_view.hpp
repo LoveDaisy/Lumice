@@ -1,7 +1,7 @@
 #ifndef LUMICE_GUI_ANALYZE_MAP_VIEW_HPP
 #define LUMICE_GUI_ANALYZE_MAP_VIEW_HPP
 
-// Frozen class-map display, immutable quality targets and sky-point intent. The observation
+// Frozen full-sky class-map display and sky-point intent. The observation
 // camera is exclusively GuiState::renderer; no disk camera or settle-triggered query exists.
 // Raw result frames/columns remain engine-owned under their immutable handles.
 
@@ -47,9 +47,8 @@ struct SkyPointIntent {
 
 struct ViewProjection;
 
-// The sun label the request derivation (and the on-picture sun marker and the delta readout)
-// anchor to: the adopted map's own Info echo when one is on show, else the adopted survey's
-// scope, else the live document's sun (the analyzed snapshot is always the better anchor —
+// The sun label the on-picture marker and delta readout anchor to: the adopted map's own Info echo when one is on show,
+// else the adopted survey's scope, else the live document's sun (the analyzed snapshot is always the better anchor —
 // the live document may have been edited since). Returns false only with nothing to read.
 struct SkySunAnchor {
   double altitude_deg = 0.0;
@@ -57,13 +56,11 @@ struct SkySunAnchor {
 };
 bool SkySunAnchorFor(const GuiState& state, SkySunAnchor* out);
 
-// The engine request for an outstanding intent (the survey request builder's sibling): the
-// key's selection fills the class fields, the view fills the window (against `sun` — the
-// bounding rectangle needs the anchor the deviation axis measures from), the sample tier and
-// budget are the constants above. Buffers move into the executor's job (the C struct holds raw
+// The full-sky request for an outstanding data intent: the key supplies class and wavelength;
+// sample count and budget are the constants above. Buffers move into the executor's job (the C struct holds raw
 // pointers). A zero wavelength leaves the buffer empty — the engine's reference resolution.
-LUMICE_PathMapRequest MakeMapRequestForKey(const MapIntentKey& key, const SkySunAnchor& sun, std::vector<int>* faces,
-                                           std::vector<int>* counts, std::vector<double>* wavelengths);
+LUMICE_PathMapRequest MakeMapRequestForKey(const MapIntentKey& key, std::vector<int>* faces, std::vector<int>* counts,
+                                           std::vector<double>* wavelengths);
 
 // ---- Map-driven Fit and display normalization ------------------------------------------------------
 
@@ -178,12 +175,11 @@ MapObservationTiming LastMapObservationTiming();
 // Writes only state.analysis's map fields and the executor; no widget, no document field.
 // The GL frame owner supplies preparation explicitly; frame-free consumers leave it unset.
 // Preparation succeeds before a finite slot changes, keeping raw readers and images attached.
-using MapSourcePreparer = bool (*)(const MapHandle&, SurveyQueryId, bool);
+using MapSourcePreparer = bool (*)(const MapHandle&, SurveyQueryId);
 void PumpMapQuery(GuiState& state, SurveyExecutor& executor, double now_s, MapSourcePreparer prepare = nullptr);
 // Explicit quality actions. Retry repeats the current full-sky request.
 void RetryMap(GuiState& state, SurveyExecutor& executor, double now_s);
 void CancelMap(GuiState& state, SurveyExecutor& executor);
-bool MapSourcesCompatible(const LUMICE_PathMapInfo& reference, const LUMICE_PathMapInfo& detail);
 
 // The Raypath view window's body — formerly the depth band's map cell (755.4 moved the whole
 // capability into the window in one piece). Draws the D3 split (contract §4.2): the LEFT

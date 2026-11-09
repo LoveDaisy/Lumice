@@ -1728,7 +1728,7 @@ bool CheckMapGlyphsAcrossUiScale(ImGuiTestContext* ctx);
 
 // The map region's face (742.5, AC1/AC3/AC6): on the fully random prism, the selected class's
 // reference map arrives through the real chain — share list selection -> survey and map queued
-// on the one worker -> the full-sky map -> the auto-Fit -> the refinement window — and the
+// on the one worker -> the full-sky map — and the
 // region takes a real click as the sky point while the panorama's ROI state stands untouched.
 // The assertions read the adopted result the picture is drawn from, so the screenshot a human
 // reads and the checks below cannot both be mock.
@@ -1811,7 +1811,7 @@ bool MapRegionShowsTheClassMapAndTakesThePick(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(gui::g_state.analysis.sky_point.valid && !gui::g_state.analysis.sky_point.from_map_pick, false);
   IM_CHECK_RETV(std::abs(gui::g_state.analysis.sky_point.dir[2] + 0.5f) < 1e-4f, false);
   // A single reference answers behind the survey. Adoption neither auto-Fits nor issues a
-  // second calculation; explicit quality actions own all subsequent detail requests.
+  // second calculation; explicit Retry owns any repeated request.
   IM_CHECK_RETV(DriveUntil(
                     ctx,
                     [] {
@@ -2073,7 +2073,7 @@ bool PointInspectorShowsThePointFiberAndThePath(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kNoIntent, false);
   IM_CHECK_RETV(gui::g_state.analysis.trace.intent_valid == false, false);
 
-  // The real pick on the map canvas: whatever sky position the refined view centres on, the pick
+  // The real pick on the map canvas: whatever sky position the shared view centres on, the pick
   // must arm the point intent (the pick-to-point chain through the real mouse path).
   IM_CHECK_RETV(DriveUntil(
                     ctx,
@@ -2718,10 +2718,10 @@ bool SurveySurvivesAWorkspaceSwitch(ImGuiTestContext* ctx) {
 // own contract stays with the leg that introduced it.
 
 // The continuous chain (v1-scope §4 C01): ONE selection, ONE session — the class overview (which
-// must not grab a sky point for the user), the refined reference map, a real pick on the canvas,
+// must not grab a sky point for the user), the frozen reference map, a real pick on the canvas,
 // the point document, the fiber, the factors and the representative path — every echo naming the
 // same selected class. Real-timing pool, the per-face legs' shape: the survey's chromatic legs,
-// then the map refinement and the point queue behind it on the one worker.
+// then the map and the point queue behind it on the one worker.
 bool AnalyzeFullChainOneSession(ImGuiTestContext* ctx) {
   ScopedServerGuard guard;
   IM_CHECK_RETV(BringUpScene(ctx, kFullyRandomJson, /*infinite=*/false, /*gpu=*/false), false);
@@ -2781,7 +2781,7 @@ bool AnalyzeFullChainOneSession(ImGuiTestContext* ctx) {
                 false);
 
   // The map window answers behind the survey on the one worker (default chain: full sky, then
-  // the auto-Fit, then the refinement), and its echo names the SAME class the overview
+  // the full-sky result), and its echo names the SAME class the overview
   // summarized — one identity feeding both faces.
   IM_CHECK_RETV(DriveUntil(
                     ctx,
@@ -2807,18 +2807,17 @@ bool AnalyzeFullChainOneSession(ImGuiTestContext* ctx) {
     ctx->LogInfo("[v1 chain] map lambda %.1f, kept %lld, window delta[%.1f,%.1f]", info.wavelength_nm, info.kept_count,
                  info.view_delta_min_deg, info.view_delta_max_deg);
   }
-  // Pure observation preserves the reference identity; fine quality is an explicit request.
+  // Pure observation preserves the full-sky reference identity.
   const auto reference_id = gui::g_state.analysis.map.adopted_id;
   gui::g_state.renderer.azimuth += 15.0f;
   gui::g_state.renderer.fov = 10.0f;
   ctx->Yield(30);
   IM_CHECK_RETV(gui::g_state.analysis.map.intent_id == reference_id, false);
-  ctx->ItemClick("**/Refine###map_quality");
   IM_CHECK_RETV(DriveUntil(
                     ctx,
                     [] {
                       const auto& m = gui::g_state.analysis.map;
-                      return m.detail_result && m.detail_id == m.intent_id;
+                      return m.adopted_result && m.adopted_id == m.intent_id;
                     },
                     30),
                 false);
@@ -2960,7 +2959,7 @@ bool AnalyzeFullChainOneSession(ImGuiTestContext* ctx) {
 
 // The internal-reflection path from its real consumer (v1-scope §4: beyond C01's two-face
 // transmission): the corpus's C03 chain `3-5-6-7` — the same scene's L0 list — selected as a
-// real row, its own reference map refined, a real pick on the canvas, and the 3D region drawing
+// real row, its own frozen reference map, a real pick on the canvas, and the 3D region drawing
 // the recovered polyline. The pin shape is the engine document's (4 contacts, 5 segments —
 // entry, three internal, exit), read back through the C readers, not a screenshot's looks.
 // Real-timing pool: the class survey's chromatic legs queue the map and the point on the one
@@ -3310,7 +3309,7 @@ bool InternalReflectionTraceFromTheRealConsumer(ImGuiTestContext* ctx) {
   const std::optional<gui::SelectedClassIdentity> identity = gui::SelectedClassIdentityFor(gui::g_state);
   IM_CHECK_RETV(identity.has_value(), false);
 
-  // The class's own map refines (behind its survey on the one worker) and echoes the class.
+  // The class's full-sky map computes (behind its survey on the one worker) and echoes the class.
   IM_CHECK_RETV(DriveUntil(
                     ctx,
                     [] {
@@ -3930,7 +3929,7 @@ bool RefusedClassBlockadesNothing(ImGuiTestContext* ctx) {
 
   // The map answers under the same selection (a refused delta axis does not blockade the map
   // face) and names the class — the FIRST adopted map is the evidence (the full-sky arrival
-  // already proves the face answers; waiting for the refinement chain would buy nothing here
+  // already proves the face answers; waiting for the map chain would buy nothing here
   // and is the pool-context watchdog budget's long pole).
   IM_CHECK_RETV(DriveUntil(
                     ctx,
@@ -4112,7 +4111,7 @@ bool CancelSurveyButtonReachesTheNamedState(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(gui::g_state.analysis.wait_feedback_texts.survey_wait_line.empty(), false);
   IM_CHECK_RETV(gui::g_state.analysis.wait_feedback_texts.share_list_busy_dots.empty(), false);
   // The latch withdraws the intent before the worker posts its cancellation. Wait for THIS
-  // face's queued/running work to end, not global idle: map refinement remains legitimate.
+  // face's queued/running work to end, not global idle: map work remains legitimate.
   IM_CHECK_RETV(
       DriveUntil(ctx, [] { return !gui::g_survey_executor.QueryOutstanding(gui::QueryFace::kSurvey); }, 20), false);
   // Keep pumping the unchanged selection: neither a late finish nor a resend may revive it.
@@ -7332,7 +7331,7 @@ bool FiveOperationsChainInOneSession(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(MapRegionWindow() != nullptr && MapInfoRegionWindow() != nullptr, false);
   IM_CHECK_RETV(ctx->ItemInfo("**/##map_canvas", ImGuiTestOpFlags_NoError).ID != 0, false);
   // The class map's representative frame (the AC7 hand-off's 类图): the window map specifically
-  // — the full-sky map auto-Fits and the refinement view answers behind the first adoption,
+  // — the full-sky map answers independently of the observation camera,
   // whose default slice can legitimately carry no events. Captured here, on the whole-sky
   // payload, before the cone analysis replaces it (the faithful §12-③ moment: the row click
   // just opened the window onto the class's own picture).
@@ -7596,19 +7595,9 @@ bool BringUpBothWindows(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(SelectRowByDisplay(ctx, TopChainDisplay().c_str()) != std::nullopt, false);
   IM_CHECK_RETV(gui::g_state.analyze_raypath_view_open, false);
   PinRaypathViewOnScreen(ctx);
-  // The row click keyed the map session and its default auto-Fit chain: the query lands
-  // sub-second, the once-per-selection auto-Fit fires a refinement right after (a new view key
-  // the pump re-asks past its settle window), and each adopted answer renders a caliber block
-  // above the info region's sky row — the altitude/azimuth inputs reflow under it. Typing
-  // through that reflow moves an item between the hover and the click, the engine records a
-  // hover error, and the sticky error silently skips the Set click (the input chain then looks
-  // like a pump that never picked the intent up). Wait out the WHOLE chain before typing: the
-  // adopted answer on show, no refinement owed (adopted_id == intent_id), the auto-Fit latch
-  // spent, the view past its settle window, nothing in flight — held across 3 consecutive
-  // polls, so a pending resend (which would surface as InFlight / adopted_id movement right
-  // after the settle window) cannot slip through a single-frame gap. Refused maps time this
-  // wait out into an explicit red; every current caller runs a canonical scene where the map
-  // completes.
+  // Wait for the row's full-sky result and a stable rendered answer before typing through
+  // the info region. Refused maps time this wait out into an explicit red; every caller here
+  // uses a canonical scene whose map completes. Observation itself never requests another map.
   int map_settle_streak = 0;
   IM_CHECK_RETV(DriveUntil(
                     ctx,
@@ -7627,7 +7616,7 @@ bool BringUpBothWindows(ImGuiTestContext* ctx) {
   ctx->ItemClick("**/Set sky point###sky_set");
   // The input chain's own completion evidence: a Set click the engine skipped (any sticky
   // error from the ops above) would leave the sky point unwritten and the pump honestly idle —
-  // assert the write landed, and that no map refinement reflowed the region behind the click.
+  // assert the write landed, and that no map update reflowed the region behind the click.
   IM_CHECK_RETV(gui::g_state.analysis.sky_point.valid, false);
   IM_CHECK_RETV(gui::g_state.analysis.map.intent_id == map_intent_at_release, false);
   // Completion is a persistent state (the adoption keeps its fields), so level polling is the
@@ -7776,22 +7765,21 @@ bool CheckMapCellSteps(ImGuiTestContext* ctx, const std::string& text, const LUM
 bool CheckMapQualityText(ImGuiTestContext* ctx, const std::string& stem) {
   const auto& map = gui::g_state.analysis.map;
   const auto reference = map.adopted_result;
-  const auto detail = map.detail_result;
   ctx->MouseMoveToPos(ImVec2(2.0f, 2.0f));
   ImGuiWindow* report = MapReportWindow();
   IM_CHECK_RETV(report != nullptr, false);
   report->Scroll.y = 0.0f;
   ctx->Yield(2);
   const std::string report_text = CaptureMapFrameText(ctx);
-  const auto check_source = [&](int slot) -> bool {
-    const char* source = slot == 0 ? "Reference" : "Detail";
+  const auto check_source = [&]() -> bool {
+    const char* source = "Reference";
     LUMICE_PathMapInfo info{};
     info.struct_size = sizeof(info);
-    IM_CHECK_RETV(LUMICE_PathMapGetInfo((slot == 0 ? reference : detail).get(), &info) == LUMICE_PATH_READ_OK, false);
+    IM_CHECK_RETV(LUMICE_PathMapGetInfo(reference.get(), &info) == LUMICE_PATH_READ_OK, false);
     const std::string line = MapTextLine(report_text, source, "δ ");
     IM_CHECK_RETV(CheckMapCellSteps(ctx, line, info), false);
     // The full-sky reader's known one-degree grid is an anchor independent of display formatting.
-    if (slot == 0) {
+    {
       IM_CHECK_RETV(info.view_rows == 180 && info.view_cols == 360, false);
       IM_CHECK_RETV(info.view_delta_max_deg - info.view_delta_min_deg == 180.0, false);
       IM_CHECK_RETV(info.view_az_max_deg - info.view_az_min_deg == 360.0, false);
@@ -7800,10 +7788,7 @@ bool CheckMapQualityText(ImGuiTestContext* ctx, const std::string& stem) {
     IM_CHECK_RETV(line.find("cell δ ") != std::string::npos, false);
     return true;
   };
-  IM_CHECK_RETV(check_source(0), false);
-  if (detail) {
-    IM_CHECK_RETV(check_source(1), false);
-  }
+  IM_CHECK_RETV(check_source(), false);
   IM_CHECK_RETV(SaveWindowPng(ctx, "//Raypath view", GuiTestTempPath(stem + "_steps.png").string()), false);
   const ImRect canvas = ctx->ItemInfo("**/##map_canvas").RectFull;
   ctx->MouseMoveToPos(canvas.GetCenter());
@@ -7812,12 +7797,12 @@ bool CheckMapQualityText(ImGuiTestContext* ctx, const std::string& stem) {
   const size_t near_at = cursor_frame.find("Near / pick direction");
   IM_CHECK_RETV(near_at != std::string::npos, false);
   const std::string cursor_text = cursor_frame.substr(near_at);
-  const char* cursor_source = detail ? "Detail r" : "Reference r";
+  const char* cursor_source = "Reference r";
   IM_CHECK_RETV(cursor_text.find("Near / pick direction") != std::string::npos, false);
   IM_CHECK_RETV(cursor_text.find(cursor_source) != std::string::npos, false);
   LUMICE_PathMapInfo cursor_info{};
   cursor_info.struct_size = sizeof(cursor_info);
-  IM_CHECK_RETV(LUMICE_PathMapGetInfo((detail ? detail : reference).get(), &cursor_info) == LUMICE_PATH_READ_OK, false);
+  IM_CHECK_RETV(LUMICE_PathMapGetInfo(reference.get(), &cursor_info) == LUMICE_PATH_READ_OK, false);
   const std::string cursor_line = MapTextLine(cursor_text, "δ ", "az ");
   IM_CHECK_RETV(CheckMapCellSteps(ctx, cursor_line, cursor_info), false);
   IM_CHECK_RETV(CheckMapTextGlyphs(ctx, "cursor", cursor_line), false);
@@ -7831,37 +7816,12 @@ bool CheckMapQualityText(ImGuiTestContext* ctx, const std::string& stem) {
     return false;
   };
   IM_CHECK_RETV(save_tooltip("_cursor.png"), false);
-  ctx->MouseMove("**/Refine###map_quality");
+  ctx->MouseMove("**/Retry###map_quality");
   ctx->Yield(3);
-  const std::string refine_text = CaptureMapFrameText(ctx);
-  IM_CHECK_RETV(refine_text.find("One explicit calculation") != std::string::npos, false);
-  const std::string actual = MapTextLine(refine_text, "Actual ", "δ ");
-  IM_CHECK_RETV(actual.find("°; grid cap 262144") != std::string::npos, false);
-  const std::string target = MapTextLine(refine_text, "Target ", "diameter");
-  double diameter = 0.0;
-  int rows = 0, cols = 0;
-  IM_CHECK_RETV(std::sscanf(target.c_str(), "Target %lf° diameter; %d×%d cells", &diameter, &rows, &cols) == 3, false);
-  IM_CHECK_RETV(diameter > 0.0 && rows > 0 && cols > 0, false);
-  const size_t delta_at = actual.find("δ ");
-  IM_CHECK_RETV(delta_at != std::string::npos, false);
-  const double preview_step = std::strtod(actual.c_str() + delta_at + std::strlen("δ "), nullptr);
-  IM_CHECK_RETV(CheckMapTextGlyphs(ctx, "Refine", target + "\n" + actual), false);
-  // The target may straddle the sun-frame pole. Its actual delta span is clipped to [0,180],
-  // not necessarily the printed diameter. This independent spherical separation uses the C
-  // result's sun and the known linear camera, never the production request/label formatter.
-  IM_CHECK_RETV(gui::g_state.renderer.lens_type == gui::kLensTypeLinear, false);
-  const double radians = std::acos(-1.0) / 180.0;
-  const double elevation = gui::g_state.renderer.elevation * radians;
-  const double sun = cursor_info.sun_altitude_deg * radians;
-  const double azimuth = (gui::g_state.renderer.azimuth - cursor_info.sun_azimuth_deg) * radians;
-  const double centre =
-      std::acos(std::clamp(
-          std::sin(elevation) * std::sin(sun) + std::cos(elevation) * std::cos(sun) * std::cos(azimuth), -1.0, 1.0)) /
-      radians;
-  const double span = std::min(180.0, centre + diameter * 0.5) - std::max(0.0, centre - diameter * 0.5);
-  IM_CHECK_RETV(preview_step > 0.0 && std::abs(preview_step * rows - span) < diameter * 1e-5, false);
-  IM_CHECK_RETV(save_tooltip("_refine.png"), false);
-  IM_CHECK_RETV(map.adopted_result == reference && map.detail_result == detail, false);
+  const std::string retry_text = CaptureMapFrameText(ctx);
+  IM_CHECK_RETV(retry_text.find("Retry the current full-sky request") != std::string::npos, false);
+  IM_CHECK_RETV(save_tooltip("_retry.png"), false);
+  IM_CHECK_RETV(map.adopted_result == reference, false);
   ctx->MouseMoveToPos(ImVec2(2.0f, 2.0f));
   ctx->Yield(2);
   return true;
@@ -7924,8 +7884,7 @@ bool CheckMapGlyphsAcrossUiScale(ImGuiTestContext* ctx) {
                  ImGui::CalcTextSize(metrics.c_str()).x, metrics.c_str());
     ctx->MouseMoveToPos(ImVec2(2.0f, 2.0f));
     ctx->Yield(2);
-    const std::string stem =
-        std::string(gui::g_state.analysis.map.detail_result ? "map_detail_glyphs_" : "map_glyphs_") + suffix;
+    const std::string stem = std::string("map_glyphs_") + suffix;
     IM_CHECK_RETV(CheckMapQualityText(ctx, stem), false);
     IM_CHECK_RETV(SaveWindowPng(ctx, "//Raypath view", GuiTestTempPath(stem + ".png").string()), false);
     // Preserve the full application frame as well as the window crop for offline inspection.
@@ -8490,7 +8449,7 @@ bool WindowsStandThroughInFlightAndDocumentScopes(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(DriveUntil(
                     ctx,
                     [] {
-                      // No observation or adoption can owe a hidden refinement. All faces
+                      // No observation or adoption can owe a hidden recalculation. All faces
                       // quiet plus the following frame drain is the completion boundary.
                       return !gui::g_survey_executor.QueryOutstanding();
                     },
