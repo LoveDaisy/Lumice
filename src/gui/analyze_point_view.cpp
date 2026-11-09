@@ -2948,10 +2948,6 @@ void RenderPointAnswerBlock(GuiState& state) {
   if (detail_valid_indices.empty()) {
     ImGui::TextDisabled("No valid sample on show for this component.");
   }
-  // §16.2's pointer rule, the point summary's own leg: the evidence rows, integrals and
-  // premise lines are omitted here, and the omission names its home — the same spelling the
-  // survey summary closes with (one constant, one sentence).
-  DisabledWrappedText("The complete answer is in the %s.", kRaypathViewWindowTitle);
 }
 
 }  // namespace lumice::gui
