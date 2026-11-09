@@ -24,6 +24,7 @@
 #include <string>
 #include <vector>
 
+#include "imgui.h"
 #include "include/lumice_raypath.h"
 
 namespace lumice::gui {
@@ -229,6 +230,17 @@ struct SurveyOverviewModel {
 // The pure half: survey document in, model out. Reads every block through the typed readers;
 // never throws, never computes optics.
 SurveyOverviewModel BuildSurveyOverviewModel(const LUMICE_PathSurvey& result);
+
+// A fold group's header: the display spelling comes from the ONE label constant; the ID suffix
+// keeps same-label groups apart inside one window (the Raypath view hosts the survey answer and
+// the point answer side by side, each with its own Physics/Calculation pair — identical visible
+// labels would collide in the window's ID space and share one expansion state). No
+// DefaultOpen: closed by default, expansion in the host window's storage — session-sticky,
+// restart-reset (io.IniFilename is null), independent per window. Shared by both answer hosts.
+inline bool FoldOpen(const char* label, const char* suffix_id) {
+  const std::string id = std::string(label) + "##" + suffix_id;
+  return ImGui::CollapsingHeader(id.c_str());
+}
 
 // The ImGui half: the model as the complete answer draws it — the default layer (the answers
 // and their limits), then the two fold groups (contract §16.1: Physics details, Calculation

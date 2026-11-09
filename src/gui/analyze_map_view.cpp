@@ -13,6 +13,7 @@
 #include "gui/analysis_panel.hpp"  // SelectedClassIdentityFor / SurveySelectionKeyFor — the one identity chain
 #include "gui/analyze_map_renderer.hpp"
 #include "gui/analyze_overview.hpp"
+#include "gui/analyze_point_view.hpp"    // RenderPointAnswerBlock — the sky-point answer host
 #include "gui/analyze_region_wheel.hpp"  // the wheel claim — one arbitration for both gesture regions
 #include "gui/analyze_workspace.hpp"     // PumpAnalyzeQueries — the pumps this window's Render-mode frames run
 #include "gui/app.hpp"
@@ -1572,6 +1573,15 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
     const SurveyOverviewModel survey_model = BuildSurveyOverviewModel(*state.analysis.survey.adopted_result);
     ImGui::TextDisabled("Class answer");
     RenderSurveyOverviewModel(survey_model);
+    ImGui::Separator();
+  }
+  // The sky-point answer (contract §16.2): the completed point document read in full, sorted
+  // into its own fold pair. Sits after the class answer, before the map's own report — the
+  // ledger's answer-region order. Like the class answer: nothing here outside the completed
+  // state; the four-state shell and the cancel actions stay in the main window.
+  if (state.analysis.point.adopted_result) {
+    ImGui::TextDisabled("Sky point answer");
+    RenderPointAnswerBlock(state);
     ImGui::Separator();
   }
   if (map.adopted_result) {
