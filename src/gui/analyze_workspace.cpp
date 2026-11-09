@@ -597,6 +597,8 @@ void PumpAnalyzeQueries(GuiState& state, SurveyExecutor& executor, double now_s,
 // writers stay separate from navigation — setting a sky point never pops either window open
 // (the negative contract is input-test guarded, not enforced by TU separation:
 // pose_view_opens_from_both_explicit_entries and map_region_shows_the_class_map_and_takes_the_pick).
+namespace {
+
 void OpenOrFocusAnalysisWindow(bool* open_flag, const char* window_title) {
   if (!*open_flag) {
     *open_flag = true;
@@ -640,7 +642,9 @@ std::string AnalyzeEntryHintFor(const GuiState& state) {
       break;  // fall through to the point face
   }
   bool point_partial = false;
-  const char* point_word = PointStatusLabelFor(analysis.point, &point_partial);
+  LUMICE_PathPointInfo point_info{};
+  point_info.struct_size = sizeof(point_info);
+  const char* point_word = PointStatusLabelFor(analysis.point, &point_partial, &point_info);
   switch (PointQueryStateFor(analysis.point)) {
     case PointQueryState::kNoIntent:
       return std::string("Pick a sky point on the ") + kRaypathViewWindowTitle + " — " + kPoseViewWindowTitle +
@@ -655,10 +659,7 @@ std::string AnalyzeEntryHintFor(const GuiState& state) {
       if (point_partial) {
         return point_word;  // "Partial" — the face's own word for the partial banner
       }
-      LUMICE_PathPointInfo info{};
-      info.struct_size = sizeof(info);
-      if (LUMICE_PathPointGetInfo(analysis.point.adopted_result.get(), &info) == LUMICE_PATH_READ_OK &&
-          (info.outcome == LUMICE_PATH_POINT_MASS || info.component_count == 0)) {
+      if (point_info.outcome == LUMICE_PATH_POINT_MASS || point_info.component_count == 0) {
         return std::string("The complete answer is in the ") + kRaypathViewWindowTitle + ".";
       }
       return "";
@@ -667,10 +668,13 @@ std::string AnalyzeEntryHintFor(const GuiState& state) {
   return "";
 }
 
+}  // namespace
+
 // The hint slot's fit rule (§16.3's bounded line): the whole text when it fits the row's
 // remaining space; otherwise its longest UTF-8-safe prefix that fits with an ellipsis — the
 // same glyph the wait-line texts themselves end in (analyze_survey.cpp) — and empty (the slot
 // omits) when even the ellipsis does not fit. Single line by construction: no wrap, no growth.
+// (External linkage by declaration in the hpp: the byte/form pins for this rule read it.)
 std::string AnalyzeEntryHintFitToWidth(const std::string& hint, float max_w) {
   if (ImGui::CalcTextSize(hint.c_str()).x <= max_w) {
     return hint;
@@ -681,25 +685,25 @@ std::string AnalyzeEntryHintFitToWidth(const std::string& hint, float max_w) {
     return "";
   }
   // One pass over character boundaries (continuation bytes never start a cut). Bounded by the
-  // hint's own length — one call per frame for one line of text.
+  // hint's own length — one call per frame for one line of text. Each candidate INCLUDES its
+  // last character, so `fitted` only ever advances through strings that measured to fit: the
+  // returned line is the longest prefix that fits, never a prefix that was already rejected.
   std::string fitted;
   for (size_t i = 0; i < hint.size();) {
-    const size_t begin = i;
     ++i;
     while (i < hint.size() && (static_cast<unsigned char>(hint[i]) & 0xC0) == 0x80) {
       ++i;
     }
-    const std::string candidate = hint.substr(0, begin) + ellipsis;
+    const std::string candidate = hint.substr(0, i) + ellipsis;
     if (ImGui::CalcTextSize(candidate.c_str()).x > max_w) {
       break;
     }
-    fitted.assign(hint, 0, i);
+    fitted = candidate;
   }
-  if (fitted.empty()) {
-    return "";
-  }
-  return fitted + ellipsis;
+  return fitted;
 }
+
+namespace {
 
 // The Selection header's entry buttons: two named buttons living in the fixed head, outside the
 // scroll region — query states and report growth never move them (geometry before content,
@@ -764,6 +768,8 @@ void RenderAnalyzeEntryActions(GuiState& state) {
   }
 }
 
+
+}  // namespace
 
 void RenderAnalyzeWorkspace(GLFWwindow* window, float window_width, float window_height) {
   // The background queries' frame pumps run at RenderWorkspacePanels' entry since 755.5 — every

@@ -377,8 +377,11 @@ void RenderPointDetailsBlock(GuiState& state, const SelectedClassIdentity& ident
 // main window's Selection header hint reuses (the mapping has one owner, two readers).
 // *partial, when non-null, is set iff the word is the partial completion's: the status row
 // paints that word in the warning color, and the completed read happens inside so the word and
-// its flag cannot disagree.
-const char* PointStatusLabelFor(const PointQuerySession& point, bool* partial = nullptr);
+// its flag cannot disagree. *completed_info, when non-null AND the state is completed, receives
+// the same Info read the word was derived from — the caller's classification facts
+// (outcome / component_count) come from that one read instead of a second engine pass.
+const char* PointStatusLabelFor(const PointQuerySession& point, bool* partial = nullptr,
+                                LUMICE_PathPointInfo* completed_info = nullptr);
 
 // The sun-direction globe region — the ##AnalyzeSunGlobe placeholder's replacement: the u-sphere
 // disk (deviation backdrop when the document carries the grid, the selected component's fiber

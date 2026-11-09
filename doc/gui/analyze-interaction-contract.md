@@ -339,7 +339,7 @@ Render 与 Analyze 共享**同一份**取景/曝光/辅助线显示状态（disp
 | 切换天空点（map 点选/拖 marker/输入坐标） | 点面新意图（~2s 预算，`analyze_survey.hpp:155`）；旧点结果即弃（新点的答案不残留）；ray 面随 (点文档, 分量, 样本) 跟进 | `PointIntentKey`（225-235）；采纳门 (代,序号)（74-79）；ray 键（354-362） |
 | fiber 内移动姿态（滑条/播放/曲线画布点击拖拽） | 只改当前姿态样本：globe marker、3D 路径、曲线游标、因素读数同步；天空点不动、点查询不重发；播放只推进样本索引，画布写游标即停播放 | `PointViewState` 契约（`analyze_survey.hpp:381-401,404-414`）；曲线画布写路径 `RenderPoseCurveRegion`（`analyze_point_view.cpp`，756） |
 | 切换 λ（窗右区滑条） | 地图面真实数据身份改变：旧全天空源撤有效，建立新全天空等待态；点面同发新意图（λ 是共享旋钮）；survey 不动（λ 无关） | `MapIntentKey.wavelength_nm`（`analyze_survey.hpp:176`）；Retry 同身份等待保旧图；λ变化清源；`PointIntentKey.wavelength_nm`（228） |
-| 窗口关闭/重开 | 关窗只关显示面：查询继续、会话存活（T-session）；Raypath view 的就地 Pose & trace 按钮与主窗 Selection 头部的两只命名按钮共用同一开窗旗标（已开点击=聚焦置顶，不造第二实例），不新增查询/选择/游标；重开呈现当前采纳结果或如实等待态；窗几何会话内记忆 | 会话档位（`gui-state-governance.md` §10.2）；四档会话记忆（`gui-visual-language.md` §9.1） |
+| 窗口关闭/重开 | 关窗只关显示面：查询继续、会话存活（T-session）；开窗入口共用同一开窗旗标——主窗 Selection 头部的两只命名按钮（已开点击=聚焦置顶，不造第二实例）与 Raypath view 的就地 Pose & trace 按钮（纯旗标写，已开点击为 no-op）——不新增查询/选择/游标；重开呈现当前采纳结果或如实等待态；窗几何会话内记忆 | 会话档位（`gui-state-governance.md` §10.2）；四档会话记忆（`gui-visual-language.md` §9.1） |
 | 工作区切换（Render↔Analyze） | 在途查询继续跑（不取消不清理），状态栏查询段持续显示；主图按压在离开时取消（未释放仍吞压）、pick 链沿原规则解除；取景连续（§5.4）。**755.5 修订**：帧泵上提至 `RenderWorkspacePanels` 入口——每个 GUI 帧（两工作区、两分析窗全关的帧在内）统一 drain 四邮箱、过采纳门、维持 level-trigger，在飞查询的完成与采纳不依赖任何窗口是否绘制；窗内 λ/天空点输入即时生效的语义不变（窗是渲染面，不再是泵的宿主） | 泵共享入口 `PumpAnalyzeQueries`（`analyze_workspace.cpp`，`RenderWorkspacePanels` 入口调用）；pick 清理（`app_panels.cpp`）；状态栏段（`app_panels.cpp`） |
 | New | 保留当前 Render/Analyze **mode**；新文档其余状态仍按原规则重置（含 analysis 列表、选择、天空点、查询意图与绑定释放）。两窗随新 GuiState 关闭，分隔比例回到默认；再次类行点击重开显示诚实空态；窗几何保留 | `DoNew` → `ReplaceDocumentState` 只迁移 mode（`app.cpp`）；4 文档切换 reason 清空 analysis（`gui-state-governance.md` §10.2）；`ReleaseScene`（`analyze_survey.hpp`） |
 | Open | 成功 JSON/blank LMC/baked LMC 同样保留 mode，其他重置仍按原原因；blank 清旧图，baked 显示文件图。未保存提示 Cancel、空路径与加载失败不改模式或旧文档身份；不新增跨启动记忆 | `DoOpen` → `ReplaceDocumentState` → per-reason reset owner；解析器不迁移会话 |
@@ -693,16 +693,20 @@ Pose & trace → 可滚动答案区**。答案区内先类结论、再已设天�
 按钮推演 ~100–110pt 被实帧推翻，以实测为准）。
 
 **排布档（实测）**：同排判据=两钮足迹＋ItemSpacing ≤ 列可用宽。260pt 最窄右列实测余量 **52pt**
-（推演的 8pt 来自按钮宽度估算误差）——同排是 260pt 的实际档；纵排档（Raypath view 行在上）是
-防御性存在，1x 合法列宽下未触发。两钮间留 ItemSpacing，**有意不用 752 的 segmented 双格**
-（`SameLine(0,0)` flush）：segmented 读作互斥模式切换，而这是两个可并存的独立显示动作——对
-752 表面语法的有意偏离，不是遗漏。
+（推演的 8pt 来自按钮宽度估算误差）——同排是 260pt 的实际档。**纵排档构造性不可达**：same_row
+判据两侧（按钮足迹与列宽下限）随字体倍率同比例缩放，1x 实测余量 44pt 在任意合法倍率与列宽下
+保持为正——纵排分支（Raypath view 行在上）是为标题文本变长留的防御路径，当前不可触发；as-built
+与测试均如实记录「不可达、不测」，不做无见证断言。两钮间留 ItemSpacing，**有意不用 752 的
+segmented 双格**（`SameLine(0,0)` flush）：segmented 读作互斥模式切换，而这是两个可并存的独立
+显示动作——对 752 表面语法的有意偏离，不是遗漏。
 
-**已开点击=聚焦置顶**：旗标是 bool，第二实例按构造不可能；点击已开的入口把该窗聚焦并置于
-显示前端（imgui `FocusWindow`）。两窗 Begin 均带 `NoCollapse`，已开态不存在折叠分支，
-聚焦即「呈现/聚焦同一窗」的全部语义。显示动作只写既有两个开窗旗标：无 dirty、无隐式
-Analyze/Retry、不动 selection/文档字段。**不因设置天空点自动弹出**（用户显式要求）；类行点击
-同样只开 Raypath view（内容快捷入口，不再是唯一入口；行点击语义不变）。
+**已开点击=聚焦置顶（主窗双按钮）**：旗标是 bool，第二实例按构造不可能；点击**主窗**已开的
+入口把该窗聚焦并置于显示前端（imgui `FocusWindow`）。两窗 Begin 均带 `NoCollapse`，已开态
+不存在折叠分支，聚焦即「呈现/聚焦同一窗」的全部语义。Raypath view 窗内的**就地** Pose 按钮
+保持纯旗标写（755.4 原样，本片 carve-out 不改）：已开时点击为 no-op。主窗入口的显示动作只写
+既有两个开窗旗标：无 dirty、无隐式 Analyze/Retry、不动 selection/文档字段。**不因设置天空点
+自动弹出**（用户显式要求）；类行点击同样只开 Raypath view（内容快捷入口，不再是唯一入口；
+行点击语义不变）。
 
 **有界短提示槽（as-built 形态）**：按钮行行尾右对齐、单行、`TextDisabled` 色；fit 规则=
 整行容得下→原文，容不下→UTF-8 安全截断前缀＋「…」（与等待行同款省略号），连首字符＋省略号
@@ -715,7 +719,10 @@ Analyze/Retry、不动 selection/文档字段。**不因设置天空点自动弹
 「Pick a sky point on the Raypath view — Pose & trace draws the ray.」（有类无点，窗名从常量
 插值）、「The complete answer is in the Raypath view.」（特殊完成态）；survey 取消无既有短词，
 提示用单词「Cancelled」（点面状态行的词形）。**无有效样本态不进头部提示**：分类需逐样本枚举，
-明细行的所有权仍在块内（成本裁定；其提示为空，块内明细行照常承载）。图标未配（本片范围裁决，
+明细行的所有权仍在块内（成本裁定；其提示为空，块内明细行照常承载）。特殊完成态的 rank-0 臂
+有矩阵用例实测；**无分量臂（component_count==0）与其共用同一提示行但触发谓词独立**，座内构造
+依赖场景特定方向未逐臂实测——判定读数与点面块的真值计数同源（同一 Info 字段），分叉风险由
+同源读数缓解，如实记录不冒充已测。图标未配（本片范围裁决，
 非几何结论）：不配图标的原推演余量数字（标签直加 202pt 口径 / 组内同宽 208pt 口径，两口径下
 36pt 图标分别余 6pt/0pt）已被实测按钮宽度（88pt，足迹 184pt）取代——图标是否放得下是任何
 后续请求面前的开放问题，不得引用旧推演数字作禁配依据；「必然翻纵排档」的因果不成立，同样

@@ -5579,15 +5579,19 @@ bool NarrowColumnClippedRowsKeepTheirEntities(ImGuiTestContext* ctx) {
 // X closes it and resets the open flag through the p_open write; an already-selected row
 // re-clicked reopens it; and a main-window control answers a real click while the window
 // floats (non-modal — a dialog takeover would fail this).
-bool ClassRowClickOpensTheRaypathView(ImGuiTestContext* ctx) {
-  const auto window_active = [](const char* fragment) {
-    for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
-      if (w != nullptr && w->Active && std::strstr(w->Name, fragment) != nullptr) {
-        return true;
-      }
+// The window-active probe for the entry-entries case family — ONE shared definition instead of
+// a third local copy per case (the file's older cases each carry their own local lambda; these
+// three share this file-scope function).
+bool EntryWindowActive(const char* fragment) {
+  for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
+    if (w != nullptr && w->Active && std::strstr(w->Name, fragment) != nullptr) {
+      return true;
     }
-    return false;
-  };
+  }
+  return false;
+}
+
+bool ClassRowClickOpensTheRaypathView(ImGuiTestContext* ctx) {
   ScopedServerGuard guard;
   IM_CHECK_RETV(BringUpHaloScene(ctx, /*infinite=*/false), false);
   OpenWindow(ctx);
@@ -5596,7 +5600,7 @@ bool ClassRowClickOpensTheRaypathView(ImGuiTestContext* ctx) {
   // The row click: selection and window opening in one gesture.
   IM_CHECK_RETV(SelectRowByDisplay(ctx, TopChainDisplay().c_str()) != std::nullopt, false);
   IM_CHECK_RETV(gui::g_state.analyze_raypath_view_open, false);
-  IM_CHECK_RETV(window_active("Raypath view"), false);
+  IM_CHECK_RETV(EntryWindowActive("Raypath view"), false);
   // Non-modal: the share list's search box answers a real click while the window floats (its
   // default placement leaves the right column uncovered; if a future placement covers a
   // control this assert drives, the case fails visibly, not silently).
@@ -5607,18 +5611,18 @@ bool ClassRowClickOpensTheRaypathView(ImGuiTestContext* ctx) {
   ctx->SetRef("");
   ctx->Yield(2);
   IM_CHECK_RETV(gui::g_state.analyze_raypath_view_open, false);
-  IM_CHECK_RETV(window_active("Raypath view"), false);
+  IM_CHECK_RETV(EntryWindowActive("Raypath view"), false);
   // The title-bar X: the close writes the flag through p_open, the same bool the row click
   // and the frame loops read.
   ctx->WindowClose("//Raypath view");
   ctx->Yield(2);
   IM_CHECK_RETV(!gui::g_state.analyze_raypath_view_open, false);
-  IM_CHECK_RETV(!window_active("Raypath view"), false);
+  IM_CHECK_RETV(!EntryWindowActive("Raypath view"), false);
   // The already-selected row re-clicked reopens (the contract's reopen-after-close rule: the
   // Selectable fires on every click, selected or not).
   IM_CHECK_RETV(SelectRowByDisplay(ctx, TopChainDisplay().c_str()) != std::nullopt, false);
   IM_CHECK_RETV(gui::g_state.analyze_raypath_view_open, false);
-  IM_CHECK_RETV(window_active("Raypath view"), false);
+  IM_CHECK_RETV(EntryWindowActive("Raypath view"), false);
   ctx->WindowClose("//Raypath view");
   ctx->Yield(2);
   IM_CHECK_RETV(!gui::g_state.analyze_raypath_view_open, false);
@@ -5631,21 +5635,13 @@ bool ClassRowClickOpensTheRaypathView(ImGuiTestContext* ctx) {
 // submit it in each); and DoNew — the one reset reason for this flag — closes an open one with
 // the whole-GuiState replacement.
 bool RaypathViewOpenIsDisplayState(ImGuiTestContext* ctx) {
-  const auto window_active = [](const char* fragment) {
-    for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
-      if (w != nullptr && w->Active && std::strstr(w->Name, fragment) != nullptr) {
-        return true;
-      }
-    }
-    return false;
-  };
   ScopedServerGuard guard;
   IM_CHECK_RETV(BringUpHaloScene(ctx, /*infinite=*/false), false);
   OpenWindow(ctx);
   IM_CHECK_RETV(!gui::g_state.analyze_raypath_view_open, false);
   IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
   IM_CHECK_RETV(!gui::g_state.analyze_raypath_view_open, false);
-  IM_CHECK_RETV(!window_active("Raypath view"), false);
+  IM_CHECK_RETV(!EntryWindowActive("Raypath view"), false);
   // The switch away: still no open — and the flag set here opens the window in the RENDER
   // workspace (the frame loop commits it there too), and the switch back keeps it (the window
   // is T-session display state, not a per-workspace panel).
@@ -5654,17 +5650,17 @@ bool RaypathViewOpenIsDisplayState(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(!gui::g_state.analyze_raypath_view_open, false);
   gui::g_state.analyze_raypath_view_open = true;  // the open entry itself is the row-click case's
   ctx->Yield(2);
-  IM_CHECK_RETV(window_active("Raypath view"), false);
+  IM_CHECK_RETV(EntryWindowActive("Raypath view"), false);
   ctx->ItemClick("##TopBar/Analyze");
   ctx->Yield(3);
   IM_CHECK_RETV(gui::g_state.analyze_raypath_view_open, false);
-  IM_CHECK_RETV(window_active("Raypath view"), false);
+  IM_CHECK_RETV(EntryWindowActive("Raypath view"), false);
   // DoNew replaces the whole GuiState: the open flag goes with it and the window stops being
   // committed the same frame rule everything else follows.
   gui::DoNew();
   ctx->Yield(3);
   IM_CHECK_RETV(!gui::g_state.analyze_raypath_view_open, false);
-  IM_CHECK_RETV(!window_active("Raypath view"), false);
+  IM_CHECK_RETV(!EntryWindowActive("Raypath view"), false);
   return true;
 }
 
@@ -6089,21 +6085,13 @@ bool PoseViewSplitsAreManualIndependentAndFloored(ImGuiTestContext* ctx) {
 // Both explicit entries open the same display surface (contract §7). Class selection and
 // coordinate Set never open it; an actual map pick followed by the nearby button does.
 bool PoseViewOpensFromBothExplicitEntries(ImGuiTestContext* ctx) {
-  const auto window_active = [](const char* fragment) {
-    for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
-      if (w != nullptr && w->Active && std::strstr(w->Name, fragment) != nullptr) {
-        return true;
-      }
-    }
-    return false;
-  };
   ScopedServerGuard guard;
   IM_CHECK_RETV(BringUpHaloScene(ctx, /*infinite=*/false), false);
   OpenWindow(ctx);
   IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
   IM_CHECK_RETV(SelectRowByDisplay(ctx, TopChainDisplay().c_str()) != std::nullopt, false);
   IM_CHECK_RETV(!gui::g_state.analyze_pose_view_open, false);
-  IM_CHECK_RETV(!window_active("Pose & trace"), false);
+  IM_CHECK_RETV(!EntryWindowActive("Pose & trace"), false);
 
   // Negative A — the class row is the Raypath view's open entry, not the pose window's.
   IM_CHECK_RETV(gui::g_state.analyze_raypath_view_open, false);  // the row click above opened it
@@ -6118,7 +6106,7 @@ bool PoseViewOpensFromBothExplicitEntries(ImGuiTestContext* ctx) {
   ctx->Yield(2);
   IM_CHECK_RETV(gui::g_state.analysis.sky_point.valid, false);
   IM_CHECK_RETV(!gui::g_state.analyze_pose_view_open, false);
-  IM_CHECK_RETV(!window_active("Pose & trace"), false);
+  IM_CHECK_RETV(!EntryWindowActive("Pose & trace"), false);
   ctx->LogInfo("[pose open] typed sky point left the pose window closed");
 
   ctx->SetRef("//Raypath view");
@@ -6127,20 +6115,20 @@ bool PoseViewOpensFromBothExplicitEntries(ImGuiTestContext* ctx) {
   ctx->KeyUp(ImGuiMod_Alt);
   ctx->Yield(2);
   IM_CHECK_RETV(gui::g_state.analysis.sky_point.from_map_pick, false);
-  IM_CHECK_RETV(!gui::g_state.analyze_pose_view_open && !window_active("Pose & trace"), false);
+  IM_CHECK_RETV(!gui::g_state.analyze_pose_view_open && !EntryWindowActive("Pose & trace"), false);
   const auto picked = gui::g_state.analysis.sky_point;
   const auto point_id = gui::g_state.analysis.point.intent_id;
   ctx->ItemClick("**/Pose & trace###pose_open");
   ctx->Yield(2);
-  IM_CHECK_RETV(gui::g_state.analyze_pose_view_open && window_active("Pose & trace"), false);
+  IM_CHECK_RETV(gui::g_state.analyze_pose_view_open && EntryWindowActive("Pose & trace"), false);
   IM_CHECK_RETV(gui::g_state.analysis.point.intent_id == point_id, false);
   ctx->WindowClose("//Pose & trace");
   ctx->Yield(2);
-  IM_CHECK_RETV(!gui::g_state.analyze_pose_view_open && !window_active("Pose & trace"), false);
+  IM_CHECK_RETV(!gui::g_state.analyze_pose_view_open && !EntryWindowActive("Pose & trace"), false);
   ctx->WindowFocus("//Raypath view");
   ctx->ItemClick("**/Pose & trace###pose_open");
   ctx->Yield(2);
-  IM_CHECK_RETV(gui::g_state.analyze_pose_view_open && window_active("Pose & trace"), false);
+  IM_CHECK_RETV(gui::g_state.analyze_pose_view_open && EntryWindowActive("Pose & trace"), false);
   IM_CHECK_RETV(gui::g_state.analysis.point.intent_id == point_id, false);
   IM_CHECK_RETV(gui::g_state.analysis.sky_point.dir[0] == picked.dir[0] &&
                     gui::g_state.analysis.sky_point.dir[1] == picked.dir[1] &&
@@ -6155,16 +6143,16 @@ bool PoseViewOpensFromBothExplicitEntries(ImGuiTestContext* ctx) {
   ctx->ItemClick("**/Pose & trace###main_pose_open");
   ctx->Yield(3);
   IM_CHECK_RETV(gui::g_state.analyze_pose_view_open, false);
-  IM_CHECK_RETV(window_active("Pose & trace"), false);
+  IM_CHECK_RETV(EntryWindowActive("Pose & trace"), false);
   // Reopen after a title-bar close: the click fires on every press — closed, the header button
   // opens; open, it focuses (the same widget, both halves of the §16.3 entry semantics).
   ctx->WindowClose("//Pose & trace");
   ctx->Yield(2);
-  IM_CHECK_RETV(!window_active("Pose & trace"), false);
+  IM_CHECK_RETV(!EntryWindowActive("Pose & trace"), false);
   ctx->ItemClick("**/Pose & trace###main_pose_open");
   ctx->Yield(3);
   IM_CHECK_RETV(gui::g_state.analyze_pose_view_open, false);
-  IM_CHECK_RETV(window_active("Pose & trace"), false);
+  IM_CHECK_RETV(EntryWindowActive("Pose & trace"), false);
   ctx->LogInfo("[pose open] header button reopened after a manual close");
 
   gui::g_state.analyze_pose_view_open = false;
@@ -7051,14 +7039,6 @@ bool PoseViewOperatesAtAMovedWindowOrigin(ImGuiTestContext* ctx) {
 // ladder), the map's canvas keeps its code floor, and the state line stays readable. No
 // analysis needed: the empty-state region renders the same controls.
 bool RaypathViewNarrowestWindowKeepsControlsReachable(ImGuiTestContext* ctx) {
-  const auto window_active = [](const char* fragment) {
-    for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
-      if (w != nullptr && w->Active && std::strstr(w->Name, fragment) != nullptr) {
-        return true;
-      }
-    }
-    return false;
-  };
   ScopedServerGuard guard;
   IM_CHECK_RETV(BringUpHaloScene(ctx, /*infinite=*/false), false);
   OpenWindow(ctx);
@@ -7080,7 +7060,7 @@ bool RaypathViewNarrowestWindowKeepsControlsReachable(ImGuiTestContext* ctx) {
     ImGui::SetWindowSize(win, ImVec2(480.0f, 360.0f), ImGuiCond_Always);
     ctx->Yield(3);
   }
-  IM_CHECK_RETV(window_active("Raypath view"), false);
+  IM_CHECK_RETV(EntryWindowActive("Raypath view"), false);
   ImGuiWindow* map = MapRegionWindow();
   ImGuiWindow* info = MapInfoRegionWindow();
   IM_CHECK_RETV(map != nullptr && info != nullptr, false);
@@ -7238,14 +7218,6 @@ bool RaypathViewNarrowestWindowKeepsControlsReachable(ImGuiTestContext* ctx) {
 // not depend on winning a race against fixed-dt completion.
 bool FiveOperationsChainInOneSession(ImGuiTestContext* ctx) {
   ScopedWatchdogGuard watchdog(ctx->EngineIO);
-  const auto window_active = [](const char* fragment) {
-    for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
-      if (w != nullptr && w->Active && std::strstr(w->Name, fragment) != nullptr) {
-        return true;
-      }
-    }
-    return false;
-  };
   ScopedServerGuard guard;
 
   // Cold start (§12.1's baseline): a document that has never run, no picture, the Analyze entry
@@ -7311,10 +7283,10 @@ bool FiveOperationsChainInOneSession(ImGuiTestContext* ctx) {
   // ---- ①'s last step, and ③'s open entry in one gesture: the top row click opens the Raypath
   // view — closed before it, alive after.
   IM_CHECK_RETV(!gui::g_state.analyze_raypath_view_open, false);
-  IM_CHECK_RETV(!window_active("Raypath view"), false);
+  IM_CHECK_RETV(!EntryWindowActive("Raypath view"), false);
   IM_CHECK_RETV(SelectRowByDisplay(ctx, TopChainDisplay().c_str()) != std::nullopt, false);  // click 4
   IM_CHECK_RETV(gui::g_state.analyze_raypath_view_open, false);
-  IM_CHECK_RETV(window_active("Raypath view"), false);
+  IM_CHECK_RETV(EntryWindowActive("Raypath view"), false);
   PinRaypathViewOnScreen(ctx);
   IM_CHECK_RETV(MapRegionWindow() != nullptr && MapInfoRegionWindow() != nullptr, false);
   IM_CHECK_RETV(ctx->ItemInfo("**/##map_canvas", ImGuiTestOpFlags_NoError).ID != 0, false);
@@ -7402,7 +7374,7 @@ bool FiveOperationsChainInOneSession(ImGuiTestContext* ctx) {
   // selected class with the survey): the row click re-selects before the map can answer. The
   // window is already open — this click re-keys it, it does not reopen it.
   IM_CHECK_RETV(SelectRowByDisplay(ctx, TopChainDisplay().c_str()) != std::nullopt, false);
-  IM_CHECK_RETV(gui::g_state.analyze_raypath_view_open && window_active("Raypath view"), false);
+  IM_CHECK_RETV(gui::g_state.analyze_raypath_view_open && EntryWindowActive("Raypath view"), false);
   ctx->LogInfo("[five ops] re-select after the cone analysis (DoAnalyze cleared the class): 1 click");
 
   // ---- Op ④'s first half — the map's pick sets the sky point and the point query waits (the
@@ -7452,11 +7424,11 @@ bool FiveOperationsChainInOneSession(ImGuiTestContext* ctx) {
   // ---- Op ④'s second half — the Selection header's named button opens the pose window
   // (closed before it), and a window-interior control answers over the real mouse path.
   IM_CHECK_RETV(!gui::g_state.analyze_pose_view_open, false);
-  IM_CHECK_RETV(!window_active("Pose & trace"), false);
+  IM_CHECK_RETV(!EntryWindowActive("Pose & trace"), false);
   ctx->ItemClick("**/Pose & trace###main_pose_open");
   ctx->Yield(3);
   IM_CHECK_RETV(gui::g_state.analyze_pose_view_open, false);
-  IM_CHECK_RETV(window_active("Pose & trace"), false);
+  IM_CHECK_RETV(EntryWindowActive("Pose & trace"), false);
   PinPoseViewOnScreen(ctx);
   IM_CHECK_RETV(PoseRegionWindow("##AnalyzeSunGlobe") != nullptr, false);
   ctx->ItemClick("**/Play##globe_play");
@@ -7484,7 +7456,7 @@ bool FiveOperationsChainInOneSession(ImGuiTestContext* ctx) {
   ctx->Yield(3);
   IM_CHECK_RETV(fabsf(gui::g_state.sun.altitude - (alt_before - 5.0f)) < 0.05f, false);
   IM_CHECK_RETV(gui::g_state.sim_state == SimState::kModified, false);
-  IM_CHECK_RETV(window_active("Raypath view") && window_active("Pose & trace"), false);
+  IM_CHECK_RETV(EntryWindowActive("Raypath view") && EntryWindowActive("Pose & trace"), false);
   // The freshness trio, read where each fact LIVES (a01: the render paths are single-source
   // call-throughs of these predicates; this imgui fork reports labels for widgets only, so the
   // pure-text lines assert through their predicates here and land on a capture for the human's
@@ -7539,7 +7511,7 @@ bool FiveOperationsChainInOneSession(ImGuiTestContext* ctx) {
   ctx->Yield(4);
   IM_CHECK_RETV(gui::AnalysisPictureNotice(gui::g_state.run_intent, gui::g_state.sim_state) != nullptr, false);
   IM_CHECK_RETV(gui::g_state.sim_state == SimState::kModified, false);
-  IM_CHECK_RETV(window_active("Raypath view") && window_active("Pose & trace"), false);
+  IM_CHECK_RETV(EntryWindowActive("Raypath view") && EntryWindowActive("Pose & trace"), false);
   ctx->LogInfo("[five ops] 5 refresh: 1 click + 1 wait; banner cleared, note honest, windows stood");
 
   // Process frames for the hand-off: the three surfaces this chain ended with, real frames of
@@ -7895,14 +7867,6 @@ bool CheckMapGlyphsAcrossUiScale(ImGuiTestContext* ctx) {
 // whose window is already open focuses that window instead (no second instance exists by
 // construction; both windows Begin with NoCollapse, so there is no collapsed tier to consider).
 bool SelectionHeaderEntryButtonsOpenAndFocus(ImGuiTestContext* ctx) {
-  const auto window_active = [](const char* fragment) {
-    for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
-      if (w != nullptr && w->Active && std::strstr(w->Name, fragment) != nullptr) {
-        return true;
-      }
-    }
-    return false;
-  };
   ScopedServerGuard guard;
   IM_CHECK_RETV(BringUpHaloScene(ctx, /*infinite=*/false), false);
   OpenWindow(ctx);
@@ -7926,7 +7890,7 @@ bool SelectionHeaderEntryButtonsOpenAndFocus(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(button_inside_clip("**/Pose & trace###main_pose_open"), false);
   ctx->ItemClick("**/Pose & trace###main_pose_open");
   ctx->Yield(2);
-  IM_CHECK_RETV(gui::g_state.analyze_pose_view_open && window_active("Pose & trace"), false);
+  IM_CHECK_RETV(gui::g_state.analyze_pose_view_open && EntryWindowActive("Pose & trace"), false);
   ctx->WindowClose("//Pose & trace");
   ctx->Yield(1);
 
@@ -7945,7 +7909,7 @@ bool SelectionHeaderEntryButtonsOpenAndFocus(ImGuiTestContext* ctx) {
   const auto point_id_before = gui::g_state.analysis.point.intent_id;
   ctx->ItemClick("**/Pose & trace###main_pose_open");
   ctx->Yield(2);
-  IM_CHECK_RETV(gui::g_state.analyze_pose_view_open && window_active("Pose & trace"), false);
+  IM_CHECK_RETV(gui::g_state.analyze_pose_view_open && EntryWindowActive("Pose & trace"), false);
   IM_CHECK_RETV(gui::g_state.analysis.selected_entry.value_or("") == selection_before, false);
   IM_CHECK_RETV(gui::g_state.dirty == dirty_before, false);
   IM_CHECK_RETV(gui::g_state.analysis.sky_point.valid == sky_before, false);
@@ -7969,7 +7933,7 @@ bool SelectionHeaderEntryButtonsOpenAndFocus(ImGuiTestContext* ctx) {
                 false);
   ctx->ItemClick("**/Raypath view###main_raypath_open");
   ctx->Yield(2);
-  IM_CHECK_RETV(gui::g_state.analyze_raypath_view_open && window_active("Raypath view"), false);
+  IM_CHECK_RETV(gui::g_state.analyze_raypath_view_open && EntryWindowActive("Raypath view"), false);
   IM_CHECK_RETV(ImGui::GetCurrentContext()->NavWindow != nullptr &&
                     std::strcmp(ImGui::GetCurrentContext()->NavWindow->Name, gui::kRaypathViewWindowTitle) == 0,
                 false);
@@ -8000,14 +7964,6 @@ bool MapPoseButtonLabelsDeriveFromTheWindowTitle(ImGuiTestContext* ctx) {
 // other states' hint texts reuse scroll-region wording, where a substring assert cannot
 // isolate the slot.
 bool SelectionHeaderEntriesTrackTheQueryStates(ImGuiTestContext* ctx) {
-  const auto window_active = [](const char* fragment) {
-    for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
-      if (w != nullptr && w->Active && std::strstr(w->Name, fragment) != nullptr) {
-        return true;
-      }
-    }
-    return false;
-  };
   const auto details_window = [] {
     for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
       if (w != nullptr && w->Active && w->ParentWindow == nullptr && std::strcmp(w->Name, "##AnalyzeDetails") == 0) {
@@ -8038,7 +7994,7 @@ bool SelectionHeaderEntriesTrackTheQueryStates(ImGuiTestContext* ctx) {
   const auto point_id_before = gui::g_state.analysis.point.intent_id;
   ctx->ItemClick("**/Pose & trace###main_pose_open");
   ctx->Yield(2);
-  IM_CHECK_RETV(gui::g_state.analyze_pose_view_open && window_active("Pose & trace"), false);
+  IM_CHECK_RETV(gui::g_state.analyze_pose_view_open && EntryWindowActive("Pose & trace"), false);
   IM_CHECK_RETV(gui::g_state.analysis.survey.intent_id == survey_id_before, false);
   IM_CHECK_RETV(gui::g_state.analysis.point.intent_id == point_id_before, false);
   IM_CHECK_RETV(gui::g_state.analysis.wait_feedback_texts.entry_hint_line.find("Pick a sky point") == 0, false);
@@ -8056,7 +8012,7 @@ bool SelectionHeaderEntriesTrackTheQueryStates(ImGuiTestContext* ctx) {
   const auto flight_id = gui::g_state.analysis.point.intent_id;
   ctx->ItemClick("**/Raypath view###main_raypath_open");
   ctx->Yield(2);
-  IM_CHECK_RETV(gui::g_state.analyze_raypath_view_open && window_active("Raypath view"), false);
+  IM_CHECK_RETV(gui::g_state.analyze_raypath_view_open && EntryWindowActive("Raypath view"), false);
   IM_CHECK_RETV(gui::g_state.analysis.point.intent_id == flight_id, false);
   IM_CHECK_RETV(
       DriveUntil(
@@ -8208,14 +8164,6 @@ bool SelectionHeaderEntriesNameRefusalAndMassArms(ImGuiTestContext* ctx) {
 // buttons, and the header's measured composition lands in the log: the §16.3 derivation's
 // live-frame calibration (推演 103/110 vs 实测), itemized by the rects the log carries.
 bool SelectionHeaderEntriesReachAtTheNarrowestBasis(ImGuiTestContext* ctx) {
-  const auto window_active = [](const char* fragment) {
-    for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
-      if (w != nullptr && w->Active && std::strstr(w->Name, fragment) != nullptr) {
-        return true;
-      }
-    }
-    return false;
-  };
   const auto request_basis = [&](int width, int height, const char* label) {
     g_window_size_test.width = width;
     g_window_size_test.height = height;
@@ -8236,7 +8184,13 @@ bool SelectionHeaderEntriesReachAtTheNarrowestBasis(ImGuiTestContext* ctx) {
   const ScopedWindowBasis window_basis(ctx);
   request_basis(1024, 640, "1024x640");
   const float panel_h = ImGui::GetIO().DisplaySize.y - gui::UiPx(gui::kTopBarHeight) - gui::UiPx(gui::kStatusBarHeight);
-  const float list_saved = gui::g_state.workspace.right_list_ratio;
+  // The floor construction pins the list ratio; the guard restores it on EVERY exit path (the
+  // RAII rule for case-mutated persistent state — a mid-case red must not leak the ratio).
+  struct RightListRatioGuard {
+    float saved;
+    RightListRatioGuard() : saved(gui::g_state.workspace.right_list_ratio) {}
+    ~RightListRatioGuard() { gui::g_state.workspace.right_list_ratio = saved; }
+  } list_ratio_guard;
   // The list absorbs the span above the diagnostics floor: the region reaches ITS floor — the
   // construction that shows the D2 floor is reachable at the narrowest basis (the list stays
   // above its own 250 floor meanwhile: floors coexist, §16.3's 368 ≤ 572).
@@ -8308,19 +8262,36 @@ bool SelectionHeaderEntriesReachAtTheNarrowestBasis(ImGuiTestContext* ctx) {
                     raypath_after.RectFull.Min.y == raypath_before.RectFull.Min.y,
                 false);
   {
-    // The measured narrowest form: the slot draws its minimal truncation ("The com…" — the
-    // calibration above logs the real leftover the truncation fills). The whole-line omission
-    // the plan's derivation expected is NOT reachable here: the live buttons are 88 pt (not the
-    // derived ~100-110), the 260 pt column leaves 52 pt, and even the vertical tier leaves
-    // more — the omit path is a defensive corner, pinned directly below through the fit seam.
+    // The measured narrowest form: the slot draws its minimal truncation — asserted by FORM,
+    // not by any pinned prefix (a wrong-fit implementation must not be nailed into the assert):
+    // the line starts the mass-arm sentence, carries the ellipsis, and MEASURES to fit the
+    // row's real leftover (the same arithmetic draw_hint used: window right edge minus the
+    // Pose button's right edge minus the item spacing).
     const std::string& narrow_hint = gui::g_state.analysis.wait_feedback_texts.entry_hint_line;
-    IM_CHECK_RETV(narrow_hint.find("The com") == 0, false);
+    IM_CHECK_RETV(narrow_hint.find("The") == 0, false);
     IM_CHECK_RETV(narrow_hint.find("…") != std::string::npos, false);
-    ctx->LogInfo("[header entries] narrowest: the slot drew its minimal truncation '%s'", narrow_hint.c_str());
+    ImGuiWindow* details_win = ctx->GetWindowByRef("##AnalyzeDetails");
+    const ImGuiTestItemInfo pose_now = ctx->ItemInfo("**/Pose & trace###main_pose_open", ImGuiTestOpFlags_NoError);
+    IM_CHECK_RETV(details_win != nullptr && pose_now.ID != 0, false);
+    const float leftover = (details_win->Pos.x + ImGui::GetContentRegionMax().x) -
+                           (pose_now.RectFull.Max.x + ImGui::GetStyle().ItemSpacing.x);
+    IM_CHECK_RETV(ImGui::CalcTextSize(narrow_hint.c_str()).x <= leftover, false);
+    ctx->LogInfo("[header entries] narrowest: minimal truncation '%s' (%.0f pt <= leftover %.0f pt)",
+                 narrow_hint.c_str(), ImGui::CalcTextSize(narrow_hint.c_str()).x, leftover);
     // The omit branch, exercised directly (it cannot fire through legal UI geometry): no width
     // carries even the ellipsis, and the whole text rides when the width allows it.
     IM_CHECK_RETV(gui::AnalyzeEntryHintFitToWidth("Pick a sky point", 0.0f).empty(), false);
     IM_CHECK_RETV(gui::AnalyzeEntryHintFitToWidth("Cancelled", 10000.0f) == "Cancelled", false);
+    // The middle-truncation pin: a width that admits "C…" but not "Ca…" returns exactly "C…" —
+    // the longest prefix that FITS, never a prefix that was already rejected (the width
+    // invariant: whatever comes back from the truncated path measures <= the requested width).
+    const float c_w = ImGui::CalcTextSize("C…").x;
+    const float ca_w = ImGui::CalcTextSize("Ca…").x;
+    IM_CHECK_RETV(gui::AnalyzeEntryHintFitToWidth("Cancelled", (c_w + ca_w) / 2.0f) == "C…", false);
+    const std::string mid =
+        gui::AnalyzeEntryHintFitToWidth("The complete answer is in the Raypath view.", (c_w + ca_w) / 2.0f + 40.0f);
+    IM_CHECK_RETV(ImGui::CalcTextSize(mid.c_str()).x <= (c_w + ca_w) / 2.0f + 40.0f, false);
+    IM_CHECK_RETV(mid.find("The") == 0 && mid.find("…") != std::string::npos, false);
   }
   {
     ImGuiWindow* details = ctx->GetWindowByRef("##AnalyzeDetails");
@@ -8342,9 +8313,8 @@ bool SelectionHeaderEntriesReachAtTheNarrowestBasis(ImGuiTestContext* ctx) {
   }
   ctx->ItemClick("**/Pose & trace###main_pose_open");
   ctx->Yield(2);
-  IM_CHECK_RETV(gui::g_state.analyze_pose_view_open && window_active("Pose & trace"), false);
+  IM_CHECK_RETV(gui::g_state.analyze_pose_view_open && EntryWindowActive("Pose & trace"), false);
   ctx->WindowClose("//Pose & trace");
-  gui::g_state.workspace.right_list_ratio = list_saved;
   ctx->Yield(2);
   ctx->LogInfo("[header entries] narrowest basis: floor geometry, scrolled-to-end reachability, click answers");
   return true;
@@ -8361,14 +8331,6 @@ bool SelectionHeaderEntriesReachAtTheNarrowestBasis(ImGuiTestContext* ctx) {
 //    (the fit promises themselves are the per-window cases'), then the factory state restores.
 bool WindowsCoexistPickReopenAndScaleTiers(ImGuiTestContext* ctx) {
   ScopedWatchdogGuard watchdog(ctx->EngineIO);
-  const auto window_active = [](const char* fragment) {
-    for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
-      if (w != nullptr && w->Active && std::strstr(w->Name, fragment) != nullptr) {
-        return true;
-      }
-    }
-    return false;
-  };
   ScopedServerGuard guard;
   IM_CHECK_RETV(BringUpBothWindows(ctx), false);
 
@@ -8484,7 +8446,7 @@ bool WindowsCoexistPickReopenAndScaleTiers(ImGuiTestContext* ctx) {
     const std::string second_label = gui::AnalysisRowLabel(second_display, gui::AnalysisCoreToPoolMap(gui::g_state));
     IM_CHECK_RETV(gui::SelectedClassRowLabelFor(gui::g_state) == second_label, false);
   }
-  IM_CHECK_RETV(window_active("Raypath view") && window_active("Pose & trace"), false);
+  IM_CHECK_RETV(EntryWindowActive("Raypath view") && EntryWindowActive("Pose & trace"), false);
   ctx->LogInfo(
       "[combo] second-row selection re-keyed both windows' issued intents and adopted docs to the full expected "
       "identity");
@@ -8495,12 +8457,12 @@ bool WindowsCoexistPickReopenAndScaleTiers(ImGuiTestContext* ctx) {
   ctx->WindowClose("//Pose & trace");
   ctx->Yield(2);
   IM_CHECK_RETV(!gui::g_state.analyze_raypath_view_open && !gui::g_state.analyze_pose_view_open, false);
-  IM_CHECK_RETV(!window_active("Raypath view") && !window_active("Pose & trace"), false);
+  IM_CHECK_RETV(!EntryWindowActive("Raypath view") && !EntryWindowActive("Pose & trace"), false);
   IM_CHECK_RETV(SelectRowByDisplay(ctx, second_display.c_str()) != std::nullopt, false);  // the row click reopens
-  IM_CHECK_RETV(gui::g_state.analyze_raypath_view_open && window_active("Raypath view"), false);
+  IM_CHECK_RETV(gui::g_state.analyze_raypath_view_open && EntryWindowActive("Raypath view"), false);
   ctx->ItemClick("**/Pose & trace###main_pose_open");
   ctx->Yield(3);
-  IM_CHECK_RETV(gui::g_state.analyze_pose_view_open && window_active("Pose & trace"), false);
+  IM_CHECK_RETV(gui::g_state.analyze_pose_view_open && EntryWindowActive("Pose & trace"), false);
   PinPoseViewOnScreen(ctx);
   IM_CHECK_RETV(MapRegionWindow() != nullptr && PoseRegionWindow("##AnalyzeSunGlobe") != nullptr, false);
   ctx->LogInfo("[combo] close/reopen through the real entries brought both windows back with their regions");
@@ -8530,7 +8492,7 @@ bool WindowsCoexistPickReopenAndScaleTiers(ImGuiTestContext* ctx) {
     ctx->Yield(3);
     PinRaypathViewOnScreen(ctx);
     PinPoseViewOnScreen(ctx);
-    IM_CHECK_RETV(window_active("Raypath view") && window_active("Pose & trace"), false);
+    IM_CHECK_RETV(EntryWindowActive("Raypath view") && EntryWindowActive("Pose & trace"), false);
     IM_CHECK_RETV(MapRegionWindow() != nullptr && PoseRegionWindow("##AnalyzeSunGlobe") != nullptr, false);
     IM_CHECK_RETV(ctx->ItemInfo("**/##map_canvas", ImGuiTestOpFlags_NoError).ID != 0, false);
     ctx->LogInfo("[combo] 150% + 1024x640 basis: both windows present, regions and canvas submitted");
@@ -8569,14 +8531,6 @@ bool WindowsCoexistPickReopenAndScaleTiers(ImGuiTestContext* ctx) {
 // ⑧ New with a verifiably in-flight point query (a fresh standing state) — the same cleared
 //    and drained contract through DoNew.
 bool WindowsStandThroughInFlightAndDocumentScopes(ImGuiTestContext* ctx) {
-  const auto window_active = [](const char* fragment) {
-    for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
-      if (w != nullptr && w->Active && std::strstr(w->Name, fragment) != nullptr) {
-        return true;
-      }
-    }
-    return false;
-  };
   ScopedServerGuard guard;
   // The arms' serial analyses exceed the default 60 s watchdog; the scale-tier precedent's
   // raised limits apply for the whole case (restored on every exit).
@@ -8627,7 +8581,7 @@ bool WindowsStandThroughInFlightAndDocumentScopes(ImGuiTestContext* ctx) {
     IM_CHECK_RETV(std::fabs(info.wavelength_nm - 600.0) > 1e-3, false);  // the landed doc's echo is not 600
   }
   IM_CHECK_RETV(gui::g_state.analysis.map.key.wavelength_nm == 0.0, false);
-  IM_CHECK_RETV(window_active("Raypath view") && window_active("Pose & trace"), false);
+  IM_CHECK_RETV(EntryWindowActive("Raypath view") && EntryWindowActive("Pose & trace"), false);
   ctx->LogInfo("[scopes] lambda 600 issued in flight, superseded by 0; the adopted doc's echo is not 600");
 
   // ---- ② a first-class request EXECUTING across the class switch: the sky point moves first
@@ -8704,7 +8658,7 @@ bool WindowsStandThroughInFlightAndDocumentScopes(ImGuiTestContext* ctx) {
     IM_CHECK_RETV(info.face_count == expected_second.faces.size(), false);
     IM_CHECK_RETV(std::equal(expected_second.faces.begin(), expected_second.faces.end(), info.faces), false);
   }
-  IM_CHECK_RETV(window_active("Raypath view") && window_active("Pose & trace"), false);
+  IM_CHECK_RETV(EntryWindowActive("Raypath view") && EntryWindowActive("Pose & trace"), false);
   ctx->LogInfo(
       "[scopes] first-class request executing across the class switch; adopted doc's faces = the second class's");
 
@@ -8757,7 +8711,7 @@ bool WindowsStandThroughInFlightAndDocumentScopes(ImGuiTestContext* ctx) {
   ctx->ItemClick("##TopBar/Render");
   ctx->Yield(3);
   IM_CHECK_RETV(gui::g_state.workspace.mode == gui::GuiState::WorkspaceMode::kRender, false);
-  IM_CHECK_RETV(window_active("Raypath view") && window_active("Pose & trace"), false);
+  IM_CHECK_RETV(EntryWindowActive("Raypath view") && EntryWindowActive("Pose & trace"), false);
   IM_CHECK_RETV(DriveUntil(
                     ctx,
                     [&target_a_id] {
@@ -8779,7 +8733,7 @@ bool WindowsStandThroughInFlightAndDocumentScopes(ImGuiTestContext* ctx) {
       "[scopes] A executed, B superseded it mid-flight, B's answer landed across the workspace switch (alt 30)");
   ctx->ItemClick("##TopBar/Analyze");
   ctx->Yield(3);
-  IM_CHECK_RETV(window_active("Raypath view") && window_active("Pose & trace"), false);
+  IM_CHECK_RETV(EntryWindowActive("Raypath view") && EntryWindowActive("Pose & trace"), false);
 
   // ---- ④ the survey re-run with the executor verifiably in flight, then Stop.
   ctx->SetRef(PanoramaRegionRef());
@@ -8800,7 +8754,7 @@ bool WindowsStandThroughInFlightAndDocumentScopes(ImGuiTestContext* ctx) {
       false);
   // The trigger cleared the SELECTION (a synchronous write); the list on show is whatever the
   // stopped run adopted — nothing asserted about it here. The windows stay open.
-  IM_CHECK_RETV(window_active("Raypath view") && window_active("Pose & trace"), false);
+  IM_CHECK_RETV(EntryWindowActive("Raypath view") && EntryWindowActive("Pose & trace"), false);
   IM_CHECK_RETV(gui::MapQueryStateFor(gui::g_state.analysis.map) == gui::MapQueryState::kNoSelection, false);
   ctx->LogInfo("[scopes] survey stop drained (executor was in flight); the windows stayed open");
   // Rows come back with the next completed analysis — then the re-selection re-arms both faces.
@@ -8858,7 +8812,7 @@ bool WindowsStandThroughInFlightAndDocumentScopes(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(gui::g_state.analysis.survey.adopted_result != nullptr, false);
   // The map face may legitimately be in flight here (the sky-point move re-keys it too); the
   // latch is per-face and only the point face was asserted outstanding.
-  IM_CHECK_RETV(window_active("Raypath view") && window_active("Pose & trace"), false);
+  IM_CHECK_RETV(EntryWindowActive("Raypath view") && EntryWindowActive("Pose & trace"), false);
   ctx->LogInfo(
       "[scopes] Revert withdrew the outstanding point face under its latch; the other faces and windows stood");
   // The moved sky point re-arms the point face (the latch clears with the changed key) — the
@@ -8903,7 +8857,7 @@ bool WindowsStandThroughInFlightAndDocumentScopes(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(gui::g_state.analysis.point.adopted_result == point_kept, false);
   IM_CHECK_RETV(gui::g_state.analysis.sky_point.valid, false);
   IM_CHECK_RETV(!gui::g_survey_executor.InFlight(), false);
-  IM_CHECK_RETV(window_active("Raypath view") && window_active("Pose & trace"), false);
+  IM_CHECK_RETV(EntryWindowActive("Raypath view") && EntryWindowActive("Pose & trace"), false);
   ctx->LogInfo("[scopes] settled Revert kept the faces, the sky point and both standing windows");
 
   // ---- Open with a point query held at pickup: the real JSON command replaces the document,
@@ -8943,7 +8897,7 @@ bool WindowsStandThroughInFlightAndDocumentScopes(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(gui::g_state.analysis.trace.adopted_result == nullptr, false);
   IM_CHECK_RETV(gui::g_state.analysis.sky_point.valid == false, false);
   IM_CHECK_RETV(!gui::g_state.analyze_raypath_view_open && !gui::g_state.analyze_pose_view_open, false);
-  IM_CHECK_RETV(!window_active("Raypath view") && !window_active("Pose & trace"), false);
+  IM_CHECK_RETV(!EntryWindowActive("Raypath view") && !EntryWindowActive("Pose & trace"), false);
   ctx->LogInfo("[scopes] Open replaced the document with a query in flight; faces cleared, windows closed, drained");
 
   // ---- ⑧ New with a point query held outstanding at its pickup (a fresh standing state: both
@@ -8974,7 +8928,7 @@ bool WindowsStandThroughInFlightAndDocumentScopes(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(gui::g_state.analysis.trace.adopted_result == nullptr, false);
   IM_CHECK_RETV(gui::g_state.analysis.sky_point.valid == false, false);
   IM_CHECK_RETV(!gui::g_state.analyze_raypath_view_open && !gui::g_state.analyze_pose_view_open, false);
-  IM_CHECK_RETV(!window_active("Raypath view") && !window_active("Pose & trace"), false);
+  IM_CHECK_RETV(!EntryWindowActive("Raypath view") && !EntryWindowActive("Pose & trace"), false);
   // No-revival over time: several more frames after the drain, the cleared contract still
   // holds (a late A-answer publish that revived any face would show here).
   ctx->Yield(20);

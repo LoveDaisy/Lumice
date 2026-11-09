@@ -1058,9 +1058,13 @@ ImU32 SegmentColor(int kind, float alpha) {
 // one definition lives at namespace scope so the main window's hint and the TU-local status row
 // read the same words; the completed read happens here so the word and its partial flag cannot
 // disagree.
-const char* PointStatusLabelFor(const PointQuerySession& point, bool* partial) {
+const char* PointStatusLabelFor(const PointQuerySession& point, bool* partial, LUMICE_PathPointInfo* completed_info) {
   if (partial != nullptr) {
     *partial = false;
+  }
+  if (completed_info != nullptr) {
+    *completed_info = LUMICE_PathPointInfo{};
+    completed_info->struct_size = sizeof(*completed_info);
   }
   const char* label = "No target";
   switch (PointQueryStateFor(point)) {
@@ -1080,6 +1084,9 @@ const char* PointStatusLabelFor(const PointQuerySession& point, bool* partial) {
       const bool is_partial = info && info->execution != LUMICE_PATH_OUTCOME_COMPLETED;
       if (partial != nullptr) {
         *partial = is_partial;
+      }
+      if (completed_info != nullptr && info.has_value()) {
+        *completed_info = *info;
       }
       label = is_partial ? "Partial" : "Ready";
       break;
