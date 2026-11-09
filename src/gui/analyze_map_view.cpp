@@ -194,120 +194,6 @@ std::vector<std::string> MapCaliberLines(const MapCaliberInput& in) {
   return lines;
 }
 
-// ---- Captured calculation target -------------------------------------------------------------
-
-MapCaptureTarget CaptureMapTarget(const ViewProjection& view, int width_px, int height_px) {
-  MapCaptureTarget target;
-  if (width_px <= 0 || height_px <= 0 || LensIsFullSky(view.lens_type)) {
-    return target;
-  }
-  // Radial inverse laws are monotone on their valid domains. The rectangle's largest radius
-  // is its half-diagonal; if a lens domain ends earlier, its circular boundary is the maximum.
-  // This includes truncated boundary arcs, not just valid corners. See the camera contract.
-  const double half_fov = static_cast<double>(view.fov) * kDeg2RadD * 0.5;
-  const double r =
-      std::hypot(static_cast<double>(width_px), static_cast<double>(height_px)) / std::min(width_px, height_px);
-  double theta = kPiD;
-  switch (view.lens_type) {
-    case kLensTypeLinear:
-      theta = std::atan(r * std::tan(half_fov));
-      break;
-    case kLensTypeFisheyeEqualArea:
-      theta = 2.0 * std::asin(std::min(1.0, r * std::sin(half_fov * 0.5)));
-      break;
-    case kLensTypeFisheyeEquidist:
-      theta = std::min(kPiD, r * half_fov);
-      break;
-    case kLensTypeFisheyeStereographic:
-      theta = 2.0 * std::atan(r * std::tan(half_fov * 0.5));
-      break;
-    case kLensTypeFisheyeOrthographic:
-      theta = std::asin(std::min(1.0, r * std::sin(half_fov)));
-      break;
-    case kLensTypeGlobe: {
-      const double limb = 1.0 / std::sqrt(kGlobeCameraD * kGlobeCameraD - 1.0);
-      const double k = r * std::tan(half_fov);
-      if (k >= limb) {
-        theta = std::acos(1.0 / kGlobeCameraD);
-        break;
-      }
-      // The near root runs monotonically from mu=1 at the centre to mu=1/D at the limb.
-      const double mu =
-          (kGlobeCameraD * k * k + std::sqrt(std::max(0.0, 1.0 - (kGlobeCameraD * kGlobeCameraD - 1.0) * k * k))) /
-          (1.0 + k * k);
-      theta = std::acos(Clamp1(mu));
-      break;
-    }
-    default:
-      return target;
-  }
-  float matrix[9];
-  BuildViewMatrix(view.elevation, view.azimuth, view.roll, matrix);
-  // Inside-out POSITION is +forward's negation; globe hit POSITION is -hit_world.
-  const double sign = view.lens_type == kLensTypeGlobe ? -1.0 : 1.0;
-  for (int k = 0; k < 3; ++k) {
-    target.centre_pos[k] = sign * matrix[6 + k];
-  }
-  Normalize3(target.centre_pos);
-  // 0.0001 degree covers the single-precision view matrix/angle conversion error. It is an
-  // angular, unit-normalized bound, not a world-coordinate epsilon. The 1.5 degree floor is
-  // the existing minimum calculation cap; it does not constrain the observation camera.
-  target.radius_deg = std::min(180.0, std::max(1.5, theta * kRad2DegD + 0.0001));
-  return target;
-}
-
-MapWindowSpec MapWindowSpecForTarget(const MapCaptureTarget& view, double sun_altitude_deg, double sun_azimuth_deg) {
-  MapWindowSpec spec;
-  if (view.radius_deg >= 180.0) {
-    return spec;  // full_sky true, grid zero — the engine's named all-sky view
-  }
-  spec.full_sky = false;
-  double c[3] = { view.centre_pos[0], view.centre_pos[1], view.centre_pos[2] };
-  Normalize3(c);
-  spec.centre_altitude_deg = std::asin(Clamp1(c[2])) * kRad2DegD;
-  spec.centre_azimuth_deg = std::atan2(c[1], c[0]) * kRad2DegD;
-
-  double sun_pos[3];
-  SkyPosition(sun_altitude_deg, sun_azimuth_deg, sun_pos);
-  const double rad = static_cast<double>(view.radius_deg) * kDeg2RadD;
-  const double delta_c = std::acos(Clamp1(Dot3(c, sun_pos)));
-  spec.delta_span_deg = 2.0 * static_cast<double>(view.radius_deg);
-  // The disk's azimuth extent about the sun: the tangent-cone bound, full circle when the disk
-  // reaches a pole of the sun frame (the azimuth coordinate degenerates there).
-  if (delta_c - rad <= 0.0 || delta_c + rad >= kPiD) {
-    spec.azimuth_span_deg = 360.0;
-  } else {
-    spec.azimuth_span_deg = 2.0 * std::asin(std::min(1.0, std::sin(rad) / std::sin(delta_c))) * kRad2DegD;
-  }
-  spec.actual_delta_span_deg = (std::min(kPiD, delta_c + rad) - std::max(0.0, delta_c - rad)) * kRad2DegD;
-  spec.subsky_target = spec.actual_delta_span_deg < 180.0 || spec.azimuth_span_deg < 360.0;
-  // The grid: kMapTargetCellsAcross across the delta span. Off the poles the azimuth columns
-  // match the sky spacing at the centre's deviation (an az degree near the sun is a small sky
-  // distance); a disk that contains a pole of the sun frame has no such reference deviation —
-  // its azimuths span the full circle about the degenerate point — so its columns size like the
-  // full sky's, one azimuth cell per delta cell (the quasi-uniform grid the all-sky default
-  // takes).
-  const double delta_cell_rad = 2.0 * rad / static_cast<double>(kMapTargetCellsAcross);
-  int rows = std::max(1, static_cast<int>(std::ceil(2.0 * rad / delta_cell_rad)));
-  const bool pole_inside = delta_c - rad <= 0.0 || delta_c + rad >= kPiD;
-  double az_cell_sky_rad = delta_cell_rad;
-  if (!pole_inside && std::sin(delta_c) > 1e-6) {
-    az_cell_sky_rad = delta_cell_rad / std::sin(delta_c);
-  }
-  int cols = static_cast<int>(std::ceil(spec.azimuth_span_deg * kDeg2RadD / az_cell_sky_rad));
-  cols = std::max(cols, 8);
-  rows = std::max(rows, 1);
-  if (static_cast<long long>(rows) * static_cast<long long>(cols) > LUMICE_PATH_MAP_MAX_PIXELS) {
-    const double scale = std::sqrt(static_cast<double>(rows) * static_cast<double>(cols) /
-                                   static_cast<double>(LUMICE_PATH_MAP_MAX_PIXELS));
-    rows = std::max(1, static_cast<int>(std::floor(rows / scale)));
-    cols = std::max(1, static_cast<int>(std::floor(cols / scale)));
-  }
-  spec.rows = rows;
-  spec.cols = cols;
-  return spec;
-}
-
 bool SkySunAnchorFor(const GuiState& state, SkySunAnchor* out) {
   // The adopted map's own echo is the best anchor (the picture's sun). Then the adopted
   // survey's scope (the digest's sun). The live document last — an edited scene's sun may
@@ -345,12 +231,6 @@ LUMICE_PathMapRequest MakeMapRequestForKey(const MapIntentKey& key, const SkySun
                                            std::vector<int>* counts, std::vector<double>* wavelengths) {
   *faces = key.selection.faces;
   *counts = key.selection.layer_face_counts;
-  MapCaptureTarget view;
-  for (int k = 0; k < 3; ++k) {
-    view.centre_pos[k] = key.centre_pos[k];
-  }
-  view.radius_deg = key.radius_deg;
-  const MapWindowSpec spec = MapWindowSpecForTarget(view, sun.altitude_deg, sun.azimuth_deg);
   LUMICE_PathMapRequest request{};
   request.struct_size = sizeof(request);
   request.crystal_id = key.selection.crystal_id;
@@ -358,13 +238,7 @@ LUMICE_PathMapRequest MakeMapRequestForKey(const MapIntentKey& key, const SkySun
   request.face_count = static_cast<int>(faces->size());
   request.layer_face_counts = counts->data();
   request.layer_count = static_cast<int>(counts->size());
-  request.full_sky = spec.full_sky ? 1 : 0;
-  request.centre_altitude_deg = spec.centre_altitude_deg;
-  request.centre_azimuth_deg = spec.centre_azimuth_deg;
-  request.delta_span_deg = spec.delta_span_deg;
-  request.azimuth_span_deg = spec.azimuth_span_deg;
-  request.view_rows = spec.rows;
-  request.view_cols = spec.cols;
+  request.full_sky = 1;
   if (key.wavelength_nm > 0.0) {
     *wavelengths = { key.wavelength_nm };
     request.wavelengths_nm = wavelengths->data();
@@ -594,26 +468,6 @@ void PumpMapQuery(GuiState& state, SurveyExecutor& executor, double now_s, MapSo
     map.intent_start_s = now_s;
     IssueMapIntent(state, executor, map.intent_id, map.key);  // once, all sky
   }
-}
-
-bool RefineMap(GuiState& state, SurveyExecutor& executor, const MapCaptureTarget& target, double now_s) {
-  auto& map = state.analysis.map;
-  if (!map.intent_valid || !map.adopted_result || target.radius_deg >= 180.0) {
-    return false;
-  }
-  SkySunAnchor sun;
-  SkySunAnchorFor(state, &sun);
-  if (!MapWindowSpecForTarget(target, sun.altitude_deg, sun.azimuth_deg).subsky_target)
-    return false;
-  executor.CancelInFlight(QueryFace::kMap);
-  std::copy(target.centre_pos, target.centre_pos + 3, map.key.centre_pos);
-  map.key.radius_deg = static_cast<float>(target.radius_deg);
-  map.cancelled_for_key = false;
-  map.adopted_error.clear();
-  map.intent_id = executor.NextId(map.key.selection.generation);
-  map.intent_start_s = now_s;
-  IssueMapIntent(state, executor, map.intent_id, map.key);
-  return true;
 }
 
 void RetryMap(GuiState& state, SurveyExecutor& executor, double now_s) {
@@ -1509,51 +1363,29 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   // the content that decides the measure (the same ladder rung the old single-column region
   // reached through its manual route).
   ImGui::BeginChild("##AnalyzeRaypathInfo", ImVec2(info_w, size.y), ImGuiChildFlags_Borders);
-  const auto quality_target = CaptureMapTarget(view.camera, view.width, view.height);
-  SkySunAnchor quality_sun;
-  SkySunAnchorFor(state, &quality_sun);
-  const auto quality_spec = MapWindowSpecForTarget(quality_target, quality_sun.altitude_deg, quality_sun.azimuth_deg);
   const bool quality_busy = map.intent_valid && !map.cancelled_for_key && map.answered_id != map.intent_id &&
                             map.adopted_id != map.intent_id && map.detail_id != map.intent_id;
   const bool quality_retry = map.cancelled_for_key || !map.adopted_error.empty();
-  const char* quality_label = quality_busy  ? "Cancel###map_quality" :
-                              quality_retry ? "Retry###map_quality" :
-                                              "Refine###map_quality";
-  const float quality_width =
-      std::max({ ImGui::CalcTextSize("Refine").x, ImGui::CalcTextSize("Retry").x, ImGui::CalcTextSize("Cancel").x }) +
-      2.0f * ImGui::GetStyle().FramePadding.x;
-  ImGui::BeginDisabled(!quality_busy && !quality_retry && (!map.adopted_result || !quality_spec.subsky_target));
+  const char* quality_label = quality_busy ? "Cancel###map_quality" : "Retry###map_quality";
+  const float quality_width = std::max(ImGui::CalcTextSize("Retry").x, ImGui::CalcTextSize("Cancel").x) +
+                              2.0f * ImGui::GetStyle().FramePadding.x;
+  ImGui::BeginDisabled(!quality_busy && !quality_retry);
   if (ImGui::Button(quality_label, ImVec2(quality_width, ImGui::GetFrameHeight()))) {
     if (quality_busy)
       CancelMap(state, g_survey_executor);
-    else if (quality_retry)
-      RetryMap(state, g_survey_executor, now_s);
     else
-      RefineMap(state, g_survey_executor, quality_target, now_s);
+      RetryMap(state, g_survey_executor, now_s);
   }
   ImGui::EndDisabled();
   if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
     if (quality_busy)
-      ImGui::SetTooltip("Cancel only this map calculation; keep current frozen sources.");
-    else if (quality_retry)
-      ImGui::SetTooltip("Retry the captured target and quality, NOT the current camera.");
-    else if (!quality_spec.subsky_target)
-      ImGui::SetTooltip("Choose a zoomable lens and narrow the target before Refine. Full-sky is not fine detail.");
-    else {
-      const auto spec = MapWindowSpecForTarget(quality_target, have_anchor_info ? anchor_info.sun_altitude_deg : 0.0,
-                                               have_anchor_info ? anchor_info.sun_azimuth_deg : 0.0);
-      ImGui::SetTooltip(
-          "One explicit calculation and its wait; capture this target once.\n%sTarget %.6g° diameter; %d×%d cells; "
-          "n=%d.\n"
-          "Actual cell δ %.7g°; grid cap %d. Move/resize while waiting without another request.",
-          view.camera.lens_type == kLensTypeGlobe ? "NEAR SIDE ONLY. Far side keeps its own precision.\n" : "",
-          2.0 * quality_target.radius_deg, spec.rows, spec.cols, kMapQuerySampleCount,
-          spec.rows ? spec.actual_delta_span_deg / spec.rows : 1.0, LUMICE_PATH_MAP_MAX_PIXELS);
-    }
+      ImGui::SetTooltip("Cancel only this map calculation; keep the current frozen map.");
+    else
+      ImGui::SetTooltip("Retry the current full-sky request, independent of the observation camera.");
   }
   // One reserved short status line: asynchronous prose belongs in the scrolling report below.
-  ImGui::TextDisabled("%s", quality_busy  ? "Computing captured target" :
-                            quality_retry ? "Retry captured target" :
+  ImGui::TextDisabled("%s", quality_busy  ? "Computing full sky" :
+                            quality_retry ? "Retry full sky" :
                                             "Observe · no calculation");
 
   // The wavelength: an explicit value in [350, 900], or the engine's reference (0). The scratch
