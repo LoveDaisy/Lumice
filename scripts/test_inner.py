@@ -7,7 +7,7 @@ Three subcommands, one per consumer:
             derivation chain goes to stderr; stdout carries a single JSON plan object
             (the machine-readable contract scripts/test.sh consumes — the two streams
             are separated so the chain's wording can evolve without breaking parsing).
-  checkers  runs the four diff-scoped policy gates through each module's
+  checkers  runs the five diff-scoped policy gates through each module's
             diff_verdict() seam — the same functions their own main() calls — and
             reports one aggregate verdict. Untracked files are counted and their
             invisibility to these gates stated (same scope as the pre-commit hook).
@@ -402,7 +402,7 @@ def derive(files: list[str], base: str, from_diff: bool) -> tuple[dict, list[tup
     if kernel and "parity" not in layers:
         layers.append("parity")
 
-    # The always-on layer: the four diff-scoped gates plus the format check run on
+    # The always-on layer: the five diff-scoped gates plus the format check run on
     # every inner invocation, whatever the diff is.
     add_layers(["checkers", "format"])
 
@@ -481,7 +481,7 @@ def print_chain(per_file: list[tuple[str, str, str]], plan: dict, from_diff: boo
         if plan["untracked"]:
             print(
                 f"  note: {plan['untracked']} untracked file(s) joined the derivation but stay "
-                f"invisible to the four diff-scoped checkers until `git add` (the same scope "
+                f"invisible to the five diff-scoped checkers until `git add` (the same scope "
                 f"the pre-commit hook sees); the commit gate covers them",
                 file=sys.stderr,
             )
@@ -616,7 +616,7 @@ def cmd_faces(args: argparse.Namespace) -> int:
 
 
 def violations_of(verdict: object) -> list:
-    """The three verdict shapes the four seams return: (violations, scanned)
+    """The three verdict shapes the checker seams return: (violations, scanned)
     tuples, bare violation lists, and check_new_test_tus's Verdict."""
     if isinstance(verdict, tuple):
         return verdict[0]
@@ -628,6 +628,7 @@ def violations_of(verdict: object) -> list:
 def cmd_checkers(args: argparse.Namespace) -> int:
     from check_loop_fatal_asserts import diff_verdict as loop_fatal_verdict
     from check_new_gui_tests import diff_verdict as gui_tests_verdict
+    from check_near_far_macros import diff_verdict as near_far_verdict
     from check_new_refs import diff_verdict as new_refs_verdict
     from check_new_test_tus import diff_verdict as test_tus_verdict
 
@@ -641,6 +642,7 @@ def cmd_checkers(args: argparse.Namespace) -> int:
         ("new-gui-tests", gui_tests_verdict(diff_args, content_ref, base_ref)),
         ("loop-fatal-asserts", loop_fatal_verdict(diff_args, content_ref)),
         ("new-test-tus", test_tus_verdict(diff_args, content_ref, base_ref)),
+        ("near-far-macros", near_far_verdict(diff_args, content_ref)),
     ]
 
     untracked = [u for u in git_out(["ls-files", "--others", "--exclude-standard"]).splitlines() if u]
@@ -664,7 +666,7 @@ def cmd_checkers(args: argparse.Namespace) -> int:
                 detail = f" ({verdict[1]} scanned)"
             print(f"checker {name}: PASS{detail}")
 
-    # One uniform verdict->exit mapping for all four: violations non-empty means 1.
+    # One uniform verdict->exit mapping: violations non-empty means 1.
     # For new-test-tus the "TU half only, notices never gate" boundary is carried by
     # its diff_verdict, which is the only thing consulted here.
     return 1 if failed else 0
@@ -836,7 +838,7 @@ def main() -> int:
         json.loads(Path(args.plan_file).read_text(encoding="utf-8"))
     ) or 0)
 
-    checkers = sub.add_parser("checkers", help="run the four diff-scoped gates")
+    checkers = sub.add_parser("checkers", help="run the five diff-scoped gates")
     checkers.add_argument("--base", default=None, help="diff base (default: merge-base HEAD main)")
     checkers.set_defaults(func=cmd_checkers)
 

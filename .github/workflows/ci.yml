@@ -2364,8 +2364,8 @@ jobs:
       - name: Unit tests for the policy gates
         run: python3 -m pytest test/unit-correctness/scripts -q
 
-  # Diff-scoped siblings of the policy gate above: both ask what THIS PR added
-  # rather than what state the tree is in, and both need a merge-base, which is
+  # Diff-scoped siblings of the policy gate above: they ask what THIS PR added
+  # rather than what state the tree is in, and need a merge-base, which is
   # why they share one job and one fetch-depth-0 checkout. The pre-commit hook
   # covers the local side of each.
   #
@@ -2380,9 +2380,11 @@ jobs:
   #      test/tu_cost_ledger.json (append-only; the checker verifies the
   #      append-only invariant and cross-checks the declared sum against the
   #      diff's actual added TU count — see check_new_test_tus.py).
+  #   5. Bare near/far identifiers added by this PR must not be erased by the
+  #      empty macros in Windows headers (see check_near_far_macros.py).
   #
-  # None of the four reads pre-existing content, so the existing body of any
-  # kind never blocks anyone.
+  # Only newly added lines/entities are gated; pre-existing content by itself
+  # never blocks anyone.
   new-refs:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-24.04
@@ -2410,3 +2412,8 @@ jobs:
         run: |
           base=$(git merge-base "${{ github.event.pull_request.base.sha }}" HEAD)
           python3 scripts/check_new_test_tus.py --range "$base..HEAD"
+
+      - name: Near-far macro check (added lines vs merge-base)
+        run: |
+          base=$(git merge-base "${{ github.event.pull_request.base.sha }}" HEAD)
+          python3 scripts/check_near_far_macros.py --range "$base..HEAD"
