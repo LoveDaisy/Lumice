@@ -38,7 +38,7 @@ printf 'win-leg: commit=%s host=%s workspace=%s\n' "${REV}" "${HOST}" "${WS}"
 if [[ -n $(git status --porcelain --untracked-files=no) ]]; then
   printf 'win-leg: synced=HEAD (worktree dirty)\n'
 fi
-LFS_DIRTY=$(git status --porcelain -- resources/ test/fixtures/li-parity/)
+LFS_DIRTY=$(git status --porcelain --untracked-files=no -- resources/ test/fixtures/li-parity/)
 if [[ -n ${LFS_DIRTY} ]]; then
   printf 'WIN_LEG_RESULT: SKIPPED lfs-dirty %s\n' "${LFS_DIRTY//$'\n'/; }"
   exit 0
@@ -50,7 +50,7 @@ if [[ ${STAMP} =~ ^[0-9a-f]{40}$ ]] && git merge-base --is-ancestor "${STAMP}" "
   if git diff --no-renames --name-status -z "${STAMP}" "${REV}" > "${TMP}/diff"; then MODE=diff; fi
 fi
 git archive "${REV}" -o "${TMP}/head.tar" || fail archive
-python3 - "${TMP}" "${REV}" "${STAMP}" "${MODE}" "${LABELS}" "${WS}" "${WAIT}" "${LIMIT}" <<'PY'
+python3 - "${TMP}" "${REV}" "${STAMP}" "${MODE}" "${LABELS}" "${WS}" "${WAIT}" "${LIMIT}" <<'PY' || fail package-exception
 import hashlib
 import io
 import json
@@ -78,6 +78,9 @@ with tarfile.open(out / 'head.tar') as source, tarfile.open(out / 'source.tar', 
         manifest[name] = hashlib.sha256(data).hexdigest()
         member.size = len(data)
         dest.addfile(member, io.BytesIO(data))
+expected = set(subprocess.check_output(['git', 'ls-tree', '-r', '-z', '--name-only', rev]).decode('utf-8').split('\0')[:-1])
+if set(manifest) != expected:
+    raise RuntimeError('HEAD contains unsupported non-regular tracked entries')
 changes, deletes = [], []
 if mode == 'diff':
     parts = (out / 'diff').read_bytes().split(b'\0')

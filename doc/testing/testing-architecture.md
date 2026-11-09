@@ -2722,7 +2722,10 @@ not binary stdin through the Windows login shell.
 
 **What is tested.** One pinned HEAD is archived, with the clean worktree's LFS contents
 substituted only for `resources/` and `test/fixtures/li-parity/`, verified against their
-HEAD pointer hashes. Other LFS paths remain pointers (no GUI reference materialization).
+HEAD pointer hashes. Untracked local assets are not a dirty-HEAD condition. Other LFS
+paths remain pointers (no GUI reference materialization). Tracked non-regular entries
+(symlinks or gitlinks) are refused during packaging, not silently omitted from the HEAD
+manifest.
 The remote full default target graph is built with Release, `BUILD_TEST=ON`, `BUILD_GUI=ON`,
 CUDA OFF and IPO OFF, matching the CI MSVC correctness build rather than release packaging.
 CTest receives `QUICK_CTEST_LABELS` from test.sh, shared with its local/inner selectors:
@@ -2754,8 +2757,14 @@ sync, build and tests. A short OS-handle guard serializes acquisition/stale recl
 the owner holds an exclusive lease and writes host/PID/time/scope/token metadata.
 Contenders wait at most `LUMICE_WIN_QUICK_LOCK_WAIT` seconds (default 600, 30s polling),
 then return `SKIPPED busy`. An abandoned slot older than 90 minutes is reclaimed with
-`stale-lock-broken` printed; a live exclusive lease is not evicted by age. The Windows
-leg always obeys the slot. WSL heavy work must take the same slot through `/mnt/c`:
+`stale-lock-broken` printed; a live exclusive lease is not evicted by age. Release uses
+the same guard and checks the holder token before disposing the lease and removing the
+slot. A persistent `build-active` marker is created before launching the build; normal
+completion or confirmed process-tree cancellation permits release. An unconfirmed build
+(controller lost or cancellation failed) is never reclaimed by age: first verify that
+its exact process tree has stopped, then explicitly clear that owned slot. Such callers
+remain `SKIPPED busy` meanwhile. The Windows leg always obeys the slot. WSL heavy work must
+take the same slot through `/mnt/c`:
 that direction is an operating convention, not a retrofit to out-of-repository WSL
 scripts. Work that ignores the slot is outside this mutual-exclusion guarantee.
 
@@ -2763,8 +2772,9 @@ scripts. Work that ignores the slot is outside this mutual-exclusion guarantee.
 cost (§7.3); steady-state cost is incremental compilation plus CTest, cold/rebase recovery
 pays a full MSVC rebuild. The build/test deadline is `LUMICE_WIN_QUICK_TIMEOUT` seconds
 (default 3600), in addition to the bounded lock queue. On expiry only the owned build PID
-and its descendants are killed. A failed cancellation retains the lock; an orphaned lock
-is recovered only by the stale-lock protocol. Dependency downloads have a 20s low-speed
+and its descendants are killed. An unconfirmed cancellation retains the slot for explicit
+recovery above; ordinary abandoned pre-build slots follow the stale-lock protocol.
+Dependency downloads have a 20s low-speed
 guard; populate missing CPM sources through the file-transfer channel before retrying a
 cold run. Do not disable SAC or substitute CI success for this invocation's evidence.
 
@@ -2779,4 +2789,7 @@ same tree. `stale-lock-broken` is a recovery note, **not** a skip. Failure stage
 `sync`, `build`, `sac`, `ctest`, `timeout`, and `transport`; `tree-mismatch` and `no-tests`
 are stable reasons. Full diagnostics persist remotely first and in
 `build/win_quick_leg.last.log` locally (single-slot overwrite); a failure prints the last
-50 local-log lines before the summary.
+50 local-log lines before the summary. Each remotely concluded run drops its source archive,
+including sync/queue failures. Completed staging diagnostics carry a completion marker and
+are retained for seven days, then pruned by subsequent invocations; directories without a
+completion marker (including unconfirmed process trees) are never automatically removed.

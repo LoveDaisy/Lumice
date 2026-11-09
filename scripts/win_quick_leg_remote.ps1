@@ -82,7 +82,10 @@ try {
                     $old = Get-Content -Raw $holder | ConvertFrom-Json
                     $born = [DateTime]::Parse($old.started).ToUniversalTime()
                 }
-                if (([DateTime]::UtcNow - $born).TotalMinutes -gt 90) {
+                # A controller lost during a build cannot prove its descendants
+                # stopped. Keep that slot for explicit recovery, regardless of age.
+                $unconfirmedBuild = Test-Path (Join-Path $lock 'build-active')
+                if (-not $unconfirmedBuild -and ([DateTime]::UtcNow - $born).TotalMinutes -gt 90) {
                     # A live owner holds this handle throughout sync/build/test;
                     # age alone must never evict a live run.
                     $probe = [IO.File]::Open((Join-Path $lock 'lease'), 'OpenOrCreate', 'ReadWrite', 'None')
@@ -191,6 +194,8 @@ try {
             $errLog = Join-Path $runDir 'run.err'
             $cmd = Join-Path $runDir 'win_quick_leg_remote.cmd'
             $args = "/d /c `"`"$cmd`" `"$ws`" `"$($request.labels)`"`""
+            Set-Content -Encoding ASCII (Join-Path $lock 'build-active') $token
+            $release = $false
             $proc = Start-Process -FilePath $env:ComSpec -ArgumentList $args -PassThru -NoNewWindow `
                 -RedirectStandardOutput $outLog -RedirectStandardError $errLog
             # PowerShell 5.1 otherwise loses ExitCode when WaitForExit reopens an
@@ -198,14 +203,11 @@ try {
             $null = $proc.Handle
             if (-not $proc.WaitForExit([int]($request.timeout * 1000))) {
                 & "$env:SystemRoot\System32\taskkill.exe" /PID $proc.Id /T /F
-                if ($LASTEXITCODE -ne 0 -and -not $proc.HasExited) {
-                    # Keep the fresh lock if cancellation failed: never let the
-                    # next caller share a still-running build tree.
-                    $release = $false
-                }
+                $release = $LASTEXITCODE -eq 0
                 $result = 'FAIL stage=timeout reason=deadline'
             } else {
                 $proc.WaitForExit()
+                $release = $true
                 $lines = @(Get-Content $outLog | Where-Object { $_ -match '^WIN_LEG_RESULT: ' })
                 if ($lines.Count -eq 1 -and $proc.ExitCode -eq 0 -and $lines[0] -match '^WIN_LEG_RESULT: PASS$') {
                     $result = 'PASS'
@@ -219,10 +221,42 @@ try {
     Write-Host "win-leg: $($_.Exception.Message)"
     $result = "FAIL stage=$stage reason=exception"
 } finally {
-    if ($null -ne $lease) { $lease.Dispose() }
     if ($owned -and $release) {
-        Remove-Item -Force -Recurse $lock
+        $guard = $null
+        try {
+            # Retain the lease until release is serialized with acquisition.
+            for ($attempt = 0; $attempt -lt 100 -and $null -eq $guard; $attempt++) {
+                try { $guard = [IO.File]::Open((Join-Path $lockRoot 'home-box.guard'), 'OpenOrCreate', 'ReadWrite', 'None') }
+                catch [IO.IOException] { Start-Sleep -Milliseconds 50 }
+            }
+            if ($null -eq $guard) { throw 'Could not acquire release guard' }
+            if ((Get-Content -Raw $holder | ConvertFrom-Json).token -eq $token) {
+                $lease.Dispose()
+                $lease = $null
+                Remove-Item -Force -Recurse $lock
+            }
+        } catch {
+            Write-Host "win-leg: lock release: $($_.Exception.Message)"
+            $result = 'FAIL stage=sync reason=lock-release'
+        } finally {
+            if ($null -ne $guard) { $guard.Dispose() }
+        }
     }
+    if ($null -ne $lease) { $lease.Dispose() }
+    # Archives are transient even on sync/queue failure. Completed diagnostic
+    # runs are retained for seven days; never prune an unconfirmed process tree.
+    try {
+        $archive = Join-Path $runDir 'source.tar'
+        if (Test-Path $archive) { Remove-Item -Force $archive }
+        if ($release) { Set-Content -Encoding ASCII (Join-Path $runDir '.completed') $token }
+        foreach ($oldRun in Get-ChildItem -Directory (Split-Path -Parent $runDir)) {
+            if ($oldRun.Name -notmatch '^[0-9a-f]{12}-tmp\.[A-Za-z0-9]+$') { continue }
+            $completed = Join-Path $oldRun.FullName '.completed'
+            if ((Test-Path $completed) -and (Get-Item $completed).LastWriteTimeUtc -lt [DateTime]::UtcNow.AddDays(-7)) {
+                Remove-Item -Recurse -Force $oldRun.FullName
+            }
+        }
+    } catch { Write-Host "win-leg: staging cleanup: $($_.Exception.Message)" }
 }
 Write-Host "WIN_LEG_RESULT: $result"
 exit 0

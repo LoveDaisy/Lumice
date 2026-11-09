@@ -117,3 +117,49 @@ printf 'WIN_LEG_RESULT: PASS\\n'
     labels = (root / "win-entered").read_text().strip()
     assert labels in (root / "local-entered").read_text()
     assert "(win: PASS)" in result.stdout
+
+
+@pytest.mark.parametrize("mutation,expected", [
+    ("untracked-asset", "FAIL stage=sync reason=transfer"),
+    ("tracked-asset", "SKIPPED lfs-dirty"),
+    ("symlink", "FAIL stage=sync reason=package-exception"),
+    ("gitlink", "FAIL stage=sync reason=package-exception"),
+])
+def test_real_packager_checks_head_entries_not_untracked_assets(tmp_path, mutation, expected):
+    root = SCRIPT.parents[1]
+    _write(tmp_path, "scripts/win_quick_leg.sh", (root / "scripts/win_quick_leg.sh").read_text())
+    for name in ("win_quick_leg_remote.cmd", "win_quick_leg_remote.ps1"):
+        _write(tmp_path, "scripts/" + name, (root / "scripts" / name).read_text())
+    _write(tmp_path, "resources/asset.txt", "tracked asset\n")
+
+    def git(*args):
+        return subprocess.check_output(["git", *args], cwd=tmp_path, text=True).strip()
+
+    git("init", "-q")
+    git("config", "user.email", "test@example.invalid")
+    git("config", "user.name", "Packager Test")
+    git("add", ".")
+    git("commit", "-qm", "fixture")
+    if mutation == "symlink":
+        try:
+            (tmp_path / "linked-asset").symlink_to("resources/asset.txt")
+        except OSError:
+            pytest.skip("OS does not permit symlink creation")
+        git("add", "linked-asset")
+        git("commit", "-qm", "symlink fixture")
+    elif mutation == "gitlink":
+        git("update-index", "--add", "--cacheinfo", "160000," + git("rev-parse", "HEAD") + ",submodule")
+        git("commit", "-qm", "gitlink fixture")
+    elif mutation == "tracked-asset":
+        (tmp_path / "resources/asset.txt").write_text("dirty tracked asset\n")
+    else:
+        (tmp_path / "resources/untracked.txt").write_text("not part of HEAD\n")
+    # Exercise the actual HEAD packager, stopping at transfer without a network.
+    _write(tmp_path, "bin/ssh", "#!/bin/sh\ncase \"$*\" in *' type '*) exit 1 ;; esac\nexit 0\n")
+    _write(tmp_path, "bin/scp", "#!/bin/sh\nexit 27\n")
+    env = dict(os.environ, PATH=str(tmp_path / "bin") + os.pathsep + os.environ["PATH"],
+               LUMICE_WIN_QUICK_HOST="fixture", LUMICE_WIN_QUICK_WS="C:/fixture/ws-winleg")
+    result = subprocess.run(["bash", "scripts/win_quick_leg.sh"], cwd=tmp_path, env=env,
+                            text=True, capture_output=True, timeout=30)
+    assert f"WIN_LEG_RESULT: {expected}" in result.stdout, result.stdout + result.stderr
+    assert result.returncode == (0 if mutation == "tracked-asset" else 1)
