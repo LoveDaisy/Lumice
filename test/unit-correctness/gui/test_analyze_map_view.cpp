@@ -246,29 +246,53 @@ TEST(AnalyzeMapView, CaliberLinesCarryTheReaderFieldsVerbatim) {
   in.evidence.geometry_basis = LUMICE_PathText{ kBasis, sizeof(kBasis) - 1 };
   in.completed = true;
 
-  const std::vector<std::string> lines = MapCaliberLines(in);
-  ASSERT_GE(lines.size(), 3u);
-  EXPECT_NE(lines[0].find("550.0 nm"), std::string::npos);
-  EXPECT_NE(lines[0].find("9/12 members"), std::string::npos);
-  EXPECT_NE(lines[0].find("n=500000"), std::string::npos);
-  EXPECT_NE(lines[0].find("12345 events"), std::string::npos);
-  EXPECT_NE(lines[0].find("[3.5, 48.5]"), std::string::npos);
-  EXPECT_NE(lines[0].find("[-100.0, 260.0]"), std::string::npos);
-  EXPECT_NE(lines[0].find("182\u00d71440"), std::string::npos) << "grid dims echo the Info's own";
-  EXPECT_NE(lines[1].find("band-sum"), std::string::npos);
-  EXPECT_NE(lines[1].find("physical class"), std::string::npos);
-  EXPECT_NE(lines[1].find("per sr"), std::string::npos);
-  EXPECT_NE(lines[1].find("scene geometry"), std::string::npos);
-  EXPECT_EQ(lines[2], kBasis);  // the engine's geometry string, byte for byte
+  // The tiers: DEFAULT = the short quantity name with its unit and the scene-vs-nominal limit;
+  // PHYSICS = the full definition, the sun premise and the engine's basis verbatim; CALCULATION
+  // = the grid and execution numbers. The lambda is in NO line — the slider row's echo is its
+  // one owner.
+  const std::vector<std::string> default_lines = MapCaliberDefaultLines(in);
+  ASSERT_GE(default_lines.size(), 2u);
+  EXPECT_NE(default_lines[0].find("band-sum"), std::string::npos);
+  EXPECT_NE(default_lines[0].find("per sr"), std::string::npos);
+  EXPECT_EQ(default_lines[0].find("physical class"), std::string::npos) << "the aggregation is a Physics fact";
+  EXPECT_NE(default_lines[1].find("Scene geometry"), std::string::npos)
+      << "a non-nominal shape names the limit at the default tier";
 
-  // A nominal shape says so; a full-sky view names the all-sky grid.
+  const std::vector<std::string> physics = MapCaliberPhysicsLines(in);
+  ASSERT_GE(physics.size(), 4u);
+  EXPECT_NE(physics[0].find("band-sum"), std::string::npos);
+  EXPECT_NE(physics[0].find("physical class"), std::string::npos);
+  EXPECT_NE(physics[0].find("per sr"), std::string::npos);
+  EXPECT_NE(physics[1].find("Sun at altitude 20.0"), std::string::npos);
+  EXPECT_NE(physics[2].find("Scene geometry"), std::string::npos);
+  EXPECT_EQ(physics[3], kBasis);  // the engine's geometry string, byte for byte
+
+  const std::vector<std::string> calc = MapCaliberCalculationLines(in);
+  ASSERT_GE(calc.size(), 3u);
+  for (const std::string& l : calc) {
+    EXPECT_EQ(l.find("550.0 nm"), std::string::npos) << "the lambda echo is deleted, not moved";
+  }
+  EXPECT_NE(calc[0].find("n=500000"), std::string::npos);
+  EXPECT_NE(calc[0].find("[3.5, 48.5]"), std::string::npos);
+  EXPECT_NE(calc[0].find("[-100.0, 260.0]"), std::string::npos);
+  EXPECT_NE(calc[0].find("182\u00d71440"), std::string::npos) << "grid dims echo the Info's own";
+  EXPECT_NE(calc[1].find("9/12 members"), std::string::npos);
+  EXPECT_NE(calc[1].find("12345 events"), std::string::npos);
+  EXPECT_NE(calc[2].find("Source-fixed scale"), std::string::npos);
+
+  // A nominal shape says so (its limit rides Physics); a full-sky view names the all-sky grid.
   in.info.shape_is_nominal = 1;
   in.info.view_full_sky = 1;
   in.info.view_rows = 180;
   in.info.view_cols = 360;
-  const std::vector<std::string> full = MapCaliberLines(in);
+  const std::vector<std::string> nominal_default = MapCaliberDefaultLines(in);
+  for (const std::string& l : nominal_default) {
+    EXPECT_EQ(l.find("Scene geometry"), std::string::npos) << "nominal needs no default limit";
+  }
+  const std::vector<std::string> nominal_physics = MapCaliberPhysicsLines(in);
+  EXPECT_NE(nominal_physics[2].find("Nominal geometry"), std::string::npos);
+  const std::vector<std::string> full = MapCaliberCalculationLines(in);
   EXPECT_NE(full[0].find("full sky 180\u00d7360"), std::string::npos);
-  EXPECT_NE(full[1].find("nominal geometry"), std::string::npos);
 }
 
 TEST(AnalyzeMapView, CaliberLinesSpellTruncationFiniteZeroAndRank0) {
@@ -281,7 +305,7 @@ TEST(AnalyzeMapView, CaliberLinesSpellTruncationFiniteZeroAndRank0) {
   in.info.kept_count = 42;
   in.info.truncated = 1;
   in.completed = true;
-  std::vector<std::string> lines = MapCaliberLines(in);
+  std::vector<std::string> lines = MapCaliberDefaultLines(in);
   ASSERT_GE(lines.size(), 1u);
   // Truncation is named and counts its prefix — never passed off as the whole class.
   bool truncated_line = false;
@@ -298,7 +322,7 @@ TEST(AnalyzeMapView, CaliberLinesSpellTruncationFiniteZeroAndRank0) {
 
   in.info.truncated = 0;
   in.info.kept_count = 0;
-  lines = MapCaliberLines(in);
+  lines = MapCaliberDefaultLines(in);
   zero_line = false;
   for (const std::string& l : lines) {
     zero_line = zero_line || l.find("finite zero") != std::string::npos;
@@ -306,7 +330,7 @@ TEST(AnalyzeMapView, CaliberLinesSpellTruncationFiniteZeroAndRank0) {
   EXPECT_TRUE(zero_line);
   // The same document before its intent is answered draws no finite-zero claim.
   in.completed = false;
-  lines = MapCaliberLines(in);
+  lines = MapCaliberDefaultLines(in);
   zero_line = false;
   for (const std::string& l : lines) {
     zero_line = zero_line || l.find("finite zero") != std::string::npos;
@@ -323,7 +347,7 @@ TEST(AnalyzeMapView, CaliberLinesSpellTruncationFiniteZeroAndRank0) {
   static const char* kMethods[] = { "psi_average", "lattice_mean" };
   in.methods[0] = kMethods[0];
   in.methods[1] = kMethods[1];
-  lines = MapCaliberLines(in);
+  lines = MapCaliberDefaultLines(in);
   bool mass_line = false;
   for (const std::string& l : lines) {
     mass_line = mass_line ||
@@ -333,7 +357,7 @@ TEST(AnalyzeMapView, CaliberLinesSpellTruncationFiniteZeroAndRank0) {
   }
   EXPECT_TRUE(mass_line);
   in.mass.pixel = -1;
-  lines = MapCaliberLines(in);
+  lines = MapCaliberDefaultLines(in);
   bool outside_line = false;
   for (const std::string& l : lines) {
     outside_line =

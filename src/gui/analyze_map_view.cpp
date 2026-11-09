@@ -165,34 +165,29 @@ const char* PoseButtonTooltip() {
   return "3D ray & pose.\nSelect class + sky point.";
 }
 
-// ---- The caliber composer (pure; the unit layer holds it to the readback) -------------------------
+// ---- The caliber composer (pure; the unit layer holds it to the readback) ---------------------------
+//
+// Three read-backs of one adopted map, one per information tier (the disposition ledger): the
+// DEFAULT lines answer "what am I looking at" — the short quantity name with its unit, the
+// scene-vs-nominal limit when the answer is not the nominal shape, and the truncation /
+// finite-zero / rank-0-mass facts; the PHYSICS lines carry the full quantity definition, the
+// sun premise and the engine's own geometry basis (byte for byte); the CALCULATION lines carry
+// the grid and execution numbers a check reads — reference cell, view window, lattice,
+// members, kept events — plus the source-fixed-scale note. The λ is NOT in any line: the λ
+// row's same-control echo is the reading's one owner (a repeated echo is deleted, not moved).
 
-std::vector<std::string> MapCaliberLines(const MapCaliberInput& in) {
+std::vector<std::string> MapCaliberDefaultLines(const MapCaliberInput& in) {
   std::vector<std::string> lines;
   char line[512];
   const LUMICE_PathMapInfo& info = in.info;
-  if (info.view_full_sky != 0) {
-    std::snprintf(line, sizeof(line),
-                  "λ %.1f nm · %d/%d members · n=%d lattice · view: full sky %d×%d · kept %lld events",
-                  info.wavelength_nm, info.members_evaluated, info.member_count, info.sample_count, info.view_rows,
-                  info.view_cols, info.kept_count);
-  } else {
-    std::snprintf(line, sizeof(line),
-                  "λ %.1f nm · %d/%d members · n=%d lattice · view: δ [%.1f, %.1f]° az [%.1f, %.1f]° %d×%d · kept %lld "
-                  "events",
-                  info.wavelength_nm, info.members_evaluated, info.member_count, info.sample_count,
-                  info.view_delta_min_deg, info.view_delta_max_deg, info.view_az_min_deg, info.view_az_max_deg,
-                  info.view_rows, info.view_cols, info.kept_count);
-  }
-  lines.emplace_back(line);
   if (in.have_quantity) {
-    std::snprintf(line, sizeof(line), "%s, %s, %s · sun %.1f°/%.1f° · %s", QuantityKindName(in.quantity.kind),
-                  AggregationName(in.quantity.aggregation), UnitName(in.quantity.unit), info.sun_altitude_deg,
-                  info.sun_azimuth_deg, info.shape_is_nominal != 0 ? "nominal geometry" : "scene geometry");
+    std::snprintf(line, sizeof(line), "%s, %s.", QuantityKindName(in.quantity.kind), UnitName(in.quantity.unit));
     lines.emplace_back(line);
   }
-  if (in.have_evidence && in.evidence.geometry_basis.length > 0) {
-    lines.emplace_back(in.evidence.geometry_basis.data, in.evidence.geometry_basis.length);
+  if (in.have_quantity && info.shape_is_nominal == 0) {
+    // The nominal-vs-scene limit is a default fact (the ledger: 名义几何≠冻结场景的限定默认) —
+    // the map answers the edited scene, and the reader must know that without opening a fold.
+    lines.emplace_back("Scene geometry — the map answers the edited scene, not the nominal shape.");
   }
   if (info.truncated != 0) {
     std::snprintf(line, sizeof(line),
@@ -221,6 +216,54 @@ std::vector<std::string> MapCaliberLines(const MapCaliberInput& in) {
                   in.mass.m, in.mass.m_error, methods.c_str(), in.mass.pixel < 0 ? " (outside this view)" : "");
     lines.emplace_back(line);
   }
+  return lines;
+}
+
+std::vector<std::string> MapCaliberPhysicsLines(const MapCaliberInput& in) {
+  std::vector<std::string> lines;
+  char line[512];
+  const LUMICE_PathMapInfo& info = in.info;
+  if (in.have_quantity) {
+    std::snprintf(line, sizeof(line), "Quantity: %s, %s, %s.", QuantityKindName(in.quantity.kind),
+                  AggregationName(in.quantity.aggregation), UnitName(in.quantity.unit));
+    lines.emplace_back(line);
+    std::snprintf(line, sizeof(line), "Sun at altitude %.1f°, azimuth %.1f°.", info.sun_altitude_deg,
+                  info.sun_azimuth_deg);
+    lines.emplace_back(line);
+    if (info.shape_is_nominal != 0) {
+      lines.emplace_back("Nominal geometry — the map answers the crystal's nominal shape.");
+    } else {
+      lines.emplace_back("Scene geometry.");
+    }
+  }
+  if (in.have_evidence && in.evidence.geometry_basis.length > 0) {
+    lines.emplace_back(in.evidence.geometry_basis.data, in.evidence.geometry_basis.length);
+  }
+  return lines;
+}
+
+std::vector<std::string> MapCaliberCalculationLines(const MapCaliberInput& in) {
+  std::vector<std::string> lines;
+  char line[512];
+  const LUMICE_PathMapInfo& info = in.info;
+  if (info.view_full_sky != 0) {
+    std::snprintf(line, sizeof(line), "Reference cell δ %.7g° × az %.7g° · view: full sky %d×%d · n=%d lattice",
+                  (info.view_delta_max_deg - info.view_delta_min_deg) / info.view_rows,
+                  (info.view_az_max_deg - info.view_az_min_deg) / info.view_cols, info.view_rows, info.view_cols,
+                  info.sample_count);
+  } else {
+    std::snprintf(line, sizeof(line),
+                  "Reference cell δ %.7g° × az %.7g° · view: δ [%.1f, %.1f]° az [%.1f, %.1f]° %d×%d · n=%d lattice",
+                  (info.view_delta_max_deg - info.view_delta_min_deg) / info.view_rows,
+                  (info.view_az_max_deg - info.view_az_min_deg) / info.view_cols, info.view_delta_min_deg,
+                  info.view_delta_max_deg, info.view_az_min_deg, info.view_az_max_deg, info.view_rows, info.view_cols,
+                  info.sample_count);
+  }
+  lines.emplace_back(line);
+  std::snprintf(line, sizeof(line), "%d/%d members · kept %lld events", info.members_evaluated, info.member_count,
+                info.kept_count);
+  lines.emplace_back(line);
+  lines.emplace_back("Source-fixed scale; cells do not interpolate.");
   return lines;
 }
 
@@ -1383,6 +1426,15 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   if (ImGui::SliderFloat("λ##map", &lambda_scratch, 350.0f, 900.0f, "%.0f nm", ImGuiSliderFlags_AlwaysClamp)) {
     state.analysis.map_wavelength_nm = static_cast<double>(lambda_scratch);
   }
+  // The λ reading's one owner is this control's own echo; its tooltip names the source rule
+  // (the ledger: 真实来源进 λ tooltip — an explicit value asks itself, the engine's reference
+  // answers until one is set). Editing asks a key change the pump turns into a real recompute.
+  if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+    ImGui::SetTooltip(
+        state.analysis.map_wavelength_nm > 0.0 ?
+            "The wavelength this map answers at — an explicit value; editing it asks a new computation." :
+            "The wavelength this map answers at — the engine's reference; editing the slider asks an explicit one.");
+  }
   ImGui::BeginDisabled(state.analysis.map_wavelength_nm <= 0.0);
   if (ImGui::SmallButton("reference##map_lambda")) {
     state.analysis.map_wavelength_nm = 0.0;
@@ -1584,27 +1636,24 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
     RenderPointAnswerBlock(state);
     ImGui::Separator();
   }
-  if (map.adopted_result) {
-    LUMICE_PathMapInfo info{};
-    info.struct_size = sizeof(info);
-    if (LUMICE_PathMapGetInfo(map.adopted_result.get(), &info) == LUMICE_PATH_READ_OK) {
-      ImGui::TextWrapped("Reference cell δ %.7g° × az %.7g° · %d/%d%s · λ %.1f · n=%d",
-                         (info.view_delta_max_deg - info.view_delta_min_deg) / info.view_rows,
-                         (info.view_az_max_deg - info.view_az_min_deg) / info.view_cols, info.members_evaluated,
-                         info.member_count, info.truncated ? " partial" : "", info.wavelength_nm, info.sample_count);
-    }
-  }
-  ImGui::TextWrapped("Source-fixed scale; cells do not interpolate. Stripes = unknown, purple = singular (not zero).");
+  ImGui::TextWrapped("Stripes = unknown, purple = singular (not zero).");
   // The identity line and the sky-point echo used to sit here; both moved up the fixed slots
   // (identity to the column's first row, the target beside the input group) and the report no
-  // longer repeats either. The Separator keeps the picture-facts above apart from the answer
-  // block below.
+  // longer repeats either. The old reference-cell line moved into the caliber's Calculation
+  // fold (the same numbers, the ledger's L4 tier); the source-fixed-scale sentence moved with
+  // it. The Separator keeps the picture-facts above apart from the answer block below.
   ImGui::Separator();
   if (state.analysis.map_wavelength_nm <= 0.0 && map.adopted_result == nullptr) {
+    // The λ's unrechoiced state stays default (the ledger: 尚未回显的未知性默认) — the map has
+    // not answered at any wavelength yet, and the slider's tooltip names the source rule.
     ImGui::TextWrapped("The engine-chosen reference wavelength is used until a map echoes it.");
   }
   // The caliber block: every fact read back through the result's own readers into the pure
-  // composer (the unit layer holds it to the readback), then drawn (AC1).
+  // composers (the unit layer holds them to the readback), then drawn — the ledger's tiers:
+  // the short quantity and its limits default, the full definition and premises behind
+  // Physics details, the grid and execution numbers behind Calculation details. The report
+  // follows every operation: its native scroll cannot overlap or reposition the
+  // typed-coordinate controls, even while a long caliber or refusal arrives.
   if (caliber_source && have_anchor_info) {
     ImGui::TextDisabled("Reference caliber");
     MapCaliberInput in;
@@ -1627,13 +1676,25 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
       }
     }
     in.completed = true;  // the named finite source completed, independently of a newer intent
-    // The report follows every operation. Its native scroll cannot overlap or reposition
-    // the typed-coordinate controls, even while a long caliber or refusal arrives.
     ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-    for (const std::string& line : MapCaliberLines(in)) {
+    for (const std::string& line : MapCaliberDefaultLines(in)) {
       ImGui::TextWrapped("%s", line.c_str());
     }
     ImGui::PopStyleColor();
+    if (FoldOpen(kSurveyPhysicsDetailsLabel, "map_caliber")) {
+      ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+      for (const std::string& line : MapCaliberPhysicsLines(in)) {
+        ImGui::TextWrapped("%s", line.c_str());
+      }
+      ImGui::PopStyleColor();
+    }
+    if (FoldOpen(kSurveyCalculationDetailsLabel, "map_caliber")) {
+      ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+      for (const std::string& line : MapCaliberCalculationLines(in)) {
+        ImGui::TextWrapped("%s", line.c_str());
+      }
+      ImGui::PopStyleColor();
+    }
   }
 
   // The legend: one entry per category THIS frame actually drew, each with its one-line
@@ -1645,13 +1706,16 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   ImGui::TextDisabled("Legend");
   {
     ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-    // Every entry is the Bullet()+TextWrapped pair (the overview's rule: BulletText and
-    // SameLine+Text size a single line and clip at the region's right edge — exactly where the
-    // dispersion entry's honesty qualifier gets interesting at the info floor's 200 pt). The
-    // wrap is the vertical scroll's own overflow channel: no horizontal scrollbar exists here.
+    // The short keys are the default tier (the ledger: 默认短形状/颜色键，长词典进折叠): each
+    // entry names the drawn category and its marker shape — the meanings and honesty qualifiers
+    // ride the Legend explanations group below, with the two short-form limits that must stay
+    // readable at the keys (positions are not whole-circle visibility; a partial circle names
+    // its arc). Every entry is the Bullet()+TextWrapped pair (BulletText and SameLine+Text size
+    // a single line and clip at the region's right edge); the wrap is the vertical scroll's own
+    // overflow channel.
     if (legend.anchor_sun) {
       ImGui::Bullet();
-      ImGui::TextWrapped("sun marker — the delta axis's zero");
+      ImGui::TextWrapped("sun marker");
     }
     if (legend.anchor_zenith) {
       ImGui::Bullet();
@@ -1692,32 +1756,42 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
       }
       ImGui::Dummy(ImVec2(ImGui::GetFrameHeight(), 0.0f));
       ImGui::SameLine(0.0f, 0.0f);
-      // One wrapped item: the kind and its meaning fold together at the marker's indent — the
-      // old SameLine+TextUnformatted pair pinned the explanation onto the kind's line, where the
-      // info floor clipped its tail exactly when the words carry the shape's meaning.
-      ImGui::TextWrapped("%s — the survey's located conclusion", kind.c_str());
+      ImGui::TextWrapped("%s", kind.c_str());
     }
     if (legend.dispersion_red || legend.dispersion_blue) {
       ImGui::Bullet();
       if (legend.dispersion_red && legend.dispersion_blue) {
-        ImGui::TextWrapped(
-            "dispersion circles (red inside blue) — the measured minimum-deviation geometry at the two reference "
-            "wavelengths; positions, not a whole-circle visibility or contribution claim");
+        ImGui::TextWrapped("dispersion circles (red inside blue) — positions, not visibility");
       } else {
         // One circle's arc sits outside the view disk this frame: the entry names the one that
         // drew — the other half's absence is the honest state, not a dropped category.
-        ImGui::TextWrapped(
-            "%s dispersion circle — the measured minimum-deviation geometry at its reference wavelength; positions, "
-            "not a whole-circle visibility or contribution claim",
-            legend.dispersion_red ? "red" : "blue");
+        ImGui::TextWrapped("%s dispersion circle — positions, not visibility", legend.dispersion_red ? "red" : "blue");
       }
       if (legend.dispersion_partial) {
-        ImGui::TextWrapped("A circle partially outside the view draws only its in-view arc (\"arc in view\").");
+        ImGui::TextWrapped("partial circles draw their in-view arc (\"arc in view\").");
       }
     }
     if (legend.sky_point) {
       ImGui::Bullet();
-      ImGui::TextWrapped("sky-point marker — the target the point face queries");
+      ImGui::TextWrapped("sky-point marker");
+    }
+    // The long dictionary: the entries' meanings and honesty qualifications, behind one
+    // closed-by-default fold (the ledger's Legend explanations group).
+    if (FoldOpen(kMapLegendExplanationsLabel, "map_legend")) {
+      if (legend.anchor_sun) {
+        ImGui::TextWrapped("sun marker — the delta axis's zero");
+      }
+      if (!legend.object_kinds.empty()) {
+        ImGui::TextWrapped("each kind's marker — the survey's located conclusion, at the position the card names");
+      }
+      if (legend.dispersion_red || legend.dispersion_blue) {
+        ImGui::TextWrapped(
+            "dispersion circles — the measured minimum-deviation geometry at the reference wavelengths; positions, "
+            "not a whole-circle visibility or contribution claim");
+      }
+      if (legend.sky_point) {
+        ImGui::TextWrapped("sky-point marker — the target the point face queries");
+      }
     }
     ImGui::PopStyleColor();
   }

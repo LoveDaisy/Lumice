@@ -7826,6 +7826,9 @@ bool CheckMapQualityText(ImGuiTestContext* ctx, const std::string& stem) {
   ImGuiWindow* report = MapReportWindow();
   IM_CHECK_RETV(report != nullptr, false);
   report->Scroll.y = 0.0f;
+  // The reference-cell line lives in the caliber's Calculation fold now (the ledger's L4
+  // tier) — open it so the capture carries the numbers the checks read.
+  ctx->ItemClick("**/Calculation details##map_caliber");
   ctx->Yield(2);
   const std::string report_text = CaptureMapFrameText(ctx);
   const auto check_source = [&]() -> bool {
@@ -7927,11 +7930,15 @@ bool CheckMapGlyphsAcrossUiScale(ImGuiTestContext* ctx) {
         LUMICE_PathMapGetInfo(gui::g_state.analysis.map.adopted_result.get(), &caliber.info) == LUMICE_PATH_READ_OK &&
             caliber.info.kept_count > 0,
         false);
-    const std::string metrics = gui::MapCaliberLines(caliber).front();
-    IM_CHECK_RETV(metrics.rfind("\xCE\xBB", 0) == 0, false);
+    // The caliber's Calculation tier carries the grid numbers (the ledger's tiering); the λ
+    // is deliberately absent from every caliber line — the slider row's echo is its owner — so
+    // the glyph audit reads the cell line's δ and the slider's λ label for the two codepoints.
+    const std::string metrics = gui::MapCaliberCalculationLines(caliber).front();
+    IM_CHECK_RETV(metrics.find("\xCE\xBB") == std::string::npos, false);
+    IM_CHECK_RETV(metrics.find("\xCE\B4") != std::string::npos, false);
     std::string old_metrics = metrics;
-    for (const char* glyph : { "\xCE\xBB", "\xCE\xB4" }) {
-      const size_t at = old_metrics.find(glyph);
+    {
+      const size_t at = old_metrics.find("\xCE\B4");
       if (at != std::string::npos) {
         old_metrics.replace(at, 2, "?");
       }
