@@ -2,7 +2,8 @@
 #
 # test.sh — one entry point for the local test scopes.
 #
-#   quick : ctest + fast e2e + gui_test correctness pool   (the closing gate)
+#   quick : ctest + fast e2e + gui_test correctness pool + optional Windows leg
+#           (the closing gate; Windows runs concurrently, not in full/pr/inner)
 #   full  : quick + gui_test real-timing pool
 #   pr    : full + shared-lib freshness + slow e2e (the CI e2e-slow shape)
 #   inner : iteration-time fast path — derives the layers from the current diff
@@ -52,6 +53,7 @@ usage() {
   echo "  quick:  ctest (unit-correctness|composition-correctness|parity|golden-analytic)"
   echo "          + fast e2e (pytest -n auto)"
   echo "          + gui_test correctness pool (--fixed-dt)"
+  echo "          + optional native Windows build/ctest leg, in parallel (quick only)"
   echo "  full:   quick + gui_test real-timing pool"
   echo "  pr:     full + shared-lib freshness check + slow e2e"
   echo "  inner:  iteration-time fast path — reads the current diff (merge-base..worktree),"
@@ -61,6 +63,10 @@ usage() {
   echo "          list instead of the diff."
   echo ""
   echo "ENVIRONMENT:"
+  echo "  LUMICE_WIN_QUICK_LEG:        opt in to the Windows closing leg (disabled in CI=1)."
+  echo "  LUMICE_WIN_QUICK_HOST / _WS: SSH alias / dedicated workspace (see machines.md)."
+  echo "  LUMICE_WIN_QUICK_LOCK_WAIT:  bounded lock queue in seconds (default 600)."
+  echo "  LUMICE_WIN_QUICK_TIMEOUT:    remote build/test deadline in seconds (default 3600)."
   echo "  LUMICE_SKIP_GUI_TESTS / CI:  skip the gui_test layers (as build.sh does)."
   echo "  LUMICE_LIB:                  absolute path to liblumice_testapi; when set, the"
   echo "                               pr scope trusts it and never rebuilds."
@@ -124,6 +130,68 @@ skip_layer() { # name note
   record_layer "$1" SKIP 0 "$2"
 }
 
+WIN_SUMMARY=""
+WIN_PID=""
+WIN_LOG="build/win_quick_leg.last.log"
+WIN_START=0
+
+start_win_leg() {
+  [[ ${SCOPE} == quick ]] || return 0
+  if [[ -z ${LUMICE_WIN_QUICK_LEG:-} || ${CI:-} == 1 ]]; then
+    skip_layer win-quick-leg "not-enabled (set LUMICE_WIN_QUICK_LEG=1 outside CI)"
+    return 0
+  fi
+  mkdir -p build
+  WIN_START=${SECONDS}
+  printf '\n========== [START] win-quick-leg (parallel; log: %s) ==========\n' "${WIN_LOG}"
+  bash scripts/win_quick_leg.sh "${QUICK_CTEST_LABELS}" > "${WIN_LOG}" 2>&1 &
+  WIN_PID=$!
+}
+
+finish_win_leg() {
+  [[ -n ${WIN_PID} ]] || return 0
+  local rc=0 result count elapsed
+  wait "${WIN_PID}" || rc=$?
+  elapsed=$(( SECONDS - WIN_START ))
+  result=$(grep '^WIN_LEG_RESULT:' "${WIN_LOG}" | tr -d '\r') || result=""
+  count=$(printf '%s\n' "${result}" | grep -c '^WIN_LEG_RESULT:') || true
+  if [[ ${count} -ne 1 ]]; then
+    result="WIN_LEG_RESULT: FAIL stage=transport reason=missing-or-duplicate-result"
+  fi
+  WIN_SUMMARY=${result#WIN_LEG_RESULT: }
+  case "${WIN_SUMMARY}" in
+    PASS*)
+      if [[ ${rc} -eq 0 ]]; then
+        record_layer win-quick-leg PASS "${elapsed}" "${WIN_LOG}"
+      else
+        WIN_SUMMARY="FAIL stage=transport reason=exit-${rc}"
+        record_layer win-quick-leg FAIL "${elapsed}" "${WIN_SUMMARY}; ${WIN_LOG}"
+      fi
+      ;;
+    'SKIPPED '*)
+      if [[ ${rc} -eq 0 ]]; then
+        skip_layer win-quick-leg "${WIN_SUMMARY#SKIPPED }"
+      else
+        WIN_SUMMARY="FAIL stage=transport reason=exit-${rc}"
+        record_layer win-quick-leg FAIL "${elapsed}" "${WIN_SUMMARY}; ${WIN_LOG}"
+      fi
+      ;;
+    *)
+      [[ ${WIN_SUMMARY} == 'FAIL '* ]] || WIN_SUMMARY="FAIL stage=transport reason=invalid-result"
+      record_layer win-quick-leg FAIL "${elapsed}" "${WIN_SUMMARY}; ${WIN_LOG}"
+      ;;
+  esac
+  # The full remote log remains on disk. Failures print a bounded diagnostic
+  # excerpt in the same invocation; no second command is needed to judge it.
+  if [[ ${WIN_SUMMARY} == 'FAIL '* ]]; then
+    python3 - "${WIN_LOG}" <<'PYTHON'
+from pathlib import Path
+import sys
+print("\n".join(Path(sys.argv[1]).read_text(errors="replace").splitlines()[-50:]))
+PYTHON
+  fi
+}
+
 print_summary() { # scope
   local total=${#LAYER_NAMES[@]}
   local width=0 i
@@ -145,11 +213,13 @@ print_summary() { # scope
     fi
   done
 
+  local win_suffix=""
+  if [[ -n ${WIN_SUMMARY} ]]; then win_suffix=" (win: ${WIN_SUMMARY})"; fi
   if [[ ${failed} -eq 0 ]]; then
-    printf 'RESULT: PASS\n'
+    printf 'RESULT: PASS%s\n' "${win_suffix}"
     return 0
   fi
-  printf 'RESULT: FAIL (%s/%s layers failed: %s)\n' "${failed}" "${total}" "${failed_names}"
+  printf 'RESULT: FAIL (%s/%s layers failed: %s)%s\n' "${failed}" "${total}" "${failed_names}" "${win_suffix}"
   return 1
 }
 
@@ -158,6 +228,7 @@ print_summary() { # scope
 # ---------------------------------------------------------------------------
 
 STATIC_CACHE="build/cmake_build/static/CMakeCache.txt"
+QUICK_CTEST_LABELS="unit-correctness|composition-correctness|parity|golden-analytic"
 
 detect_build_type() {
   [[ -f ${STATIC_CACHE} ]] || die "${STATIC_CACHE} not found — build the static flavor first: ./scripts/build.sh -tgj release"
@@ -314,7 +385,7 @@ layer_ctest() {
   # --test-dir instead of cd/pushd: the layer must not leave test.sh in a
   # different working directory than the one the next layer's paths assume.
   run_layer ctest ctest --test-dir build/cmake_build/static \
-    -L "unit-correctness|composition-correctness|parity|golden-analytic" --output-on-failure
+    -L "${QUICK_CTEST_LABELS}" --output-on-failure
   local rc=$?
   if [[ ${rc} -ne 0 ]] && ! grep -q '^BUILD_TEST:[^=]*=ON' "${STATIC_CACHE}"; then
     annotate_last_layer "static tree has BUILD_TEST=OFF — rebuild with ./scripts/build.sh -tgj ${BUILD_TYPE_LOWER}"
@@ -441,7 +512,7 @@ run_inner() {
   fi
 
   if has_inner_layer ctest; then
-    guarded_ctest_layer ctest -L "unit-correctness|composition-correctness|parity|golden-analytic"
+    guarded_ctest_layer ctest -L "${QUICK_CTEST_LABELS}"
   fi
   if has_inner_layer ctest-unit-correctness; then
     guarded_ctest_layer ctest-unit-correctness -L unit-correctness
@@ -691,6 +762,7 @@ fi
 
 printf 'test.sh: scope=%s  build_type=%s  flavor=static\n' "${SCOPE}" "${BUILD_TYPE}"
 
+start_win_leg
 layer_ctest
 layer_fast_e2e
 run_gui_layer gui-correctness fixed
@@ -707,6 +779,7 @@ if [[ ${SCOPE} == pr ]]; then
   fi
 fi
 
+finish_win_leg
 print_summary "${SCOPE}"
 exit $?
 
