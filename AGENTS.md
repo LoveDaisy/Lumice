@@ -225,7 +225,7 @@ fails the check.
   | Situation | Run |
   |---|---|
   | Iterating on a change — fast feedback scoped to what the diff touches | `./scripts/test.sh inner` |
-  | Verify the change you just made (the closing gate) | `./scripts/test.sh quick` |
+  | Verify the change you just made (the closing gate) | `./scripts/test.sh quick` — opt-in parallel native Windows build/ctest via `LUMICE_WIN_QUICK_LEG=1`; disposition contract: `doc/testing/testing-architecture.md` §7.11 |
   | Right after a static rebuild, before moving on | `./scripts/test.sh quick` |
   | Broader regression sweep — unsure how far a change reaches | `./scripts/test.sh full` |
   | Before opening a PR — reproduce the CI e2e-slow shape locally | `./scripts/test.sh pr` |

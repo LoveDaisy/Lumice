@@ -24,6 +24,7 @@
 |---|---|---|
 | **CUDA 参照机（Linux）** | `home-wsl` | CUDA build、parity/正确性验证、CUDA 吞吐 bench；每日精确吞吐闸 `cuda` leg 的执行机（由 Metal 参照机经 ssh 派发，见 `performance-testing.md`「Precise throughput gate (local schedule)」） |
 | **CUDA 参照机（Windows）** | `home-win` | MSVC + CUDA 编译、Windows 产物验证、Windows 吞吐 bench |
+| **收尾闸 Windows 构建腿** | `home-win` | 可选 quick 的 MSVC 全目标构建 + CTest，合同见 `testing-architecture.md` §7.11；腿专属 `C:/lumice-test/ws-winleg`，不是日常克隆 |
 | **GUI 物理桌面机** | `home-win` | 需要真实显示器 session 的 GUI VSync 性能测试 |
 | **原生 Windows 剖析机（nsys/ncu 全 CUPTI）** | `home-win` | 需要 CUPTI 全量采样（`nsys`/`ncu` kernel timeline）的 GPU 剖析——WSL2 侧 CUPTI 支持不完整，须原生 Windows |
 | **Metal 参照机** | 开发用 Mac | Metal 后端 build / parity / 吞吐 bench；每日精确吞吐闸的驱动机与 `metal` leg 执行机（launchd，同上节） |
@@ -70,6 +71,9 @@
 | cmake / ninja | **VS Build Tools 自带**，位于 `Common7\IDE\CommonExtensions\Microsoft\CMake\` 下 |
 | CUDA | **12.9**，标准路径 `C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.9` |
 | 构建脚本 | `C:\Users\15093\win_build.cmd`（产物-only 版 `win_build_product.cmd`） |
+| quick 腿 workspace / staging | `C:\lumice-test\ws-winleg` / `C:\lumice-test\winleg-runs\<run-token>`；与 watcher 的 trigger/done/stdout/stderr 根级文件不重叠 |
+| 物理机共用锁槽 | `C:\lumice-test\locks\home-box.lock`；WSL 重活使用同一 `/mnt/c/lumice-test/locks/home-box.lock`，协议与保证边界见 `testing-architecture.md` §7.11 |
+| quick 腿 Python | `C:\Users\15093\AppData\Local\Programs\Python\Python312\python.exe`；构建入口用 `%LOCALAPPDATA%` 定位 |
 | 吞吐脚本 | `C:\Users\15093\win_bench.cmd` |
 
 - ssh 默认 shell 是 **PowerShell 5.1**：`&&` 不是有效的语句分隔符。多条命令请分开发，

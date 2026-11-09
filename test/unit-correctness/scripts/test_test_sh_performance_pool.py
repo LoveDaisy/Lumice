@@ -83,6 +83,7 @@ sys.exit(result.returncode or codes.get(str(index), 0))
     env = {key: value for key, value in os.environ.items()
            if not key.startswith("PYTEST_")}
     env.update(PATH=str(bin_dir) + os.pathsep + env["PATH"], CI="1",
+               LUMICE_WIN_QUICK_LEG="",
                LUMICE_LIB=str(tmp_path / "liblumice_testapi.so"),
                PYTEST_DISABLE_PLUGIN_AUTOLOAD="1")
     return tmp_path, env
