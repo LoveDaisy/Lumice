@@ -43,7 +43,8 @@ if [[ -n ${LFS_DIRTY} ]]; then
   printf 'WIN_LEG_RESULT: SKIPPED lfs-dirty %s\n' "${LFS_DIRTY//$'\n'/; }"
   exit 0
 fi
-STAMP=$("${SSH[@]}" "${HOST}" "cmd /c type ${WS}/.lumice-winleg-sync-rev" 2>/dev/null | tr -d '\r\n') || STAMP=""
+WS_CMD=${WS//\//\\}
+STAMP=$("${SSH[@]}" "${HOST}" "cmd /c type ${WS_CMD}\\.lumice-winleg-sync-rev" 2>/dev/null | tr -d '\r\n') || STAMP=""
 MODE=full
 if [[ ${STAMP} =~ ^[0-9a-f]{40}$ ]] && git merge-base --is-ancestor "${STAMP}" "${REV}" 2>/dev/null; then
   if git diff --no-renames --name-status -z "${STAMP}" "${REV}" > "${TMP}/diff"; then MODE=diff; fi
@@ -92,7 +93,8 @@ for name in ('win_quick_leg_remote.cmd', 'win_quick_leg_remote.ps1'):
 PY
 TOKEN="${REV:0:12}-$(basename "${TMP}")"
 REMOTE="C:/lumice-test/winleg-runs/${TOKEN}"
-"${SSH[@]}" "${HOST}" "cmd /c mkdir ${REMOTE}" >/dev/null || fail staging
+REMOTE_CMD=${REMOTE//\//\\}
+"${SSH[@]}" "${HOST}" "cmd /c mkdir ${REMOTE_CMD}" >/dev/null || fail staging
 "${SCP[@]}" "${TMP}/source.tar" "${TMP}/request.json" "${TMP}/win_quick_leg_remote.cmd" "${TMP}/win_quick_leg_remote.ps1" "${HOST}:${REMOTE}/" || fail transfer
 # Remote stdout is a control channel. Build/test output lives on the remote disk
 # first, so a dropped SSH connection cannot erase the diagnostic evidence.
