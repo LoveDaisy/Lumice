@@ -2538,6 +2538,89 @@ bool SurveyOverviewShowsDispersionAndProfile(ImGuiTestContext* ctx) {
   return true;
 }
 
+// The verdict anchor's density interaction (§16.1's A2 pilot), on the real window: the class
+// answer's diagnose rows — addressable hover surfaces over the wrapped text — drive the map's
+// anchor, the toggle keeps it, and the legend bit (the same accounting the legend entry renders
+// from) reads what the canvas actually drew. The fixture is the dispersion face's own scene; the
+// clicked row is NOT the top chain — the probe behind this file's H1: the top chain's verdict
+// names itself not visible and anchors nothing BY DESIGN (the honesty gate's own leg), while
+// this chain's diagnose is the pilot's edge/blue/visible and its dispersion carries no min row
+// (no dispersion circle shares the canvas, so the verdict bit is unambiguous).
+bool VerdictAnchorHoverAndToggleOnTheMap(ImGuiTestContext* ctx) {
+  ScopedServerGuard guard;
+  IM_CHECK_RETV(BringUpScene(ctx, kFullyRandomJson, /*infinite=*/false, /*gpu=*/false), false);
+  OpenWindow(ctx);
+  IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
+  // The pilot's row: 1-3-2 — its survey completes inside the GUI's budget (the probe: ~5.6 s of
+  // the 15 s it asks for).
+  SetListRef(ctx);
+  ctx->ItemClick("**/1-3-2");
+  ctx->SetRef("");
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      return gui::SurveyOverviewStateFor(gui::g_state.analysis.survey) ==
+                             gui::SurveyOverviewState::kCompleted;
+                    },
+                    60),
+                false);
+  // The fixture's premise, on the very document the window is about to draw: the pilot's
+  // verdict — edge, blue, visible, positioned, complete coverage.
+  const gui::SurveyOverviewModel model = gui::BuildSurveyOverviewModel(*gui::g_state.analysis.survey.adopted_result);
+  IM_CHECK_RETV(model.valid && model.diagnose.available, false);
+  IM_CHECK_RETV(model.diagnose.verdict_kind == "edge", false);
+  IM_CHECK_RETV(model.diagnose.color == "blue", false);
+  IM_CHECK_RETV(model.diagnose.visible != 0, false);
+  IM_CHECK_RETV(model.diagnose.position_available, false);
+  IM_CHECK_RETV(model.diagnose.coverage_complete, false);
+  ctx->LogInfo("[verdict anchor] pilot diagnose delta %.3f deg", model.diagnose.position_deg);
+  // The row click opens the Raypath view (§16.3's content shortcut).
+  IM_CHECK_RETV(gui::g_state.analyze_raypath_view_open, false);
+  // The pilot's ring is the far side of the sky (its delta is ~117° about the sun — the default
+  // linear 60° view cannot hold a single sample of it, and the walk would submit nothing). The
+  // map's own Full-sky preset is the robust aim: every circle has in-view samples there.
+  ctx->ItemClick("**/Full sky##map");
+  ctx->Yield(3);
+  ctx->Yield(3);
+  // The default frame: no hover, the toggle off — the anchor drew nothing even with the ring in
+  // view.
+  IM_CHECK_RETV(!gui::g_state.analysis.verdict_anchor_shown, false);
+  IM_CHECK_RETV(!gui::g_state.analysis.verdict_anchor_hover, false);
+  IM_CHECK_RETV(!gui::LastMapOverlayLegend().verdict_anchor, false);
+  // Hover the verdict row: the row's overlay takes the pointer, the info column writes the
+  // standing, the canvas draws it the NEXT frame — three frames carry the whole chain (the
+  // frame lag the contract accepts for hover semantics).
+  ctx->ScrollToItem("**/###diagnose_verdict_row", ImGuiAxis_Y);
+  ctx->Yield(1);
+  const ImVec2 verdict_center = ctx->ItemInfo("**/###diagnose_verdict_row").RectFull.GetCenter();
+  ctx->MouseMoveToPos(verdict_center);
+  ctx->Yield(3);
+  IM_CHECK_RETV(gui::g_state.analysis.verdict_anchor_hover, false);
+  IM_CHECK_RETV(gui::LastMapOverlayLegend().verdict_anchor, false);
+  // Hover the Position row: the second linked row, the same anchor.
+  ctx->ScrollToItem("**/###diagnose_position_row", ImGuiAxis_Y);
+  ctx->Yield(1);
+  const ImVec2 position_center = ctx->ItemInfo("**/###diagnose_position_row").RectFull.GetCenter();
+  ctx->MouseMoveToPos(position_center);
+  ctx->Yield(3);
+  IM_CHECK_RETV(gui::LastMapOverlayLegend().verdict_anchor, false);
+  // Off the rows: the hover tier's annotation leaves.
+  ctx->MouseMoveToPos(ImVec2(-100.0f, -100.0f));
+  ctx->Yield(3);
+  IM_CHECK_RETV(!gui::g_state.analysis.verdict_anchor_hover, false);
+  IM_CHECK_RETV(!gui::LastMapOverlayLegend().verdict_anchor, false);
+  // The toggle's always-on tier: no row hover, the anchor stands; off, it leaves.
+  ctx->ItemClick("**/Verdict anchors##map");
+  ctx->Yield(3);
+  IM_CHECK_RETV(gui::g_state.analysis.verdict_anchor_shown, false);
+  IM_CHECK_RETV(!gui::g_state.analysis.verdict_anchor_hover, false);
+  IM_CHECK_RETV(gui::LastMapOverlayLegend().verdict_anchor, false);
+  ctx->ItemClick("**/Verdict anchors##map");
+  ctx->Yield(3);
+  IM_CHECK_RETV(!gui::LastMapOverlayLegend().verdict_anchor, false);
+  return true;
+}
+
 // The engine's named refusal, on the two-layer scene: a multi-layer class is a legitimate
 // selection and the survey answers it with multi_layer_unsupported — shown, not fabricated
 // around (R5/R7; the multi-layer evidence the plan's M3-5 asks to be on file).
@@ -12219,6 +12302,10 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
   {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "survey_overview_shows_dispersion_and_profile");
     t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(SurveyOverviewShowsDispersionAndProfile(ctx)); };
+  }
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "verdict_anchor_hover_and_toggle_on_the_map");
+    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(VerdictAnchorHoverAndToggleOnTheMap(ctx)); };
   }
   {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "survey_refuses_multilayer_class_by_name");
