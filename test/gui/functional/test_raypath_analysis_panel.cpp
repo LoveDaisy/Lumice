@@ -728,11 +728,14 @@ void PoseD5HeightBounds(float r3d_h, float curve_h, float* bound_3d, float* boun
 // surface the cross-case lesson's prescription targets (a tail restore only covers the happy
 // path; an IM_CHECK_RETV early exit would leak the dragged extremes to the whole pool).
 struct ScopedPoseSessionSplits {
+  bool open;
   float d4, d6, d5, d7;
   ScopedPoseSessionSplits()
-      : d4(gui::g_state.analyze_pose_view_right_ratio), d6(gui::g_state.analyze_pose_view_globe_ratio),
-        d5(gui::g_state.analyze_pose_view_left_row_ratio), d7(gui::g_state.analyze_pose_view_curve_canvas_ratio) {}
+      : open(gui::g_state.analyze_pose_view_open), d4(gui::g_state.analyze_pose_view_right_ratio),
+        d6(gui::g_state.analyze_pose_view_globe_ratio), d5(gui::g_state.analyze_pose_view_left_row_ratio),
+        d7(gui::g_state.analyze_pose_view_curve_canvas_ratio) {}
   ~ScopedPoseSessionSplits() {
+    gui::g_state.analyze_pose_view_open = open;
     gui::g_state.analyze_pose_view_right_ratio = d4;
     gui::g_state.analyze_pose_view_globe_ratio = d6;
     gui::g_state.analyze_pose_view_left_row_ratio = d5;
@@ -6364,15 +6367,7 @@ bool PoseViewSplitsAreManualIndependentAndFloored(ImGuiTestContext* ctx) {
   // while the sentinel still holds.
   const ImGuiTestItemInfo canvas_quota0 = ctx->ItemInfo("**/##pose_curve_canvas", ImGuiTestOpFlags_NoError);
   IM_CHECK_RETV(canvas_quota0.ID != 0, false);
-  ImGuiWindow* scroll_quota0 = nullptr;
-  for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
-    if (w != nullptr && w->Active && w->ParentWindow != nullptr &&
-        std::strstr(w->ParentWindow->Name, "##AnalyzePoseCurve") != nullptr &&
-        std::strstr(w->Name, "##PoseCurveScroll") != nullptr) {
-      scroll_quota0 = w;
-      break;
-    }
-  }
+  ImGuiWindow* scroll_quota0 = PoseRegionScrollChild("##AnalyzePoseCurve", "##PoseCurveScroll");
   IM_CHECK_RETV(scroll_quota0 != nullptr, false);
   const float canvas_quota_h0 = canvas_quota0.RectFull.GetHeight();
   const float scroll_quota_h0 = scroll_quota0->Size.y;
@@ -6386,15 +6381,7 @@ bool PoseViewSplitsAreManualIndependentAndFloored(ImGuiTestContext* ctx) {
   }
   const ImGuiTestItemInfo canvas_quota1 = ctx->ItemInfo("**/##pose_curve_canvas", ImGuiTestOpFlags_NoError);
   IM_CHECK_RETV(canvas_quota1.ID != 0, false);
-  ImGuiWindow* scroll_quota1 = nullptr;
-  for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
-    if (w != nullptr && w->Active && w->ParentWindow != nullptr &&
-        std::strstr(w->ParentWindow->Name, "##AnalyzePoseCurve") != nullptr &&
-        std::strstr(w->Name, "##PoseCurveScroll") != nullptr) {
-      scroll_quota1 = w;
-      break;
-    }
-  }
+  ImGuiWindow* scroll_quota1 = PoseRegionScrollChild("##AnalyzePoseCurve", "##PoseCurveScroll");
   IM_CHECK_RETV(scroll_quota1 != nullptr, false);
   ctx->LogInfo("[D7 quota] stretched: canvas %.0f, companion %.0f",
                static_cast<double>(canvas_quota1.RectFull.GetHeight()), static_cast<double>(scroll_quota1->Size.y));
@@ -7276,15 +7263,7 @@ bool PoseViewNarrowestWindowKeepsTheFixedStackOperable(ImGuiTestContext* ctx) {
     // the default-closed shape).
     ctx->ItemClick("**/Calculation details##pose_factors");
     ctx->Yield(2);
-    ImGuiWindow* factors_scroll = nullptr;
-    for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
-      if (w != nullptr && w->Active && w->ParentWindow != nullptr &&
-          std::strstr(w->ParentWindow->Name, "##AnalyzePoseFactors") != nullptr &&
-          std::strstr(w->Name, "##PoseFactorsScroll") != nullptr) {
-        factors_scroll = w;
-        break;
-      }
-    }
+    ImGuiWindow* factors_scroll = PoseRegionScrollChild("##AnalyzePoseFactors", "##PoseFactorsScroll");
     IM_CHECK_RETV(factors_scroll != nullptr, false);
     factors_scroll->Scroll.y = factors_scroll->ScrollMax.y;  // belt-and-braces seek, the globe leg's idiom
     ctx->Yield(2);
@@ -7478,15 +7457,7 @@ bool PoseCurveRegionDrawsAndMovesTheSharedCursor(ImGuiTestContext* ctx) {
                                                                &reg) == LUMICE_PATH_READ_OK;
     ctx->LogInfo("[pose factors] fold headers contained at default; measure registration %s (gap %d)",
                  reg_ok ? "read" : "absent", reg_ok ? static_cast<int>(reg.registered_gap) : -1);
-    ImGuiWindow* comp = nullptr;
-    for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
-      if (w != nullptr && w->Active && w->ParentWindow != nullptr &&
-          std::strstr(w->ParentWindow->Name, "##AnalyzePoseCurve") != nullptr &&
-          std::strstr(w->Name, "##PoseCurveScroll") != nullptr) {
-        comp = w;
-        break;
-      }
-    }
+    ImGuiWindow* comp = PoseRegionScrollChild("##AnalyzePoseCurve", "##PoseCurveScroll");
     IM_CHECK_RETV(comp != nullptr, false);
     const float quota = 8.0f * ImGui::GetTextLineHeightWithSpacing();
     ctx->LogInfo("[pose factors] companion %.0f vs quota %.0f", static_cast<double>(comp->Size.y),
