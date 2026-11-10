@@ -2488,7 +2488,10 @@ bool SurveyOverviewShowsDispersionAndProfile(ImGuiTestContext* ctx) {
     IM_CHECK_RETV(frame_text.find("Support:") != std::string::npos, false);
     IM_CHECK_RETV(frame_text.find("Sharp edge") != std::string::npos, false);
     IM_CHECK_RETV(frame_text.find("Wavelength dispersion:") != std::string::npos, false);
-    IM_CHECK_RETV(frame_text.find("Weight tint:") != std::string::npos, false);
+    // The full-dimensional arm's tint reading rides the default layer as the bare ratio line
+    // (the "Weight tint:" spelling is the identity arm's conclusions'); the colour verdict's
+    // default line is shared across arms.
+    IM_CHECK_RETV(frame_text.find("Blue/red ratio") != std::string::npos, false);
     IM_CHECK_RETV(frame_text.find("Weight colour:") != std::string::npos, false);
     IM_CHECK_RETV(frame_text.find("All-TIR share") != std::string::npos, false);
     IM_CHECK_RETV(frame_text.find("The complete answer is in the Raypath view.") != std::string::npos, false);
