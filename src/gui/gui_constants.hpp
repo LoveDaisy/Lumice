@@ -168,6 +168,11 @@ constexpr float kPoseViewCurveCanvasRatioUndragged = 0.0f;
 constexpr float kPoseViewCurveCanvasFloor = 40.0f;
 constexpr float kPoseViewCurveCompanionFloor = 32.0f;
 constexpr int kPoseViewCurveCompanionLines = 8;
+// The 3D region's report viewport's fixed budget (§16.4's resize strategy — D5's delta flows
+// to the two canvases, so the 3D report's allowance is FIXED, not a share of the region: the
+// old scaled 0.2x floor would re-take a growing slice of every stretch). Calibration candidate
+// until the real-frame pass; at the narrowest face the canvas above it still clears 150 pt.
+constexpr float kPoseView3dReportQuota = 48.0f;
 // The two analysis windows' title display spellings, the ONE source for every consumer of those
 // spellings: the windows' own Begin calls, the Raypath view window's in-place Pose button (the
 // constant plus the button's `###pose_open` addressing suffix), and the main window's Selection

@@ -1500,8 +1500,8 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
   view.crystal_frame = frame == 1;
   RenderPointStatus(point);
   const ImVec2 remaining = ImGui::GetContentRegionAvail();
-  const float graph_h = CanvasHeightBeforeReport(remaining.y, 0.0f, std::max(UiPx(64.0f), remaining.y * 0.2f),
-                                                 ImGui::GetStyle().ItemSpacing.y);
+  const float graph_h =
+      CanvasHeightBeforeReport(remaining.y, 0.0f, UiPx(kPoseView3dReportQuota), ImGui::GetStyle().ItemSpacing.y);
   const ImVec2 canvas_size(remaining.x, graph_h);
   const ImVec2 graph_min = ImGui::GetCursorScreenPos();
   ImDrawList* graph_draw_list = ImGui::GetWindowDrawList();
