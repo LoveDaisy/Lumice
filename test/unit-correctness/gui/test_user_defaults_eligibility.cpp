@@ -85,11 +85,16 @@ namespace {
 // reference-map | info split — a layout choice of this session, kSession like workspace before
 // it). Neither is serialized, so no row can reach the panel; both are ineligible for the same
 // reasons as their family.
-// 95 with the Pose & trace window's three session rows (755.5): `analyze_pose_view_open` (the
-// window's open flag — ineligible like analyze_raypath_view_open for the same reason) and the
-// window's own split ratios `analyze_pose_view_right_ratio` / `analyze_pose_view_globe_ratio`
-// (D4 / D5 — layout choices of this session, ineligible like analyze_raypath_view_info_ratio).
-// None is serialized, so no row can reach the panel.
+// 97 with the Pose & trace window's four boundary rows (755.5, extended by the §16.4
+// relayout): `analyze_pose_view_open` (the window's open flag — ineligible like
+// analyze_raypath_view_open for the same reason) and the window's own split ratios
+// `analyze_pose_view_right_ratio` (D4 — 3D | right column width) /
+// `analyze_pose_view_globe_ratio` (D6 — the right column's globe | factors height share; the
+// boundary the drag has always written, renamed with the relayout) /
+// `analyze_pose_view_left_row_ratio` (D5 — the left column's 3D | curve height share) /
+// `analyze_pose_view_curve_canvas_ratio` (D7 — the curve region's canvas | companion share;
+// 0.0f sentinel = never dragged). Layout choices of this session, ineligible like
+// analyze_raypath_view_info_ratio. None is serialized, so no row can reach the panel.
 constexpr std::size_t kExpectedGovernedFieldCount = 97;
 
 std::vector<std::string> AllGovernedFieldNames() {

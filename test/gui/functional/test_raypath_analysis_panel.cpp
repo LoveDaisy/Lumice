@@ -6997,6 +6997,13 @@ bool PoseViewResizeStrategyDistributesByRatioAndQuota(ImGuiTestContext* ctx) {
 // lives in the narrowest-window case, the 1x geometry bounds in the splits case.
 bool PoseViewNarrowestBoundariesHoldBothEnds(ImGuiTestContext* ctx) {
   ScopedServerGuard guard;
+  // The session splits this case drags to their ends are display state it owns: capture and
+  // restore all four (the splits and resize cases' own hygiene — a later geometry-style case
+  // without an entry reset would otherwise inherit the extreme splits).
+  const float d4_entry = gui::g_state.analyze_pose_view_right_ratio;
+  const float d6_entry = gui::g_state.analyze_pose_view_globe_ratio;
+  const float d5_entry = gui::g_state.analyze_pose_view_left_row_ratio;
+  const float d7_entry = gui::g_state.analyze_pose_view_curve_canvas_ratio;
   IM_CHECK_RETV(BringUpHaloScene(ctx, /*infinite=*/false), false);
   OpenWindow(ctx);
   IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
@@ -7135,6 +7142,16 @@ bool PoseViewNarrowestBoundariesHoldBothEnds(ImGuiTestContext* ctx) {
       IM_CHECK_RETV(play.ID != 0, false);
       ctx->LogInfo("[chain %.1fx] D6 bottom: globe %.0f, factors %.0f", (double)scale,
                    static_cast<double>(globe_n->Size.y), static_cast<double>(factors_n->Size.y));
+      // The factors region at ITS floor: the fold structure is present in the content flow and
+      // the content is reachable — the scroll reaches its end over the wheel. The fold headers
+      // sit past the visible clip at this extreme (registered, not contained — the same
+      // addressable-is-not-visible distinction the narrowest case's lesson names), so the
+      // standing claim here is reachability, not containment.
+      const ImGuiTestItemInfo physics_b = ctx->ItemInfo("**/Physics details##pose_factors", ImGuiTestOpFlags_NoError);
+      IM_CHECK_RETV(physics_b.ID != 0, false);
+      ImGuiWindow* scroll_b = child_under("##AnalyzePoseFactors", "##PoseFactorsScroll");
+      IM_CHECK_RETV(scroll_b != nullptr, false);
+      IM_CHECK_RETV(wheel_to_end(scroll_b, "factors scroll (D6 bottom)"), false);
     }
 
     // D7 — both ends: the canvas holds its real-slice floor and still writes the selection; the
@@ -7204,6 +7221,14 @@ bool PoseViewNarrowestBoundariesHoldBothEnds(ImGuiTestContext* ctx) {
   }
   IM_CHECK_RETV(g_window_size_test.done.load(), false);
   ctx->Yield(3);
+  // Restore the session splits the end-drags left at their extremes (the case-level capture;
+  // the same hygiene the splits and resize cases own — a later geometry-style case without an
+  // entry reset must not inherit the extreme splits).
+  gui::g_state.analyze_pose_view_right_ratio = d4_entry;
+  gui::g_state.analyze_pose_view_globe_ratio = d6_entry;
+  gui::g_state.analyze_pose_view_left_row_ratio = d5_entry;
+  gui::g_state.analyze_pose_view_curve_canvas_ratio = d7_entry;
+  ctx->Yield(2);
   return true;
 }
 
