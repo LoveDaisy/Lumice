@@ -373,11 +373,12 @@ void PumpRayTrace(GuiState& state, SurveyExecutor& executor);
 // limits and the no-valid-sample fact. The complete answer lives in the Raypath view.
 void RenderPointDetailsBlock(GuiState& state, const SelectedClassIdentity& identity);
 
-// The Raypath view's sky-point answer (contract §16.2's complete-answer host): the completed
+// The Raypath view's sky-point answer (contract §16.2's complete-answer host): the adopted
 // document read in full — target, λ, the rank-0 mass arm, the component evidence rows, the
 // reach and completeness conclusions — sorted into the same default layer plus fold groups the
-// survey answer uses (its own `##pt_answer` suffixed pair). Draws nothing outside the completed
-// state: the four-state shell and its cancel actions stay in the main window's summary.
+// survey answer uses (its own `##pt_answer` suffixed pair, the same pair on every arm). An
+// adopted document draws its content, including across a re-query's in-flight window; the
+// four-state shell and its cancel actions stay in the main window's summary.
 void RenderPointAnswerBlock(GuiState& state);
 
 // The point session's one-line state word — the short status RenderPointStatus draws, and the

@@ -2846,9 +2846,12 @@ void RenderPointDetailsBlock(GuiState& state, const SelectedClassIdentity& ident
 void RenderPointAnswerBlock(GuiState& state) {
   PointQuerySession& point = state.analysis.point;
   PointViewState& view = state.analysis.point_view;
-  // The four-state shell lives in the main window (§16.2's split): outside the completed state
-  // this section draws nothing — the answer region carries answers, not waits or refusals.
-  if (PointQueryStateFor(point) != PointQueryState::kCompleted) {
+  // The adopted document displays whenever one is in hand — including the in-flight window of
+  // a re-query, where it IS the answer the ledger's distinction row promises (the input group's
+  // target is the intent, the answer's target is the adopted document). The four states and
+  // their cancel actions stay in the main window; a withdrawn intent resets the session, so no
+  // document means this section draws nothing.
+  if (point.adopted_result == nullptr) {
     return;
   }
   LUMICE_PathPointInfo info{};
@@ -2856,11 +2859,9 @@ void RenderPointAnswerBlock(GuiState& state) {
     return;
   }
 
-  // Default layer: the target, the λ premise, and the document's answer in full.
+  // Default layer: the target and λ/n premises (§16.2: 天空点答案带 target、λ、必要量纲),
+  // then the arm's answer.
   const std::vector<std::string> caliber = PointCaliberLines(info);
-  // The target line and the λ/n line — the answer's premises (§16.2: 天空点答案带 target、λ、
-  // 必要量纲); the member-faces premise rides the Physics group below, the execution triple the
-  // Calculation group.
   if (caliber.size() > 2) {
     for (const size_t i : { size_t(0), size_t(2) }) {
       ImGui::Bullet();
@@ -2868,6 +2869,10 @@ void RenderPointAnswerBlock(GuiState& state) {
     }
   }
 
+  std::vector<PointComponentRow> rows;
+  const int component_total =
+      info.outcome == LUMICE_PATH_POINT_MASS ? 0 : PointComponentRows(*point.adopted_result, &rows);
+  bool has_components = false;
   if (info.outcome == LUMICE_PATH_POINT_MASS) {
     LUMICE_PathPointMass mass{};
     mass.struct_size = sizeof(mass);
@@ -2881,72 +2886,87 @@ void RenderPointAnswerBlock(GuiState& state) {
     } else {
       ImGui::TextDisabled("The mass block did not answer its reader.");
     }
-    if (FoldOpen(kSurveyCalculationDetailsLabel, "pt_answer")) {
-      // The discovery's execution counts (the ledger's L4): the caliber line's sample_count/
-      // budget/execution triple, spelled whole.
-      if (caliber.size() > 3) {
-        DisabledWrappedText("%s", caliber[3].c_str());
+  } else if (component_total == 0) {
+    DrawPointNoComponentConclusions(point);
+  } else {
+    has_components = true;
+    // The component summary at the default layer: the count, the kinds, the availability
+    // limits and the selected component's no-valid-sample fact. The evidence rows are the
+    // Physics group's.
+    std::string kinds;
+    int unavailable = 0;
+    for (const PointComponentRow& row : rows) {
+      if (!kinds.empty()) {
+        kinds += ", ";
+      }
+      kinds += row.kind;
+      if (!row.integral_available) {
+        ++unavailable;
       }
     }
-    return;
-  }
-
-  std::vector<PointComponentRow> rows;
-  const int component_total = PointComponentRows(*point.adopted_result, &rows);
-  if (component_total == 0) {
-    DrawPointNoComponentConclusions(point);
-    return;
-  }
-
-  // The component evidence rows: kind, ends, coverage and integral availability — the ledger's
-  // Physics tier for the point answer. The rows are read-only (the component selector's one
-  // interaction owner is the pose window's globe combo); each row's hover tooltip names its
-  // full text. The render cap's truncation note stays AT the truncated list.
-  const size_t true_component_count = static_cast<size_t>(info.component_count);
-  if (FoldOpen(kSurveyPhysicsDetailsLabel, "pt_answer")) {
-    ImGui::TextDisabled("Components");
-    for (int i = 0; i < component_total; ++i) {
-      const PointComponentRow& row = rows[static_cast<size_t>(i)];
-      char label[192];
-      std::snprintf(label, sizeof(label), "%d: %s, %d pts, ends %s / %s%s", i + 1, row.kind.c_str(), row.point_count,
-                    row.forward_text.c_str(), row.backward_text.c_str(),
-                    row.integral_available ? "" : ", integral unavailable");
-      ImGui::Bullet();
-      ImGui::TextWrapped("%s", label);
-      RowLabelTextTooltip(std::string(label));
+    ImGui::Bullet();
+    ImGui::TextWrapped("%d component(s): %s.", component_total, kinds.c_str());
+    if (unavailable > 0) {
+      DisabledWrappedText("%d of them: fiber integral unavailable (the points did not cover an arclength).",
+                          unavailable);
     }
     const int component = std::clamp(view.component_index, 0, component_total - 1);
-    const PointComponentRow& selected = rows[static_cast<size_t>(component)];
-    if (selected.integral_available) {
-      DisabledWrappedText("Selected component's fiber integral %.6g (covers %d/%d points' arclength).",
-                          selected.fiber_integral, selected.available_points, selected.total_points);
-    } else {
-      DisabledWrappedText("Selected component's fiber integral: unavailable (%d/%d points usable).",
-                          selected.available_points, selected.total_points);
+    const std::vector<int> detail_valid_indices = CollectValidSampleIndices(*point.adopted_result, component);
+    if (detail_valid_indices.empty()) {
+      ImGui::TextDisabled("No valid sample on show for this component.");
     }
-    if (true_component_count > static_cast<size_t>(component_total)) {
-      DisabledWrappedText("+ %zu more component(s) — beyond this view's render cap.",
-                          true_component_count - static_cast<size_t>(component_total));
-    }
+  }
+
+  // The fold pairs, the SAME structure on every arm — the complete-answer promise means every
+  // premise line has a home on every document shape (the member-faces line and the execution
+  // triple are PointCaliberLines' unconditional rows; the component evidence is the component
+  // arm's extra content inside the same groups).
+  if (FoldOpen(kSurveyPhysicsDetailsLabel, "pt_answer")) {
     if (caliber.size() > 1) {  // the member faces / crystal / kind premise line
       DisabledWrappedText("%s", caliber[1].c_str());
+    }
+    if (has_components) {
+      // The component evidence rows: kind, ends, coverage and integral availability — the
+      // ledger's Physics tier. The rows are read-only (the component selector's one
+      // interaction owner is the pose window's globe combo); each row's hover tooltip names
+      // its full text. The render cap's truncation note stays AT the truncated list.
+      const size_t true_component_count = static_cast<size_t>(info.component_count);
+      ImGui::TextDisabled("Components");
+      for (int i = 0; i < component_total; ++i) {
+        const PointComponentRow& row = rows[static_cast<size_t>(i)];
+        char label[192];
+        std::snprintf(label, sizeof(label), "%d: %s, %d pts, ends %s / %s%s", i + 1, row.kind.c_str(), row.point_count,
+                      row.forward_text.c_str(), row.backward_text.c_str(),
+                      row.integral_available ? "" : ", integral unavailable");
+        ImGui::Bullet();
+        ImGui::TextWrapped("%s", label);
+        RowLabelTextTooltip(std::string(label));
+      }
+      const int component = std::clamp(view.component_index, 0, component_total - 1);
+      const PointComponentRow& selected = rows[static_cast<size_t>(component)];
+      if (selected.integral_available) {
+        DisabledWrappedText("Selected component's fiber integral %.6g (covers %d/%d points' arclength).",
+                            selected.fiber_integral, selected.available_points, selected.total_points);
+      } else {
+        DisabledWrappedText("Selected component's fiber integral: unavailable (%d/%d points usable).",
+                            selected.available_points, selected.total_points);
+      }
+      if (true_component_count > static_cast<size_t>(component_total)) {
+        DisabledWrappedText("+ %zu more component(s) — beyond this view's render cap.",
+                            true_component_count - static_cast<size_t>(component_total));
+      }
     }
   }
   if (FoldOpen(kSurveyCalculationDetailsLabel, "pt_answer")) {
     if (caliber.size() > 3) {  // discovery sample_count / budget / execution
       DisabledWrappedText("%s", caliber[3].c_str());
     }
-    const int component = std::clamp(view.component_index, 0, component_total - 1);
-    const std::vector<int> valid_indices = CollectValidSampleIndices(*point.adopted_result, component);
-    DisabledWrappedText("Selected component: %d valid sample(s) of %d.", static_cast<int>(valid_indices.size()),
-                        rows[static_cast<size_t>(component)].point_count);
-  }
-  // The selected component's no-valid-sample fact — an answer-and-evidence fact this block
-  // owns at the default layer (the per-sample FACTORS draw in the Pose & trace window).
-  const int component = std::clamp(view.component_index, 0, component_total - 1);
-  const std::vector<int> detail_valid_indices = CollectValidSampleIndices(*point.adopted_result, component);
-  if (detail_valid_indices.empty()) {
-    ImGui::TextDisabled("No valid sample on show for this component.");
+    if (has_components) {
+      const int component = std::clamp(view.component_index, 0, component_total - 1);
+      const std::vector<int> valid_indices = CollectValidSampleIndices(*point.adopted_result, component);
+      DisabledWrappedText("Selected component: %d valid sample(s) of %d.", static_cast<int>(valid_indices.size()),
+                          rows[static_cast<size_t>(component)].point_count);
+    }
   }
 }
 

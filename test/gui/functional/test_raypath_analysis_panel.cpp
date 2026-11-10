@@ -3953,6 +3953,16 @@ bool IdentityClassShowsTheMassArmAndTheMapAnswers(ImGuiTestContext* ctx) {
     IM_CHECK_RETV(reopened_text.find("wavelength 550.00 nm") != std::string::npos, false);
     IM_CHECK_RETV(reopened_text.find("discovery sample_count") == std::string::npos, false);
     IM_CHECK_RETV(reopened_text.find("Selected component") == std::string::npos, false);
+    // The mass arm's fold pair is the SAME structure as the component arm's: opening the point
+    // answer's Physics group surfaces the member-faces premise line here too (the click's
+    // auto-scroll brings the header into the report child's clip; toggling back leaves the
+    // found state).
+    ctx->ItemClick("**/Physics details##pt_answer");
+    ctx->Yield(2);
+    const std::string mass_physics_text = CaptureMapFrameText(ctx);
+    IM_CHECK_RETV(mass_physics_text.find("member faces") != std::string::npos, false);
+    ctx->ItemClick("**/Physics details##pt_answer");
+    ctx->Yield(1);
   }
   ctx->WindowClose("//Raypath view");
   ctx->Yield(1);

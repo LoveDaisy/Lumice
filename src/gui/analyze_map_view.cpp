@@ -1627,10 +1627,12 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
     RenderSurveyOverviewModel(survey_model);
     ImGui::Separator();
   }
-  // The sky-point answer (contract §16.2): the completed point document read in full, sorted
+  // The sky-point answer (contract §16.2): the adopted point document read in full, sorted
   // into its own fold pair. Sits after the class answer, before the map's own report — the
-  // ledger's answer-region order. Like the class answer: nothing here outside the completed
-  // state; the four-state shell and the cancel actions stay in the main window.
+  // ledger's answer-region order. Same gate as the class answer: an adopted document in hand
+  // draws its content (including across a re-query's in-flight window — the four-state shell
+  // and the cancel actions stay in the main window, and the input group's target line carries
+  // the intent/adopted distinction).
   if (state.analysis.point.adopted_result) {
     ImGui::TextDisabled("Sky point answer");
     RenderPointAnswerBlock(state);

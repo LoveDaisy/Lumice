@@ -615,10 +615,15 @@ void RenderSurveyDefaultLayer(const SurveyOverviewModel& model) {
     }
   }
   // The tint reading for the arms whose conclusions don't already carry it (the identity arm's
-  // conclusions quote the ratio; the caliber stays a Physics detail).
+  // conclusions quote the ratio; the caliber stays a Physics detail). A tint leg that ran but
+  // produced no value names that at the default layer too — the leg's existence with an empty
+  // value is an engine-reachable state, and dropping it silently would read the absence as if
+  // the question had never been asked.
   if (model.tint.available && model.tint.reading_available && model.arm != SurveyArm::kIdentity) {
     ImGui::Bullet();
     ImGui::TextWrapped("Blue/red ratio %.3f — %s.", model.tint.ratio, DirectionProse(model.tint.direction).c_str());
+  } else if (model.tint.available && !model.tint.reading_available) {
+    DisabledWrapped("Weight tint: no reading (%s).", SurveyStateName(model.tint.state));
   }
   // The probe's refused mode is a limit — default at EVERY arm (§16.1's state honesty: a
   // refusal must not be readable only through a fold, and the full-dimensional arm's object
