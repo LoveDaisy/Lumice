@@ -700,8 +700,9 @@ Windows/Linux 真机输入已测。最终执行结果存于测试报告；这些
 
 #### 16.1.3 形态轴试点：空间结论的图上锚定（A2，as-built 2026-11-10）
 
-> 随片 A2（ia-anchored-verdict-pilot）落地翻 as-built。裁决单源 =
-> `ia-proposal-decisions-2026-11-09.md` §3；owner 明示 hover/toggle 双档选择可被真机上手推翻。
+> 随片 A2（ia-anchored-verdict-pilot）落地翻 as-built。溯源：owner 裁决 2026-11-09 第二轮
+> （裁决稿随任务归档、不在 tracked 树内），裁决内容以下文复述为准，本文即其耐久载体。
+> owner 明示 hover/toggle 双档选择可被真机上手推翻。
 
 **封闭视觉词汇表（四类设备，裁决原文「环/弧/点/区域」）**：①环 = 绕日等偏角整圈（结论 =
 距太阳 δ 的整圈；视野裁剪是显示形态不是语义，部分可见以 "· arc in view" 措辞陈述——

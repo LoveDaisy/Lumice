@@ -617,13 +617,12 @@ bool ProjectToRect(const MapCanvasProjection& view, const double pos[3], const I
 struct IsoDeltaWalk {
   int drawn = 0;            // the CURRENT contiguous polyline run (a disk exit breaks the run and resets
                             // it — the polyline's segmentation, not the walked amount)
-  int drawn_total = 0;      // in-disk pairs walked across the WHOLE walk: for the solid form this
-                            // IS the submitted-line count ("actually drew this curve"), the legend
-                            // reads it; a circle that left the disk mid-way and never returned
-                            // still read zero from its final run's length alone
-  int lines_submitted = 0;  // AddLine calls actually emitted — the dashed form walks every pair
-                            // but submits only its on-phase ones, so the drawn-only legend gate
-                            // and label read THIS, never the walked amount
+  int lines_submitted = 0;  // AddLine calls actually emitted — the ONE "actually drew" fact the
+                            // legend gates and the label read. The walked sample count is
+                            // samples_in_disk (same value every counter here used to
+                            // double-carry); a dashed walk submits only its on-phase pairs, so
+                            // walked > 0 with nothing drawn is a real state the gates must not
+                            // light.
   int samples_in_disk = 0;  // the circle's own samples that landed in the view disk (of kOverlaySegments+1)
   bool have_top = false;
   double top_x = 0.0;
@@ -687,7 +686,6 @@ IsoDeltaWalk WalkIsoDeltaCircle(ImDrawList* dl, const MapCanvasProjection& view,
     last_x = x;
     last_y = y;
     ++walk.drawn;
-    ++walk.drawn_total;
     if (!walk.have_top || y < walk.top_y) {
       walk.have_top = true;
       walk.top_x = x;
@@ -999,16 +997,18 @@ void DrawSurveyOverlays(ImDrawList* dl, GuiState& state, const MapCanvasProjecti
     for (const Curve& curve : curves) {
       // One walk draws the circle and reports its topmost drawn point — the label anchor (the
       // readout the eye meets). A partially visible circle says so: the drawn arc is the
-      // in-view part, not the whole circle.
+      // in-view part, not the whole circle. The legend and the label read the SUBMITTED line
+      // count: a legend describes the drawn picture, and a walk that only grazed the disk
+      // (samples in, but no two consecutive) draws no curve and earns no entry.
       const IsoDeltaWalk walk =
           WalkIsoDeltaCircle(dl, view, pic_min, pic_px, sun_pos, curve.delta_deg, curve.colour, 1.4f);
-      if (legend != nullptr && walk.drawn_total > 0) {
+      if (legend != nullptr && walk.lines_submitted > 0) {
         *curve.legend_bit = true;
         if (walk.partial()) {
           legend->dispersion_partial = true;
         }
       }
-      if (walk.drawn_total > 0) {
+      if (walk.lines_submitted > 0) {
         char line[112];
         std::snprintf(line, sizeof(line), "%s · %.3f°%s", curve.label->c_str(), curve.delta_deg,
                       walk.partial() ? " · arc in view" : "");

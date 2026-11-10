@@ -1123,9 +1123,13 @@ TEST_F(VerdictAnchorDraw, HoverAndToggleEachAnchor) {
   EXPECT_GT(IndexCountForColour(kChromaticColourRed), 0);
 }
 
-// The switch standing but the ring wholly outside the view disk: the walk submits nothing — no
-// legend bit, no label. This is the lines_submitted gate's own reason: the walked pair count is
-// nonzero while the drawn picture is empty, and a legend describes the drawn picture.
+// The switch standing but the ring wholly outside the frustum: nothing draws and no legend bit
+// lights — the density gate's complement on the drawing side. What this rig CANNOT reach is the
+// intermediate regime the lines_submitted gate also covers (samples in view but zero submitted
+// pairs: a dashed arc wholly inside its off-phase windows, or the measure-zero tangent ring
+// whose single in-view sample forms no pair) — that regime has no robust fixture in this
+// projection, and the gate it protects reads the one "actually drew" counter so a future caller
+// cannot pick a walked-but-not-drawn carrier.
 TEST_F(VerdictAnchorDraw, OutOfViewRingDrawsNothingAndEarnsNoLegend) {
   const ViewProjection vp = SunCamera();
   OverlayLegendState legend;
