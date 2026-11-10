@@ -157,8 +157,8 @@ Entry Edit、pick-link 语义沿用现列表行为 `analyze_workspace.cpp:80-112
 
 ### 4.2 五处分隔
 
-> 当前五处分隔如下。2026-11-09 的 **待批准建议**见 §16.3（D2 新导航头下限）及 §16.4
-> （D4–D6 三条主边界＋可选 D7；不沿用“五处”数量描述新布局）。
+> 当前五处分隔如下。§16.3（D2 新导航头下限）与 §16.4（Pose & trace 四边界 D4–D7＋resize
+> 策略）已随各自实施片翻 as-built——Pose & trace 的边界数量不再沿用「五处」描述。
 
 | # | 位置 | 轴 | 默认（建议值） | 最小可用判据 | 会话行为 |
 |---|---|---|---|---|---|
@@ -291,8 +291,8 @@ Render 与 Analyze 共享**同一份**取景/曝光/辅助线显示状态（disp
 
 ## 7. 姿态/轨迹窗（天空点/姿态层）
 
-> 2026-11-09 **待批准建议**：主窗入口替换见 §16.3，左下曲线/右下因素与分隔见 §16.4，
-> 特殊完成态完整答案的归属修订见 §16.2。以下 as-built 的右下曲线、D5 与主窗答案 owner 仍描述现状。
+> §16.3 的入口替换、§16.4 的左下曲线/右下因素与四边界、§16.2 的答案归属均已实施翻
+> as-built。本节下文的「右下曲线、D5」等描述为历史 as-built 快照，现状以 §16.4 为准。
 
 > **755.5 as-built**：本节已落地（`RenderAnalyzePoseViewWindow`，`analyze_point_view.cpp`）。开窗
 > 入口、常开同步、诚实空态与关闭重开全部照合同实现；as-built 补充——窗名 `Pose & trace`，默认
@@ -410,8 +410,8 @@ caliber）就近在对应窗口；未知/拒答/partial 不以空白或零冒充
 
 ## 11. 内容预算核对
 
-> R4/R5/R7 是旧空间的预算与后续 as-built 量测，不因本轮方案倒改；新几何账在 §16.3/§16.4.1，
-> **只有推演、尚未渲染校准**。旧最窄窗已通过不能签发新分隔/新归属的可用性。
+> R4/R5/R7 是旧空间的预算与后续 as-built 量测，不因本轮方案倒改；新几何账见 §16.3 与
+> §16.4.1（已渲染校准：1x/1.5x/2x 真机实测，见 §16.4.1 as-built 记录）。
 
 **量测来源声明**：窗口常量锚定（`gui_constants.hpp:27-30` 窗口 1600×980 默认 / 1024×640 最小；
 `:49-55` 顶栏 40/状态栏 28/左栏 300/右列 400）＋ Roboto Medium 15px（1x 设计基准，
@@ -865,87 +865,101 @@ segmented 双格**（`SameLine(0,0)` flush）：segmented 读作互斥模式切�
 **标题文本保留**：`Selection details` / `Diagnostics` 未改名（「标题可用 Selection」为许可非
 强制）；标题文本属 A1 details 区重构面，本片避免两次 churn。
 
-### 16.4 Pose & trace：左列形态与曲线，右列姿态选择与解释
+### 16.4 Pose & trace：左列形态与曲线，右列姿态选择与解释（as-built 2026-11-10）
 
-**建议结构**（推演，不是已运行截图）：
+> 本节随 scrum 778 片 C（ia-pose-relayout）落地翻为 as-built：下列为已交付形态与实测语义，
+> 不再是建议。代码锚点：`analyze_point_view.cpp` 的 `RenderAnalyzePoseViewWindow`（四边界派生
+> 与绝对光标摆放）、`RenderPoseCurveRegion`（D7 与伴读定额）、`RenderPoseFactorsRegion`（因素
+> 区）；字段 `analyze_pose_view_{right,globe,left_row,curve_canvas}_ratio`（全会话显示态，
+> `gui_state_tiers.hpp` 四行 kSession）；常量 `gui_constants.hpp` 的 `kPoseView*` 族。
+
+**结构**（已运行、已测试）：
 
 ```text
 ┌───────────────────────────┬────────────────────────┐
-│ 3D crystal + ray          │ Sun direction globe    │
+│ Raypath 3D                │ Sun direction globe    │
 │ World / Crystal           │ component / pose / play│
 │ GL perspective + x-ray    │                        │
 ├──────── D5 ───────────────┤          D4            │
 │ Contribution curve        ├──────── D6 ────────────┤
 │ five arms / shared cursor │ Current pose factors   │
-├──────── D7 ───────────────┤ physical explanation   │
-│ curve key / units / readout│ scrollable details     │
+├──────── D7 ───────────────┤ (fold groups, toggle)  │
+│ legend / caliber / readout│ scrollable details     │
 └───────────────────────────┴────────────────────────┘
 ```
 
-D4 是贯穿窗体的列间分隔，不是右列内部横线；图中位置只为标名。边界实际清单：
+D4 是贯穿窗体的列间分隔，不是右列内部横线。边界实际清单（全部已交付）：
 
-| 边界 | 操作/独立写域 | 与现实现的关系（建议） |
+| 边界 | 操作/独立写域 | 实现（as-built） |
 |---|---|---|
-| D4 左右列间 | 横拖改变两列宽 | 复用 `PoseViewColumnSplitter` 的显示边界增量/双侧钳制 recipe |
-| D5 左列3D/curve间 | 纵拖改变3D与曲线区高度 | 复用 `PoseViewRowSplitter` 的参数化 recipe，独立左列比例 |
-| D6 右列globe/文字间 | 纵拖改变globe与解释区高度 | 旧globe比例语义跟随globe保留到此，不把旧值静默改解释成3D比例 |
-| D7 curve画布/短伴读间 | 纵拖改变画布与图例/单位/读数份额，仅左下区内部 | **新增建议**，复用行分隔 recipe；画布与报告仍消费同一几何分配规则 |
+| D4 左右列间 | 横拖改变两列宽 | `PoseViewColumnSplitter`（`analyze_pose_view_right_ratio`，右列宽份额；floors 220/300，双侧钳制＋③ fallback） |
+| D5 左列3D/curve间 | 纵拖改变3D与曲线区高度 | `PoseViewRowSplitter`（`analyze_pose_view_left_row_ratio`，3D 高份额；floors 300/330） |
+| D6 右列globe/文字间 | 纵拖改变globe与因素区高度 | `PoseViewRowSplitter`（`analyze_pose_view_globe_ratio`，globe 高份额——旧值语义跟随 globe，未静默改义；floors 221/140） |
+| D7 curve画布/伴读间 | 纵拖改变画布与图例/量纲/读数份额，仅左下区内部 | `PoseViewRowSplitter`（`analyze_pose_view_curve_canvas_ratio`；floors 40/32；0.0f 哨兵=未拖） |
 
-**“四处”的口径**：左右列间＋左右各自上下只构成 **3条独立 pane 边界**。第四条 D7 是本设计建议，
-依据是曲线区内部 canvas/文字比例固定造成的实际不便，不声称它是 owner 已逐字指定的第四条。
-建议采用D7满足“间隔全可调”的使用意图；若 owner 只要三条主边界，D7可单独否决，其他布局不依赖它。
-不为了凑数在 globe 或文字区再加无用途分隔。
+**“四处”的口径（as-built 落定）**：D7 经 owner 2026-11-09 裁决保留，四条边界各自写各自
+的会话态字段，互不写入（gui_test 拖拽腿逐边界持有）。未在 globe 或因素区添加无用途分隔。
 
-**复用而非重写**：现 `analyze_point_view.cpp:1947–1996` 已是接收 id/ratio/floors 的两个方向 recipe。
-新增消费者与独立比例即可，不引入一套通用 pane 框架。`canvas_report_layout.hpp` 仍是可见 client 与
-图/报告几何的唯一实现；D7只提供用户分配意图，不在业务窗复制同一分配算式。三条水平比例互不写入，
-D4只改变宽度，resize只派生钳制；任何内容/结果/开窗都不得覆盖手调比例。新比例归会话显示态，
-旧globe比例保原含义；不保存到场景或新增跨启动偏好。
+**复用而非重写（as-built）**：四个 splitter 全部是既有两方向 recipe 的参数化复用
+（id/ratio/floors），无通用 pane 框架；`canvas_report_layout.hpp` 仍是几何分配实现
+（3D 画布经 `CanvasHeightBeforeReport`＋固定报告预算；曲线画布由 D7 派生）。三条纵向比例
+互不写入，D4 只改变宽度；任何内容/结果/开窗不覆盖手调比例（manual priority，§9.3——无结果
+写入路径）。新比例归会话显示态不持久化；旧 globe 比例保原含义。
 
-**内容 owner**：3D仍用当前GL晶体与同MVP光路/标记/太阳箭头；无合法轨迹仍保晶体，不倒回旧投影。
-曲线移左下，保五臂、真实弧长/闭环、共享log轴、精确零行、不可用断线、seed、正值分位数拟合、
-窗外点计数/实际最值及滚轮Y缩放；点击/拖拽仍写同一游标并停播放。短量纲/测度、五臂键、
-当前或hover读数、删点诚实行留在曲线伴读，不能全部迁走后让曲线失去解释。
-完整当前姿态因素与物理说明到右下；hover仅暂时覆盖曲线读数，不悄悄更改右侧“Current pose”所指的样本。
-积分或测度不可用/registered gap等限制必须在相关读数旁默认可读，详细原文可内滚读取。
-右上保globe/分量/姿态游标/播放；dev-grid是计算辅助，退到Calculation details。
+**内容 owner（as-built）**：3D 用当前 GL 晶体与同 MVP 光路/标记/太阳箭头；无合法轨迹仍保晶体。
+曲线在左下，保五臂、真实弧长/闭环、共享 log 轴、精确零行、不可用断线、seed、正值分位数拟合、
+窗外点计数/实际最值及滚轮 Y 缩放；点击/拖拽仍写同一游标并停播放。曲线伴读（D7 之下）保留
+图例（含 0-throughout/unavailable 命名）、量纲行（angle-Lebesgue · rad）、积分回显（标题行）、
+当前/hover 读数行、partial note；**measure registration note 与当前姿态因素行迁至右下因素区**。
+因素区（`RenderPoseFactorsRegion`）承载：`PointFactorLines` 的默认层读数（永远绑
+`view.sample_index`，hover 不改它所指样本）＋measure note（默认可见）＋`Physics details`
+折叠组（逐接口透射率——T 的光学前提，判据梯 L3 证据行）＋`Calculation details` 折叠组
+（deviation grid 开关自 globe 常驻栈迁入，no-grid 注记随 toggle）。§16.1 判据梯逐行机械套用：
+接口透射率行=P3 证据行；因素结论=L1/L2 默认层。积分/测度不可用等限制在相关读数旁默认可读。
+右上保 globe/分量/姿态游标/播放。
 
-#### 16.4.1 最小尺寸梯与完整行预算（建议，未渲染校准）
+#### 16.4.1 最小尺寸梯与 resize 策略（as-built 2026-11-10，含三档真机校准）
 
-建议先**维持现有默认960×720与最小640×680**，不借排版改动宣称可以缩到未经验证的高度。
-下表为1x/Roboto Medium 15px、`theme.cpp:103–106` padding(8,6)、FramePadding(6,3)、
-ItemSpacing(8,3)、splitter8的**算术模板**；不是实测。窗口名义尺寸要先扣标题/边框/祖先clip；
-示例按宽扣16、高扣33得到可见client，落地必须用真实可见矩形替换示例输入。
+默认 960×720 与最小 640×680 维持现状宣称（`SetNextWindowSizeConstraints` 每 Begin 重钳，
+`kPoseViewMinWidth/Height`）。下表先保留原算术模板作为推导记录，**实测结论随后**——「最窄
+已验证容纳」由 gui_test 真实帧签发（`pose_view_splits_are_manual_independent_and_floored`
+的 both-floors 腿 + `pose_view_narrowest_boundaries_hold_both_ends` 的逐边界链，1x 与 1.5x
+各一），不是本表算术。
 
-| 推导量 | 默认窗示例 | 最窄窗示例 | 判据/用途 |
+| 推导量 | 默认窗示例 | 最窄窗示例 | 备注 |
 |---|---|---|---|
-| 外窗 → 可见client Wc×Hc | 960×720 → 944×687 | 640×680 → 624×647 | chrome33仅为本模板输入，不能作为源码常量或忽略viewport裁剪 |
-| 列宽分母 Wc−8 | 936 | 616 | 建议右列比例1/3，左/右floor300/220；左floor比旧3D240宽，为曲线留可读横域 |
-| 左/右列实际宽 | 624 / 312 | 396 / 220（右侧撞floor） | 内容宽再扣各child padding：608/296、380/204；不是拿外窗宽测最宽行 |
-| 两列各自的高分母 Hc−8−2×3 | 673 | 633 | D5/D6各自消费同一个可见高度，不共享比例 |
-| 左3D/curve高（建议3D比例0.45，floor300/330） | 302.85 / 370.15 | 300 / 333（夹在floor带） | 300＋330=630 ≤633；窄窗可拖范围仅3pt，不冒充宽裕 |
-| 右globe/文字高（建议globe比例0.55，floor221/140） | 370.15 / 302.85 | 348.15 / 284.85 | 221＋140=361 ≤633；两端均保解释区入口 |
+| 外窗 → 可见client Wc×Hc | 960×720 → 944×687 | 640×680 → 624×647 | chrome33 为模板输入；真实值以每帧 `VisibleContentSize()` 为准 |
+| 列宽分母 Wc−8 | 936 | 616 | D4 floors 220/300，两侧钳制 |
+| 两列各自的高分母 Hc−8−2×3 | 673 | 633 | D5/D6 各自消费同一可见高度，不共享比例 |
+| 左3D/curve高（D5，floors 300/330） | 303/370（0.45） | 300/333（夹在floor带，拖程≈3pt） | 实测见下 |
+| 右globe/文字高（D6，floors 221/140） | 370/303（0.55） | 348/285 | 实测见下 |
+| 曲线区内部（D7，floors 40/32） | 画布≈denom−伴读定额 | 画布40下限 | 伴读定额=8×活行高（1x 实测 144px） |
 
-逐项高度账（同为建议模板，长状态/极值按真实字形换行，不固定截行）：
+**真机实测（gui_test 真实帧，2026-11-10，llvmpipe leg）**：
 
-| 区 | 最低完整形的支出 | 合计与裁决 |
-|---|---|---|
-| 左上3D | 标题21＋帧选择21＋短状态21＋canvas180＋报告视口32＋padding12＋四间距12 | **299≤300**；180对应旧3D可辨建议高度；图例/transmittance/长拒答在报告，不把它们算在画布之前 |
-| 左下curve（含D7） | 标题21＋短状态21＋canvas84＋伴读8行×19＋padding12＋D7条8＋四间距12 | **310≤330**；8行模板=图例2、量纲1、读数3、删点注2，不声称极端数字永远只占8行；超出则伴读内滚，不能吞掉整行数值 |
-| 右上globe | 沿用已校准full floor221；固定标题/分量/画布≥60/姿态播放，说明区内滚 | 不因移走曲线任意降低221；它不是“60px画布就够了”的总高度 |
-| 右下文字 | 标题21＋短状态21＋可滚4行×19＋padding12＋三间距9 | **139≤140**；读数全文可滚，不要求所有因素同时平铺；默认显示物理因素，技术统计折叠 |
+- **1x 最窄 640×680**：左列高分母实测 647pt ≥ 630 → D5 floors 成立（端点拖拽：D5 顶 3D 300/
+  curve 333，D5 底 3D 303/curve 330）；D6 端点（globe 221/factors 412 与 globe 493/factors
+  140）；D7 端点（画布 40 下限可点击写游标；对端 companion 32 下限）。模板「3pt 余量」为真。
+- **1.5x**：OS 窗随档增长（实测 960×980）；viewport 钳制窗走 D5 ③ fallback，比例份额精确
+  （3D 419px = 分母×300/630 的界值，逐像素吻合）。
+- **2x**：narrowest 用例既有 2x 腿（fixed stack 包含＋真实操作＋可达）全绿。
+- 三档断言读行为（包含/可达/写入），不复算像素——§16.4.1 原校准义务的落法。
 
-**完整最宽行**不按当前等待短文估算：每档要用活字体测量
-“World＋Crystal帧选择”、“最长分量combo＋标签”、“姿态滑条＋Play/Stop”、
-“五臂键”、“最长科学计数读数＋单位/partial限定”、“最坏删点计数＋实际min/max”各自完整足迹，
-包含frame、尾标签、padding与spacing。比较对象是上表child的**实际可见内容宽**；容不下则几何换行或
-报告内滚，不因当前结果短就改变档位。未取得新渲染数据前，本表不能签发“最窄已验证容纳”。
+**resize 尺寸响应策略（as-built，owner 2026-11-09 裁决落地）**：每对分隔成员二分——**弹性**（画布、
+可滚报告）/ **定额**（固定预算：3D 报告视口 `kPoseView3dReportQuota` 48pt、曲线伴读 8 行
+定额=行数固定×活行高、控件条）。**拉伸**：delta 由弹性成员按现行 ratio 分摊（D4/D6 两侧均
+弹性=既有 recipe 原语义；D5 delta 归两画布——3D 报告与曲线伴读守定额；D7 未拖时 delta 全给
+画布）；**收缩反向对称**：弹性先缩到 floor，不够才压定额从 floor 再退（D7 伴读可压穿 32 至
+零，随后画布让位整段——区域进入可恢复内滚的诚实形态）；**用户拖分隔条 = 意图，永远覆盖策
+略**（拖后按新 ratio 分摊：D5 拖后份额实测 0.512 精确 govern；D7 拖后 companion 脱离定额随
+ratio 走，实测 0.694）。gui_test 红绿证据：`pose_view_resize_strategy_distributes_by_ratio_
+and_quota`（拉伸/收缩/拖后再 resize/D7 拖后四场景，份额断言 ±0.03–0.05）。
 
-**低于full floors的阶梯**：先基于祖先真实可见client按既有比例压缩，不撑大外窗；曲线
-full canvas≥84/伴读≥32为建议，D7在可行带钳制；不足时canvas退到真实切片≥40，再退该区可恢复内滚
-（无canvas也须明确说明并可恢复）。globe/3D按原有同类让步链，不能提交落在祖先clip外的“假可见图”。
-每个新分隔端点都须验证另一侧至少一整行可见、内容可滚至末尾、操作仍可达；不能只测自身ScrollMax=0。
-1.5x/2x不能直接线性放大上述证据，须按活字形/viewport复算；这是实施校准义务，不是本设计轮已完成实验。
+**完整最宽行与几何退化**（as-built 落法）：长状态/极值换行不截行——伴读 8 行是定额预算不是
+截行上限，超出内容内滚、不吞数值；D7 未拖时画布吃余量到 40pt 下限，再退无画布形态（读数与
+partial note 由区内滚动承载，可恢复）；每个分隔端点另一侧整行可见、内容可滚至末尾、操作可达
+（退化链用例的真实滚轮腿持有）。UI 倍率不可线性外推（learnings 既有证据）——三档各自真跑，
+是本节签发的唯一依据。
 
 ### 16.5 七态与空间不变量的提案核对
 
@@ -968,7 +982,7 @@ full canvas≥84/伴读≥32为建议，D7在可行带钳制；不足时canvas�
 | 现条款 | 当前行为 → 建议修订 | 一句话理由 |
 |---|---|---|
 | §2.2 诊断/参考图读数行＋不重复堆放 | 主窗完整survey/point → 主摘要＋Raypath完整答案＋Pose样本因素 | 兼顾关窗可见与同一光路聚合，不复制完整报告 |
-| §4.2 D2/D4/D5 | 极薄主窗头、3D全左/globe曲线右 → 双导航头下限、左右上下各自可调、可选D7 | 新入口有真实空间，曲线得到横向区域；明确3条pane＋第4建议边界 |
+| §4.2 D2/D4/D5 | 极薄主窗头、3D全左/globe曲线右 → 双导航头下限（§16.3 as-built）；Pose & trace 四边界 D4–D7 各自可调＋resize 弹性策略（§16.4 as-built） | 新入口有真实空间，曲线得到横向区域；4 条 pane 全参数化复用、互不写入 |
 | §6 打开目标/内容/分工 | 类行快捷但唯一、右区混报告 → 保快捷＋主窗显式入口，按§16.1/16.2拆层 | 可发现且不要求理解程序读数 |
 | §7 打开目标/内容/特殊完成态/Curve | Point detail链接、右下curve、答案owner主窗 → 命名按钮、左下curve、完整答案归Raypath、因素右下 | 图形与解释按任务聚类，rank-0等答案不被可绘制性吃掉 |
 | §8 切类/λ/开合 | 机制不变；入口指涉由Point detail改按钮，所有报告取同一文档 | 归属迁移不产生新物理状态或新查询触发 |

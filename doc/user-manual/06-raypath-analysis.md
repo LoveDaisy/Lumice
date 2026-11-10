@@ -237,9 +237,14 @@ Raypath view's sky-point answer section. A refusal names itself; a multi-layer c
 filters and re-run).
 
 In the window, the component selector is the globe region's combo — the one place that moves
-between components. The window's two draggable splits (the 3D region | the right column, the
-globe | the factor readouts) keep their ratios while the window is closed and reopened in the
-same session.
+between components. The window's layout is two columns: the left stacks **Raypath 3D** over the
+**contribution curve**, the right stacks the **sun direction globe** over the **current pose
+factors**. Four draggable dividers — between the columns, inside each column, and between the
+curve's canvas and its reading strip — keep their ratios while the window is closed and
+reopened in the same session. Resizing the window or a divider never snaps a hand-set split
+back: the dividers' extents are floors, and the graph areas absorb what a resize adds or
+removes (the curve's reading strip holds an eight-line budget until you drag its divider
+yourself).
 
 Waiting, cancelled, refused and sample changes retain the same canvas and control slots. Missing
 components or samples disable the corresponding controls instead of inventing data. Descriptions,
@@ -249,15 +254,17 @@ not squeeze the graph when they grow. Resize and divider changes still resize th
 **The sun direction globe** (the window's upper right) draws the selected component's fiber:
 each valid sample is one pose where the sun sits somewhere in the crystal (the `u` arrow), the
 polyline walks them in order, and the highlighted marker is the current sample. The deviation
-grid (toggleable) colours the sphere by where each sun direction deflected the light — drawn
-only when the document carries the grid, absent otherwise, never painted as zero. Under the
-disk: the sample slider and **Play**. Dragging the slider or playing moves through the poses
-that already came back in the document; the sky point itself never moves — playing changes the
-pose you are looking at, not the direction you asked about — and with the window closed the
-playing pauses (the cursor holds where it was and resumes on reopen).
+grid colours the sphere by where each sun direction deflected the light — drawn only when the
+document carries the grid, absent otherwise, never painted as zero; its toggle lives in the
+factors region's **Calculation details** fold, together with the note that names a requested
+grid the document does not carry. Under the disk: the sample slider and **Play**. Dragging the
+slider or playing moves through the poses that already came back in the document; the sky
+point itself never moves — playing changes the pose you are looking at, not the direction you
+asked about — and with the window closed the playing pauses (the cursor holds where it was
+and resumes on reopen).
 
-**Raypath 3D** (the window's large left region) draws the current sample's real path: the
-crystal's wireframe (its analysis shape — distributions flattened to the values the engine
+**Raypath 3D** (the window's left column, upper region) draws the current sample's real path:
+the crystal's wireframe (its analysis shape — distributions flattened to the values the engine
 used) with the entry leg, every internal reflection and the exit leg from the engine's
 representative-ray recovery, colour-coded with a legend, contacts marked. **World** and
 **Crystal** are the same physical path in two frames (drag orbits, wheel zooms). While the path
@@ -265,7 +272,8 @@ for a fresh pose is computing the region says so; a pose with no legal path name
 corridor's refusal and its measured area); a rank-0 point mass has no path and says that
 instead of drawing one.
 
-**Contribution curve** (the window's lower right) draws the selected component's five named
+**Contribution curve** (the window's left column, lower region) draws the selected component's
+five named
 factors — ρ (the declared pose density, `rad^-3`), A/a² (the entry area over the crystal
 length unit squared), T (the total transmission), K = 1/(J+ε), and their product ρ·A/a²·T·K —
 along the component's own SO(3) **arclength** (the horizontal axis, in rad; a closed loop
@@ -287,11 +295,15 @@ is the declared measure's honest answer, not missing data. The readouts are not 
 chart: the arms do not sum to 100 %, and a drawable curve is not a completeness claim about
 the class.
 
-**Current sample factors** (the scrollable list under the curve) reads the current pose's own
+**Current pose factors** (the window's lower right region) reads the current pose's own
 numbers — the orientation angles, ρ, the entry measures, the total transmission, the Jacobian
-with its named-unavailable state, K, their product, and each interface's transmittance
-labelled as conditional on this path. The class-level totals stay in the main window's
-diagnostics; these are the per-pose, per-path numbers of the sample the globe's marker names.
+with its named-unavailable state, K, and their product. Each interface's transmittance,
+labelled as conditional on this path, lives one fold deeper under **Physics details**. The
+region also carries the measure registration's note beside the numbers it limits, and short
+state lines that name the honest empty, waiting or refused forms. Hovering the curve canvas
+temporarily overrides the curve's own readout line only — these factors always describe the
+sample the globe's marker names, never the hovered one. The class-level totals stay in the
+main window's diagnostics; these are the per-pose, per-path numbers.
 
 ## 9. From the command line
 
