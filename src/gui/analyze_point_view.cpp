@@ -2033,9 +2033,32 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
   ImGui::SeparatorText("Contribution curve");
 
   RenderPointStatus(point);
+  // ---- D7 — the curve region's canvas | companion split (§16.4): the canvas's share of the
+  // span below the fixed head. The sentinel share (never dragged) grants the companion its
+  // fixed 8-line quota and the canvas eats the whole delta — the resize strategy's
+  // elastic|quota pair, the quota a budget of LINES (live-measured height), never content
+  // height (§15: lines beyond it scroll, none is swallowed). A drag writes the dragged share,
+  // and from then on the stored share governs — user intent overrides the strategy — clamped
+  // at the canvas's real-slice floor and the companion's floor (the quota compresses from its
+  // floor first, the shrink ladder's reverse symmetry). Below the canvas floor's own reach the
+  // canvas yields entirely: the region's honest scroll form, recoverable by growing back. ----
   const ImVec2 available = ImGui::GetContentRegionAvail();
-  const float graph_h = CanvasHeightBeforeReport(available.y, 0.0f, std::max(UiPx(96.0f), available.y * 0.4f),
-                                                 ImGui::GetStyle().ItemSpacing.y);
+  const float strip_7 = UiPx(kAnalyzeSplitterSize);
+  const float v_spacing = ImGui::GetStyle().ItemSpacing.y;
+  const float denom_7 = std::max(0.0f, available.y - strip_7 - v_spacing * 2.0f);
+  const float canvas_floor_7 = UiPx(kPoseViewCurveCanvasFloor);
+  const float companion_floor_7 = UiPx(kPoseViewCurveCompanionFloor);
+  const float companion_quota_7 =
+      static_cast<float>(kPoseViewCurveCompanionLines) * ImGui::GetTextLineHeightWithSpacing();
+  float graph_h = 0.0f;
+  if (denom_7 >= canvas_floor_7) {
+    if (state.analyze_pose_view_curve_canvas_ratio > kPoseViewCurveCanvasRatioUndragged) {
+      const float upper = std::max(canvas_floor_7, denom_7 - companion_floor_7);
+      graph_h = std::clamp(state.analyze_pose_view_curve_canvas_ratio * denom_7, canvas_floor_7, upper);
+    } else {
+      graph_h = std::max(canvas_floor_7, denom_7 - companion_quota_7);
+    }
+  }
   const ImVec2 graph_size(available.x, graph_h);
   const ImVec2 graph_min = ImGui::GetCursorScreenPos();
   ImDrawList* graph_draw_list = ImGui::GetWindowDrawList();
@@ -2050,6 +2073,10 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
   }
   AnalyzeRegionWheelStanding();  // latch before this region writes its claim
   AnalyzeRegionWheelClaim(graph_hovered, AnalyzeCurveWheelOwnerId());
+  if (graph_h > 0.0f) {
+    PoseViewRowSplitter("##PoseCurveSplitter", available.x, graph_h, &state.analyze_pose_view_curve_canvas_ratio,
+                        denom_7, canvas_floor_7, companion_floor_7);
+  }
   ImGui::BeginChild("##PoseCurveScroll", RemainingReportSize());
   const auto render_content = [&] {
     const PointQueryState st = PointQueryStateFor(point);
@@ -2476,56 +2503,26 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
       } else {
         ImGui::TextWrapped("%s", sample_readout(std::clamp(view.sample_index, 0, valid_count - 1)).c_str());
       }
-      // ---- The scroll region: the partial note, the measure registration's note verbatim when
-      // the engine's gap flag stands (J7 — the GUI never paraphrases the support semantics), and
-      // the current sample's full factor readouts (the factors face, retained in-window). ----
+      // ---- The scroll region's tail: the partial note. The measure registration's note and
+      // the current sample's factor readouts moved to the factors region (§16.4's content
+      // owner) — the companion carries the curve's own reading only. ----
       if (info->execution != LUMICE_PATH_OUTCOME_COMPLETED) {
         ImGui::PushStyleColor(ImGuiCol_Text, WarningTextColor());
         ImGui::TextWrapped("Partial document (%s) — the curve on show is what arrived.",
                            ExecutionText(info->execution));
         ImGui::PopStyleColor();
       }
-      LUMICE_PathMeasureRegistration reg{};
-      reg.struct_size = sizeof(reg);
-      if (LUMICE_PathPointGetMeasureRegistration(point.adopted_result.get(), &reg) == LUMICE_PATH_READ_OK &&
-          reg.registered_gap != 0 && reg.note.data != nullptr && reg.note.length > 0) {
-        disabled_line("measure registration: %.*s", static_cast<int>(reg.note.length), reg.note.data);
-      }
-      if (const std::optional<CurrentSample> current =
-              CurrentSampleOf(*point.adopted_result, view, curve.valid_positions);
-          current.has_value()) {
-        disabled_line("Current sample:");
-        for (const std::string& line_text : PointFactorLines(current->sample)) {
-          ImGui::Bullet();
-          ImGui::TextWrapped("%s", line_text.c_str());
-        }
-      }
       return;
     }
     // The degraded form: no canvas — the readout and the lines render direct in the region, the
     // region's own scrollbar carries them (the content budget's answer at a cell too short for
-    // the two-segment form).
+    // the two-segment form; the factors live in their region now, §16.4).
     if (info->execution != LUMICE_PATH_OUTCOME_COMPLETED) {
       ImGui::PushStyleColor(ImGuiCol_Text, WarningTextColor());
       ImGui::TextWrapped("Partial document (%s) — the curve on show is what arrived.", ExecutionText(info->execution));
       ImGui::PopStyleColor();
     }
     ImGui::TextWrapped("%s", sample_readout(std::clamp(view.sample_index, 0, valid_count - 1)).c_str());
-    LUMICE_PathMeasureRegistration reg{};
-    reg.struct_size = sizeof(reg);
-    if (LUMICE_PathPointGetMeasureRegistration(point.adopted_result.get(), &reg) == LUMICE_PATH_READ_OK &&
-        reg.registered_gap != 0 && reg.note.data != nullptr && reg.note.length > 0) {
-      disabled_line("measure registration: %.*s", static_cast<int>(reg.note.length), reg.note.data);
-    }
-    if (const std::optional<CurrentSample> current =
-            CurrentSampleOf(*point.adopted_result, view, curve.valid_positions);
-        current.has_value()) {
-      disabled_line("Current sample:");
-      for (const std::string& line_text : PointFactorLines(current->sample)) {
-        ImGui::Bullet();
-        ImGui::TextWrapped("%s", line_text.c_str());
-      }
-    }
   };
   render_content();
   ImGui::EndChild();

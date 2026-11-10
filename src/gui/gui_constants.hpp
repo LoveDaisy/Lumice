@@ -159,6 +159,15 @@ constexpr float kPoseViewCurveFloor = 330.0f;
 // means the resize strategy's undragged state (companion at its fixed quota, canvas eats the
 // delta), never a user's split.
 constexpr float kPoseViewCurveCanvasRatioUndragged = 0.0f;
+// D7's split floors and the companion's fixed quota (§16.4.1 suggested values, calibration
+// candidates until the real-frame pass): the canvas's real-slice floor — the smallest canvas
+// that still draws a real slice before the region's honest scroll form takes over — the
+// companion's smallest readable budget, and the 8-line quota the UNDRAGGED state grants it.
+// The quota is a budget of LINES (live-measured height per frame), never content height — §15:
+// lines beyond it scroll, none is swallowed.
+constexpr float kPoseViewCurveCanvasFloor = 40.0f;
+constexpr float kPoseViewCurveCompanionFloor = 32.0f;
+constexpr int kPoseViewCurveCompanionLines = 8;
 // The two analysis windows' title display spellings, the ONE source for every consumer of those
 // spellings: the windows' own Begin calls, the Raypath view window's in-place Pose button (the
 // constant plus the button's `###pose_open` addressing suffix), and the main window's Selection

@@ -6211,6 +6211,7 @@ bool PoseViewSplitsAreManualIndependentAndFloored(ImGuiTestContext* ctx) {
   const float ratio_d4 = gui::g_state.analyze_pose_view_right_ratio;
   const float ratio_d6 = gui::g_state.analyze_pose_view_globe_ratio;
   const float ratio_d5_entry = gui::g_state.analyze_pose_view_left_row_ratio;
+  const float ratio_d7_entry = gui::g_state.analyze_pose_view_curve_canvas_ratio;
   // The D6 drag legs need a known starting geometry: the window's live size depends on which
   // earlier case last sized it (the workspace scroll-pins case runs the pose window at a
   // 640-tall basis; the minimum-height clamp then re-raises it to 680). Pin the contract
@@ -6305,6 +6306,80 @@ bool PoseViewSplitsAreManualIndependentAndFloored(ImGuiTestContext* ctx) {
                static_cast<double>(r3d_after_d5->Size.y), static_cast<double>(d5_before),
                static_cast<double>(gui::g_state.analyze_pose_view_left_row_ratio));
 
+  // The companion's fixed quota (the UNDRAGGED D7 state, the resize strategy's elastic|quota
+  // pair): stretching the window grows the CANVAS — the companion child's height stays at its
+  // 8-line budget, never content-driven (§15: geometry first). Runs before the D7 drag below,
+  // while the sentinel still holds.
+  const ImGuiTestItemInfo canvas_quota0 = ctx->ItemInfo("**/##pose_curve_canvas", ImGuiTestOpFlags_NoError);
+  IM_CHECK_RETV(canvas_quota0.ID != 0, false);
+  ImGuiWindow* scroll_quota0 = nullptr;
+  for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
+    if (w != nullptr && w->Active && w->ParentWindow != nullptr &&
+        std::strstr(w->ParentWindow->Name, "##AnalyzePoseCurve") != nullptr &&
+        std::strstr(w->Name, "##PoseCurveScroll") != nullptr) {
+      scroll_quota0 = w;
+      break;
+    }
+  }
+  IM_CHECK_RETV(scroll_quota0 != nullptr, false);
+  const float canvas_quota_h0 = canvas_quota0.RectFull.GetHeight();
+  const float scroll_quota_h0 = scroll_quota0->Size.y;
+  ctx->LogInfo("[D7 quota] canvas %.0f, companion %.0f (quota %.0f)", static_cast<double>(canvas_quota_h0),
+               static_cast<double>(scroll_quota_h0), static_cast<double>(8.0f * ImGui::GetTextLineHeightWithSpacing()));
+  {
+    const ImVec2 vp1 = ImGui::GetMainViewport()->Size;
+    ImGui::SetWindowSize(win, ImVec2(std::min(gui::UiPx(1100.0f), vp1.x), std::min(gui::UiPx(860.0f), vp1.y)),
+                         ImGuiCond_Always);
+    ctx->Yield(3);
+  }
+  const ImGuiTestItemInfo canvas_quota1 = ctx->ItemInfo("**/##pose_curve_canvas", ImGuiTestOpFlags_NoError);
+  IM_CHECK_RETV(canvas_quota1.ID != 0, false);
+  ImGuiWindow* scroll_quota1 = nullptr;
+  for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
+    if (w != nullptr && w->Active && w->ParentWindow != nullptr &&
+        std::strstr(w->ParentWindow->Name, "##AnalyzePoseCurve") != nullptr &&
+        std::strstr(w->Name, "##PoseCurveScroll") != nullptr) {
+      scroll_quota1 = w;
+      break;
+    }
+  }
+  IM_CHECK_RETV(scroll_quota1 != nullptr, false);
+  ctx->LogInfo("[D7 quota] stretched: canvas %.0f, companion %.0f",
+               static_cast<double>(canvas_quota1.RectFull.GetHeight()), static_cast<double>(scroll_quota1->Size.y));
+  IM_CHECK_RETV(canvas_quota1.RectFull.GetHeight() > canvas_quota_h0 + 20.0f, false);  // the canvas ate the delta
+  IM_CHECK_RETV(fabsf(scroll_quota1->Size.y - scroll_quota_h0) < 2.0f, false);         // the quota did not grow
+  {
+    const ImVec2 vp0 = ImGui::GetMainViewport()->Size;
+    ImGui::SetWindowSize(win, ImVec2(std::min(gui::UiPx(960.0f), vp0.x), std::min(gui::UiPx(720.0f), vp0.y)),
+                         ImGuiCond_Always);
+    ctx->Yield(3);
+  }
+
+  // D7's drag (the curve region's canvas | companion split, §16.4's new boundary) writes D7's
+  // field and only it: the sentinel share (0.0f — never dragged) becomes the dragged share,
+  // the canvas grows downward over the companion, and D4/D5/D6 stand where the previous drags
+  // left them.
+  const float d7_before = gui::g_state.analyze_pose_view_curve_canvas_ratio;
+  const float d4_before_d7 = gui::g_state.analyze_pose_view_right_ratio;
+  const float d5_before_d7 = gui::g_state.analyze_pose_view_left_row_ratio;
+  const float d6_before_d7 = gui::g_state.analyze_pose_view_globe_ratio;
+  const ImGuiTestItemInfo canvas_d7_0 = ctx->ItemInfo("**/##pose_curve_canvas", ImGuiTestOpFlags_NoError);
+  IM_CHECK_RETV(canvas_d7_0.ID != 0, false);
+  const float canvas_d7_h0 = canvas_d7_0.RectFull.GetHeight();
+  IM_CHECK_RETV(drag_strip("**/##PoseCurveSplitter", 0.0f, 30.0f), false);
+  ctx->LogInfo("[D7] ratio now %.4f (was %.4f — the sentinel)",
+               static_cast<double>(gui::g_state.analyze_pose_view_curve_canvas_ratio), static_cast<double>(d7_before));
+  IM_CHECK_RETV(gui::g_state.analyze_pose_view_curve_canvas_ratio > d7_before + 0.02f, false);
+  IM_CHECK_RETV(gui::g_state.analyze_pose_view_right_ratio == d4_before_d7, false);
+  IM_CHECK_RETV(gui::g_state.analyze_pose_view_left_row_ratio == d5_before_d7, false);
+  IM_CHECK_RETV(gui::g_state.analyze_pose_view_globe_ratio == d6_before_d7, false);
+  const ImGuiTestItemInfo canvas_d7_1 = ctx->ItemInfo("**/##pose_curve_canvas", ImGuiTestOpFlags_NoError);
+  IM_CHECK_RETV(canvas_d7_1.ID != 0, false);
+  IM_CHECK_RETV(canvas_d7_1.RectFull.GetHeight() > canvas_d7_h0 + 15.0f, false);
+  ctx->LogInfo("[D7] down drag: canvas %.0f -> %.0f, ratio %.4f", static_cast<double>(canvas_d7_h0),
+               static_cast<double>(canvas_d7_1.RectFull.GetHeight()),
+               static_cast<double>(gui::g_state.analyze_pose_view_curve_canvas_ratio));
+
   // The narrowest window's both-end clamp (the plan §3 revision): at 640x420 — the window
   // minimum — a drag of D4 to either end leaves BOTH sides at/above their floors. Measured
   // child sizes, not ratios: the containment assertions are structurally blind to a side
@@ -6356,10 +6431,11 @@ bool PoseViewSplitsAreManualIndependentAndFloored(ImGuiTestContext* ctx) {
   ctx->Yield(3);
   IM_CHECK_RETV(both_floors("shrink under kept ratio"), false);
 
-  // Session retention, by value: close + reopen keeps all three ratios and the derived split.
+  // Session retention, by value: close + reopen keeps all four ratios and the derived split.
   const float kept_d4 = gui::g_state.analyze_pose_view_right_ratio;
   const float kept_d6 = gui::g_state.analyze_pose_view_globe_ratio;
   const float kept_d5 = gui::g_state.analyze_pose_view_left_row_ratio;
+  const float kept_d7 = gui::g_state.analyze_pose_view_curve_canvas_ratio;
   const float globe_w_before_close = PoseRegionWindow("##AnalyzeSunGlobe")->Size.x;
   gui::g_state.analyze_pose_view_open = false;
   ctx->Yield(2);
@@ -6371,9 +6447,10 @@ bool PoseViewSplitsAreManualIndependentAndFloored(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(fabsf(gui::g_state.analyze_pose_view_right_ratio - kept_d4) < 1e-6f, false);
   IM_CHECK_RETV(fabsf(gui::g_state.analyze_pose_view_globe_ratio - kept_d6) < 1e-6f, false);
   IM_CHECK_RETV(fabsf(gui::g_state.analyze_pose_view_left_row_ratio - kept_d5) < 1e-6f, false);
+  IM_CHECK_RETV(fabsf(gui::g_state.analyze_pose_view_curve_canvas_ratio - kept_d7) < 1e-6f, false);
   IM_CHECK_RETV(fabsf(globe_re->Size.x - globe_w_before_close) < 2.0f, false);
-  ctx->LogInfo("[D4/D6/D5] reopen keeps ratios %.3f / %.3f / %.3f", static_cast<double>(kept_d4),
-               static_cast<double>(kept_d6), static_cast<double>(kept_d5));
+  ctx->LogInfo("[D4/D6/D5/D7] reopen keeps ratios %.3f / %.3f / %.3f / %.3f", static_cast<double>(kept_d4),
+               static_cast<double>(kept_d6), static_cast<double>(kept_d5), static_cast<double>(kept_d7));
 
   // Restore the session the case found (cross-case hygiene: the open flag and the splits are
   // display state this case owns).
@@ -6381,6 +6458,7 @@ bool PoseViewSplitsAreManualIndependentAndFloored(ImGuiTestContext* ctx) {
   gui::g_state.analyze_pose_view_right_ratio = ratio_d4;
   gui::g_state.analyze_pose_view_globe_ratio = ratio_d6;
   gui::g_state.analyze_pose_view_left_row_ratio = ratio_d5_entry;
+  gui::g_state.analyze_pose_view_curve_canvas_ratio = ratio_d7_entry;
   ctx->Yield(2);
   return true;
 }
