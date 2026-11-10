@@ -698,6 +698,57 @@ Windows/Linux 真机输入已测。最终执行结果存于测试报告；这些
     ——SameLine 接禁用按钮会静默吞掉后续折叠头的点击（已实测，见 `identity_class…` 用例），
     该行保持两行。
 
+#### 16.1.3 形态轴试点：空间结论的图上锚定（A2，as-built 2026-11-10）
+
+> 随片 A2（ia-anchored-verdict-pilot）落地翻 as-built。裁决单源 =
+> `ia-proposal-decisions-2026-11-09.md` §3；owner 明示 hover/toggle 双档选择可被真机上手推翻。
+
+**封闭视觉词汇表（四类设备，裁决原文「环/弧/点/区域」）**：①环 = 绕日等偏角整圈（结论 =
+距太阳 δ 的整圈；视野裁剪是显示形态不是语义，部分可见以 "· arc in view" 措辞陈述——
+dispersion 双圈与 verdict 锚定同走线同措辞）；②弧 = 带方位向延展的弧段结论（预留，未接线）；
+③点 = 单点空间结论（已有 `DrawSkyPointMarker` 与 survey object marker 生产先例，词汇表收编）；
+④区域着色 = 面域结论（预留）。语义映射规则：按 verdict 载荷字段路由（有 `position_deg` → 环；
+有单点 alt/az → 点；无空间字段 → 不锚定，文字即形态）。本片只接线①环。
+
+**锚定触发集（封闭，非开放谓词）**：仅 edge 族（`kEdge`/`kGateEdge`）。结构性依据 =
+`dp_chromatic.cpp` `VerdictOf` 的唯一 `has_position=true` 赋值点恰为该族；`kTint` 携带 tint
+读数无位、`kUnresolved`/`kNone`/stop 停止的 verdict 均无位——「凡有位皆画」与「仅 edge 族」
+在该装配下是同一个集合，映射表按封闭集落纸，防表与行为分叉。带位非 edge kind（未来新增）
+的接入归 owner 裁定域，不作实施期自决选项。
+
+**诚实性视觉语法（两形态，求值次序 = 缺席谓词短路优先）**：
+- **缺席（不画）**：diagnose 不可用（refused/未运行文档——文字层的 chromatic 限定行是该状态
+  的诚实）；verdict 不在触发集；`position_available=0`（无空间载荷）；`visible=0`（结论自述
+  不可见，锚定会与文字矛盾）。「不画 = 不标注，不是『无光』」由文字层限定行与图例
+  「画了才亮」模式共同承载。
+- **虚线弱化（画出）**：`coverage_complete=0` 且 verdict 带位——有限计算进视觉语法而非缺席；
+  文字层同名限定行（"Coverage incomplete — …"）与虚线形态同源。owner 可推翻（缺席派读法）。
+
+**密度交互两档（宿主 = Raypath view 图侧）**：
+- **hover 联动（默认态）**：联动行集 = 类答案区内承载被锚定 verdict 的两行（verdict 行 +
+  Position 行）。行集判定（正面式，后续 verdict 接入时机械可循）：**限定语义已被图形形态
+  承载的限定行不入集**（本片的 coverage 限定行——其限定由虚线形态同源承载），**其余 L1
+  限定行入集**；处置账其余行（无对应标注设备）不联动。主窗摘要零联动（§16.3 范围）。
+- **toggle 常驻**："Verdict anchors" checkbox 落图区头部行（与 Overlays 同行，固定操作栈，
+  不入随报告增长的滚动流）；锚定绘制嵌套于 Overlays 总闸之内。默认 off——默认帧画布零像素
+  变化。
+- **帧序与复位**：hover 经会话字段跨 region 传递，画布消费上一帧写入（一帧延迟，hover 语义
+  下不可感知）。覆写契约 = 类答案区渲染路径每帧覆写（无 hover 显式 false）；复位接缝两处 =
+  类答案缺席分支 + 关窗/被裁剪分支——标志只在写它的 region 在屏期间为真。
+
+**行可寻址化的交互面增量（as-built 形态）**：联动两行保留 `Bullet + TextWrapped` 逐字节渲染
+（wrap 纪律：Selectable 的 RenderTextClipped 不换行，弃用）；行上叠加**透明 InvisibleButton**
+（ID 面向测试寻址：`###diagnose_verdict_row` / `###diagnose_position_row`）。交互面增量两面：
+hover 即标注（无高亮——InvisibleButton 不画任何东西）；行点击被吞占（一帧 ActiveId，无视觉
+后果）；键盘 nav 焦点无（InvisibleButton 默认 NoNav）。主窗路径不传读出参数 = 零新 item、
+零交互态。
+
+**语义色板（单源提升）**：dispersion 双圈的两个内联色值提升为命名常量
+（`analyze_map_view.hpp` `kChromaticColourRed/Blue`，cpp 侧 static_assert 逐字节钉旧字面量
+等值）；dispersion 与 verdict 锚定共同引用——改值是双消费点变更，不是单侧重调。读数标签
+（顶点 + 底衬 + δ 值 + "· arc in view"）为 dispersion 与 verdict 的共享 helper，背衬墨色
+字面量单点。
+
 ### 16.2 诊断归属：主窗摘要＋Raypath view 完整答案（as-built 2026-11-10）
 
 > 原"建议"随片 A1 落地翻为 as-built。§2.2 的旧归属（点答案 owner=主窗）由本节显式修订：

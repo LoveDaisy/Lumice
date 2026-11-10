@@ -989,9 +989,9 @@ void DrawSurveyOverlays(ImDrawList* dl, GuiState& state, const MapCanvasProjecti
                                                   // addressable bit slot; writes to the sink
                                                   // are the frame's no-legend path
     const Curve curves[2] = {
-      { model.dispersion.value_red_deg, IM_COL32(242, 108, 92, 235), &model.dispersion.red_label,
+      { model.dispersion.value_red_deg, kChromaticColourRed, &model.dispersion.red_label,
         legend != nullptr ? &legend->dispersion_red : &legend_bits_sink[0] },
-      { model.dispersion.value_blue_deg, IM_COL32(96, 145, 240, 235), &model.dispersion.blue_label,
+      { model.dispersion.value_blue_deg, kChromaticColourBlue, &model.dispersion.blue_label,
         legend != nullptr ? &legend->dispersion_blue : &legend_bits_sink[1] },
     };
     for (const Curve& curve : curves) {

@@ -190,6 +190,17 @@ implicitly. The report scroll never zooms either camera. **Overlays** still cons
 survey's own located objects and dispersion circles, with one grouped tooltip and a legend
 of what was actually drawn; geometry positions are not whole-circle contribution claims.
 
+**Verdict anchors.** The class answer's colour verdict ("Weight colour: …" / "Position: …") is a
+spatial conclusion: hovering either row in the class answer draws a circle on the map at the
+deviation the verdict names, and moving the mouse away removes it. The **Verdict anchors**
+switch beside **Overlays** keeps the circle on without hovering; both nest under Overlays —
+turning Overlays off hides the anchor too. The circle reuses the dispersion circles' colour and
+readout label, quoted with the verdict's own delta. The honesty rules are visual: a verdict that
+names itself **not visible**, and one the class answer carries no position for, draw nothing
+(the text is the answer there, not a missing marker), and a verdict with **incomplete coverage**
+draws its circle dashed. The legend lists "verdict anchor" only on frames where one actually
+drew — its absence means no anchor is on the map, not that the verdict is gone.
+
 ## 8. The point inspector (the Pose & trace window, point detail)
 
 Where §7 answered "what does this class look like over the whole sky", the faces fed by the
