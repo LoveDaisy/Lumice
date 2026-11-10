@@ -116,6 +116,15 @@ std::vector<int> CollectValidSampleIndices(const LUMICE_SinglePathResult& result
 // the engine's names and units, never an additive percentage, never a fabricated number.
 std::vector<std::string> PointFactorLines(const LUMICE_PathPointSample& sample);
 
+// The two §16.1 ladder halves of the factor readouts (contract §16.4's factors region): the
+// head lines are the default layer's factor conclusions (pose, rho, A_P/A_a^2, T, J/K/product
+// or their named-unavailable forms); the interface lines are T's optical premises — the
+// per-interface transmittances, conditional on this path — the Physics details fold's rows.
+// PointFactorLines is their one concatenation (the original spelling, byte-identical), so the
+// partition has a single source and the two callers cannot drift apart.
+std::vector<std::string> PointFactorHeadLines(const LUMICE_PathPointSample& sample);
+std::vector<std::string> PointFactorInterfaceLines(const LUMICE_PathPointSample& sample);
+
 // The identity/echo lines (AC1): the result's OWN Info read back — target labels + deviation,
 // member faces, crystal id, wavelength + its source, refractive index, sample tier and budget
 // echo. The engine's echo, not a GUI restatement of the request.

@@ -251,7 +251,11 @@ std::vector<int> CollectValidSampleIndices(const LUMICE_SinglePathResult& result
   return indices;
 }
 
-std::vector<std::string> PointFactorLines(const LUMICE_PathPointSample& sample) {
+// The default layer's half (contract §16.1's ladder, §16.4's factors region): the pose itself
+// and the four factor conclusions — or their named-unavailable forms (R4: no zero stands in
+// for a quantity the engine did not produce). The per-interface rows below are T's optical
+// premises, the Physics details fold's rows; PointFactorLines is the one concatenation.
+std::vector<std::string> PointFactorHeadLines(const LUMICE_PathPointSample& sample) {
   std::vector<std::string> lines;
   char buf[192];
   // Orientation: the pose's own angle words, the degeneracy named (R4 — a spin-degenerate pose
@@ -274,17 +278,29 @@ std::vector<std::string> PointFactorLines(const LUMICE_PathPointSample& sample) 
     std::snprintf(buf, sizeof(buf), "rho*A/a^2*T*K = %.6g", sample.factor_product);
     lines.emplace_back(buf);
   } else {
-    // The named-unavailable states (R4): no zero stands in for a quantity the engine did not
-    // produce, and the product that would use it is unavailable with it.
     lines.emplace_back("J (jacobian): unavailable");
     lines.emplace_back("K = 1/(J+eps): unavailable");
     lines.emplace_back("rho*A/a^2*T*K: unavailable");
   }
+  return lines;
+}
+
+std::vector<std::string> PointFactorInterfaceLines(const LUMICE_PathPointSample& sample) {
+  std::vector<std::string> lines;
+  char buf[192];
   const int interfaces = static_cast<int>(sample.interface_count);
   for (int i = 0; i < interfaces; ++i) {
     std::snprintf(buf, sizeof(buf), "interface %d/%d transmittance = %.6g (conditional on this path)", i + 1,
                   interfaces, sample.interface_transmittances[i]);
     lines.emplace_back(buf);
+  }
+  return lines;
+}
+
+std::vector<std::string> PointFactorLines(const LUMICE_PathPointSample& sample) {
+  std::vector<std::string> lines = PointFactorHeadLines(sample);
+  for (std::string& line : PointFactorInterfaceLines(sample)) {
+    lines.push_back(std::move(line));
   }
   return lines;
 }
@@ -1149,40 +1165,15 @@ void RenderAnalyzeSunGlobeRegion(GuiState& state, const ImVec2& size) {
   ImGui::BeginChild("##AnalyzeSunGlobe", size, ImGuiChildFlags_Borders);
   PointQuerySession& point = state.analysis.point;
   PointViewState& view = state.analysis.point_view;
-  // SameLine is a judgment, not a default (the map region's rule): the side-by-side cell sits at
-  // its own content floor, the stacked form can be narrower, and a clipped toggle or readout is
-  // an unreachable fact — successors wrap when the line cannot hold them.
-  const auto fits_on_line = [&](float next_w) {
-    const float line_right = ImGui::GetContentRegionMax().x + ImGui::GetWindowPos().x;
-    return ImGui::GetItemRectMax().x + ImGui::GetStyle().ItemSpacing.x + next_w <= line_right;
-  };
 
   // Every result branch writes only the report after the fixed component/canvas/sample stack.
   const auto render_state_area = [](auto&& draw_lines) { draw_lines(); };
 
   // ---- The fixed interaction stack (R4): the controls a hand must reach are submitted outside
-  // any scrolling region at every cell the window's minimum admits — the title and the
-  // deviation-grid toggle here; the combo, the canvas, the weight bar and the slider/play row
-  // in the discovered arm below. ----
+  // any scrolling region at every cell the window's minimum admits — the title here (the
+  // deviation-grid toggle retired to the factors region's Calculation details, §16.4); the
+  // combo, the canvas, the weight bar and the slider/play row in the discovered arm below. ----
   ImGui::TextUnformatted("Sun direction globe");
-  const float dev_grid_w =
-      ImGui::GetFrameHeight() + ImGui::GetStyle().ItemInnerSpacing.x + ImGui::CalcTextSize("Deviation grid").x;
-  // A unit wider than the row is not fixed by wrapping (the wrapped checkbox's label would
-  // still clip — its name is the toggle's only identity). Below that the join is a judgment;
-  // at the over-width shapes the toggle keeps its id with an empty display label and the name
-  // moves to wrapped text under it (one id across the forms, "###" anchored).
-  const bool dev_grid_fits = dev_grid_w <= ImGui::GetContentRegionAvail().x;
-  if (dev_grid_fits && fits_on_line(dev_grid_w)) {
-    ImGui::SameLine();
-  }
-  if (dev_grid_fits) {
-    ImGui::Checkbox("Deviation grid###globe_dev_grid", &view.show_deviation_grid);
-  } else {
-    ImGui::Checkbox("###globe_dev_grid", &view.show_deviation_grid);
-    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-    ImGui::TextWrapped("Deviation grid");
-    ImGui::PopStyleColor();
-  }
 
   const auto info = point.adopted_result ? ReadPointInfo(*point.adopted_result) : std::nullopt;
   std::vector<PointComponentRow> rows;
@@ -1447,10 +1438,11 @@ void RenderAnalyzeSunGlobeRegion(GuiState& state, const ImVec2& size) {
       // is the curve region's product arm now, on the true arclength axis instead of the sample
       // index; the same window drawing it twice was a duplication, not a redundancy.)
     }
-    // ---- The state area (R4's scroll set): the description, the partial note, the
-    // grid-absence note, the weight note and the sample readout — all reachable by scrolling,
-    // none deleted. The readout's old fits_on_line join is gone with the form: the state area is
-    // where these lines live at every width. ----
+    // ---- The state area (R4's scroll set): the description, the partial note, the weight note
+    // and the sample readout — all reachable by scrolling, none deleted. The grid-absence note
+    // moved with the toggle to the factors region's Calculation details (§16.4); the readout's
+    // old fits_on_line join is gone with the form: the state area is where these lines live at
+    // every width. ----
     const std::optional<CurrentSample> current = CurrentSampleOf(*point.adopted_result, view, valid_indices);
     render_state_area([&] {
       DisabledWrappedText("Crystal-frame sun directions — a pose projection, not the full SO(3).");
@@ -1459,9 +1451,6 @@ void RenderAnalyzeSunGlobeRegion(GuiState& state, const ImVec2& size) {
         ImGui::TextWrapped("Partial document (%s) — the fiber on show is what arrived.",
                            ExecutionText(info->execution));
         ImGui::PopStyleColor();
-      }
-      if (!have_grid && view.show_deviation_grid) {
-        DisabledWrappedText("(no sun grid in this document — the backdrop is absent, not zero)");
       }
       if (current.has_value()) {
         char readout[128];
@@ -1990,22 +1979,23 @@ void PoseViewColumnSplitter(const char* id, float height, float shown_right_w, f
                                       line_col, 1.0f);
 }
 
-// D5 — the right column's horizontal strip between the globe region and the factors region:
-// the row splitter's recipe and direction (dragging down grows the globe, the
+// The row splitter's recipe (contract §16.4's D6 here; the §16.4 relayout's other row splits
+// — D5 in the left column, D7 inside the curve region — consume the same parameterized shape):
+// the row splitter's direction (dragging down grows the UPPER region, the
 // MiddleRowsSplitter's convention), the same delta-only write from the displayed boundary.
-// Independent of D4 by construction — the two splitters write different fields and drag
-// neither's geometry (§4.2's 独立不联动).
-void PoseViewRowSplitter(const char* id, float width, float shown_globe_h, float* ratio, float denom_h,
-                         float globe_floor_px, float factors_floor_px) {
+// Independent of the window's other splitters by construction — each writes its own field and
+// drags neither's geometry (§4.2's 独立不联动, §16.4's 互不写入).
+void PoseViewRowSplitter(const char* id, float width, float shown_upper_h, float* ratio, float denom_h,
+                         float upper_floor_px, float lower_floor_px) {
   const float height = UiPx(kAnalyzeSplitterSize);
   ImGui::InvisibleButton(id, ImVec2(width, height));
   const bool hovered = ImGui::IsItemHovered();
   const bool active = ImGui::IsItemActive();
   const float mouse_dy = ImGui::GetIO().MouseDelta.y;
   if (active && mouse_dy != 0.0f && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
-    const float new_globe =
-        std::clamp(shown_globe_h + mouse_dy, globe_floor_px, std::max(globe_floor_px, denom_h - factors_floor_px));
-    *ratio = new_globe / std::max(1.0f, denom_h);
+    const float new_upper =
+        std::clamp(shown_upper_h + mouse_dy, upper_floor_px, std::max(upper_floor_px, denom_h - lower_floor_px));
+    *ratio = new_upper / std::max(1.0f, denom_h);
   }
   if (hovered || active) {
     ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
@@ -2542,6 +2532,151 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
   ImGui::EndChild();
 }
 
+// The factors region — the right column's lower member (contract §16.4): the current pose's
+// factor readouts bound to view.sample_index — the ONE selection the slider, the globe, the 3D
+// trace and the curve canvas all write — plus the measure registration's note (a limitation
+// reads beside the numbers it limits, §16.4's default-readable rule) and the two §16.1 fold
+// groups. The curve canvas's hover readout is a temporary override of the CURVE's own line
+// only; nothing here follows the hover — CurrentSampleOf reads view.sample_index, which hover
+// never writes.
+void RenderPoseFactorsRegion(GuiState& state, const ImVec2& size) {
+  ImGui::BeginChild("##AnalyzePoseFactors", size, ImGuiChildFlags_Borders);
+  PointQuerySession& point = state.analysis.point;
+  PointViewState& view = state.analysis.point_view;
+  const auto disabled_line = [](const char* fmt, auto... args) {
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+    ImGui::TextWrapped(fmt, args...);
+    ImGui::PopStyleColor();
+  };
+  ImGui::TextUnformatted("Current pose factors");
+  RenderPointStatus(point);
+  ImGui::BeginChild("##PoseFactorsScroll", RemainingReportSize());
+  const auto render_content = [&] {
+    const PointQueryState st = PointQueryStateFor(point);
+    if (st == PointQueryState::kNoIntent) {
+      disabled_line("The current pose's factors take this region once a point result is in.");
+      return;
+    }
+    if (st == PointQueryState::kWaiting) {
+      disabled_line("The point is computing — the pose factors follow it.");
+      return;
+    }
+    if (st == PointQueryState::kCancelled) {
+      disabled_line("Point cancelled — the pose factors wait for a new query.");
+      return;
+    }
+    if (st == PointQueryState::kRefused) {
+      disabled_line("Point refused — the pose factors wait for a supported target.");
+      return;
+    }
+    const std::optional<LUMICE_PathPointInfo> info = ReadPointInfo(*point.adopted_result);
+    if (!info.has_value()) {
+      DisabledWrappedText("The adopted point document did not answer its Info reader.");
+      return;
+    }
+    if (info->outcome == LUMICE_PATH_POINT_MASS) {
+      disabled_line("A rank-0 point mass has no per-pose factors — the details carry the mass numbers.");
+      return;
+    }
+    std::vector<PointComponentRow> rows;
+    const int component_total = PointComponentRows(*point.adopted_result, &rows);
+    if (component_total == 0) {
+      LUMICE_PathPointReach reach{};
+      reach.struct_size = sizeof(reach);
+      const bool have_reach = LUMICE_PathPointGetReach(point.adopted_result.get(), &reach) == LUMICE_PATH_READ_OK;
+      if (info->execution != LUMICE_PATH_OUTCOME_COMPLETED) {
+        ImGui::PushStyleColor(ImGuiCol_Text, WarningTextColor());
+        ImGui::TextWrapped(
+            "Partial document (%s) — what arrived is on show; emptiness here is the run's "
+            "stop, not a physical absence.",
+            ExecutionText(info->execution));
+        ImGui::PopStyleColor();
+      }
+      if (have_reach && !reach.target_in_range) {
+        disabled_line("No fiber here: the target's deviation is outside the range of this path's deflection field.");
+      } else {
+        disabled_line("No fiber component at this point — there are no pose factors to read.");
+      }
+      return;
+    }
+    const int component = std::clamp(view.component_index, 0, component_total - 1);
+    const std::vector<int> valid_indices = CollectValidSampleIndices(*point.adopted_result, component);
+    if (valid_indices.empty()) {
+      if (info->execution != LUMICE_PATH_OUTCOME_COMPLETED) {
+        ImGui::PushStyleColor(ImGuiCol_Text, WarningTextColor());
+        ImGui::TextWrapped("Partial document (%s) — the factors on show are what arrived.",
+                           ExecutionText(info->execution));
+        ImGui::PopStyleColor();
+      }
+      disabled_line("This component carries no valid sample — the pose factors have nothing to point at.");
+      return;
+    }
+    if (info->execution != LUMICE_PATH_OUTCOME_COMPLETED) {
+      ImGui::PushStyleColor(ImGuiCol_Text, WarningTextColor());
+      ImGui::TextWrapped("Partial document (%s) — the factors on show are what arrived.",
+                         ExecutionText(info->execution));
+      ImGui::PopStyleColor();
+    }
+    const std::optional<CurrentSample> current = CurrentSampleOf(*point.adopted_result, view, valid_indices);
+    if (!current.has_value()) {
+      disabled_line("The current sample could not be read from the adopted document.");
+      return;
+    }
+    // ---- The default layer (§16.1's ladder): the factor conclusions, bound to the ONE
+    // selection; the measure registration's note beside them (a limitation reads where it
+    // limits, §16.4's default-readable rule). ----
+    disabled_line("Current sample:");
+    for (const std::string& line_text : PointFactorHeadLines(current->sample)) {
+      ImGui::Bullet();
+      ImGui::TextWrapped("%s", line_text.c_str());
+    }
+    LUMICE_PathMeasureRegistration reg{};
+    reg.struct_size = sizeof(reg);
+    if (LUMICE_PathPointGetMeasureRegistration(point.adopted_result.get(), &reg) == LUMICE_PATH_READ_OK &&
+        reg.registered_gap != 0 && reg.note.data != nullptr && reg.note.length > 0) {
+      disabled_line("measure registration: %.*s", static_cast<int>(reg.note.length), reg.note.data);
+    }
+    // ---- The two §16.1 fold groups: A1's label constants, one spelling (a56); the expansion
+    // state lives in the pose window's ImGui storage — session-sticky, no GuiState field, the
+    // same convention every answer host follows. ----
+    if (FoldOpen(kSurveyPhysicsDetailsLabel, "pose_factors")) {
+      // The per-interface transmittances: T's optical premises — the ladder's evidence rows,
+      // not the default layer's conclusions.
+      for (const std::string& line_text : PointFactorInterfaceLines(current->sample)) {
+        ImGui::Bullet();
+        ImGui::TextWrapped("%s", line_text.c_str());
+      }
+    }
+    if (FoldOpen(kSurveyCalculationDetailsLabel, "pose_factors")) {
+      // The deviation-grid toggle: a calculation aid retired here from the globe's fixed stack
+      // (§16.4); its reader — the globe's backdrop — keeps its own region. The requested-but-
+      // absent note travels with the toggle: it is the toggle request's fact, not the globe's.
+      const float dev_grid_w =
+          ImGui::GetFrameHeight() + ImGui::GetStyle().ItemInnerSpacing.x + ImGui::CalcTextSize("Deviation grid").x;
+      if (dev_grid_w <= ImGui::GetContentRegionAvail().x) {
+        ImGui::Checkbox("Deviation grid###pose_factors_dev_grid", &view.show_deviation_grid);
+      } else {
+        ImGui::Checkbox("###pose_factors_dev_grid", &view.show_deviation_grid);
+        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+        ImGui::TextWrapped("Deviation grid");
+        ImGui::PopStyleColor();
+      }
+      if (view.show_deviation_grid) {
+        LUMICE_PathSunGrid grid{};
+        grid.struct_size = sizeof(grid);
+        const bool have_grid =
+            LUMICE_PathPointGetSunGrid(point.adopted_result.get(), &grid) == LUMICE_PATH_READ_OK && grid.cell_count > 0;
+        if (!have_grid) {
+          disabled_line("(no sun grid in this document — the backdrop is absent, not zero)");
+        }
+      }
+    }
+  };
+  render_content();
+  ImGui::EndChild();
+  ImGui::EndChild();
+}
+
 }  // namespace
 
 void RenderAnalyzePoseViewWindow(GuiState& state) {
@@ -2586,12 +2721,14 @@ void RenderAnalyzePoseViewWindow(GuiState& state) {
     ImGui::End();
     return;
   }
-  // ---- D4 — the 3D | right-column split (contract §4.2), the Raypath view's D3 recipe: the
+  // ---- D4 — the 3D | right-column split (contract §16.4), the Raypath view's D3 recipe: the
   // stored ratio is the split's identity (manual priority, §9.3 — no query result or selection
   // ever writes it); the frame derives pixels and clamps BOTH sides every frame — the right
-  // column at its floor AND the 3D region at its own (either side may be the one pushed toward
-  // its bound by a drag to an end or a resize under a kept ratio); only when the two floors
-  // cannot share the span does the ③ proportional fallback apply. ----
+  // column at its floor AND the left column at its own (either side may be the one pushed
+  // toward its bound by a drag to an end or a resize under a kept ratio); only when the two
+  // floors cannot share the span does the ③ proportional fallback apply. Both columns are
+  // elastic members of the resize strategy (each hosts canvases over fixed controls), so the
+  // resize delta distributes by the stored ratio — the recipe's own semantics, no new path. ----
   const float splitter_w = UiPx(kAnalyzeSplitterSize);
   const ImVec2 avail = VisibleContentSize();
   const float avail_w = std::max(0.0f, avail.x);
@@ -2606,23 +2743,43 @@ void RenderAnalyzePoseViewWindow(GuiState& state) {
   }
   const float left_w = std::max(0.0f, denom_w - right_w);
 
-  // The body's five elements are placed by ABSOLUTE cursor (the derived geometry and the
+  // The body's six elements are placed by ABSOLUTE cursor (the derived geometry and the
   // placement are the same arithmetic — the SameLine row flow would put the right column's
   // vertical stack back at the window's left edge on the line below the 3D row, under the 3D
   // region's own child).
   const ImVec2 body_min = ImGui::GetCursorScreenPos();
-  RenderAnalyzeRay3DRegion(state, ImVec2(left_w, avail.y));
-  ImGui::SetCursorScreenPos(ImVec2(body_min.x + left_w, body_min.y));
-  PoseViewColumnSplitter("##PoseViewSplitter", avail.y, right_w, &state.analyze_pose_view_right_ratio, denom_w,
-                         right_floor, left_floor);
 
-  // ---- The right column: D5's globe | factors split, the row-splitter recipe. The column
-  // spends its height on the globe region, the strip and the factors region; the two
-  // ItemSpacings between the three elements are part of the budget the stored ratio divides.
-  // Same floors-and-fallback rule as D4. ----
+  // ---- The LEFT column (§16.4): the 3D region on top, the curve region below — the curve's
+  // horizontal domain. This step lands the layout swap; the column's row split (D5) is a fixed
+  // share of the §16.4.1 suggested ratio, and its parameterized drag arrives with the D5 field
+  // wiring in the next step. Both column splits share one rule: each column's height
+  // denominator is its own — D5 and D6 each consume the same visible height without sharing a
+  // ratio — and the two ItemSpacings between a column's three elements are part of the budget
+  // the split divides. ----
   const float strip_h = UiPx(kAnalyzeSplitterSize);
   const float v_spacing = ImGui::GetStyle().ItemSpacing.y;
   const float denom_h = std::max(0.0f, avail.y - strip_h - v_spacing * 2.0f);
+  const float left_3d_floor = UiPx(kPoseViewLeft3dFloor);
+  const float curve_floor = UiPx(kPoseViewCurveFloor);
+  float left_3d_h = 0.45f * denom_h;
+  if (denom_h >= left_3d_floor + curve_floor) {
+    left_3d_h = std::clamp(left_3d_h, left_3d_floor, denom_h - curve_floor);
+  } else {
+    left_3d_h = std::max(0.0f, denom_h * (left_3d_floor / (left_3d_floor + curve_floor)));
+  }
+  const float left_curve_h = std::max(0.0f, denom_h - left_3d_h);
+
+  RenderAnalyzeRay3DRegion(state, ImVec2(left_w, left_3d_h));
+  ImGui::SetCursorScreenPos(ImVec2(body_min.x + left_w, body_min.y));
+  PoseViewColumnSplitter("##PoseViewSplitter", avail.y, right_w, &state.analyze_pose_view_right_ratio, denom_w,
+                         right_floor, left_floor);
+  ImGui::SetCursorScreenPos(ImVec2(body_min.x, body_min.y + left_3d_h + v_spacing + strip_h + v_spacing));
+  RenderPoseCurveRegion(state, ImVec2(left_w, left_curve_h));
+
+  // ---- The right column: D6's globe | factors split (§16.4), the row-splitter recipe. The
+  // boundary the drag has always written keeps its semantics — the globe region's share of the
+  // column's height, never re-meaned into a 3D share; the lower member is now the factors
+  // region. Same floors-and-fallback rule as D4. ----
   const float globe_floor = UiPx(kPoseViewGlobeFloor);
   const float factors_floor = UiPx(kPoseViewFactorsFloor);
   float globe_h = state.analyze_pose_view_globe_ratio * denom_h;
@@ -2640,7 +2797,7 @@ void RenderAnalyzePoseViewWindow(GuiState& state) {
   PoseViewRowSplitter("##PoseViewRowsSplitter", right_w, globe_h, &state.analyze_pose_view_globe_ratio, denom_h,
                       globe_floor, factors_floor);
   ImGui::SetCursorScreenPos(ImVec2(col_x, body_min.y + globe_h + v_spacing + strip_h + v_spacing));
-  RenderPoseCurveRegion(state, ImVec2(right_w, factors_h));
+  RenderPoseFactorsRegion(state, ImVec2(right_w, factors_h));
   ImGui::End();
 }
 

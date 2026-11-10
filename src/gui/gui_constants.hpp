@@ -117,27 +117,42 @@ constexpr float kRaypathViewMapMinSize = 160.0f;
 // region under the input rows' wrap ladder and the canvas under its 64 px code floor).
 constexpr float kRaypathViewMinWidth = 480.0f;
 constexpr float kRaypathViewMinHeight = 360.0f;
-// The Pose & trace window's window-level minimum (contract §11 R4's narrowest face): the D5
-// column now carries the curve region's full form (756) beside the globe's, so the height the
-// two floors were proven over rose with them — 640x420 was the pre-curve window's narrowest
-// face; the constraint below is the smallest size the user can reach and the domain the D4/D5
-// floors were verified over (the ③ fallback below the floors' reach degrades the curve region
-// to its scroll form, by design).
+// The Pose & trace window's window-level minimum (contract §11 R4's narrowest face, re-anchored
+// by the §16.4 relayout): the LEFT column now carries the curve region's full form beside the 3D
+// region's, and the right column's floors dropped with the factors region — 640x420 was the
+// pre-curve window's narrowest face, 640x680 the curve-in-right-column one; the constraint below
+// is the smallest size the user can reach and the domain the D4/D5 floors were verified over
+// (the ③ fallback below the floors' reach compresses the left column's split proportionally and
+// the curve region retreats down its own degrade ladder, by design).
 constexpr float kPoseViewMinWidth = 640.0f;
 constexpr float kPoseViewMinHeight = 680.0f;
-// D4 — the Pose & trace window's split floors (contract §4.2: right column ≥ 220, 3D ≥ 240;
-// suggested values carrying the render-level calibration duty). The right floor is the globe
-// region's fixed interaction stack at its narrow wrap form; the left floor keeps the 3D orbit
-// legible. The window's minimum width (above) is the existence proof that both floors fit the
-// narrowest legal window; the derivation clamps BOTH sides at every frame (§3 of the task plan:
-// either side may be the one pushed toward its bound).
+// D4 — the Pose & trace window's split floors (contract §16.4: right column ≥ 220, left
+// column ≥ 300 — the §16.4.1 suggested value, wider than the 3D-only 240 to keep the curve
+// region's horizontal domain readable; both carry the render-level calibration duty). The
+// right floor is the globe region's fixed interaction stack at its narrow wrap form; the left
+// floor now serves BOTH left-column regions (the 3D canvas and the curve's width). The
+// window's minimum width (above) is the existence proof that both floors fit the narrowest
+// legal window; the derivation clamps BOTH sides at every frame (§3 of the task plan: either
+// side may be the one pushed toward its bound).
 constexpr float kPoseViewRightFloor = 220.0f;
-constexpr float kPoseViewLeftFloor = 240.0f;
+constexpr float kPoseViewLeftFloor = 300.0f;
 // D6's established full-region floors remain conservative interaction bounds after moving
-// variable titles/legends into reports. Keep the user's split semantics: clamp above the joint
-// floors, proportionally compress below them. Report content never changes these bounds.
+// variable titles/legends into reports. The lower member of the right column is now the
+// factors region (§16.4 — a scrollable text face, not the curve), so its floor drops to the
+// §16.4.1 suggested 140: title + short status + a scrollable 4-line window + padding. The
+// globe floor keeps the calibrated full-form stack (§16.4.1: not lowered because the curve
+// moved out). Keep the user's split semantics: clamp above the joint floors, proportionally
+// compress below them. Report content never changes these bounds.
 constexpr float kPoseViewGlobeFloor = 221.0f;
-constexpr float kPoseViewFactorsFloor = 330.0f;
+constexpr float kPoseViewFactorsFloor = 140.0f;
+// D5 — the LEFT column's 3D | curve row floors (§16.4.1 suggested values, calibration
+// candidates until the real-frame pass): the 3D region's full form at its narrowest face
+// (title + frame switch + status + canvas 180 + report viewport + padding) and the curve
+// region's (title + status + canvas 84 + the companion's 8-line quota + the D7 strip). Both
+// fit the narrowest window's left column with ~3pt of drag room — that narrow margin is the
+// calibration obligation, not a claim.
+constexpr float kPoseViewLeft3dFloor = 300.0f;
+constexpr float kPoseViewCurveFloor = 330.0f;
 // D7 — the curve region's canvas | companion split: the canvas share's "never dragged" sentinel
 // (gui_state.hpp's analyze_pose_view_curve_canvas_ratio). A drag always writes a positive share
 // — the canvas's real-slice floor keeps the derived value above zero — so 0.0f unambiguously

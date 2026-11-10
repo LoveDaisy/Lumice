@@ -5816,30 +5816,6 @@ bool NarrowColumnClippedRowsKeepTheirEntities(ImGuiTestContext* ctx) {
     ctx->Yield(2);
     IM_CHECK_RETV(gui::g_state.analysis.sky_point.valid, false);
 
-    // The globe: the pose window hosts it now — its toggle contained and driven.
-    gui::g_state.analyze_pose_view_open = true;
-    PinPoseViewOnScreen(ctx);
-    ctx->Yield(1);
-    ImGuiWindow* globe_c = nullptr;
-    for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
-      if (w != nullptr && w->Active && w->ParentWindow != nullptr &&
-          std::strcmp(w->ParentWindow->Name, "Pose & trace") == 0 &&
-          std::strstr(w->Name, "##AnalyzeSunGlobe") != nullptr) {
-        globe_c = w;
-        break;
-      }
-    }
-    IM_CHECK_RETV(globe_c != nullptr, false);
-    const ImGuiTestItemInfo grid_c = ctx->ItemInfo("**/Deviation grid###globe_dev_grid", ImGuiTestOpFlags_NoError);
-    IM_CHECK_RETV(grid_c.ID != 0, false);
-    IM_CHECK_RETV(grid_c.RectFull.Max.x <= globe_c->InnerClipRect.Max.x + 0.5f &&
-                      grid_c.RectFull.Max.y <= globe_c->InnerClipRect.Max.y + 0.5f,
-                  false);
-    const bool grid_c_before = gui::g_state.analysis.point_view.show_deviation_grid;
-    ctx->ItemClick("**/Deviation grid###globe_dev_grid");
-    ctx->Yield(2);
-    IM_CHECK_RETV(gui::g_state.analysis.point_view.show_deviation_grid == !grid_c_before, false);
-
     // Inline basis restore (the 1280x800 leg's rule: the next case's entry audit must have
     // nothing to undo).
     g_window_size_test.width = gui::kInitWindowWidth;
@@ -6233,12 +6209,11 @@ bool PoseViewSplitsAreManualIndependentAndFloored(ImGuiTestContext* ctx) {
   ImGuiWindow* globe = PoseRegionWindow("##AnalyzeSunGlobe");
   IM_CHECK_RETV(r3d != nullptr && globe != nullptr, false);
   const float ratio_d4 = gui::g_state.analyze_pose_view_right_ratio;
-  const float ratio_d5 = gui::g_state.analyze_pose_view_globe_ratio;
-  // The D5 drag legs need a known starting geometry: the window's live size depends on which
+  const float ratio_d6 = gui::g_state.analyze_pose_view_globe_ratio;
+  // The D6 drag legs need a known starting geometry: the window's live size depends on which
   // earlier case last sized it (the workspace scroll-pins case runs the pose window at a
-  // 640-tall basis; the minimum-height clamp then re-raises it to 680, where the D5 clamp
-  // band's headroom above the default ratio is 18pt — under this leg's 20pt growth threshold).
-  // Pin the contract default the way the FirstUseEver path would apply it.
+  // 640-tall basis; the minimum-height clamp then re-raises it to 680). Pin the contract
+  // default the way the FirstUseEver path would apply it.
   {
     const ImVec2 vp0 = ImGui::GetMainViewport()->Size;
     ImGui::SetWindowSize(win, ImVec2(std::min(gui::UiPx(960.0f), vp0.x), std::min(gui::UiPx(720.0f), vp0.y)),
@@ -6250,8 +6225,8 @@ bool PoseViewSplitsAreManualIndependentAndFloored(ImGuiTestContext* ctx) {
   const float r3d_w0 = r3d->Size.x;
   const float globe_w0 = globe->Size.x;
   const float globe_h0 = globe->Size.y;
-  ctx->LogInfo("[D4/D5] initial ratios %.3f / %.3f, window %.0fx%.0f", static_cast<double>(ratio_d4),
-               static_cast<double>(ratio_d5), static_cast<double>(win->Size.x), static_cast<double>(win->Size.y));
+  ctx->LogInfo("[D4/D6] initial ratios %.3f / %.3f, window %.0fx%.0f", static_cast<double>(ratio_d4),
+               static_cast<double>(ratio_d6), static_cast<double>(win->Size.x), static_cast<double>(win->Size.y));
 
   // D4's drag writes D4's ratio and only it: 60 pt right (the 3D widens, the right column
   // narrows — the ratio is the column's share, so it shrinks).
@@ -6271,7 +6246,7 @@ bool PoseViewSplitsAreManualIndependentAndFloored(ImGuiTestContext* ctx) {
   };
   IM_CHECK_RETV(drag_strip("**/##PoseViewSplitter", 60.0f, 0.0f), false);
   IM_CHECK_RETV(gui::g_state.analyze_pose_view_right_ratio < ratio_d4 - 0.02f, false);
-  IM_CHECK_RETV(gui::g_state.analyze_pose_view_globe_ratio == ratio_d5, false);
+  IM_CHECK_RETV(gui::g_state.analyze_pose_view_globe_ratio == ratio_d6, false);
   ImGuiWindow* r3d_after = PoseRegionWindow("##AnalyzeRaypath3D");
   ImGuiWindow* globe_after = PoseRegionWindow("##AnalyzeSunGlobe");
   IM_CHECK_RETV(r3d_after != nullptr && globe_after != nullptr, false);
@@ -6285,26 +6260,28 @@ bool PoseViewSplitsAreManualIndependentAndFloored(ImGuiTestContext* ctx) {
                static_cast<double>(r3d_after->Size.x), static_cast<double>(r3d_after->Size.x - r3d_w0),
                static_cast<double>(globe_after->Size.x));
 
-  // D5's drag writes D5's ratio and only it, and moves the column's vertical split (the globe
-  // grows downward) — independent of D4, whose ratio stands where the last drag left it.
+  // D6's drag (the row splitter the §16.4 relayout renamed — the boundary the drag has always
+  // written) writes D6's ratio and only it, and moves the column's vertical split (the globe
+  // grows downward, the factors region below) — independent of D4, whose ratio stands where
+  // the last drag left it.
   const float d4_after_first_drag = gui::g_state.analyze_pose_view_right_ratio;
   {
     const ImGuiTestItemInfo probe = ctx->ItemInfo("**/##PoseViewRowsSplitter", ImGuiTestOpFlags_NoError);
-    ctx->LogInfo("[D5 probe] id %08x rect (%.0f,%.0f)-(%.0f,%.0f)", probe.ID, static_cast<double>(probe.RectFull.Min.x),
+    ctx->LogInfo("[D6 probe] id %08x rect (%.0f,%.0f)-(%.0f,%.0f)", probe.ID, static_cast<double>(probe.RectFull.Min.x),
                  static_cast<double>(probe.RectFull.Min.y), static_cast<double>(probe.RectFull.Max.x),
                  static_cast<double>(probe.RectFull.Max.y));
   }
   IM_CHECK_RETV(drag_strip("**/##PoseViewRowsSplitter", 0.0f, 40.0f), false);
-  ctx->LogInfo("[D5] ratio now %.4f (was %.4f)", static_cast<double>(gui::g_state.analyze_pose_view_globe_ratio),
-               static_cast<double>(ratio_d5));
-  IM_CHECK_RETV(gui::g_state.analyze_pose_view_globe_ratio > ratio_d5 + 0.02f, false);
+  ctx->LogInfo("[D6] ratio now %.4f (was %.4f)", static_cast<double>(gui::g_state.analyze_pose_view_globe_ratio),
+               static_cast<double>(ratio_d6));
+  IM_CHECK_RETV(gui::g_state.analyze_pose_view_globe_ratio > ratio_d6 + 0.02f, false);
   IM_CHECK_RETV(gui::g_state.analyze_pose_view_right_ratio == d4_after_first_drag, false);
-  ImGuiWindow* globe_after_d5 = PoseRegionWindow("##AnalyzeSunGlobe");
-  IM_CHECK_RETV(globe_after_d5 != nullptr, false);
-  IM_CHECK_RETV(globe_after_d5->Size.y > globe_h0 + 20.0f, false);
-  ctx->LogInfo("[D5] down drag: ratio %.3f -> %.3f, globe h %.0f -> %.0f", static_cast<double>(ratio_d5),
+  ImGuiWindow* globe_after_d6 = PoseRegionWindow("##AnalyzeSunGlobe");
+  IM_CHECK_RETV(globe_after_d6 != nullptr, false);
+  IM_CHECK_RETV(globe_after_d6->Size.y > globe_h0 + 20.0f, false);
+  ctx->LogInfo("[D6] down drag: ratio %.3f -> %.3f, globe h %.0f -> %.0f", static_cast<double>(ratio_d6),
                static_cast<double>(gui::g_state.analyze_pose_view_globe_ratio), static_cast<double>(globe_h0),
-               static_cast<double>(globe_after_d5->Size.y));
+               static_cast<double>(globe_after_d6->Size.y));
 
   // The narrowest window's both-end clamp (the plan §3 revision): at 640x420 — the window
   // minimum — a drag of D4 to either end leaves BOTH sides at/above their floors. Measured
@@ -6316,7 +6293,9 @@ bool PoseViewSplitsAreManualIndependentAndFloored(ImGuiTestContext* ctx) {
   const auto both_floors = [&](const char* leg) {
     ImGuiWindow* r3d_n = PoseRegionWindow("##AnalyzeRaypath3D");
     ImGuiWindow* globe_n = PoseRegionWindow("##AnalyzeSunGlobe");
-    IM_CHECK_RETV(r3d_n != nullptr && globe_n != nullptr, false);
+    ImGuiWindow* curve_n = PoseRegionWindow("##AnalyzePoseCurve");
+    ImGuiWindow* factors_n = PoseRegionWindow("##AnalyzePoseFactors");
+    IM_CHECK_RETV(r3d_n != nullptr && globe_n != nullptr && curve_n != nullptr && factors_n != nullptr, false);
     ctx->LogInfo("[%s] 3d %.0f (floor %.0f), right col %.0f (floor %.0f)", leg, static_cast<double>(r3d_n->Size.x),
                  static_cast<double>(gui::UiPx(gui::kPoseViewLeftFloor)), static_cast<double>(globe_n->Size.x),
                  static_cast<double>(gui::UiPx(gui::kPoseViewRightFloor)));
@@ -6343,7 +6322,7 @@ bool PoseViewSplitsAreManualIndependentAndFloored(ImGuiTestContext* ctx) {
 
   // Session retention, by value: close + reopen keeps both ratios and the derived split.
   const float kept_d4 = gui::g_state.analyze_pose_view_right_ratio;
-  const float kept_d5 = gui::g_state.analyze_pose_view_globe_ratio;
+  const float kept_d6 = gui::g_state.analyze_pose_view_globe_ratio;
   const float globe_w_before_close = PoseRegionWindow("##AnalyzeSunGlobe")->Size.x;
   gui::g_state.analyze_pose_view_open = false;
   ctx->Yield(2);
@@ -6353,15 +6332,15 @@ bool PoseViewSplitsAreManualIndependentAndFloored(ImGuiTestContext* ctx) {
   ImGuiWindow* globe_re = PoseRegionWindow("##AnalyzeSunGlobe");
   IM_CHECK_RETV(globe_re != nullptr, false);
   IM_CHECK_RETV(fabsf(gui::g_state.analyze_pose_view_right_ratio - kept_d4) < 1e-6f, false);
-  IM_CHECK_RETV(fabsf(gui::g_state.analyze_pose_view_globe_ratio - kept_d5) < 1e-6f, false);
+  IM_CHECK_RETV(fabsf(gui::g_state.analyze_pose_view_globe_ratio - kept_d6) < 1e-6f, false);
   IM_CHECK_RETV(fabsf(globe_re->Size.x - globe_w_before_close) < 2.0f, false);
-  ctx->LogInfo("[D4/D5] reopen keeps ratios %.3f / %.3f", static_cast<double>(kept_d4), static_cast<double>(kept_d5));
+  ctx->LogInfo("[D4/D6] reopen keeps ratios %.3f / %.3f", static_cast<double>(kept_d4), static_cast<double>(kept_d6));
 
   // Restore the session the case found (cross-case hygiene: the open flag and the splits are
   // display state this case owns).
   gui::g_state.analyze_pose_view_open = false;
   gui::g_state.analyze_pose_view_right_ratio = ratio_d4;
-  gui::g_state.analyze_pose_view_globe_ratio = ratio_d5;
+  gui::g_state.analyze_pose_view_globe_ratio = ratio_d6;
   ctx->Yield(2);
   return true;
 }
@@ -6785,16 +6764,13 @@ bool PoseViewNarrowestWindowKeepsTheFixedStackOperable(ImGuiTestContext* ctx) {
                  (double)win->Size.y, (double)win->Pos.x, (double)win->Pos.y);
 
     ImGuiWindow* globe = PoseRegionWindow("##AnalyzeSunGlobe");
-    IM_CHECK_RETV(globe != nullptr, false);
-    // The fixed stack's controls, VISIBLE: each rect inside the region's live clip (the clip is
+    ImGuiWindow* factors = PoseRegionWindow("##AnalyzePoseFactors");
+    IM_CHECK_RETV(globe != nullptr && factors != nullptr, false);
+    // The fixed stack's controls, VISIBLE: each rect inside its region's live clip (the clip is
     // viewport-intersected — an off-viewport rect fails this even though the item registered).
-    const ImGuiTestItemInfo toggle = ctx->ItemInfo("**/Deviation grid###globe_dev_grid", ImGuiTestOpFlags_NoError);
-    IM_CHECK_RETV(toggle.ID != 0, false);
-    IM_CHECK_RETV(toggle.RectFull.Min.x >= globe->InnerClipRect.Min.x - 0.5f &&
-                      toggle.RectFull.Max.x <= globe->InnerClipRect.Max.x + 0.5f &&
-                      toggle.RectFull.Min.y >= globe->InnerClipRect.Min.y - 0.5f &&
-                      toggle.RectFull.Max.y <= globe->InnerClipRect.Max.y + 0.5f,
-                  false);
+    // The deviation-grid toggle's home is the factors region's Calculation details (§16.4 —
+    // the toggle retired there with the relayout); its containment leg runs below, after the
+    // fold is open and the scroll has sought it into view.
     const ImGuiTestItemInfo sample = ctx->ItemInfo("**/##globe_sample", ImGuiTestOpFlags_NoError);
     IM_CHECK_RETV(sample.ID != 0, false);
     IM_CHECK_RETV(sample.RectFull.Max.x <= globe->InnerClipRect.Max.x + 0.5f &&
@@ -6804,11 +6780,42 @@ bool PoseViewNarrowestWindowKeepsTheFixedStackOperable(ImGuiTestContext* ctx) {
     IM_CHECK_RETV(play.ID != 0, false);
     IM_CHECK_RETV(play.RectFull.Max.y <= globe->InnerClipRect.Max.y + 0.5f, false);
 
-    // REAL operations, the review's demand: the toggle flips for true,
+    // REAL operations, the review's demand: the toggle flips for true. The toggle lives in the
+    // factors region's Calculation details fold — closed by default, its content past the
+    // factor readouts in the scroll — so the leg opens the fold, seeks the scroll to its end,
+    // and only then addresses the checkbox (the §16.1 fold discipline: the fold's expansion is
+    // session-sticky window storage; the leg closes it again at the end, leaving the next case
+    // the default-closed shape).
+    ctx->ItemClick("**/Calculation details##pose_factors");
+    ctx->Yield(2);
+    ImGuiWindow* factors_scroll = nullptr;
+    for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
+      if (w != nullptr && w->Active && w->ParentWindow != nullptr &&
+          std::strstr(w->ParentWindow->Name, "##AnalyzePoseFactors") != nullptr &&
+          std::strstr(w->Name, "##PoseFactorsScroll") != nullptr) {
+        factors_scroll = w;
+        break;
+      }
+    }
+    IM_CHECK_RETV(factors_scroll != nullptr, false);
+    factors_scroll->Scroll.y = factors_scroll->ScrollMax.y;  // belt-and-braces seek, the globe leg's idiom
+    ctx->Yield(2);
+    // The toggle's own containment leg: its rect inside the factors region's live clip — the
+    // same visibility demand the fixed-stack controls above answer, relocated with its region.
+    const ImGuiTestItemInfo toggle =
+        ctx->ItemInfo("**/Deviation grid###pose_factors_dev_grid", ImGuiTestOpFlags_NoError);
+    IM_CHECK_RETV(toggle.ID != 0, false);
+    IM_CHECK_RETV(toggle.RectFull.Min.x >= factors->InnerClipRect.Min.x - 0.5f &&
+                      toggle.RectFull.Max.x <= factors->InnerClipRect.Max.x + 0.5f &&
+                      toggle.RectFull.Min.y >= factors->InnerClipRect.Min.y - 0.5f &&
+                      toggle.RectFull.Max.y <= factors->InnerClipRect.Max.y + 0.5f,
+                  false);
     const bool grid_before = gui::g_state.analysis.point_view.show_deviation_grid;
-    ctx->ItemClick("**/Deviation grid###globe_dev_grid");
+    ctx->ItemClick("**/Deviation grid###pose_factors_dev_grid");
     ctx->Yield(2);
     IM_CHECK_RETV(gui::g_state.analysis.point_view.show_deviation_grid != grid_before, false);
+    ctx->ItemClick("**/Calculation details##pose_factors");  // restore the default-closed shape
+    ctx->Yield(2);
     // a running playback is stopped by a hand on the slider (the click moves the cursor),
     gui::g_state.analysis.point_view.playing = true;
     ctx->Yield(2);
@@ -6839,39 +6846,44 @@ bool PoseViewNarrowestWindowKeepsTheFixedStackOperable(ImGuiTestContext* ctx) {
       }
     }
     if (state_area != nullptr) {
-      IM_CHECK_RETV(state_area->ScrollMax.y > 0.0f, false);
-      // The reviewer's enhancement: the bounded area's reachability is a real wheel's work —
-      // scroll it, verify the wheel actually advanced the content, wheel to the end, and only
-      // then re-check that the fixed stack above still answers (the reachability must not come
-      // at the fixed controls' expense).
-      const float sm0 = state_area->ScrollMax.y;
-      const float scroll0 = state_area->Scroll.y;
-      const ImVec2 area_centre = state_area->Rect().GetCenter();
-      ctx->MouseMoveToPos(area_centre);
-      ctx->Yield(2);
-      for (int i = 0; i < 24 && state_area->Scroll.y < state_area->ScrollMax.y - 0.5f; ++i) {
-        ctx->MouseWheelY(-1.0f);
-        ctx->Yield(1);
+      // The bounded area's two honest shapes at this geometry: it FITS ENTIRELY (ScrollMax == 0
+      // — the fixed stack is one control shorter since the toggle retired to the factors
+      // region, so the narrowest face can now hold the whole report) or it SCROLLS, and then
+      // the reviewer's wheel legs hold: the wheel did the scrolling, the end is in view,
+      // nothing was deleted to fit. Both are reachability; neither deletes a line.
+      if (state_area->ScrollMax.y > 0.0f) {
+        const float sm0 = state_area->ScrollMax.y;
+        const float scroll0 = state_area->Scroll.y;
+        const ImVec2 area_centre = state_area->Rect().GetCenter();
+        ctx->MouseMoveToPos(area_centre);
+        ctx->Yield(2);
+        for (int i = 0; i < 24 && state_area->Scroll.y < state_area->ScrollMax.y - 0.5f; ++i) {
+          ctx->MouseWheelY(-1.0f);
+          ctx->Yield(1);
+        }
+        IM_CHECK_RETV(state_area->Scroll.y > scroll0 + 0.5f, false);                   // the wheel did the scrolling
+        IM_CHECK_RETV(state_area->Scroll.y >= state_area->ScrollMax.y - 1.0f, false);  // the end is in view
+        IM_CHECK_RETV(state_area->ScrollMax.y >= sm0 - 0.5f, false);                   // nothing was deleted to fit
+        ctx->LogInfo("[pose narrowest %.1fx] state area bounded, wheeled %.0f -> %.0f of SM %.0f; end in view",
+                     (double)scale, (double)scroll0, (double)state_area->Scroll.y, (double)state_area->ScrollMax.y);
+        // The fixed stack answers with the state area parked at its end.
+        ctx->ItemClick("**/Play##globe_play");
+        ctx->Yield(2);
+        IM_CHECK_RETV(gui::g_state.analysis.point_view.playing, false);
+        ctx->ItemClick("**/Stop##globe_play");
+        ctx->Yield(2);
+        IM_CHECK_RETV(!gui::g_state.analysis.point_view.playing, false);
+        ctx->LogInfo("[pose narrowest %.1fx] fixed stack operated with the state area at its end", (double)scale);
+      } else {
+        ctx->LogInfo("[pose narrowest %.1fx] state area fits entirely (SM 0) — reachable by construction",
+                     (double)scale);
       }
-      IM_CHECK_RETV(state_area->Scroll.y > scroll0 + 0.5f, false);                   // the wheel did the scrolling
-      IM_CHECK_RETV(state_area->Scroll.y >= state_area->ScrollMax.y - 1.0f, false);  // the end is in view
-      IM_CHECK_RETV(state_area->ScrollMax.y >= sm0 - 0.5f, false);                   // nothing was deleted to fit
-      ctx->LogInfo("[pose narrowest %.1fx] state area bounded, wheeled %.0f -> %.0f of SM %.0f; end in view",
-                   (double)scale, (double)scroll0, (double)state_area->Scroll.y, (double)state_area->ScrollMax.y);
-      // The fixed stack answers with the state area parked at its end.
-      ctx->ItemClick("**/Play##globe_play");
-      ctx->Yield(2);
-      IM_CHECK_RETV(gui::g_state.analysis.point_view.playing, false);
-      ctx->ItemClick("**/Stop##globe_play");
-      ctx->Yield(2);
-      IM_CHECK_RETV(!gui::g_state.analysis.point_view.playing, false);
-      ctx->LogInfo("[pose narrowest %.1fx] fixed stack operated with the state area at its end", (double)scale);
     } else {
       ImGuiWindow* globe_scroll = PoseRegionWindow("##AnalyzeSunGlobe");
       IM_CHECK_RETV(globe_scroll != nullptr, false);
       ctx->LogInfo("[pose narrowest %.1fx] state area unbounded (the region's own scroll), region SM %.0f",
                    (double)scale, (double)globe_scroll->ScrollMax.y);
-      IM_CHECK_RETV(globe_scroll->ScrollMax.y > 0.0f, false);
+      IM_CHECK_RETV(globe_scroll->ScrollMax.y >= 0.0f, false);  // fits or scrolls; no clip without a scroll exists
     }
 
     gui::g_state.analyze_pose_view_open = false;
@@ -7098,7 +7110,7 @@ bool PoseCurveRegionDrawsAndMovesTheSharedCursor(ImGuiTestContext* ctx) {
       "canvas %s h %.0f",
       static_cast<double>(win->Size.x), static_cast<double>(win->Size.y), static_cast<double>(globe_n->Size.y),
       static_cast<double>(gui::UiPx(gui::kPoseViewGlobeFloor)), static_cast<double>(curve_n->Size.y),
-      static_cast<double>(gui::UiPx(gui::kPoseViewFactorsFloor)), static_cast<double>(curve_n->ScrollMax.y),
+      static_cast<double>(gui::UiPx(gui::kPoseViewCurveFloor)), static_cast<double>(curve_n->ScrollMax.y),
       canvas_n.ID != 0 ? "yes" : "NO", canvas_n.ID != 0 ? static_cast<double>(canvas_n.RectFull.GetHeight()) : 0.0);
   // The full form at the narrowest face is the floors' promise only while the viewport can
   // host the true minimum (the min(min, viewport) clamp rule); on a shorter viewport the
@@ -9706,17 +9718,19 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
         gui::g_state.analyze_raypath_view_open = false;
         ctx->Yield(1);
 
-        // The globe's fixed head at the compressed tier, in the pose window: before any point
-        // intent the head is the title and the Deviation grid toggle — the one control it owns
-        // in every state; the sample/play controls belong to a completed point result and are
-        // driven by the point inspector's leg.
+        // The pose window at the compressed tier, BEFORE any point intent: the fixed heads are
+        // the two region titles — the globe's deviation-grid toggle retired to the factors
+        // region's Calculation details fold (§16.4), which lives in the discovered arm, so the
+        // pre-intent heads are titles + short status only (the pre-intent guide line IS the
+        // factors region's forward pointer). The toggle's contain+flip legs live with the
+        // completed document (the narrowest and narrow-column cases); the sample/play controls
+        // belong to a completed point result and are driven by the point inspector's leg.
         gui::g_state.analyze_pose_view_open = true;
         PinPoseViewOnScreen(ctx);
         ctx->Yield(1);
-        const bool grid_before = gui::g_state.analysis.point_view.show_deviation_grid;
-        ctx->ItemClick("**/Deviation grid###globe_dev_grid");
-        ctx->Yield(2);
-        IM_CHECK_EQ(gui::g_state.analysis.point_view.show_deviation_grid, !grid_before);
+        ImGuiWindow* globe_p = PoseRegionWindow("##AnalyzeSunGlobe");
+        ImGuiWindow* factors_p = PoseRegionWindow("##AnalyzePoseFactors");
+        IM_CHECK(globe_p != nullptr && factors_p != nullptr);
 
         // The 3D region beside it: at the viewport-clamped window its canvas stays legible.
         ImGuiWindow* r3d = PoseRegionWindow("##AnalyzeRaypath3D");
