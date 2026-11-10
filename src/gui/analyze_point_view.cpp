@@ -2749,19 +2749,17 @@ void RenderAnalyzePoseViewWindow(GuiState& state) {
   // region's own child).
   const ImVec2 body_min = ImGui::GetCursorScreenPos();
 
-  // ---- The LEFT column (§16.4): the 3D region on top, the curve region below — the curve's
-  // horizontal domain. This step lands the layout swap; the column's row split (D5) is a fixed
-  // share of the §16.4.1 suggested ratio, and its parameterized drag arrives with the D5 field
-  // wiring in the next step. Both column splits share one rule: each column's height
-  // denominator is its own — D5 and D6 each consume the same visible height without sharing a
-  // ratio — and the two ItemSpacings between a column's three elements are part of the budget
-  // the split divides. ----
+  // ---- The LEFT column (§16.4): D5's 3D | curve split, the row-splitter recipe. The column's
+  // height denominator is its own — D5 and D6 each consume the same visible height without
+  // sharing a ratio — and the two ItemSpacings between the three elements are part of the
+  // budget the stored ratio divides. Same floors-and-fallback rule as D4/D6; dragging D5
+  // writes D5's field and never touches the others (§16.4's 互不写入). ----
   const float strip_h = UiPx(kAnalyzeSplitterSize);
   const float v_spacing = ImGui::GetStyle().ItemSpacing.y;
   const float denom_h = std::max(0.0f, avail.y - strip_h - v_spacing * 2.0f);
   const float left_3d_floor = UiPx(kPoseViewLeft3dFloor);
   const float curve_floor = UiPx(kPoseViewCurveFloor);
-  float left_3d_h = 0.45f * denom_h;
+  float left_3d_h = state.analyze_pose_view_left_row_ratio * denom_h;
   if (denom_h >= left_3d_floor + curve_floor) {
     left_3d_h = std::clamp(left_3d_h, left_3d_floor, denom_h - curve_floor);
   } else {
@@ -2773,6 +2771,9 @@ void RenderAnalyzePoseViewWindow(GuiState& state) {
   ImGui::SetCursorScreenPos(ImVec2(body_min.x + left_w, body_min.y));
   PoseViewColumnSplitter("##PoseViewSplitter", avail.y, right_w, &state.analyze_pose_view_right_ratio, denom_w,
                          right_floor, left_floor);
+  ImGui::SetCursorScreenPos(ImVec2(body_min.x, body_min.y + left_3d_h + v_spacing));
+  PoseViewRowSplitter("##PoseViewLeftRowSplitter", left_w, left_3d_h, &state.analyze_pose_view_left_row_ratio, denom_h,
+                      left_3d_floor, curve_floor);
   ImGui::SetCursorScreenPos(ImVec2(body_min.x, body_min.y + left_3d_h + v_spacing + strip_h + v_spacing));
   RenderPoseCurveRegion(state, ImVec2(left_w, left_curve_h));
 

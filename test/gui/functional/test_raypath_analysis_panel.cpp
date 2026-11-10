@@ -6210,6 +6210,7 @@ bool PoseViewSplitsAreManualIndependentAndFloored(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(r3d != nullptr && globe != nullptr, false);
   const float ratio_d4 = gui::g_state.analyze_pose_view_right_ratio;
   const float ratio_d6 = gui::g_state.analyze_pose_view_globe_ratio;
+  const float ratio_d5_entry = gui::g_state.analyze_pose_view_left_row_ratio;
   // The D6 drag legs need a known starting geometry: the window's live size depends on which
   // earlier case last sized it (the workspace scroll-pins case runs the pose window at a
   // 640-tall basis; the minimum-height clamp then re-raises it to 680). Pin the contract
@@ -6283,6 +6284,27 @@ bool PoseViewSplitsAreManualIndependentAndFloored(ImGuiTestContext* ctx) {
                static_cast<double>(gui::g_state.analyze_pose_view_globe_ratio), static_cast<double>(globe_h0),
                static_cast<double>(globe_after_d6->Size.y));
 
+  // D5's drag (the left column's 3D | curve split, the §16.4 relayout's new boundary) writes
+  // D5's field and only it: the 3D region grows downward over the curve region, while D4 and
+  // D6 stand exactly where the previous drags left them (§16.4's 互不写入, now over four
+  // fields).
+  const float d5_before = gui::g_state.analyze_pose_view_left_row_ratio;
+  const float d4_before_d5 = gui::g_state.analyze_pose_view_right_ratio;
+  const float d6_before_d5 = gui::g_state.analyze_pose_view_globe_ratio;
+  const float r3d_h0 = PoseRegionWindow("##AnalyzeRaypath3D")->Size.y;
+  IM_CHECK_RETV(drag_strip("**/##PoseViewLeftRowSplitter", 0.0f, 40.0f), false);
+  ctx->LogInfo("[D5] ratio now %.4f (was %.4f)", static_cast<double>(gui::g_state.analyze_pose_view_left_row_ratio),
+               static_cast<double>(d5_before));
+  IM_CHECK_RETV(gui::g_state.analyze_pose_view_left_row_ratio > d5_before + 0.02f, false);
+  IM_CHECK_RETV(gui::g_state.analyze_pose_view_right_ratio == d4_before_d5, false);
+  IM_CHECK_RETV(gui::g_state.analyze_pose_view_globe_ratio == d6_before_d5, false);
+  ImGuiWindow* r3d_after_d5 = PoseRegionWindow("##AnalyzeRaypath3D");
+  IM_CHECK_RETV(r3d_after_d5 != nullptr, false);
+  IM_CHECK_RETV(r3d_after_d5->Size.y > r3d_h0 + 20.0f, false);
+  ctx->LogInfo("[D5] down drag: 3d h %.0f -> %.0f, ratio %.3f -> %.3f", static_cast<double>(r3d_h0),
+               static_cast<double>(r3d_after_d5->Size.y), static_cast<double>(d5_before),
+               static_cast<double>(gui::g_state.analyze_pose_view_left_row_ratio));
+
   // The narrowest window's both-end clamp (the plan §3 revision): at 640x420 — the window
   // minimum — a drag of D4 to either end leaves BOTH sides at/above their floors. Measured
   // child sizes, not ratios: the containment assertions are structurally blind to a side
@@ -6301,6 +6323,20 @@ bool PoseViewSplitsAreManualIndependentAndFloored(ImGuiTestContext* ctx) {
                  static_cast<double>(gui::UiPx(gui::kPoseViewRightFloor)));
     IM_CHECK_RETV(globe_n->Size.x >= gui::UiPx(gui::kPoseViewRightFloor) - 1.5f, false);
     IM_CHECK_RETV(r3d_n->Size.x >= gui::UiPx(gui::kPoseViewLeftFloor) - 1.5f, false);
+    // D5's height pair at this face: the floors when they can share the span, the proportional
+    // fallback share when they cannot — min(floor, share) is the bound both shapes honour (a
+    // side is never below its proportional share, nor below its floor while the span admits
+    // both).
+    const float denom_left =
+        r3d_n->Size.y + curve_n->Size.y + gui::UiPx(gui::kAnalyzeSplitterSize) + 2.0f * ImGui::GetStyle().ItemSpacing.y;
+    const float d5_joint = gui::kPoseViewLeft3dFloor + gui::kPoseViewCurveFloor;
+    const float bound_3d = std::min(gui::kPoseViewLeft3dFloor, denom_left * (gui::kPoseViewLeft3dFloor / d5_joint));
+    const float bound_curve = std::min(gui::kPoseViewCurveFloor, denom_left * (gui::kPoseViewCurveFloor / d5_joint));
+    ctx->LogInfo("[%s] left col denom %.0f, 3d %.0f (bound %.0f), curve %.0f (bound %.0f)", leg,
+                 static_cast<double>(denom_left), static_cast<double>(r3d_n->Size.y), static_cast<double>(bound_3d),
+                 static_cast<double>(curve_n->Size.y), static_cast<double>(bound_curve));
+    IM_CHECK_RETV(r3d_n->Size.y >= gui::UiPx(bound_3d) - 1.5f, false);
+    IM_CHECK_RETV(curve_n->Size.y >= gui::UiPx(bound_curve) - 1.5f, false);
     return true;
   };
   IM_CHECK_RETV(both_floors("before end drags"), false);
@@ -6320,9 +6356,10 @@ bool PoseViewSplitsAreManualIndependentAndFloored(ImGuiTestContext* ctx) {
   ctx->Yield(3);
   IM_CHECK_RETV(both_floors("shrink under kept ratio"), false);
 
-  // Session retention, by value: close + reopen keeps both ratios and the derived split.
+  // Session retention, by value: close + reopen keeps all three ratios and the derived split.
   const float kept_d4 = gui::g_state.analyze_pose_view_right_ratio;
   const float kept_d6 = gui::g_state.analyze_pose_view_globe_ratio;
+  const float kept_d5 = gui::g_state.analyze_pose_view_left_row_ratio;
   const float globe_w_before_close = PoseRegionWindow("##AnalyzeSunGlobe")->Size.x;
   gui::g_state.analyze_pose_view_open = false;
   ctx->Yield(2);
@@ -6333,14 +6370,17 @@ bool PoseViewSplitsAreManualIndependentAndFloored(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(globe_re != nullptr, false);
   IM_CHECK_RETV(fabsf(gui::g_state.analyze_pose_view_right_ratio - kept_d4) < 1e-6f, false);
   IM_CHECK_RETV(fabsf(gui::g_state.analyze_pose_view_globe_ratio - kept_d6) < 1e-6f, false);
+  IM_CHECK_RETV(fabsf(gui::g_state.analyze_pose_view_left_row_ratio - kept_d5) < 1e-6f, false);
   IM_CHECK_RETV(fabsf(globe_re->Size.x - globe_w_before_close) < 2.0f, false);
-  ctx->LogInfo("[D4/D6] reopen keeps ratios %.3f / %.3f", static_cast<double>(kept_d4), static_cast<double>(kept_d6));
+  ctx->LogInfo("[D4/D6/D5] reopen keeps ratios %.3f / %.3f / %.3f", static_cast<double>(kept_d4),
+               static_cast<double>(kept_d6), static_cast<double>(kept_d5));
 
   // Restore the session the case found (cross-case hygiene: the open flag and the splits are
   // display state this case owns).
   gui::g_state.analyze_pose_view_open = false;
   gui::g_state.analyze_pose_view_right_ratio = ratio_d4;
   gui::g_state.analyze_pose_view_globe_ratio = ratio_d6;
+  gui::g_state.analyze_pose_view_left_row_ratio = ratio_d5_entry;
   ctx->Yield(2);
   return true;
 }
