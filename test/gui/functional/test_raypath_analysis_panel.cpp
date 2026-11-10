@@ -675,6 +675,71 @@ ImGuiWindow* PoseRegionWindow(const char* name_fragment) {
   return RegionWindowUnder("Pose & trace", name_fragment);
 }
 
+// The splitter strip's real-drag gesture, shared by the pose split cases. The splits, resize
+// and chain cases each carried a private copy of this idiom, and the copies are exactly what
+// this task's own history warns about (the px-vs-pt unit slip and the split-span denominator
+// were both fixed in one copy while its sibling still carried the bug) — one gesture, one
+// owner.
+bool PoseDragStrip(ImGuiTestContext* ctx, const char* id, float dx, float dy) {
+  const ImGuiTestItemInfo grab = ctx->ItemInfo(id, ImGuiTestOpFlags_NoError);
+  IM_CHECK_SILENT_RETV(grab.ID != 0, false);
+  const ImVec2 c = grab.RectFull.GetCenter();
+  ctx->MouseMoveToPos(c);
+  ctx->Yield(2);
+  ctx->MouseDown(0);
+  ctx->Yield(2);
+  ctx->MouseMoveToPos(ImVec2(c.x + dx, c.y + dy));
+  ctx->Yield(3);
+  ctx->MouseUp(0);
+  ctx->Yield(2);
+  return true;
+}
+
+// A region's scrolling child, found by the parent fragment + child name fragment (the
+// report/companion/state children under ##AnalyzePoseCurve / ##AnalyzePoseFactors /
+// ##AnalyzeRaypath3D). Shared by the pose cases for the same single-owner reason as
+// PoseDragStrip.
+ImGuiWindow* PoseRegionScrollChild(const char* parent_fragment, const char* name_fragment) {
+  for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
+    if (w != nullptr && w->Active && w->ParentWindow != nullptr &&
+        std::strstr(w->ParentWindow->Name, parent_fragment) != nullptr &&
+        std::strstr(w->Name, name_fragment) != nullptr) {
+      return w;
+    }
+  }
+  return nullptr;
+}
+
+// The D5 pair's height bounds at the measured geometry, in PIXELS: the floors when they can
+// share the span, the proportional fallback share when they cannot — min(floor, share) is the
+// bound both shapes honour. All terms in pixels (a pt value against a px share reads as the
+// floor at 1x and lies at 1.5x/2x — the 1.5x leg of the chain case caught exactly that slip),
+// and the span is the two regions' heights (the strip and its two spacings sit OUTSIDE the
+// derivation's denominator; summing the parts' full stack inflates the bound by exactly that
+// strip — the fallback regime made the inflation fatal).
+void PoseD5HeightBounds(float r3d_h, float curve_h, float* bound_3d, float* bound_curve) {
+  const float denom_left = r3d_h + curve_h;
+  const float d5_joint = gui::kPoseViewLeft3dFloor + gui::kPoseViewCurveFloor;
+  *bound_3d = std::min(gui::UiPx(gui::kPoseViewLeft3dFloor), denom_left * (gui::kPoseViewLeft3dFloor / d5_joint));
+  *bound_curve = std::min(gui::UiPx(gui::kPoseViewCurveFloor), denom_left * (gui::kPoseViewCurveFloor / d5_joint));
+}
+
+// The four pose session splits, restored on scope exit — the failure path is the pollution
+// surface the cross-case lesson's prescription targets (a tail restore only covers the happy
+// path; an IM_CHECK_RETV early exit would leak the dragged extremes to the whole pool).
+struct ScopedPoseSessionSplits {
+  float d4, d6, d5, d7;
+  ScopedPoseSessionSplits()
+      : d4(gui::g_state.analyze_pose_view_right_ratio), d6(gui::g_state.analyze_pose_view_globe_ratio),
+        d5(gui::g_state.analyze_pose_view_left_row_ratio), d7(gui::g_state.analyze_pose_view_curve_canvas_ratio) {}
+  ~ScopedPoseSessionSplits() {
+    gui::g_state.analyze_pose_view_right_ratio = d4;
+    gui::g_state.analyze_pose_view_globe_ratio = d6;
+    gui::g_state.analyze_pose_view_left_row_ratio = d5;
+    gui::g_state.analyze_pose_view_curve_canvas_ratio = d7;
+  }
+};
+
 // The floating window is user-placed; at a smaller workspace basis the cascade position can
 // park it past the OS window's edge, and the viewport clip then cuts the region's content
 // (the containment asserts would read the clip, not the layout). A user moves the window back
@@ -6200,6 +6265,7 @@ bool RaypathViewSplitIsManualAndFloored(ImGuiTestContext* ctx) {
 // bound, so each leg asserts measured child sizes for both regions at 640x420. No analysis
 // needed: the regions render their honest empty states under the same geometry.
 bool PoseViewSplitsAreManualIndependentAndFloored(ImGuiTestContext* ctx) {
+  ScopedPoseSessionSplits splits_guard;  // the drags' extremes leave with this scope, come what may
   gui::g_state.analyze_pose_view_open =
       true;  // the state write the title click performs (the click path is its own case)
   ctx->Yield(3);
@@ -6232,21 +6298,7 @@ bool PoseViewSplitsAreManualIndependentAndFloored(ImGuiTestContext* ctx) {
 
   // D4's drag writes D4's ratio and only it: 60 pt right (the 3D widens, the right column
   // narrows — the ratio is the column's share, so it shrinks).
-  const auto drag_strip = [&](const char* id, float dx, float dy) {
-    const ImGuiTestItemInfo grab = ctx->ItemInfo(id, ImGuiTestOpFlags_NoError);
-    IM_CHECK_RETV(grab.ID != 0, false);
-    const ImVec2 c = grab.RectFull.GetCenter();
-    ctx->MouseMoveToPos(c);
-    ctx->Yield(2);
-    ctx->MouseDown(0);
-    ctx->Yield(2);
-    ctx->MouseMoveToPos(ImVec2(c.x + dx, c.y + dy));
-    ctx->Yield(3);
-    ctx->MouseUp(0);
-    ctx->Yield(2);
-    return true;
-  };
-  IM_CHECK_RETV(drag_strip("**/##PoseViewSplitter", 60.0f, 0.0f), false);
+  IM_CHECK_RETV(PoseDragStrip(ctx, "**/##PoseViewSplitter", 60.0f, 0.0f), false);
   IM_CHECK_RETV(gui::g_state.analyze_pose_view_right_ratio < ratio_d4 - 0.02f, false);
   IM_CHECK_RETV(gui::g_state.analyze_pose_view_globe_ratio == ratio_d6, false);
   ImGuiWindow* r3d_after = PoseRegionWindow("##AnalyzeRaypath3D");
@@ -6273,7 +6325,7 @@ bool PoseViewSplitsAreManualIndependentAndFloored(ImGuiTestContext* ctx) {
                  static_cast<double>(probe.RectFull.Min.y), static_cast<double>(probe.RectFull.Max.x),
                  static_cast<double>(probe.RectFull.Max.y));
   }
-  IM_CHECK_RETV(drag_strip("**/##PoseViewRowsSplitter", 0.0f, 40.0f), false);
+  IM_CHECK_RETV(PoseDragStrip(ctx, "**/##PoseViewRowsSplitter", 0.0f, 40.0f), false);
   ctx->LogInfo("[D6] ratio now %.4f (was %.4f)", static_cast<double>(gui::g_state.analyze_pose_view_globe_ratio),
                static_cast<double>(ratio_d6));
   IM_CHECK_RETV(gui::g_state.analyze_pose_view_globe_ratio > ratio_d6 + 0.02f, false);
@@ -6293,7 +6345,7 @@ bool PoseViewSplitsAreManualIndependentAndFloored(ImGuiTestContext* ctx) {
   const float d4_before_d5 = gui::g_state.analyze_pose_view_right_ratio;
   const float d6_before_d5 = gui::g_state.analyze_pose_view_globe_ratio;
   const float r3d_h0 = PoseRegionWindow("##AnalyzeRaypath3D")->Size.y;
-  IM_CHECK_RETV(drag_strip("**/##PoseViewLeftRowSplitter", 0.0f, 40.0f), false);
+  IM_CHECK_RETV(PoseDragStrip(ctx, "**/##PoseViewLeftRowSplitter", 0.0f, 40.0f), false);
   ctx->LogInfo("[D5] ratio now %.4f (was %.4f)", static_cast<double>(gui::g_state.analyze_pose_view_left_row_ratio),
                static_cast<double>(d5_before));
   IM_CHECK_RETV(gui::g_state.analyze_pose_view_left_row_ratio > d5_before + 0.02f, false);
@@ -6366,7 +6418,7 @@ bool PoseViewSplitsAreManualIndependentAndFloored(ImGuiTestContext* ctx) {
   const ImGuiTestItemInfo canvas_d7_0 = ctx->ItemInfo("**/##pose_curve_canvas", ImGuiTestOpFlags_NoError);
   IM_CHECK_RETV(canvas_d7_0.ID != 0, false);
   const float canvas_d7_h0 = canvas_d7_0.RectFull.GetHeight();
-  IM_CHECK_RETV(drag_strip("**/##PoseCurveSplitter", 0.0f, 30.0f), false);
+  IM_CHECK_RETV(PoseDragStrip(ctx, "**/##PoseCurveSplitter", 0.0f, 30.0f), false);
   ctx->LogInfo("[D7] ratio now %.4f (was %.4f — the sentinel)",
                static_cast<double>(gui::g_state.analyze_pose_view_curve_canvas_ratio), static_cast<double>(d7_before));
   IM_CHECK_RETV(gui::g_state.analyze_pose_view_curve_canvas_ratio > d7_before + 0.02f, false);
@@ -6398,34 +6450,25 @@ bool PoseViewSplitsAreManualIndependentAndFloored(ImGuiTestContext* ctx) {
                  static_cast<double>(gui::UiPx(gui::kPoseViewRightFloor)));
     IM_CHECK_RETV(globe_n->Size.x >= gui::UiPx(gui::kPoseViewRightFloor) - 1.5f, false);
     IM_CHECK_RETV(r3d_n->Size.x >= gui::UiPx(gui::kPoseViewLeftFloor) - 1.5f, false);
-    // D5's height pair at this face: the floors when they can share the span, the proportional
-    // fallback share when they cannot — min(floor, share) is the bound both shapes honour (a
-    // side is never below its proportional share, nor below its floor while the span admits
-    // both). All terms in PIXELS: UiPx(floor) against the measured denominator's share — the
-    // ratio floor/sum is scale-free, but the min's two sides must share a unit (a pt value
-    // against a px share reads as the floor at 1x and lies at 1.5x/2x).
-    // The split's span: the two regions' heights — the strip and its two spacings sit OUTSIDE
-    // the derivation's denominator (denom_h = avail − strip − 2·spacing, and curve = denom −
-    // 3d), so summing the parts' full stack here would inflate the bound by exactly that strip.
-    const float denom_left = r3d_n->Size.y + curve_n->Size.y;
-    const float d5_joint = gui::kPoseViewLeft3dFloor + gui::kPoseViewCurveFloor;
-    const float bound_3d =
-        std::min(gui::UiPx(gui::kPoseViewLeft3dFloor), denom_left * (gui::kPoseViewLeft3dFloor / d5_joint));
-    const float bound_curve =
-        std::min(gui::UiPx(gui::kPoseViewCurveFloor), denom_left * (gui::kPoseViewCurveFloor / d5_joint));
+    // D5's height pair at this face: the shared PoseD5HeightBounds carries the px-unit and
+    // span-denominator discipline (its comment holds the two slips the chain case's 1.5x leg
+    // caught); this leg asserts against it and logs the numbers.
+    float bound_3d = 0.0f;
+    float bound_curve = 0.0f;
+    PoseD5HeightBounds(r3d_n->Size.y, curve_n->Size.y, &bound_3d, &bound_curve);
     ctx->LogInfo("[%s] left col denom %.0f, 3d %.0f (bound %.0f), curve %.0f (bound %.0f)", leg,
-                 static_cast<double>(denom_left), static_cast<double>(r3d_n->Size.y), static_cast<double>(bound_3d),
-                 static_cast<double>(curve_n->Size.y), static_cast<double>(bound_curve));
+                 static_cast<double>(r3d_n->Size.y + curve_n->Size.y), static_cast<double>(r3d_n->Size.y),
+                 static_cast<double>(bound_3d), static_cast<double>(curve_n->Size.y), static_cast<double>(bound_curve));
     IM_CHECK_RETV(r3d_n->Size.y >= bound_3d - 1.5f, false);
     IM_CHECK_RETV(curve_n->Size.y >= bound_curve - 1.5f, false);
     return true;
   };
   IM_CHECK_RETV(both_floors("before end drags"), false);
   // Drag right hard: the right column stops at its floor, the 3D keeps its own.
-  IM_CHECK_RETV(drag_strip("**/##PoseViewSplitter", 900.0f, 0.0f), false);
+  IM_CHECK_RETV(PoseDragStrip(ctx, "**/##PoseViewSplitter", 900.0f, 0.0f), false);
   IM_CHECK_RETV(both_floors("right-clamped"), false);
   // Drag left hard: the 3D stops at its floor, the right column keeps its own.
-  IM_CHECK_RETV(drag_strip("**/##PoseViewSplitter", -1800.0f, 0.0f), false);
+  IM_CHECK_RETV(PoseDragStrip(ctx, "**/##PoseViewSplitter", -1800.0f, 0.0f), false);
   IM_CHECK_RETV(both_floors("left-clamped"), false);
 
   // The floors hold under a kept wide-right ratio + shrink (the other premise the revision
@@ -6458,13 +6501,9 @@ bool PoseViewSplitsAreManualIndependentAndFloored(ImGuiTestContext* ctx) {
   ctx->LogInfo("[D4/D6/D5/D7] reopen keeps ratios %.3f / %.3f / %.3f / %.3f", static_cast<double>(kept_d4),
                static_cast<double>(kept_d6), static_cast<double>(kept_d5), static_cast<double>(kept_d7));
 
-  // Restore the session the case found (cross-case hygiene: the open flag and the splits are
-  // display state this case owns).
+  // The open flag is this case's own display state; the four splits leave with the RAII guard
+  // (happy path and early exit alike).
   gui::g_state.analyze_pose_view_open = false;
-  gui::g_state.analyze_pose_view_right_ratio = ratio_d4;
-  gui::g_state.analyze_pose_view_globe_ratio = ratio_d6;
-  gui::g_state.analyze_pose_view_left_row_ratio = ratio_d5_entry;
-  gui::g_state.analyze_pose_view_curve_canvas_ratio = ratio_d7_entry;
   ctx->Yield(2);
   return true;
 }
@@ -6850,6 +6889,7 @@ bool PoseViewDoNewClosesAndReopensHonest(ImGuiTestContext* ctx) {
 // dragged ratio governs (user intent overrides the strategy). Geometry-only: no document —
 // the canvases and the quota children derive from the region shapes alone.
 bool PoseViewResizeStrategyDistributesByRatioAndQuota(ImGuiTestContext* ctx) {
+  ScopedPoseSessionSplits splits_guard;  // scenario drags leave with this scope, come what may
   gui::g_state.analyze_pose_view_open = true;
   ctx->Yield(3);
   ImGuiWindow* win = ctx->GetWindowByRef("//Pose & trace");
@@ -6865,41 +6905,15 @@ bool PoseViewResizeStrategyDistributesByRatioAndQuota(ImGuiTestContext* ctx) {
     IM_CHECK_RETV(c.ID != 0, false);
     return c.RectFull.GetHeight();
   };
-  const auto child_under = [&](const char* parent_fragment, const char* name_fragment) -> ImGuiWindow* {
-    for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
-      if (w != nullptr && w->Active && w->ParentWindow != nullptr &&
-          std::strstr(w->ParentWindow->Name, parent_fragment) != nullptr &&
-          std::strstr(w->Name, name_fragment) != nullptr) {
-        return w;
-      }
-    }
-    return nullptr;
-  };
-  const auto drag_strip = [&](const char* id, float dx, float dy) {
-    const ImGuiTestItemInfo grab = ctx->ItemInfo(id, ImGuiTestOpFlags_NoError);
-    IM_CHECK_RETV(grab.ID != 0, false);
-    const ImVec2 c = grab.RectFull.GetCenter();
-    ctx->MouseMoveToPos(c);
-    ctx->Yield(2);
-    ctx->MouseDown(0);
-    ctx->Yield(2);
-    ctx->MouseMoveToPos(ImVec2(c.x + dx, c.y + dy));
-    ctx->Yield(3);
-    ctx->MouseUp(0);
-    ctx->Yield(2);
-    return true;
-  };
 
   // Scenario 1 — STRETCH, the undragged D7: the quota members hold, the canvases take the
   // delta by D5's ratio (Δ3d : Δcurve == ratio : 1−ratio).
-  const float d4_saved = gui::g_state.analyze_pose_view_right_ratio;
   const float d5_saved = gui::g_state.analyze_pose_view_left_row_ratio;
-  const float d6_saved = gui::g_state.analyze_pose_view_globe_ratio;
   const float d7_saved = gui::g_state.analyze_pose_view_curve_canvas_ratio;
   const float c3d_0 = canvas_h("**/##r3d_canvas");
   const float cc_0 = canvas_h("**/##pose_curve_canvas");
-  ImGuiWindow* rep3d_0 = child_under("##AnalyzeRaypath3D", "##Ray3DReport");
-  ImGuiWindow* comp_0 = child_under("##AnalyzePoseCurve", "##PoseCurveScroll");
+  ImGuiWindow* rep3d_0 = PoseRegionScrollChild("##AnalyzeRaypath3D", "##Ray3DReport");
+  ImGuiWindow* comp_0 = PoseRegionScrollChild("##AnalyzePoseCurve", "##PoseCurveScroll");
   IM_CHECK_RETV(rep3d_0 != nullptr && comp_0 != nullptr, false);
   const float rep3d_h0 = rep3d_0->Size.y;
   const float comp_h0 = comp_0->Size.y;
@@ -6909,8 +6923,8 @@ bool PoseViewResizeStrategyDistributesByRatioAndQuota(ImGuiTestContext* ctx) {
   pin_size(960.0f, 880.0f);
   const float c3d_1 = canvas_h("**/##r3d_canvas");
   const float cc_1 = canvas_h("**/##pose_curve_canvas");
-  ImGuiWindow* rep3d_1 = child_under("##AnalyzeRaypath3D", "##Ray3DReport");
-  ImGuiWindow* comp_1 = child_under("##AnalyzePoseCurve", "##PoseCurveScroll");
+  ImGuiWindow* rep3d_1 = PoseRegionScrollChild("##AnalyzeRaypath3D", "##Ray3DReport");
+  ImGuiWindow* comp_1 = PoseRegionScrollChild("##AnalyzePoseCurve", "##PoseCurveScroll");
   IM_CHECK_RETV(rep3d_1 != nullptr && comp_1 != nullptr, false);
   ctx->LogInfo("[resize stretch] stretched: canvas 3d %.0f curve %.0f | quota %.0f / %.0f", static_cast<double>(c3d_1),
                static_cast<double>(cc_1), static_cast<double>(rep3d_1->Size.y), static_cast<double>(comp_1->Size.y));
@@ -6938,7 +6952,7 @@ bool PoseViewResizeStrategyDistributesByRatioAndQuota(ImGuiTestContext* ctx) {
   // (user intent overrides the strategy). Drag the 3D side down 60 (the drag may clamp at the
   // curve floor — the redistribution it performs is part of the pre-stretch baseline), measure
   // the post-drag geometry, then stretch and re-derive.
-  IM_CHECK_RETV(drag_strip("**/##PoseViewLeftRowSplitter", 0.0f, 60.0f), false);
+  IM_CHECK_RETV(PoseDragStrip(ctx, "**/##PoseViewLeftRowSplitter", 0.0f, 60.0f), false);
   const float dragged_ratio = gui::g_state.analyze_pose_view_left_row_ratio;
   IM_CHECK_RETV(dragged_ratio > d5_saved + 0.03f, false);
   const float c3d_post = canvas_h("**/##r3d_canvas");
@@ -6960,12 +6974,12 @@ bool PoseViewResizeStrategyDistributesByRatioAndQuota(ImGuiTestContext* ctx) {
   // the undragged state above; the drag's intent overrides it, and the resize keeps the
   // dragged split rather than re-pinning the quota).
   pin_size(960.0f, 880.0f);
-  IM_CHECK_RETV(drag_strip("**/##PoseCurveSplitter", 0.0f, 40.0f), false);
+  IM_CHECK_RETV(PoseDragStrip(ctx, "**/##PoseCurveSplitter", 0.0f, 40.0f), false);
   const float d7_dragged = gui::g_state.analyze_pose_view_curve_canvas_ratio;
   IM_CHECK_RETV(d7_dragged > d7_saved + 0.03f, false);
   pin_size(960.0f, 720.0f);
   const float cc_5 = canvas_h("**/##pose_curve_canvas");
-  ImGuiWindow* comp_5 = child_under("##AnalyzePoseCurve", "##PoseCurveScroll");
+  ImGuiWindow* comp_5 = PoseRegionScrollChild("##AnalyzePoseCurve", "##PoseCurveScroll");
   IM_CHECK_RETV(comp_5 != nullptr, false);
   const float denom_7 = cc_5 + comp_5->Size.y;  // the split's span: canvas + companion (the strip and spacings cancel)
   const float share_5 = cc_5 / denom_7;
@@ -6978,11 +6992,7 @@ bool PoseViewResizeStrategyDistributesByRatioAndQuota(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(fabsf(share_5 - d7_dragged) < 0.03f, false);  // the dragged share governs the settled split
   IM_CHECK_RETV(comp_5->Size.y < quota_5 - 20.0f, false);     // the companion gave up its quota to the drag
 
-  // Restore the session the case found (cross-case hygiene).
-  gui::g_state.analyze_pose_view_right_ratio = d4_saved;
-  gui::g_state.analyze_pose_view_left_row_ratio = d5_saved;
-  gui::g_state.analyze_pose_view_globe_ratio = d6_saved;
-  gui::g_state.analyze_pose_view_curve_canvas_ratio = d7_saved;
+  // The four splits leave with the RAII guard; the window basis is this case's own state.
   pin_size(960.0f, 720.0f);
   gui::g_state.analyze_pose_view_open = false;
   ctx->Yield(2);
@@ -6997,13 +7007,10 @@ bool PoseViewResizeStrategyDistributesByRatioAndQuota(ImGuiTestContext* ctx) {
 // lives in the narrowest-window case, the 1x geometry bounds in the splits case.
 bool PoseViewNarrowestBoundariesHoldBothEnds(ImGuiTestContext* ctx) {
   ScopedServerGuard guard;
-  // The session splits this case drags to their ends are display state it owns: capture and
-  // restore all four (the splits and resize cases' own hygiene — a later geometry-style case
-  // without an entry reset would otherwise inherit the extreme splits).
-  const float d4_entry = gui::g_state.analyze_pose_view_right_ratio;
-  const float d6_entry = gui::g_state.analyze_pose_view_globe_ratio;
-  const float d5_entry = gui::g_state.analyze_pose_view_left_row_ratio;
-  const float d7_entry = gui::g_state.analyze_pose_view_curve_canvas_ratio;
+  // The session splits this case drags to their ends leave with the RAII guard — happy path
+  // and early exit alike (the cross-case lesson's prescription; a tail restore only covers
+  // the happy path).
+  ScopedPoseSessionSplits splits_guard;
   IM_CHECK_RETV(BringUpHaloScene(ctx, /*infinite=*/false), false);
   OpenWindow(ctx);
   IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
@@ -7015,20 +7022,6 @@ bool PoseViewNarrowestBoundariesHoldBothEnds(ImGuiTestContext* ctx) {
           60),
       false);
 
-  const auto drag_strip = [&](const char* id, float dx, float dy) {
-    const ImGuiTestItemInfo grab = ctx->ItemInfo(id, ImGuiTestOpFlags_NoError);
-    IM_CHECK_RETV(grab.ID != 0, false);
-    const ImVec2 c = grab.RectFull.GetCenter();
-    ctx->MouseMoveToPos(c);
-    ctx->Yield(2);
-    ctx->MouseDown(0);
-    ctx->Yield(2);
-    ctx->MouseMoveToPos(ImVec2(c.x + dx, c.y + dy));
-    ctx->Yield(3);
-    ctx->MouseUp(0);
-    ctx->Yield(2);
-    return true;
-  };
   // A real wheel's work to the member's end — the reviewer's demand that reachability not be
   // claimed from ScrollMax's existence. A member whose content fits (ScrollMax == 0) is
   // reachable by construction; the log names which shape the leg saw.
@@ -7050,16 +7043,6 @@ bool PoseViewNarrowestBoundariesHoldBothEnds(ImGuiTestContext* ctx) {
       ctx->LogInfo("[chain] %s fits entirely (SM 0)", what);
     }
     return true;
-  };
-  const auto child_under = [&](const char* parent_fragment, const char* name_fragment) -> ImGuiWindow* {
-    for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
-      if (w != nullptr && w->Active && w->ParentWindow != nullptr &&
-          std::strstr(w->ParentWindow->Name, parent_fragment) != nullptr &&
-          std::strstr(w->Name, name_fragment) != nullptr) {
-        return w;
-      }
-    }
-    return nullptr;
   };
 
   const auto drive_chain = [&](float scale) -> bool {
@@ -7092,14 +7075,9 @@ bool PoseViewNarrowestBoundariesHoldBothEnds(ImGuiTestContext* ctx) {
       ImGuiWindow* r3d_n = PoseRegionWindow("##AnalyzeRaypath3D");
       ImGuiWindow* curve_n = PoseRegionWindow("##AnalyzePoseCurve");
       IM_CHECK_RETV(r3d_n != nullptr && curve_n != nullptr, false);
-      // The split's span is the two regions' heights — the strip and spacings sit OUTSIDE the
-      // derivation's denominator (see the splits case's bound note).
-      const float denom_left = r3d_n->Size.y + curve_n->Size.y;
-      const float d5_joint = gui::kPoseViewLeft3dFloor + gui::kPoseViewCurveFloor;
-      const float bound_3d =
-          std::min(gui::UiPx(gui::kPoseViewLeft3dFloor), denom_left * (gui::kPoseViewLeft3dFloor / d5_joint));
-      const float bound_curve =
-          std::min(gui::UiPx(gui::kPoseViewCurveFloor), denom_left * (gui::kPoseViewCurveFloor / d5_joint));
+      float bound_3d = 0.0f;
+      float bound_curve = 0.0f;
+      PoseD5HeightBounds(r3d_n->Size.y, curve_n->Size.y, &bound_3d, &bound_curve);
       ctx->LogInfo("[chain %.1fx] D5: 3d %.0f (bound %.0f), curve %.0f (bound %.0f)", (double)scale,
                    static_cast<double>(r3d_n->Size.y), static_cast<double>(bound_3d),
                    static_cast<double>(curve_n->Size.y), static_cast<double>(bound_curve));
@@ -7107,19 +7085,19 @@ bool PoseViewNarrowestBoundariesHoldBothEnds(ImGuiTestContext* ctx) {
       IM_CHECK_RETV(curve_n->Size.y >= bound_curve - 1.5f, false);
       return true;
     };
-    IM_CHECK_RETV(drag_strip("**/##PoseViewLeftRowSplitter", 0.0f, -1800.0f), false);
+    IM_CHECK_RETV(PoseDragStrip(ctx, "**/##PoseViewLeftRowSplitter", 0.0f, -1800.0f), false);
     IM_CHECK_RETV(d5_bounds_hold(), false);
     {
-      ImGuiWindow* comp = child_under("##AnalyzePoseCurve", "##PoseCurveScroll");
+      ImGuiWindow* comp = PoseRegionScrollChild("##AnalyzePoseCurve", "##PoseCurveScroll");
       IM_CHECK_RETV(comp != nullptr, false);
       IM_CHECK_RETV(wheel_to_end(comp, "curve companion (D5 top)"), false);
     }
-    IM_CHECK_RETV(drag_strip("**/##PoseViewLeftRowSplitter", 0.0f, 1800.0f), false);
+    IM_CHECK_RETV(PoseDragStrip(ctx, "**/##PoseViewLeftRowSplitter", 0.0f, 1800.0f), false);
     IM_CHECK_RETV(d5_bounds_hold(), false);
 
     // D6 — both ends: the globe's fixed stack answers at its floor; the factors region's
     // scroll reaches its end over the wheel.
-    IM_CHECK_RETV(drag_strip("**/##PoseViewRowsSplitter", 0.0f, -1800.0f), false);
+    IM_CHECK_RETV(PoseDragStrip(ctx, "**/##PoseViewRowsSplitter", 0.0f, -1800.0f), false);
     {
       ImGuiWindow* globe_n = PoseRegionWindow("##AnalyzeSunGlobe");
       ImGuiWindow* factors_n = PoseRegionWindow("##AnalyzePoseFactors");
@@ -7129,11 +7107,11 @@ bool PoseViewNarrowestBoundariesHoldBothEnds(ImGuiTestContext* ctx) {
       IM_CHECK_RETV(sample.RectFull.Max.y <= globe_n->InnerClipRect.Max.y + 0.5f, false);
       ctx->LogInfo("[chain %.1fx] D6 top: globe %.0f, factors %.0f", (double)scale,
                    static_cast<double>(globe_n->Size.y), static_cast<double>(factors_n->Size.y));
-      ImGuiWindow* scroll = child_under("##AnalyzePoseFactors", "##PoseFactorsScroll");
+      ImGuiWindow* scroll = PoseRegionScrollChild("##AnalyzePoseFactors", "##PoseFactorsScroll");
       IM_CHECK_RETV(scroll != nullptr, false);
       IM_CHECK_RETV(wheel_to_end(scroll, "factors scroll (D6 top)"), false);
     }
-    IM_CHECK_RETV(drag_strip("**/##PoseViewRowsSplitter", 0.0f, 1800.0f), false);
+    IM_CHECK_RETV(PoseDragStrip(ctx, "**/##PoseViewRowsSplitter", 0.0f, 1800.0f), false);
     {
       ImGuiWindow* globe_n = PoseRegionWindow("##AnalyzeSunGlobe");
       ImGuiWindow* factors_n = PoseRegionWindow("##AnalyzePoseFactors");
@@ -7149,7 +7127,7 @@ bool PoseViewNarrowestBoundariesHoldBothEnds(ImGuiTestContext* ctx) {
       // standing claim here is reachability, not containment.
       const ImGuiTestItemInfo physics_b = ctx->ItemInfo("**/Physics details##pose_factors", ImGuiTestOpFlags_NoError);
       IM_CHECK_RETV(physics_b.ID != 0, false);
-      ImGuiWindow* scroll_b = child_under("##AnalyzePoseFactors", "##PoseFactorsScroll");
+      ImGuiWindow* scroll_b = PoseRegionScrollChild("##AnalyzePoseFactors", "##PoseFactorsScroll");
       IM_CHECK_RETV(scroll_b != nullptr, false);
       IM_CHECK_RETV(wheel_to_end(scroll_b, "factors scroll (D6 bottom)"), false);
     }
@@ -7157,7 +7135,7 @@ bool PoseViewNarrowestBoundariesHoldBothEnds(ImGuiTestContext* ctx) {
     // D7 — both ends: the canvas holds its real-slice floor and still writes the selection; the
     // companion reaches its end over the wheel; then the canvas swallows the span and the
     // companion holds its own floor.
-    IM_CHECK_RETV(drag_strip("**/##PoseCurveSplitter", 0.0f, -1800.0f), false);
+    IM_CHECK_RETV(PoseDragStrip(ctx, "**/##PoseCurveSplitter", 0.0f, -1800.0f), false);
     {
       const ImGuiTestItemInfo canvas_n = ctx->ItemInfo("**/##pose_curve_canvas", ImGuiTestOpFlags_NoError);
       IM_CHECK_RETV(canvas_n.ID != 0, false);
@@ -7179,19 +7157,24 @@ bool PoseViewNarrowestBoundariesHoldBothEnds(ImGuiTestContext* ctx) {
       IM_CHECK_RETV(gui::g_state.analysis.point_view.sample_index > 0, false);
       ctx->LogInfo("[chain %.1fx] D7 top: canvas click at floor wrote sample %d", (double)scale,
                    gui::g_state.analysis.point_view.sample_index);
-      ImGuiWindow* comp = child_under("##AnalyzePoseCurve", "##PoseCurveScroll");
+      ImGuiWindow* comp = PoseRegionScrollChild("##AnalyzePoseCurve", "##PoseCurveScroll");
       IM_CHECK_RETV(comp != nullptr, false);
       IM_CHECK_RETV(wheel_to_end(comp, "curve companion (D7 top)"), false);
     }
-    IM_CHECK_RETV(drag_strip("**/##PoseCurveSplitter", 0.0f, 1800.0f), false);
+    IM_CHECK_RETV(PoseDragStrip(ctx, "**/##PoseCurveSplitter", 0.0f, 1800.0f), false);
     {
       const ImGuiTestItemInfo canvas_n = ctx->ItemInfo("**/##pose_curve_canvas", ImGuiTestOpFlags_NoError);
       IM_CHECK_RETV(canvas_n.ID != 0, false);
-      ImGuiWindow* comp = child_under("##AnalyzePoseCurve", "##PoseCurveScroll");
+      ImGuiWindow* comp = PoseRegionScrollChild("##AnalyzePoseCurve", "##PoseCurveScroll");
       IM_CHECK_RETV(comp != nullptr, false);
       ctx->LogInfo("[chain %.1fx] D7 bottom: canvas %.0f, companion %.0f", (double)scale,
                    static_cast<double>(canvas_n.RectFull.GetHeight()), static_cast<double>(comp->Size.y));
       IM_CHECK_RETV(comp->Size.y >= gui::UiPx(gui::kPoseViewCurveCompanionFloor) - 1.5f, false);
+      // The companion at its 32pt floor is the ONE form where overflow is guaranteed by
+      // construction (the quota's content cannot fit 32pt) — the as-built's "content scrolls
+      // to the end" claim for every endpoint is carried here by a real wheel, not by the
+      // fits-entirely branches the other legs may honestly report.
+      IM_CHECK_RETV(wheel_to_end(comp, "curve companion (D7 bottom, floor-squeezed)"), false);
     }
 
     gui::g_state.analyze_pose_view_open = false;
@@ -7221,14 +7204,6 @@ bool PoseViewNarrowestBoundariesHoldBothEnds(ImGuiTestContext* ctx) {
   }
   IM_CHECK_RETV(g_window_size_test.done.load(), false);
   ctx->Yield(3);
-  // Restore the session splits the end-drags left at their extremes (the case-level capture;
-  // the same hygiene the splits and resize cases own — a later geometry-style case without an
-  // entry reset must not inherit the extreme splits).
-  gui::g_state.analyze_pose_view_right_ratio = d4_entry;
-  gui::g_state.analyze_pose_view_globe_ratio = d6_entry;
-  gui::g_state.analyze_pose_view_left_row_ratio = d5_entry;
-  gui::g_state.analyze_pose_view_curve_canvas_ratio = d7_entry;
-  ctx->Yield(2);
   return true;
 }
 

@@ -254,7 +254,8 @@ std::vector<int> CollectValidSampleIndices(const LUMICE_SinglePathResult& result
 // The default layer's half (contract §16.1's ladder, §16.4's factors region): the pose itself
 // and the four factor conclusions — or their named-unavailable forms (R4: no zero stands in
 // for a quantity the engine did not produce). The per-interface rows below are T's optical
-// premises, the Physics details fold's rows; PointFactorLines is the one concatenation.
+// premises, the Physics details fold's rows; PointFactorLines is the one concatenation (the
+// tests' consumer — the production readers take the halves directly).
 std::vector<std::string> PointFactorHeadLines(const LUMICE_PathPointSample& sample) {
   std::vector<std::string> lines;
   char buf[192];
