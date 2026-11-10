@@ -85,10 +85,15 @@ constexpr float kAnalyzeShareListMinHeight = 250.0f;
 // re-derives an effective ROI. Frames, not milliseconds — the count is deterministic under the
 // test harness's fixed-dt clock.
 constexpr int kAnalyzeConeCenterConvergenceFrames = 8;
-// D2: the diagnostics region's height floor — its title plus one wrapped state line.
-// Re-confirmed 2026-11-04 at the proportional split: the scroll child keeps a visible first
-// line (34 px measured) and the wheel reaches the rest (ScrollMax 128 with the idle stack).
-constexpr float kAnalyzeDetailsMinHeight = 64.0f;
+// D2: the diagnostics region's height floor — the double-entry header's budget (contract §16.3):
+// the title row, the entry button pair at its vertical tier (two full-height rows — the worst
+// layout the header can take), the row gaps, the window padding and one visible first line of
+// the scroll region, with headroom. A same-row layout renders one button row, but the floor
+// covers the vertical tier so state changes never resize the header. The invariant the number
+// serves: both entry buttons fully reachable and the scroll region's first line visible at the
+// smallest permitted diagnostics height (the derivation's itemized account and its live-frame
+// calibration are contract §16.3's as-built record).
+constexpr float kAnalyzeDetailsMinHeight = 110.0f;
 // D2's default: the contract's list ≈45% of the right column's height.
 constexpr float kAnalyzeRightListDefaultRatio = 0.45f;
 // (The depth band's per-cell floors kAnalyzeDepthGlobeMinSize / kAnalyzeDepth3DMinSize retired
@@ -112,27 +117,82 @@ constexpr float kRaypathViewMapMinSize = 160.0f;
 // region under the input rows' wrap ladder and the canvas under its 64 px code floor).
 constexpr float kRaypathViewMinWidth = 480.0f;
 constexpr float kRaypathViewMinHeight = 360.0f;
-// The Pose & trace window's window-level minimum (contract §11 R4's narrowest face): the D5
-// column now carries the curve region's full form (756) beside the globe's, so the height the
-// two floors were proven over rose with them — 640x420 was the pre-curve window's narrowest
-// face; the constraint below is the smallest size the user can reach and the domain the D4/D5
-// floors were verified over (the ③ fallback below the floors' reach degrades the curve region
-// to its scroll form, by design).
+// The Pose & trace window's window-level minimum (contract §11 R4's narrowest face, re-anchored
+// by the §16.4 relayout): the LEFT column now carries the curve region's full form beside the 3D
+// region's, and the right column's floors dropped with the factors region — 640x420 was the
+// pre-curve window's narrowest face, 640x680 the curve-in-right-column one; the constraint below
+// is the smallest size the user can reach and the domain the D4/D5 floors were verified over
+// (the ③ fallback below the floors' reach compresses the left column's split proportionally and
+// the curve region retreats down its own degrade ladder, by design).
 constexpr float kPoseViewMinWidth = 640.0f;
 constexpr float kPoseViewMinHeight = 680.0f;
-// D4 — the Pose & trace window's split floors (contract §4.2: right column ≥ 220, 3D ≥ 240;
-// suggested values carrying the render-level calibration duty). The right floor is the globe
-// region's fixed interaction stack at its narrow wrap form; the left floor keeps the 3D orbit
-// legible. The window's minimum width (above) is the existence proof that both floors fit the
-// narrowest legal window; the derivation clamps BOTH sides at every frame (§3 of the task plan:
-// either side may be the one pushed toward its bound).
+// D4 — the Pose & trace window's split floors (contract §16.4: right column ≥ 220, left
+// column ≥ 300 — the §16.4.1 suggested value, wider than the 3D-only 240 to keep the curve
+// region's horizontal domain readable; both carry the render-level calibration duty). The
+// right floor is the globe region's fixed interaction stack at its narrow wrap form; the left
+// floor now serves BOTH left-column regions (the 3D canvas and the curve's width). The
+// window's minimum width (above) is the existence proof that both floors fit the narrowest
+// legal window; the derivation clamps BOTH sides at every frame (§3 of the task plan: either
+// side may be the one pushed toward its bound).
 constexpr float kPoseViewRightFloor = 220.0f;
-constexpr float kPoseViewLeftFloor = 240.0f;
-// D5's established full-region floors remain conservative interaction bounds after moving
-// variable titles/legends into reports. Keep the user's split semantics: clamp above the joint
-// floors, proportionally compress below them. Report content never changes these bounds.
+constexpr float kPoseViewLeftFloor = 300.0f;
+// D6's established full-region floors remain conservative interaction bounds after moving
+// variable titles/legends into reports. The lower member of the right column is now the
+// factors region (§16.4 — a scrollable text face, not the curve), so its floor drops to the
+// §16.4.1 suggested 140: title + short status + a scrollable 4-line window + padding. The
+// globe floor keeps the calibrated full-form stack (§16.4.1: not lowered because the curve
+// moved out). Keep the user's split semantics: clamp above the joint floors, proportionally
+// compress below them. Report content never changes these bounds.
 constexpr float kPoseViewGlobeFloor = 221.0f;
-constexpr float kPoseViewFactorsFloor = 330.0f;
+constexpr float kPoseViewFactorsFloor = 140.0f;
+// D5 — the LEFT column's 3D | curve row floors (§16.4.1 suggested values, calibration
+// candidates until the real-frame pass): the 3D region's full form at its narrowest face
+// (title + frame switch + status + canvas 180 + report viewport + padding) and the curve
+// region's (title + status + canvas 84 + the companion's 8-line quota + the D7 strip). Both
+// fit the narrowest window's left column with ~3pt of drag room — that narrow margin is the
+// calibration obligation, not a claim.
+constexpr float kPoseViewLeft3dFloor = 300.0f;
+constexpr float kPoseViewCurveFloor = 330.0f;
+// D7 — the curve region's canvas | companion split: the canvas share's "never dragged" sentinel
+// (gui_state.hpp's analyze_pose_view_curve_canvas_ratio). A drag always writes a positive share
+// — the canvas's real-slice floor keeps the derived value above zero — so 0.0f unambiguously
+// means the resize strategy's undragged state (companion at its fixed quota, canvas eats the
+// delta), never a user's split.
+constexpr float kPoseViewCurveCanvasRatioUndragged = 0.0f;
+// D7's split floors and the companion's fixed quota (§16.4.1 suggested values, calibration
+// candidates until the real-frame pass): the canvas's real-slice floor — the smallest canvas
+// that still draws a real slice before the region's honest scroll form takes over — the
+// companion's smallest readable budget, and the 8-line quota the UNDRAGGED state grants it.
+// The quota is a budget of LINES (live-measured height per frame), never content height — §15:
+// lines beyond it scroll, none is swallowed.
+constexpr float kPoseViewCurveCanvasFloor = 40.0f;
+constexpr float kPoseViewCurveCompanionFloor = 32.0f;
+constexpr int kPoseViewCurveCompanionLines = 8;
+// The 3D region's report viewport's fixed budget (§16.4's resize strategy — D5's delta flows
+// to the two canvases, so the 3D report's allowance is FIXED, not a share of the region: the
+// old scaled 0.2x floor would re-take a growing slice of every stretch). Calibration candidate
+// until the real-frame pass; at the narrowest face the canvas above it still clears 150 pt.
+constexpr float kPoseView3dReportQuota = 48.0f;
+// The two analysis windows' title display spellings, the ONE source for every consumer of those
+// spellings: the windows' own Begin calls, the Raypath view window's in-place Pose button (the
+// constant plus the button's `###pose_open` addressing suffix), and the main window's Selection
+// header entry buttons (contract §16.3 — the header buttons and the windows must not be able to
+// drift apart in what they are called). The map button's narrow-column wrap form derives from the
+// constant mechanically (the LAST space becomes the line break — the unambiguous rule for the
+// only multi-space spelling); it never re-spells the words.
+constexpr const char* kRaypathViewWindowTitle = "Raypath view";
+constexpr const char* kPoseViewWindowTitle = "Pose & trace";
+// The information-layering fold groups (contract §16.1): the two secondary tiers the survey and
+// point answers sort their evidence into, plus the map legend's long dictionary. The spellings
+// are ONE source — every CollapsingHeader that opens one of these groups draws this constant, so
+// the two windows' groups cannot re-spell themselves apart (a56). No flag carries `DefaultOpen`:
+// a group is closed by default, its expansion state lives in the host window's ImGui storage
+// (session-sticky, reset by restart — io.IniFilename is null, so nothing persists across
+// processes), and each window's storage is its own, so the two windows' groups count
+// independently without any GuiState field.
+constexpr const char* kSurveyPhysicsDetailsLabel = "Physics details";
+constexpr const char* kSurveyCalculationDetailsLabel = "Calculation details";
+constexpr const char* kMapLegendExplanationsLabel = "Legend explanations";
 // The split strips' thickness (the workspace dividers' 8 pt recipe, shared by the pose window's
 // two splitters).
 constexpr float kAnalyzeSplitterSize = 8.0f;

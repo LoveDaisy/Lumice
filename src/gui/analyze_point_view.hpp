@@ -116,6 +116,18 @@ std::vector<int> CollectValidSampleIndices(const LUMICE_SinglePathResult& result
 // the engine's names and units, never an additive percentage, never a fabricated number.
 std::vector<std::string> PointFactorLines(const LUMICE_PathPointSample& sample);
 
+// The two §16.1 ladder halves of the factor readouts (contract §16.4's factors region): the
+// head lines are the default layer's factor conclusions (pose, rho, A_P/A_a^2, T, J/K/product
+// or their named-unavailable forms); the interface lines are T's optical premises — the
+// per-interface transmittances, conditional on this path — the Physics details fold's rows.
+// The production callers are the factors region's two arms (default layer + fold); the
+// concatenated spelling below survives as the partition's single-source anchor and the tests'
+// consumer (unit-correctness pins the per-state spellings, the functional chain asserts the
+// engine-facing read) — the halves and the concatenation cannot drift apart because the
+// concatenation IS their composition.
+std::vector<std::string> PointFactorHeadLines(const LUMICE_PathPointSample& sample);
+std::vector<std::string> PointFactorInterfaceLines(const LUMICE_PathPointSample& sample);
+
 // The identity/echo lines (AC1): the result's OWN Info read back — target labels + deviation,
 // member faces, crystal id, wavelength + its source, refractive index, sample tier and budget
 // echo. The engine's echo, not a GUI restatement of the request.
@@ -367,11 +379,29 @@ void PumpPointQuery(GuiState& state, SurveyExecutor& executor, double now_s);
 // means no ray intent — the session is dropped, the 3D view shows its honest state.
 void PumpRayTrace(GuiState& state, SurveyExecutor& executor);
 
-// The right column's point-level block — the placeholder's replacement under the class overview:
-// the four visible states, the echo lines, the mass arm, the component list (selectable), the
-// current sample's factor lines and interface transmittances, the cancel button (latch, the
-// survey's shape).
+// The main window's point summary (contract §16.2's summary projection): the four visible
+// states with their cancel actions, then — completed — the L1/L2 reads of the document: the
+// partial limit, the target line, the rank-0 answer, the component count with its availability
+// limits and the no-valid-sample fact. The complete answer lives in the Raypath view.
 void RenderPointDetailsBlock(GuiState& state, const SelectedClassIdentity& identity);
+
+// The Raypath view's sky-point answer (contract §16.2's complete-answer host): the adopted
+// document read in full — target, λ, the rank-0 mass arm, the component evidence rows, the
+// reach and completeness conclusions — sorted into the same default layer plus fold groups the
+// survey answer uses (its own `##pt_answer` suffixed pair, the same pair on every arm). An
+// adopted document draws its content, including across a re-query's in-flight window; the
+// four-state shell and its cancel actions stay in the main window's summary.
+void RenderPointAnswerBlock(GuiState& state);
+
+// The point session's one-line state word — the short status RenderPointStatus draws, and the
+// main window's Selection header hint reuses (the mapping has one owner, two readers).
+// *partial, when non-null, is set iff the word is the partial completion's: the status row
+// paints that word in the warning color, and the completed read happens inside so the word and
+// its flag cannot disagree. *completed_info, when non-null AND the state is completed, receives
+// the same Info read the word was derived from — the caller's classification facts
+// (outcome / component_count) come from that one read instead of a second engine pass.
+const char* PointStatusLabelFor(const PointQuerySession& point, bool* partial = nullptr,
+                                LUMICE_PathPointInfo* completed_info = nullptr);
 
 // The sun-direction globe region — the ##AnalyzeSunGlobe placeholder's replacement: the u-sphere
 // disk (deviation backdrop when the document carries the grid, the selected component's fiber
@@ -387,8 +417,9 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size);
 // The Pose & trace window (analyze-interaction-contract.md §7, 755.5): the free-floating
 // non-modal window that gathers the sky point's three faces — the sun-direction globe, the
 // raypath 3D view and the current sample's factor readouts — around ONE adopted point document.
-// Opened ONLY by the point detail block's title click (and closed by its own title bar X /
-// DoNew's whole-state reset); the sky-point and wavelength writers never open it. The open flag
+// Opened by the named entry buttons only — the main window's Selection header and the Raypath
+// view window's in-place one (§16.3; closed by its own title bar X / DoNew's whole-state
+// reset); the sky-point and wavelength writers never open it. The open flag
 // and the two split ratios are T-session display state (GuiState::analyze_pose_view_*). The
 // frame pump is NOT this window's concern — it runs at RenderWorkspacePanels' entry on every
 // GUI frame; this function keeps only the window skeleton (size recipe, minimum constraint)

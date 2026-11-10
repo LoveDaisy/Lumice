@@ -28,6 +28,15 @@ inline constexpr float kMapFullSkyRadiusDeg = 180.0f;
 // so the picture never claims a finer sample than it ran.
 inline constexpr int kMapQuerySampleCount = 500000;
 
+// The chromatic layer's two semantic colours, the dispersion pair's own values promoted to names
+// (contract §16.1's A2 pilot): the dispersion circles and the verdict anchor share this palette —
+// one semantics, one authority — so retuning a value here is a TWO-consumer change by definition,
+// never a one-side restyle. Spelled as the shift expression IM_COL32 spells (alpha<<24 | blue<<16
+// | green<<8 | red) so the RGBA tuple stays readable and this header stays off imgui.h;
+// analyze_map_view.cpp pins each against its original literal at compile time.
+inline constexpr unsigned int kChromaticColourRed = (235u << 24) | (92u << 16) | (108u << 8) | 242u;
+inline constexpr unsigned int kChromaticColourBlue = (235u << 24) | (240u << 16) | (145u << 8) | 96u;
+
 // ---- Session-facing types -------------------------------------------------------------------------
 
 // The user's sky-point intent (AC3): WHERE in the sky they are asking about, independent of any
@@ -99,6 +108,13 @@ uint32_t MapCellColorRgba(double value, uint8_t status, const MapDisplayNorm& no
 // The map region's caliber block: every fact the reader calls handed in, the lines spelled here.
 // The renderer fills the input from the adopted result's own readers; the unit layer pins each
 // line's fields to the input structs — the engine's words, never a hard-coded claim (AC1).
+// One read-back per information tier (the disposition ledger): the DEFAULT lines answer "what
+// am I looking at" — the short quantity name with its unit, the scene-vs-nominal limit when
+// the answer is not the nominal shape, and the truncation / finite-zero / rank-0-mass facts;
+// the PHYSICS lines carry the full quantity definition, the sun premise and the engine's own
+// geometry basis verbatim; the CALCULATION lines carry the grid and execution numbers —
+// reference cell, view window, lattice, members, kept events — plus the source-fixed-scale
+// note. The λ is in no line: the λ row's same-control echo is the reading's one owner.
 inline constexpr size_t kMapCaliberMaxMethods = 8;
 struct MapCaliberInput {
   LUMICE_PathMapInfo info{};
@@ -111,7 +127,9 @@ struct MapCaliberInput {
   const char* methods[kMapCaliberMaxMethods] = {};  // the mass arm's deduplicated method names
   bool completed = false;                           // the standing intent answered (gates the finite-zero line)
 };
-std::vector<std::string> MapCaliberLines(const MapCaliberInput& in);
+std::vector<std::string> MapCaliberDefaultLines(const MapCaliberInput& in);
+std::vector<std::string> MapCaliberPhysicsLines(const MapCaliberInput& in);
+std::vector<std::string> MapCaliberCalculationLines(const MapCaliberInput& in);
 
 // ---- The overlay presentation model (pure; the renderer draws what these name) ----------------------
 
@@ -154,11 +172,58 @@ struct OverlayLegendState {
   bool dispersion_red = false;
   bool dispersion_blue = false;
   bool dispersion_partial = false;  // any drawn circle left the view disk (the arc-in-view wording)
+  bool verdict_anchor = false;      // the verdict anchor drew (solid or dashed) — one bit: the
+                                    // legend entry names the category, the dashed form's honesty
+                                    // wording rides the Legend explanations group
   bool sky_point = false;
 };
 
 // Last actually drawn overlay legend, not a second camera/availability model.
 OverlayLegendState LastMapOverlayLegend();
+
+// ---- The verdict anchor (contract §16.1's A2 pilot) --------------------------------------------------
+
+struct SurveyDiagnoseView;  // gui/analyze_overview.hpp — the anchor's input facts, by reference
+
+// The anchor draw's caller-side geometry and switches. Every field is a plain value so the unit
+// layer can drive every honesty leg on a synthetic diagnose: the input struct is the model's own
+// field shape (SurveyDiagnoseView), the camera reaches the projection by pointer (the header
+// stays off ViewProjection's include chain), and the canvas rectangle is the region's own.
+// The projection quintet (camera/width_px/height_px/width_pt/height_pt) mirrors MapCanvasProjection
+// field-for-field — DrawVerdictAnchor rebuilds the projection from these, and a new projection
+// field must be added to BOTH sides or the anchor's rebuilt view silently defaults while the
+// dispersion circles move (the geometry-parameter twin of the palette's static_assert pin).
+struct VerdictAnchorInput {
+  const ViewProjection* camera = nullptr;  // the region's frame projection (incomplete here)
+  int width_px = 1;                        // the projection's pixel sizes (the frame's own)
+  int height_px = 1;
+  float width_pt = 1.0f;  // the canvas rectangle's point sizes
+  float height_pt = 1.0f;
+  float pic_min_x = 0.0f;  // the canvas rectangle's top-left, screen coords
+  float pic_min_y = 0.0f;
+  float pic_px = 1.0f;                   // the canvas width in points (the walk's disk)
+  SkySunAnchor sun;                      // the sun the delta quotes (SkySunAnchorFor's read)
+  bool shown = false;                    // the persistent toggle (the session's checkbox)
+  bool hover = false;                    // the standing row hover (last frame's read)
+  OverlayLegendState* legend = nullptr;  // the frame's legend accounting; null = no legend
+};
+
+// The diagnose block's spatial conclusion drawn as an iso-deviation circle about the sun — the
+// dispersion curve's own geometry at the verdict's delta, the vocabulary's circle device. The
+// honesty gate runs in contract §16.1.3's short-circuit order: a diagnosis the class
+// answer does not render rows for (unavailable), a verdict outside the closed trigger kind set
+// (the edge family only — the kinds that carry a position, dp_chromatic's VerdictOf), a verdict
+// with no spatial payload, and a verdict that names itself not visible draw NOTHING (not drawing
+// is the honest state, the text layer's limit lines and the legend's drawn-only rule carry it);
+// a position-carrying verdict with incomplete coverage draws the DASHED form (the same circle,
+// weakened — the "limited computation" honesty in the visual grammar), solid otherwise. The
+// colour is the shared semantic palette (kChromaticColour*): blue verdict blue, red verdict red,
+// no palette entry → no anchor. The readout label and the legend bit follow the dispersion
+// circle's precedents (topmost drawn point, backing rect, "arc in view"; a legend describes the
+// drawn picture — nothing drawn, no entry). Surfaced whole (gate + geometry) for the unit
+// layer's draw-list assertions; the map region's overlay path calls it with the adopted survey's
+// cache model and the session's two switches.
+void DrawVerdictAnchor(ImDrawList* dl, const SurveyDiagnoseView& diagnose, const VerdictAnchorInput& in);
 struct MapObservationTiming {
   double began_seconds = 0.0;
   double cpu_finished_seconds = 0.0;
@@ -190,6 +255,21 @@ void CancelMap(GuiState& state, SurveyExecutor& executor);
 // GuiState::analyze_raypath_view_info_ratio. The raster itself is the .cpp's cached GL
 // texture; the overlays, the cursor readout and the coordinate input live with their halves.
 void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size);
+
+// The map window's in-place Pose & trace button's two labels (contract §6's stable operation
+// stack). Both derive from kPoseViewWindowTitle — the plain form appends the button's
+// `###pose_open` addressing suffix; the narrow-column form is the constant's LAST space turned
+// into the line break, the unambiguous derivation rule for the only multi-space spelling.
+// Surfaced as functions so the byte-pin test reads the exact submitted strings: a wrong
+// derivation or a re-spelled title cannot pass green.
+const char* PoseButtonLabel();
+const char* PoseButtonWrappedLabel();
+
+// The Pose button's tooltip — the constant purpose text ("3D ray & pose. / Select class + sky
+// point.") that left the always-on prose slot beside the button. Surfaced like the two labels
+// above so the test layer holds the exact bytes of a text the render never draws as a visible
+// item.
+const char* PoseButtonTooltip();
 
 // The Raypath view floating window (doc/gui/analyze-interaction-contract.md §6): the non-modal
 // container the share list's class rows open. Committed from BOTH frame loops next to the

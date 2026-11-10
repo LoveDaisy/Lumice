@@ -322,6 +322,7 @@ struct WaitFeedbackTexts {
   std::string point_wait_line_details;   // analyze_point_view.cpp, the details' kWaiting
   std::string share_list_busy_dots;      // analysis_panel.cpp, the selected row's activity dots
   std::string status_bar_query_segment;  // app_panels.cpp, the status bar's active segment
+  std::string entry_hint_line;           // analyze_workspace.cpp, the Selection header's hint slot
 };
 
 // ---- The ray face's session (742.6) ----------------------------------------------------------------

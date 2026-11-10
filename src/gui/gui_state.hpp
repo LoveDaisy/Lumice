@@ -1875,6 +1875,26 @@ struct GuiState {
     // site drew this frame, for the gui_test layer to read (ImGui text has no ID to address).
     // Cleared at the Analyze workspace's frame entry; the render sites are the only writers.
     WaitFeedbackTexts wait_feedback_texts;
+    // The verdict anchor's density interaction (contract §16.1's A2 pilot): the class answer's
+    // colour verdict drawn on the map, two switches. `verdict_anchor_shown` is the persistent
+    // checkbox (default off — with nothing hovered the default frame's canvas is unchanged).
+    // `verdict_anchor_hover` is the diagnose-row hover standing: the class answer's render path
+    // overwrites it EVERY frame it renders (hover on either of the two linked rows → true,
+    // otherwise false), and
+    // the canvas consumes it the NEXT frame (the map region draws before the info column writes
+    // — the one-frame lag is the hover semantics' own, accepted at the contract). The two seams
+    // that skip the render path write false explicitly — the class-answer-absent frame and the
+    // closed window — so the flag only ever stands while the region that wrote it is on screen.
+    // A document switch drops the whole struct with the session (the reset below). Session tier
+    // like the struct's other display fields: never persisted, not in ConfigSnapshot or the
+    // dirty diff, Revert keeps them.
+    // WRITERS (the audit set): the checkbox in the Raypath view's map header row;
+    // RenderAnalyzeMapRegion's ##MapReport class-answer host (the overwrite, and the absent
+    // branch's reset); RenderAnalyzeRaypathViewWindow's closed-window seams (both the closed
+    // early-return and the Begin-false branch). No other write path by construction. READER:
+    // the canvas's verdict anchor draw (analyze_map_view.cpp DrawSurveyOverlays).
+    bool verdict_anchor_shown = false;
+    bool verdict_anchor_hover = false;
     // The sun the frozen scene binding was built with, captured at DoAnalyze (the GUI's sun is
     // always due north). The map request's window geometry derives from the sun the ENGINE will
     // evaluate against — the executor's frozen scene, not the live document, which the user may
@@ -1924,9 +1944,10 @@ struct GuiState {
   AnalyzeWorkspaceSession workspace;
 
   // The Raypath view window's open state (analyze-interaction-contract.md §6, §8 ownership
-  // declaration): the class-map window the share list's class rows open. T-session display
-  // state, `left_panel_collapsed`'s family — not document state, never persisted, never in
-  // ConfigSnapshot or the dirty diff. New and successful Open reset it with the incoming
+  // declaration): the class-map window the share list's class rows open (the content shortcut)
+  // and the main window's Selection header opens with its named button (§16.3). T-session
+  // display state, `left_panel_collapsed`'s family — not document state, never persisted, never
+  // in ConfigSnapshot or the dirty diff. New and successful Open reset it with the incoming
   // GuiState; Revert keeps it. Workspace mode retention does not retain window-open flags.
   // The window's own geometry (size, position, the D3 split) is ImGui window storage: session
   // memory inside the process, outside GuiState entirely.
@@ -1943,14 +1964,16 @@ struct GuiState {
   float analyze_raypath_view_info_ratio = 0.30f;
 
   // The Pose & trace window's open state (analyze-interaction-contract.md §7, §8 ownership
-  // declaration): the pose/trace window the point detail block's title opens — and ONLY that
-  // click; the sky-point and wavelength writers must not open it (the user's explicit
-  // negative requirement). T-session display state, `analyze_raypath_view_open`'s family — not
-  // document state, never persisted, never in ConfigSnapshot or the dirty diff. Revert keeps
-  // it; New and successful Open reset it with the incoming GuiState.
-  // WRITERS (the audit set): the "Point detail" title click (RenderPointDetailsBlock), the
-  // window's own title bar X through `p_open`, and document replacement — no other write
-  // path exists by construction.
+  // declaration): the pose/trace window the main window's Selection header opens with its named
+  // button, alongside the Raypath view window's own in-place Pose & trace button. The sky-point
+  // and wavelength writers must not open it (the user's explicit negative requirement).
+  // T-session display state, `analyze_raypath_view_open`'s family — not document state, never
+  // persisted, never in ConfigSnapshot or the dirty diff. Revert keeps it; New and successful
+  // Open reset it with the incoming GuiState.
+  // WRITERS (the audit set, per the assignment-site enumeration): the Selection header's
+  // `Pose & trace` button (RenderAnalyzeEntryActions, analyze_workspace.cpp), the Raypath view
+  // window's in-place Pose & trace button (analyze_map_view.cpp), the window's own title bar X
+  // through `p_open`, and document replacement — no other write path exists by construction.
   bool analyze_pose_view_open = false;
   // D4 — the Pose & trace window's 3D | right-column split (contract §4.2): the RIGHT column's
   // share of the window's content width. Ratio semantics like the Raypath view's D3 field
@@ -1961,13 +1984,33 @@ struct GuiState {
   // reset it, Revert keeps it — closing and reopening the
   // window keeps the user's split within this process.
   float analyze_pose_view_right_ratio = 0.333f;
-  // D5 — the Pose & trace window's right column's globe | curve split (contract §4.2): the
-  // globe region's share of the column's height. Same semantics, independence and tier as the
-  // D4 field above (dragging D5 never touches D4 and vice versa — §4.2's 独立不联动). The
-  // default sits INSIDE the D5 clamp band at the default window (756: the curve region's full
-  // form took most of the column; a default above the band's ceiling would drag "down" into a
-  // downward correction — the band's ceiling is the curve region's floor).
-  float analyze_pose_view_globe_ratio = 0.45f;
+  // D6 — the Pose & trace window's right column's globe | factors split (contract §16.4): the
+  // globe region's share of the column's height. The boundary the pose window's row splitter
+  // has always written; the §16.4 relayout renames the LOWER side (curve → factors region) and
+  // the stored semantics follow the globe — the field keeps meaning "the globe region's height
+  // share", never a 3D share (the contract's explicit no-silent-remeaning rule). Same
+  // independence and tier as the D4 field above (dragging D6 never touches D4 and vice versa).
+  // The default sits INSIDE the clamp band at the default window (the band's ceiling is the
+  // factors region's floor); the §16.4.1 suggested value refreshes the factory state only —
+  // the ratio is session display state, so no user data migrates.
+  float analyze_pose_view_globe_ratio = 0.55f;
+  // D5 — the Pose & trace window's LEFT column's 3D | curve split (contract §16.4): the 3D
+  // region's share of the left column's height. A new session field for the relayout's new
+  // boundary — same semantics, independence and tier as D4/D6 above: the split's identity,
+  // written only by its drag, clamped at the two floors every frame (the 3D floor and the
+  // curve region's floor, gui_constants.hpp); no query result, selection change or content
+  // change ever writes it (manual priority, §9.3). Dragging D5 never touches D4/D6/D7.
+  float analyze_pose_view_left_row_ratio = 0.45f;
+  // D7 — the Pose & trace window's curve region's canvas | companion split (contract §16.4):
+  // the canvas's share of the curve region's split span. The sentinel 0.0f means "never
+  // dragged": the companion then holds its fixed 8-line quota and the canvas eats the whole
+  // delta (the resize strategy's elastic|quota pair — the quota is a fixed budget, never
+  // content height, §15). A drag writes the dragged share (> 0 by construction — the canvas's
+  // real-slice floor keeps a written share positive), and from then on the stored share
+  // governs the split, clamped at the two floors: user intent overrides the strategy, the
+  // resize-strategy contract's override rule. Same session tier and manual-priority discipline
+  // as the other three pose ratios; dragging D7 never touches D4/D5/D6.
+  float analyze_pose_view_curve_canvas_ratio = kPoseViewCurveCanvasRatioUndragged;
 
   // The Angular Distance section's "pick a radius on the preview" mode (angular_dist_picker.hpp).
   // While armed, the preview's left click belongs to the pick — camera orbit and zoom, the

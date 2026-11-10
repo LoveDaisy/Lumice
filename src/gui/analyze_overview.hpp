@@ -24,6 +24,7 @@
 #include <string>
 #include <vector>
 
+#include "imgui.h"
 #include "include/lumice_raypath.h"
 
 namespace lumice::gui {
@@ -230,9 +231,35 @@ struct SurveyOverviewModel {
 // never throws, never computes optics.
 SurveyOverviewModel BuildSurveyOverviewModel(const LUMICE_PathSurvey& result);
 
-// The ImGui half: the model as the details region draws it. Assumes the region's four-state
-// shell already dispatched here (a completed, adopted document).
-void RenderSurveyOverviewModel(const SurveyOverviewModel& model);
+// A fold group's header: the display spelling comes from the ONE label constant; the ID suffix
+// keeps same-label groups apart inside one window (the Raypath view hosts the survey answer and
+// the point answer side by side, each with its own Physics/Calculation pair — identical visible
+// labels would collide in the window's ID space and share one expansion state). No
+// DefaultOpen: closed by default, expansion in the host window's storage — session-sticky,
+// restart-reset (io.IniFilename is null), independent per window. Shared by both answer hosts.
+inline bool FoldOpen(const char* label, const char* suffix_id) {
+  const std::string id = std::string(label) + "##" + suffix_id;
+  return ImGui::CollapsingHeader(id.c_str());
+}
+
+// The ImGui half: the model as the complete answer draws it — the default layer (the answers
+// and their limits), then the two fold groups (contract §16.1: Physics details, Calculation
+// details, both closed by default). Assumes the region's four-state shell already dispatched
+// here (a completed, adopted document). This is the Raypath view's class-answer host.
+//
+// `verdict_hover_readout` is the verdict anchor's hover read (§16.1's A2 pilot): when non-null,
+// the diagnose block's two linked rows (the verdict line and the Position line) gain an
+// addressable hover surface and the pointer receives the row-hover standing — true when either
+// row is under the pointer this frame, false otherwise (the caller writes it to the session
+// every frame). Null (the default) submits the same rows as plain text, no extra items, zero
+// interaction state — the main window's summary path passes nothing and renders byte-identically.
+void RenderSurveyOverviewModel(const SurveyOverviewModel& model, bool* verdict_hover_readout = nullptr);
+
+// The main window's summary projection (contract §16.2): the SAME model read through the SAME
+// default-layer renderer the complete answer uses — the summary is a read of it, never a second
+// wording — closed with the pointer to the window hosting the complete answer. The main window
+// draws no fold groups of its own; the omitted detail lives in the Raypath view.
+void RenderSurveySummary(const SurveyOverviewModel& model);
 
 }  // namespace lumice::gui
 

@@ -13,6 +13,7 @@
 #include "gui/analysis_panel.hpp"  // SelectedClassIdentityFor / SurveySelectionKeyFor — the one identity chain
 #include "gui/analyze_map_renderer.hpp"
 #include "gui/analyze_overview.hpp"
+#include "gui/analyze_point_view.hpp"    // RenderPointAnswerBlock — the sky-point answer host
 #include "gui/analyze_region_wheel.hpp"  // the wheel claim — one arbitration for both gesture regions
 #include "gui/analyze_workspace.hpp"     // PumpAnalyzeQueries — the pumps this window's Render-mode frames run
 #include "gui/app.hpp"
@@ -31,6 +32,14 @@ namespace lumice::gui {
 
 
 namespace {
+
+// The semantic palette's promotion (analyze_map_view.hpp kChromaticColour*) must be VALUE-identical
+// to the dispersion pair's original literals — the dispersions' pixels are a visual-reference
+// surface, and a wrong promotion would retune the whole picture at once. Pinned against the
+// literals at the promotion site: retuning one side breaks this at compile time, the two-consumer
+// change the constant's comment demands.
+static_assert(kChromaticColourRed == IM_COL32(242, 108, 92, 235), "the promoted red must equal its literal");
+static_assert(kChromaticColourBlue == IM_COL32(96, 145, 240, 235), "the promoted blue must equal its literal");
 
 OverlayLegendState g_map_legend;
 MapObservationTiming g_map_observation_timing;
@@ -133,36 +142,60 @@ const char* UnitName(int unit) {
   }
 }
 
+// The in-place Pose button's two labels derive from the window-title constant (the display
+// spelling has one source). The narrow-column form is the constant's LAST space turned into the
+// line break — the unambiguous derivation for the only multi-space spelling; the byte-pin test
+// reads the exact submitted strings through the accessors below.
+const std::string kPoseButtonLabelStorage = std::string(kPoseViewWindowTitle) + "###pose_open";
+const std::string kPoseButtonWrappedLabelStorage = [] {
+  std::string wrapped = kPoseViewWindowTitle;
+  const size_t last_space = wrapped.find_last_of(' ');
+  if (last_space != std::string::npos)
+    wrapped[last_space] = '\n';
+  return wrapped + "###pose_open";
+}();
+
 }  // namespace
 
-// ---- The caliber composer (pure; the unit layer holds it to the readback) -------------------------
+const char* PoseButtonLabel() {
+  return kPoseButtonLabelStorage.c_str();
+}
 
-std::vector<std::string> MapCaliberLines(const MapCaliberInput& in) {
+const char* PoseButtonWrappedLabel() {
+  return kPoseButtonWrappedLabelStorage.c_str();
+}
+
+// The Pose button's tooltip: the constant purpose text that used to sit beside the button as
+// always-on prose (the disposition ledger — a fixed explanation must not occupy operation
+// area). A named function, not an inline literal, so the relocated text keeps its byte pin in
+// the tests the same way the two labels above do.
+const char* PoseButtonTooltip() {
+  return "3D ray & pose.\nSelect class + sky point.";
+}
+
+// ---- The caliber composer (pure; the unit layer holds it to the readback) ---------------------------
+//
+// Three read-backs of one adopted map, one per information tier (the disposition ledger): the
+// DEFAULT lines answer "what am I looking at" — the short quantity name with its unit, the
+// scene-vs-nominal limit when the answer is not the nominal shape, and the truncation /
+// finite-zero / rank-0-mass facts; the PHYSICS lines carry the full quantity definition, the
+// sun premise and the engine's own geometry basis (byte for byte); the CALCULATION lines carry
+// the grid and execution numbers a check reads — reference cell, view window, lattice,
+// members, kept events — plus the source-fixed-scale note. The λ is NOT in any line: the λ
+// row's same-control echo is the reading's one owner (a repeated echo is deleted, not moved).
+
+std::vector<std::string> MapCaliberDefaultLines(const MapCaliberInput& in) {
   std::vector<std::string> lines;
   char line[512];
   const LUMICE_PathMapInfo& info = in.info;
-  if (info.view_full_sky != 0) {
-    std::snprintf(line, sizeof(line),
-                  "λ %.1f nm · %d/%d members · n=%d lattice · view: full sky %d×%d · kept %lld events",
-                  info.wavelength_nm, info.members_evaluated, info.member_count, info.sample_count, info.view_rows,
-                  info.view_cols, info.kept_count);
-  } else {
-    std::snprintf(line, sizeof(line),
-                  "λ %.1f nm · %d/%d members · n=%d lattice · view: δ [%.1f, %.1f]° az [%.1f, %.1f]° %d×%d · kept %lld "
-                  "events",
-                  info.wavelength_nm, info.members_evaluated, info.member_count, info.sample_count,
-                  info.view_delta_min_deg, info.view_delta_max_deg, info.view_az_min_deg, info.view_az_max_deg,
-                  info.view_rows, info.view_cols, info.kept_count);
-  }
-  lines.emplace_back(line);
   if (in.have_quantity) {
-    std::snprintf(line, sizeof(line), "%s, %s, %s · sun %.1f°/%.1f° · %s", QuantityKindName(in.quantity.kind),
-                  AggregationName(in.quantity.aggregation), UnitName(in.quantity.unit), info.sun_altitude_deg,
-                  info.sun_azimuth_deg, info.shape_is_nominal != 0 ? "nominal geometry" : "scene geometry");
+    std::snprintf(line, sizeof(line), "%s, %s.", QuantityKindName(in.quantity.kind), UnitName(in.quantity.unit));
     lines.emplace_back(line);
   }
-  if (in.have_evidence && in.evidence.geometry_basis.length > 0) {
-    lines.emplace_back(in.evidence.geometry_basis.data, in.evidence.geometry_basis.length);
+  if (in.have_quantity && info.shape_is_nominal == 0) {
+    // The nominal-vs-scene limit is a default fact (the ledger: 名义几何≠冻结场景的限定默认) —
+    // the map answers the edited scene, and the reader must know that without opening a fold.
+    lines.emplace_back("Scene geometry — the map answers the edited scene, not the nominal shape.");
   }
   if (info.truncated != 0) {
     std::snprintf(line, sizeof(line),
@@ -191,6 +224,54 @@ std::vector<std::string> MapCaliberLines(const MapCaliberInput& in) {
                   in.mass.m, in.mass.m_error, methods.c_str(), in.mass.pixel < 0 ? " (outside this view)" : "");
     lines.emplace_back(line);
   }
+  return lines;
+}
+
+std::vector<std::string> MapCaliberPhysicsLines(const MapCaliberInput& in) {
+  std::vector<std::string> lines;
+  char line[512];
+  const LUMICE_PathMapInfo& info = in.info;
+  if (in.have_quantity) {
+    std::snprintf(line, sizeof(line), "Quantity: %s, %s, %s.", QuantityKindName(in.quantity.kind),
+                  AggregationName(in.quantity.aggregation), UnitName(in.quantity.unit));
+    lines.emplace_back(line);
+    std::snprintf(line, sizeof(line), "Sun at altitude %.1f°, azimuth %.1f°.", info.sun_altitude_deg,
+                  info.sun_azimuth_deg);
+    lines.emplace_back(line);
+    if (info.shape_is_nominal != 0) {
+      lines.emplace_back("Nominal geometry — the map answers the crystal's nominal shape.");
+    } else {
+      lines.emplace_back("Scene geometry.");
+    }
+  }
+  if (in.have_evidence && in.evidence.geometry_basis.length > 0) {
+    lines.emplace_back(in.evidence.geometry_basis.data, in.evidence.geometry_basis.length);
+  }
+  return lines;
+}
+
+std::vector<std::string> MapCaliberCalculationLines(const MapCaliberInput& in) {
+  std::vector<std::string> lines;
+  char line[512];
+  const LUMICE_PathMapInfo& info = in.info;
+  if (info.view_full_sky != 0) {
+    std::snprintf(line, sizeof(line), "Reference cell δ %.7g° × az %.7g° · view: full sky %d×%d · n=%d lattice",
+                  (info.view_delta_max_deg - info.view_delta_min_deg) / info.view_rows,
+                  (info.view_az_max_deg - info.view_az_min_deg) / info.view_cols, info.view_rows, info.view_cols,
+                  info.sample_count);
+  } else {
+    std::snprintf(line, sizeof(line),
+                  "Reference cell δ %.7g° × az %.7g° · view: δ [%.1f, %.1f]° az [%.1f, %.1f]° %d×%d · n=%d lattice",
+                  (info.view_delta_max_deg - info.view_delta_min_deg) / info.view_rows,
+                  (info.view_az_max_deg - info.view_az_min_deg) / info.view_cols, info.view_delta_min_deg,
+                  info.view_delta_max_deg, info.view_az_min_deg, info.view_az_max_deg, info.view_rows, info.view_cols,
+                  info.sample_count);
+  }
+  lines.emplace_back(line);
+  std::snprintf(line, sizeof(line), "%d/%d members · kept %lld events", info.members_evaluated, info.member_count,
+                info.kept_count);
+  lines.emplace_back(line);
+  lines.emplace_back("Source-fixed scale; cells do not interpolate.");
   return lines;
 }
 
@@ -536,9 +617,12 @@ bool ProjectToRect(const MapCanvasProjection& view, const double pos[3], const I
 struct IsoDeltaWalk {
   int drawn = 0;            // the CURRENT contiguous polyline run (a disk exit breaks the run and resets
                             // it — the polyline's segmentation, not the walked amount)
-  int drawn_total = 0;      // segments submitted across the WHOLE walk: the "actually drew this
-                            // curve" fact the legend reads (the final run's length would read
-                            // zero for a circle that left the disk mid-way and never returned)
+  int lines_submitted = 0;  // AddLine calls actually emitted — the ONE "actually drew" fact the
+                            // legend gates and the label read. The walked sample count is
+                            // samples_in_disk (same value every counter here used to
+                            // double-carry); a dashed walk submits only its on-phase pairs, so
+                            // walked > 0 with nothing drawn is a real state the gates must not
+                            // light.
   int samples_in_disk = 0;  // the circle's own samples that landed in the view disk (of kOverlaySegments+1)
   bool have_top = false;
   double top_x = 0.0;
@@ -550,9 +634,18 @@ struct IsoDeltaWalk {
 
 // The iso-deviation circle about the sun (the survey dispersion's curve geometry): the circle's
 // one parameterization — orthogonal basis about the sun, kOverlaySegments samples — sampled,
-// projected, split where the disk leaves the view.
+// projected, split where the disk leaves the view. `dashed` is the verdict anchor's weakened
+// form (the coverage-incomplete honesty, §16.1's visual grammar): every dash-cycle's second half
+// of samples skips the segment, by SAMPLE INDEX (the circle's own parameter) so the pattern is
+// deterministic and view-independent — a run broken by the view disk does not restart the phase.
+// The solid form (dashed=false, every existing call) emits the same AddLine sequence it always
+// did, byte for byte.
 IsoDeltaWalk WalkIsoDeltaCircle(ImDrawList* dl, const MapCanvasProjection& view, const ImVec2& pic_min, float pic_px,
-                                const double sun_pos[3], double delta_deg, ImU32 colour, float thickness) {
+                                const double sun_pos[3], double delta_deg, ImU32 colour, float thickness,
+                                bool dashed = false) {
+  constexpr int kDashCycleSegments = 4;  // one dash phase = 4 samples: 4 drawn, then 4 skipped
+                                         // (the %2 alternation makes the period 8) — a run broken
+                                         // by the view disk does not restart the phase
   double u[3] = { 0.0, 0.0, 1.0 };
   double dot = Dot3(u, sun_pos);
   if (std::fabs(dot) > 0.9) {
@@ -585,14 +678,14 @@ IsoDeltaWalk WalkIsoDeltaCircle(ImDrawList* dl, const MapCanvasProjection& view,
       continue;
     }
     ++walk.samples_in_disk;
-    if (walk.drawn > 0) {
+    if (walk.drawn > 0 && (!dashed || (s / kDashCycleSegments) % 2 == 0)) {
       dl->AddLine(ImVec2(static_cast<float>(last_x), static_cast<float>(last_y)),
                   ImVec2(static_cast<float>(x), static_cast<float>(y)), colour, thickness);
+      ++walk.lines_submitted;
     }
     last_x = x;
     last_y = y;
     ++walk.drawn;
-    ++walk.drawn_total;
     if (!walk.have_top || y < walk.top_y) {
       walk.have_top = true;
       walk.top_x = x;
@@ -600,6 +693,20 @@ IsoDeltaWalk WalkIsoDeltaCircle(ImDrawList* dl, const MapCanvasProjection& view,
     }
   }
   return walk;
+}
+
+// The curve readout's label (the dispersion circles' and the verdict anchor's shared shape): the
+// walk's topmost in-disk sample carries the text over a dark backing rect, in the curve's own
+// colour (the dashed form may leave that sample on a skipped stretch — the anchor sits within one
+// dash cycle of the nearest submitted line). One body for both callers — the backing ink's
+// literal lives here and nowhere else.
+void DrawIsoDeltaReadoutLabel(ImDrawList* dl, const IsoDeltaWalk& walk, ImU32 colour, const char* text) {
+  const ImVec2 ts = ImGui::CalcTextSize(text);
+  dl->AddRectFilled(ImVec2(static_cast<float>(walk.top_x) - ts.x * 0.5f - 3.0f, static_cast<float>(walk.top_y) - ts.y),
+                    ImVec2(static_cast<float>(walk.top_x) + ts.x * 0.5f + 3.0f, static_cast<float>(walk.top_y)),
+                    IM_COL32(16, 17, 20, 170));
+  dl->AddText(ImVec2(static_cast<float>(walk.top_x) - ts.x * 0.5f, static_cast<float>(walk.top_y) - ts.y), colour,
+              text);
 }
 
 void DrawFrameAnchors(ImDrawList* dl, const MapCanvasProjection& view, const LUMICE_PathMapInfo& info,
@@ -884,37 +991,52 @@ void DrawSurveyOverlays(ImDrawList* dl, GuiState& state, const MapCanvasProjecti
                                                   // addressable bit slot; writes to the sink
                                                   // are the frame's no-legend path
     const Curve curves[2] = {
-      { model.dispersion.value_red_deg, IM_COL32(242, 108, 92, 235), &model.dispersion.red_label,
+      { model.dispersion.value_red_deg, kChromaticColourRed, &model.dispersion.red_label,
         legend != nullptr ? &legend->dispersion_red : &legend_bits_sink[0] },
-      { model.dispersion.value_blue_deg, IM_COL32(96, 145, 240, 235), &model.dispersion.blue_label,
+      { model.dispersion.value_blue_deg, kChromaticColourBlue, &model.dispersion.blue_label,
         legend != nullptr ? &legend->dispersion_blue : &legend_bits_sink[1] },
     };
     for (const Curve& curve : curves) {
-      // One walk draws the circle and reports its topmost drawn point — the label anchor (the
+      // One walk draws the circle and reports its topmost in-disk sample — the label anchor (the
       // readout the eye meets). A partially visible circle says so: the drawn arc is the
-      // in-view part, not the whole circle.
+      // in-view part, not the whole circle. The legend and the label read the SUBMITTED line
+      // count: a legend describes the drawn picture, and a walk that only grazed the disk
+      // (samples in, but no two consecutive) draws no curve and earns no entry.
       const IsoDeltaWalk walk =
           WalkIsoDeltaCircle(dl, view, pic_min, pic_px, sun_pos, curve.delta_deg, curve.colour, 1.4f);
-      if (legend != nullptr && walk.drawn_total > 0) {
+      if (legend != nullptr && walk.lines_submitted > 0) {
         *curve.legend_bit = true;
         if (walk.partial()) {
           legend->dispersion_partial = true;
         }
       }
-      if (walk.drawn_total > 0) {
+      if (walk.lines_submitted > 0) {
         char line[112];
         std::snprintf(line, sizeof(line), "%s · %.3f°%s", curve.label->c_str(), curve.delta_deg,
                       walk.partial() ? " · arc in view" : "");
-        const ImVec2 ts = ImGui::CalcTextSize(line);
-        dl->AddRectFilled(
-            ImVec2(static_cast<float>(walk.top_x) - ts.x * 0.5f - 3.0f, static_cast<float>(walk.top_y) - ts.y),
-            ImVec2(static_cast<float>(walk.top_x) + ts.x * 0.5f + 3.0f, static_cast<float>(walk.top_y)),
-            IM_COL32(16, 17, 20, 170));
-        dl->AddText(ImVec2(static_cast<float>(walk.top_x) - ts.x * 0.5f, static_cast<float>(walk.top_y) - ts.y),
-                    curve.colour, line);
+        DrawIsoDeltaReadoutLabel(dl, walk, curve.colour, line);
       }
     }
   }
+  // The verdict anchor (§16.1's A2 pilot): the class answer's diagnose drawn about the sun, the
+  // vocabulary's circle device at the verdict's own delta. The density interaction's two
+  // switches read the session — the hover standing is LAST frame's row state (the canvas draws
+  // before the info column writes; the one-frame lag is the hover semantics' own). The honesty
+  // gate, the closed kind set and the colour routing are the anchor draw's own (single owner).
+  VerdictAnchorInput verdict;
+  verdict.camera = &view.camera;
+  verdict.width_px = view.width;
+  verdict.height_px = view.height;
+  verdict.width_pt = view.width_pt;
+  verdict.height_pt = view.height_pt;
+  verdict.pic_min_x = pic_min.x;
+  verdict.pic_min_y = pic_min.y;
+  verdict.pic_px = pic_px;
+  SkySunAnchorFor(state, &verdict.sun);
+  verdict.shown = state.analysis.verdict_anchor_shown;
+  verdict.hover = state.analysis.verdict_anchor_hover;
+  verdict.legend = legend;
+  DrawVerdictAnchor(dl, model.diagnose, verdict);
 }
 
 void DrawSkyPointMarker(ImDrawList* dl, const MapCanvasProjection& view, const SkyPointIntent& intent,
@@ -942,6 +1064,73 @@ void DrawSkyPointMarker(ImDrawList* dl, const MapCanvasProjection& view, const S
 }
 
 }  // namespace
+
+void DrawVerdictAnchor(ImDrawList* dl, const SurveyDiagnoseView& diagnose, const VerdictAnchorInput& in) {
+  // The density gate first: neither switch standing → nothing (with the toggle off and nothing
+  // hovered the canvas is the frame it always was).
+  if (!in.shown && !in.hover) {
+    return;
+  }
+  // The honesty gate, in contract §16.1.3's order, each leg short-circuiting. An unavailable
+  // diagnosis (a refused or not-run document) renders no diagnose rows at the text layer either
+  // — the chromatic layer's own limit line is that state's honesty, the anchor adds nothing.
+  if (!diagnose.available) {
+    return;
+  }
+  // The closed trigger kind set (contract §16.1.3): the edge family are the verdict kinds that
+  // carry a position — the set is closed by the payload's own structure (dp_chromatic's VerdictOf
+  // is the only place has_position is set, exactly for these two kinds), not by an open
+  // "anything with a position" predicate (the mapping must not fork from what the documents can
+  // actually carry).
+  const bool kind_anchored = diagnose.verdict_kind == "edge" || diagnose.verdict_kind == "gate_edge";
+  if (!kind_anchored || !diagnose.position_available || diagnose.visible == 0) {
+    // No spatial payload, or the verdict names itself not visible — anchoring it would read the
+    // map against the row's own words. Not drawing is the honest state; the text layer's limit
+    // lines and the legend's drawn-only rule carry the absence.
+    return;
+  }
+  // The coverage leg: an incomplete-coverage verdict still names its position, so the anchor
+  // draws — weakened, dashed (the limited computation stated in the visual grammar, the text
+  // layer's own qualifier line carrying the same limit in words). Judge the absence legs FIRST:
+  // a stop-requested verdict is kindless and positionless anyway, so a coverage-incomplete,
+  // self-invisible edge verdict resolves to absence here, not to a dashed ghost.
+  const bool dashed = !diagnose.coverage_complete;
+  ImU32 colour = 0;
+  if (diagnose.color == "blue") {
+    colour = kChromaticColourBlue;
+  } else if (diagnose.color == "red") {
+    colour = kChromaticColourRed;
+  } else {
+    return;  // no palette entry, no anchor — the edge family's colours are blue/red by construction
+  }
+  MapCanvasProjection view;
+  // The mirror of VerdictAnchorInput's projection quintet (see its comment): a new
+  // MapCanvasProjection field must be copied here AND carried by the input struct, or this
+  // rebuilt view silently defaults while the dispersion circles move.
+  view.camera = *in.camera;
+  view.width = in.width_px;
+  view.height = in.height_px;
+  view.width_pt = in.width_pt;
+  view.height_pt = in.height_pt;
+  const ImVec2 pic_min(in.pic_min_x, in.pic_min_y);
+  double sun_pos[3];
+  SkyPosition(in.sun.altitude_deg, in.sun.azimuth_deg, sun_pos);
+  // One walk draws the circle and reports its topmost in-disk sample — the label anchor, the
+  // dispersion readout's own precedent. The legend bit reads the SUBMITTED line count: a legend
+  // describes the drawn picture, and a dashed circle that walked in-disk may still have skipped
+  // every one of its pairs.
+  const IsoDeltaWalk walk =
+      WalkIsoDeltaCircle(dl, view, pic_min, in.pic_px, sun_pos, diagnose.position_deg, colour, 1.4f, dashed);
+  if (walk.lines_submitted > 0) {
+    if (in.legend != nullptr) {
+      in.legend->verdict_anchor = true;
+    }
+    char line[96];
+    std::snprintf(line, sizeof(line), "verdict · %.3f°%s", diagnose.position_deg,
+                  walk.partial() ? " · arc in view" : "");
+    DrawIsoDeltaReadoutLabel(dl, walk, colour, line);
+  }
+}
 
 void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   g_map_observation_timing.began_seconds = ObservationClockSeconds();
@@ -1012,6 +1201,22 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   bool overlays = storage->GetBool(overlay_key, true);
   if (ImGui::Checkbox("Overlays##map", &overlays)) {
     storage->SetBool(overlay_key, overlays);
+  }
+  // The verdict anchor's persistent switch (§16.1's A2 pilot), beside the Overlays toggle it
+  // nests under (the anchor draws only while Overlays stands; this switch adds the always-on
+  // tier over the rows' hover). It lives on this header row — the fixed operation stack, never
+  // inside the growing report — and the session field IS the control's state (the slider's
+  // shape). The join is the row's own judgment: wrap, don't clip.
+  const float verdict_check_w =
+      ImGui::GetFrameHeight() + ImGui::GetStyle().ItemInnerSpacing.x + ImGui::CalcTextSize("Verdict anchors##map").x;
+  if (fits_on_line(verdict_check_w)) {
+    ImGui::SameLine();
+  }
+  ImGui::Checkbox("Verdict anchors##map", &state.analysis.verdict_anchor_shown);
+  if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+    ImGui::SetTooltip(
+        "Draw the class answer's colour verdict on the map: hovering its rows shows "
+        "the anchor temporarily, this switch keeps it.\nHidden together with Overlays.");
   }
 
   const float canvas_avail_w = ImGui::GetContentRegionAvail().x;
@@ -1279,6 +1484,17 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   // the content that decides the measure (the same ladder rung the old single-column region
   // reached through its manual route).
   ImGui::BeginChild("##AnalyzeRaypathInfo", ImVec2(info_w, size.y), ImGuiChildFlags_Borders);
+  // The identity line, the right column's FIRST row (the disposition ledger's slot 1): the map's
+  // one echo of the selection, worded by the list's own source (SelectedClassRowLabelFor — the
+  // same spelling the list shows). The main window can be occluded while this window is open,
+  // so the column names the chain being looked at before anything else; the long report below
+  // no longer repeats it (its old in-report copy moved here, not duplicated).
+  const std::string identity_label = SelectedClassRowLabelFor(state);
+  if (identity_label.empty()) {
+    ImGui::TextDisabled("(no class selected)");
+  } else {
+    ImGui::TextWrapped("%s", identity_label.c_str());
+  }
   const bool quality_busy =
       map.intent_valid && !map.cancelled_for_key && map.answered_id != map.intent_id && map.adopted_id != map.intent_id;
   const bool quality_retry = map.cancelled_for_key || !map.adopted_error.empty();
@@ -1296,18 +1512,32 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
     if (quality_busy)
       ImGui::SetTooltip("Cancel only this map calculation; keep the current frozen map.");
-    else
+    else if (quality_retry)
       ImGui::SetTooltip("Retry the current full-sky request, independent of the observation camera.");
+    else
+      ImGui::SetTooltip(
+          "Observation never recomputes: the map answers only an explicit full-sky request, independent of the "
+          "observation camera.");
   }
-  // One reserved short status line: asynchronous prose belongs in the scrolling report below.
-  ImGui::TextDisabled("%s", quality_busy  ? "Computing full sky" :
-                            quality_retry ? "Retry full sky" :
-                                            "Observe · no calculation");
+  // The disposition ledger's slot is ONE row — action and state side by side ("Cancel/Retry＋
+  // 状态"). The row's height is the button's at every tier, so the stable-space contract (§15:
+  // a state change must not move the rows below) holds without an empty stand-in line; the
+  // idle tier draws the button alone (its static explanation in the tooltip; the old constant
+  // "Observe · no calculation" is deleted — a nothing-happened line is presentation noise).
+  // Asynchronous prose belongs in the scrolling report below.
+  if (quality_busy || quality_retry) {
+    ImGui::SameLine();
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+    ImGui::TextUnformatted(quality_busy ? "Computing full sky" : "Retry full sky");
+    ImGui::PopStyleColor();
+  }
 
   // The wavelength: an explicit value in [350, 900], or the engine's reference (0). The scratch
   // float shows the effective value either way; editing it asks the explicit wavelength — a key
   // change the pump turns into a new request (the engine has no warm map: every lambda is a
-  // real re-evaluation).
+  // real re-evaluation). One ledger slot ("λ / reference"): the track yields to the reference
+  // button while both fit one line — the 60 pt floor keeps a usable track at every width the
+  // info floor can produce — and the button wraps below at whatever cannot fit.
   float lambda_scratch = 550.0f;
   if (map.adopted_result != nullptr) {
     LUMICE_PathMapInfo info{};
@@ -1319,20 +1549,23 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   if (state.analysis.map_wavelength_nm > 0.0) {
     lambda_scratch = static_cast<float>(state.analysis.map_wavelength_nm);
   }
-  const bool lambda_same_line = false;
-  // The wrapped case re-spends the FRESH line's whole width: the track shrinks so slider plus
-  // its trailing label stay inside the region. The 60 pt floor keeps a usable track at every
-  // width the info floor can produce; this child scrolls, so even the wrapped fallback stays
-  // reachable.
+  const float reference_w = ImGui::CalcTextSize("reference").x + ImGui::GetStyle().FramePadding.x * 2.0f;
   float lambda_track = UiPx(140.0f);
-  if (!lambda_same_line) {
-    lambda_track = std::min(lambda_track, ImGui::GetContentRegionAvail().x - ImGui::CalcTextSize("λ").x -
-                                              ImGui::GetStyle().ItemInnerSpacing.x);
-    lambda_track = std::max(lambda_track, UiPx(60.0f));
-  }
+  lambda_track = std::min(lambda_track, ImGui::GetContentRegionAvail().x - ImGui::CalcTextSize("λ").x -
+                                            ImGui::GetStyle().ItemInnerSpacing.x);
+  lambda_track = std::max(lambda_track, UiPx(60.0f));
   ImGui::SetNextItemWidth(lambda_track);
   if (ImGui::SliderFloat("λ##map", &lambda_scratch, 350.0f, 900.0f, "%.0f nm", ImGuiSliderFlags_AlwaysClamp)) {
     state.analysis.map_wavelength_nm = static_cast<double>(lambda_scratch);
+  }
+  // The λ reading's one owner is this control's own echo; its tooltip names the source rule
+  // (the ledger: 真实来源进 λ tooltip — an explicit value asks itself, the engine's reference
+  // answers until one is set). Editing asks a key change the pump turns into a real recompute.
+  if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+    ImGui::SetTooltip(
+        state.analysis.map_wavelength_nm > 0.0 ?
+            "The wavelength this map answers at — an explicit value; editing it asks a new computation." :
+            "The wavelength this map answers at — the engine's reference; editing the slider asks an explicit one.");
   }
   ImGui::BeginDisabled(state.analysis.map_wavelength_nm <= 0.0);
   if (ImGui::SmallButton("reference##map_lambda")) {
@@ -1380,6 +1613,12 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   }
   if (ImGui::IsItemHovered())
     ImGui::SetTooltip("Shared full-sky preset — changes BOTH pictures, keeps the frozen map.");
+  // The steering group's one "shared view" mark (the disposition ledger): both verbs move BOTH
+  // pictures, and the column says so once beside them — the tooltips carry the per-verb rest.
+  if (fits_on_line(ImGui::CalcTextSize("· shared view").x)) {
+    ImGui::SameLine();
+  }
+  ImGui::TextDisabled("· shared view");
 
   // ---- The sky-point input: always available (AC3: no map required to name a target) ----------
   ImGui::Separator();
@@ -1447,16 +1686,6 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
     intent.dir[1] = dir[1];
     intent.dir[2] = dir[2];
   }
-  char status[128];
-  if (intent.valid) {
-    float alt = 0.0f;
-    float az = 0.0f;
-    DirToAltAz(intent.dir, &alt, &az);
-    std::snprintf(status, sizeof(status), "sky point: alt %.2f° az %.2f° (%s)", alt, az,
-                  intent.from_map_pick ? "picked on the map" : "typed coordinates");
-  } else {
-    std::snprintf(status, sizeof(status), "no sky point set");
-  }
   if (fits_on_line(ImGui::CalcTextSize("Clear").x + style_fp_x * 2.0f)) {
     ImGui::SameLine();
   }
@@ -1465,55 +1694,110 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
     intent = SkyPointIntent{};
   }
   ImGui::EndDisabled();
+  // The current target, adjacent to the inputs that name it (the disposition ledger's slot 5):
+  // it is what the point face queries — distinct from the fields above, which hold whatever the
+  // user is typing until Set is pressed, so a still-computing older target reads as the intent
+  // it is, never as the new input. The pick/typed source words live in this line's tooltip (the
+  // input group's), and the report's second echo of the target is deleted with the move.
+  // Wrapped like every prose line here: the narrowest info floor folds the row, it does not
+  // clip it.
+  if (intent.valid) {
+    float target_alt = 0.0f;
+    float target_az = 0.0f;
+    DirToAltAz(intent.dir, &target_alt, &target_az);
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+    ImGui::TextWrapped("target: alt %.2f° az %.2f°", target_alt, target_az);
+    ImGui::PopStyleColor();
+    if (ImGui::IsItemHovered()) {
+      ImGui::SetTooltip(intent.from_map_pick ? "Set from a map pick." : "Set from typed coordinates.");
+    }
+  } else {
+    // The row is reserved at every tier (the stable-space contract: setting a first target
+    // must not move the slots below it — the probe test holds the Pose button's rect across
+    // exactly that transition). No label in the empty tier: the widgets above already say the
+    // empty state.
+    ImGui::Dummy(ImVec2(0.0f, ImGui::GetTextLineHeight()));
+  }
 
-  // Navigation is display-only, like the Point detail title in the main window. Keep it
-  // outside the growing report, available even before a class/point or drawable result exists.
-  // Only geometry chooses the label's line break; query states never move this operation stack.
+  // Navigation is display-only, like the main window's Selection header entry buttons (§16.3):
+  // every state's entry into the pose window sits outside the growing report, available before
+  // a class/point or drawable result exists. Only geometry chooses the label's line break;
+  // query states never move this operation stack.
   ImGui::Separator();
-  const float pose_label_w = ImGui::CalcTextSize("Pose & trace").x + style_fp_x * 2.0f;
+  const float pose_label_w = ImGui::CalcTextSize(kPoseViewWindowTitle).x + style_fp_x * 2.0f;
   const char* pose_label =
-      pose_label_w <= ImGui::GetContentRegionAvail().x ? "Pose & trace###pose_open" : "Pose &\ntrace###pose_open";
+      pose_label_w <= ImGui::GetContentRegionAvail().x ? PoseButtonLabel() : PoseButtonWrappedLabel();
   if (ImGui::Button(pose_label)) {
     state.analyze_pose_view_open = true;
   }
+  if (ImGui::IsItemHovered()) {
+    ImGui::SetTooltip("%s", PoseButtonTooltip());
+  }
+  // The constant purpose text moved into the tooltip (the disposition ledger's slot 6 — a fixed
+  // explanation must not occupy operation area); the column carries instead only a next step
+  // when one exists: no class, then no point. With both present the stack stays quiet. The
+  // wording is the compact-without-demotion form (the ladder's L1/L2 rule): one line at the
+  // narrowest info floor, the longer where-withal riding the button's tooltip.
   ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-  ImGui::TextWrapped("3D ray & pose.\nSelect class + sky point.");
+  if (identity_label.empty()) {
+    ImGui::TextWrapped("Select a class first.");
+  } else if (!intent.valid) {
+    ImGui::TextWrapped("Set a sky point above.");
+  }
   ImGui::PopStyleColor();
 
   ImGui::BeginChild("##MapReport", RemainingReportSize());
-  if (map.adopted_result) {
-    LUMICE_PathMapInfo info{};
-    info.struct_size = sizeof(info);
-    if (LUMICE_PathMapGetInfo(map.adopted_result.get(), &info) == LUMICE_PATH_READ_OK) {
-      ImGui::TextWrapped("Reference cell δ %.7g° × az %.7g° · %d/%d%s · λ %.1f · n=%d",
-                         (info.view_delta_max_deg - info.view_delta_min_deg) / info.view_rows,
-                         (info.view_az_max_deg - info.view_az_min_deg) / info.view_cols, info.members_evaluated,
-                         info.member_count, info.truncated ? " partial" : "", info.wavelength_nm, info.sample_count);
-    }
-  }
-  ImGui::TextWrapped("Source-fixed scale; cells do not interpolate. Stripes = unknown, purple = singular (not zero).");
-  // The identity line (contract §6's status summary): the selected class named WHERE it is read.
-  // The list that carries the same label can be off-screen while this window is open (Render
-  // workspace, an occluding float), so the window re-states the list's own text — the one chain
-  // (SelectedClassRowLabelFor, the same AnalysisRowLabel spelling the list shows), not a second
-  // rendering of the selection and not a copy of the overview's report (§2.2: the survey facts
-  // stay in the main window's diagnostics). Wrapped like every legend line below: a long chain
-  // label folds, it does not clip. The Separator ends the line so the λ row's SameLine judgment
-  // below reads a fresh line — fits_on_line judges against the LAST item's rect, and the
-  // judgment it must not inherit is whatever the map region submitted before this child.
-  const std::string identity_label = SelectedClassRowLabelFor(state);
-  if (identity_label.empty()) {
-    ImGui::TextDisabled("(no class selected)");
+  // The class answer (contract §16.2): the adopted survey document, drawn by the
+  // complete-answer renderer — the same default layer and fold groups the renderer gives every
+  // host, read back from the SAME adopted result the main window's summary reads (no second
+  // model, no second session; opening or closing this window changes no query lifetime). The
+  // four-state shell stays in the main window (§16.2's split): while the survey computes, is
+  // cancelled or refused, this section draws nothing here — the answer region carries answers.
+  if (state.analysis.survey.adopted_result) {
+    const SurveyOverviewModel survey_model = BuildSurveyOverviewModel(*state.analysis.survey.adopted_result);
+    ImGui::TextDisabled("Class answer");
+    // The verdict anchor's hover read (§16.1's A2 pilot): the class answer is the only site the
+    // linked diagnose rows render at, so this is the overwrite's owner — the row path writes the
+    // standing every frame (hover or explicit false), the canvas consumes it next frame.
+    bool verdict_row_hover = false;
+    RenderSurveyOverviewModel(survey_model, &verdict_row_hover);
+    state.analysis.verdict_anchor_hover = verdict_row_hover;
+    ImGui::Separator();
   } else {
-    ImGui::TextWrapped("%s", identity_label.c_str());
+    // The class answer's absent frame (no adopted document): no rows render, so the overwrite
+    // has no site — this branch is the reset's owner instead. Without it a document's last
+    // hover standing would outlive the rows that carried it.
+    state.analysis.verdict_anchor_hover = false;
   }
+  // The sky-point answer (contract §16.2): the adopted point document read in full, sorted
+  // into its own fold pair. Sits after the class answer, before the map's own report — the
+  // ledger's answer-region order. Same gate as the class answer: an adopted document in hand
+  // draws its content (including across a re-query's in-flight window — the four-state shell
+  // and the cancel actions stay in the main window, and the input group's target line carries
+  // the intent/adopted distinction).
+  if (state.analysis.point.adopted_result) {
+    ImGui::TextDisabled("Sky point answer");
+    RenderPointAnswerBlock(state);
+    ImGui::Separator();
+  }
+  ImGui::TextWrapped("Stripes = unknown, purple = singular (not zero).");
+  // The identity line and the sky-point echo used to sit here; both moved up the fixed slots
+  // (identity to the column's first row, the target beside the input group) and the report no
+  // longer repeats either. The old reference-cell line moved into the caliber's Calculation
+  // fold (the same numbers, the ledger's L4 tier); the source-fixed-scale sentence moved with
+  // it. The Separator keeps the picture-facts above apart from the answer block below.
   ImGui::Separator();
-  ImGui::TextWrapped("%s", status);
   if (state.analysis.map_wavelength_nm <= 0.0 && map.adopted_result == nullptr) {
+    // The λ's unrechoiced state stays default (the ledger: 尚未回显的未知性默认) — the map has
+    // not answered at any wavelength yet, and the slider's tooltip names the source rule.
     ImGui::TextWrapped("The engine-chosen reference wavelength is used until a map echoes it.");
   }
   // The caliber block: every fact read back through the result's own readers into the pure
-  // composer (the unit layer holds it to the readback), then drawn (AC1).
+  // composers (the unit layer holds them to the readback), then drawn — the ledger's tiers:
+  // the short quantity and its limits default, the full definition and premises behind
+  // Physics details, the grid and execution numbers behind Calculation details. The report
+  // follows every operation: its native scroll cannot overlap or reposition the
+  // typed-coordinate controls, even while a long caliber or refusal arrives.
   if (caliber_source && have_anchor_info) {
     ImGui::TextDisabled("Reference caliber");
     MapCaliberInput in;
@@ -1536,13 +1820,25 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
       }
     }
     in.completed = true;  // the named finite source completed, independently of a newer intent
-    // The report follows every operation. Its native scroll cannot overlap or reposition
-    // the typed-coordinate controls, even while a long caliber or refusal arrives.
     ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-    for (const std::string& line : MapCaliberLines(in)) {
+    for (const std::string& line : MapCaliberDefaultLines(in)) {
       ImGui::TextWrapped("%s", line.c_str());
     }
     ImGui::PopStyleColor();
+    if (FoldOpen(kSurveyPhysicsDetailsLabel, "map_caliber")) {
+      ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+      for (const std::string& line : MapCaliberPhysicsLines(in)) {
+        ImGui::TextWrapped("%s", line.c_str());
+      }
+      ImGui::PopStyleColor();
+    }
+    if (FoldOpen(kSurveyCalculationDetailsLabel, "map_caliber")) {
+      ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+      for (const std::string& line : MapCaliberCalculationLines(in)) {
+        ImGui::TextWrapped("%s", line.c_str());
+      }
+      ImGui::PopStyleColor();
+    }
   }
 
   // The legend: one entry per category THIS frame actually drew, each with its one-line
@@ -1554,13 +1850,16 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   ImGui::TextDisabled("Legend");
   {
     ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-    // Every entry is the Bullet()+TextWrapped pair (the overview's rule: BulletText and
-    // SameLine+Text size a single line and clip at the region's right edge — exactly where the
-    // dispersion entry's honesty qualifier gets interesting at the info floor's 200 pt). The
-    // wrap is the vertical scroll's own overflow channel: no horizontal scrollbar exists here.
+    // The short keys are the default tier (the ledger: 默认短形状/颜色键，长词典进折叠): each
+    // entry names the drawn category and its marker shape — the meanings and honesty qualifiers
+    // ride the Legend explanations group below, with the two short-form limits that must stay
+    // readable at the keys (positions are not whole-circle visibility; a partial circle names
+    // its arc). Every entry is the Bullet()+TextWrapped pair (BulletText and SameLine+Text size
+    // a single line and clip at the region's right edge); the wrap is the vertical scroll's own
+    // overflow channel.
     if (legend.anchor_sun) {
       ImGui::Bullet();
-      ImGui::TextWrapped("sun marker — the delta axis's zero");
+      ImGui::TextWrapped("sun marker");
     }
     if (legend.anchor_zenith) {
       ImGui::Bullet();
@@ -1601,32 +1900,51 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
       }
       ImGui::Dummy(ImVec2(ImGui::GetFrameHeight(), 0.0f));
       ImGui::SameLine(0.0f, 0.0f);
-      // One wrapped item: the kind and its meaning fold together at the marker's indent — the
-      // old SameLine+TextUnformatted pair pinned the explanation onto the kind's line, where the
-      // info floor clipped its tail exactly when the words carry the shape's meaning.
-      ImGui::TextWrapped("%s — the survey's located conclusion", kind.c_str());
+      ImGui::TextWrapped("%s", kind.c_str());
     }
     if (legend.dispersion_red || legend.dispersion_blue) {
       ImGui::Bullet();
       if (legend.dispersion_red && legend.dispersion_blue) {
-        ImGui::TextWrapped(
-            "dispersion circles (red inside blue) — the measured minimum-deviation geometry at the two reference "
-            "wavelengths; positions, not a whole-circle visibility or contribution claim");
+        ImGui::TextWrapped("dispersion circles (red inside blue) — positions, not visibility");
       } else {
         // One circle's arc sits outside the view disk this frame: the entry names the one that
         // drew — the other half's absence is the honest state, not a dropped category.
-        ImGui::TextWrapped(
-            "%s dispersion circle — the measured minimum-deviation geometry at its reference wavelength; positions, "
-            "not a whole-circle visibility or contribution claim",
-            legend.dispersion_red ? "red" : "blue");
+        ImGui::TextWrapped("%s dispersion circle — positions, not visibility", legend.dispersion_red ? "red" : "blue");
       }
       if (legend.dispersion_partial) {
-        ImGui::TextWrapped("A circle partially outside the view draws only its in-view arc (\"arc in view\").");
+        ImGui::TextWrapped("partial circles draw their in-view arc (\"arc in view\").");
       }
+    }
+    if (legend.verdict_anchor) {
+      ImGui::Bullet();
+      ImGui::TextWrapped("verdict anchor");
     }
     if (legend.sky_point) {
       ImGui::Bullet();
-      ImGui::TextWrapped("sky-point marker — the target the point face queries");
+      ImGui::TextWrapped("sky-point marker");
+    }
+    // The long dictionary: the entries' meanings and honesty qualifications, behind one
+    // closed-by-default fold (the ledger's Legend explanations group).
+    if (FoldOpen(kMapLegendExplanationsLabel, "map_legend")) {
+      if (legend.anchor_sun) {
+        ImGui::TextWrapped("sun marker — the delta axis's zero");
+      }
+      if (!legend.object_kinds.empty()) {
+        ImGui::TextWrapped("each kind's marker — the survey's located conclusion, at the position the card names");
+      }
+      if (legend.dispersion_red || legend.dispersion_blue) {
+        ImGui::TextWrapped(
+            "dispersion circles — the measured minimum-deviation geometry at the reference wavelengths; positions, "
+            "not a whole-circle visibility or contribution claim");
+      }
+      if (legend.verdict_anchor) {
+        ImGui::TextWrapped(
+            "verdict anchor — the class answer's colour verdict at the deviation it names; "
+            "dashed when its coverage is incomplete");
+      }
+      if (legend.sky_point) {
+        ImGui::TextWrapped("sky-point marker — the target the point face queries");
+      }
     }
     ImGui::PopStyleColor();
   }
@@ -1642,6 +1960,10 @@ void RenderAnalyzeRaypathViewWindow(GuiState& state) {
       g_survey_overlay_cache.id != state.analysis.survey.intent_id)
     g_survey_overlay_cache = {};
   if (!state.analyze_raypath_view_open) {
+    // The window's closed frames: the class answer's rows do not render, so the hover standing's
+    // overwrite has no site — this seam owns the reset, and the first frame after a reopen reads
+    // false instead of whatever the mouse was on when the window closed.
+    state.analysis.verdict_anchor_hover = false;
     if (state.workspace.map_press_owner != GuiState::AnalyzeWorkspaceSession::PanoramaPressOwner::kNone)
       state.workspace.map_press_owner = GuiState::AnalyzeWorkspaceSession::PanoramaPressOwner::kCancelled;
     return;
@@ -1683,9 +2005,12 @@ void RenderAnalyzeRaypathViewWindow(GuiState& state) {
   // NoDocking: the window is a free-form surface, not shell layout (the contract's §7 boundary
   // note); NoCollapse: a collapsed title bar hides the map without freeing its queries — the
   // honest off state is closed, via the same flag the title bar's X writes through `p_open`.
-  if (!ImGui::Begin("Raypath view", &state.analyze_raypath_view_open,
+  if (!ImGui::Begin(kRaypathViewWindowTitle, &state.analyze_raypath_view_open,
                     ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoScrollbar |
                         ImGuiWindowFlags_NoScrollWithMouse)) {
+    // The Begin-false frame (the window fully clipped): neither region renders, so the hover
+    // standing's overwrite has no site here either — the same reset the closed seam owns.
+    state.analysis.verdict_anchor_hover = false;
     ImGui::End();
     if (state.workspace.map_press_owner != GuiState::AnalyzeWorkspaceSession::PanoramaPressOwner::kNone)
       state.workspace.map_press_owner = GuiState::AnalyzeWorkspaceSession::PanoramaPressOwner::kCancelled;

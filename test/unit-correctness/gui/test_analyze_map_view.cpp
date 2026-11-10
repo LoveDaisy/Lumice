@@ -19,6 +19,8 @@
 #include "gui/analyze_survey.hpp"
 #include "gui/file_io.hpp"  // SceneDeleter's complete type — the survey tests' include
 #include "gui/gui_state.hpp"
+#include "gui/preview_renderer.hpp"  // ViewProjection's full shape — the anchor tests' camera
+#include "imgui.h"
 #include "include/lumice_base.h"
 #include "include/lumice_raypath.h"
 #include "include/lumice_scene.h"
@@ -246,29 +248,53 @@ TEST(AnalyzeMapView, CaliberLinesCarryTheReaderFieldsVerbatim) {
   in.evidence.geometry_basis = LUMICE_PathText{ kBasis, sizeof(kBasis) - 1 };
   in.completed = true;
 
-  const std::vector<std::string> lines = MapCaliberLines(in);
-  ASSERT_GE(lines.size(), 3u);
-  EXPECT_NE(lines[0].find("550.0 nm"), std::string::npos);
-  EXPECT_NE(lines[0].find("9/12 members"), std::string::npos);
-  EXPECT_NE(lines[0].find("n=500000"), std::string::npos);
-  EXPECT_NE(lines[0].find("12345 events"), std::string::npos);
-  EXPECT_NE(lines[0].find("[3.5, 48.5]"), std::string::npos);
-  EXPECT_NE(lines[0].find("[-100.0, 260.0]"), std::string::npos);
-  EXPECT_NE(lines[0].find("182\u00d71440"), std::string::npos) << "grid dims echo the Info's own";
-  EXPECT_NE(lines[1].find("band-sum"), std::string::npos);
-  EXPECT_NE(lines[1].find("physical class"), std::string::npos);
-  EXPECT_NE(lines[1].find("per sr"), std::string::npos);
-  EXPECT_NE(lines[1].find("scene geometry"), std::string::npos);
-  EXPECT_EQ(lines[2], kBasis);  // the engine's geometry string, byte for byte
+  // The tiers: DEFAULT = the short quantity name with its unit and the scene-vs-nominal limit;
+  // PHYSICS = the full definition, the sun premise and the engine's basis verbatim; CALCULATION
+  // = the grid and execution numbers. The lambda is in NO line — the slider row's echo is its
+  // one owner.
+  const std::vector<std::string> default_lines = MapCaliberDefaultLines(in);
+  ASSERT_GE(default_lines.size(), 2u);
+  EXPECT_NE(default_lines[0].find("band-sum"), std::string::npos);
+  EXPECT_NE(default_lines[0].find("per sr"), std::string::npos);
+  EXPECT_EQ(default_lines[0].find("physical class"), std::string::npos) << "the aggregation is a Physics fact";
+  EXPECT_NE(default_lines[1].find("Scene geometry"), std::string::npos)
+      << "a non-nominal shape names the limit at the default tier";
 
-  // A nominal shape says so; a full-sky view names the all-sky grid.
+  const std::vector<std::string> physics = MapCaliberPhysicsLines(in);
+  ASSERT_GE(physics.size(), 4u);
+  EXPECT_NE(physics[0].find("band-sum"), std::string::npos);
+  EXPECT_NE(physics[0].find("physical class"), std::string::npos);
+  EXPECT_NE(physics[0].find("per sr"), std::string::npos);
+  EXPECT_NE(physics[1].find("Sun at altitude 20.0"), std::string::npos);
+  EXPECT_NE(physics[2].find("Scene geometry"), std::string::npos);
+  EXPECT_EQ(physics[3], kBasis);  // the engine's geometry string, byte for byte
+
+  const std::vector<std::string> calc = MapCaliberCalculationLines(in);
+  ASSERT_GE(calc.size(), 3u);
+  for (const std::string& l : calc) {
+    EXPECT_EQ(l.find("550.0 nm"), std::string::npos) << "the lambda echo is deleted, not moved";
+  }
+  EXPECT_NE(calc[0].find("n=500000"), std::string::npos);
+  EXPECT_NE(calc[0].find("[3.5, 48.5]"), std::string::npos);
+  EXPECT_NE(calc[0].find("[-100.0, 260.0]"), std::string::npos);
+  EXPECT_NE(calc[0].find("182\u00d71440"), std::string::npos) << "grid dims echo the Info's own";
+  EXPECT_NE(calc[1].find("9/12 members"), std::string::npos);
+  EXPECT_NE(calc[1].find("12345 events"), std::string::npos);
+  EXPECT_NE(calc[2].find("Source-fixed scale"), std::string::npos);
+
+  // A nominal shape says so (its limit rides Physics); a full-sky view names the all-sky grid.
   in.info.shape_is_nominal = 1;
   in.info.view_full_sky = 1;
   in.info.view_rows = 180;
   in.info.view_cols = 360;
-  const std::vector<std::string> full = MapCaliberLines(in);
+  const std::vector<std::string> nominal_default = MapCaliberDefaultLines(in);
+  for (const std::string& l : nominal_default) {
+    EXPECT_EQ(l.find("Scene geometry"), std::string::npos) << "nominal needs no default limit";
+  }
+  const std::vector<std::string> nominal_physics = MapCaliberPhysicsLines(in);
+  EXPECT_NE(nominal_physics[2].find("Nominal geometry"), std::string::npos);
+  const std::vector<std::string> full = MapCaliberCalculationLines(in);
   EXPECT_NE(full[0].find("full sky 180\u00d7360"), std::string::npos);
-  EXPECT_NE(full[1].find("nominal geometry"), std::string::npos);
 }
 
 TEST(AnalyzeMapView, CaliberLinesSpellTruncationFiniteZeroAndRank0) {
@@ -281,7 +307,7 @@ TEST(AnalyzeMapView, CaliberLinesSpellTruncationFiniteZeroAndRank0) {
   in.info.kept_count = 42;
   in.info.truncated = 1;
   in.completed = true;
-  std::vector<std::string> lines = MapCaliberLines(in);
+  std::vector<std::string> lines = MapCaliberDefaultLines(in);
   ASSERT_GE(lines.size(), 1u);
   // Truncation is named and counts its prefix — never passed off as the whole class.
   bool truncated_line = false;
@@ -298,7 +324,7 @@ TEST(AnalyzeMapView, CaliberLinesSpellTruncationFiniteZeroAndRank0) {
 
   in.info.truncated = 0;
   in.info.kept_count = 0;
-  lines = MapCaliberLines(in);
+  lines = MapCaliberDefaultLines(in);
   zero_line = false;
   for (const std::string& l : lines) {
     zero_line = zero_line || l.find("finite zero") != std::string::npos;
@@ -306,7 +332,7 @@ TEST(AnalyzeMapView, CaliberLinesSpellTruncationFiniteZeroAndRank0) {
   EXPECT_TRUE(zero_line);
   // The same document before its intent is answered draws no finite-zero claim.
   in.completed = false;
-  lines = MapCaliberLines(in);
+  lines = MapCaliberDefaultLines(in);
   zero_line = false;
   for (const std::string& l : lines) {
     zero_line = zero_line || l.find("finite zero") != std::string::npos;
@@ -323,7 +349,7 @@ TEST(AnalyzeMapView, CaliberLinesSpellTruncationFiniteZeroAndRank0) {
   static const char* kMethods[] = { "psi_average", "lattice_mean" };
   in.methods[0] = kMethods[0];
   in.methods[1] = kMethods[1];
-  lines = MapCaliberLines(in);
+  lines = MapCaliberDefaultLines(in);
   bool mass_line = false;
   for (const std::string& l : lines) {
     mass_line = mass_line ||
@@ -333,7 +359,7 @@ TEST(AnalyzeMapView, CaliberLinesSpellTruncationFiniteZeroAndRank0) {
   }
   EXPECT_TRUE(mass_line);
   in.mass.pixel = -1;
-  lines = MapCaliberLines(in);
+  lines = MapCaliberDefaultLines(in);
   bool outside_line = false;
   for (const std::string& l : lines) {
     outside_line =
@@ -904,6 +930,281 @@ TEST(AnalyzeMapView, OverlayMarkerStyleSolidOnlyForConcludedClaims) {
   // An unknown kind still gets the honest fallback marker, not a crash or the sun's look.
   const OverlayMarkerStyle fallback = OverlayMarkerStyleFor("some future kind", LUMICE_PATH_STATE_CERTIFIED);
   EXPECT_EQ(fallback.shape, OverlayMarkerShape::kFallbackDiamond);
+}
+
+// ---- The verdict anchor (contract §16.1's A2 pilot) --------------------------------------------------
+//
+// The anchor's draw-list assertions run on a headless frame: the context, its CPU-built default
+// font atlas and one NewFrame are the whole rig — the background draw list records exactly what
+// the canvas would draw, and the assertions read it through the SHARED palette constants (the
+// colour buckets) and the vertices' extents, never a second projection. Where two rings must be
+// told apart in one frame, they take the palette's two colours: the routing maps the diagnose's
+// own colour field, so a blue diagnose and a red diagnose of the same geometry are the two
+// buckets — the same trick that keeps the label's glyph vertices harmless (they carry their
+// curve's colour; the x-extent reading below survives them because the label's patch sits inside
+// the ring's own).
+
+class VerdictAnchorDraw : public ::testing::Test {
+ protected:
+  void SetUp() override {
+    ctx_ = ImGui::CreateContext();
+    ImGuiIO& io = ImGui::GetIO();
+    io.DisplaySize = ImVec2(600.0f, 600.0f);
+    io.DeltaTime = 1.0f / 60.0f;
+    io.Fonts->AddFontDefault();
+    unsigned char* pixels = nullptr;
+    int atlas_w = 0;
+    int atlas_h = 0;
+    io.Fonts->GetTexDataAsAlpha8(&pixels, &atlas_w, &atlas_h);  // builds the atlas, CPU-only
+    ImGui::NewFrame();
+  }
+  void TearDown() override {
+    if (ImGui::GetCurrentContext() != nullptr) {
+      ImGui::EndFrame();
+    }
+    ImGui::DestroyContext(ctx_);
+  }
+
+  // The frame's camera: a 180° equidistant fisheye aimed at the sun (its own altitude and
+  // azimuth), so the iso-delta circles land concentric about the canvas centre and their screen
+  // radii scale linearly with the delta — the relation the ring-ratio test reads.
+  static ViewProjection SunCamera() {
+    ViewProjection vp;
+    vp.lens_type = kLensTypeFisheyeEquidist;
+    vp.fov = 180.0f;
+    vp.elevation = 20.0f;
+    vp.azimuth = 0.0f;
+    vp.roll = 0.0f;
+    vp.visible = kVisibleFull;
+    vp.front = false;
+    return vp;
+  }
+
+  static SurveyDiagnoseView Diagnose(const char* kind, const char* colour, double delta_deg, bool coverage) {
+    SurveyDiagnoseView d;
+    d.available = true;
+    d.verdict_kind = kind;
+    d.color = colour;
+    d.visible = 1;
+    d.position_available = true;
+    d.position_deg = delta_deg;
+    d.coverage_complete = coverage;
+    return d;
+  }
+
+  static VerdictAnchorInput Input(const ViewProjection& vp, bool shown, bool hover) {
+    VerdictAnchorInput in;
+    in.camera = &vp;
+    in.width_px = 600;
+    in.height_px = 600;
+    in.width_pt = 600.0f;
+    in.height_pt = 600.0f;
+    in.pic_min_x = 0.0f;
+    in.pic_min_y = 0.0f;
+    in.pic_px = 600.0f;
+    in.sun.altitude_deg = 20.0;
+    in.sun.azimuth_deg = 0.0;
+    in.shown = shown;
+    in.hover = hover;
+    return in;
+  }
+
+  // The colour bucket's index count: every primitive whose six vertices carry the colour — the
+  // anchor's line quads and its label's glyphs together (the backing rect's ink is a different
+  // colour and stays out of every bucket).
+  static int IndexCountForColour(ImU32 colour) {
+    ImDrawList* dl = ImGui::GetBackgroundDrawList();
+    int count = 0;
+    for (int i = 0; i + 5 < dl->IdxBuffer.Size; i += 6) {
+      bool matches = true;
+      for (int k = 0; k < 6; ++k) {
+        if (dl->VtxBuffer[static_cast<int>(dl->IdxBuffer[i + k])].col != colour) {
+          matches = false;
+          break;
+        }
+      }
+      if (matches) {
+        count += 6;
+      }
+    }
+    return count;
+  }
+
+  // The colour bucket's vertices' x-extent: for a full ring that is its diameter along x (the
+  // 96-sample walk puts vertices within a half-segment of both extremes, a sub-0.1% shave), and
+  // the label's patch — centered on the ring's topmost point, halfwidth well inside the radius —
+  // cannot inflate it. The vertical extents are deliberately not read: the label rides above
+  // the ring's top, exactly where a y-extent would be polluted.
+  static void XExtentForColour(ImU32 colour, float* min_x, float* max_x) {
+    ImDrawList* dl = ImGui::GetBackgroundDrawList();
+    *min_x = FLT_MAX;
+    *max_x = -FLT_MAX;
+    for (int i = 0; i < dl->VtxBuffer.Size; ++i) {
+      const ImDrawVert& v = dl->VtxBuffer[i];
+      if (v.col != colour) {
+        continue;
+      }
+      *min_x = std::min(*min_x, v.pos.x);
+      *max_x = std::max(*max_x, v.pos.x);
+    }
+  }
+
+  ImGuiContext* ctx_ = nullptr;
+};
+
+// The honesty gate on a synthetic diagnose — the injection seam the SurveyDiagnoseView plain
+// struct provides, and the only tier that can hold the drawn legs: the engine reaches a
+// coverage-incomplete, position-carrying verdict only through a stop or a cost guard, shapes no
+// deterministic fixture produces (contract §16.1.3 records the vocabulary and the honesty
+// grammar these tests assert).
+// Each absence leg draws nothing (bucket counts zero), the coverage-incomplete leg still draws
+// (dashed — the drawn form's discriminability is the next test), and the legend's verdict bit
+// follows what actually drew.
+TEST_F(VerdictAnchorDraw, HonestyGateLegs) {
+  const ViewProjection vp = SunCamera();
+  const SurveyDiagnoseView pilot = Diagnose("edge", "blue", 40.0, true);
+  const SurveyDiagnoseView not_available = [] {
+    SurveyDiagnoseView d;
+    d.available = false;  // the refused / not-run document: no diagnose rows anywhere
+    return d;
+  }();
+  const SurveyDiagnoseView tint = Diagnose("tint", "blue", 40.0, true);  // outside the closed kind set
+  SurveyDiagnoseView positionless = Diagnose("edge", "blue", 40.0, true);
+  positionless.position_available = false;
+  SurveyDiagnoseView self_invisible = Diagnose("edge", "blue", 40.0, true);
+  self_invisible.visible = 0;
+  SurveyDiagnoseView self_invisible_partial = Diagnose("edge", "blue", 40.0, false);
+  self_invisible_partial.visible = 0;  // the precedence: absence wins over the dashed leg
+  const SurveyDiagnoseView unpainted_colour = Diagnose("edge", "white", 40.0, true);
+
+  struct Leg {
+    const char* what;
+    const SurveyDiagnoseView* d;
+  };
+  const Leg absent[] = { { "unavailable document", &not_available },
+                         { "kind outside the closed set", &tint },
+                         { "no spatial payload", &positionless },
+                         { "verdict names itself not visible", &self_invisible },
+                         { "not visible with incomplete coverage", &self_invisible_partial },
+                         { "colour with no palette entry", &unpainted_colour } };
+  for (const Leg& leg : absent) {
+    OverlayLegendState legend;
+    VerdictAnchorInput in = Input(vp, /*shown=*/true, /*hover=*/false);
+    in.legend = &legend;
+    DrawVerdictAnchor(ImGui::GetBackgroundDrawList(), *leg.d, in);
+    EXPECT_EQ(IndexCountForColour(kChromaticColourBlue), 0) << leg.what;
+    EXPECT_EQ(IndexCountForColour(kChromaticColourRed), 0) << leg.what;
+    EXPECT_FALSE(legend.verdict_anchor) << leg.what;
+  }
+  // And the density gate: a fully anchorable verdict with neither switch standing draws nothing.
+  OverlayLegendState legend;
+  VerdictAnchorInput in = Input(vp, /*shown=*/false, /*hover=*/false);
+  in.legend = &legend;
+  DrawVerdictAnchor(ImGui::GetBackgroundDrawList(), pilot, in);
+  EXPECT_EQ(IndexCountForColour(kChromaticColourBlue), 0);
+  EXPECT_FALSE(legend.verdict_anchor);
+}
+
+// The density gate's two tiers: the hover alone anchors, the toggle alone anchors — and the
+// closed kind set's second member (gate_edge) anchors through the same path. One frame, two
+// colour buckets: the hover tier draws blue, the toggle tier's gate_edge red. The legend bit is
+// pinned here too (the drawn → bit-set coupling, unit-tier, not only through the functional
+// chain).
+TEST_F(VerdictAnchorDraw, HoverAndToggleEachAnchor) {
+  const ViewProjection vp = SunCamera();
+  OverlayLegendState legend;
+  VerdictAnchorInput in = Input(vp, /*shown=*/false, /*hover=*/true);
+  in.legend = &legend;
+  DrawVerdictAnchor(ImGui::GetBackgroundDrawList(), Diagnose("edge", "blue", 40.0, true), in);
+  EXPECT_GT(IndexCountForColour(kChromaticColourBlue), 0);
+  EXPECT_TRUE(legend.verdict_anchor);
+  in = Input(vp, /*shown=*/true, /*hover=*/false);
+  DrawVerdictAnchor(ImGui::GetBackgroundDrawList(), Diagnose("gate_edge", "red", 60.0, true), in);
+  EXPECT_GT(IndexCountForColour(kChromaticColourRed), 0);
+}
+
+// The switch standing but the ring wholly outside the frustum: nothing draws and no legend bit
+// lights — the density gate's complement on the drawing side. What this rig CANNOT reach is the
+// intermediate regime the lines_submitted gate also covers (samples in view but zero submitted
+// pairs: a dashed arc wholly inside its off-phase windows, or the measure-zero tangent ring
+// whose single in-view sample forms no pair) — that regime has no robust fixture in this
+// projection, and the gate it protects reads the one "actually drew" counter so a future caller
+// cannot pick a walked-but-not-drawn carrier.
+TEST_F(VerdictAnchorDraw, OutOfViewRingDrawsNothingAndEarnsNoLegend) {
+  const ViewProjection vp = SunCamera();
+  OverlayLegendState legend;
+  VerdictAnchorInput in = Input(vp, /*shown=*/true, /*hover=*/false);
+  in.legend = &legend;
+  // δ=150 about the sun on a 180° fisheye aimed at the sun: every sample sits beyond the
+  // frustum's 90° reach, so the whole walk is out of view.
+  DrawVerdictAnchor(ImGui::GetBackgroundDrawList(), Diagnose("edge", "blue", 150.0, true), in);
+  EXPECT_EQ(IndexCountForColour(kChromaticColourBlue), 0);
+  EXPECT_FALSE(legend.verdict_anchor);
+}
+
+// The colour routing reads the verdict's own colour through the shared palette: a red verdict's
+// anchor lands in the red bucket and nowhere else.
+TEST_F(VerdictAnchorDraw, ColourRoutingUsesTheSharedPalette) {
+  const ViewProjection vp = SunCamera();
+  VerdictAnchorInput in = Input(vp, /*shown=*/true, /*hover=*/false);
+  DrawVerdictAnchor(ImGui::GetBackgroundDrawList(), Diagnose("edge", "red", 40.0, true), in);
+  EXPECT_GT(IndexCountForColour(kChromaticColourRed), 0);
+  EXPECT_EQ(IndexCountForColour(kChromaticColourBlue), 0);
+}
+
+// The ring geometry, with no second projection: two rings drawn about the same sun — deltas 40
+// and 80 — must land at x-extents whose ratio is the deltas' own (the equidistant lens's linear
+// radius law), inside one frame and two colour buckets.
+TEST_F(VerdictAnchorDraw, RingsLandAtTheRatiosTheDeltasName) {
+  const ViewProjection vp = SunCamera();
+  VerdictAnchorInput in = Input(vp, /*shown=*/true, /*hover=*/false);
+  ImDrawList* dl = ImGui::GetBackgroundDrawList();
+  DrawVerdictAnchor(dl, Diagnose("edge", "blue", 40.0, true), in);
+  DrawVerdictAnchor(dl, Diagnose("edge", "red", 80.0, true), in);
+  EXPECT_GT(IndexCountForColour(kChromaticColourBlue), 0);
+  EXPECT_GT(IndexCountForColour(kChromaticColourRed), 0);
+  float blue_min_x = 0.0f;
+  float blue_max_x = 0.0f;
+  float red_min_x = 0.0f;
+  float red_max_x = 0.0f;
+  XExtentForColour(kChromaticColourBlue, &blue_min_x, &blue_max_x);
+  XExtentForColour(kChromaticColourRed, &red_min_x, &red_max_x);
+  ASSERT_GT(blue_max_x, blue_min_x);
+  ASSERT_GT(red_max_x, red_min_x);
+  const float blue_extent = blue_max_x - blue_min_x;
+  const float red_extent = red_max_x - red_min_x;
+  EXPECT_NEAR(red_extent / blue_extent, 2.0f, 0.02f) << blue_extent << " vs " << red_extent;
+  // And one ring's own sanity: δ=40 on a 180° equidistant canvas of 600pt is ~133pt of radius —
+  // not a degenerate dot, not off-canvas.
+  EXPECT_GT(blue_extent, 100.0f);
+  EXPECT_LT(blue_extent, 600.0f);
+}
+
+// The coverage leg's drawn form: the same delta in the two palette colours — solid (blue) and
+// coverage-incomplete (red) — draws the same ring twice, the dashed one with strictly fewer
+// submitted primitives. The label's glyphs ride each bucket equally, so the ratio band is wide.
+TEST_F(VerdictAnchorDraw, IncompleteCoverageDrawsTheDashedForm) {
+  const ViewProjection vp = SunCamera();
+  VerdictAnchorInput in = Input(vp, /*shown=*/true, /*hover=*/false);
+  ImDrawList* dl = ImGui::GetBackgroundDrawList();
+  DrawVerdictAnchor(dl, Diagnose("edge", "blue", 40.0, /*coverage=*/true), in);
+  DrawVerdictAnchor(dl, Diagnose("edge", "red", 40.0, /*coverage=*/false), in);
+  const int solid = IndexCountForColour(kChromaticColourBlue);
+  const int dashed = IndexCountForColour(kChromaticColourRed);
+  EXPECT_GT(solid, 0);
+  EXPECT_GT(dashed, 0);
+  EXPECT_LT(dashed, solid);
+  EXPECT_GT(dashed, solid / 3);
+  // Same delta, same ring: the two forms' x-extents agree.
+  float blue_min_x = 0.0f;
+  float blue_max_x = 0.0f;
+  float red_min_x = 0.0f;
+  float red_max_x = 0.0f;
+  XExtentForColour(kChromaticColourBlue, &blue_min_x, &blue_max_x);
+  XExtentForColour(kChromaticColourRed, &red_min_x, &red_max_x);
+  ASSERT_GT(blue_max_x, blue_min_x);
+  ASSERT_GT(red_max_x, red_min_x);
+  EXPECT_NEAR((blue_max_x - blue_min_x) / (red_max_x - red_min_x), 1.0f, 0.01f);
 }
 
 }  // namespace

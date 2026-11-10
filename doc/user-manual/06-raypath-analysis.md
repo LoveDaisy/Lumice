@@ -107,42 +107,49 @@ which is the answer, not an error), or the completed overview. Nothing is comput
 interface thread, and nothing is invented: a refused or unevaluated part shows the engine's own
 words.
 
-The completed overview is organized by the class's routing arm, a few main conclusions first
-with the details behind expanders:
+The completed overview in the card is the class's **summary**: a few main conclusions, the
+limits that qualify them, and a pointer to the complete answer (which lives in the Raypath
+view's class-answer section, sorted into two closed-by-default fold groups — **Physics
+details** for the optical premises and evidence methods, **Calculation details** for the
+sampling and execution numbers):
 
 - **A direction-invariant class** (every pose sends its light back to the sun's own direction)
   shows the certified **source image** at the sun, the **weight tint** reading (e.g.
   "blue-tinted") with the exact measurement caliber spelled out, and the statement that
   wavelength moves no edge here — the colour question is the tint, not a shift.
 - **A full-dimensional class** shows the **support** (the deviation range the class covers), the
-  **sharp edge** with its closed-form certificate when the geometry certifies one, the
-  brightness peak as a **finite-resolution probe reading** (distinct from the geometric edge),
-  and the **chromatic dispersion** block: the inner edge at 650 nm and at 450 nm, how far apart
-  they sit and which way (for the classic two-face halo, red inner and blue outer), followed by
-  every other onset the table carried, and the basis — the engine's own geometry string and the
-  certificate's formula, apex angle and cross-check — readable in place. The **weight colour
-  reading**, the **weight tint** and the **reference profile** (the class's brightness along the
-  solar radial line at the document's reference wavelength, drawn with empty bins as gaps, not
-  zeros) sit behind their own expanders. A class without a sharp structure renders exactly that:
-  a support and a probe reading, no fabricated "brightest point".
-- **A family-restricted class** (a directed crystal) shows the **freezing ladder**: which
-  orientation dimension each level froze, at what centre and width, how many candidate images
-  each level proposed and how many the survival filter killed.
+  **sharp edge**, the brightness peak as a **finite-resolution probe reading** (distinct from
+  the geometric edge), and the **chromatic dispersion** line: how far the 650 nm inner edge sits
+  inside the 450 nm one and which way. The colour verdict, the tint reading and the
+  internal-reflection share sit beside the conclusions; a partial document says so, and the
+  reference wavelength and sun the positions read are always named. The followed-onset table,
+  the refractive indices, the certificate's formula and cross-check, the profile curve (drawn
+  with empty bins as gaps, not zeros), the tint's measurement caliber and the object cards live
+  in the Raypath view's fold groups.
+- **A family-restricted class** (a directed crystal) summarizes the ladder's outcome in one
+  line — how many candidate images survive and how many the survival filter killed; which
+  dimension each level froze, and each level's sample counts, are in the Raypath view's fold
+  groups.
 - **A refused class** says so in the engine's words — the delta axis could not partition this
   geometry, which is a statement about the partition, not that the class carries no light — and
-  keeps the independent facts readable beside it: the **independent witness** (the declared
-  source's own positive events on this class) and the **internal-reflection share**.
+  keeps the independent facts readable beside it: the **independent witness** sentence and the
+  **internal-reflection share**.
 
-The header always names the reference wavelength and where it came from, the sun the positions
-read, and whether the survey stopped inside its budget (a partial document says so). Selecting
-another class re-asks; the card never mixes two answers.
+Selecting another class re-asks; the card never mixes two answers.
 
 ## 7. The raypath view (the class reference map)
 
 Selecting a share-list row opens **Raypath view**, a movable, non-modal window following the
-selected physical class. The left pane is its scalar sky map; the right pane keeps the quality
-action, wavelength, shared presets, sky-point controls and **Pose & trace** entry above an
-independently scrolling identity/caliber/legend report. Closing a window only hides it: results
+selected physical class. The left pane is its scalar sky map; the right pane names the selected
+class first, then keeps the quality action with its state beside it, the wavelength row (the λ
+slider echoes the reading; its tooltip names whether an explicit value or the engine's
+reference is in force), the shared-view presets, the sky-point controls with the current
+target beside them, and the **Pose & trace** entry — all above an independently scrolling
+report that carries, in order: the **class answer** (the complete survey, with its Physics
+details / Calculation details fold groups), the **sky-point answer** (the complete point
+document, with its own fold pair), the map's caliber (the short quantity and its limits, the
+grid and execution numbers in folds), and a legend of short shape keys whose longer meanings
+sit behind a **Legend explanations** fold. Closing a window only hides it: results
 and in-flight work survive. Clicking the selected row opens it again.
 
 **One camera, two pictures.** The main picture and the map use the same lens, FOV, orientation
@@ -183,6 +190,17 @@ implicitly. The report scroll never zooms either camera. **Overlays** still cons
 survey's own located objects and dispersion circles, with one grouped tooltip and a legend
 of what was actually drawn; geometry positions are not whole-circle contribution claims.
 
+**Verdict anchors.** The class answer's colour verdict ("Weight colour: …" / "Position: …") is a
+spatial conclusion: hovering either row in the class answer draws a circle on the map at the
+deviation the verdict names, and moving the mouse away removes it. The **Verdict anchors**
+switch beside **Overlays** keeps the circle on without hovering; both nest under Overlays —
+turning Overlays off hides the anchor too. The circle reuses the dispersion circles' colour and
+readout label, quoted with the verdict's own delta. The honesty rules are visual: a verdict that
+names itself **not visible**, and one the class answer carries no position for, draw nothing
+(the text is the answer there, not a missing marker), and a verdict with **incomplete coverage**
+draws its circle dashed. The legend lists "verdict anchor" only on frames where one actually
+drew — its absence means no anchor is on the map, not that the verdict is gone.
+
 ## 8. The point inspector (the Pose & trace window, point detail)
 
 Where §7 answered "what does this class look like over the whole sky", the faces fed by the
@@ -200,26 +218,33 @@ coordinates and press **Set sky point**), then click **Pose & trace**. Picking o
 point does **not** open the window automatically. Close it with its title-bar close button and
 use the same entry to reopen it.
 
-**Point detail** (in the diagnostics region, under the class overview) remains another opener:
-clicking its title opens the **same floating, non-modal window**, with the same current selection,
-point document and pose cursor. Opening or reopening it starts no query and does not reset the
-cursor. The block itself keeps the answer and its evidence: once a class is
+The **Selection header** at the top of the diagnostics region carries two named buttons —
+**Raypath view** and **Pose & trace** — that stay reachable in every state, before any analysis,
+while queries run and after refusals; clicking one opens that window (or focuses it when it is
+already open). A short hint beside the buttons names the current state's next step. The point
+block below keeps the answer's summary: once a class is
 selected and a sky point is set, the engine is asked about that exact direction in the
 background (a couple-of-seconds tier; the point queues behind the survey and map on the same
-worker, and the block says so while it waits, with a **Cancel point** button). The answer opens
-with the engine's own echo — the target labels and deviation, the member face sequence, the
-crystal, the wavelength and its source, the refractive index, the sampling tier — then the
-component list as evidence rows (kind, end statuses, coverage, integral). A **point mass**
+worker, and the block says so while it waits, with a **Cancel point** button). The completed
+summary names the target and its deviation, the component count with any unavailable-integral
+limits, and the selected component's no-valid-sample fact; a **point mass**
 answer (a direction-invariant path — the sun's own image) is presented as the mass it is:
 position, target separation, the orbit integral and its measure support — no fiber, no
-playback, no forced curve. A refusal names itself; a multi-layer chain names
+playback, no forced curve. The complete answer — the member face sequence, the per-component
+evidence rows (kind, end statuses, coverage, integral), the sampling tier — lives in the
+Raypath view's sky-point answer section. A refusal names itself; a multi-layer chain names
 `multi_layer_unsupported` and points at the existing retreat (keep only this chain in the
 filters and re-run).
 
 In the window, the component selector is the globe region's combo — the one place that moves
-between components. The window's two draggable splits (the 3D region | the right column, the
-globe | the factor readouts) keep their ratios while the window is closed and reopened in the
-same session.
+between components. The window's layout is two columns: the left stacks **Raypath 3D** over the
+**contribution curve**, the right stacks the **sun direction globe** over the **current pose
+factors**. Four draggable dividers — between the columns, inside each column, and between the
+curve's canvas and its reading strip — keep their ratios while the window is closed and
+reopened in the same session. Resizing the window or a divider never snaps a hand-set split
+back: the dividers' extents are floors, and the graph areas absorb what a resize adds or
+removes (the curve's reading strip holds an eight-line budget until you drag its divider
+yourself).
 
 Waiting, cancelled, refused and sample changes retain the same canvas and control slots. Missing
 components or samples disable the corresponding controls instead of inventing data. Descriptions,
@@ -229,15 +254,17 @@ not squeeze the graph when they grow. Resize and divider changes still resize th
 **The sun direction globe** (the window's upper right) draws the selected component's fiber:
 each valid sample is one pose where the sun sits somewhere in the crystal (the `u` arrow), the
 polyline walks them in order, and the highlighted marker is the current sample. The deviation
-grid (toggleable) colours the sphere by where each sun direction deflected the light — drawn
-only when the document carries the grid, absent otherwise, never painted as zero. Under the
-disk: the sample slider and **Play**. Dragging the slider or playing moves through the poses
-that already came back in the document; the sky point itself never moves — playing changes the
-pose you are looking at, not the direction you asked about — and with the window closed the
-playing pauses (the cursor holds where it was and resumes on reopen).
+grid colours the sphere by where each sun direction deflected the light — drawn only when the
+document carries the grid, absent otherwise, never painted as zero; its toggle lives in the
+factors region's **Calculation details** fold, together with the note that names a requested
+grid the document does not carry. Under the disk: the sample slider and **Play**. Dragging the
+slider or playing moves through the poses that already came back in the document; the sky
+point itself never moves — playing changes the pose you are looking at, not the direction you
+asked about — and with the window closed the playing pauses (the cursor holds where it was
+and resumes on reopen).
 
-**Raypath 3D** (the window's large left region) draws the current sample's real path: the
-crystal's wireframe (its analysis shape — distributions flattened to the values the engine
+**Raypath 3D** (the window's left column, upper region) draws the current sample's real path:
+the crystal's wireframe (its analysis shape — distributions flattened to the values the engine
 used) with the entry leg, every internal reflection and the exit leg from the engine's
 representative-ray recovery, colour-coded with a legend, contacts marked. **World** and
 **Crystal** are the same physical path in two frames (drag orbits, wheel zooms). While the path
@@ -245,7 +272,8 @@ for a fresh pose is computing the region says so; a pose with no legal path name
 corridor's refusal and its measured area); a rank-0 point mass has no path and says that
 instead of drawing one.
 
-**Contribution curve** (the window's lower right) draws the selected component's five named
+**Contribution curve** (the window's left column, lower region) draws the selected component's
+five named
 factors — ρ (the declared pose density, `rad^-3`), A/a² (the entry area over the crystal
 length unit squared), T (the total transmission), K = 1/(J+ε), and their product ρ·A/a²·T·K —
 along the component's own SO(3) **arclength** (the horizontal axis, in rad; a closed loop
@@ -267,11 +295,15 @@ is the declared measure's honest answer, not missing data. The readouts are not 
 chart: the arms do not sum to 100 %, and a drawable curve is not a completeness claim about
 the class.
 
-**Current sample factors** (the scrollable list under the curve) reads the current pose's own
+**Current pose factors** (the window's lower right region) reads the current pose's own
 numbers — the orientation angles, ρ, the entry measures, the total transmission, the Jacobian
-with its named-unavailable state, K, their product, and each interface's transmittance
-labelled as conditional on this path. The class-level totals stay in the main window's
-diagnostics; these are the per-pose, per-path numbers of the sample the globe's marker names.
+with its named-unavailable state, K, and their product. Each interface's transmittance,
+labelled as conditional on this path, lives one fold deeper under **Physics details**. The
+region also carries the measure registration's note beside the numbers it limits, and short
+state lines that name the honest empty, waiting or refused forms. Hovering the curve canvas
+temporarily overrides the curve's own readout line only — these factors always describe the
+sample the globe's marker names, never the hovered one. The class-level totals stay in the
+main window's diagnostics; these are the per-pose, per-path numbers.
 
 ## 9. From the command line
 

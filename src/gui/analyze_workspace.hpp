@@ -32,6 +32,8 @@
 
 struct GLFWwindow;
 
+#include <string>
+
 namespace lumice::gui {
 
 struct GuiState;
@@ -51,6 +53,13 @@ void PumpAnalyzeQueries(GuiState& state, SurveyExecutor& executor, double now_s,
 // The Analyze workspace's frame layout. `window` is the host GLFW window (unused by the
 // placeholders, part of the Render*Panel signature family the frame loop calls).
 void RenderAnalyzeWorkspace(GLFWwindow* window, float window_width, float window_height);
+
+// The Selection header's hint slot fit rule, exported for the test seam that pins the slot's
+// width-dependent forms: the whole text when it fits the given width, otherwise its longest
+// UTF-8-safe prefix plus an ellipsis, and empty when the space cannot carry even that (the
+// slot then omits entirely — a defensive corner, unreachable at every legal column width while
+// the button pair fits its row, per the live-frame calibration).
+std::string AnalyzeEntryHintFitToWidth(const std::string& hint, float max_w);
 
 }  // namespace lumice::gui
 
