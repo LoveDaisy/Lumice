@@ -33,6 +33,14 @@ namespace lumice::gui {
 
 namespace {
 
+// The semantic palette's promotion (analyze_map_view.hpp kChromaticColour*) must be VALUE-identical
+// to the dispersion pair's original literals — the dispersions' pixels are a visual-reference
+// surface, and a wrong promotion would retune the whole picture at once. Pinned against the
+// literals at the promotion site: retuning one side breaks this at compile time, the two-consumer
+// change the constant's comment demands.
+static_assert(kChromaticColourRed == IM_COL32(242, 108, 92, 235), "the promoted red must equal its literal");
+static_assert(kChromaticColourBlue == IM_COL32(96, 145, 240, 235), "the promoted blue must equal its literal");
+
 OverlayLegendState g_map_legend;
 MapObservationTiming g_map_observation_timing;
 double ObservationClockSeconds() {
@@ -609,9 +617,13 @@ bool ProjectToRect(const MapCanvasProjection& view, const double pos[3], const I
 struct IsoDeltaWalk {
   int drawn = 0;            // the CURRENT contiguous polyline run (a disk exit breaks the run and resets
                             // it — the polyline's segmentation, not the walked amount)
-  int drawn_total = 0;      // segments submitted across the WHOLE walk: the "actually drew this
-                            // curve" fact the legend reads (the final run's length would read
-                            // zero for a circle that left the disk mid-way and never returned)
+  int drawn_total = 0;      // in-disk pairs walked across the WHOLE walk: for the solid form this
+                            // IS the submitted-line count ("actually drew this curve"), the legend
+                            // reads it; a circle that left the disk mid-way and never returned
+                            // still read zero from its final run's length alone
+  int lines_submitted = 0;  // AddLine calls actually emitted — the dashed form walks every pair
+                            // but submits only its on-phase ones, so the drawn-only legend gate
+                            // and label read THIS, never the walked amount
   int samples_in_disk = 0;  // the circle's own samples that landed in the view disk (of kOverlaySegments+1)
   bool have_top = false;
   double top_x = 0.0;
@@ -623,9 +635,16 @@ struct IsoDeltaWalk {
 
 // The iso-deviation circle about the sun (the survey dispersion's curve geometry): the circle's
 // one parameterization — orthogonal basis about the sun, kOverlaySegments samples — sampled,
-// projected, split where the disk leaves the view.
+// projected, split where the disk leaves the view. `dashed` is the verdict anchor's weakened
+// form (the coverage-incomplete honesty, §16.1's visual grammar): every dash-cycle's second half
+// of samples skips the segment, by SAMPLE INDEX (the circle's own parameter) so the pattern is
+// deterministic and view-independent — a run broken by the view disk does not restart the phase.
+// The solid form (dashed=false, every existing call) emits the same AddLine sequence it always
+// did, byte for byte.
 IsoDeltaWalk WalkIsoDeltaCircle(ImDrawList* dl, const MapCanvasProjection& view, const ImVec2& pic_min, float pic_px,
-                                const double sun_pos[3], double delta_deg, ImU32 colour, float thickness) {
+                                const double sun_pos[3], double delta_deg, ImU32 colour, float thickness,
+                                bool dashed = false) {
+  constexpr int kDashCycleSegments = 4;  // one cycle = 4 samples: 2 drawn, 2 skipped
   double u[3] = { 0.0, 0.0, 1.0 };
   double dot = Dot3(u, sun_pos);
   if (std::fabs(dot) > 0.9) {
@@ -658,9 +677,10 @@ IsoDeltaWalk WalkIsoDeltaCircle(ImDrawList* dl, const MapCanvasProjection& view,
       continue;
     }
     ++walk.samples_in_disk;
-    if (walk.drawn > 0) {
+    if (walk.drawn > 0 && (!dashed || (s / kDashCycleSegments) % 2 == 0)) {
       dl->AddLine(ImVec2(static_cast<float>(last_x), static_cast<float>(last_y)),
                   ImVec2(static_cast<float>(x), static_cast<float>(y)), colour, thickness);
+      ++walk.lines_submitted;
     }
     last_x = x;
     last_y = y;
@@ -673,6 +693,18 @@ IsoDeltaWalk WalkIsoDeltaCircle(ImDrawList* dl, const MapCanvasProjection& view,
     }
   }
   return walk;
+}
+
+// The curve readout's label (the dispersion circles' and the verdict anchor's shared shape): the
+// walk's topmost drawn point carries the text over a dark backing rect, in the curve's own colour.
+// One body for both callers — the backing ink's literal lives here and nowhere else.
+void DrawIsoDeltaReadoutLabel(ImDrawList* dl, const IsoDeltaWalk& walk, ImU32 colour, const char* text) {
+  const ImVec2 ts = ImGui::CalcTextSize(text);
+  dl->AddRectFilled(ImVec2(static_cast<float>(walk.top_x) - ts.x * 0.5f - 3.0f, static_cast<float>(walk.top_y) - ts.y),
+                    ImVec2(static_cast<float>(walk.top_x) + ts.x * 0.5f + 3.0f, static_cast<float>(walk.top_y)),
+                    IM_COL32(16, 17, 20, 170));
+  dl->AddText(ImVec2(static_cast<float>(walk.top_x) - ts.x * 0.5f, static_cast<float>(walk.top_y) - ts.y), colour,
+              text);
 }
 
 void DrawFrameAnchors(ImDrawList* dl, const MapCanvasProjection& view, const LUMICE_PathMapInfo& info,
@@ -978,16 +1010,29 @@ void DrawSurveyOverlays(ImDrawList* dl, GuiState& state, const MapCanvasProjecti
         char line[112];
         std::snprintf(line, sizeof(line), "%s · %.3f°%s", curve.label->c_str(), curve.delta_deg,
                       walk.partial() ? " · arc in view" : "");
-        const ImVec2 ts = ImGui::CalcTextSize(line);
-        dl->AddRectFilled(
-            ImVec2(static_cast<float>(walk.top_x) - ts.x * 0.5f - 3.0f, static_cast<float>(walk.top_y) - ts.y),
-            ImVec2(static_cast<float>(walk.top_x) + ts.x * 0.5f + 3.0f, static_cast<float>(walk.top_y)),
-            IM_COL32(16, 17, 20, 170));
-        dl->AddText(ImVec2(static_cast<float>(walk.top_x) - ts.x * 0.5f, static_cast<float>(walk.top_y) - ts.y),
-                    curve.colour, line);
+        DrawIsoDeltaReadoutLabel(dl, walk, curve.colour, line);
       }
     }
   }
+  // The verdict anchor (§16.1's A2 pilot): the class answer's diagnose drawn about the sun, the
+  // vocabulary's circle device at the verdict's own delta. The density interaction's two
+  // switches read the session — the hover standing is LAST frame's row state (the canvas draws
+  // before the info column writes; the one-frame lag is the hover semantics' own). The honesty
+  // gate, the closed kind set and the colour routing are the anchor draw's own (single owner).
+  VerdictAnchorInput verdict;
+  verdict.camera = &view.camera;
+  verdict.width_px = view.width;
+  verdict.height_px = view.height;
+  verdict.width_pt = view.width_pt;
+  verdict.height_pt = view.height_pt;
+  verdict.pic_min_x = pic_min.x;
+  verdict.pic_min_y = pic_min.y;
+  verdict.pic_px = pic_px;
+  SkySunAnchorFor(state, &verdict.sun);
+  verdict.shown = state.analysis.verdict_anchor_shown;
+  verdict.hover = state.analysis.verdict_anchor_hover;
+  verdict.legend = legend;
+  DrawVerdictAnchor(dl, model.diagnose, verdict);
 }
 
 void DrawSkyPointMarker(ImDrawList* dl, const MapCanvasProjection& view, const SkyPointIntent& intent,
@@ -1015,6 +1060,69 @@ void DrawSkyPointMarker(ImDrawList* dl, const MapCanvasProjection& view, const S
 }
 
 }  // namespace
+
+void DrawVerdictAnchor(ImDrawList* dl, const SurveyDiagnoseView& diagnose, const VerdictAnchorInput& in) {
+  // The density gate first: neither switch standing → nothing (with the toggle off and nothing
+  // hovered the canvas is the frame it always was).
+  if (!in.shown && !in.hover) {
+    return;
+  }
+  // The honesty gate, in the plan's J3 order, each leg short-circuiting. An unavailable
+  // diagnosis (a refused or not-run document) renders no diagnose rows at the text layer either
+  // — the chromatic layer's own limit line is that state's honesty, the anchor adds nothing.
+  if (!diagnose.available) {
+    return;
+  }
+  // The closed trigger kind set (H2's enumeration over dp_chromatic's VerdictOf): the edge
+  // family are the verdict kinds that carry a position — the set is closed by the payload's own
+  // structure, not by an open "anything with a position" predicate (the mapping must not fork
+  // from what the documents can actually carry).
+  const bool kind_anchored = diagnose.verdict_kind == "edge" || diagnose.verdict_kind == "gate_edge";
+  if (!kind_anchored || !diagnose.position_available || diagnose.visible == 0) {
+    // No spatial payload, or the verdict names itself not visible — anchoring it would read the
+    // map against the row's own words. Not drawing is the honest state; the text layer's limit
+    // lines and the legend's drawn-only rule carry the absence.
+    return;
+  }
+  // The coverage leg: an incomplete-coverage verdict still names its position, so the anchor
+  // draws — weakened, dashed (the limited computation stated in the visual grammar, the text
+  // layer's own qualifier line carrying the same limit in words). Judge the absence legs FIRST:
+  // a stop-requested verdict is kindless and positionless anyway, so a coverage-incomplete,
+  // self-invisible edge verdict resolves to absence here, not to a dashed ghost.
+  const bool dashed = !diagnose.coverage_complete;
+  ImU32 colour = 0;
+  if (diagnose.color == "blue") {
+    colour = kChromaticColourBlue;
+  } else if (diagnose.color == "red") {
+    colour = kChromaticColourRed;
+  } else {
+    return;  // no palette entry, no anchor — the edge family's colours are blue/red by construction
+  }
+  MapCanvasProjection view;
+  view.camera = *in.camera;
+  view.width = in.width_px;
+  view.height = in.height_px;
+  view.width_pt = in.width_pt;
+  view.height_pt = in.height_pt;
+  const ImVec2 pic_min(in.pic_min_x, in.pic_min_y);
+  double sun_pos[3];
+  SkyPosition(in.sun.altitude_deg, in.sun.azimuth_deg, sun_pos);
+  // One walk draws the circle and reports its topmost drawn point — the label anchor, the
+  // dispersion readout's own precedent. The legend bit reads the SUBMITTED line count: a legend
+  // describes the drawn picture, and a dashed circle that walked in-disk may still have skipped
+  // every one of its pairs.
+  const IsoDeltaWalk walk =
+      WalkIsoDeltaCircle(dl, view, pic_min, in.pic_px, sun_pos, diagnose.position_deg, colour, 1.4f, dashed);
+  if (walk.lines_submitted > 0) {
+    if (in.legend != nullptr) {
+      in.legend->verdict_anchor = true;
+    }
+    char line[96];
+    std::snprintf(line, sizeof(line), "verdict · %.3f°%s", diagnose.position_deg,
+                  walk.partial() ? " · arc in view" : "");
+    DrawIsoDeltaReadoutLabel(dl, walk, colour, line);
+  }
+}
 
 void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   g_map_observation_timing.began_seconds = ObservationClockSeconds();
@@ -1085,6 +1193,22 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   bool overlays = storage->GetBool(overlay_key, true);
   if (ImGui::Checkbox("Overlays##map", &overlays)) {
     storage->SetBool(overlay_key, overlays);
+  }
+  // The verdict anchor's persistent switch (§16.1's A2 pilot), beside the Overlays toggle it
+  // nests under (the anchor draws only while Overlays stands; this switch adds the always-on
+  // tier over the rows' hover). It lives on this header row — the fixed operation stack, never
+  // inside the growing report — and the session field IS the control's state (the slider's
+  // shape). The join is the row's own judgment: wrap, don't clip.
+  const float verdict_check_w =
+      ImGui::GetFrameHeight() + ImGui::GetStyle().ItemInnerSpacing.x + ImGui::CalcTextSize("Verdict anchors##map").x;
+  if (fits_on_line(verdict_check_w)) {
+    ImGui::SameLine();
+  }
+  ImGui::Checkbox("Verdict anchors##map", &state.analysis.verdict_anchor_shown);
+  if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+    ImGui::SetTooltip(
+        "Draw the class answer's colour verdict on the map: hovering its rows shows "
+        "the anchor temporarily, this switch keeps it.\nHidden together with Overlays.");
   }
 
   const float canvas_avail_w = ImGui::GetContentRegionAvail().x;
@@ -1624,8 +1748,18 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   if (state.analysis.survey.adopted_result) {
     const SurveyOverviewModel survey_model = BuildSurveyOverviewModel(*state.analysis.survey.adopted_result);
     ImGui::TextDisabled("Class answer");
-    RenderSurveyOverviewModel(survey_model);
+    // The verdict anchor's hover read (§16.1's A2 pilot): the class answer is the only site the
+    // linked diagnose rows render at, so this is the overwrite's owner — the row path writes the
+    // standing every frame (hover or explicit false), the canvas consumes it next frame.
+    bool verdict_row_hover = false;
+    RenderSurveyOverviewModel(survey_model, &verdict_row_hover);
+    state.analysis.verdict_anchor_hover = verdict_row_hover;
     ImGui::Separator();
+  } else {
+    // The class answer's absent frame (no adopted document): no rows render, so the overwrite
+    // has no site — this branch is the reset's owner instead. Without it a document's last
+    // hover standing would outlive the rows that carried it.
+    state.analysis.verdict_anchor_hover = false;
   }
   // The sky-point answer (contract §16.2): the adopted point document read in full, sorted
   // into its own fold pair. Sits after the class answer, before the map's own report — the
@@ -1773,6 +1907,10 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
         ImGui::TextWrapped("partial circles draw their in-view arc (\"arc in view\").");
       }
     }
+    if (legend.verdict_anchor) {
+      ImGui::Bullet();
+      ImGui::TextWrapped("verdict anchor");
+    }
     if (legend.sky_point) {
       ImGui::Bullet();
       ImGui::TextWrapped("sky-point marker");
@@ -1790,6 +1928,11 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
         ImGui::TextWrapped(
             "dispersion circles — the measured minimum-deviation geometry at the reference wavelengths; positions, "
             "not a whole-circle visibility or contribution claim");
+      }
+      if (legend.verdict_anchor) {
+        ImGui::TextWrapped(
+            "verdict anchor — the class answer's colour verdict at the deviation it names; "
+            "dashed when its coverage is incomplete");
       }
       if (legend.sky_point) {
         ImGui::TextWrapped("sky-point marker — the target the point face queries");
@@ -1809,6 +1952,10 @@ void RenderAnalyzeRaypathViewWindow(GuiState& state) {
       g_survey_overlay_cache.id != state.analysis.survey.intent_id)
     g_survey_overlay_cache = {};
   if (!state.analyze_raypath_view_open) {
+    // The window's closed frames: the class answer's rows do not render, so the hover standing's
+    // overwrite has no site — this seam owns the reset, and the first frame after a reopen reads
+    // false instead of whatever the mouse was on when the window closed.
+    state.analysis.verdict_anchor_hover = false;
     if (state.workspace.map_press_owner != GuiState::AnalyzeWorkspaceSession::PanoramaPressOwner::kNone)
       state.workspace.map_press_owner = GuiState::AnalyzeWorkspaceSession::PanoramaPressOwner::kCancelled;
     return;
@@ -1853,6 +2000,9 @@ void RenderAnalyzeRaypathViewWindow(GuiState& state) {
   if (!ImGui::Begin(kRaypathViewWindowTitle, &state.analyze_raypath_view_open,
                     ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoScrollbar |
                         ImGuiWindowFlags_NoScrollWithMouse)) {
+    // The Begin-false frame (the window fully clipped): neither region renders, so the hover
+    // standing's overwrite has no site here either — the same reset the closed seam owns.
+    state.analysis.verdict_anchor_hover = false;
     ImGui::End();
     if (state.workspace.map_press_owner != GuiState::AnalyzeWorkspaceSession::PanoramaPressOwner::kNone)
       state.workspace.map_press_owner = GuiState::AnalyzeWorkspaceSession::PanoramaPressOwner::kCancelled;

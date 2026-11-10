@@ -28,6 +28,15 @@ inline constexpr float kMapFullSkyRadiusDeg = 180.0f;
 // so the picture never claims a finer sample than it ran.
 inline constexpr int kMapQuerySampleCount = 500000;
 
+// The chromatic layer's two semantic colours, the dispersion pair's own values promoted to names
+// (contract §16.1's A2 pilot): the dispersion circles and the verdict anchor share this palette —
+// one semantics, one authority — so retuning a value here is a TWO-consumer change by definition,
+// never a one-side restyle. Spelled as the shift expression IM_COL32 spells (alpha<<24 | blue<<16
+// | green<<8 | red) so the RGBA tuple stays readable and this header stays off imgui.h;
+// analyze_map_view.cpp pins each against its original literal at compile time.
+inline constexpr unsigned int kChromaticColourRed = (235u << 24) | (92u << 16) | (108u << 8) | 242u;
+inline constexpr unsigned int kChromaticColourBlue = (235u << 24) | (240u << 16) | (145u << 8) | 96u;
+
 // ---- Session-facing types -------------------------------------------------------------------------
 
 // The user's sky-point intent (AC3): WHERE in the sky they are asking about, independent of any
@@ -163,11 +172,54 @@ struct OverlayLegendState {
   bool dispersion_red = false;
   bool dispersion_blue = false;
   bool dispersion_partial = false;  // any drawn circle left the view disk (the arc-in-view wording)
+  bool verdict_anchor = false;      // the verdict anchor drew (solid or dashed) — one bit: the
+                                    // legend entry names the category, the dashed form's honesty
+                                    // wording rides the Legend explanations group
   bool sky_point = false;
 };
 
 // Last actually drawn overlay legend, not a second camera/availability model.
 OverlayLegendState LastMapOverlayLegend();
+
+// ---- The verdict anchor (contract §16.1's A2 pilot) --------------------------------------------------
+
+struct SurveyDiagnoseView;  // gui/analyze_overview.hpp — the anchor's input facts, by reference
+
+// The anchor draw's caller-side geometry and switches. Every field is a plain value so the unit
+// layer can drive every honesty leg on a synthetic diagnose: the plan struct is the model's own
+// field shape (SurveyDiagnoseView), the camera reaches the projection by pointer (the header
+// stays off ViewProjection's include chain), and the canvas rectangle is the region's own.
+struct VerdictAnchorInput {
+  const ViewProjection* camera = nullptr;  // the region's frame projection (incomplete here)
+  int width_px = 1;                        // the projection's pixel sizes (the frame's own)
+  int height_px = 1;
+  float width_pt = 1.0f;  // the canvas rectangle's point sizes
+  float height_pt = 1.0f;
+  float pic_min_x = 0.0f;  // the canvas rectangle's top-left, screen coords
+  float pic_min_y = 0.0f;
+  float pic_px = 1.0f;                   // the canvas width in points (the walk's disk)
+  SkySunAnchor sun;                      // the sun the delta quotes (SkySunAnchorFor's read)
+  bool shown = false;                    // the persistent toggle (the session's checkbox)
+  bool hover = false;                    // the standing row hover (last frame's read)
+  OverlayLegendState* legend = nullptr;  // the frame's legend accounting; null = no legend
+};
+
+// The diagnose block's spatial conclusion drawn as an iso-deviation circle about the sun — the
+// dispersion curve's own geometry at the verdict's delta, the vocabulary's circle device. The
+// honesty gate runs in the plan's J3 order, each leg short-circuiting: a diagnosis the class
+// answer does not render rows for (unavailable), a verdict outside the closed trigger kind set
+// (the edge family only — the kinds that carry a position, dp_chromatic's VerdictOf), a verdict
+// with no spatial payload, and a verdict that names itself not visible draw NOTHING (not drawing
+// is the honest state, the text layer's limit lines and the legend's drawn-only rule carry it);
+// a position-carrying verdict with incomplete coverage draws the DASHED form (the same circle,
+// weakened — the "limited computation" honesty in the visual grammar), solid otherwise. The
+// colour is the shared semantic palette (kChromaticColour*): blue verdict blue, red verdict red,
+// no palette entry → no anchor. The readout label and the legend bit follow the dispersion
+// circle's precedents (topmost drawn point, backing rect, "arc in view"; a legend describes the
+// drawn picture — nothing drawn, no entry). Surfaced whole (gate + geometry) for the unit
+// layer's draw-list assertions; the map region's overlay path calls it with the adopted survey's
+// cache model and the session's two switches.
+void DrawVerdictAnchor(ImDrawList* dl, const SurveyDiagnoseView& diagnose, const VerdictAnchorInput& in);
 struct MapObservationTiming {
   double began_seconds = 0.0;
   double cpu_finished_seconds = 0.0;

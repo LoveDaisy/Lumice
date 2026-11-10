@@ -1875,6 +1875,26 @@ struct GuiState {
     // site drew this frame, for the gui_test layer to read (ImGui text has no ID to address).
     // Cleared at the Analyze workspace's frame entry; the render sites are the only writers.
     WaitFeedbackTexts wait_feedback_texts;
+    // The verdict anchor's density interaction (contract §16.1's A2 pilot): the class answer's
+    // colour verdict drawn on the map, two switches. `verdict_anchor_shown` is the persistent
+    // checkbox (default off — with nothing hovered the default frame's canvas is unchanged).
+    // `verdict_anchor_hover` is the diagnose-row hover standing: the class answer's render path
+    // overwrites it EVERY frame it renders (hover on either of the two linked rows → true,
+    // otherwise false), and
+    // the canvas consumes it the NEXT frame (the map region draws before the info column writes
+    // — the one-frame lag is the hover semantics' own, accepted at the contract). The two seams
+    // that skip the render path write false explicitly — the class-answer-absent frame and the
+    // closed window — so the flag only ever stands while the region that wrote it is on screen.
+    // A document switch drops the whole struct with the session (the reset below). Session tier
+    // like the struct's other display fields: never persisted, not in ConfigSnapshot or the
+    // dirty diff, Revert keeps them.
+    // WRITERS (the audit set): the checkbox in the Raypath view's map header row;
+    // RenderAnalyzeMapRegion's ##MapReport class-answer host (the overwrite, and the absent
+    // branch's reset); RenderAnalyzeRaypathViewWindow's closed-window seams (both the closed
+    // early-return and the Begin-false branch). No other write path by construction. READER:
+    // the canvas's verdict anchor draw (analyze_map_view.cpp DrawSurveyOverlays).
+    bool verdict_anchor_shown = false;
+    bool verdict_anchor_hover = false;
     // The sun the frozen scene binding was built with, captured at DoAnalyze (the GUI's sun is
     // always due north). The map request's window geometry derives from the sun the ENGINE will
     // evaluate against — the executor's frozen scene, not the live document, which the user may

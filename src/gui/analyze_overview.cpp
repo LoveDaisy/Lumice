@@ -546,6 +546,22 @@ void TextDeg(const char* label, double deg) {
   ImGui::TextWrapped("%s %s", label, FormatDeg(deg).c_str());
 }
 
+// The row's addressable hover surface (the verdict anchor's read, §16.1's A2 pilot): an
+// invisible button spanning the LAST item's own rect, submitted right after it. Plain text has
+// no ID — without an item there is neither a hover affordance nor the tests' addressing; the
+// button carries both and draws nothing. Submitted from the item's own rect top, ItemSize
+// replays the flow cursor exactly where the text item left it (the line's y restarts at the set
+// position, x returns to the line start), so both hosts' pixels and layout are the text's own —
+// SameLine after the row reads the button's rect, which IS the text's. Call immediately after
+// the row's text item; the call site owns OR-ing this into the frame's readout.
+bool HoverableRowOverlay(const char* id) {
+  const ImVec2 tmin = ImGui::GetItemRectMin();
+  const ImVec2 tmax = ImGui::GetItemRectMax();
+  ImGui::SetCursorScreenPos(tmin);
+  ImGui::InvisibleButton(id, ImVec2(tmax.x - tmin.x, tmax.y - tmin.y));
+  return ImGui::IsItemHovered();
+}
+
 // The region's text wraps, never clips: ImGui's Text/TextDisabled/BulletText size a single line
 // and clip at the region's right edge — exactly where a sentence gets interesting at the right
 // column's 260 pt floor (the screenshot that caught this reads "...certified by the closed-form
@@ -567,7 +583,11 @@ void DisabledWrapped(const char* fmt, ...) {
 // summary is a read of the same layer, not a second wording). H1's gap readings — the diagnose
 // verdict, the tint and TIR readings the conclusions don't already carry — read the same model
 // fields here, so both hosts see them without a second model.
-void RenderSurveyDefaultLayer(const SurveyOverviewModel& model) {
+//
+// `verdict_hover_readout` is the verdict anchor's hover read; the two linked diagnose rows (the
+// verdict line and the Position line) gain their addressable hover surface only when it is
+// non-null — see RenderSurveyOverviewModel's declaration for the read contract.
+void RenderSurveyDefaultLayer(const SurveyOverviewModel& model, bool* verdict_hover_readout = nullptr) {
   // The limits first (§16.1: state honesty covers both layers; the disabled block the header
   // used to carry keeps its content, minus the counts line that moved into Calculation
   // details).
@@ -603,12 +623,22 @@ void RenderSurveyDefaultLayer(const SurveyOverviewModel& model) {
   }
   // The colour verdict's main conclusion, default (the Dispersion/Diagnose row: 边位置、可见性/
   // 色彩主结论默认；coverage 不完整默认). Its notes and evidence basis stay in Physics details.
+  // The two linked rows (the verdict line and the Position line) are the verdict anchor's hover
+  // read (§16.1's A2 pilot): with a readout they carry their invisible hover surface, without
+  // one they are plain text and nothing else changes — the coverage qualifier line is NOT
+  // linked: its limit is carried by the anchor's own dashed form, hovering it adds nothing.
   if (model.diagnose.available) {
     ImGui::Bullet();
     ImGui::TextWrapped("Weight colour: %s, %s, %s.", model.diagnose.verdict_kind.c_str(), model.diagnose.color.c_str(),
                        model.diagnose.visible ? "visible" : "not visible");
+    if (verdict_hover_readout != nullptr) {
+      *verdict_hover_readout |= HoverableRowOverlay("###diagnose_verdict_row");
+    }
     if (model.diagnose.position_available) {
       TextDeg("Position:", model.diagnose.position_deg);
+      if (verdict_hover_readout != nullptr) {
+        *verdict_hover_readout |= HoverableRowOverlay("###diagnose_position_row");
+      }
     }
     if (!model.diagnose.coverage_complete) {
       DisabledWrapped("Coverage incomplete — the verdict names what it read, not the whole class.");
@@ -875,12 +905,12 @@ void RenderSurveyCalculationDetails(const SurveyOverviewModel& model) {
 
 }  // namespace
 
-void RenderSurveyOverviewModel(const SurveyOverviewModel& model) {
+void RenderSurveyOverviewModel(const SurveyOverviewModel& model, bool* verdict_hover_readout) {
   if (!model.valid) {
     ImGui::TextUnformatted("Survey document unreadable.");
     return;
   }
-  RenderSurveyDefaultLayer(model);
+  RenderSurveyDefaultLayer(model, verdict_hover_readout);
   ImGui::Spacing();
   if (FoldOpen(kSurveyPhysicsDetailsLabel, "sv_answer")) {
     RenderSurveyPhysicsDetails(model);

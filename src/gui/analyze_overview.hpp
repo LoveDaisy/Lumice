@@ -246,7 +246,14 @@ inline bool FoldOpen(const char* label, const char* suffix_id) {
 // and their limits), then the two fold groups (contract §16.1: Physics details, Calculation
 // details, both closed by default). Assumes the region's four-state shell already dispatched
 // here (a completed, adopted document). This is the Raypath view's class-answer host.
-void RenderSurveyOverviewModel(const SurveyOverviewModel& model);
+//
+// `verdict_hover_readout` is the verdict anchor's hover read (§16.1's A2 pilot): when non-null,
+// the diagnose block's two linked rows (the verdict line and the Position line) gain an
+// addressable hover surface and the pointer receives the row-hover standing — true when either
+// row is under the pointer this frame, false otherwise (the caller writes it to the session
+// every frame). Null (the default) submits the same rows as plain text, no extra items, zero
+// interaction state — the main window's summary path passes nothing and renders byte-identically.
+void RenderSurveyOverviewModel(const SurveyOverviewModel& model, bool* verdict_hover_readout = nullptr);
 
 // The main window's summary projection (contract §16.2): the SAME model read through the SAME
 // default-layer renderer the complete answer uses — the summary is a read of it, never a second
