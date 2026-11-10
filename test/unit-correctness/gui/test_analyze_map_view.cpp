@@ -1052,10 +1052,14 @@ class VerdictAnchorDraw : public ::testing::Test {
   ImGuiContext* ctx_ = nullptr;
 };
 
-// The honesty gate on a synthetic diagnose — the injection the plan's H4 asked for and the drawn
-// form has no engine fixture for. Each absence leg draws nothing (bucket counts zero), the
-// coverage-incomplete leg still draws (dashed — the drawn form's discriminability is the next
-// test), and the legend's verdict bit follows what actually drew.
+// The honesty gate on a synthetic diagnose — the injection seam the SurveyDiagnoseView plain
+// struct provides, and the only tier that can hold the drawn legs: the engine reaches a
+// coverage-incomplete, position-carrying verdict only through a stop or a cost guard, shapes no
+// deterministic fixture produces (contract §16.1.3 records the vocabulary and the honesty
+// grammar these tests assert).
+// Each absence leg draws nothing (bucket counts zero), the coverage-incomplete leg still draws
+// (dashed — the drawn form's discriminability is the next test), and the legend's verdict bit
+// follows what actually drew.
 TEST_F(VerdictAnchorDraw, HonestyGateLegs) {
   const ViewProjection vp = SunCamera();
   const SurveyDiagnoseView pilot = Diagnose("edge", "blue", 40.0, true);
@@ -1103,15 +1107,35 @@ TEST_F(VerdictAnchorDraw, HonestyGateLegs) {
 
 // The density gate's two tiers: the hover alone anchors, the toggle alone anchors — and the
 // closed kind set's second member (gate_edge) anchors through the same path. One frame, two
-// colour buckets: the hover tier draws blue, the toggle tier's gate_edge red.
+// colour buckets: the hover tier draws blue, the toggle tier's gate_edge red. The legend bit is
+// pinned here too (the drawn → bit-set coupling, unit-tier, not only through the functional
+// chain).
 TEST_F(VerdictAnchorDraw, HoverAndToggleEachAnchor) {
   const ViewProjection vp = SunCamera();
+  OverlayLegendState legend;
   VerdictAnchorInput in = Input(vp, /*shown=*/false, /*hover=*/true);
+  in.legend = &legend;
   DrawVerdictAnchor(ImGui::GetBackgroundDrawList(), Diagnose("edge", "blue", 40.0, true), in);
   EXPECT_GT(IndexCountForColour(kChromaticColourBlue), 0);
+  EXPECT_TRUE(legend.verdict_anchor);
   in = Input(vp, /*shown=*/true, /*hover=*/false);
   DrawVerdictAnchor(ImGui::GetBackgroundDrawList(), Diagnose("gate_edge", "red", 60.0, true), in);
   EXPECT_GT(IndexCountForColour(kChromaticColourRed), 0);
+}
+
+// The switch standing but the ring wholly outside the view disk: the walk submits nothing — no
+// legend bit, no label. This is the lines_submitted gate's own reason: the walked pair count is
+// nonzero while the drawn picture is empty, and a legend describes the drawn picture.
+TEST_F(VerdictAnchorDraw, OutOfViewRingDrawsNothingAndEarnsNoLegend) {
+  const ViewProjection vp = SunCamera();
+  OverlayLegendState legend;
+  VerdictAnchorInput in = Input(vp, /*shown=*/true, /*hover=*/false);
+  in.legend = &legend;
+  // δ=150 about the sun on a 180° fisheye aimed at the sun: every sample sits beyond the
+  // frustum's 90° reach, so the whole walk is out of view.
+  DrawVerdictAnchor(ImGui::GetBackgroundDrawList(), Diagnose("edge", "blue", 150.0, true), in);
+  EXPECT_EQ(IndexCountForColour(kChromaticColourBlue), 0);
+  EXPECT_FALSE(legend.verdict_anchor);
 }
 
 // The colour routing reads the verdict's own colour through the shared palette: a red verdict's

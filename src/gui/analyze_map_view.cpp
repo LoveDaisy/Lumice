@@ -644,7 +644,9 @@ struct IsoDeltaWalk {
 IsoDeltaWalk WalkIsoDeltaCircle(ImDrawList* dl, const MapCanvasProjection& view, const ImVec2& pic_min, float pic_px,
                                 const double sun_pos[3], double delta_deg, ImU32 colour, float thickness,
                                 bool dashed = false) {
-  constexpr int kDashCycleSegments = 4;  // one cycle = 4 samples: 2 drawn, 2 skipped
+  constexpr int kDashCycleSegments = 4;  // one dash phase = 4 samples: 4 drawn, then 4 skipped
+                                         // (the %2 alternation makes the period 8) — a run broken
+                                         // by the view disk does not restart the phase
   double u[3] = { 0.0, 0.0, 1.0 };
   double dot = Dot3(u, sun_pos);
   if (std::fabs(dot) > 0.9) {
@@ -1067,16 +1069,17 @@ void DrawVerdictAnchor(ImDrawList* dl, const SurveyDiagnoseView& diagnose, const
   if (!in.shown && !in.hover) {
     return;
   }
-  // The honesty gate, in the plan's J3 order, each leg short-circuiting. An unavailable
+  // The honesty gate, in contract §16.1.3's order, each leg short-circuiting. An unavailable
   // diagnosis (a refused or not-run document) renders no diagnose rows at the text layer either
   // — the chromatic layer's own limit line is that state's honesty, the anchor adds nothing.
   if (!diagnose.available) {
     return;
   }
-  // The closed trigger kind set (H2's enumeration over dp_chromatic's VerdictOf): the edge
-  // family are the verdict kinds that carry a position — the set is closed by the payload's own
-  // structure, not by an open "anything with a position" predicate (the mapping must not fork
-  // from what the documents can actually carry).
+  // The closed trigger kind set (contract §16.1.3): the edge family are the verdict kinds that
+  // carry a position — the set is closed by the payload's own structure (dp_chromatic's VerdictOf
+  // is the only place has_position is set, exactly for these two kinds), not by an open
+  // "anything with a position" predicate (the mapping must not fork from what the documents can
+  // actually carry).
   const bool kind_anchored = diagnose.verdict_kind == "edge" || diagnose.verdict_kind == "gate_edge";
   if (!kind_anchored || !diagnose.position_available || diagnose.visible == 0) {
     // No spatial payload, or the verdict names itself not visible — anchoring it would read the
@@ -1099,6 +1102,9 @@ void DrawVerdictAnchor(ImDrawList* dl, const SurveyDiagnoseView& diagnose, const
     return;  // no palette entry, no anchor — the edge family's colours are blue/red by construction
   }
   MapCanvasProjection view;
+  // The mirror of VerdictAnchorInput's projection quintet (see its comment): a new
+  // MapCanvasProjection field must be copied here AND carried by the input struct, or this
+  // rebuilt view silently defaults while the dispersion circles move.
   view.camera = *in.camera;
   view.width = in.width_px;
   view.height = in.height_px;

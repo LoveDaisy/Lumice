@@ -2542,10 +2542,16 @@ bool SurveyOverviewShowsDispersionAndProfile(ImGuiTestContext* ctx) {
 // answer's diagnose rows — addressable hover surfaces over the wrapped text — drive the map's
 // anchor, the toggle keeps it, and the legend bit (the same accounting the legend entry renders
 // from) reads what the canvas actually drew. The fixture is the dispersion face's own scene; the
-// clicked row is NOT the top chain — the probe behind this file's H1: the top chain's verdict
-// names itself not visible and anchors nothing BY DESIGN (the honesty gate's own leg), while
-// this chain's diagnose is the pilot's edge/blue/visible and its dispersion carries no min row
-// (no dispersion circle shares the canvas, so the verdict bit is unambiguous).
+// clicked row is NOT the top chain — the top chain (a two-face chain, like 3-6) structurally
+// refuses the TIR leg and its verdict names itself not visible, anchoring nothing BY DESIGN (the
+// honesty gate's own leg), while this chain's diagnose is the pilot's edge/blue/visible and its
+// dispersion carries no min row (no dispersion circle shares the canvas, so the verdict bit is
+// unambiguous).
+// Flake attribution, should this ever red: the premise asserts below (the 1-3-2 survey's
+// diagnose fields) are the FIRST suspects — the whole-sky analysis is unseeded and the survey's
+// chromatic legs complete in ~5.6 s of the 15 s budget (~2.7x margin), so a red premise is a
+// data/ranking or budget-truncation event, not an interaction-chain defect. The interaction
+// chain is only in play once the premises hold.
 bool VerdictAnchorHoverAndToggleOnTheMap(ImGuiTestContext* ctx) {
   ScopedServerGuard guard;
   IM_CHECK_RETV(BringUpScene(ctx, kFullyRandomJson, /*infinite=*/false, /*gpu=*/false), false);

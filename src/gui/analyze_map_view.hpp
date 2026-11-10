@@ -186,9 +186,13 @@ OverlayLegendState LastMapOverlayLegend();
 struct SurveyDiagnoseView;  // gui/analyze_overview.hpp — the anchor's input facts, by reference
 
 // The anchor draw's caller-side geometry and switches. Every field is a plain value so the unit
-// layer can drive every honesty leg on a synthetic diagnose: the plan struct is the model's own
+// layer can drive every honesty leg on a synthetic diagnose: the input struct is the model's own
 // field shape (SurveyDiagnoseView), the camera reaches the projection by pointer (the header
 // stays off ViewProjection's include chain), and the canvas rectangle is the region's own.
+// The projection quintet (camera/width_px/height_px/width_pt/height_pt) mirrors MapCanvasProjection
+// field-for-field — DrawVerdictAnchor rebuilds the projection from these, and a new projection
+// field must be added to BOTH sides or the anchor's rebuilt view silently defaults while the
+// dispersion circles move (the geometry-parameter twin of the palette's static_assert pin).
 struct VerdictAnchorInput {
   const ViewProjection* camera = nullptr;  // the region's frame projection (incomplete here)
   int width_px = 1;                        // the projection's pixel sizes (the frame's own)
@@ -206,7 +210,7 @@ struct VerdictAnchorInput {
 
 // The diagnose block's spatial conclusion drawn as an iso-deviation circle about the sun — the
 // dispersion curve's own geometry at the verdict's delta, the vocabulary's circle device. The
-// honesty gate runs in the plan's J3 order, each leg short-circuiting: a diagnosis the class
+// honesty gate runs in contract §16.1.3's short-circuit order: a diagnosis the class
 // answer does not render rows for (unavailable), a verdict outside the closed trigger kind set
 // (the edge family only — the kinds that carry a position, dp_chromatic's VerdictOf), a verdict
 // with no spatial payload, and a verdict that names itself not visible draw NOTHING (not drawing
