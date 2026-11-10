@@ -627,6 +627,32 @@ ImGuiWindow* RegionWindowUnder(const char* parent_name, const char* name_fragmen
 ImGuiWindow* MapRegionWindow() {
   return RegionWindowUnder("Raypath view", "##AnalyzeRaypathView");
 }
+// The map window's colour bucket, in index quads — the unit rig's IndexCountForColour over the
+// real window's draw list. The anchor's line quads and its label's glyphs carry the semantic
+// colour six vertices at a time; the backing rect's ink is a different colour and stays out of
+// every bucket. This reads the PRODUCTION assembly's own output (the VerdictAnchorInput field
+// copies at the canvas), which the session-flag and legend reads only imply.
+int MapWindowIndexCountForColour(ImU32 colour) {
+  const ImGuiWindow* region = MapRegionWindow();
+  if (region == nullptr) {
+    return 0;
+  }
+  const ImDrawList* dl = region->DrawList;
+  int count = 0;
+  for (int i = 0; i + 5 < dl->IdxBuffer.Size; i += 6) {
+    bool matches = true;
+    for (int k = 0; k < 6; ++k) {
+      if (dl->VtxBuffer[static_cast<int>(dl->IdxBuffer[i + k])].col != colour) {
+        matches = false;
+        break;
+      }
+    }
+    if (matches) {
+      count += 6;
+    }
+  }
+  return count;
+}
 // The info region beside the map (##AnalyzeRaypathInfo): the wavelength, the view buttons,
 // the caliber block and the sky-point input. The D3 split (contract §4.2) puts the picture's
 // facts here; the containment asserts for those controls anchor to THIS child.
@@ -2589,10 +2615,12 @@ bool VerdictAnchorHoverAndToggleOnTheMap(ImGuiTestContext* ctx) {
   ctx->Yield(3);
   ctx->Yield(3);
   // The default frame: no hover, the toggle off — the anchor drew nothing even with the ring in
-  // view.
+  // view. The bucket read is the draw face itself (the production assembly's own quads), the
+  // reads above only imply it.
   IM_CHECK_RETV(!gui::g_state.analysis.verdict_anchor_shown, false);
   IM_CHECK_RETV(!gui::g_state.analysis.verdict_anchor_hover, false);
   IM_CHECK_RETV(!gui::LastMapOverlayLegend().verdict_anchor, false);
+  IM_CHECK_RETV(MapWindowIndexCountForColour(gui::kChromaticColourBlue) == 0, false);
   // Hover the verdict row: the row's overlay takes the pointer, the info column writes the
   // standing, the canvas draws it the NEXT frame — three frames carry the whole chain (the
   // frame lag the contract accepts for hover semantics).
@@ -2603,6 +2631,7 @@ bool VerdictAnchorHoverAndToggleOnTheMap(ImGuiTestContext* ctx) {
   ctx->Yield(3);
   IM_CHECK_RETV(gui::g_state.analysis.verdict_anchor_hover, false);
   IM_CHECK_RETV(gui::LastMapOverlayLegend().verdict_anchor, false);
+  IM_CHECK_RETV(MapWindowIndexCountForColour(gui::kChromaticColourBlue) > 0, false);
   // Hover the Position row: the second linked row, the same anchor.
   ctx->ScrollToItem("**/###diagnose_position_row", ImGuiAxis_Y);
   ctx->Yield(1);
@@ -2615,15 +2644,18 @@ bool VerdictAnchorHoverAndToggleOnTheMap(ImGuiTestContext* ctx) {
   ctx->Yield(3);
   IM_CHECK_RETV(!gui::g_state.analysis.verdict_anchor_hover, false);
   IM_CHECK_RETV(!gui::LastMapOverlayLegend().verdict_anchor, false);
+  IM_CHECK_RETV(MapWindowIndexCountForColour(gui::kChromaticColourBlue) == 0, false);
   // The toggle's always-on tier: no row hover, the anchor stands; off, it leaves.
   ctx->ItemClick("**/Verdict anchors##map");
   ctx->Yield(3);
   IM_CHECK_RETV(gui::g_state.analysis.verdict_anchor_shown, false);
   IM_CHECK_RETV(!gui::g_state.analysis.verdict_anchor_hover, false);
   IM_CHECK_RETV(gui::LastMapOverlayLegend().verdict_anchor, false);
+  IM_CHECK_RETV(MapWindowIndexCountForColour(gui::kChromaticColourBlue) > 0, false);
   ctx->ItemClick("**/Verdict anchors##map");
   ctx->Yield(3);
   IM_CHECK_RETV(!gui::LastMapOverlayLegend().verdict_anchor, false);
+  IM_CHECK_RETV(MapWindowIndexCountForColour(gui::kChromaticColourBlue) == 0, false);
   return true;
 }
 

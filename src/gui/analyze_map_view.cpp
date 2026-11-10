@@ -696,8 +696,10 @@ IsoDeltaWalk WalkIsoDeltaCircle(ImDrawList* dl, const MapCanvasProjection& view,
 }
 
 // The curve readout's label (the dispersion circles' and the verdict anchor's shared shape): the
-// walk's topmost drawn point carries the text over a dark backing rect, in the curve's own colour.
-// One body for both callers — the backing ink's literal lives here and nowhere else.
+// walk's topmost in-disk sample carries the text over a dark backing rect, in the curve's own
+// colour (the dashed form may leave that sample on a skipped stretch — the anchor sits within one
+// dash cycle of the nearest submitted line). One body for both callers — the backing ink's
+// literal lives here and nowhere else.
 void DrawIsoDeltaReadoutLabel(ImDrawList* dl, const IsoDeltaWalk& walk, ImU32 colour, const char* text) {
   const ImVec2 ts = ImGui::CalcTextSize(text);
   dl->AddRectFilled(ImVec2(static_cast<float>(walk.top_x) - ts.x * 0.5f - 3.0f, static_cast<float>(walk.top_y) - ts.y),
@@ -995,7 +997,7 @@ void DrawSurveyOverlays(ImDrawList* dl, GuiState& state, const MapCanvasProjecti
         legend != nullptr ? &legend->dispersion_blue : &legend_bits_sink[1] },
     };
     for (const Curve& curve : curves) {
-      // One walk draws the circle and reports its topmost drawn point — the label anchor (the
+      // One walk draws the circle and reports its topmost in-disk sample — the label anchor (the
       // readout the eye meets). A partially visible circle says so: the drawn arc is the
       // in-view part, not the whole circle. The legend and the label read the SUBMITTED line
       // count: a legend describes the drawn picture, and a walk that only grazed the disk
@@ -1113,7 +1115,7 @@ void DrawVerdictAnchor(ImDrawList* dl, const SurveyDiagnoseView& diagnose, const
   const ImVec2 pic_min(in.pic_min_x, in.pic_min_y);
   double sun_pos[3];
   SkyPosition(in.sun.altitude_deg, in.sun.azimuth_deg, sun_pos);
-  // One walk draws the circle and reports its topmost drawn point — the label anchor, the
+  // One walk draws the circle and reports its topmost in-disk sample — the label anchor, the
   // dispersion readout's own precedent. The legend bit reads the SUBMITTED line count: a legend
   // describes the drawn picture, and a dashed circle that walked in-disk may still have skipped
   // every one of its pairs.
