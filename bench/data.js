@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794334960577,
+  "lastUpdate": 1794334962749,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9608,50 +9608,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "a2c5d90a7a3f0918d628d6b49921aad3a0a7c8ed",
-          "message": "Merge pull request #479 from LoveDaisy/fix/analyze-render-share-calibration\n\nShare-domain calibration: lens landing semantics + dual fold-boundary defect + cone cross-check tool (task-669)",
-          "timestamp": "2026-10-10T18:45:27+08:00",
-          "tree_id": "45ab14128501225882d5f360859fce217f5b3a9f",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/a2c5d90a7a3f0918d628d6b49921aad3a0a7c8ed"
-        },
-        "date": 1791629302856,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 106.6,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 99.6,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 98.9,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 91.6,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "6e0a5b01d67218589710fdc63aaa96e5c9bab05d",
           "message": "Merge pull request #480 from LoveDaisy/fix/dual-fisheye-fold-boundary-loss\n\nfix(raypath): clamp dual-fisheye fold-boundary pixels into canvas (task-670)",
           "timestamp": "2026-10-10T22:52:34+08:00",
@@ -13986,6 +13942,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 94.6,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e0df6562454ca8358e50acf0a8b95517ddb84774",
+          "message": "Merge pull request #582 from LoveDaisy/feat/analyze-ia-implementation\n\nAnalyze IA implementation: dual entries, L1-L5 layering, verdict anchors, Pose relayout (scrum 778)",
+          "timestamp": "2026-11-11T02:18:48+08:00",
+          "tree_id": "a98c639e8604a4f19de9b25f463f24311689ebfd",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/e0df6562454ca8358e50acf0a8b95517ddb84774"
+        },
+        "date": 1794334962312,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 92.6,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 99.9,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 99,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 93.4,
             "unit": "%"
           }
         ]
