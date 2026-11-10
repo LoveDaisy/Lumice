@@ -7456,6 +7456,59 @@ bool PoseCurveRegionDrawsAndMovesTheSharedCursor(ImGuiTestContext* ctx) {
                static_cast<double>(canvas.RectFull.GetWidth()), static_cast<double>(canvas.RectFull.GetHeight()));
   IM_CHECK_RETV(SaveWindowPng(ctx, "//Pose & trace", GuiTestTempPath("pose_curve_region_default.png").string()), false);
 
+  // ---- §16.4's content-owner faces at the default geometry (Step 6): the factors region
+  // hosts the current pose's readouts — both fold headers present and contained (default-
+  // closed; the toggle's flip legs live in the narrowest case), the companion holds its fixed
+  // 8-line quota against the content's arrival (the ladder line became the full companion
+  // content and the geometry did not move — §15), and the measure registration's gap state is
+  // logged for the hands-on record (the note rides the default layer by construction; this
+  // scene may not carry a gap to exercise it). ----
+  {
+    ImGuiWindow* factors = PoseRegionWindow("##AnalyzePoseFactors");
+    IM_CHECK_RETV(factors != nullptr, false);
+    const ImGuiTestItemInfo physics = ctx->ItemInfo("**/Physics details##pose_factors", ImGuiTestOpFlags_NoError);
+    IM_CHECK_RETV(physics.ID != 0, false);
+    const ImGuiTestItemInfo calc = ctx->ItemInfo("**/Calculation details##pose_factors", ImGuiTestOpFlags_NoError);
+    IM_CHECK_RETV(calc.ID != 0, false);
+    IM_CHECK_RETV(physics.RectFull.Max.y <= factors->InnerClipRect.Max.y + 0.5f, false);
+    IM_CHECK_RETV(calc.RectFull.Max.y <= factors->InnerClipRect.Max.y + 0.5f, false);
+    LUMICE_PathMeasureRegistration reg{};
+    reg.struct_size = sizeof(reg);
+    const bool reg_ok = LUMICE_PathPointGetMeasureRegistration(gui::g_state.analysis.point.adopted_result.get(),
+                                                               &reg) == LUMICE_PATH_READ_OK;
+    ctx->LogInfo("[pose factors] fold headers contained at default; measure registration %s (gap %d)",
+                 reg_ok ? "read" : "absent", reg_ok ? static_cast<int>(reg.registered_gap) : -1);
+    ImGuiWindow* comp = nullptr;
+    for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
+      if (w != nullptr && w->Active && w->ParentWindow != nullptr &&
+          std::strstr(w->ParentWindow->Name, "##AnalyzePoseCurve") != nullptr &&
+          std::strstr(w->Name, "##PoseCurveScroll") != nullptr) {
+        comp = w;
+        break;
+      }
+    }
+    IM_CHECK_RETV(comp != nullptr, false);
+    const float quota = 8.0f * ImGui::GetTextLineHeightWithSpacing();
+    ctx->LogInfo("[pose factors] companion %.0f vs quota %.0f", static_cast<double>(comp->Size.y),
+                 static_cast<double>(quota));
+    IM_CHECK_RETV(fabsf(comp->Size.y - quota) < 2.0f, false);
+  }
+  // Hover on the canvas is the curve readout's temporary override only: the selection stands
+  // and the factors region — bound to view.sample_index, which hover never writes — keeps its
+  // geometry.
+  {
+    const int sample_before_hover = gui::g_state.analysis.point_view.sample_index;
+    const ImVec2 factors_geo_before = PoseRegionWindow("##AnalyzePoseFactors")->Size;
+    ctx->MouseMoveToPos(
+        ImVec2(canvas.RectFull.Min.x + canvas.RectFull.GetWidth() * 0.3f, canvas.RectFull.GetCenter().y));
+    ctx->Yield(3);
+    IM_CHECK_RETV(gui::g_state.analysis.point_view.sample_index == sample_before_hover, false);
+    const ImVec2 factors_geo_after = PoseRegionWindow("##AnalyzePoseFactors")->Size;
+    IM_CHECK_RETV(factors_geo_before.x == factors_geo_after.x && factors_geo_before.y == factors_geo_after.y, false);
+    ctx->LogInfo("[pose factors] hover wrote nothing; factors region held %.0fx%.0f",
+                 static_cast<double>(factors_geo_after.x), static_cast<double>(factors_geo_after.y));
+  }
+
   // Wheel zoom owns only the Y window: neither the cursor nor the query changes. Let the
   // existing region claim stand before sending input, as for the map/orbit gestures.
   const gui::PointIntentKey key_before = gui::g_state.analysis.point.key;
