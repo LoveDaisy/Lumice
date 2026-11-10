@@ -1984,13 +1984,33 @@ struct GuiState {
   // reset it, Revert keeps it — closing and reopening the
   // window keeps the user's split within this process.
   float analyze_pose_view_right_ratio = 0.333f;
-  // D5 — the Pose & trace window's right column's globe | curve split (contract §4.2): the
-  // globe region's share of the column's height. Same semantics, independence and tier as the
-  // D4 field above (dragging D5 never touches D4 and vice versa — §4.2's 独立不联动). The
-  // default sits INSIDE the D5 clamp band at the default window (756: the curve region's full
-  // form took most of the column; a default above the band's ceiling would drag "down" into a
-  // downward correction — the band's ceiling is the curve region's floor).
-  float analyze_pose_view_globe_ratio = 0.45f;
+  // D6 — the Pose & trace window's right column's globe | factors split (contract §16.4): the
+  // globe region's share of the column's height. The boundary the pose window's row splitter
+  // has always written; the §16.4 relayout renames the LOWER side (curve → factors region) and
+  // the stored semantics follow the globe — the field keeps meaning "the globe region's height
+  // share", never a 3D share (the contract's explicit no-silent-remeaning rule). Same
+  // independence and tier as the D4 field above (dragging D6 never touches D4 and vice versa).
+  // The default sits INSIDE the clamp band at the default window (the band's ceiling is the
+  // factors region's floor); the §16.4.1 suggested value refreshes the factory state only —
+  // the ratio is session display state, so no user data migrates.
+  float analyze_pose_view_globe_ratio = 0.55f;
+  // D5 — the Pose & trace window's LEFT column's 3D | curve split (contract §16.4): the 3D
+  // region's share of the left column's height. A new session field for the relayout's new
+  // boundary — same semantics, independence and tier as D4/D6 above: the split's identity,
+  // written only by its drag, clamped at the two floors every frame (the 3D floor and the
+  // curve region's floor, gui_constants.hpp); no query result, selection change or content
+  // change ever writes it (manual priority, §9.3). Dragging D5 never touches D4/D6/D7.
+  float analyze_pose_view_left_row_ratio = 0.45f;
+  // D7 — the Pose & trace window's curve region's canvas | companion split (contract §16.4):
+  // the canvas's share of the curve region's split span. The sentinel 0.0f means "never
+  // dragged": the companion then holds its fixed 8-line quota and the canvas eats the whole
+  // delta (the resize strategy's elastic|quota pair — the quota is a fixed budget, never
+  // content height, §15). A drag writes the dragged share (> 0 by construction — the canvas's
+  // real-slice floor keeps a written share positive), and from then on the stored share
+  // governs the split, clamped at the two floors: user intent overrides the strategy, the
+  // resize-strategy contract's override rule. Same session tier and manual-priority discipline
+  // as the other three pose ratios; dragging D7 never touches D4/D5/D6.
+  float analyze_pose_view_curve_canvas_ratio = kPoseViewCurveCanvasRatioUndragged;
 
   // The Angular Distance section's "pick a radius on the preview" mode (angular_dist_picker.hpp).
   // While armed, the preview's left click belongs to the pick — camera orbit and zoom, the

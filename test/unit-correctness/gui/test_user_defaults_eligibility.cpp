@@ -90,7 +90,7 @@ namespace {
 // window's own split ratios `analyze_pose_view_right_ratio` / `analyze_pose_view_globe_ratio`
 // (D4 / D5 — layout choices of this session, ineligible like analyze_raypath_view_info_ratio).
 // None is serialized, so no row can reach the panel.
-constexpr std::size_t kExpectedGovernedFieldCount = 95;
+constexpr std::size_t kExpectedGovernedFieldCount = 97;
 
 std::vector<std::string> AllGovernedFieldNames() {
   std::vector<std::string> names;

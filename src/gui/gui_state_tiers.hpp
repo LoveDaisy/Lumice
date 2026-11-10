@@ -213,14 +213,19 @@ inline constexpr FieldTierEntry kFieldTierTable[] = {
     // same tier (the split's identity, written only by its drag).
     { "analyze_raypath_view_open",  FieldTier::kSession,    false },
     { "analyze_raypath_view_info_ratio", FieldTier::kSession, false },
-    // The Pose & trace window's three session rows (755.5): the open flag (which panels are open
-    // is not document state — the same reason as analyze_raypath_view_open) and the window's own
-    // two split ratios, D4 (3D | right column) and D5 (globe | factors) — layout choices of this
-    // session, written only by their drags. Never persisted; New/successful Open reset them
-    // with the incoming GuiState; Revert keeps them.
+    // The Pose & trace window's session rows (755.5, extended by the §16.4 relayout): the open
+    // flag (which panels are open is not document state — the same reason as
+    // analyze_raypath_view_open) and the window's four split ratios — D4 (3D | right column,
+    // width), D5 (left column's 3D | curve, height), D6 (right column's globe | factors,
+    // height — the boundary the row splitter has always written) and D7 (the curve region's
+    // canvas | companion, height; the 0.0f sentinel means never dragged). Layout choices of
+    // this session, written only by their drags. Never persisted; New/successful Open reset
+    // them with the incoming GuiState; Revert keeps them.
     { "analyze_pose_view_open",     FieldTier::kSession,    false },
     { "analyze_pose_view_right_ratio", FieldTier::kSession, false },
     { "analyze_pose_view_globe_ratio", FieldTier::kSession, false },
+    { "analyze_pose_view_left_row_ratio", FieldTier::kSession, false },
+    { "analyze_pose_view_curve_canvas_ratio", FieldTier::kSession, false },
     { "look_at",                    FieldTier::kSession,    false },
     // An Angular Distance pick in flight (armed + which family) — a gesture, not the document.
     { "angular_dist_picker",        FieldTier::kSession,    false },

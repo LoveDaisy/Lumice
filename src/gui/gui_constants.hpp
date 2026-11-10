@@ -133,11 +133,17 @@ constexpr float kPoseViewMinHeight = 680.0f;
 // either side may be the one pushed toward its bound).
 constexpr float kPoseViewRightFloor = 220.0f;
 constexpr float kPoseViewLeftFloor = 240.0f;
-// D5's established full-region floors remain conservative interaction bounds after moving
+// D6's established full-region floors remain conservative interaction bounds after moving
 // variable titles/legends into reports. Keep the user's split semantics: clamp above the joint
 // floors, proportionally compress below them. Report content never changes these bounds.
 constexpr float kPoseViewGlobeFloor = 221.0f;
 constexpr float kPoseViewFactorsFloor = 330.0f;
+// D7 — the curve region's canvas | companion split: the canvas share's "never dragged" sentinel
+// (gui_state.hpp's analyze_pose_view_curve_canvas_ratio). A drag always writes a positive share
+// — the canvas's real-slice floor keeps the derived value above zero — so 0.0f unambiguously
+// means the resize strategy's undragged state (companion at its fixed quota, canvas eats the
+// delta), never a user's split.
+constexpr float kPoseViewCurveCanvasRatioUndragged = 0.0f;
 // The two analysis windows' title display spellings, the ONE source for every consumer of those
 // spellings: the windows' own Begin calls, the Raypath view window's in-place Pose button (the
 // constant plus the button's `###pose_open` addressing suffix), and the main window's Selection
