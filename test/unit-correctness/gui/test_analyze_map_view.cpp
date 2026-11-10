@@ -19,6 +19,8 @@
 #include "gui/analyze_survey.hpp"
 #include "gui/file_io.hpp"  // SceneDeleter's complete type — the survey tests' include
 #include "gui/gui_state.hpp"
+#include "gui/preview_renderer.hpp"  // ViewProjection's full shape — the anchor tests' camera
+#include "imgui.h"
 #include "include/lumice_base.h"
 #include "include/lumice_raypath.h"
 #include "include/lumice_scene.h"
@@ -928,6 +930,253 @@ TEST(AnalyzeMapView, OverlayMarkerStyleSolidOnlyForConcludedClaims) {
   // An unknown kind still gets the honest fallback marker, not a crash or the sun's look.
   const OverlayMarkerStyle fallback = OverlayMarkerStyleFor("some future kind", LUMICE_PATH_STATE_CERTIFIED);
   EXPECT_EQ(fallback.shape, OverlayMarkerShape::kFallbackDiamond);
+}
+
+// ---- The verdict anchor (contract §16.1's A2 pilot) --------------------------------------------------
+//
+// The anchor's draw-list assertions run on a headless frame: the context, its CPU-built default
+// font atlas and one NewFrame are the whole rig — the background draw list records exactly what
+// the canvas would draw, and the assertions read it through the SHARED palette constants (the
+// colour buckets) and the vertices' extents, never a second projection. Where two rings must be
+// told apart in one frame, they take the palette's two colours: the routing maps the diagnose's
+// own colour field, so a blue diagnose and a red diagnose of the same geometry are the two
+// buckets — the same trick that keeps the label's glyph vertices harmless (they carry their
+// curve's colour; the x-extent reading below survives them because the label's patch sits inside
+// the ring's own).
+
+class VerdictAnchorDraw : public ::testing::Test {
+ protected:
+  void SetUp() override {
+    ctx_ = ImGui::CreateContext();
+    ImGuiIO& io = ImGui::GetIO();
+    io.DisplaySize = ImVec2(600.0f, 600.0f);
+    io.DeltaTime = 1.0f / 60.0f;
+    io.Fonts->AddFontDefault();
+    unsigned char* pixels = nullptr;
+    int atlas_w = 0;
+    int atlas_h = 0;
+    io.Fonts->GetTexDataAsAlpha8(&pixels, &atlas_w, &atlas_h);  // builds the atlas, CPU-only
+    ImGui::NewFrame();
+  }
+  void TearDown() override {
+    if (ImGui::GetCurrentContext() != nullptr) {
+      ImGui::EndFrame();
+    }
+    ImGui::DestroyContext(ctx_);
+  }
+
+  // The frame's camera: a 180° equidistant fisheye aimed at the sun (its own altitude and
+  // azimuth), so the iso-delta circles land concentric about the canvas centre and their screen
+  // radii scale linearly with the delta — the relation the ring-ratio test reads.
+  static ViewProjection SunCamera() {
+    ViewProjection vp;
+    vp.lens_type = kLensTypeFisheyeEquidist;
+    vp.fov = 180.0f;
+    vp.elevation = 20.0f;
+    vp.azimuth = 0.0f;
+    vp.roll = 0.0f;
+    vp.visible = kVisibleFull;
+    vp.front = false;
+    return vp;
+  }
+
+  static SurveyDiagnoseView Diagnose(const char* kind, const char* colour, double delta_deg, bool coverage) {
+    SurveyDiagnoseView d;
+    d.available = true;
+    d.verdict_kind = kind;
+    d.color = colour;
+    d.visible = 1;
+    d.position_available = true;
+    d.position_deg = delta_deg;
+    d.coverage_complete = coverage;
+    return d;
+  }
+
+  static VerdictAnchorInput Input(const ViewProjection& vp, bool shown, bool hover) {
+    VerdictAnchorInput in;
+    in.camera = &vp;
+    in.width_px = 600;
+    in.height_px = 600;
+    in.width_pt = 600.0f;
+    in.height_pt = 600.0f;
+    in.pic_min_x = 0.0f;
+    in.pic_min_y = 0.0f;
+    in.pic_px = 600.0f;
+    in.sun.altitude_deg = 20.0;
+    in.sun.azimuth_deg = 0.0;
+    in.shown = shown;
+    in.hover = hover;
+    return in;
+  }
+
+  // The colour bucket's index count: every primitive whose six vertices carry the colour — the
+  // anchor's line quads and its label's glyphs together (the backing rect's ink is a different
+  // colour and stays out of every bucket).
+  static int IndexCountForColour(ImU32 colour) {
+    ImDrawList* dl = ImGui::GetBackgroundDrawList();
+    int count = 0;
+    for (int i = 0; i + 5 < dl->IdxBuffer.Size; i += 6) {
+      bool matches = true;
+      for (int k = 0; k < 6; ++k) {
+        if (dl->VtxBuffer[static_cast<int>(dl->IdxBuffer[i + k])].col != colour) {
+          matches = false;
+          break;
+        }
+      }
+      if (matches) {
+        count += 6;
+      }
+    }
+    return count;
+  }
+
+  // The colour bucket's vertices' x-extent: for a full ring that is its diameter along x (the
+  // 96-sample walk puts vertices within a half-segment of both extremes, a sub-0.1% shave), and
+  // the label's patch — centered on the ring's topmost point, halfwidth well inside the radius —
+  // cannot inflate it. The vertical extents are deliberately not read: the label rides above
+  // the ring's top, exactly where a y-extent would be polluted.
+  static void XExtentForColour(ImU32 colour, float* min_x, float* max_x) {
+    ImDrawList* dl = ImGui::GetBackgroundDrawList();
+    *min_x = FLT_MAX;
+    *max_x = -FLT_MAX;
+    for (int i = 0; i < dl->VtxBuffer.Size; ++i) {
+      const ImDrawVert& v = dl->VtxBuffer[i];
+      if (v.col != colour) {
+        continue;
+      }
+      *min_x = std::min(*min_x, v.pos.x);
+      *max_x = std::max(*max_x, v.pos.x);
+    }
+  }
+
+  ImGuiContext* ctx_ = nullptr;
+};
+
+// The honesty gate on a synthetic diagnose — the injection the plan's H4 asked for and the drawn
+// form has no engine fixture for. Each absence leg draws nothing (bucket counts zero), the
+// coverage-incomplete leg still draws (dashed — the drawn form's discriminability is the next
+// test), and the legend's verdict bit follows what actually drew.
+TEST_F(VerdictAnchorDraw, HonestyGateLegs) {
+  const ViewProjection vp = SunCamera();
+  const SurveyDiagnoseView pilot = Diagnose("edge", "blue", 40.0, true);
+  const SurveyDiagnoseView not_available = [] {
+    SurveyDiagnoseView d;
+    d.available = false;  // the refused / not-run document: no diagnose rows anywhere
+    return d;
+  }();
+  const SurveyDiagnoseView tint = Diagnose("tint", "blue", 40.0, true);  // outside the closed kind set
+  SurveyDiagnoseView positionless = Diagnose("edge", "blue", 40.0, true);
+  positionless.position_available = false;
+  SurveyDiagnoseView self_invisible = Diagnose("edge", "blue", 40.0, true);
+  self_invisible.visible = 0;
+  SurveyDiagnoseView self_invisible_partial = Diagnose("edge", "blue", 40.0, false);
+  self_invisible_partial.visible = 0;  // the precedence: absence wins over the dashed leg
+  const SurveyDiagnoseView unpainted_colour = Diagnose("edge", "white", 40.0, true);
+
+  struct Leg {
+    const char* what;
+    const SurveyDiagnoseView* d;
+  };
+  const Leg absent[] = { { "unavailable document", &not_available },
+                         { "kind outside the closed set", &tint },
+                         { "no spatial payload", &positionless },
+                         { "verdict names itself not visible", &self_invisible },
+                         { "not visible with incomplete coverage", &self_invisible_partial },
+                         { "colour with no palette entry", &unpainted_colour } };
+  for (const Leg& leg : absent) {
+    OverlayLegendState legend;
+    VerdictAnchorInput in = Input(vp, /*shown=*/true, /*hover=*/false);
+    in.legend = &legend;
+    DrawVerdictAnchor(ImGui::GetBackgroundDrawList(), *leg.d, in);
+    EXPECT_EQ(IndexCountForColour(kChromaticColourBlue), 0) << leg.what;
+    EXPECT_EQ(IndexCountForColour(kChromaticColourRed), 0) << leg.what;
+    EXPECT_FALSE(legend.verdict_anchor) << leg.what;
+  }
+  // And the density gate: a fully anchorable verdict with neither switch standing draws nothing.
+  OverlayLegendState legend;
+  VerdictAnchorInput in = Input(vp, /*shown=*/false, /*hover=*/false);
+  in.legend = &legend;
+  DrawVerdictAnchor(ImGui::GetBackgroundDrawList(), pilot, in);
+  EXPECT_EQ(IndexCountForColour(kChromaticColourBlue), 0);
+  EXPECT_FALSE(legend.verdict_anchor);
+}
+
+// The density gate's two tiers: the hover alone anchors, the toggle alone anchors — and the
+// closed kind set's second member (gate_edge) anchors through the same path. One frame, two
+// colour buckets: the hover tier draws blue, the toggle tier's gate_edge red.
+TEST_F(VerdictAnchorDraw, HoverAndToggleEachAnchor) {
+  const ViewProjection vp = SunCamera();
+  VerdictAnchorInput in = Input(vp, /*shown=*/false, /*hover=*/true);
+  DrawVerdictAnchor(ImGui::GetBackgroundDrawList(), Diagnose("edge", "blue", 40.0, true), in);
+  EXPECT_GT(IndexCountForColour(kChromaticColourBlue), 0);
+  in = Input(vp, /*shown=*/true, /*hover=*/false);
+  DrawVerdictAnchor(ImGui::GetBackgroundDrawList(), Diagnose("gate_edge", "red", 60.0, true), in);
+  EXPECT_GT(IndexCountForColour(kChromaticColourRed), 0);
+}
+
+// The colour routing reads the verdict's own colour through the shared palette: a red verdict's
+// anchor lands in the red bucket and nowhere else.
+TEST_F(VerdictAnchorDraw, ColourRoutingUsesTheSharedPalette) {
+  const ViewProjection vp = SunCamera();
+  VerdictAnchorInput in = Input(vp, /*shown=*/true, /*hover=*/false);
+  DrawVerdictAnchor(ImGui::GetBackgroundDrawList(), Diagnose("edge", "red", 40.0, true), in);
+  EXPECT_GT(IndexCountForColour(kChromaticColourRed), 0);
+  EXPECT_EQ(IndexCountForColour(kChromaticColourBlue), 0);
+}
+
+// The ring geometry, with no second projection: two rings drawn about the same sun — deltas 40
+// and 80 — must land at x-extents whose ratio is the deltas' own (the equidistant lens's linear
+// radius law), inside one frame and two colour buckets.
+TEST_F(VerdictAnchorDraw, RingsLandAtTheRatiosTheDeltasName) {
+  const ViewProjection vp = SunCamera();
+  VerdictAnchorInput in = Input(vp, /*shown=*/true, /*hover=*/false);
+  ImDrawList* dl = ImGui::GetBackgroundDrawList();
+  DrawVerdictAnchor(dl, Diagnose("edge", "blue", 40.0, true), in);
+  DrawVerdictAnchor(dl, Diagnose("edge", "red", 80.0, true), in);
+  EXPECT_GT(IndexCountForColour(kChromaticColourBlue), 0);
+  EXPECT_GT(IndexCountForColour(kChromaticColourRed), 0);
+  float blue_min_x = 0.0f;
+  float blue_max_x = 0.0f;
+  float red_min_x = 0.0f;
+  float red_max_x = 0.0f;
+  XExtentForColour(kChromaticColourBlue, &blue_min_x, &blue_max_x);
+  XExtentForColour(kChromaticColourRed, &red_min_x, &red_max_x);
+  ASSERT_GT(blue_max_x, blue_min_x);
+  ASSERT_GT(red_max_x, red_min_x);
+  const float blue_extent = blue_max_x - blue_min_x;
+  const float red_extent = red_max_x - red_min_x;
+  EXPECT_NEAR(red_extent / blue_extent, 2.0f, 0.02f) << blue_extent << " vs " << red_extent;
+  // And one ring's own sanity: δ=40 on a 180° equidistant canvas of 600pt is ~133pt of radius —
+  // not a degenerate dot, not off-canvas.
+  EXPECT_GT(blue_extent, 100.0f);
+  EXPECT_LT(blue_extent, 600.0f);
+}
+
+// The coverage leg's drawn form: the same delta in the two palette colours — solid (blue) and
+// coverage-incomplete (red) — draws the same ring twice, the dashed one with strictly fewer
+// submitted primitives. The label's glyphs ride each bucket equally, so the ratio band is wide.
+TEST_F(VerdictAnchorDraw, IncompleteCoverageDrawsTheDashedForm) {
+  const ViewProjection vp = SunCamera();
+  VerdictAnchorInput in = Input(vp, /*shown=*/true, /*hover=*/false);
+  ImDrawList* dl = ImGui::GetBackgroundDrawList();
+  DrawVerdictAnchor(dl, Diagnose("edge", "blue", 40.0, /*coverage=*/true), in);
+  DrawVerdictAnchor(dl, Diagnose("edge", "red", 40.0, /*coverage=*/false), in);
+  const int solid = IndexCountForColour(kChromaticColourBlue);
+  const int dashed = IndexCountForColour(kChromaticColourRed);
+  EXPECT_GT(solid, 0);
+  EXPECT_GT(dashed, 0);
+  EXPECT_LT(dashed, solid);
+  EXPECT_GT(dashed, solid / 3);
+  // Same delta, same ring: the two forms' x-extents agree.
+  float blue_min_x = 0.0f;
+  float blue_max_x = 0.0f;
+  float red_min_x = 0.0f;
+  float red_max_x = 0.0f;
+  XExtentForColour(kChromaticColourBlue, &blue_min_x, &blue_max_x);
+  XExtentForColour(kChromaticColourRed, &red_min_x, &red_max_x);
+  ASSERT_GT(blue_max_x, blue_min_x);
+  ASSERT_GT(red_max_x, red_min_x);
+  EXPECT_NEAR((blue_max_x - blue_min_x) / (red_max_x - red_min_x), 1.0f, 0.01f);
 }
 
 }  // namespace
