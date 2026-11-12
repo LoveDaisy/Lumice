@@ -996,6 +996,21 @@ class MapDeviceDrawRig : public ::testing::Test {
     return vp;
   }
 
+  // The rectangular equirect camera: a full-canvas longitude/latitude map that WRAPS at
+  // longitude ±π and anchors the pole itself to longitude 0 — the projection's own screen
+  // discontinuities, which a per-sample "it projects" reading never sees.
+  static ViewProjection RectangularCamera() {
+    ViewProjection vp;
+    vp.lens_type = kLensTypeRectangular;
+    vp.fov = 180.0f;
+    vp.elevation = 20.0f;
+    vp.azimuth = 0.0f;
+    vp.roll = 0.0f;
+    vp.visible = kVisibleFull;
+    vp.front = false;
+    return vp;
+  }
+
   static SurveyDiagnoseView Diagnose(const char* kind, const char* colour, double delta_deg, bool coverage) {
     SurveyDiagnoseView d;
     d.available = true;
@@ -1670,6 +1685,18 @@ TEST_F(ProfileHoverDraw, IntervalAcrossTheDiskSplitDrawsNothing) {
   EXPECT_EQ(RoseCount(), 0) << "an interval across the disk split must leave the draw list untouched";
 }
 
+// The reviewer's rectangular probe: the equirect wraps at longitude ±π — an interval whose
+// sample sequence crosses the seam draws a full-canvas horizontal chord between two
+// neighbouring samples, both individually projecting. Sun at (alt 20, az 170), the probe's
+// radial line at φ = −π/2: the sequence's longitude crosses ±π at δ ≈ 9.4°, inside the interval
+// [5, 60]. All-or-nothing: the rose bucket must be empty.
+TEST_F(ProfileHoverDraw, IntervalAcrossTheLongitudeSeamDrawsNothing) {
+  const ViewProjection vp = RectangularCamera();
+  ImDrawList* dl = ImGui::GetBackgroundDrawList();
+  DrawProfileHoverDevice(dl, Probe(true, 270.0, 5.0, 60.0), Input(vp, 20.0, 170.0, SurveyProfileHover::kSeparation));
+  EXPECT_EQ(RoseCount(), 0) << "an interval across the longitude seam must leave the draw list untouched";
+}
+
 // The same projection break, on the walk: a verdict ring about an alt-45 sun at δ=60 crosses
 // the horizon, and on the dual-fisheye camera its upper-half samples land in the left disk and
 // its lower-half ones in the right. The run must break at the split — no submitted segment
@@ -1709,6 +1736,44 @@ TEST_F(VerdictAnchorDraw, WalkBreaksAtTheDualFisheyeDiskSplit) {
     }
   }
   EXPECT_EQ(straddling, 0) << "no walk segment may bridge the two disks";
+}
+
+// The same break, on the rectangular camera: a δ=60 ring about an (alt 20, az 170) sun wraps
+// across longitude ±π, where neighbouring samples project to opposite canvas edges. No walk
+// segment may span that jump — a legit segment on this ring is a few pixels of longitude arc;
+// the seam chord is the whole canvas.
+TEST_F(VerdictAnchorDraw, WalkBreaksAtTheRectangularSeam) {
+  const ViewProjection vp = RectangularCamera();
+  VerdictAnchorInput in = Input(vp, /*shown=*/true, /*hover=*/false);
+  in.sun.altitude_deg = 20.0;
+  in.sun.azimuth_deg = 170.0;
+  ImDrawList* dl = ImGui::GetBackgroundDrawList();
+  DrawVerdictAnchor(dl, Diagnose("edge", "blue", 60.0, true), in);
+  ASSERT_GT(IndexCountForColour(kChromaticColourBlue), 0) << "the ring must draw for the walk to be read";
+  const ImVec2 white = ImGui::GetIO().Fonts->TexUvWhitePixel;
+  std::vector<std::array<float, 2>> geom;
+  for (int i = 0; i < dl->VtxBuffer.Size; ++i) {
+    const ImDrawVert& v = dl->VtxBuffer[i];
+    if (v.col != kChromaticColourBlue) {
+      continue;
+    }
+    if (std::fabs(v.uv.x - white.x) < 1e-3f && std::fabs(v.uv.y - white.y) < 1e-3f) {
+      geom.push_back({ v.pos.x, v.pos.y });
+    }
+  }
+  int too_wide = 0;
+  for (size_t q = 0; q + 3 < geom.size(); q += 4) {
+    float qmin_x = FLT_MAX;
+    float qmax_x = -FLT_MAX;
+    for (int k = 0; k < 4; ++k) {
+      qmin_x = std::min(qmin_x, geom[q + k][0]);
+      qmax_x = std::max(qmax_x, geom[q + k][0]);
+    }
+    if (qmax_x - qmin_x > 150.0f) {
+      ++too_wide;
+    }
+  }
+  EXPECT_EQ(too_wide, 0) << "no walk segment may span the longitude seam's canvas-wide jump";
 }
 
 }  // namespace

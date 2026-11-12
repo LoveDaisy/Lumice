@@ -615,17 +615,35 @@ bool ProjectToRect(const MapCanvasProjection& view, const double pos[3], const I
   return true;
 }
 
-// A projected pair's disk continuity: the dual-fisheye family (a full-sky lens — no view
-// transform, the world travel direction goes straight in) splits the sky into two disks by the
-// travel direction's z sign, so consecutive samples on opposite sides of the split belong to
-// different disks and the segment between them does not exist on the picture. One predicate, two
-// consumers — the iso-delta walk (a flip breaks the run: a fresh polyline starts at the next
-// in-disk pair) and the profile device (a flip voids the all-or-nothing interval). Every other
-// lens projects into one contiguous region, where a projected pair is always continuous.
-bool SameProjectionDisk(int lens_type, double travel_prev_z, double travel_next_z) {
+// One projected pair's screen continuity — the projection's own discontinuities, not a
+// per-sample property. The dual-fisheye family (a full-sky lens — no view transform, the world
+// travel direction goes straight in) splits the sky into two disks by the travel direction's z
+// sign: consecutive samples on opposite sides of the split belong to different disks, and the
+// segment between them does not exist on the picture. The rectangular equirect wraps at
+// longitude ±π and anchors the pole itself to longitude 0 — a pair straddling the seam (or
+// touching the anchored pole) screens farther apart than the samples' own bounded step can
+// explain, and the chord between them is likewise not the path. One predicate, two consumers —
+// the iso-delta walk (a break starts a fresh polyline at the next in-disk pair) and the profile
+// device (a break voids the all-or-nothing interval). The single-fisheye family and the globe
+// project into one contiguous region with a behind-camera sentinel, where a projected pair is
+// always continuous.
+bool ProjectionContinuous(int lens_type, double travel_prev_z, double travel_next_z, const double travel_prev[3],
+                          const double travel_next[3]) {
   if (lens_type == kLensTypeDualFisheyeEqualArea || lens_type == kLensTypeDualFisheyeEquidist ||
       lens_type == kLensTypeDualFisheyeStereographic || lens_type == kLensTypeDualFisheyeOrthographic) {
     return (travel_prev_z < 0.0) == (travel_next_z < 0.0);
+  }
+  if (lens_type == kLensTypeRectangular) {
+    // The travel directions' own longitudes, spelled as ProjectRectangular spells them; the
+    // pole anchor's epsilon is that branch's own (the squared x-y norm below it).
+    const double prev_pole = travel_prev[0] * travel_prev[0] + travel_prev[1] * travel_prev[1] < 1e-6;
+    const double next_pole = travel_next[0] * travel_next[0] + travel_next[1] * travel_next[1] < 1e-6;
+    if (prev_pole || next_pole) {
+      return false;  // the anchored pole column: a neighbour pairs with it across a whole-canvas jump
+    }
+    const double lon_a = std::atan2(-travel_prev[1], -travel_prev[0]);
+    const double lon_b = std::atan2(-travel_next[1], -travel_next[0]);
+    return std::fabs(lon_a - lon_b) <= kPiD;  // beyond a half turn = the ±π seam straddled
   }
   return true;
 }
@@ -742,6 +760,7 @@ IsoDeltaWalk WalkIsoDeltaCircle(ImDrawList* dl, const MapCanvasProjection& view,
   double last_x = 0.0;
   double last_y = 0.0;
   double prev_travel_z = 0.0;
+  double prev_travel[3] = { 0.0, 0.0, 0.0 };
   for (int s = 0; s <= kOverlaySegments; ++s) {
     const double phi = 2.0 * kPiD * s / kOverlaySegments;
     double p[3];
@@ -753,16 +772,21 @@ IsoDeltaWalk WalkIsoDeltaCircle(ImDrawList* dl, const MapCanvasProjection& view,
       continue;
     }
     ++walk.samples_in_disk;
-    const double travel_z = -p[2];  // the projection's own input (ProjectToRect negates)
-    const bool same_disk = s == 0 || SameProjectionDisk(view.camera.lens_type, prev_travel_z, travel_z);
-    prev_travel_z = travel_z;
+    const double travel[3] = { -p[0], -p[1], -p[2] };  // the projection's own input (ProjectToRect negates)
+    const bool same_disk =
+        s == 0 || ProjectionContinuous(view.camera.lens_type, prev_travel_z, travel[2], prev_travel, travel);
+    prev_travel_z = travel[2];
+    for (int k = 0; k < 3; ++k) {
+      prev_travel[k] = travel[k];
+    }
     if (walk.drawn > 0 && same_disk && (!dashed || (s / kDashCycleSegments) % 2 == 0)) {
       dl->AddLine(ImVec2(static_cast<float>(last_x), static_cast<float>(last_y)),
                   ImVec2(static_cast<float>(x), static_cast<float>(y)), colour, thickness);
       ++walk.lines_submitted;
     }
     if (!same_disk) {
-      walk.drawn = 0;  // a disk flip breaks the run the same way an off-view sample does
+      walk.drawn = 0;  // a projection break (disk flip or seam/pole jump) ends the run, the same
+                       // way an off-view sample does — the next in-disk pair starts fresh
     }
     last_x = x;
     last_y = y;
@@ -1340,16 +1364,21 @@ void DrawProfileHoverDevice(ImDrawList* dl, const SurveyProbeView& probe, const 
     std::vector<ProfileScreenPoint> samples;
     samples.reserve(static_cast<size_t>(steps) + 1);
     double prev_travel_z = 0.0;
+    double prev_travel[3] = { 0.0, 0.0, 0.0 };
     for (int s = 0; s <= steps; ++s) {
       const double delta = lo + (hi - lo) * static_cast<double>(s) / static_cast<double>(steps);
       double p[3];
       SkyPointAboutSun(sun_pos, u, v, delta, phi, p);
-      const double travel_z = -p[2];
-      if (s > 0 && !SameProjectionDisk(view.camera.lens_type, prev_travel_z, travel_z)) {
-        return;  // the interval spans the dual-fisheye disk split: the bridged chord does not
-                 // exist on the picture, and the all-or-nothing rule keeps the list untouched
+      const double travel[3] = { -p[0], -p[1], -p[2] };
+      if (s > 0 && !ProjectionContinuous(view.camera.lens_type, prev_travel_z, travel[2], prev_travel, travel)) {
+        return;  // the interval spans one of the projection's own breaks (the dual-fisheye disk
+                 // split, the rectangular seam or pole anchor): the bridged chord does not exist
+                 // on the picture, and the all-or-nothing rule keeps the list untouched
       }
-      prev_travel_z = travel_z;
+      prev_travel_z = travel[2];
+      for (int k = 0; k < 3; ++k) {
+        prev_travel[k] = travel[k];
+      }
       double x = 0.0;
       double y = 0.0;
       ProfileScreenPoint out;
