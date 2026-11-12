@@ -48,6 +48,7 @@ env 是标准做法，不在治理范围内。
 | `LUMICE_DISABLE_DEVICE_GEN` | `env::DisableDeviceGen` ← `metal_trace_backend.mm` Impl ctor | 关 device-gen（实验/调试旋钮） | 无（启动 INFO 可观测） |
 | `LUMICE_DISABLE_METAL_SOURCE_COMPILE` | `env::DisableMetalSourceCompile` ← `metal_trace_backend.mm` `LoadMetalLibrary` | 关 metal 源码编译（也被回归 sentinel 当门禁用） | 无（启动 INFO 可观测） |
 | `LUMICE_WL_POOL_SIZE` | `env::WlPoolSize` ← `metal_trace_backend.mm` `EnsureWlPoolBuffer` | 波长池大小（实验旋钮） | 无（启动 INFO 可观测） |
+| `LUMICE_ANALYZE_DEBUG_DETAILS` | `env::AnalyzeDebugDetails` ← `gui/main.cpp` 启动判定（启用 INFO 也在该处）＋四宿主渲染门控（`analyze_overview.cpp` / `analyze_point_view.cpp` / `analyze_map_view.cpp`） | Analyze GUI 四答案宿主的诊断折叠组（各宿主旧 Calculation details 层与其中的实现级条目）的显示资格；纯展示旋钮，不改变数据读取、计算与任何正确性结果。布尔约定沿既有 `IsTruthy`（非空且非 `'0'` 开头为真；未设置/空/`0` 关）。**本旋钮在 `env_knobs.cpp` 内不打日志**（唯一例外）：消费方只有 GUI，GUI logger 是独立 spdlog 实例，core ILOG 抵达不了 GUI 面板/文件 sink——启用记录由 `gui/main.cpp` 启动时以 `GUI_LOG_INFO` 发出；显示值每次调用重读（单进程 GUI 测试切两态），不缓存首读 | 无（纯开发诊断旋钮，默认用户路径无需 env；启动 INFO 可观测） |
 
 关于 `LUMICE_TRACE_BACKEND` 的处置（task-287 已落地）：
 

@@ -205,4 +205,10 @@ bool DisableDeviceGen(Logger& logger) {
   return on;
 }
 
+bool AnalyzeDebugDetails() {
+  // No log here, by design: see the declaration in env_knobs.hpp — the GUI startup owns the
+  // enable record on the GUI logger lane; this read stays pure and re-readable.
+  return IsTruthy(std::getenv("LUMICE_ANALYZE_DEBUG_DETAILS"));
+}
+
 }  // namespace lumice::env
