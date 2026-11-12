@@ -2083,7 +2083,19 @@ void RenderAnalyzeDriftWarning(GuiState& state, float wrap_width) {
   ImGui::TextWrapped("%s", kConeCenterDriftWarningText);
   ImGui::PopStyleColor();
   ImGui::PopTextWrapPos();
-  state.analysis.wait_feedback_texts.cone_center_drift_warning = kConeCenterDriftWarningText;
+  // The submitted item's FULL rect: the layout footprint of every wrapped line, independent of
+  // which vertices RenderText went on to emit (it stops at the clip bottom, so a line clipped
+  // away leaves ink but never the rect — the rect is the completeness face, the vertices the
+  // ink face; the gui_test layer asserts their conjunction). Four plain floats: the
+  // render-feedback header keeps imgui off its include chain.
+  const ImVec2 rect_min = ImGui::GetItemRectMin();
+  const ImVec2 rect_max = ImGui::GetItemRectMax();
+  auto& drift_feedback = state.analysis.wait_feedback_texts;
+  drift_feedback.cone_center_drift_warning_rect_min_x = rect_min.x;
+  drift_feedback.cone_center_drift_warning_rect_min_y = rect_min.y;
+  drift_feedback.cone_center_drift_warning_rect_max_x = rect_max.x;
+  drift_feedback.cone_center_drift_warning_rect_max_y = rect_max.y;
+  drift_feedback.cone_center_drift_warning = kConeCenterDriftWarningText;
 }
 
 namespace {

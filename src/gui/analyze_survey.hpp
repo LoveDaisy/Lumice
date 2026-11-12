@@ -324,6 +324,17 @@ struct WaitFeedbackTexts {
   std::string status_bar_query_segment;   // app_panels.cpp, the status bar's active segment
   std::string entry_hint_line;            // analyze_workspace.cpp, the Selection header's hint slot
   std::string cone_center_drift_warning;  // analysis_panel.cpp, the drift band's fixed text
+  // The band's FULL item rect as submitted (GetItemRectMin/Max right after the draw), four
+  // plain floats — this header keeps imgui off its include chain (the unit-test TUs compile it
+  // without imgui's paths): min x, min y, max x, max y. The layout footprint every wrapped
+  // line occupies whether or not the renderer emitted its vertices — a line clipped away
+  // leaves the rect untouched, so this rect, not the drawn vertices, is the completeness
+  // evidence (the vertices answer for the ink, the rect for the text). Zeroed with the other
+  // fields at the workspace's frame entry.
+  float cone_center_drift_warning_rect_min_x = 0.0f;
+  float cone_center_drift_warning_rect_min_y = 0.0f;
+  float cone_center_drift_warning_rect_max_x = 0.0f;
+  float cone_center_drift_warning_rect_max_y = 0.0f;
 };
 
 // ---- The ray face's session (742.6) ----------------------------------------------------------------

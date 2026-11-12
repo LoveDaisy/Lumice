@@ -814,6 +814,10 @@ void RenderAnalyzeWorkspace(GLFWwindow* window, float window_width, float window
     feedback.share_list_busy_dots.clear();
     feedback.entry_hint_line.clear();
     feedback.cone_center_drift_warning.clear();
+    feedback.cone_center_drift_warning_rect_min_x = 0.0f;
+    feedback.cone_center_drift_warning_rect_min_y = 0.0f;
+    feedback.cone_center_drift_warning_rect_max_x = 0.0f;
+    feedback.cone_center_drift_warning_rect_max_y = 0.0f;
   }
 
   // The viewport publications are cleared once at the dispatch point (RenderWorkspacePanels);

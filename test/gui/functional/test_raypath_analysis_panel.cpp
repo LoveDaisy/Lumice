@@ -12113,6 +12113,21 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       }
       IM_CHECK_EQ(status_warning_vertices, 0);
       IM_CHECK_LE(after_drag.bbox.Max.y, status->InnerClipRect.Min.y + 0.5f);
+      // The completeness face (review round 1's judge): the vertices answer for the ink, the
+      // recorded item rect answers for the text — the layout footprint every wrapped line
+      // occupies whether or not RenderText went on to emit it (it stops at the clip bottom,
+      // so a line clipped away leaves ink but never the rect; "only the first line visible"
+      // cannot pass this pair). The rect is the item's own bb: its height is the same
+      // CalcTextSizeA call the band's budget runs, so the two cannot disagree without breaking
+      // the stack arithmetic.
+      const auto& feedback = gui::g_state.analysis.wait_feedback_texts;
+      const ImRect band_rect(
+          ImVec2(feedback.cone_center_drift_warning_rect_min_x, feedback.cone_center_drift_warning_rect_min_y),
+          ImVec2(feedback.cone_center_drift_warning_rect_max_x, feedback.cone_center_drift_warning_rect_max_y));
+      IM_CHECK_FLOAT_NEAR(band_rect.GetHeight(), gui::AnalyzeDriftWarningHeight(host->ContentRegionRect.GetWidth()),
+                          1e-3f);
+      IM_CHECK(host->InnerClipRect.Contains(band_rect));
+      IM_CHECK(after_drag.bbox.Min.y >= band_rect.Min.y - 1.0f && after_drag.bbox.Max.y <= band_rect.Max.y + 1.0f);
       // The viewport stays a bounded, genuinely scrollable viewport (AC4): its remaining
       // content still overflows the two-line fold, real scrolling moves it, and the band —
       // outside the flow — is untouched by that scroll. Not a ScrollMaxY==0 leg: the overflow
@@ -12157,6 +12172,8 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       const PanoramaWarningInk after_reanalyze = CollectPanoramaWarningInk(warn_colour);
       IM_CHECK(!after_reanalyze.found);
       IM_CHECK(gui::g_state.analysis.wait_feedback_texts.cone_center_drift_warning.empty());
+      IM_CHECK_EQ(gui::g_state.analysis.wait_feedback_texts.cone_center_drift_warning_rect_min_x, 0.0f);
+      IM_CHECK_EQ(gui::g_state.analysis.wait_feedback_texts.cone_center_drift_warning_rect_max_y, 0.0f);
     };
   }
 
@@ -12260,6 +12277,27 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
         ImGuiWindow* host = AnalyzePanoramaHostWindow();
         IM_CHECK_RETV(host != nullptr, false);
         IM_CHECK_RETV(host->ScrollMax.y == 0.0f, false);
+        // The completeness face, per leg (the same pair the main case judges): the ink's
+        // vertices inside the recorded full item rect, and the rect itself inside the chrome's
+        // clip — a line RenderText skipped for the clip bottom leaves ink but never the rect,
+        // so "only the first line visible" cannot pass.
+        const auto& feedback = gui::g_state.analysis.wait_feedback_texts;
+        const ImRect band_rect(
+            ImVec2(feedback.cone_center_drift_warning_rect_min_x, feedback.cone_center_drift_warning_rect_min_y),
+            ImVec2(feedback.cone_center_drift_warning_rect_max_x, feedback.cone_center_drift_warning_rect_max_y));
+        IM_CHECK_RETV(
+            fabsf(band_rect.GetHeight() - gui::AnalyzeDriftWarningHeight(host->ContentRegionRect.GetWidth())) < 1e-3f,
+            false);
+        IM_CHECK_RETV(host->InnerClipRect.Contains(band_rect), false);
+        IM_CHECK_RETV(band.bbox.Min.y >= band_rect.Min.y - 1.0f && band.bbox.Max.y <= band_rect.Max.y + 1.0f, false);
+        // The negative control, on real geometry (review round 1): the same containment judge
+        // applied to the two-line status viewport's clip — the OLD placement's fold — must
+        // reject a band that wraps taller than it. Where this leg's band demonstrably wraps
+        // multi-line, the fold's rejection is exactly what would have failed the old shape
+        // under this judge; the judge discriminates, it is not a tautology of the vertex probe.
+        if (band_rect.GetHeight() > status->InnerClipRect.GetHeight()) {
+          IM_CHECK_RETV(!status->InnerClipRect.Contains(band_rect), false);
+        }
         // "**/" roots the search — at the narrow tiers the op bar lives in its scroll child,
         // which a chrome-window ref cannot address (child windows register as
         // "Parent/Name_<id>"). The roomier tiers resolve the button at rest; at the extreme
