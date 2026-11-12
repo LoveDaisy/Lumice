@@ -773,17 +773,19 @@ constexpr double kRayTraceFactorBand = 1e-6;
 std::vector<RayTraceSegmentEnergy> RayTraceCumulativeEnergies(const double* factors, size_t count) {
   // E[0] = 1 (the entry leg, before the first interface), then E[k+1] = E[k] * q[k] — every
   // interface consumed exactly once, the last segment including the exit factor. An internal
-  // reflection with R = 1 keeps the energy; an exact zero ends it (a legal declared zero).
+  // reflection with R = 1 keeps the energy; an exact zero ends it (a legal declared zero). The
+  // accumulation stays DOUBLE: narrowing per step would underflow a long chain of small factors
+  // (0.02^27 ~ 1.3e-46) into a fabricated exact zero while the honest value is still positive.
   std::vector<RayTraceSegmentEnergy> out;
   out.reserve(count + 1);
-  float energy = 1.0f;
+  double energy = 1.0;
   bool valid = true;
   out.push_back(RayTraceSegmentEnergy{ energy, valid });
   for (size_t k = 0; k < count; ++k) {
     const double q = factors != nullptr ? factors[k] : 0.0;
     if (valid && std::isfinite(q) && q >= -kRayTraceFactorBand && q <= 1.0 + kRayTraceFactorBand) {
       const double clamped = std::min(1.0, std::max(0.0, q));
-      energy = static_cast<float>(static_cast<double>(energy) * clamped);
+      energy = energy * clamped;
     } else {
       // Unusable factor: everything from the segment after it on carries no energy claim. The
       // stored value is the last honest prefix — unused while invalid, kept for inspection.
@@ -794,15 +796,17 @@ std::vector<RayTraceSegmentEnergy> RayTraceCumulativeEnergies(const double* fact
   return out;
 }
 
-float RayTraceEnergyWidth(float energy) {
+float RayTraceEnergyWidth(double energy) {
   // The fixed sqrt monotone visual mapping over the positive range (the plan's chosen gamma: a
   // linear map presses small positives into sub-pixel lines, buckets lose the segment order).
-  // E <= 0 (or non-finite) answers 0 — no ink; the contact markers stay.
-  if (!(energy > 0.0f)) {
+  // E <= 0 (or non-finite) answers 0 — no ink; the contact markers stay. The mapping runs in
+  // double and narrows only at the returned width.
+  if (!(energy > 0.0)) {
     return 0.0f;
   }
-  const float e = std::min(1.0f, energy);
-  return UiPx(kRayTraceWidthMinUi) + (UiPx(kRayTraceWidthMaxUi) - UiPx(kRayTraceWidthMinUi)) * std::sqrt(e);
+  const double e = std::min(1.0, energy);
+  return static_cast<float>(UiPx(kRayTraceWidthMinUi) +
+                            (UiPx(kRayTraceWidthMaxUi) - UiPx(kRayTraceWidthMinUi)) * std::sqrt(e));
 }
 
 std::string RayTraceEnergyLabelText(const RayTraceSegmentEnergy& energy) {
@@ -814,6 +818,47 @@ std::string RayTraceEnergyLabelText(const RayTraceSegmentEnergy& energy) {
   // the common range; an exact zero reads as "0%".
   std::snprintf(buf, sizeof(buf), "%.3g%%", static_cast<double>(energy.value) * 100.0);
   return buf;
+}
+
+bool RayTraceSegmentOnCanvas(const ImVec2& a, const ImVec2& b, const ImVec2& canvas_min, const ImVec2& canvas_max,
+                             double* out_t0, double* out_t1) {
+  // Liang-Barsky against the canvas rect. Degenerate (zero-length) segments answer the point's
+  // own containment.
+  double t0 = 0.0;
+  double t1 = 1.0;
+  const double dx = static_cast<double>(b.x) - a.x;
+  const double dy = static_cast<double>(b.y) - a.y;
+  const auto bound = [&](double p, double q) {
+    if (std::abs(p) < 1e-12) {
+      return q >= 0.0;
+    }
+    const double r = q / p;
+    if (p < 0.0) {
+      if (r > t1) {
+        return false;
+      }
+      if (r > t0) {
+        t0 = r;
+      }
+    } else {
+      if (r < t0) {
+        return false;
+      }
+      if (r < t1) {
+        t1 = r;
+      }
+    }
+    return true;
+  };
+  const bool visible = bound(-dx, static_cast<double>(a.x) - canvas_min.x) && bound(dx, canvas_max.x - a.x) &&
+                       bound(-dy, static_cast<double>(a.y) - canvas_min.y) && bound(dy, canvas_max.y - a.y);
+  if (out_t0 != nullptr) {
+    *out_t0 = t0;
+  }
+  if (out_t1 != nullptr) {
+    *out_t1 = t1;
+  }
+  return visible;
 }
 
 RayTraceContactFaceNormal RayTraceContactFaceNormalFor(const LUMICE_CrystalMesh& mesh, int face_number) {
@@ -1991,21 +2036,25 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
           // segment past an unusable interface factor draws a fixed neutral line — no energy
           // claim — and an exact zero draws no ink at all: the contact markers carry those
           // spots, the labels (when shown) read 0%.
-          const bool draw_ink = !energy.valid || energy.value > 0.0f;
+          const bool draw_ink = !energy.valid || energy.value > 0.0;
           if (draw_ink) {
             const float width = energy.valid ? RayTraceEnergyWidth(energy.value) : UiPx(kRayTraceWidthNeutralUi);
             dl->AddLine(pa, pb, SegmentColor(line.seg_kinds[s], 1.0f), width);
           }
           if (view.show_fresnel_labels) {
             // The ratio label rides the VISIBLE part's midpoint, offset off the line and
-            // clamped into the canvas — the anchor stays a real visible position, and a
-            // segment with nothing of it on show takes no fabricated edge slot.
-            const bool touches_canvas = std::max(pa.x, pb.x) >= canvas_min.x && std::min(pa.x, pb.x) <= canvas_max.x &&
-                                        std::max(pa.y, pb.y) >= canvas_min.y && std::min(pa.y, pb.y) <= canvas_max.y;
-            if (touches_canvas) {
+            // clamped into the canvas — the anchor stays a real visible position. Visibility
+            // is the REAL segment-rect clip (an AABB overlap is only necessary: a segment
+            // skimming past a corner must take no fabricated edge slot).
+            double vis_t0 = 0.0;
+            double vis_t1 = 1.0;
+            const ImVec2 canvas_max(canvas_min.x + canvas_size.x, canvas_min.y + canvas_size.y);
+            const bool on_canvas = RayTraceSegmentOnCanvas(pa, pb, canvas_min, canvas_max, &vis_t0, &vis_t1);
+            if (on_canvas && vis_t1 > vis_t0) {
               const std::string text = RayTraceEnergyLabelText(energy);
               const ImVec2 text_size = ImGui::CalcTextSize(text.c_str());
-              const ImVec2 mid((pa.x + pb.x) * 0.5f, (pa.y + pb.y) * 0.5f);
+              const ImVec2 mid(pa.x + static_cast<float>((pb.x - pa.x) * (vis_t0 + vis_t1) * 0.5),
+                               pa.y + static_cast<float>((pb.y - pa.y) * (vis_t0 + vis_t1) * 0.5));
               ImVec2 dir(pb.x - pa.x, pb.y - pa.y);
               const float len = std::sqrt(dir.x * dir.x + dir.y * dir.y);
               if (len > 1e-3f) {
@@ -2066,8 +2115,12 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
                                static_cast<float>(current->sample.sun_in_crystal[2]) };
           const float tip[3] = { centre[0] + u[0] * fit * 0.6f, centre[1] + u[1] * fit * 0.6f,
                                  centre[2] + u[2] * fit * 0.6f };
-          const auto a0 = scene_of(centre);
-          const auto a1 = scene_of(tip);
+          // centre/tip are ALREADY display points (the crystal view's mesh centre, and the
+          // tip built from the body-frame sun direction in that same view): normalize
+          // directly. scene_of would apply the frame switch's point transform a SECOND time
+          // (an extra inverse rotation that bends the arrow off the true sun direction).
+          const auto a0 = ToRay3DScene(centre, rendered);
+          const auto a1 = ToRay3DScene(tip, rendered);
           ImVec2 pa;
           ImVec2 pb;
           if (RayTraceClipSegmentToPixel(a0.data(), a1.data(), near_w, rendered, &pa, &pb)) {

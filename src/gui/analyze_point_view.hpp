@@ -321,11 +321,14 @@ inline constexpr float kRayTraceWidthNeutralUi = 2.0f;
 
 // One segment's cumulative Fresnel relative energy: the running product of the interface factors
 // already passed (the entry leg carries 1.0 — nothing absorbed yet; the exit leg the full-chain
-// product). `valid` false from the first unusable factor onward — the prefix stays honest, the
-// suffix carries no energy claim. An exact zero is a VALID energy (the engine produced it): no
-// ink, the contact markers stay, the label reads 0%.
+// product). The value stays DOUBLE end to end — the factors are double and a long chain of small
+// reflections is exactly the case the sqrt width mapping exists to keep readable; narrowing per
+// step would underflow legal positive energies (float's denormal floor ~1e-38) into a fabricated
+// exact zero (no ink, a wrong 0% label). `valid` false from the first unusable factor onward —
+// the prefix stays honest, the suffix carries no energy claim. An exact zero is a VALID energy
+// (the engine produced it): no ink, the contact markers stay, the label reads 0%.
 struct RayTraceSegmentEnergy {
-  float value = 1.0f;
+  double value = 1.0;
   bool valid = true;
 };
 
@@ -350,13 +353,22 @@ std::vector<RayTraceSegmentEnergy> RayTraceCumulativeEnergies(const double* fact
 
 // The visual line width (live UI scale) for a cumulative relative energy: the fixed sqrt
 // monotone mapping over the positive range; E <= 0 answers 0 — the renderer draws no ink for a
-// zero-energy segment. Not a physical scale: the legend says so.
-float RayTraceEnergyWidth(float energy);
+// zero-energy segment. The mapping runs in double and narrows only at the returned width, so a
+// legal sub-float energy still carries ink. Not a physical scale: the legend says so.
+float RayTraceEnergyWidth(double energy);
 
 // The per-segment ratio label's text: the exact cumulative value as a percentage with enough
 // precision for tiny non-zero values (never a rounded-to-zero non-zero), "0%" for an exact zero,
 // "n/a" past an unusable factor.
 std::string RayTraceEnergyLabelText(const RayTraceSegmentEnergy& energy);
+
+// The canvas-visible parameter window [t0, t1] of a pixel-space segment, clipped against the
+// canvas rect (Liang-Barsky). False when NOTHING of the segment is on the canvas. This is the
+// label path's visibility gate: an axis-aligned bounding-box overlap is only a NECESSARY
+// condition — a segment skimming past a canvas corner has an overlapping bbox and no visible
+// point, and anchoring there would fabricate an edge label for light nothing of which shows.
+bool RayTraceSegmentOnCanvas(const ImVec2& a, const ImVec2& b, const ImVec2& canvas_min, const ImVec2& canvas_max,
+                             double* out_t0 = nullptr, double* out_t1 = nullptr);
 
 // One contact's outward face normal, read from the mesh's per-face table by face NUMBER (the
 // raypath filter numbering; never an array index — the table is scanned). `known` false for a

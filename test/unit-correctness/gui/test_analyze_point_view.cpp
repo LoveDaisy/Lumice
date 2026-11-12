@@ -701,6 +701,63 @@ TEST(AnalyzePointView, RayTraceEnergyLabelTextSpellsExactRatiosAndUnavailable) {
   EXPECT_EQ(RayTraceEnergyLabelText(RayTraceSegmentEnergy{ 1.0f, false }), "n/a");
 }
 
+TEST(AnalyzePointView, RayTraceCumulativeEnergiesStayPositiveThroughLegalLongChains) {
+  // A long chain of small legal factors is exactly the case the sqrt width mapping exists to
+  // keep readable: the double accumulation must NOT underflow into a fabricated exact zero
+  // (no ink, a wrong 0% label) while the honest product is still positive. 0.02^27 ~ 1.3e-46
+  // sits far below float's denormal floor — the historical float-per-step narrowing read it
+  // as zero by the 27th interface.
+  std::vector<double> factors(27, 0.02);
+  const std::vector<RayTraceSegmentEnergy> chain = RayTraceCumulativeEnergies(factors.data(), factors.size());
+  ASSERT_EQ(chain.size(), 28U);
+  for (size_t s = 0; s < chain.size(); ++s) {
+    EXPECT_TRUE(chain[s].valid);
+    EXPECT_GT(chain[s].value, 0.0) << "segment " << s;
+  }
+  const std::string tail = RayTraceEnergyLabelText(chain.back());
+  EXPECT_NE(tail, "0%") << tail;
+  EXPECT_GT(RayTraceEnergyWidth(chain.back().value), 0.0f);  // the tail keeps its ink
+  // Even deeper: 30 factors (~1.1e-49) still carries its honest positive energy.
+  std::vector<double> deeper(30, 0.02);
+  const std::vector<RayTraceSegmentEnergy> deep = RayTraceCumulativeEnergies(deeper.data(), deeper.size());
+  EXPECT_GT(deep.back().value, 0.0);
+  EXPECT_TRUE(deep.back().valid);
+  // A REAL exact zero still reads as one — the underflow fix must not hide the declared zero.
+  std::vector<double> zeroed(27, 0.02);
+  zeroed[10] = 0.0;
+  const std::vector<RayTraceSegmentEnergy> mixed = RayTraceCumulativeEnergies(zeroed.data(), zeroed.size());
+  EXPECT_EQ(mixed[11].value, 0.0);
+  EXPECT_EQ(RayTraceEnergyLabelText(mixed[11]), "0%");
+  EXPECT_EQ(RayTraceEnergyWidth(mixed[11].value), 0.0f);
+}
+
+TEST(AnalyzePointView, RayTraceSegmentOnCanvasRejectsBboxOverlapWithoutIntersection) {
+  // The AABB overlap is only necessary: a segment skimming past the canvas corner has an
+  // overlapping bbox and NO visible point — the historical touches_canvas proxy would have
+  // anchored a ghost label there. Canvas [0,100]^2.
+  const ImVec2 lo(0.0f, 0.0f);
+  const ImVec2 hi(100.0f, 100.0f);
+  double t0 = 0.0;
+  double t1 = 1.0;
+  // Past the top-right corner: bbox overlaps, the segment (x - y = 30 throughout) never enters.
+  EXPECT_FALSE(RayTraceSegmentOnCanvas(ImVec2(90.0f, -20.0f), ImVec2(120.0f, 10.0f), lo, hi, &t0, &t1));
+  // Past the top-left corner: the reviewer's counterexample family (x + y = -50).
+  EXPECT_FALSE(RayTraceSegmentOnCanvas(ImVec2(-100.0f, 50.0f), ImVec2(50.0f, -100.0f), lo, hi, &t0, &t1));
+  // Fully outside on one axis.
+  EXPECT_FALSE(RayTraceSegmentOnCanvas(ImVec2(-50.0f, 10.0f), ImVec2(-10.0f, 90.0f), lo, hi));
+  // A real crossing: one end far outside, the visible part parameterized honestly.
+  ASSERT_TRUE(RayTraceSegmentOnCanvas(ImVec2(-100.0f, 50.0f), ImVec2(150.0f, 50.0f), lo, hi, &t0, &t1));
+  EXPECT_NEAR(t0, 0.4, 1e-9);  // enters at x=0
+  EXPECT_NEAR(t1, 0.8, 1e-9);  // leaves at x=100
+  // Fully inside.
+  EXPECT_TRUE(RayTraceSegmentOnCanvas(ImVec2(10.0f, 10.0f), ImVec2(90.0f, 90.0f), lo, hi, &t0, &t1));
+  EXPECT_NEAR(t0, 0.0, 1e-9);
+  EXPECT_NEAR(t1, 1.0, 1e-9);
+  // A degenerate segment answers its own containment.
+  EXPECT_TRUE(RayTraceSegmentOnCanvas(ImVec2(50.0f, 50.0f), ImVec2(50.0f, 50.0f), lo, hi));
+  EXPECT_FALSE(RayTraceSegmentOnCanvas(ImVec2(150.0f, 50.0f), ImVec2(150.0f, 50.0f), lo, hi));
+}
+
 TEST(AnalyzePointView, RayTraceContactFaceNormalResolvesOnlyKnownFaces) {
   // A nominal hex prism: the mesh's per-face table carries basal 1/2 and prism 3..8.
   LUMICE_CrystalParam param{};

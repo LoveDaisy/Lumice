@@ -3976,9 +3976,40 @@ bool TraceBuildExpectedLines(const gui::Ray3DFrameInfo& frame, const TraceChainE
       if (!TraceOracleClipSegment(frame, d0, d1, &e.pa, &e.pb)) {
         e.drawn = false;  // fully behind the near plane — nothing submitted
       } else {
+        // The oracle's own segment-rect clip (Liang-Barsky, written out here independently of
+        // the producer's RayTraceSegmentOnCanvas — the expectation must not reuse the
+        // producer's visibility predicate): an AABB overlap is only necessary, and a segment
+        // skimming past a corner must expect no label.
         const ImVec2 canvas_max(frame.canvas_min.x + frame.canvas_size.x, frame.canvas_min.y + frame.canvas_size.y);
-        e.touches_canvas = std::max(e.pa.x, e.pb.x) >= frame.canvas_min.x && std::min(e.pa.x, e.pb.x) <= canvas_max.x &&
-                           std::max(e.pa.y, e.pb.y) >= frame.canvas_min.y && std::min(e.pa.y, e.pb.y) <= canvas_max.y;
+        double u0 = 0.0;
+        double u1 = 1.0;
+        const double dx = static_cast<double>(e.pb.x) - e.pa.x;
+        const double dy = static_cast<double>(e.pb.y) - e.pa.y;
+        const auto cut = [&](double q, double dir) {
+          if (std::abs(dir) < 1e-12) {
+            return q >= 0.0;
+          }
+          const double r = q / dir;
+          if (dir < 0.0) {
+            if (r > u1) {
+              return false;
+            }
+            if (r > u0) {
+              u0 = r;
+            }
+          } else {
+            if (r < u0) {
+              return false;
+            }
+            if (r < u1) {
+              u1 = r;
+            }
+          }
+          return true;
+        };
+        e.touches_canvas =
+            cut(static_cast<double>(e.pa.x) - frame.canvas_min.x, -dx) && cut(canvas_max.x - e.pa.x, dx) &&
+            cut(static_cast<double>(e.pa.y) - frame.canvas_min.y, -dy) && cut(canvas_max.y - e.pa.y, dy) && u1 > u0;
       }
     }
     out->push_back(e);
@@ -4293,6 +4324,71 @@ bool TraceContactShapesFollowTheRealFacing(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(discriminating >= 1, false);  // the perspective anchor — a fwd proxy would flip this contact
   ctx->LogInfo("[trace facing] solid %d hollow %d, %d contact(s) discriminate against the fwd proxy", solid_expected,
                hollow_expected, discriminating);
+  return true;
+}
+
+// The crystal view's sun-direction arrow, anchored independently: the tip rides the C-API
+// sample's own sun_in_crystal from the display-frame mesh centre, so the submitted accent
+// primitives must lie on THAT line — a regression that re-applies the frame switch's inverse
+// rotation to already-display points (the scene_of refactor's coordinate-boundary defect)
+// bends the arrow off this line and fails the check. Runs in the crystal view.
+bool TraceSunArrowFollowsTheCrystalSun(ImGuiTestContext* ctx) {
+  const auto& frame = gui::LastRay3DFrameInfo();
+  IM_CHECK_RETV(frame.valid && frame.crystal_frame && frame.frame_count == ImGui::GetFrameCount(), false);
+  auto& view = gui::g_state.analysis.point_view;
+  LUMICE_PathPointSample sample{};
+  sample.struct_size = sizeof(sample);
+  const int stored = gui::PointValidSampleIndexAt(*gui::g_state.analysis.point.adopted_result, view.component_index,
+                                                  view.sample_index);
+  IM_CHECK_RETV(LUMICE_PathPointGetSample(gui::g_state.analysis.point.adopted_result.get(),
+                                          static_cast<size_t>(view.component_index), static_cast<size_t>(stored),
+                                          &sample) == LUMICE_PATH_READ_OK,
+                false);
+  // The expected arrow: display-frame mesh centre -> centre + u * 0.6 * fit (u verbatim from
+  // the sample; in the crystal view the display frame IS the body frame).
+  const float u[3] = { static_cast<float>(sample.sun_in_crystal[0]), static_cast<float>(sample.sun_in_crystal[1]),
+                       static_cast<float>(sample.sun_in_crystal[2]) };
+  const float un = std::sqrt(u[0] * u[0] + u[1] * u[1] + u[2] * u[2]);
+  IM_CHECK_RETV(un > 1e-6f, false);
+  const float centre[3] = { frame.centre[0], frame.centre[1], frame.centre[2] };
+  const float tip[3] = { centre[0] + u[0] / un * frame.fit * 0.6f, centre[1] + u[1] / un * frame.fit * 0.6f,
+                         centre[2] + u[2] / un * frame.fit * 0.6f };
+  const ImVec2 pc = TraceOracleProject(frame, centre);
+  const ImVec2 pt = TraceOracleProject(frame, tip);
+  // The pose must be non-identity here for the double-rotation regression to be visible.
+  double pose_dev = 0.0;
+  for (int k = 0; k < 9; ++k) {
+    pose_dev = std::max(pose_dev, std::abs(frame.pose[k] - (k % 4 == 0 ? 1.0 : 0.0)));
+  }
+  ctx->LogInfo("[trace arrow] pose deviation from identity %.3f, arrow pixels (%.0f,%.0f)->(%.0f,%.0f)", pose_dev, pc.x,
+               pc.y, pt.x, pt.y);
+  // The accent primitives INSIDE the canvas rect (the window's other accent ink — e.g. the
+  // checked radio's bullet — sits above the canvas and must not enter the bucket).
+  const ImU32 accent = ImGui::ColorConvertFloat4ToU32(gui::AccentColor());
+  const ImVec2 canvas_max(frame.canvas_min.x + frame.canvas_size.x, frame.canvas_min.y + frame.canvas_size.y);
+  std::vector<ImVec2> arrow_ink;
+  for (const ImVec2& v : TraceCanvasVertices(accent)) {
+    if (v.x >= frame.canvas_min.x && v.x <= canvas_max.x && v.y >= frame.canvas_min.y && v.y <= canvas_max.y) {
+      arrow_ink.push_back(v);
+    }
+  }
+  IM_CHECK_RETV(!arrow_ink.empty(), false);
+  // Every arrow vertex sits on the expected centre->tip segment (within the marker's AA
+  // envelope): the wrong-direction regression puts the ink on a different line.
+  const double seg_dx = static_cast<double>(pt.x) - pc.x;
+  const double seg_dy = static_cast<double>(pt.y) - pc.y;
+  const double seg_len = std::sqrt(seg_dx * seg_dx + seg_dy * seg_dy);
+  IM_CHECK_RETV(seg_len > 1.0, false);
+  const double tolerance = gui::UiPx(4.0);
+  double worst = 0.0;
+  for (const ImVec2& v : arrow_ink) {
+    const double t = ((v.x - pc.x) * seg_dx + (v.y - pc.y) * seg_dy) / (seg_len * seg_len);
+    const double px = pc.x + seg_dx * std::clamp(t, 0.0, 1.0);
+    const double py = pc.y + seg_dy * std::clamp(t, 0.0, 1.0);
+    worst = std::max(worst, std::hypot(v.x - px, v.y - py));
+  }
+  IM_CHECK_RETV(worst < tolerance, false);
+  ctx->LogInfo("[trace arrow] %zu ink vertices on the expected sun line, worst %.2f px", arrow_ink.size(), worst);
   return true;
 }
 
@@ -4797,6 +4893,7 @@ bool InternalReflectionTraceFromTheRealConsumer(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(TraceWidthsFollowCumulativeEnergy(ctx), false);
   IM_CHECK_RETV(TraceLabelsFollowTheToggle(ctx), false);
   IM_CHECK_RETV(TraceContactShapesFollowTheRealFacing(ctx), false);
+  IM_CHECK_RETV(TraceSunArrowFollowsTheCrystalSun(ctx), false);
   IM_CHECK_RETV(TraceOverlayClipsAtTheNearPlane(ctx), false);
   ctx->LogInfo("[v1 c03] the internal-reflection path drawn in the 3D region: entry, 3 internal, exit");
   IM_CHECK_RETV(RefusedTraceKeepsCrystalVisible(ctx, *identity), false);
