@@ -1285,12 +1285,16 @@ TEST_F(VerdictAnchorDraw, EdgeAnchorKeepsTheLabelInsideTheCanvas) {
     double delta;
     float pic_min_x;
     float pic_min_y;
+    bool glyph_wrap_assertable;  // the origin leg's canvas deliberately exceeds the screen
+                                 // viewport (that is what makes the non-zero origin visible to
+                                 // the clamp) — there the screen clip, not the canvas, bounds
+                                 // glyph emission, so the wrap fact is unassertable in this rig
   };
   const ViewProjection sun_vp = SunCamera();
   const Poke pokes[] = {
-    { "right-edge anchor", &sun_vp, 20.0, 88.0, 20.0, 0.0f, 0.0f },
-    { "top-edge anchor", &horizon_vp, 85.0, 0.0, 5.0, 0.0f, 0.0f },
-    { "right-edge anchor, non-zero canvas origin", &sun_vp, 20.0, 88.0, 20.0, 100.0f, 50.0f },
+    { "right-edge anchor", &sun_vp, 20.0, 88.0, 20.0, 0.0f, 0.0f, true },
+    { "top-edge anchor", &horizon_vp, 85.0, 0.0, 5.0, 0.0f, 0.0f, true },
+    { "right-edge anchor, non-zero canvas origin", &sun_vp, 20.0, 88.0, 20.0, 100.0f, 50.0f, false },
   };
   for (const Poke& poke : pokes) {
     VerdictAnchorInput in = Input(*poke.vp, /*shown=*/true, /*hover=*/false);
@@ -1312,7 +1316,7 @@ TEST_F(VerdictAnchorDraw, EdgeAnchorKeepsTheLabelInsideTheCanvas) {
     float min_y = 0.0f;
     float max_x = 0.0f;
     float max_y = 0.0f;
-    RectForColour(IM_COL32(16, 17, 20, 170), &min_x, &min_y, &max_x, &max_y);
+    RectForColour(kReadoutBackingInk, &min_x, &min_y, &max_x, &max_y);
     if (max_x <= min_x) {
       ADD_FAILURE() << poke.what << ": the label backing must have drawn";
       continue;
@@ -1325,24 +1329,26 @@ TEST_F(VerdictAnchorDraw, EdgeAnchorKeepsTheLabelInsideTheCanvas) {
     EXPECT_LE(max_x, canvas_r) << poke.what << ": patch crosses the canvas right edge";
     EXPECT_GE(min_y, canvas_t) << poke.what << ": patch crosses the canvas top edge";
     EXPECT_LE(max_y, canvas_b) << poke.what << ": patch crosses the canvas bottom edge";
-    // The glyphs ride the backing (text and backing move together): the label's text rect sits
-    // inside the backing's box, and the backing wraps it with the pad on both sides — the patch
-    // moved, never shrank (the glyph box is the text's own width; the ring shares the bucket and
-    // is excluded by the white-pixel discriminator).
-    float gmin_x = 0.0f;
-    float gmin_y = 0.0f;
-    float gmax_x = 0.0f;
-    float gmax_y = 0.0f;
-    GlyphRectForColour(kChromaticColourBlue, &gmin_x, &gmin_y, &gmax_x, &gmax_y);
-    if (gmax_x <= gmin_x) {
-      ADD_FAILURE() << poke.what << ": glyphs must have drawn";
-      continue;
+    if (poke.glyph_wrap_assertable) {
+      // The glyphs ride the backing (text and backing move together): the label's text rect sits
+      // inside the backing's box, and the backing wraps it with the pad — the patch moved, never
+      // shrank. The glyph box is the quad box, an advance narrower than CalcTextSize by the last
+      // glyph's own side bearing — hence the slack in the pad equality.
+      float gmin_x = 0.0f;
+      float gmin_y = 0.0f;
+      float gmax_x = 0.0f;
+      float gmax_y = 0.0f;
+      GlyphRectForColour(kChromaticColourBlue, &gmin_x, &gmin_y, &gmax_x, &gmax_y);
+      if (gmax_x <= gmin_x) {
+        ADD_FAILURE() << poke.what << ": glyphs must have drawn";
+        continue;
+      }
+      EXPECT_GE(gmin_x, min_x - 0.5f) << poke.what << ": glyph left of backing";
+      EXPECT_LE(gmax_x, max_x + 0.5f) << poke.what << ": glyph right of backing";
+      EXPECT_GE(gmin_y, min_y - 0.5f) << poke.what << ": glyph above backing";
+      EXPECT_LE(gmax_y, max_y + 0.5f) << poke.what << ": glyph below backing";
+      EXPECT_NEAR(max_x - min_x, (gmax_x - gmin_x) + 6.0f, 4.0f) << poke.what << ": backing wraps the text";
     }
-    EXPECT_GE(gmin_x, min_x - 0.5f) << poke.what << ": glyph left of backing";
-    EXPECT_LE(gmax_x, max_x + 0.5f) << poke.what << ": glyph right of backing";
-    EXPECT_GE(gmin_y, min_y - 0.5f) << poke.what << ": glyph above backing";
-    EXPECT_LE(gmax_y, max_y + 0.5f) << poke.what << ": glyph below backing";
-    EXPECT_NEAR(max_x - min_x, (gmax_x - gmin_x) + 6.0f, 2.0f) << poke.what << ": backing wraps the text";
   }
 }
 

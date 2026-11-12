@@ -37,6 +37,13 @@ inline constexpr int kMapQuerySampleCount = 500000;
 inline constexpr unsigned int kChromaticColourRed = (235u << 24) | (92u << 16) | (108u << 8) | 242u;
 inline constexpr unsigned int kChromaticColourBlue = (235u << 24) | (240u << 16) | (145u << 8) | 96u;
 
+// The readout label's backing ink (the dark patch every iso-deviation readout sits on): promoted
+// beside the chromatic pair because the unit layer reads the patch BY THIS COLOUR — the backing
+// is unique in the map frame, so its vertex box is the label's patch rect, and the clamp's tests
+// hold it to the canvas. Same discipline as the pair above: one value, both consumers (the draw
+// and the test), a compile-time pin against the original literal.
+inline constexpr unsigned int kReadoutBackingInk = (170u << 24) | (20u << 16) | (17u << 8) | 16u;
+
 // ---- Session-facing types -------------------------------------------------------------------------
 
 // The user's sky-point intent (AC3): WHERE in the sky they are asking about, independent of any

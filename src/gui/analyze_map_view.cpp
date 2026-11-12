@@ -26,6 +26,7 @@
 #include "gui/theme.hpp"
 #include "gui/view_look_at.hpp"
 #include "imgui.h"
+#include "util/label_viewport_clamp.hpp"  // the ONE viewport clamp — the readout label's shared rule
 #include "util/sky_direction.hpp"
 
 namespace lumice::gui {
@@ -40,6 +41,7 @@ namespace {
 // change the constant's comment demands.
 static_assert(kChromaticColourRed == IM_COL32(242, 108, 92, 235), "the promoted red must equal its literal");
 static_assert(kChromaticColourBlue == IM_COL32(96, 145, 240, 235), "the promoted blue must equal its literal");
+static_assert(kReadoutBackingInk == IM_COL32(16, 17, 20, 170), "the promoted backing ink must equal its literal");
 
 OverlayLegendState g_map_legend;
 MapObservationTiming g_map_observation_timing;
@@ -699,14 +701,20 @@ IsoDeltaWalk WalkIsoDeltaCircle(ImDrawList* dl, const MapCanvasProjection& view,
 // walk's topmost in-disk sample carries the text over a dark backing rect, in the curve's own
 // colour (the dashed form may leave that sample on a skipped stretch — the anchor sits within one
 // dash cycle of the nearest submitted line). One body for both callers — the backing ink's
-// literal lives here and nowhere else.
-void DrawIsoDeltaReadoutLabel(ImDrawList* dl, const IsoDeltaWalk& walk, ImU32 colour, const char* text) {
+// literal is the promoted kReadoutBackingInk and lives nowhere else. The patch is clamped into
+// the canvas rectangle through the ONE shared viewport clamp (util/label_viewport_clamp.hpp): a
+// readout anchored near the canvas edge must keep text AND backing inside (the unclamped draw
+// cropped the word on the edge), and the two move together — the clamp adjusts the position, never
+// the size, and leaves a degenerate axis (a canvas that cannot hold the patch plus the inset)
+// untouched, per the shared rule.
+void DrawIsoDeltaReadoutLabel(ImDrawList* dl, const IsoDeltaWalk& walk, ImU32 colour, const char* text,
+                              const LabelViewport& canvas) {
   const ImVec2 ts = ImGui::CalcTextSize(text);
-  dl->AddRectFilled(ImVec2(static_cast<float>(walk.top_x) - ts.x * 0.5f - 3.0f, static_cast<float>(walk.top_y) - ts.y),
-                    ImVec2(static_cast<float>(walk.top_x) + ts.x * 0.5f + 3.0f, static_cast<float>(walk.top_y)),
-                    IM_COL32(16, 17, 20, 170));
-  dl->AddText(ImVec2(static_cast<float>(walk.top_x) - ts.x * 0.5f, static_cast<float>(walk.top_y) - ts.y), colour,
-              text);
+  LabelPos pos{ static_cast<float>(walk.top_x) - ts.x * 0.5f, static_cast<float>(walk.top_y) - ts.y };
+  const LabelSize size{ ts.x + 6.0f, ts.y };  // the backing's full extent: the text plus 3pt each side
+  pos = ClampLabelPosToViewport(pos, size, canvas);
+  dl->AddRectFilled(ImVec2(pos.x - 3.0f, pos.y), ImVec2(pos.x + ts.x + 3.0f, pos.y + ts.y), kReadoutBackingInk);
+  dl->AddText(ImVec2(pos.x, pos.y), colour, text);
 }
 
 void DrawFrameAnchors(ImDrawList* dl, const MapCanvasProjection& view, const LUMICE_PathMapInfo& info,
@@ -1014,7 +1022,8 @@ void DrawSurveyOverlays(ImDrawList* dl, GuiState& state, const MapCanvasProjecti
         char line[112];
         std::snprintf(line, sizeof(line), "%s · %.3f°%s", curve.label->c_str(), curve.delta_deg,
                       walk.partial() ? " · arc in view" : "");
-        DrawIsoDeltaReadoutLabel(dl, walk, curve.colour, line);
+        DrawIsoDeltaReadoutLabel(dl, walk, curve.colour, line,
+                                 LabelViewport{ pic_min.x, pic_min.y, view.width_pt, view.height_pt });
       }
     }
   }
@@ -1128,7 +1137,8 @@ void DrawVerdictAnchor(ImDrawList* dl, const SurveyDiagnoseView& diagnose, const
     char line[96];
     std::snprintf(line, sizeof(line), "verdict · %.3f°%s", diagnose.position_deg,
                   walk.partial() ? " · arc in view" : "");
-    DrawIsoDeltaReadoutLabel(dl, walk, colour, line);
+    DrawIsoDeltaReadoutLabel(dl, walk, colour, line,
+                             LabelViewport{ in.pic_min_x, in.pic_min_y, in.width_pt, in.height_pt });
   }
 }
 
