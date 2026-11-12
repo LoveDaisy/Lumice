@@ -4561,6 +4561,27 @@ bool IdentityClassShowsTheMassArmAndTheMapAnswers(ImGuiTestContext* ctx) {
       ctx->Yield(1);
     }
   }
+  {
+    // The gate's priority over the sticky state: the storage still says open (the env-on leg
+    // left the group expanded across its window reopen), but with the env unset the header is
+    // unsubmitted — an old expansion state cannot re-display a gated group.
+    const ScopedDebugDetailsEnv env_unset(DebugDetailsState::kUnset);
+    ctx->Yield(2);
+    IM_CHECK_RETV(ctx->ItemInfo("**/Class diagnostics##sv_answer", ImGuiTestOpFlags_NoError).ID == 0, false);
+  }
+  {
+    // Env on again, same session: the storage's own answer comes back — the group returns
+    // still expanded, no second click (the session's expansion preference survives the gate).
+    // The seek is the capture's own requirement: the env-off frames reflowed the report and
+    // the expanded body sits below the clip until scrolled to.
+    const ScopedDebugDetailsEnv env_on(DebugDetailsState::kOn);
+    ctx->Yield(2);
+    IM_CHECK_RETV(ctx->ItemInfo("**/Class diagnostics##sv_answer", ImGuiTestOpFlags_NoError).ID != 0, false);
+    ctx->ScrollToItem("**/Class diagnostics##sv_answer", ImGuiAxis_Y);
+    ctx->Yield(2);
+    const std::string restored_text = CaptureMapFrameText(ctx);
+    IM_CHECK_RETV(restored_text.find("member(s)") != std::string::npos, false);
+  }
   ctx->WindowClose("//Raypath view");
   ctx->Yield(1);
   return true;
