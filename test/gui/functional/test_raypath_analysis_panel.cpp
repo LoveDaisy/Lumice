@@ -2876,6 +2876,14 @@ bool ReportHighlightBBox(ImU32 colour, ImVec2* out_min, ImVec2* out_max) {
   return any;
 }
 
+// Two rects intersect iff NEITHER axis separates them — the row highlight's own criterion. The
+// two axis separations join with OR: a highlight drawn one row above or below the target shares
+// the rows' x span, so only the OR rejects it (the AND-shaped mix the first draft had let exactly
+// that shape through).
+bool RowRectsIntersect(const ImRect& a, const ImRect& b) {
+  return (a.Min.x <= b.Max.x && a.Max.x >= b.Min.x) && (a.Min.y <= b.Max.y && a.Max.y >= b.Min.y);
+}
+
 // The 2026-11-12 feedback wave's interaction face (contract §16.1.3's extension): the class
 // answer's rows highlight where the pointer stands (AC1/AC3 — the ratio row's feedback is local
 // by design, it names no spatial payload), the three profile reading rows drive the map's profile
@@ -2934,6 +2942,13 @@ bool ProfileRowsHighlightAndDrawOnTheMap(ImGuiTestContext* ctx) {
   const ImU32 hovered_ink = ImGui::GetColorU32(ImGuiCol_HeaderHovered);
   IM_CHECK_RETV(gui::g_state.analysis.profile_row_hover == gui::SurveyProfileHover::kNone, false);
   IM_CHECK_RETV(MapWindowIndexCountForColour(gui::kProfileReadingColour) == 0, false);
+  // The intersection predicate's own legs, before the rows lean on it: the adjacent-row shape the
+  // OR form exists to reject (horizontal overlap, vertical separation — above and below), and a
+  // genuine overlap the predicate must still accept.
+  IM_CHECK_RETV(!RowRectsIntersect(ImRect(0, 0, 100, 10), ImRect(0, 20, 100, 30)), false);
+  IM_CHECK_RETV(!RowRectsIntersect(ImRect(0, 0, 100, 10), ImRect(0, -30, 100, -20)), false);
+  IM_CHECK_RETV(RowRectsIntersect(ImRect(0, 0, 100, 10), ImRect(0, 5, 100, 15)), false);
+  IM_CHECK_RETV(RowRectsIntersect(ImRect(0, 0, 100, 10), ImRect(50, 0, 150, 10)), false);
   auto hover_row = [&](const char* id, gui::SurveyProfileHover expect) -> bool {
     ctx->ScrollToItem(id, ImGuiAxis_Y);
     ctx->Yield(1);
@@ -2954,7 +2969,8 @@ bool ProfileRowsHighlightAndDrawOnTheMap(ImGuiTestContext* ctx) {
       return false;
     }
     const ImRect row = ctx->ItemInfo(id).RectFull;
-    if ((hmax.x < row.Min.x || hmin.x > row.Max.x) && (hmax.y < row.Min.y || hmin.y > row.Max.y)) {
+    const ImRect highlight(hmin, hmax);
+    if (!RowRectsIntersect(highlight, row)) {
       ctx->LogError(
           "[profile hover] %s: highlight bbox (%.0f,%.0f)-(%.0f,%.0f) misses the row rect (%.0f,%.0f)-(%.0f,%.0f)", id,
           hmin.x, hmin.y, hmax.x, hmax.y, row.Min.x, row.Min.y, row.Max.x, row.Max.y);
