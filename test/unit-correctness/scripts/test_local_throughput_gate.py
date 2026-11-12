@@ -290,3 +290,87 @@ def test_remote_readings_failures_degrade_to_an_error_reading(monkeypatch):
                         lambda c, **kw: subprocess.CompletedProcess(c, 0, stdout="not json\n", stderr=""))
     r = g.remote_readings(remote_ctx())
     assert r.errors and "remote readings failed" in r.errors[0]
+
+
+# --- metal build-tools pre-check -----------------------------------------------
+# A missing build tool is a deterministic configuration error: it must surface as
+# an error before anything expensive (readings, build, cool-down, pytest), with a
+# public category an issue reader can diagnose from — tool names stay local.
+
+def test_missing_build_tools_reason_names_each_missing_tool_in_fixed_order():
+    assert g.missing_build_tools_reason({"cmake": "/opt/hb/bin/cmake", "ninja": "/opt/hb/bin/ninja"}) is None
+    assert g.missing_build_tools_reason({"cmake": None, "ninja": "/opt/hb/bin/ninja"}) == \
+        "build tools missing from PATH: cmake"
+    assert g.missing_build_tools_reason({"cmake": "/opt/hb/bin/cmake", "ninja": None}) == \
+        "build tools missing from PATH: ninja"
+    assert g.missing_build_tools_reason({"cmake": None, "ninja": None}) == \
+        "build tools missing from PATH: cmake ninja"
+
+
+def test_metal_build_tools_found_resolves_from_path(monkeypatch):
+    """The IO seam queries every required tool through shutil.which on the
+    inherited PATH — the same PATH the build will use."""
+    monkeypatch.setattr(g.shutil, "which", lambda t: {"cmake": "/opt/hb/bin/cmake"}.get(t))
+    assert g.metal_build_tools_found() == {"cmake": "/opt/hb/bin/cmake", "ninja": None}
+
+
+def make_ctx(tmp_path):
+    """A minimal Ctx for run_metal tests: a quiet machine lives behind the doubles."""
+    args = argparse.Namespace(dry_run=False, cooldown_timeout=0.0, cooldown_poll=0.0,
+                              threshold_override=None, pytest_timeout=10,
+                              work_dir=str(tmp_path / "work"))
+    return g.Ctx(args=args, run_id="t", run_dir=tmp_path, log=lambda msg: None,
+                 thresholds=g.IdleThresholds(), synthetic=False)
+
+
+def test_metal_fails_fast_before_any_expensive_stage_when_tools_missing(tmp_path, monkeypatch):
+    ctx = make_ctx(tmp_path)
+    calls = []
+    monkeypatch.setattr(g, "metal_build_tools_found",
+                        lambda: {"cmake": None, "ninja": "/opt/hb/bin/ninja"})
+    monkeypatch.setattr(g, "collect_readings", lambda with_wsl_host: calls.append("readings"))
+    monkeypatch.setattr(g, "run_logged", lambda *a, **kw: calls.append(tuple(a)))
+    rec = g.run_metal(ctx, "sha")
+    assert rec["status"] == "error"
+    assert rec["reason"] == "build tools missing from PATH: cmake"
+    assert calls == []                       # no readings, no build, no pytest
+    assert "idle_pre" not in rec             # nothing was measured, nothing is faked
+    assert not (tmp_path / "metal-build.log").exists()
+
+
+def test_metal_with_tools_present_reaches_build_and_pytest_boundaries(tmp_path, monkeypatch):
+    """Tools present: the leg runs its real sequence to both expensive boundaries,
+    where the doubles stop it — no build or test workload is ever executed."""
+    ctx = make_ctx(tmp_path)
+    calls = []
+    monkeypatch.setattr(g, "metal_build_tools_found",
+                        lambda: {"cmake": "/opt/hb/bin/cmake", "ninja": "/opt/hb/bin/ninja"})
+    monkeypatch.setattr(g, "collect_readings",
+                        lambda with_wsl_host: g.Readings(load1=0.0, physical_cores=8))
+
+    def fake_run_logged(ctx_, cmd, log_path, **kw):
+        calls.append(list(cmd))
+        Path(log_path).touch()               # run_logged always creates the log file
+        return 0
+
+    monkeypatch.setattr(g, "run_logged", fake_run_logged)
+    rec = g.run_metal(ctx, "sha")
+    build_calls = [c for c in calls if c[0] == "./scripts/build.sh"]
+    pytest_calls = [c for c in calls if c[0] != "./scripts/build.sh"]
+    assert len(build_calls) == 1 and build_calls[0][1:3] == ["-j", "release"]
+    assert len(pytest_calls) == 1 and pytest_calls[0][1:3] == ["-m", "pytest"]
+    assert any(a.startswith("--junitxml=") and str(tmp_path) in a for a in pytest_calls[0])
+    assert "idle_pre" in rec and "idle_post" in rec and "idle_after_pytest" in rec
+    # the doubles stop at the boundaries, so this is no measurement — and never a pass
+    assert rec["status"] == "error" and "no-junit" in rec["reason"]
+    assert (tmp_path / "metal-build.log").exists() and (tmp_path / "metal-pytest.log").exists()
+
+
+def test_missing_tools_error_publishes_its_category_but_not_the_details():
+    rec = {"status": "error", "run_id": "r", "sha": "abc",
+           "reason": "build tools missing from PATH: cmake"}
+    assert g.public_reason(rec["reason"]) == "build tools missing from PATH"
+    body = g.issue_body("metal", rec, None)
+    assert "build tools missing from PATH" in body
+    # which tool is missing stays in the local record; the public body names no tool or path
+    assert "cmake" not in body and "/Users/" not in body

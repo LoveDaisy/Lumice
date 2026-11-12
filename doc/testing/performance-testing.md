@@ -479,7 +479,12 @@ it measures (see "idle" below), because the two roles are one physical machine.
 **What one run does** — `scripts/local_throughput_gate.py`, one entry point, fixed order per leg:
 check out `origin/main`'s tip in the gate's **own clone** (`~/.cache/lumice-throughput-gate/repo`,
 never a developer worktree) → idle pre-check → build → cool-down → idle re-check → pytest → record
-→ notify. The CUDA leg pushes the commit into a persistent repo on the remote (so the remote build
+→ notify. Before any of that, the metal leg resolves its build tools (`cmake`, `ninja`) from PATH —
+a missing tool is a deterministic configuration error, not a busy-machine signal, so the leg ends
+as `error` with the public category `build tools missing from PATH` (the issue body shows only that
+category; which tool is missing is in the local reason in `results.jsonl`), and its record carries
+no idle readings because none were taken. The CUDA leg pushes the commit into a persistent repo on
+the remote (so the remote build
 stays incremental), tops up the remote's CPM source cache from this machine's, and runs the build
 and the test there under `nohup`, each writing its log, exit code and a done-marker to the
 **remote disk** (`~/Codes/lumice-throughput-gate/results/<run_id>/`); this machine polls the marker
@@ -492,7 +497,9 @@ test's own verdict (exit code + junit XML, target test actually executed). `skip
 unreachable / locked) and `error` (build failure, test not executed or skipped, lost remote run,
 timeout) are infrastructure, kept apart from `fail` so a broken build is never read as a throughput
 regression — and an exit-0 run whose target test was skipped is an `error`, not a pass (the silent
-green of a missing binary or an unset `LUMICE_HAS_CUDA`).
+green of a missing binary or an unset `LUMICE_HAS_CUDA`). Captured child output is decoded with
+replacement (`errors="replace"`): one stray non-UTF-8 byte in, say, another process's `ps` entry
+becomes U+FFFD in the readings and logs instead of raising and discarding the run's records.
 
 **Idle.** A measurement taken while something else loads the machine is a false red, so a leg only
 measures when its machine is idle, and only the re-check **after** the build decides (the
