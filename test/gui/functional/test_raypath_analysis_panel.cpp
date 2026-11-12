@@ -45,6 +45,7 @@
 #include "gui/log_sink.hpp"
 #include "gui/panels.hpp"
 #include "gui/raypath_segments.hpp"
+#include "gui/semantic_colors.hpp"  // WarningTextColor — the drift warning ink's colour probe
 #include "gui/sim_state_rules.hpp"
 #include "gui/theme.hpp"
 #include "gui/user_defaults.hpp"  // kFactoryUiScaleMultiplier — the scale tiers restore through it
@@ -922,6 +923,83 @@ bool UnprojectMouse(float out[3]) {
       gui::PreviewAnnotationView(gui::g_state, gui::g_panorama_vp.vp_w, gui::g_panorama_vp.vp_h);
   int valid = 0;
   return LUMICE_UnprojectPixel(&view, px->px, px->py, out, &valid) == LUMICE_OK && valid == 1;
+}
+
+// The Analyze main view's chrome window (the picture child, the status viewport and the
+// operation bar all render inside it). The chrome window and the picture child share the name
+// segment ##AnalyzePanorama (the child spells "##AnalyzePanoramaPicture_<id>"), so the lookup is
+// exact-name, not a fragment match.
+ImGuiWindow* AnalyzePanoramaHostWindow() {
+  for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
+    if (w != nullptr && w->WasActive && std::strcmp(w->Name, "##AnalyzePanorama") == 0) {
+      return w;
+    }
+  }
+  return nullptr;
+}
+
+// The drift warning's ink over the Analyze main view, read off the draw lists the way the user
+// sees it. Every active window whose ancestor chain reaches the ##AnalyzePanorama chrome
+// contributes the vertices that carry the given text colour; the drift warning's glyphs are the
+// only warning-coloured ink that subtree draws (the marker and ring are accent, the status prose
+// is the regular text colour), so the probe answers for the warning line directly. The verdict
+// the callers need is the pair: whether any of it was drawn at all, and whether every vertex
+// sits inside its own window's InnerClipRect — a line scrolled past its child's fold is either
+// emitted below the clip or not emitted at all (RenderText stops at the clip bottom, and a
+// fully-culled item never reaches AddText), and both shapes fail the "visible without
+// scrolling" bar the drift warning's AC pins.
+struct PanoramaWarningInk {
+  bool found = false;
+  bool clipped = false;
+  ImRect bbox = ImRect(FLT_MAX, FLT_MAX, -FLT_MAX, -FLT_MAX);
+  int vertices = 0;
+};
+
+PanoramaWarningInk CollectPanoramaWarningInk(ImU32 colour) {
+  PanoramaWarningInk ink;
+  ImGuiWindow* host = AnalyzePanoramaHostWindow();
+  if (host == nullptr) {
+    return ink;
+  }
+  for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
+    if (w == nullptr || !w->WasActive || w->DrawList == nullptr) {
+      continue;
+    }
+    bool under_host = false;
+    for (const ImGuiWindow* p = w; p != nullptr; p = p->ParentWindow) {
+      if (p == host) {
+        under_host = true;
+        break;
+      }
+    }
+    if (!under_host) {
+      continue;
+    }
+    for (const ImDrawVert& v : w->DrawList->VtxBuffer) {
+      if (v.col != colour) {
+        continue;
+      }
+      ink.found = true;
+      ++ink.vertices;
+      ink.bbox.Add(v.pos);
+      // Half a pixel of rounding slack — the same containment tolerance the region pins use.
+      if (v.pos.x < w->InnerClipRect.Min.x - 0.5f || v.pos.x > w->InnerClipRect.Max.x + 0.5f ||
+          v.pos.y < w->InnerClipRect.Min.y - 0.5f || v.pos.y > w->InnerClipRect.Max.y + 0.5f) {
+        ink.clipped = true;
+      }
+    }
+  }
+  return ink;
+}
+
+// The exact packed colour the warning text's vertices carry, read the way the renderer reads it:
+// push the semantic colour, read ImGuiCol_Text back — so a theme change or a global alpha
+// factor cannot drift the probe away from what was actually drawn.
+ImU32 WarningTextVertexColour() {
+  ImGui::PushStyleColor(ImGuiCol_Text, gui::WarningTextColor());
+  const ImU32 colour = ImGui::GetColorU32(ImGuiCol_Text);
+  ImGui::PopStyleColor();
+  return colour;
 }
 
 // Whether the pick banner is on screen: the banner child exists and was submitted last frame
@@ -11920,6 +11998,110 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       IM_CHECK_EQ(gui::g_state.renderer.azimuth, az_before);
       IM_CHECK_EQ(gui::g_state.renderer.elevation, el_before);
       IM_CHECK_EQ(gui::g_state.renderer.fov, fov_before);
+    };
+  }
+
+  // The cone-centre drift warning's fixed visibility (779.1): after a completed Point analysis,
+  // moving the centre must light the warning in the main view's info area WITHOUT scrolling and
+  // WITHOUT collapsing anything. The shape that failed the owner's real check drew the warning
+  // as the fourth line of the two-line status viewport, past its fold — equivalent to no failure
+  // sign at all. The judge is the drawn ink itself (CollectPanoramaWarningInk), never the
+  // predicate or an item id: the red state this case first recorded was the warning's glyphs
+  // absent from the main view's output entirely.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "cone_centre_drift_warning_fixed_visible");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ScopedServerGuard guard;
+      IM_CHECK(BringUpHaloScene(ctx, /*infinite=*/false));
+      OpenWindow(ctx);
+      ctx->SetRef(PanoramaRegionRef());
+      ctx->ItemClick("Point");
+      ctx->Yield(2);
+      ctx->SetRef("");
+      const gui::CanvasPixel px = PickPanoramaCentre(ctx);
+      IM_CHECK(gui::g_state.analysis.cone_center_valid);
+      // Analyze, through the button; completion is the analysis's own end plus a result, the
+      // same gate point_pick_analyze_lists_chains uses — never a stale payload alone.
+      ctx->SetRef(PanoramaRegionRef());
+      ctx->ItemClick(kAnalyzeButton);
+      ctx->SetRef("");
+      IM_CHECK(gui::g_state.analysis.started);
+      IM_CHECK(DriveUntil(
+          ctx, [] { return !gui::g_state.analysis_run_in_progress && gui::g_state.analysis_result.payload != nullptr; },
+          60));
+      IM_CHECK_EQ(gui::g_state.analysis_result.payload->roi_mode, LUMICE_RAYPATH_ROI_CONE);
+
+      const ImU32 warn_colour = WarningTextVertexColour();
+      const PanoramaWarningInk before_drag = CollectPanoramaWarningInk(warn_colour);
+      IM_CHECK(!gui::ConeCenterDriftedFromResult(gui::g_state));
+      // AC3's positive control: no warning ink while the centre stands on the analysed one. If
+      // something else in this subtree ever draws the warning colour, this leg turns red and
+      // the probe needs a second discriminator — a deliberate tripwire, not a pass.
+      IM_CHECK(!before_drag.found);
+
+      // The real marker drag, the same gesture marker_drag_moves_the_centre_not_the_view pins:
+      // press on the marker, move to another sky point, release.
+      const std::optional<ImVec2> marker = MarkerScreenPos(ctx);
+      IM_CHECK(marker.has_value());
+      const float dir_before[3] = { gui::g_state.analysis.cone_center_dir[0], gui::g_state.analysis.cone_center_dir[1],
+                                    gui::g_state.analysis.cone_center_dir[2] };
+      ctx->MouseMoveToPos(*marker);
+      ctx->Yield(2);
+      ctx->MouseDown(0);
+      ctx->Yield(1);
+      IM_CHECK(gui::g_state.workspace.panorama_press_owner == PressOwner::kMarker);
+      ctx->MouseMoveToPos(ImVec2(marker->x + 45.0f, marker->y - 30.0f));
+      ctx->Yield(1);
+      ctx->KeyDown(ImGuiMod_Alt);
+      ctx->MouseMoveToPos(ImVec2(marker->x + 60.0f, marker->y - 40.0f));
+      ctx->Yield(2);
+      ctx->KeyUp(ImGuiMod_Alt);
+      ctx->MouseUp(0);
+      ctx->Yield(2);
+      IM_CHECK(gui::g_state.workspace.panorama_press_owner == PressOwner::kNone);
+      const float dir_after[3] = { gui::g_state.analysis.cone_center_dir[0], gui::g_state.analysis.cone_center_dir[1],
+                                   gui::g_state.analysis.cone_center_dir[2] };
+      IM_CHECK(std::memcmp(dir_before, dir_after, sizeof(dir_before)) != 0);
+      // The drag is only a re-aim (contract §8): no analysis may auto-start, and the completed
+      // result stays on show unchanged. `started` is the standing intent, not a progress flag —
+      // the judge for "nothing re-ran" is the derived in-progress flag and the payload pointer.
+      const auto* payload_before = gui::g_state.analysis_result.payload.get();
+      IM_CHECK(!gui::g_state.analysis_run_in_progress);
+      IM_CHECK(gui::ConeCenterDriftedFromResult(gui::g_state));
+
+      // AC1's judge, at rest, before any scroll: the warning must be ON SCREEN in the main
+      // view's info area. The drag gesture lives on the picture, so a scroll here would be the
+      // automatic kind the AC forbids. Telemetry first — a red assert prints its expression,
+      // these lines carry the geometry behind it.
+      ImGuiWindow* host = AnalyzePanoramaHostWindow();
+      IM_CHECK(host != nullptr);
+      ImGuiWindow* status = RegionWindowUnder("##AnalyzePanorama", "##AnalyzePictureStatus");
+      IM_CHECK(status != nullptr);
+      ctx->LogInfo(
+          "[drift band] status SM %.1f SC %.1f inner [%.0f..%.0f] h %.0f | chrome SM %.1f/%.1f avail %.0fx%.0f",
+          status->ScrollMax.y, status->Scroll.y, status->InnerClipRect.Min.y, status->InnerClipRect.Max.y,
+          status->InnerClipRect.GetHeight(), host->ScrollMax.x, host->ScrollMax.y, host->ContentRegionRect.GetWidth(),
+          host->ContentRegionRect.GetHeight());
+      IM_CHECK_EQ(status->Scroll.y, 0.0f);
+      const PanoramaWarningInk after_drag = CollectPanoramaWarningInk(warn_colour);
+      // The visibility bar: the warning's ink was drawn, and none of it sits outside its own
+      // window's clip. On the old placement the warning's item is culled past the viewport's
+      // fold and no vertex reaches the draw list — the red state this case is the regression
+      // anchor for.
+      // The visibility bar: the warning's ink was drawn, and none of it sits outside its own
+      // window's clip. On the old placement the warning's item is culled past the viewport's
+      // fold and no vertex reaches the draw list — the red state this case is the regression
+      // anchor for.
+      IM_CHECK(after_drag.found);
+      IM_CHECK(!after_drag.clipped);
+      // The chrome window itself never scrolls for the warning: the band's height is part of
+      // the column's vertical stack, not a window-level overflow.
+      IM_CHECK_EQ(host->ScrollMax.y, 0.0f);
+      IM_CHECK_EQ(host->Scroll.y, 0.0f);
+      // Still nothing auto-started several frames in (the adoption gate would have run by now).
+      ctx->Yield(3);
+      IM_CHECK(!gui::g_state.analysis_run_in_progress);
+      IM_CHECK_EQ(gui::g_state.analysis_result.payload.get(), payload_before);
     };
   }
 
