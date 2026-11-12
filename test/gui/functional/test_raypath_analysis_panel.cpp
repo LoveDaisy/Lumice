@@ -8977,11 +8977,12 @@ bool CheckMapCellSteps(ImGuiTestContext* ctx, const std::string& text, const LUM
 }
 
 bool CheckMapQualityText(ImGuiTestContext* ctx, const std::string& stem) {
-  // The shipped default, proven with the non-diagnostic premises group OPEN: the "Map
-  // diagnostics" header is unsubmitted (the gate, not a closed fold), and neither the grid /
-  // execution lines nor the engine's raw geometry-basis string leak into the capture.
-  {
-    const ScopedDebugDetailsEnv env_unset(DebugDetailsState::kUnset);
+  // The shipped default under BOTH off spellings — no variable, and an explicit "0" — proven
+  // with the non-diagnostic premises group OPEN: the "Map diagnostics" header is unsubmitted
+  // (the gate, not a closed fold), and neither the grid / execution lines nor the engine's raw
+  // geometry-basis string leak into the capture.
+  for (const DebugDetailsState gate_state : { DebugDetailsState::kUnset, DebugDetailsState::kOff }) {
+    const ScopedDebugDetailsEnv env_off(gate_state);
     ctx->Yield(2);
     IM_CHECK_RETV(ctx->ItemInfo("**/Map diagnostics##map_caliber", ImGuiTestOpFlags_NoError).ID == 0, false);
     ImGuiWindow* report = MapReportWindow();
