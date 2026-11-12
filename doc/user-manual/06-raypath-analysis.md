@@ -149,7 +149,8 @@ report that carries, in order: the **class answer** (the complete survey, with i
 details / Calculation details fold groups), the **sky-point answer** (the complete point
 document, with its own fold pair), the map's caliber (the short quantity and its limits, the
 grid and execution numbers in folds), and a legend of short shape keys whose longer meanings
-sit behind a **Legend explanations** fold. Closing a window only hides it: results
+sit behind a **Legend explanations** fold — each key carries a small icon of the shape it
+names, in the shape's own colour. Closing a window only hides it: results
 and in-flight work survive. Clicking the selected row opens it again.
 
 **One camera, two pictures.** The main picture and the map use the same lens, FOV, orientation
@@ -200,6 +201,26 @@ names itself **not visible**, and one the class answer carries no position for, 
 (the text is the answer there, not a missing marker), and a verdict with **incomplete coverage**
 draws its circle dashed. The legend lists "verdict anchor" only on frames where one actually
 drew — its absence means no anchor is on the map, not that the verdict is gone.
+
+**Row highlights and the reference profile's readings.** Every hoverable row in the class answer
+highlights while the pointer stands on it — the theme's own hover colour under the row's text —
+so the row you are on is readable without looking at the map. Three of the rows are also spatial:
+**Profile edge**, **Profile peak** and **Peak–edge separation**. Hovering edge or peak draws a
+point on the map at that reading's position on the survey's reference profile — the radial line
+the probe sampled at its own azimuth, anchored on the survey document's own sun. Hovering
+separation draws the interval between the two readings along that line (a segment between two
+points, not a filled band between two circles). The readings' honesty carries to the map: a
+refused profile, an unknown profile azimuth, or a missing reading draws nothing, and a reading
+whose position is off the view draws nothing — the row's own words are the answer there. The
+Blue/red ratio row highlights too but names no position, so it drives no map geometry. The
+profile drawings are hover-transient: no row standing, no ink, and Overlays off holds them back
+while the row highlight stays.
+
+**Readout labels stay inside the view.** The delta labels on the dispersion circles and the
+verdict anchor move inside the map's bounds when their anchor sits near an edge — the word stays
+whole (text and backing move together), and a view too small to hold a label keeps that label
+where the curve put it. The map's other drawings are unchanged: the sun marker may still be
+cut by the view's edge, and the circles still end at the view's own physical boundary.
 
 ## 8. The point inspector (the Pose & trace window, point detail)
 

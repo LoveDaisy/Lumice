@@ -739,18 +739,51 @@ dispersion 双圈与 verdict 锚定同走线同措辞）；②弧 = 带方位向
   下不可感知）。覆写契约 = 类答案区渲染路径每帧覆写（无 hover 显式 false）；复位接缝两处 =
   类答案缺席分支 + 关窗/被裁剪分支——标志只在写它的 region 在屏期间为真。
 
-**行可寻址化的交互面增量（as-built 形态）**：联动两行保留 `Bullet + TextWrapped` 逐字节渲染
-（wrap 纪律：Selectable 的 RenderTextClipped 不换行，弃用）；行上叠加**透明 InvisibleButton**
-（ID 面向测试寻址：`###diagnose_verdict_row` / `###diagnose_position_row`）。交互面增量两面：
-hover 即标注（无高亮——InvisibleButton 不画任何东西）；行点击被吞占（一帧 ActiveId，无视觉
-后果）；键盘 nav 焦点无（InvisibleButton 默认 NoNav）。主窗路径不传读出参数 = 零新 item、
-零交互态。
+**行可寻址化的交互面增量（as-built 形态；2026-11-12 反馈波推翻高亮形态）**：联动行保留
+`Bullet + TextWrapped` 逐字节渲染（wrap 纪律：Selectable 的 RenderTextClipped 不换行，弃用）；
+行上叠加 InvisibleButton（ID 面向测试寻址：`###diagnose_verdict_row` /
+`###diagnose_position_row`）。交互面增量两面：行点击被吞占（一帧 ActiveId，无视觉后果）；键盘
+nav 焦点无（InvisibleButton 默认 NoNav）。主窗路径不传读出参数 = 零新 item、零交互态。
+**2026-11-12 修订（owner 上手反馈，原「无高亮」形态被明示推翻）**：hover 行在本帧即获得可见
+行反馈——主题交互色（`ImGuiCol_HeaderHovered`）的背景，绘入窗口通道 0（内容在通道 1，合并后
+背景在文字之下），行命中面与高亮视觉面一致（同为文字 item 矩形）；主窗摘要宿主仍零联动。
 
 **语义色板（单源提升）**：dispersion 双圈的两个内联色值提升为命名常量
 （`analyze_map_view.hpp` `kChromaticColourRed/Blue`，cpp 侧 static_assert 逐字节钉旧字面量
 等值）；dispersion 与 verdict 锚定共同引用——改值是双消费点变更，不是单侧重调。读数标签
 （顶点 + 底衬 + δ 值 + "· arc in view"）为 dispersion 与 verdict 的共享 helper，背衬墨色
-字面量单点。
+字面量单点（提升为 `kReadoutBackingInk`，测试按该常量读 patch）。
+
+**2026-11-12 反馈波扩展（as-built）**：
+
+- **profile 设备（词汇表扩展）**：参考剖线悬停设备 = ③点的第二消费（edge/peak 读数在剖线上的
+  位置点标）+ **径向区间**新设备（separation 行 = edge 到 peak 的剖线区间段，沿线采样，**不是**
+  等偏角弧、不是两圈间环带——预留的②弧（方位向延展）仍未接线）。帧前提 = **survey 文档自己的
+  太阳回显 + probe 自己的方位帧**：引擎 probe 帧以 incident = −太阳天位向量构造，与地图 walk
+  基 (u,v) 逐点重合（e1=u、e2=−v，含同一 fallback），probe 方位 az 映射到 walk 圆参数
+  φ = π − az；内建 probe 的 `azimuth_deg=0` 是代表楔的显式 schema 值（方位自由剖面的代表线），
+  非缺省未知。点标语义 = 「参考剖线上的读数位置」，不是全域峰或全圆可见性声明。
+- **profile 触发集（封闭）**：类答案区三条读数行（`###profile_edge_row`/`###profile_peak_row`/
+  `###profile_separation_row`）各自携带 hover 面，写会话 `profile_row_hover`（互斥身份，覆写
+  契约与复位接缝与 verdict hover 完全同构）。设备的诚实门短路序：无身份、probe 拒答、方位
+  不可用、具名读数缺席 → 不画（行文字承载缺席）；端点出视 → 整体不画（全有或全无，不跨投影
+  断裂桥接，无「arc in view」类限定可承载的部分画法）。probe 行只在非 full-dimensional 臂渲染
+  （echo 规则不变）——固定 zenith/roll 的 family 臂无 pose density、量化腿全跳，profile 行天然
+  缺席。
+- **ratio 行 = 仅本地反馈**：Blue/red ratio 行有 hover 面与行高亮，无任何地图几何——ratio 无
+  空间载荷，不为它虚构位置（AC3 的合法完成态）。
+- **profile 设备不进图例**：设备为 hover 瞬态，驱动它的行本身就是解释；图例「画了才亮」的
+  常驻类别记账不含它（verdict hover 联动仍点亮 verdict 图例位，不变）。
+- **图例四锚图标**：sun marker / zenith cross / horizon circle / verdict anchor 四条目各带与
+  地图形状、颜色对应的小图标（同一图标槽位模式，object kinds 先例）：日 = 金色实心圆+外环，
+  天顶 = 双线，地平 = 圆圈（地图地平线 alpha 60 在图标尺寸不可辨，取天顶 alpha——色相是对应、
+  透明度是图例自身可辨性），verdict = 实际画法所在调色板条目的圆圈，虚线形态按 walk 的
+  dash 相位画。verdict 图标的事实（颜色 + 虚线）随 drawn bit 一并记录（`OverlayLegendState`
+  扩展两字段）。
+- **readout 标签 clamp**：贴边 readout 经 `src/util/label_viewport_clamp.hpp` 的共享
+  `ClampLabelPosToViewport` 压回画布矩形（视口 = 图区画布自身矩形），文字与底衬同移、尺寸不缩、
+  退化轴不动（共享规则原文）；dispersion 与 verdict 两个消费面同 helper，不为本窗写第二份 clamp。
+  marker 自然裁剪与 iso 圈 in-disk 物理边界不变，不开边缘指示通道。
 
 ### 16.2 诊断归属：主窗摘要＋Raypath view 完整答案（as-built 2026-11-10）
 
