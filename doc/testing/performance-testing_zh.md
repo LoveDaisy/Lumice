@@ -237,7 +237,12 @@ profile（由 `--dual-gate-profile` 选择），但两者服务不同失败路�
 | `precise` | **0.85**；Metal 21 次 ratio-of-medians；CUDA 63 次、10% winsorized paired-ratio mean | 参照机本地每日定时 | `[throughput-gate] <leg> fail` GitHub issue |
 
 `scripts/local_throughput_gate.py` 是唯一入口：在 gate 自有 clone 上取 `origin/main` → idle 检查 →
-build → 冷却与二次 idle 检查 → pytest → 记录 → 通知。Metal 参照机运行 `metal` leg，并按
+build → 冷却与二次 idle 检查 → pytest → 记录 → 通知。metal leg 在这一切之前先从 PATH 解析构建工具
+`cmake` / `ninja`——缺任何一件即在一切昂贵阶段（含 idle 预检）前以 `error` 结束，公开类别
+`build tools missing from PATH`（issue 正文只显示类别，缺失的工具名看本地 reason），该 error 未采集
+负载，记录没有 idle 读数。所有子进程捕获输出按替换解码（`errors="replace"`）：`ps` 表里其他进程参数
+带来的单个非法 UTF-8 字节降级为 U+FFFD，不再以 `UnicodeDecodeError` 丢掉整次无人值守运行。Metal
+参照机运行 `metal` leg，并按
 `machines.md` 的角色绑定通过 SSH 派发 `cuda` leg；两角色的当前主机不在本节重复。安装、更新与移除
 由 `scripts/install_throughput_gate.sh` 管理。结果写入
 `~/.local/state/lumice-throughput-gate/`，`pass` / `fail` 与 `skipped` / `error` 分开记录；连续无真实

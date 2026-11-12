@@ -61,6 +61,11 @@ from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 LEGS = ("metal", "cuda")
 
+# The metal leg builds with scripts/build.sh, which needs these on PATH. Resolved
+# before anything expensive — even before the idle pre-check — because a missing
+# tool is a deterministic configuration error, not a busy-machine signal.
+METAL_BUILD_TOOLS = ("cmake", "ninja")
+
 # The gate each leg runs: (pytest file, test function name). The threshold and
 # the statistic live in test/e2e/_multi_renderer_throughput.py, not here.
 GATE_TESTS: Dict[str, Tuple[str, str]] = {
@@ -399,6 +404,20 @@ def refreshes_last_real_run(status: str, synthetic: bool) -> bool:
     return status in ("pass", "fail") and not synthetic
 
 
+def missing_build_tools_reason(found: Dict[str, Optional[str]]) -> Optional[str]:
+    """The metal leg's tool pre-check verdict: None, or the error reason.
+
+    ``found`` maps each required tool to its resolved path (or None). The reason
+    names the missing tools in METAL_BUILD_TOOLS order and nothing else — the
+    public issue shows only the category prefix; the tool names stay in the
+    local record.
+    """
+    missing = [t for t in METAL_BUILD_TOOLS if not found.get(t)]
+    if missing:
+        return "build tools missing from PATH: " + " ".join(missing)
+    return None
+
+
 # =============================================================================
 # IO: readings
 # =============================================================================
@@ -409,7 +428,10 @@ GIT_CLONE_TIMEOUT_S = 3600
 
 
 def _run(cmd: Sequence[str], **kw) -> subprocess.CompletedProcess:
-    return subprocess.run(list(cmd), capture_output=True, text=True, **kw)
+    # The capture boundary decodes with replacement: one stray non-UTF-8 byte in a
+    # child's output (another process's args in a `ps` row) degrades to U+FFFD
+    # instead of raising UnicodeDecodeError and losing the whole unattended run.
+    return subprocess.run(list(cmd), capture_output=True, text=True, errors="replace", **kw)
 
 
 def _physical_cores() -> int:
@@ -671,8 +693,20 @@ def write_override_plugin(d: Path) -> None:
 # ---- metal leg -------------------------------------------------------------
 
 
+def metal_build_tools_found() -> Dict[str, Optional[str]]:
+    """Resolve the metal build tools from this process's PATH — the same PATH the
+    build inherits (`clean_env` keeps it). IO seam: tests inject the result."""
+    return {t: shutil.which(t) for t in METAL_BUILD_TOOLS}
+
+
 def run_metal(ctx: Ctx, sha: str) -> dict:
     rec: dict = {}
+    reason = missing_build_tools_reason(metal_build_tools_found())
+    if reason:
+        # A missing build tool is a deterministic configuration error, reported
+        # before anything expensive — even before the idle pre-check — so this
+        # record has no idle readings: none were taken, none are faked.
+        return {"status": "error", "reason": reason}
     th = ctx.thresholds
     read = lambda: collect_readings(with_wsl_host=False)  # noqa: E731
     ok, r, reasons = wait_idle_once(ctx, read, "metal pre-check")
@@ -728,8 +762,10 @@ def ssh_argv(ctx: Ctx, *remote: str) -> List[str]:
 def remote_readings(ctx: Ctx) -> Readings:
     """Run this very file's collect_readings on the remote via `python3 -`."""
     try:
-        p = subprocess.run(ssh_argv(ctx, "python3", "-", "--collect-readings", "--wsl-host"),
-                           input=Path(__file__).read_text(), capture_output=True, text=True, timeout=180)
+        # Through the common _run entry, so remote output follows the same
+        # replace-decode rule as every other captured text.
+        p = _run(ssh_argv(ctx, "python3", "-", "--collect-readings", "--wsl-host"),
+                 input=Path(__file__).read_text(), timeout=180)
         if p.returncode != 0:
             raise RuntimeError(f"exit {p.returncode}: {p.stderr[-300:]}")
         return Readings.from_json(json.loads(p.stdout.strip().splitlines()[-1]))
@@ -949,8 +985,9 @@ def apply_action(ctx: Ctx, leg: str, namespace: str, action: Action) -> None:
 
 PUBLIC_REASON_CATEGORIES = (
     "busy", "unreachable", "dry-run", "locked", "no-test-executed", "no-junit", "junit-unparseable",
-    "pytest-did-not-finish", "pytest-exit", "build failed", "remote build failed", "remote pytest",
-    "could not start", "source", "internal", "metal leg needs macOS")
+    "pytest-did-not-finish", "pytest-exit", "build failed", "build tools missing from PATH",
+    "remote build failed", "remote pytest", "could not start", "source", "internal",
+    "metal leg needs macOS")
 
 
 def public_reason(reason: str) -> str:
