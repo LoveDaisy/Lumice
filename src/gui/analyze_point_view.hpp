@@ -312,8 +312,10 @@ inline constexpr ImU32 kRayTraceSegmentColors[] = { IM_COL32(90, 160, 255, 255),
 // site; 2026-11-12 feedback #8's calibration). The mapping is w_min + (w_max - w_min) * sqrt(E)
 // over the positive energies — strictly monotone, low values stay readable. The width is ONLY
 // visual scaling; the per-segment numbers (when shown) carry the exact ratio. A segment past an
-// unusable interface factor draws at the fixed neutral width — no energy claim.
-inline constexpr float kRayTraceWidthMinUi = 0.75f;
+// unusable interface factor draws at the fixed neutral width — no energy claim. The ends stay
+// above the thin-line boundary (1.0 layout unit): below it ImGui's AA geometry changes shape and
+// a thin energy tail would become a hairline the draw-list cannot measure honestly.
+inline constexpr float kRayTraceWidthMinUi = 1.2f;
 inline constexpr float kRayTraceWidthMaxUi = 3.5f;
 inline constexpr float kRayTraceWidthNeutralUi = 2.0f;
 

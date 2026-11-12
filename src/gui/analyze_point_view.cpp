@@ -1617,6 +1617,7 @@ void RenderAnalyzeSunGlobeRegion(GuiState& state, const ImVec2& size) {
 
 void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
   g_ray3d_frame.valid = false;
+  state.analysis.ray3d_fresnel_labels.clear();
   // The canvas and frame controls never scroll with result prose. The report scrolls
   // natively; only the actual canvas registers the orbit wheel claim.
   ImGui::BeginChild("##AnalyzeRaypath3D", size, ImGuiChildFlags_Borders, ImGuiWindowFlags_NoScrollWithMouse);
@@ -1780,6 +1781,9 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
         display_state == RayTraceDisplayState::kDrawn &&
         LUMICE_RepresentativeRayGetInfo(trace.adopted_result.get(), &ray_info) == LUMICE_PATH_READ_OK &&
         ray_info.face_count == static_cast<int>(line.seg_kinds.size() - 1) && ray_info.faces != nullptr;
+    // The labels' render feedback: one slot per segment, filled only where a label actually
+    // drew this frame (the toggle's leg reads positions from the primitives and content here).
+    state.analysis.ray3d_fresnel_labels.assign(line.seg_kinds.size(), std::string{});
 
     // The frame switch is a display transform (AC4): world view rotates the body-frame mesh to the
     // pose's world; crystal view rotates the world-frame path back. One physical state, two views.
@@ -2017,6 +2021,7 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
               anchor.y = std::clamp(anchor.y, canvas_min.y + UiPx(1.0f),
                                     std::max(canvas_min.y + UiPx(1.0f), canvas_max.y - text_size.y - UiPx(1.0f)));
               dl->AddText(anchor, kRayTraceLabelColor, text.c_str());
+              state.analysis.ray3d_fresnel_labels[s] = text;
             }
           }
         }

@@ -1871,6 +1871,15 @@ struct GuiState {
     PointQuerySession point;
     RayTraceSession trace;
     PointViewState point_view;
+    // The 3D trace's per-segment Fresnel ratio labels, exactly as drawn this frame (the
+    // draw-list carries no strings; the positions come from the submitted primitives, the
+    // content from here). Parallel to the polyline's segments — empty string = no label drawn
+    // (the toggle off, a behind-eye segment, a segment with nothing on the canvas, or a
+    // non-drawn state). Cleared at the 3D region's submission entry — the same discipline as
+    // Ray3DFrameInfo's valid flag — and written only by the drawn arm; the pose window closed
+    // leaves it stale like every window-closed field. Per-frame render feedback for the gui_test
+    // layer, never read by production logic.
+    std::vector<std::string> ray3d_fresnel_labels;
     // The wait displays' render feedback (analyze_survey.hpp WaitFeedbackTexts): what each wait
     // site drew this frame, for the gui_test layer to read (ImGui text has no ID to address).
     // Cleared at the Analyze workspace's frame entry; the render sites are the only writers.
