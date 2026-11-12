@@ -26,6 +26,7 @@
 #include "gui/theme.hpp"
 #include "imgui.h"
 #include "include/lumice_editor.h"  // LUMICE_GetCrystalMesh — the crystal's true-scale wireframe
+#include "util/env_knobs.hpp"       // env::AnalyzeDebugDetails — the diagnostics groups' env gate
 #include "util/sky_direction.hpp"
 
 namespace lumice::gui {
@@ -254,8 +255,8 @@ std::vector<int> CollectValidSampleIndices(const LUMICE_SinglePathResult& result
 // The default layer's half (contract §16.1's ladder, §16.4's factors region): the pose itself
 // and the four factor conclusions — or their named-unavailable forms (R4: no zero stands in
 // for a quantity the engine did not produce). The per-interface rows below are T's optical
-// premises, the Physics details fold's rows; PointFactorLines is the one concatenation (the
-// tests' consumer — the production readers take the halves directly).
+// premises, the Interface transmission fold's rows; PointFactorLines is the one concatenation
+// (the tests' consumer — the production readers take the halves directly).
 std::vector<std::string> PointFactorHeadLines(const LUMICE_PathPointSample& sample) {
   std::vector<std::string> lines;
   char buf[192];
@@ -1172,8 +1173,8 @@ void RenderAnalyzeSunGlobeRegion(GuiState& state, const ImVec2& size) {
 
   // ---- The fixed interaction stack (R4): the controls a hand must reach are submitted outside
   // any scrolling region at every cell the window's minimum admits — the title here (the
-  // deviation-grid toggle retired to the factors region's Calculation details, §16.4); the
-  // combo, the canvas, the weight bar and the slider/play row in the discovered arm below. ----
+  // deviation-grid toggle retired to the factors region's env-gated diagnostics group, §16.4);
+  // the combo, the canvas, the weight bar and the slider/play row in the discovered arm below. ----
   ImGui::TextUnformatted("Sun direction globe");
 
   const auto info = point.adopted_result ? ReadPointInfo(*point.adopted_result) : std::nullopt;
@@ -1441,9 +1442,9 @@ void RenderAnalyzeSunGlobeRegion(GuiState& state, const ImVec2& size) {
     }
     // ---- The state area (R4's scroll set): the description, the partial note, the weight note
     // and the sample readout — all reachable by scrolling, none deleted. The grid-absence note
-    // moved with the toggle to the factors region's Calculation details (§16.4); the readout's
-    // old fits_on_line join is gone with the form: the state area is where these lines live at
-    // every width. ----
+    // moved with the toggle to the factors region's env-gated diagnostics group (§16.4); the
+    // readout's old fits_on_line join is gone with the form: the state area is where these
+    // lines live at every width. ----
     const std::optional<CurrentSample> current = CurrentSampleOf(*point.adopted_result, view, valid_indices);
     render_state_area([&] {
       DisabledWrappedText("Crystal-frame sun directions — a pose projection, not the full SO(3).");
@@ -2636,8 +2637,12 @@ void RenderPoseFactorsRegion(GuiState& state, const ImVec2& size) {
     }
     // ---- The two §16.1 fold groups: A1's label constants, one spelling (a56); the expansion
     // state lives in the pose window's ImGui storage — session-sticky, no GuiState field, the
-    // same convention every answer host follows. ----
-    if (FoldOpen(kSurveyPhysicsDetailsLabel, "pose_factors")) {
+    // same convention every answer host follows. The diagnostics group is env-gated as a
+    // whole: with LUMICE_ANALYZE_DEBUG_DETAILS off, neither its header nor the deviation-grid
+    // toggle inside it renders, and the toggle's stored true value cannot re-display the grid
+    // either (the grid's backdrop reader gates on the toggle, which stays parked until the
+    // env returns). ----
+    if (FoldOpen(kPoseTransmissionLabel, "pose_factors")) {
       // The per-interface transmittances: T's optical premises — the ladder's evidence rows,
       // not the default layer's conclusions.
       for (const std::string& line_text : PointFactorInterfaceLines(current->sample)) {
@@ -2645,7 +2650,7 @@ void RenderPoseFactorsRegion(GuiState& state, const ImVec2& size) {
         ImGui::TextWrapped("%s", line_text.c_str());
       }
     }
-    if (FoldOpen(kSurveyCalculationDetailsLabel, "pose_factors")) {
+    if (env::AnalyzeDebugDetails() && FoldOpen(kPoseDiagnosticsLabel, "pose_factors")) {
       // The deviation-grid toggle: a calculation aid retired here from the globe's fixed stack
       // (§16.4); its reader — the globe's backdrop — keeps its own region. The requested-but-
       // absent note travels with the toggle: it is the toggle request's fact, not the globe's.
@@ -3074,10 +3079,10 @@ void RenderPointAnswerBlock(GuiState& state) {
   }
 
   // The fold pairs, the SAME structure on every arm — the complete-answer promise means every
-  // premise line has a home on every document shape (the member-faces line and the execution
-  // triple are PointCaliberLines' unconditional rows; the component evidence is the component
-  // arm's extra content inside the same groups).
-  if (FoldOpen(kSurveyPhysicsDetailsLabel, "pt_answer")) {
+  // premise line has a home on every document shape (the member-faces line is
+  // PointCaliberLines' unconditional evidence row; the component evidence is the component
+  // arm's extra content inside the same group; the diagnostics group is env-gated as a whole).
+  if (FoldOpen(kPointEvidenceLabel, "pt_answer")) {
     if (caliber.size() > 1) {  // the member faces / crystal / kind premise line
       DisabledWrappedText("%s", caliber[1].c_str());
     }
@@ -3085,7 +3090,10 @@ void RenderPointAnswerBlock(GuiState& state) {
       // The component evidence rows: kind, ends, coverage and integral availability — the
       // ledger's Physics tier. The rows are read-only (the component selector's one
       // interaction owner is the pose window's globe combo); each row's hover tooltip names
-      // its full text. The render cap's truncation note stays AT the truncated list.
+      // its full text. The render cap's truncation note stays AT the truncated list. The
+      // integral row keeps its value and its availability verdict — the covers/points-usable
+      // counts inside the parentheses are implementation coverage numbers and moved to the
+      // diagnostics group.
       const size_t true_component_count = static_cast<size_t>(info.component_count);
       ImGui::TextDisabled("Components");
       for (int i = 0; i < component_total; ++i) {
@@ -3101,11 +3109,9 @@ void RenderPointAnswerBlock(GuiState& state) {
       const int component = std::clamp(view.component_index, 0, component_total - 1);
       const PointComponentRow& selected = rows[static_cast<size_t>(component)];
       if (selected.integral_available) {
-        DisabledWrappedText("Selected component's fiber integral %.6g (covers %d/%d points' arclength).",
-                            selected.fiber_integral, selected.available_points, selected.total_points);
+        DisabledWrappedText("Selected component's fiber integral %.6g.", selected.fiber_integral);
       } else {
-        DisabledWrappedText("Selected component's fiber integral: unavailable (%d/%d points usable).",
-                            selected.available_points, selected.total_points);
+        DisabledWrappedText("Selected component's fiber integral: unavailable.");
       }
       if (true_component_count > static_cast<size_t>(component_total)) {
         DisabledWrappedText("+ %zu more component(s) — beyond this view's render cap.",
@@ -3113,12 +3119,23 @@ void RenderPointAnswerBlock(GuiState& state) {
       }
     }
   }
-  if (FoldOpen(kSurveyCalculationDetailsLabel, "pt_answer")) {
+  // The diagnostics group, env-gated as a whole (header and body): the discovery execution
+  // triple, the per-component coverage counts and the valid/total sample ratio. The default
+  // partial/no-valid-sample limits stay at the default layer regardless of this group.
+  if (env::AnalyzeDebugDetails() && FoldOpen(kPointDiagnosticsLabel, "pt_answer")) {
     if (caliber.size() > 3) {  // discovery sample_count / budget / execution
       DisabledWrappedText("%s", caliber[3].c_str());
     }
     if (has_components) {
       const int component = std::clamp(view.component_index, 0, component_total - 1);
+      const PointComponentRow& selected = rows[static_cast<size_t>(component)];
+      if (selected.integral_available) {
+        DisabledWrappedText("Selected component's fiber integral covers %d/%d points' arclength.",
+                            selected.available_points, selected.total_points);
+      } else {
+        DisabledWrappedText("Selected component's fiber integral: %d/%d points usable.", selected.available_points,
+                            selected.total_points);
+      }
       const std::vector<int> valid_indices = CollectValidSampleIndices(*point.adopted_result, component);
       DisabledWrappedText("Selected component: %d valid sample(s) of %d.", static_cast<int>(valid_indices.size()),
                           rows[static_cast<size_t>(component)].point_count);

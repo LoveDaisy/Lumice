@@ -265,7 +265,7 @@ TEST(AnalyzeOverviewChain, FamilyArmOrganizesAsTheFreezingLadder) {
   }
   EXPECT_GT(surviving, 0);
   // The ladder's mechanism sentence left the conclusions (the layering's owner example: the
-  // frozen-dim enumeration is Physics details' content); what stays is the consequence in one
+  // frozen-dim enumeration is the diagnostics group's content); what stays is the consequence in one
   // user sentence.
   EXPECT_FALSE(HasLine(model.conclusions, "Freezing ladder"));
   EXPECT_TRUE(HasLine(model.conclusions, "survive the ladder"));

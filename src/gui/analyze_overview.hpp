@@ -240,19 +240,22 @@ struct SurveyOverviewModel {
 SurveyOverviewModel BuildSurveyOverviewModel(const LUMICE_PathSurvey& result);
 
 // A fold group's header: the display spelling comes from the ONE label constant; the ID suffix
-// keeps same-label groups apart inside one window (the Raypath view hosts the survey answer and
-// the point answer side by side, each with its own Physics/Calculation pair — identical visible
+// keeps same-prefix groups apart inside one window (the Raypath view hosts the survey answer and
+// the point answer side by side, each with its own evidence/diagnostics pair — identical visible
 // labels would collide in the window's ID space and share one expansion state). No
 // DefaultOpen: closed by default, expansion in the host window's storage — session-sticky,
-// restart-reset (io.IniFilename is null), independent per window. Shared by both answer hosts.
+// restart-reset (io.IniFilename is null), independent per window. Shared by all four answer
+// hosts; the diagnostics half of each pair is additionally env-gated at its call site
+// (env::AnalyzeDebugDetails gates the header itself, so an off env submits neither header nor
+// body while the storage keeps the old expansion state).
 inline bool FoldOpen(const char* label, const char* suffix_id) {
   const std::string id = std::string(label) + "##" + suffix_id;
   return ImGui::CollapsingHeader(id.c_str());
 }
 
 // The ImGui half: the model as the complete answer draws it — the default layer (the answers
-// and their limits), then the two fold groups (contract §16.1: Physics details, Calculation
-// details, both closed by default). Assumes the region's four-state shell already dispatched
+// and their limits), then the evidence fold and the env-gated diagnostics fold (contract
+// §16.1, both closed by default). Assumes the region's four-state shell already dispatched
 // here (a completed, adopted document). This is the Raypath view's class-answer host.
 //
 // `verdict_hover_readout` is the verdict anchor's hover read (§16.1's A2 pilot): when non-null,

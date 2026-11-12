@@ -249,9 +249,9 @@ TEST(AnalyzeMapView, CaliberLinesCarryTheReaderFieldsVerbatim) {
   in.completed = true;
 
   // The tiers: DEFAULT = the short quantity name with its unit and the scene-vs-nominal limit;
-  // PHYSICS = the full definition, the sun premise and the engine's basis verbatim; CALCULATION
-  // = the grid and execution numbers. The lambda is in NO line — the slider row's echo is its
-  // one owner.
+  // PHYSICS = the full definition and the sun premise (the readable scene/nominal caliber);
+  // DIAGNOSTICS = the engine's basis verbatim plus the grid and execution numbers. The lambda
+  // is in NO line — the slider row's echo is its one owner.
   const std::vector<std::string> default_lines = MapCaliberDefaultLines(in);
   ASSERT_GE(default_lines.size(), 2u);
   EXPECT_NE(default_lines[0].find("band-sum"), std::string::npos);
@@ -260,27 +260,31 @@ TEST(AnalyzeMapView, CaliberLinesCarryTheReaderFieldsVerbatim) {
   EXPECT_NE(default_lines[1].find("Scene geometry"), std::string::npos)
       << "a non-nominal shape names the limit at the default tier";
 
+  // The tiers: DEFAULT = the short quantity name with its unit and the scene-vs-nominal limit;
+  // PHYSICS = the full definition and the sun premise (the readable scene/nominal caliber);
+  // DIAGNOSTICS = the engine's basis verbatim plus the grid and execution numbers. The lambda
+  // is in NO line \u2014 the slider row's echo is its one owner.
   const std::vector<std::string> physics = MapCaliberPhysicsLines(in);
-  ASSERT_GE(physics.size(), 4u);
+  ASSERT_GE(physics.size(), 3u);
   EXPECT_NE(physics[0].find("band-sum"), std::string::npos);
   EXPECT_NE(physics[0].find("physical class"), std::string::npos);
   EXPECT_NE(physics[0].find("per sr"), std::string::npos);
   EXPECT_NE(physics[1].find("Sun at altitude 20.0"), std::string::npos);
   EXPECT_NE(physics[2].find("Scene geometry"), std::string::npos);
-  EXPECT_EQ(physics[3], kBasis);  // the engine's geometry string, byte for byte
 
-  const std::vector<std::string> calc = MapCaliberCalculationLines(in);
-  ASSERT_GE(calc.size(), 3u);
+  const std::vector<std::string> calc = MapCaliberDiagnosticsLines(in);
+  ASSERT_GE(calc.size(), 4u);
+  EXPECT_EQ(calc[0], kBasis) << "the engine's geometry string, byte for byte, leads the diagnostics tier";
   for (const std::string& l : calc) {
     EXPECT_EQ(l.find("550.0 nm"), std::string::npos) << "the lambda echo is deleted, not moved";
   }
-  EXPECT_NE(calc[0].find("n=500000"), std::string::npos);
-  EXPECT_NE(calc[0].find("[3.5, 48.5]"), std::string::npos);
-  EXPECT_NE(calc[0].find("[-100.0, 260.0]"), std::string::npos);
-  EXPECT_NE(calc[0].find("182\u00d71440"), std::string::npos) << "grid dims echo the Info's own";
-  EXPECT_NE(calc[1].find("9/12 members"), std::string::npos);
-  EXPECT_NE(calc[1].find("12345 events"), std::string::npos);
-  EXPECT_NE(calc[2].find("Source-fixed scale"), std::string::npos);
+  EXPECT_NE(calc[1].find("n=500000"), std::string::npos);
+  EXPECT_NE(calc[1].find("[3.5, 48.5]"), std::string::npos);
+  EXPECT_NE(calc[1].find("[-100.0, 260.0]"), std::string::npos);
+  EXPECT_NE(calc[1].find("182\u00d71440"), std::string::npos) << "grid dims echo the Info's own";
+  EXPECT_NE(calc[2].find("9/12 members"), std::string::npos);
+  EXPECT_NE(calc[2].find("12345 events"), std::string::npos);
+  EXPECT_NE(calc[3].find("Source-fixed scale"), std::string::npos);
 
   // A nominal shape says so (its limit rides Physics); a full-sky view names the all-sky grid.
   in.info.shape_is_nominal = 1;
@@ -293,8 +297,8 @@ TEST(AnalyzeMapView, CaliberLinesCarryTheReaderFieldsVerbatim) {
   }
   const std::vector<std::string> nominal_physics = MapCaliberPhysicsLines(in);
   EXPECT_NE(nominal_physics[2].find("Nominal geometry"), std::string::npos);
-  const std::vector<std::string> full = MapCaliberCalculationLines(in);
-  EXPECT_NE(full[0].find("full sky 180\u00d7360"), std::string::npos);
+  const std::vector<std::string> full = MapCaliberDiagnosticsLines(in);
+  EXPECT_NE(full[1].find("full sky 180\u00d7360"), std::string::npos);
 }
 
 TEST(AnalyzeMapView, CaliberLinesSpellTruncationFiniteZeroAndRank0) {

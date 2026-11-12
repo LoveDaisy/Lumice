@@ -119,8 +119,8 @@ std::vector<std::string> PointFactorLines(const LUMICE_PathPointSample& sample);
 // The two §16.1 ladder halves of the factor readouts (contract §16.4's factors region): the
 // head lines are the default layer's factor conclusions (pose, rho, A_P/A_a^2, T, J/K/product
 // or their named-unavailable forms); the interface lines are T's optical premises — the
-// per-interface transmittances, conditional on this path — the Physics details fold's rows.
-// The production callers are the factors region's two arms (default layer + fold); the
+// per-interface transmittances, conditional on this path — the Interface transmission fold's
+// rows. The production callers are the factors region's two arms (default layer + fold); the
 // concatenated spelling below survives as the partition's single-source anchor and the tests'
 // consumer (unit-correctness pins the per-state spellings, the functional chain asserts the
 // engine-facing read) — the halves and the concatenation cannot drift apart because the

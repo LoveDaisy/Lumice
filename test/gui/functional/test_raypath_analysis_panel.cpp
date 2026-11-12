@@ -55,6 +55,7 @@
 #include "include/lumice_editor.h"
 #include "include/lumice_engine.h"
 #include "include/lumice_render.h"
+#include "support/env_var.hpp"  // SetEnvVar / UnsetEnvVar — the LUMICE_ANALYZE_DEBUG_DETAILS legs
 #include "support/gui_server_lifetime.hpp"
 #include "test_gui_shared.hpp"
 #include "util/raypath_analysis_display.hpp"
@@ -64,6 +65,45 @@ namespace {
 
 using SimState = gui::GuiState::SimState;
 using PressOwner = gui::GuiState::AnalyzeWorkspaceSession::PanoramaPressOwner;
+
+// LUMICE_ANALYZE_DEBUG_DETAILS is a process-global the four answer hosts' diagnostics groups
+// read every frame, so every leg that asserts their presence or absence DECLARES its state
+// through this guard and restores the prior value (or its absence) on every exit path — the
+// IM_CHECK_RETV early returns included. No leg depends on execution order or on the shell's
+// environment: the three states are spelled kUnset (no variable, the shipped default), kOff
+// (an explicit "0") and kOn ("1", the dev diagnostic view).
+enum class DebugDetailsState { kUnset, kOff, kOn };
+
+class ScopedDebugDetailsEnv {
+ public:
+  explicit ScopedDebugDetailsEnv(DebugDetailsState state) {
+    const char* current = std::getenv("LUMICE_ANALYZE_DEBUG_DETAILS");
+    saved_ = current != nullptr ? std::optional<std::string>(current) : std::nullopt;
+    switch (state) {
+      case DebugDetailsState::kOn:
+        lumice::test::SetEnvVar("LUMICE_ANALYZE_DEBUG_DETAILS", "1");
+        break;
+      case DebugDetailsState::kOff:
+        lumice::test::SetEnvVar("LUMICE_ANALYZE_DEBUG_DETAILS", "0");
+        break;
+      case DebugDetailsState::kUnset:
+        lumice::test::UnsetEnvVar("LUMICE_ANALYZE_DEBUG_DETAILS");
+        break;
+    }
+  }
+  ScopedDebugDetailsEnv(const ScopedDebugDetailsEnv&) = delete;
+  ScopedDebugDetailsEnv& operator=(const ScopedDebugDetailsEnv&) = delete;
+  ~ScopedDebugDetailsEnv() {
+    if (saved_) {
+      lumice::test::SetEnvVar("LUMICE_ANALYZE_DEBUG_DETAILS", saved_->c_str());
+    } else {
+      lumice::test::UnsetEnvVar("LUMICE_ANALYZE_DEBUG_DETAILS");
+    }
+  }
+
+ private:
+  std::optional<std::string> saved_;
+};
 
 // The analysis tool lives in the Analyze workspace now: the share list in the middle area's
 // right column, the ROI controls above the panorama's picture. Both are TOP-LEVEL chrome windows
@@ -2691,41 +2731,75 @@ bool SurveyOverviewShowsDispersionAndProfile(ImGuiTestContext* ctx) {
     IM_CHECK_RETV(frame_text.find("The complete answer is in the Raypath view.") != std::string::npos, false);
     IM_CHECK_RETV(frame_text.find("member(s)") == std::string::npos, false);
     IM_CHECK_RETV(frame_text.find("kept lattice events") == std::string::npos, false);
-    IM_CHECK_RETV(frame_text.find("Physics details") == std::string::npos, false);
+    IM_CHECK_RETV(frame_text.find("Class evidence") == std::string::npos, false);
+    IM_CHECK_RETV(frame_text.find("Class diagnostics") == std::string::npos, false);
   }
   // The complete answer lives in the Raypath view: open it and the class answer section draws
-  // the same document through the full renderer — fold groups present, both closed by default.
-  // The closed state is proven mechanically: a closed CollapsingHeader submits no body, so the
-  // counts line ("member(s)") and the profile section label are absent from the frame text
-  // while both groups stand unopened.
-  ctx->ItemClick("**/Raypath view###main_raypath_open");
-  ctx->Yield(2);
-  IM_CHECK_RETV(gui::g_state.analyze_raypath_view_open, false);
-  const std::string report_text = CaptureMapFrameText(ctx);
-  IM_CHECK_RETV(report_text.find("Class answer") != std::string::npos, false);
-  IM_CHECK_RETV(report_text.find("member(s)") == std::string::npos, false);
-  IM_CHECK_RETV(report_text.find("Reference profile") == std::string::npos, false);
-  const ImGuiID physics_fold = ctx->ItemInfo("**/Physics details##sv_answer", ImGuiTestOpFlags_NoError).ID;
-  const ImGuiID calculation_fold = ctx->ItemInfo("**/Calculation details##sv_answer", ImGuiTestOpFlags_NoError).ID;
-  IM_CHECK_RETV(physics_fold != 0 && calculation_fold != 0, false);
-  // The Physics group, expanded: the reference curve on screen is the human-readable half of
-  // the probe block's evidence (the samples and their gap rule are the model test's). The
-  // group header lives inside the map report child, so the item is addressed through the
-  // wildcard (the GUI test engine-addressing rule for items inside a named child).
-  ctx->ItemClick("**/Physics details##sv_answer");
-  ctx->Yield(2);
-  if (ImGuiWindow* report = MapReportWindow()) {
-    report->Scroll.y = report->ScrollMax.y;
-  }
-  ctx->Yield(2);
-  IM_CHECK_RETV(SaveWindowPng(ctx, "//Raypath view", GuiTestTempPath("analysis_survey_overview_profile.png").string()),
-                false);
-  // And the Calculation group: the L4 facts are one fold away, present in the same window.
-  ctx->ItemClick("**/Calculation details##sv_answer");
-  ctx->Yield(2);
+  // the same document through the full renderer. This leg is also the env gate's three-state
+  // spine on the survey host: the shipped default and an explicit "0" both leave the "Class
+  // diagnostics" group UNSUBMITTED (header and body — a closed CollapsingHeader submits no
+  // body, and a gated group submits no header either), while the evidence group stands in
+  // every state; "1" surfaces the diagnostics group, and the env going off again wins over
+  // the storage's still-open expansion state.
   {
+    const ScopedDebugDetailsEnv env_off(DebugDetailsState::kOff);
+    ctx->ItemClick("**/Raypath view###main_raypath_open");
+    ctx->Yield(2);
+    IM_CHECK_RETV(gui::g_state.analyze_raypath_view_open, false);
+    const std::string report_text = CaptureMapFrameText(ctx);
+    IM_CHECK_RETV(report_text.find("Class answer") != std::string::npos, false);
+    IM_CHECK_RETV(report_text.find("member(s)") == std::string::npos, false);
+    IM_CHECK_RETV(report_text.find("Reference profile") == std::string::npos, false);
+    const ImGuiID evidence_fold = ctx->ItemInfo("**/Class evidence##sv_answer", ImGuiTestOpFlags_NoError).ID;
+    const ImGuiID diagnostics_fold = ctx->ItemInfo("**/Class diagnostics##sv_answer", ImGuiTestOpFlags_NoError).ID;
+    IM_CHECK_RETV(evidence_fold != 0, false);
+    // An explicit "0" leaves the diagnostics header unsubmitted.
+    IM_CHECK_RETV(diagnostics_fold == 0, false);
+    // The evidence group, expanded: the reference curve on screen is the human-readable half
+    // of the probe block's evidence (the samples and their gap rule are the model test's).
+    // The group header lives inside the map report child, so the item is addressed through
+    // the wildcard (the GUI test engine-addressing rule for items inside a named child). The
+    // implementation-level rows the evidence group gave up — the engine's dispersion-table n
+    // pair, the freezing ladder's raw enumeration — stay absent here however far the group
+    // opens: they moved to the diagnostics group, not behind another fold.
+    ctx->ItemClick("**/Class evidence##sv_answer");
+    ctx->Yield(2);
+    if (ImGuiWindow* report = MapReportWindow()) {
+      report->Scroll.y = report->ScrollMax.y;
+    }
+    ctx->Yield(2);
+    IM_CHECK_RETV(
+        SaveWindowPng(ctx, "//Raypath view", GuiTestTempPath("analysis_survey_overview_profile.png").string()), false);
+    const std::string evidence_text = CaptureMapFrameText(ctx);
+    IM_CHECK_RETV(evidence_text.find("Deviation from") != std::string::npos, false);
+    IM_CHECK_RETV(evidence_text.find("Refractive indices n(") == std::string::npos, false);
+    IM_CHECK_RETV(evidence_text.find("member(s)") == std::string::npos, false);
+    ctx->ItemClick("**/Class evidence##sv_answer");  // restore the default-closed shape
+    ctx->Yield(2);
+  }
+  {
+    // The diagnostics group under "1": the header the "0" leg proved absent now stands (the
+    // gate is re-read every frame, never cached), and its body carries the execution counts
+    // plus the implementation rows the evidence group gave up.
+    const ScopedDebugDetailsEnv env_on(DebugDetailsState::kOn);
+    ctx->Yield(2);
+    const ImGuiID diagnostics_fold = ctx->ItemInfo("**/Class diagnostics##sv_answer", ImGuiTestOpFlags_NoError).ID;
+    IM_CHECK_RETV(diagnostics_fold != 0, false);
+    ctx->ItemClick("**/Class diagnostics##sv_answer");
+    ctx->Yield(2);
     const std::string opened_text = CaptureMapFrameText(ctx);
     IM_CHECK_RETV(opened_text.find("member(s)") != std::string::npos, false);
+    IM_CHECK_RETV(opened_text.find("Refractive indices n(") != std::string::npos, false);
+    ctx->ItemClick("**/Class diagnostics##sv_answer");  // restore the default-closed shape
+    ctx->Yield(2);
+  }
+  {
+    // The env off again, with the storage still remembering nothing open: the header is gone
+    // either way — gating is display eligibility, not an expansion state of its own.
+    const ScopedDebugDetailsEnv env_unset(DebugDetailsState::kUnset);
+    ctx->Yield(2);
+    const ImGuiID diagnostics_fold = ctx->ItemInfo("**/Class diagnostics##sv_answer", ImGuiTestOpFlags_NoError).ID;
+    IM_CHECK_RETV(diagnostics_fold == 0, false);
   }
   ctx->WindowClose("//Raypath view");
   ctx->Yield(1);
@@ -4408,63 +4482,84 @@ bool IdentityClassShowsTheMassArmAndTheMapAnswers(ImGuiTestContext* ctx) {
     IM_CHECK_RETV(frame_text.find("Weight tint:") != std::string::npos, false);
     IM_CHECK_RETV(frame_text.find("The complete answer is in the Raypath view.") != std::string::npos, false);
     IM_CHECK_RETV(frame_text.find("member(s)") == std::string::npos, false);
-    IM_CHECK_RETV(frame_text.find("Physics details") == std::string::npos, false);
+    IM_CHECK_RETV(frame_text.find("Class evidence") == std::string::npos, false);
     // The point summary's own closed-windows legs (§16.2): the mass answer in full, the target
     // line, and the pointer naming where its omitted caliber detail lives.
     IM_CHECK_RETV(frame_text.find("Rank-0 point mass") != std::string::npos, false);
     IM_CHECK_RETV(frame_text.find("target: alt 20.000 deg") != std::string::npos, false);
   }
-  ctx->ItemClick("**/Raypath view###main_raypath_open");
-  ctx->Yield(2);
-  IM_CHECK_RETV(gui::g_state.analyze_raypath_view_open, false);
-  const std::string identity_report = CaptureMapFrameText(ctx);
-  IM_CHECK_RETV(identity_report.find("Class answer") != std::string::npos, false);
-  IM_CHECK_RETV(identity_report.find("member(s)") == std::string::npos, false);
+  // The env gate on the survey and point hosts, the shipped default: the evidence groups
+  // stand closed, the diagnostics groups are unsubmitted entirely — the gate is display
+  // eligibility, so the header's absence is the proof, not a closed fold.
   {
-    // λ single-owner (the ledger's L5): the slider row's echo is the window's only λ glyph —
-    // the survey and point answers spell "wavelength", the caliber carries none, the legend none.
-    size_t lambda_count = 0;
-    for (size_t at = identity_report.find("\xCE\xBB"); at != std::string::npos;
-         at = identity_report.find("\xCE\xBB", at + 2)) {
-      ++lambda_count;
-    }
-    IM_CHECK_RETV(lambda_count == 1, false);
-  }
-  IM_CHECK_RETV(ctx->ItemInfo("**/Physics details##sv_answer", ImGuiTestOpFlags_NoError).ID != 0, false);
-  IM_CHECK_RETV(ctx->ItemInfo("**/Calculation details##sv_answer", ImGuiTestOpFlags_NoError).ID != 0, false);
-  ctx->ItemClick("**/Calculation details##sv_answer");
-  ctx->Yield(2);
-  {
-    const std::string opened_text = CaptureMapFrameText(ctx);
-    IM_CHECK_RETV(opened_text.find("member(s)") != std::string::npos, false);
-  }
-  // The expansion is the window-storage's own state: close the window and reopen it, and the
-  // group is still open (session-sticky); a fresh GuiState would start closed, but this leg's
-  // session stands — the reopen rides the same window storage.
-  ctx->WindowClose("//Raypath view");
-  ctx->Yield(1);
-  ctx->ItemClick("**/Raypath view###main_raypath_open");
-  ctx->Yield(2);
-  {
-    const std::string reopened_text = CaptureMapFrameText(ctx);
-    IM_CHECK_RETV(reopened_text.find("member(s)") != std::string::npos, false);
-    // The sky-point answer rides the same report: present at the default layer (the λ premise
-    // line), its own Calculation fold still closed — the execution triple is one fold away,
-    // and "Selected component" (a Physics-tier phrase) exists nowhere in this mass arm.
-    IM_CHECK_RETV(reopened_text.find("Sky point answer") != std::string::npos, false);
-    IM_CHECK_RETV(reopened_text.find("wavelength 550.00 nm") != std::string::npos, false);
-    IM_CHECK_RETV(reopened_text.find("discovery sample_count") == std::string::npos, false);
-    IM_CHECK_RETV(reopened_text.find("Selected component") == std::string::npos, false);
-    // The mass arm's fold pair is the SAME structure as the component arm's: opening the point
-    // answer's Physics group surfaces the member-faces premise line here too (the click's
-    // auto-scroll brings the header into the report child's clip; toggling back leaves the
-    // found state).
-    ctx->ItemClick("**/Physics details##pt_answer");
+    const ScopedDebugDetailsEnv env_unset(DebugDetailsState::kUnset);
+    ctx->ItemClick("**/Raypath view###main_raypath_open");
     ctx->Yield(2);
-    const std::string mass_physics_text = CaptureMapFrameText(ctx);
-    IM_CHECK_RETV(mass_physics_text.find("member faces") != std::string::npos, false);
-    ctx->ItemClick("**/Physics details##pt_answer");
+    IM_CHECK_RETV(gui::g_state.analyze_raypath_view_open, false);
+    const std::string identity_report = CaptureMapFrameText(ctx);
+    IM_CHECK_RETV(identity_report.find("Class answer") != std::string::npos, false);
+    IM_CHECK_RETV(identity_report.find("member(s)") == std::string::npos, false);
+    {
+      // λ single-owner (the ledger's L5): the slider row's echo is the window's only λ glyph —
+      // the survey and point answers spell "wavelength", the caliber carries none, the legend none.
+      size_t lambda_count = 0;
+      for (size_t at = identity_report.find("\xCE\xBB"); at != std::string::npos;
+           at = identity_report.find("\xCE\xBB", at + 2)) {
+        ++lambda_count;
+      }
+      IM_CHECK_RETV(lambda_count == 1, false);
+    }
+    IM_CHECK_RETV(ctx->ItemInfo("**/Class evidence##sv_answer", ImGuiTestOpFlags_NoError).ID != 0, false);
+    IM_CHECK_RETV(ctx->ItemInfo("**/Class diagnostics##sv_answer", ImGuiTestOpFlags_NoError).ID == 0, false);
+    IM_CHECK_RETV(ctx->ItemInfo("**/Point evidence##pt_answer", ImGuiTestOpFlags_NoError).ID != 0, false);
+    IM_CHECK_RETV(ctx->ItemInfo("**/Point diagnostics##pt_answer", ImGuiTestOpFlags_NoError).ID == 0, false);
+  }
+  {
+    // Under "1" the diagnostics groups surface and carry the L4 facts; the expansion is the
+    // window-storage's own state — close the window and reopen it, and the group is still
+    // open (session-sticky); a fresh GuiState would start closed, but this leg's session
+    // stands — the reopen rides the same window storage.
+    const ScopedDebugDetailsEnv env_on(DebugDetailsState::kOn);
+    ctx->Yield(2);
+    IM_CHECK_RETV(ctx->ItemInfo("**/Class diagnostics##sv_answer", ImGuiTestOpFlags_NoError).ID != 0, false);
+    ctx->ItemClick("**/Class diagnostics##sv_answer");
+    ctx->Yield(2);
+    {
+      const std::string opened_text = CaptureMapFrameText(ctx);
+      IM_CHECK_RETV(opened_text.find("member(s)") != std::string::npos, false);
+    }
+    ctx->WindowClose("//Raypath view");
     ctx->Yield(1);
+    ctx->ItemClick("**/Raypath view###main_raypath_open");
+    ctx->Yield(2);
+    {
+      const std::string reopened_text = CaptureMapFrameText(ctx);
+      IM_CHECK_RETV(reopened_text.find("member(s)") != std::string::npos, false);
+      // The sky-point answer rides the same report: present at the default layer (the λ premise
+      // line), its own diagnostics group present but still closed — the execution triple is one
+      // fold away, and "Selected component" (an evidence-tier phrase) exists nowhere in this
+      // mass arm.
+      IM_CHECK_RETV(reopened_text.find("Sky point answer") != std::string::npos, false);
+      IM_CHECK_RETV(reopened_text.find("wavelength 550.00 nm") != std::string::npos, false);
+      IM_CHECK_RETV(reopened_text.find("discovery sample_count") == std::string::npos, false);
+      IM_CHECK_RETV(reopened_text.find("Selected component") == std::string::npos, false);
+      // The mass arm's fold pair is the SAME structure as the component arm's: opening the
+      // point answer's evidence group surfaces the member-faces premise line here too, and
+      // opening its diagnostics group surfaces the execution triple (the click's auto-scroll
+      // brings the header into the report child's clip; toggling back leaves the found state).
+      ctx->ItemClick("**/Point evidence##pt_answer");
+      ctx->Yield(2);
+      const std::string mass_evidence_text = CaptureMapFrameText(ctx);
+      IM_CHECK_RETV(mass_evidence_text.find("member faces") != std::string::npos, false);
+      ctx->ItemClick("**/Point evidence##pt_answer");
+      ctx->Yield(1);
+      ctx->ItemClick("**/Point diagnostics##pt_answer");
+      ctx->Yield(2);
+      const std::string mass_diagnostics_text = CaptureMapFrameText(ctx);
+      IM_CHECK_RETV(mass_diagnostics_text.find("discovery sample_count") != std::string::npos, false);
+      ctx->ItemClick("**/Point diagnostics##pt_answer");
+      ctx->Yield(1);
+    }
   }
   ctx->WindowClose("//Raypath view");
   ctx->Yield(1);
@@ -4601,10 +4696,10 @@ bool RefusedClassBlockadesNothing(ImGuiTestContext* ctx) {
 
   // The point answer's split (§16.2), the component arm: the map window (open since the row
   // click) carries "Sky point answer" with its default-layer premise lines and BOTH fold
-  // groups closed — the evidence rows are the Physics tier's, and the frame text proves the
+  // groups closed — the evidence rows are the evidence tier's, and the frame text proves the
   // closed state mechanically (a closed CollapsingHeader submits no body). The fold's rendered
   // response to expansion is then read by writing the same window-storage key a user click
-  // writes (the click wiring itself is the identity case's Calculation-details leg).
+  // writes (the click wiring itself is the identity case's diagnostics leg).
   {
     ImGuiWindow* report = MapReportWindow();
     IM_CHECK_RETV(report != nullptr, false);
@@ -4613,12 +4708,12 @@ bool RefusedClassBlockadesNothing(ImGuiTestContext* ctx) {
     IM_CHECK_RETV(report_text.find("wavelength 550.00 nm") != std::string::npos, false);
     IM_CHECK_RETV(report_text.find("Selected component") == std::string::npos, false);
     IM_CHECK_RETV(report_text.find("discovery sample_count") == std::string::npos, false);
-    report->StateStorage.SetInt(report->GetID("Physics details##pt_answer"), 1);
+    report->StateStorage.SetInt(report->GetID("Point evidence##pt_answer"), 1);
     ctx->Yield(2);
     const std::string opened_text = CaptureMapFrameText(ctx);
     IM_CHECK_RETV(opened_text.find("Selected component") != std::string::npos, false);
     IM_CHECK_RETV(opened_text.find("member faces") != std::string::npos, false);
-    report->StateStorage.SetInt(report->GetID("Physics details##pt_answer"), 0);
+    report->StateStorage.SetInt(report->GetID("Point evidence##pt_answer"), 0);
     ctx->Yield(1);
   }
   // The main window's summary arm, both windows closed: the component count with its kinds,
@@ -7422,7 +7517,8 @@ bool PoseViewNarrowestBoundariesHoldBothEnds(ImGuiTestContext* ctx) {
       // sit past the visible clip at this extreme (registered, not contained — the same
       // addressable-is-not-visible distinction the narrowest case's lesson names), so the
       // standing claim here is reachability, not containment.
-      const ImGuiTestItemInfo physics_b = ctx->ItemInfo("**/Physics details##pose_factors", ImGuiTestOpFlags_NoError);
+      const ImGuiTestItemInfo physics_b =
+          ctx->ItemInfo("**/Interface transmission##pose_factors", ImGuiTestOpFlags_NoError);
       IM_CHECK_RETV(physics_b.ID != 0, false);
       ImGuiWindow* scroll_b = PoseRegionScrollChild("##AnalyzePoseFactors", "##PoseFactorsScroll");
       IM_CHECK_RETV(scroll_b != nullptr, false);
@@ -7553,9 +7649,9 @@ bool PoseViewNarrowestWindowKeepsTheFixedStackOperable(ImGuiTestContext* ctx) {
     IM_CHECK_RETV(globe != nullptr && factors != nullptr, false);
     // The fixed stack's controls, VISIBLE: each rect inside its region's live clip (the clip is
     // viewport-intersected — an off-viewport rect fails this even though the item registered).
-    // The deviation-grid toggle's home is the factors region's Calculation details (§16.4 —
-    // the toggle retired there with the relayout); its containment leg runs below, after the
-    // fold is open and the scroll has sought it into view.
+    // The deviation-grid toggle's home is the factors region's env-gated "Pose diagnostics"
+    // group (§16.4 — the toggle retired there with the relayout); its containment leg runs
+    // below, after the gate is on and the fold is open and the scroll has sought it into view.
     const ImGuiTestItemInfo sample = ctx->ItemInfo("**/##globe_sample", ImGuiTestOpFlags_NoError);
     IM_CHECK_RETV(sample.ID != 0, false);
     IM_CHECK_RETV(sample.RectFull.Max.x <= globe->InnerClipRect.Max.x + 0.5f &&
@@ -7566,33 +7662,38 @@ bool PoseViewNarrowestWindowKeepsTheFixedStackOperable(ImGuiTestContext* ctx) {
     IM_CHECK_RETV(play.RectFull.Max.y <= globe->InnerClipRect.Max.y + 0.5f, false);
 
     // REAL operations, the review's demand: the toggle flips for true. The toggle lives in the
-    // factors region's Calculation details fold — closed by default, its content past the
-    // factor readouts in the scroll — so the leg opens the fold, seeks the scroll to its end,
-    // and only then addresses the checkbox (the §16.1 fold discipline: the fold's expansion is
-    // session-sticky window storage; the leg closes it again at the end, leaving the next case
-    // the default-closed shape).
-    ctx->ItemClick("**/Calculation details##pose_factors");
-    ctx->Yield(2);
-    ImGuiWindow* factors_scroll = PoseRegionScrollChild("##AnalyzePoseFactors", "##PoseFactorsScroll");
-    IM_CHECK_RETV(factors_scroll != nullptr, false);
-    factors_scroll->Scroll.y = factors_scroll->ScrollMax.y;  // belt-and-braces seek, the globe leg's idiom
-    ctx->Yield(2);
-    // The toggle's own containment leg: its rect inside the factors region's live clip — the
-    // same visibility demand the fixed-stack controls above answer, relocated with its region.
-    const ImGuiTestItemInfo toggle =
-        ctx->ItemInfo("**/Deviation grid###pose_factors_dev_grid", ImGuiTestOpFlags_NoError);
-    IM_CHECK_RETV(toggle.ID != 0, false);
-    IM_CHECK_RETV(toggle.RectFull.Min.x >= factors->InnerClipRect.Min.x - 0.5f &&
-                      toggle.RectFull.Max.x <= factors->InnerClipRect.Max.x + 0.5f &&
-                      toggle.RectFull.Min.y >= factors->InnerClipRect.Min.y - 0.5f &&
-                      toggle.RectFull.Max.y <= factors->InnerClipRect.Max.y + 0.5f,
-                  false);
-    const bool grid_before = gui::g_state.analysis.point_view.show_deviation_grid;
-    ctx->ItemClick("**/Deviation grid###pose_factors_dev_grid");
-    ctx->Yield(2);
-    IM_CHECK_RETV(gui::g_state.analysis.point_view.show_deviation_grid != grid_before, false);
-    ctx->ItemClick("**/Calculation details##pose_factors");  // restore the default-closed shape
-    ctx->Yield(2);
+    // factors region's "Pose diagnostics" group — closed by default AND env-gated, its content
+    // past the factor readouts in the scroll — so the leg turns the gate on, opens the fold,
+    // seeks the scroll to its end, and only then addresses the checkbox (the §16.1 fold
+    // discipline: the fold's expansion is session-sticky window storage; the leg closes it
+    // again at the end, leaving the next case the default-closed shape). The gate is display
+    // eligibility only: with it off, the toggle is not renderable at any expansion state.
+    {
+      const ScopedDebugDetailsEnv env_on(DebugDetailsState::kOn);
+      ctx->Yield(2);
+      ctx->ItemClick("**/Pose diagnostics##pose_factors");
+      ctx->Yield(2);
+      ImGuiWindow* factors_scroll = PoseRegionScrollChild("##AnalyzePoseFactors", "##PoseFactorsScroll");
+      IM_CHECK_RETV(factors_scroll != nullptr, false);
+      factors_scroll->Scroll.y = factors_scroll->ScrollMax.y;  // belt-and-braces seek, the globe leg's idiom
+      ctx->Yield(2);
+      // The toggle's own containment leg: its rect inside the factors region's live clip — the
+      // same visibility demand the fixed-stack controls above answer, relocated with its region.
+      const ImGuiTestItemInfo toggle =
+          ctx->ItemInfo("**/Deviation grid###pose_factors_dev_grid", ImGuiTestOpFlags_NoError);
+      IM_CHECK_RETV(toggle.ID != 0, false);
+      IM_CHECK_RETV(toggle.RectFull.Min.x >= factors->InnerClipRect.Min.x - 0.5f &&
+                        toggle.RectFull.Max.x <= factors->InnerClipRect.Max.x + 0.5f &&
+                        toggle.RectFull.Min.y >= factors->InnerClipRect.Min.y - 0.5f &&
+                        toggle.RectFull.Max.y <= factors->InnerClipRect.Max.y + 0.5f,
+                    false);
+      const bool grid_before = gui::g_state.analysis.point_view.show_deviation_grid;
+      ctx->ItemClick("**/Deviation grid###pose_factors_dev_grid");
+      ctx->Yield(2);
+      IM_CHECK_RETV(gui::g_state.analysis.point_view.show_deviation_grid != grid_before, false);
+      ctx->ItemClick("**/Pose diagnostics##pose_factors");  // restore the default-closed shape
+      ctx->Yield(2);
+    }
     // a running playback is stopped by a hand on the slider (the click moves the cursor),
     gui::g_state.analysis.point_view.playing = true;
     ctx->Yield(2);
@@ -7753,11 +7854,23 @@ bool PoseCurveRegionDrawsAndMovesTheSharedCursor(ImGuiTestContext* ctx) {
   // logged for the hands-on record (the note rides the default layer by construction; this
   // scene may not carry a gap to exercise it). ----
   {
+    // The env gate, pose host: with the variable unset the "Pose diagnostics" header is not
+    // submitted at all; under "1" both fold headers stand and are contained (default-closed;
+    // the toggle's flip legs live in the narrowest case).
+    const ScopedDebugDetailsEnv env_unset(DebugDetailsState::kUnset);
+    ctx->Yield(2);
+    IM_CHECK_RETV(ctx->ItemInfo("**/Pose diagnostics##pose_factors", ImGuiTestOpFlags_NoError).ID == 0, false);
+    IM_CHECK_RETV(ctx->ItemInfo("**/Interface transmission##pose_factors", ImGuiTestOpFlags_NoError).ID != 0, false);
+  }
+  {
+    const ScopedDebugDetailsEnv env_on(DebugDetailsState::kOn);
+    ctx->Yield(2);
     ImGuiWindow* factors = PoseRegionWindow("##AnalyzePoseFactors");
     IM_CHECK_RETV(factors != nullptr, false);
-    const ImGuiTestItemInfo physics = ctx->ItemInfo("**/Physics details##pose_factors", ImGuiTestOpFlags_NoError);
+    const ImGuiTestItemInfo physics =
+        ctx->ItemInfo("**/Interface transmission##pose_factors", ImGuiTestOpFlags_NoError);
     IM_CHECK_RETV(physics.ID != 0, false);
-    const ImGuiTestItemInfo calc = ctx->ItemInfo("**/Calculation details##pose_factors", ImGuiTestOpFlags_NoError);
+    const ImGuiTestItemInfo calc = ctx->ItemInfo("**/Pose diagnostics##pose_factors", ImGuiTestOpFlags_NoError);
     IM_CHECK_RETV(calc.ID != 0, false);
     IM_CHECK_RETV(physics.RectFull.Max.y <= factors->InnerClipRect.Max.y + 0.5f, false);
     IM_CHECK_RETV(calc.RectFull.Max.y <= factors->InnerClipRect.Max.y + 0.5f, false);
@@ -8843,22 +8956,25 @@ bool CheckMapCellSteps(ImGuiTestContext* ctx, const std::string& text, const LUM
 }
 
 bool CheckMapQualityText(ImGuiTestContext* ctx, const std::string& stem) {
+  // The caliber's diagnostics group is env-gated: the helper runs under "1" (the group's
+  // header, idempotent-open and restore logic all ride the gate being on).
+  const ScopedDebugDetailsEnv env_on(DebugDetailsState::kOn);
   const auto& map = gui::g_state.analysis.map;
   const auto reference = map.adopted_result;
   ctx->MouseMoveToPos(ImVec2(2.0f, 2.0f));
   ImGuiWindow* report = MapReportWindow();
   IM_CHECK_RETV(report != nullptr, false);
   report->Scroll.y = 0.0f;
-  // The reference-cell line lives in the caliber's Calculation fold now (the ledger's L4
-  // tier) — open it IDEMPOTENTLY so the capture carries the numbers the checks read: the
-  // header is a toggle, and check_scale calls this helper three times (1x / 1.5x / back), so
-  // a blind click would close it on the second leg. The header's open state is the report
-  // child's own tree storage.
-  const ImGuiID calc_fold_id = report->GetID("Calculation details##map_caliber");
+  // The reference-cell line lives in the caliber's env-gated "Map diagnostics" group (the
+  // ledger's L4 tier) — open it IDEMPOTENTLY so the capture carries the numbers the checks
+  // read: the header is a toggle, and check_scale calls this helper three times (1x / 1.5x /
+  // back), so a blind click would close it on the second leg. The header's open state is the
+  // report child's own tree storage.
+  const ImGuiID calc_fold_id = report->GetID("Map diagnostics##map_caliber");
   ImGuiStorage* fold_storage = &report->StateStorage;
   const bool calc_fold_open = fold_storage->GetInt(calc_fold_id, 0) != 0;
   if (!calc_fold_open) {
-    ctx->ItemClick("**/Calculation details##map_caliber");
+    ctx->ItemClick("**/Map diagnostics##map_caliber");
     ctx->Yield(2);
   }
   const std::string report_text = CaptureMapFrameText(ctx);
@@ -8916,7 +9032,7 @@ bool CheckMapQualityText(ImGuiTestContext* ctx, const std::string& stem) {
   // Leave the fold as we found it: the report child's storage outlives this helper, and a
   // later case asserting the closed-by-default state must not inherit our open tier.
   if (!calc_fold_open && fold_storage->GetInt(calc_fold_id, 0) != 0) {
-    ctx->ItemClick("**/Calculation details##map_caliber");
+    ctx->ItemClick("**/Map diagnostics##map_caliber");
     ctx->Yield(2);
   }
   ctx->MouseMoveToPos(ImVec2(2.0f, 2.0f));
@@ -8967,10 +9083,11 @@ bool CheckMapGlyphsAcrossUiScale(ImGuiTestContext* ctx) {
         LUMICE_PathMapGetInfo(gui::g_state.analysis.map.adopted_result.get(), &caliber.info) == LUMICE_PATH_READ_OK &&
             caliber.info.kept_count > 0,
         false);
-    // The caliber's Calculation tier carries the grid numbers (the ledger's tiering); the λ
+    // The caliber's diagnostics tier carries the grid numbers (the ledger's tiering); the λ
     // is deliberately absent from every caliber line — the slider row's echo is its owner — so
     // the glyph audit reads the cell line's δ and the slider's λ label for the two codepoints.
-    const std::string metrics = gui::MapCaliberCalculationLines(caliber).front();
+    // This input carries no evidence, so the diagnostics lines' front is the grid line itself.
+    const std::string metrics = gui::MapCaliberDiagnosticsLines(caliber).front();
     IM_CHECK_RETV(metrics.find("\xCE\xBB") == std::string::npos, false);
     IM_CHECK_RETV(metrics.find("\xCE\xB4") != std::string::npos, false);
     std::string old_metrics = metrics;
@@ -10542,8 +10659,8 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
 
         // The pose window at the compressed tier, BEFORE any point intent: the fixed heads are
         // the two region titles — the globe's deviation-grid toggle retired to the factors
-        // region's Calculation details fold (§16.4), which lives in the discovered arm, so the
-        // pre-intent heads are titles + short status only (the pre-intent guide line IS the
+        // region's env-gated diagnostics group (§16.4), which lives in the discovered arm, so
+        // the pre-intent heads are titles + short status only (the pre-intent guide line IS the
         // factors region's forward pointer). The toggle's contain+flip legs live with the
         // completed document (the narrowest and narrow-column cases); the sample/play controls
         // belong to a completed point result and are driven by the point inspector's leg.

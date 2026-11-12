@@ -9,6 +9,7 @@
 #include "gui/gui_constants.hpp"
 #include "gui/theme.hpp"
 #include "imgui.h"
+#include "util/env_knobs.hpp"  // env::AnalyzeDebugDetails — the diagnostics groups' env gate
 
 namespace lumice::gui {
 namespace {
@@ -298,8 +299,8 @@ void BuildConclusions(const LUMICE_PathSurvey& result, SurveyOverviewModel* mode
     case SurveyArm::kFamily: {
       // The freezing ladder's mechanism text (which level froze which dim at what width) is
       // the owner's own example of presentation noise at the default layer — the enumeration
-      // lives in Physics details, the per-level sample/survival counts in Calculation details.
-      // What floats here is the ladder's consequence in one user sentence: how many images
+      // lives in the env-gated diagnostics group, the per-level sample/survival counts beside
+      // it. What floats here is the ladder's consequence in one user sentence: how many images
       // the class holds after the survival filter had its say.
       int surviving = 0;
       int killed = 0;
@@ -613,8 +614,8 @@ void RenderSurveyDefaultLayer(const SurveyOverviewModel& model, SurveyRowHoverRe
     ImGui::GetWindowDrawList()->ChannelsSetCurrent(1);
   }
   // The limits first (§16.1: state honesty covers both layers; the disabled block the header
-  // used to carry keeps its content, minus the counts line that moved into Calculation
-  // details).
+  // used to carry keeps its content, minus the counts line that moved into the diagnostics
+  // group).
   ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
   if (model.execution == LUMICE_PATH_OUTCOME_DEADLINE_EXCEEDED || model.early_stopped) {
     ImGui::TextWrapped("The survey stopped inside its budget — the facts on show are partial.");
@@ -646,7 +647,8 @@ void RenderSurveyDefaultLayer(const SurveyOverviewModel& model, SurveyRowHoverRe
     DisabledWrapped("Chromatic layer (%s): %s", SurveyStateName(model.chromatic_state), model.chromatic_note.c_str());
   }
   // The colour verdict's main conclusion, default (the Dispersion/Diagnose row: 边位置、可见性/
-  // 色彩主结论默认；coverage 不完整默认). Its notes and evidence basis stay in Physics details.
+  // 色彩主结论默认；coverage 不完整默认). Its notes and evidence basis stay in the evidence
+  // group.
   // The two linked rows (the verdict line and the Position line) are the verdict anchor's hover
   // read (§16.1's A2 pilot): with a readout they carry their invisible hover surface, without
   // one they are plain text and nothing else changes — the coverage qualifier line is NOT
@@ -750,10 +752,11 @@ void RenderSurveyDefaultLayer(const SurveyOverviewModel& model, SurveyRowHoverRe
   }
 }
 
-// The Physics details group (the ladder's L3): the optical premises, evidence methods and
-// complete definitions behind the default layer's answers. One closed-by-default fold; each
-// former block keeps a small section label so the group stays navigable.
-void RenderSurveyPhysicsDetails(const SurveyOverviewModel& model) {
+// The class evidence group (the ladder's L3, the host's non-diagnostic fold): the optical
+// premises, evidence methods and complete definitions behind the default layer's answers —
+// nothing implementation-level, which lives in the env-gated diagnostics group below. One
+// closed-by-default fold; each block keeps a small section label so the group stays navigable.
+void RenderSurveyClassEvidence(const SurveyOverviewModel& model) {
   if (model.dispersion.available) {
     ImGui::TextDisabled("Chromatic dispersion");
     const SurveyDispersionView& d = model.dispersion;
@@ -762,8 +765,6 @@ void RenderSurveyPhysicsDetails(const SurveyOverviewModel& model) {
     } else {
       ImGui::TextWrapped("%s inner edge %s — %s %s", d.red_label.c_str(), FormatDeg(d.value_red_deg).c_str(),
                          d.blue_label.c_str(), FormatDeg(d.value_blue_deg).c_str());
-      DisabledWrapped("Refractive indices n(%s) = %.4f, n(%s) = %.4f — the engine's dispersion table at this pair.",
-                      d.red_label.c_str(), d.n_red, d.blue_label.c_str(), d.n_blue);
     }
     if (!d.followed.empty()) {
       if (ImGui::TreeNode("##ov_disp_followed", "Followed onsets (%zu)", d.followed.size())) {
@@ -849,8 +850,11 @@ void RenderSurveyPhysicsDetails(const SurveyOverviewModel& model) {
           const ImVec2 b = to_screen(p.peak_deg, max_value);
           dl->AddLine(a, b, ImGui::GetColorU32(ImGuiCol_PlotHistogram), 1.0f);
         }
-        DisabledWrapped("Deviation from %s to %s — empty bins are gaps, not zeros; n = %.4f at this wavelength.",
-                        FormatDeg(d0).c_str(), FormatDeg(d1).c_str(), p.refractive_index);
+        // The gap rule stays with the curve; the wavelength's n restatement (the engine's
+        // dispersion table at this pair, the same value the default scope line already
+        // carries) is a diagnostics-group item, not evidence.
+        DisabledWrapped("Deviation from %s to %s — empty bins are gaps, not zeros.", FormatDeg(d0).c_str(),
+                        FormatDeg(d1).c_str());
       }
     }
   }
@@ -870,25 +874,6 @@ void RenderSurveyPhysicsDetails(const SurveyOverviewModel& model) {
   if (model.tir.available && model.tir.value_available) {
     ImGui::TextDisabled("Internal-reflection share");
     ImGui::TextWrapped("Read across %zu interface(s).", model.tir.interface_count);
-  }
-  if (model.family.available) {
-    ImGui::TextDisabled("Freezing ladder");
-    for (const SurveyFamilyLevelView& level : model.family.levels) {
-      if (!level.frozen_dims.empty()) {
-        std::string frozen = "L" + std::to_string(level.level) + " frozen: ";
-        for (const std::string& dim : level.frozen_dims) {
-          frozen += dim + "; ";
-        }
-        DisabledWrapped("%s", frozen.c_str());
-      }
-      if (!level.free_dims.empty()) {
-        std::string free_dims = "L" + std::to_string(level.level) + " free: ";
-        for (const std::string& dim : level.free_dims) {
-          free_dims += dim + "; ";
-        }
-        DisabledWrapped("%s", free_dims.c_str());
-      }
-    }
   }
   if (!model.objects.empty()) {
     ImGui::TextDisabled("Objects");
@@ -924,9 +909,14 @@ void RenderSurveyPhysicsDetails(const SurveyOverviewModel& model) {
   }
 }
 
-// The Calculation details group (the ladder's L4): the numeric and execution facts a check
-// reads — counts, budgets, tolerances — none of them a default answer.
-void RenderSurveyCalculationDetails(const SurveyOverviewModel& model) {
+// The class diagnostics group: the dev-visible half, rendered only while
+// LUMICE_ANALYZE_DEBUG_DETAILS is set (env::AnalyzeDebugDetails gates the header itself, so
+// with the env off neither header nor body exists). The numeric and execution facts a check
+// reads — counts, budgets, tolerances — plus the three implementation-level rows the evidence
+// group gave up (the engine's dispersion-table n pair, the profile's wavelength-n restatement
+// and the freezing ladder's raw level/frozen/free enumeration); the ladder's consequence and
+// the scope's own n stay at the default layer either way.
+void RenderSurveyClassDiagnostics(const SurveyOverviewModel& model) {
   ImGui::TextWrapped("%s — %zu member(s), %zu object(s), budget %d ms%s", SurveyOutcomeName(model.execution),
                      model.member_count, model.object_count, model.budget_ms,
                      model.early_stopped ? ", early-stopped" : "");
@@ -949,6 +939,33 @@ void RenderSurveyCalculationDetails(const SurveyOverviewModel& model) {
                          level.samples, level.valid_samples, level.objects_proposed, level.objects_killed);
     }
   }
+  if (model.dispersion.available && model.dispersion.min_row_available) {
+    const SurveyDispersionView& d = model.dispersion;
+    DisabledWrapped("Refractive indices n(%s) = %.4f, n(%s) = %.4f — the engine's dispersion table at this pair.",
+                    d.red_label.c_str(), d.n_red, d.blue_label.c_str(), d.n_blue);
+  }
+  if (model.probe.available && model.probe.state != LUMICE_PATH_STATE_REFUSED && !model.probe.sample_value.empty()) {
+    DisabledWrapped("n = %.4f at this wavelength.", model.probe.refractive_index);
+  }
+  if (model.family.available) {
+    ImGui::TextDisabled("Freezing ladder");
+    for (const SurveyFamilyLevelView& level : model.family.levels) {
+      if (!level.frozen_dims.empty()) {
+        std::string frozen = "L" + std::to_string(level.level) + " frozen: ";
+        for (const std::string& dim : level.frozen_dims) {
+          frozen += dim + "; ";
+        }
+        DisabledWrapped("%s", frozen.c_str());
+      }
+      if (!level.free_dims.empty()) {
+        std::string free_dims = "L" + std::to_string(level.level) + " free: ";
+        for (const std::string& dim : level.free_dims) {
+          free_dims += dim + "; ";
+        }
+        DisabledWrapped("%s", free_dims.c_str());
+      }
+    }
+  }
 }
 
 }  // namespace
@@ -960,12 +977,15 @@ void RenderSurveyOverviewModel(const SurveyOverviewModel& model, SurveyRowHoverR
   }
   RenderSurveyDefaultLayer(model, row_readout);
   ImGui::Spacing();
-  if (FoldOpen(kSurveyPhysicsDetailsLabel, "sv_answer")) {
-    RenderSurveyPhysicsDetails(model);
+  if (FoldOpen(kSurveyClassEvidenceLabel, "sv_answer")) {
+    RenderSurveyClassEvidence(model);
     ImGui::Spacing();
   }
-  if (FoldOpen(kSurveyCalculationDetailsLabel, "sv_answer")) {
-    RenderSurveyCalculationDetails(model);
+  // The env gate precedes the header: with the diagnostics off, neither the "Class
+  // diagnostics" header nor its body is submitted — the storage's old expansion state stays
+  // untouched behind the absent header (env on again restores it within the session).
+  if (env::AnalyzeDebugDetails() && FoldOpen(kSurveyClassDiagnosticsLabel, "sv_answer")) {
+    RenderSurveyClassDiagnostics(model);
   }
 }
 

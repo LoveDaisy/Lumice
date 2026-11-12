@@ -26,6 +26,7 @@
 #include "gui/theme.hpp"
 #include "gui/view_look_at.hpp"
 #include "imgui.h"
+#include "util/env_knobs.hpp"             // env::AnalyzeDebugDetails — the diagnostics groups' env gate
 #include "util/label_viewport_clamp.hpp"  // the ONE viewport clamp — the readout label's shared rule
 #include "util/sky_direction.hpp"
 
@@ -247,16 +248,20 @@ std::vector<std::string> MapCaliberPhysicsLines(const MapCaliberInput& in) {
       lines.emplace_back("Scene geometry.");
     }
   }
-  if (in.have_evidence && in.evidence.geometry_basis.length > 0) {
-    lines.emplace_back(in.evidence.geometry_basis.data, in.evidence.geometry_basis.length);
-  }
   return lines;
 }
 
-std::vector<std::string> MapCaliberCalculationLines(const MapCaliberInput& in) {
+// The caliber's diagnostics group: the engine's raw geometry_basis explanation string plus the
+// grid and execution facts — rendered only while LUMICE_ANALYZE_DEBUG_DETAILS is set. The
+// readable scene/nominal caliber stays in the evidence group above, so the raw basis string
+// hides nothing a default or evidence line does not already say in user words.
+std::vector<std::string> MapCaliberDiagnosticsLines(const MapCaliberInput& in) {
   std::vector<std::string> lines;
   char line[512];
   const LUMICE_PathMapInfo& info = in.info;
+  if (in.have_evidence && in.evidence.geometry_basis.length > 0) {
+    lines.emplace_back(in.evidence.geometry_basis.data, in.evidence.geometry_basis.length);
+  }
   if (info.view_full_sky != 0) {
     std::snprintf(line, sizeof(line), "Reference cell δ %.7g° × az %.7g° · view: full sky %d×%d · n=%d lattice",
                   (info.view_delta_max_deg - info.view_delta_min_deg) / info.view_rows,
@@ -2066,9 +2071,10 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   ImGui::TextWrapped("Stripes = unknown, purple = singular (not zero).");
   // The identity line and the sky-point echo used to sit here; both moved up the fixed slots
   // (identity to the column's first row, the target beside the input group) and the report no
-  // longer repeats either. The old reference-cell line moved into the caliber's Calculation
-  // fold (the same numbers, the ledger's L4 tier); the source-fixed-scale sentence moved with
-  // it. The Separator keeps the picture-facts above apart from the answer block below.
+  // longer repeats either. The old reference-cell line moved into the caliber's env-gated
+  // diagnostics fold (the same numbers, the ledger's L4 tier); the source-fixed-scale sentence
+  // moved with it. The Separator keeps the picture-facts above apart from the answer block
+  // below.
   ImGui::Separator();
   if (state.analysis.map_wavelength_nm <= 0.0 && map.adopted_result == nullptr) {
     // The λ's unrechoiced state stays default (the ledger: 尚未回显的未知性默认) — the map has
@@ -2078,9 +2084,9 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   // The caliber block: every fact read back through the result's own readers into the pure
   // composers (the unit layer holds them to the readback), then drawn — the ledger's tiers:
   // the short quantity and its limits default, the full definition and premises behind
-  // Physics details, the grid and execution numbers behind Calculation details. The report
-  // follows every operation: its native scroll cannot overlap or reposition the
-  // typed-coordinate controls, even while a long caliber or refusal arrives.
+  // "Map quantity & premises", the grid and execution numbers behind the env-gated "Map
+  // diagnostics". The report follows every operation: its native scroll cannot overlap or
+  // reposition the typed-coordinate controls, even while a long caliber or refusal arrives.
   if (caliber_source && have_anchor_info) {
     ImGui::TextDisabled("Reference caliber");
     MapCaliberInput in;
@@ -2108,16 +2114,19 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
       ImGui::TextWrapped("%s", line.c_str());
     }
     ImGui::PopStyleColor();
-    if (FoldOpen(kSurveyPhysicsDetailsLabel, "map_caliber")) {
+    if (FoldOpen(kMapCaliberPremisesLabel, "map_caliber")) {
       ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
       for (const std::string& line : MapCaliberPhysicsLines(in)) {
         ImGui::TextWrapped("%s", line.c_str());
       }
       ImGui::PopStyleColor();
     }
-    if (FoldOpen(kSurveyCalculationDetailsLabel, "map_caliber")) {
+    // The diagnostics group is env-gated as a whole (header and body): with the env off
+    // neither the header nor the raw basis/grid/execution lines render, and the group's old
+    // expansion state survives behind the absent header for env-on to restore.
+    if (env::AnalyzeDebugDetails() && FoldOpen(kMapCaliberDiagnosticsLabel, "map_caliber")) {
       ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-      for (const std::string& line : MapCaliberCalculationLines(in)) {
+      for (const std::string& line : MapCaliberDiagnosticsLines(in)) {
         ImGui::TextWrapped("%s", line.c_str());
       }
       ImGui::PopStyleColor();

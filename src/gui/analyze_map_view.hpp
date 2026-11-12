@@ -140,10 +140,11 @@ uint32_t MapCellColorRgba(double value, uint8_t status, const MapDisplayNorm& no
 // One read-back per information tier (the disposition ledger): the DEFAULT lines answer "what
 // am I looking at" — the short quantity name with its unit, the scene-vs-nominal limit when
 // the answer is not the nominal shape, and the truncation / finite-zero / rank-0-mass facts;
-// the PHYSICS lines carry the full quantity definition, the sun premise and the engine's own
-// geometry basis verbatim; the CALCULATION lines carry the grid and execution numbers —
-// reference cell, view window, lattice, members, kept events — plus the source-fixed-scale
-// note. The λ is in no line: the λ row's same-control echo is the reading's one owner.
+// the PHYSICS lines carry the full quantity definition and the sun premise — the evidence
+// group's rows; the DIAGNOSTICS lines are the env-gated group's — the engine's own geometry
+// basis verbatim plus the grid and execution numbers: reference cell, view window, lattice,
+// members, kept events, and the source-fixed-scale note. The λ is in no line: the λ row's
+// same-control echo is the reading's one owner.
 inline constexpr size_t kMapCaliberMaxMethods = 8;
 struct MapCaliberInput {
   LUMICE_PathMapInfo info{};
@@ -158,7 +159,7 @@ struct MapCaliberInput {
 };
 std::vector<std::string> MapCaliberDefaultLines(const MapCaliberInput& in);
 std::vector<std::string> MapCaliberPhysicsLines(const MapCaliberInput& in);
-std::vector<std::string> MapCaliberCalculationLines(const MapCaliberInput& in);
+std::vector<std::string> MapCaliberDiagnosticsLines(const MapCaliberInput& in);
 
 // ---- The overlay presentation model (pure; the renderer draws what these name) ----------------------
 
