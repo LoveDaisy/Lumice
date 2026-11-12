@@ -12141,6 +12141,172 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       ctx->Yield(3);
       IM_CHECK(!gui::g_state.analysis_run_in_progress);
       IM_CHECK_EQ(gui::g_state.analysis_result.payload.get(), payload_before);
+
+      // AC2, through the real chain: the button's new analysis runs to its own end and adopts
+      // the moved centre as the analysed one — the band is gone (no ink, no drawn text), and
+      // the button was reachable at rest when clicked.
+      ctx->SetRef(PanoramaRegionRef());
+      IM_CHECK(!IsDisabled(ctx->ItemInfo(kAnalyzeButton)));
+      ctx->ItemClick(kAnalyzeButton);
+      ctx->SetRef("");
+      IM_CHECK(gui::g_state.analysis.started);
+      IM_CHECK(DriveUntil(
+          ctx, [] { return !gui::g_state.analysis_run_in_progress && gui::g_state.analysis_result.payload != nullptr; },
+          60));
+      IM_CHECK(!gui::ConeCenterDriftedFromResult(gui::g_state));
+      const PanoramaWarningInk after_reanalyze = CollectPanoramaWarningInk(warn_colour);
+      IM_CHECK(!after_reanalyze.found);
+      IM_CHECK(gui::g_state.analysis.wait_feedback_texts.cone_center_drift_warning.empty());
+    };
+  }
+
+  // The band's boundary legs (779.1): the narrowest legal window and the 1x/1.5x/2x scale
+  // tiers — the wrap-width extremes the fixed height must survive. One completed analysis
+  // feeds every leg; each leg re-establishes the undrifted baseline (the state write is the
+  // display face of the pure predicate — the real gesture moved the centre in the main case),
+  // resets the viewport's scroll, then drags the marker through the same real gesture at THIS
+  // leg's geometry and reads the actual client off the drawn frame.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "cone_centre_drift_warning_narrow_and_scaled");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ScopedServerGuard guard;
+      const ScopedUiScaleAndBasisLease geometry_lease(ctx);
+      IM_CHECK(BringUpHaloScene(ctx, /*infinite=*/false));
+      OpenWindow(ctx);
+      ctx->SetRef(PanoramaRegionRef());
+      ctx->ItemClick("Point");
+      ctx->Yield(2);
+      ctx->SetRef("");
+      PickPanoramaCentre(ctx);
+      IM_CHECK(gui::g_state.analysis.cone_center_valid);
+      ctx->SetRef(PanoramaRegionRef());
+      ctx->ItemClick(kAnalyzeButton);
+      ctx->SetRef("");
+      IM_CHECK(DriveUntil(
+          ctx, [] { return !gui::g_state.analysis_run_in_progress && gui::g_state.analysis_result.payload != nullptr; },
+          60));
+      IM_CHECK_EQ(gui::g_state.analysis_result.payload->roi_mode, LUMICE_RAYPATH_ROI_CONE);
+
+      const auto set_scale = [&](float multiplier) -> bool {
+        gui::g_ui_scale_multiplier = multiplier;
+        gui::g_ui_scale_dirty = true;
+        for (int i = 0;
+             i < 60 && !(gui::UiPx(gui::kAnalyzeLeftPanelWidth) > multiplier * gui::kAnalyzeLeftPanelWidth - 0.5f &&
+                         gui::UiPx(gui::kAnalyzeLeftPanelWidth) < multiplier * gui::kAnalyzeLeftPanelWidth + 0.5f);
+             ++i) {
+          ctx->Yield(1);
+        }
+        IM_CHECK_RETV(fabsf(gui::UiPx(gui::kAnalyzeLeftPanelWidth) - multiplier * gui::kAnalyzeLeftPanelWidth) < 0.5f,
+                      false);
+        ctx->Yield(4);
+        return true;
+      };
+      const auto set_basis = [&](int w, int h) -> bool {
+        g_window_size_test.apply_aspect = false;
+        g_window_size_test.width = w;
+        g_window_size_test.height = h;
+        g_window_size_test.done.store(false);
+        g_window_size_test.requested.store(true);
+        for (int i = 0; i < 20 && !g_window_size_test.done.load(); ++i) {
+          ctx->Yield(1);
+        }
+        IM_CHECK_RETV(g_window_size_test.done.load(), false);
+        ctx->Yield(3);
+        return true;
+      };
+
+      const auto run_leg = [&](const char* label) -> bool {
+        const ImU32 warn_colour = WarningTextVertexColour();
+        // Undrifted baseline at THIS leg's geometry: the centre back on the analysed one (the
+        // display face of the pure predicate), the viewport's scroll reset, no ink.
+        std::memcpy(gui::g_state.analysis.cone_center_dir, gui::g_state.analysis.analyzed_cone_center_dir,
+                    sizeof(gui::g_state.analysis.cone_center_dir));
+        ImGuiWindow* status = RegionWindowUnder("##AnalyzePanorama", "##AnalyzePictureStatus");
+        IM_CHECK_RETV(status != nullptr, false);
+        status->Scroll.y = 0.0f;
+        ctx->Yield(2);
+        IM_CHECK_RETV(!gui::ConeCenterDriftedFromResult(gui::g_state), false);
+        const PanoramaWarningInk baseline = CollectPanoramaWarningInk(warn_colour);
+        IM_CHECK_RETV(!baseline.found, false);
+        // The real marker drag, the main case's gesture at this leg's geometry.
+        const std::optional<ImVec2> marker = MarkerScreenPos(ctx);
+        IM_CHECK_RETV(marker.has_value(), false);
+        ctx->MouseMoveToPos(*marker);
+        ctx->Yield(2);
+        ctx->MouseDown(0);
+        ctx->Yield(1);
+        IM_CHECK_RETV(gui::g_state.workspace.panorama_press_owner == PressOwner::kMarker, false);
+        ctx->MouseMoveToPos(ImVec2(marker->x + 45.0f, marker->y - 30.0f));
+        ctx->Yield(1);
+        ctx->KeyDown(ImGuiMod_Alt);
+        ctx->MouseMoveToPos(ImVec2(marker->x + 60.0f, marker->y - 40.0f));
+        ctx->Yield(2);
+        ctx->KeyUp(ImGuiMod_Alt);
+        ctx->MouseUp(0);
+        ctx->Yield(2);
+        IM_CHECK_RETV(gui::g_state.workspace.panorama_press_owner == PressOwner::kNone, false);
+        IM_CHECK_RETV(gui::ConeCenterDriftedFromResult(gui::g_state), false);
+        // AC1 at this geometry: both clauses drawn, the ink whole and inside every clip.
+        const std::string& drawn = gui::g_state.analysis.wait_feedback_texts.cone_center_drift_warning;
+        IM_CHECK_RETV(drawn.find("Centre has moved") != std::string::npos, false);
+        IM_CHECK_RETV(drawn.find("Analyze") != std::string::npos, false);
+        const PanoramaWarningInk band = CollectPanoramaWarningInk(warn_colour);
+        IM_CHECK_RETV(band.found, false);
+        IM_CHECK_RETV(!band.clipped, false);
+        // The layout floor at this geometry: at least one full readable text line of viewport
+        // client, the chrome window still unscrolled, and the Analyze control — the action the
+        // warning names — reachable.
+        IM_CHECK_RETV(status->InnerClipRect.GetHeight() >= ImGui::GetTextLineHeight() - 0.5f, false);
+        ImGuiWindow* host = AnalyzePanoramaHostWindow();
+        IM_CHECK_RETV(host != nullptr, false);
+        IM_CHECK_RETV(host->ScrollMax.y == 0.0f, false);
+        // "**/" roots the search — at the narrow tiers the op bar lives in its scroll child,
+        // which a chrome-window ref cannot address (child windows register as
+        // "Parent/Name_<id>"). The roomier tiers resolve the button at rest; at the extreme
+        // tier the bar's content stacks past the two budgeted rows, so the button registers
+        // only once the bar's OWN internal scroll — the contract's designed reach ("not
+        // permanently cut") — brings its row in view. A bounded sweep, not one scroll-to-end:
+        // the button sits mid-stack, and an end position can leave it past the fold in either
+        // direction. The containment reads at the same in-view frame; the rest state returns
+        // after.
+        ctx->SetRef(PanoramaRegionRef());
+        ImGuiTestItemInfo analyze_btn =
+            ctx->ItemInfo((std::string("**/") + kAnalyzeButton).c_str(), ImGuiTestOpFlags_NoError);
+        ctx->SetRef("");
+        ImGuiWindow* opbar_scroll = RegionWindowUnder("##AnalyzePanorama", "##AnalyzeOpBarScroll");
+        if (analyze_btn.ID == 0 && opbar_scroll != nullptr) {
+          const float max_scroll = opbar_scroll->ScrollMax.y;
+          const float step = std::max(1.0f, opbar_scroll->InnerClipRect.GetHeight() * 0.5f);
+          for (float s = 0.0f; analyze_btn.ID == 0 && s <= max_scroll + 0.5f; s += step) {
+            opbar_scroll->Scroll.y = std::min(s, max_scroll);
+            ctx->Yield(1);
+            ctx->SetRef(PanoramaRegionRef());
+            analyze_btn = ctx->ItemInfo((std::string("**/") + kAnalyzeButton).c_str(), ImGuiTestOpFlags_NoError);
+            ctx->SetRef("");
+          }
+        }
+        IM_CHECK_RETV(analyze_btn.ID != 0, false);
+        IM_CHECK_RETV(analyze_btn.RectFull.Min.y >= host->InnerClipRect.Min.y - 0.5f &&
+                          analyze_btn.RectFull.Max.y <= host->InnerClipRect.Max.y + 0.5f,
+                      false);
+        if (opbar_scroll != nullptr) {
+          opbar_scroll->Scroll.y = 0.0f;
+        }
+        ctx->Yield(1);
+        ctx->LogInfo("[drift band leg] %s: band %.0fx%.0f, status client h %.0f SM %.0f, avail %.0fx%.0f", label,
+                     band.bbox.GetWidth(), band.bbox.GetHeight(), status->InnerClipRect.GetHeight(),
+                     status->ScrollMax.y, host->ContentRegionRect.GetWidth(), host->ContentRegionRect.GetHeight());
+        return true;
+      };
+
+      IM_CHECK(set_basis(1024, 640));
+      IM_CHECK(run_leg("1024x640 1x"));
+      IM_CHECK(set_scale(1.5f));
+      IM_CHECK(set_basis(1024, 640));
+      IM_CHECK(run_leg("1024x640 1.5x"));
+      IM_CHECK(set_scale(2.0f));
+      IM_CHECK(set_basis(1024, 640));
+      IM_CHECK(run_leg("1024x640 2x"));
     };
   }
 
