@@ -37,6 +37,7 @@
 #include "gui/analyze_point_view.hpp"
 #include "gui/analyze_workspace.hpp"
 #include "gui/angular_dist_picker.hpp"
+#include "gui/crystal_renderer.hpp"  // ComputeDist / ComputeNearPlane — the frame tests' camera
 #include "gui/edit_modals.hpp"
 #include "gui/export_fbo_renderer.hpp"
 #include "gui/file_io.hpp"
@@ -3857,6 +3858,701 @@ bool TraceLegendSwatchesAvoidText(ImGuiTestContext* ctx) {
   return true;
 }
 
+// ---- The 2026-11-12 display-model legs (feedback #7/#8/#9): mesh-only framing, cumulative
+// Fresnel widths, ratio labels, contact facing. The oracle side reads the SAME persisted frame
+// fields (Ray3DFrameInfo) through the shared CrystalRenderer camera formulas and inspects the
+// submitted primitives — never a second copy of the renderer's internals. ----
+
+// The display-space point of a polyline/contact point (the frame switch's own transform: the
+// world view leaves a world point alone, the crystal view rotates it back by the pose).
+void TracePolylinePointToDisplay(const gui::Ray3DFrameInfo& frame, const float p[3], float out[3]) {
+  float tmp[3] = { p[0], p[1], p[2] };
+  if (frame.crystal_frame) {
+    gui::RayTracePointToCrystalFrame(frame.pose, tmp);
+  }
+  out[0] = tmp[0];
+  out[1] = tmp[1];
+  out[2] = tmp[2];
+}
+
+// The near-plane-clipped pixel endpoints of a display-space segment — the production clip's
+// independent twin: scene coordinates over frame.centre/fit, homogeneous clip over frame.mvp,
+// the plane from CrystalRenderer::ComputeNearPlane(frame.zoom) (the frustum's own near plane).
+// False when the whole segment sits behind the near plane.
+bool TraceOracleClipSegment(const gui::Ray3DFrameInfo& frame, const float display_a[3], const float display_b[3],
+                            ImVec2* pa, ImVec2* pb) {
+  const float near_w = gui::CrystalRenderer::ComputeNearPlane(frame.zoom);
+  float clip[2][4];
+  const float* displays[2] = { display_a, display_b };
+  for (int e = 0; e < 2; ++e) {
+    for (int row = 0; row < 4; ++row) {
+      clip[e][row] = frame.mvp[12 + row];
+      for (int k = 0; k < 3; ++k) {
+        clip[e][row] += frame.mvp[k * 4 + row] * ((displays[e][k] - frame.centre[k]) / frame.fit);
+      }
+    }
+  }
+  if (clip[0][3] < near_w && clip[1][3] < near_w) {
+    return false;
+  }
+  float t[2] = { 0.0f, 1.0f };
+  if (clip[0][3] < near_w) {
+    t[0] = (near_w - clip[0][3]) / (clip[1][3] - clip[0][3]);
+  }
+  if (clip[1][3] < near_w) {
+    t[1] = (near_w - clip[0][3]) / (clip[1][3] - clip[0][3]);
+  }
+  for (int e = 0; e < 2; ++e) {
+    float c[4];
+    for (int k = 0; k < 4; ++k) {
+      c[k] = clip[0][k] + (clip[1][k] - clip[0][k]) * t[e];
+    }
+    ImVec2& out = e == 0 ? *pa : *pb;
+    out = ImVec2(frame.canvas_min.x + (c[0] / c[3] + 1.0f) * 0.5f * frame.canvas_size.x,
+                 frame.canvas_min.y + (1.0f - c[1] / c[3]) * 0.5f * frame.canvas_size.y);
+  }
+  return true;
+}
+
+// The adopted chain's per-segment cumulative energies, multiplied test-side from the C readers
+// (the pure rule's hand anchors live in the unit layer; the same +-1e-6 usability band).
+struct TraceChainEnergies {
+  std::vector<double> energies;  // per segment, the entry leg 1.0
+  std::vector<bool> valid;       // false from the first unusable factor on
+};
+bool TraceReadChainEnergies(TraceChainEnergies* out) {
+  LUMICE_PathRayContacts contacts{};
+  contacts.struct_size = sizeof(contacts);
+  if (LUMICE_RepresentativeRayGetContacts(gui::g_state.analysis.trace.adopted_result.get(), &contacts) !=
+          LUMICE_PATH_READ_OK ||
+      contacts.contact_count == 0) {
+    return false;
+  }
+  const size_t segments = contacts.contact_count + 1;
+  out->energies.assign(segments, 1.0);
+  out->valid.assign(segments, true);
+  for (size_t k = 0; k < contacts.contact_count; ++k) {
+    const double q = contacts.contacts[k].transmittance;
+    out->valid[k + 1] = out->valid[k] && std::isfinite(q) && q >= -1e-6 && q <= 1.0 + 1e-6;
+    out->energies[k + 1] = out->valid[k + 1] ? out->energies[k] * std::clamp(q, 0.0, 1.0) : out->energies[k];
+  }
+  return true;
+}
+
+// What each segment SHOULD have submitted: the near-clipped endpoints, the shared mapping's
+// width (neutral past an unusable factor), and whether the segment drew at all (an exact zero
+// draws no ink) and whether anything of it is on the canvas.
+struct TraceExpectedLine {
+  int seg = 0;
+  int kind = 0;
+  ImVec2 pa;
+  ImVec2 pb;
+  float width = 0.0f;
+  double energy = 0.0;
+  bool drawn = false;
+  bool touches_canvas = false;
+};
+bool TraceBuildExpectedLines(const gui::Ray3DFrameInfo& frame, const TraceChainEnergies& chain,
+                             std::vector<TraceExpectedLine>* out) {
+  gui::RayTracePolyline line;
+  if (!gui::BuildRayTracePolyline(*gui::g_state.analysis.trace.adopted_result, 1.1f, &line) ||
+      line.seg_kinds.size() != chain.energies.size()) {
+    return false;
+  }
+  out->clear();
+  for (size_t s = 0; s < line.seg_kinds.size(); ++s) {
+    TraceExpectedLine e;
+    e.seg = static_cast<int>(s);
+    e.kind = line.seg_kinds[s];
+    e.energy = chain.energies[s];
+    e.width = chain.valid[s] ? gui::RayTraceEnergyWidth(static_cast<float>(chain.energies[s])) :
+                               gui::UiPx(gui::kRayTraceWidthNeutralUi);
+    e.drawn = chain.valid[s] ? chain.energies[s] > 0.0 : true;
+    if (e.drawn) {
+      float d0[3];
+      float d1[3];
+      TracePolylinePointToDisplay(frame, &line.points[s * 6], d0);
+      TracePolylinePointToDisplay(frame, &line.points[s * 6 + 3], d1);
+      if (!TraceOracleClipSegment(frame, d0, d1, &e.pa, &e.pb)) {
+        e.drawn = false;  // fully behind the near plane — nothing submitted
+      } else {
+        const ImVec2 canvas_max(frame.canvas_min.x + frame.canvas_size.x, frame.canvas_min.y + frame.canvas_size.y);
+        e.touches_canvas = std::max(e.pa.x, e.pb.x) >= frame.canvas_min.x && std::min(e.pa.x, e.pb.x) <= canvas_max.x &&
+                           std::max(e.pa.y, e.pb.y) >= frame.canvas_min.y && std::min(e.pa.y, e.pb.y) <= canvas_max.y;
+      }
+    }
+    out->push_back(e);
+  }
+  return true;
+}
+
+// AC2's primitive leg: each drawn line's stroke span, measured off its exact-color vertices,
+// must track the shared mapping's width — the span-minus-thickness offset (the vendored AA
+// path's own constant, read off the draw list's flags) stays ONE value across every measured
+// line, so span differences equal width differences; the chain's real decay shows a visible
+// spread. Runs with the toggle off (no label ink interleaves between the lines).
+bool TraceWidthsFollowCumulativeEnergy(ImGuiTestContext* ctx) {
+  const auto& frame = gui::LastRay3DFrameInfo();
+  IM_CHECK_RETV(frame.valid && frame.frame_count == ImGui::GetFrameCount(), false);
+  IM_CHECK_RETV(gui::g_state.analysis.point_view.show_fresnel_labels == false, false);
+  TraceChainEnergies chain;
+  IM_CHECK_RETV(TraceReadChainEnergies(&chain), false);
+  std::vector<TraceExpectedLine> expected;
+  IM_CHECK_RETV(TraceBuildExpectedLines(frame, chain, &expected), false);
+  const int expected_drawn = static_cast<int>(
+      std::count_if(expected.begin(), expected.end(), [](const TraceExpectedLine& e) { return e.drawn; }));
+  IM_CHECK_RETV(expected_drawn >= 3, false);  // entry + at least one internal + exit: the chain's shape
+  const ImGuiWindow* region = PoseRegionWindow("##AnalyzeRaypath3D");
+  IM_CHECK_RETV(region != nullptr, false);
+  const ImDrawList* dl = region->DrawList;
+  const ImDrawVert* verts = dl->VtxBuffer.begin();
+  const int total = dl->VtxBuffer.Size;
+  const bool aa = (dl->Flags & ImDrawListFlags_AntiAliasedLines) != 0;
+  const bool aa_tex = (dl->Flags & ImDrawListFlags_AntiAliasedLinesUseTex) != 0;
+  int cursor = 0;
+  float offset = 0.0f;
+  bool have_offset = false;
+  float min_w = FLT_MAX;
+  float max_w = -FLT_MAX;
+  for (const TraceExpectedLine& e : expected) {
+    if (!e.drawn) {
+      continue;
+    }
+    // One line's checks run inside an immediate lambda (the loop-fatal-assert rule: a fatal
+    // assert directly in a for body aborts the remaining rows; inside the lambda it returns
+    // only the row, and the row's own IM_CHECK diagnostics survive).
+    const bool line_ok = [&](const TraceExpectedLine& line) {
+      const float t = line.width;
+      // The vendored AddPolyline's branch: baked-lines texture path for integer thickness below
+      // IM_DRAWLIST_TEX_LINES_WIDTH_MAX (4 verts, span t + 2), geometry path otherwise (8 verts,
+      // the exact-color inner pair at +- (t-1)/2, span t - 1), the non-AA path (4 verts, span t).
+      int per_line = 0;
+      float want_offset = 0.0f;
+      if (!aa) {
+        per_line = 4;
+        want_offset = 0.0f;
+      } else if (aa_tex && (t - static_cast<float>(static_cast<int>(t))) <= 0.00001f &&
+                 static_cast<int>(t) < IM_DRAWLIST_TEX_LINES_WIDTH_MAX) {
+        per_line = 4;
+        want_offset = 2.0f;
+      } else {
+        per_line = 8;
+        want_offset = -1.0f;  // the width floor stays above the 1.0 thin-line boundary
+      }
+      // The geometry AA path interleaves alpha-0 fringe verts with the opaque core (per point:
+      // fringe, core, core, fringe) — match the RGB family and anchor at the line's run start.
+      const ImU32 rgb = gui::kRayTraceSegmentColors[line.kind] & ~IM_COL32_A_MASK;
+      while (cursor < total && (verts[cursor].col & ~IM_COL32_A_MASK) != rgb) {
+        ++cursor;
+      }
+      IM_CHECK_RETV(cursor + per_line <= total, false);
+      ImVec2 dir(line.pb.x - line.pa.x, line.pb.y - line.pa.y);
+      const float len = std::sqrt(dir.x * dir.x + dir.y * dir.y);
+      IM_CHECK_RETV(len > 1e-3f, false);
+      dir.x /= len;
+      dir.y /= len;
+      const float npx = dir.y;
+      const float npy = -dir.x;
+      // The span comes from the OPAQUE core verts only: the geometry path's alpha-0 fringe sits
+      // one AA pixel outside them (it would read t + 1); the texture and non-AA paths are opaque
+      // throughout, so their whole quad measures.
+      float lo = FLT_MAX;
+      float hi = -FLT_MAX;
+      bool any_opaque = false;
+      int wrong_family = 0;
+      for (int k = 0; k < per_line; ++k) {
+        wrong_family += ((verts[cursor + k].col & ~IM_COL32_A_MASK) == rgb) ? 0 : 1;
+        if (verts[cursor + k].col != gui::kRayTraceSegmentColors[line.kind]) {
+          continue;
+        }
+        const float proj = (verts[cursor + k].pos.x - line.pa.x) * npx + (verts[cursor + k].pos.y - line.pa.y) * npy;
+        lo = std::min(lo, proj);
+        hi = std::max(hi, proj);
+        any_opaque = true;
+      }
+      cursor += per_line;
+      IM_CHECK_RETV(any_opaque && wrong_family == 0, false);
+      const float span = hi - lo;
+      ctx->LogInfo("[trace width] seg %d kind %d E=%.4g width=%.3f span=%.3f offset=%.3f", line.seg, line.kind,
+                   line.energy, t, span, span - t);
+      if (have_offset) {
+        IM_CHECK_RETV(std::abs(span - t - offset) < 0.05f, false);
+      } else {
+        offset = span - t;
+        have_offset = true;
+      }
+      IM_CHECK_RETV(std::abs(span - t - want_offset) < 0.05f, false);
+      return true;
+    }(e);
+    if (!line_ok) {
+      return false;  // the row's own IM_CHECK named the failure
+    }
+    min_w = std::min(min_w, e.width);
+    max_w = std::max(max_w, e.width);
+  }
+  IM_CHECK_RETV(have_offset && max_w - min_w > 0.0f, false);
+  ctx->LogInfo("[trace width] measured %d lines, width spread %.3f-%.3f, path offset %.2f", expected_drawn, min_w,
+               max_w, offset);
+  return true;
+}
+
+// AC3's primitive leg: the ratio numbers default off, a real click turns them on, every
+// canvas-touching drawn segment then carries its label — the ink near the visible part's
+// midpoint, the exact ratio text from the render-feedback slot (the draw-list carries no
+// strings), and the canvas geometry holds still across the toggle.
+bool TraceLabelsFollowTheToggle(ImGuiTestContext* ctx) {
+  auto& view = gui::g_state.analysis.point_view;
+  struct Restore {
+    bool saved = gui::g_state.analysis.point_view.show_fresnel_labels;
+    ~Restore() { gui::g_state.analysis.point_view.show_fresnel_labels = saved; }
+  } restore;
+  IM_CHECK_RETV(view.show_fresnel_labels == false, false);  // the AC's initial state
+  ctx->Yield(2);
+  IM_CHECK_RETV(TraceCanvasVertices(gui::kRayTraceLabelColor).empty(), false);
+  const gui::Ray3DFrameInfo before = gui::LastRay3DFrameInfo();
+  IM_CHECK_RETV(before.valid, false);
+  ctx->SetRef("//Pose & trace");
+  ctx->ItemClick("**/Show Fresnel ratios##r3d_fresnel");
+  ctx->Yield(2);
+  IM_CHECK_RETV(view.show_fresnel_labels == true, false);
+  const auto& frame = gui::LastRay3DFrameInfo();
+  IM_CHECK_RETV(frame.valid && frame.frame_count == ImGui::GetFrameCount(), false);
+  IM_CHECK_RETV(frame.canvas_min.x == before.canvas_min.x && frame.canvas_min.y == before.canvas_min.y &&
+                    frame.canvas_size.x == before.canvas_size.x && frame.canvas_size.y == before.canvas_size.y,
+                false);
+  TraceChainEnergies chain;
+  IM_CHECK_RETV(TraceReadChainEnergies(&chain), false);
+  std::vector<TraceExpectedLine> expected;
+  IM_CHECK_RETV(TraceBuildExpectedLines(frame, chain, &expected), false);
+  const std::vector<ImVec2> label_ink = TraceCanvasVertices(gui::kRayTraceLabelColor);
+  int labelled = 0;
+  for (const TraceExpectedLine& e : expected) {
+    // One segment's checks run inside an immediate lambda (the loop-fatal-assert rule).
+    const bool seg_ok = [&](const TraceExpectedLine& line) {
+      const std::string& drawn_text = gui::g_state.analysis.ray3d_fresnel_labels[static_cast<size_t>(line.seg)];
+      if (!line.drawn || !line.touches_canvas) {
+        IM_CHECK_RETV(drawn_text.empty(), false);  // nothing submitted or nothing on show — no slot
+        return true;
+      }
+      const std::string want = gui::RayTraceEnergyLabelText(gui::RayTraceSegmentEnergy{
+          static_cast<float>(chain.energies[line.seg]), chain.valid[static_cast<size_t>(line.seg)] });
+      IM_CHECK_RETV(drawn_text == want, false);
+      // The ink exists near the visible part's midpoint (the anchor's offset + the text's extent
+      // keep a generous bound; the exact anchor is the renderer's clamp, not the claim).
+      const ImVec2 mid((line.pa.x + line.pb.x) * 0.5f, (line.pa.y + line.pb.y) * 0.5f);
+      const float bound = gui::UiPx(50.0f);
+      const bool near_mid = std::any_of(label_ink.begin(), label_ink.end(), [&](const ImVec2& v) {
+        const float dx = v.x - mid.x;
+        const float dy = v.y - mid.y;
+        return dx * dx + dy * dy < bound * bound;
+      });
+      IM_CHECK_RETV(near_mid, false);
+      return true;
+    }(e);
+    if (!seg_ok) {
+      return false;  // the row's own IM_CHECK named the failure
+    }
+    if (e.drawn && e.touches_canvas) {
+      ++labelled;
+    }
+  }
+  IM_CHECK_RETV(labelled >= 3, false);
+  IM_CHECK_RETV(label_ink.size() > static_cast<size_t>(labelled),
+                false);  // each label is a text run, more than one vertex
+  ctx->LogInfo("[trace labels] %d labelled segments, %zu ink vertices, default-off leg held", labelled,
+               label_ink.size());
+  ctx->ItemClick("**/Show Fresnel ratios##r3d_fresnel");
+  ctx->Yield(2);
+  IM_CHECK_RETV(view.show_fresnel_labels == false, false);
+  IM_CHECK_RETV(TraceCanvasVertices(gui::kRayTraceLabelColor).empty(), false);
+  return true;
+}
+
+// AC4's primitive leg: each contact's marker shape follows the REAL facing — the request's own
+// face number resolved in the mesh's per-face table (the test's own scan), the normal rotated
+// by the frame switch, dotted against contact->eye with the REAL camera (ComputeDist over the
+// persisted zoom; never a global fwd proxy). At least one contact must sit where the
+// perspective test and its fwd approximation disagree — the leg's own proof that the proxy
+// would have answered differently.
+bool TraceContactShapesFollowTheRealFacing(ImGuiTestContext* ctx) {
+  const auto& frame = gui::LastRay3DFrameInfo();
+  IM_CHECK_RETV(frame.valid && frame.frame_count == ImGui::GetFrameCount(), false);
+  LUMICE_CrystalMesh mesh{};
+  std::vector<ImVec2> mesh_pixels;
+  IM_CHECK_RETV(TraceOracleMesh(ctx, &mesh, &mesh_pixels), false);
+  LUMICE_PathRayContacts contacts{};
+  contacts.struct_size = sizeof(contacts);
+  IM_CHECK_RETV(LUMICE_RepresentativeRayGetContacts(gui::g_state.analysis.trace.adopted_result.get(), &contacts) ==
+                    LUMICE_PATH_READ_OK,
+                false);
+  LUMICE_RepresentativeRayInfo info{};
+  info.struct_size = sizeof(info);
+  IM_CHECK_RETV(
+      LUMICE_RepresentativeRayGetInfo(gui::g_state.analysis.trace.adopted_result.get(), &info) == LUMICE_PATH_READ_OK,
+      false);
+  IM_CHECK_RETV(info.face_count == static_cast<int>(contacts.contact_count) && info.faces != nullptr, false);
+  const auto& orbit = gui::g_state.analysis.point_view;
+  double fwd[3];
+  double right[3];
+  double up[3];
+  gui::OrbitBasis(orbit.orbit_yaw_deg, orbit.orbit_pitch_deg, fwd, right, up);
+  const float eye_dist = gui::CrystalRenderer::ComputeDist(frame.zoom);
+  const float eye[3] = { static_cast<float>(-eye_dist * fwd[0]), static_cast<float>(-eye_dist * fwd[1]),
+                         static_cast<float>(-eye_dist * fwd[2]) };
+  const double tolerance = gui::UiPx(6.0f);
+  int solid_expected = 0;
+  int hollow_expected = 0;
+  int discriminating = 0;
+  for (size_t i = 0; i < contacts.contact_count; ++i) {
+    // One contact's checks run inside an immediate lambda (the loop-fatal-assert rule: a fatal
+    // assert directly in a for body aborts the remaining rows); the counters advance only on a
+    // passing row.
+    const bool contact_ok = [&](size_t ci) {
+      float c_display[3] = { static_cast<float>(contacts.contacts[ci].point[0]),
+                             static_cast<float>(contacts.contacts[ci].point[1]),
+                             static_cast<float>(contacts.contacts[ci].point[2]) };
+      if (frame.crystal_frame) {
+        gui::RayTracePointToCrystalFrame(frame.pose, c_display);
+      }
+      const ImVec2 pixel = TraceOracleProject(frame, c_display);
+      // The test's own face-number scan (the production helper is pinned in the unit layer; this
+      // leg reads the raw mesh fields independently).
+      bool known = false;
+      float n_body[3] = { 0.0f, 0.0f, 0.0f };
+      if (info.faces[ci] >= 0) {
+        for (int f = 0; f < mesh.face_count; ++f) {
+          if (mesh.face_numbers_by_face[f] != info.faces[ci]) {
+            continue;
+          }
+          const float* n = &mesh.face_normals[static_cast<size_t>(f) * 3];
+          const float norm = std::sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
+          if (norm > 0.5f) {
+            known = true;
+            n_body[0] = n[0];
+            n_body[1] = n[1];
+            n_body[2] = n[2];
+          }
+          break;
+        }
+      }
+      float n_display[3];
+      if (frame.crystal_frame) {
+        n_display[0] = n_body[0];
+        n_display[1] = n_body[1];
+        n_display[2] = n_body[2];
+      } else {
+        for (int row = 0; row < 3; ++row) {
+          n_display[row] = static_cast<float>(frame.pose[row * 3] * n_body[0] + frame.pose[row * 3 + 1] * n_body[1] +
+                                              frame.pose[row * 3 + 2] * n_body[2]);
+        }
+      }
+      float c_scene[3];
+      for (int k = 0; k < 3; ++k) {
+        c_scene[k] = (c_display[k] - frame.centre[k]) / frame.fit;
+      }
+      const double dot = static_cast<double>(n_display[0]) * (eye[0] - c_scene[0]) +
+                         static_cast<double>(n_display[1]) * (eye[1] - c_scene[1]) +
+                         static_cast<double>(n_display[2]) * (eye[2] - c_scene[2]);
+      const double dot_fwd = -(static_cast<double>(n_display[0]) * fwd[0] + static_cast<double>(n_display[1]) * fwd[1] +
+                               static_cast<double>(n_display[2]) * fwd[2]);
+      const bool solid = known && dot > 0.0;
+      const ImU32 want = solid ? gui::kRayTraceContactSolidColor : gui::kRayTraceContactColor;
+      const ImU32 other = solid ? gui::kRayTraceContactColor : gui::kRayTraceContactSolidColor;
+      bool want_near = false;
+      bool other_near = false;
+      for (const ImVec2& v : TraceCanvasVertices(want)) {
+        const double dx = v.x - pixel.x;
+        const double dy = v.y - pixel.y;
+        want_near = want_near || dx * dx + dy * dy < tolerance * tolerance;
+      }
+      for (const ImVec2& v : TraceCanvasVertices(other)) {
+        const double dx = v.x - pixel.x;
+        const double dy = v.y - pixel.y;
+        other_near = other_near || dx * dx + dy * dy < tolerance * tolerance;
+      }
+      ctx->LogInfo("[trace facing] contact %zu face %d known=%d dot=%.3f dot_fwd=%.3f -> %s", ci, info.faces[ci],
+                   known ? 1 : 0, dot, dot_fwd,
+                   solid ? "solid" :
+                   known ? "hollow(back)" :
+                           "hollow(unknown)");
+      IM_CHECK_RETV(want_near, false);
+      IM_CHECK_RETV(!other_near, false);
+      solid ? ++solid_expected : ++hollow_expected;
+      if ((dot > 0.0) != (dot_fwd > 0.0)) {
+        ++discriminating;
+      }
+      return true;
+    }(i);
+    if (!contact_ok) {
+      return false;  // the row's own IM_CHECK named the failure
+    }
+  }
+  IM_CHECK_RETV(solid_expected >= 1 && hollow_expected >= 1, false);
+  IM_CHECK_RETV(discriminating >= 1, false);  // the perspective anchor — a fwd proxy would flip this contact
+  ctx->LogInfo("[trace facing] solid %d hollow %d, %d contact(s) discriminate against the fwd proxy", solid_expected,
+               hollow_expected, discriminating);
+  return true;
+}
+
+// The mesh-only fit's boundary leg: aimed straight down the entry leg at max zoom, the
+// incident extension runs at the camera and crosses the near plane. The submitted geometry
+// must stop at the crossing (the clipped bbox, not the raw behind-eye projection) and every
+// overlay vertex stays finite.
+bool TraceOverlayClipsAtTheNearPlane(ImGuiTestContext* ctx) {
+  const auto& base = gui::LastRay3DFrameInfo();
+  IM_CHECK_RETV(base.valid, false);
+  // Aim the camera OPPOSITE the entry extension's far endpoint (in scene units, at the CURRENT
+  // frame's framing): the far endpoint then sits straight behind the eye, w = dist - |p| < 0
+  // by construction, and the segment must cross the near plane at every max-zoom geometry —
+  // not just when the incident direction happens to point at the eye.
+  gui::RayTracePolyline line;
+  IM_CHECK_RETV(gui::BuildRayTracePolyline(*gui::g_state.analysis.trace.adopted_result, 1.1f, &line), false);
+  double p[3] = {};
+  double pn = 0.0;
+  for (size_t end : { size_t(0), line.points.size() / 3 - 1 }) {
+    float far_display[3];
+    TracePolylinePointToDisplay(base, &line.points[end * 3], far_display);
+    double q[3];
+    for (int k = 0; k < 3; ++k) {
+      q[k] = (far_display[k] - base.centre[k]) / base.fit;
+    }
+    const double qn = std::sqrt(q[0] * q[0] + q[1] * q[1] + q[2] * q[2]);
+    if (qn > pn) {
+      pn = qn;
+      std::copy_n(q, 3, p);
+    }
+  }
+  for (double& v : p) {
+    v /= pn;
+  }
+  ctx->LogInfo("[trace clip] far endpoint scene radius %.3f (crossing needs radius > eye distance)", pn);
+  struct Restore {
+    float yaw = gui::g_state.analysis.point_view.orbit_yaw_deg;
+    float pitch = gui::g_state.analysis.point_view.orbit_pitch_deg;
+    float zoom = gui::g_state.analysis.point_view.orbit_zoom;
+    ~Restore() {
+      auto& view = gui::g_state.analysis.point_view;
+      view.orbit_yaw_deg = yaw;
+      view.orbit_pitch_deg = pitch;
+      view.orbit_zoom = zoom;
+    }
+  } restore;
+  auto& view = gui::g_state.analysis.point_view;
+  // The display endpoints of segment 0 (its geometry is orbit-independent; only the camera
+  // moves). points is a FLAT xyz array: point k occupies [k*3, k*3+3), so segment 0 runs from
+  // points[0] (the display extension's far end) to points[3] (the first contact).
+  float d0[3];
+  float d1[3];
+  TracePolylinePointToDisplay(base, &line.points[0], d0);
+  TracePolylinePointToDisplay(base, &line.points[3], d1);
+  float s0[3];
+  float s1[3];
+  for (int k = 0; k < 3; ++k) {
+    s0[k] = (d0[k] - base.centre[k]) / base.fit;
+    s1[k] = (d1[k] - base.centre[k]) / base.fit;
+  }
+  // Aim OPPOSITE the far endpoint: the far endpoint then sits straight behind the eye
+  // (w = dist - |p| < 0), the segment must cross the near plane, and the submitted geometry
+  // is the visible part's quad — vertices MAY extend past the canvas (the raster clip, not
+  // the vertex buffer, owns canvas bounds), so the submitted run exists regardless.
+  view.orbit_yaw_deg = static_cast<float>(std::atan2(-p[1], -p[0]) * 180.0 / 3.14159265358979323846);
+  view.orbit_pitch_deg = static_cast<float>(std::asin(std::clamp(-p[2], -1.0, 1.0)) * 180.0 / 3.14159265358979323846);
+  view.orbit_zoom = 8.0f;
+  ctx->Yield(2);
+  const auto& frame = gui::LastRay3DFrameInfo();
+  IM_CHECK_RETV(frame.valid && frame.frame_count == ImGui::GetFrameCount(), false);
+  const float near_w = gui::CrystalRenderer::ComputeNearPlane(frame.zoom);
+  float clip_far[4];
+  for (int row = 0; row < 4; ++row) {
+    clip_far[row] = frame.mvp[12 + row];
+    for (int k = 0; k < 3; ++k) {
+      clip_far[row] += frame.mvp[k * 4 + row] * s0[k];
+    }
+  }
+  IM_CHECK_RETV(clip_far[3] < near_w, false);  // the far endpoint is behind the eye at this aim
+  ImVec2 pa;
+  ImVec2 pb;
+  IM_CHECK_RETV(TraceOracleClipSegment(frame, d0, d1, &pa, &pb), false);  // the near part stays visible
+  ctx->LogInfo("[trace clip] eye dist %.3f at frame zoom %.3f", gui::CrystalRenderer::ComputeDist(frame.zoom),
+               frame.zoom);
+  // All overlay ink finite — a behind-eye point that slipped through would divide by a
+  // non-positive w and land somewhere absurd. Vertices MAY sit past the canvas rect: a
+  // segment crossing the canvas edge submits its full geometry and the clip rect rasters only
+  // the visible part, so bounds belong to the raster, not to the vertex buffer.
+  int non_finite = 0;
+  for (ImU32 color : gui::kRayTraceSegmentColors) {
+    for (const ImVec2& v : TraceCanvasVertices(color)) {
+      non_finite += (std::isfinite(v.x) && std::isfinite(v.y)) ? 0 : 1;
+    }
+  }
+  for (ImU32 color : { gui::kRayTraceContactColor, gui::kRayTraceContactSolidColor }) {
+    for (const ImVec2& v : TraceCanvasVertices(color)) {
+      non_finite += (std::isfinite(v.x) && std::isfinite(v.y)) ? 0 : 1;
+    }
+  }
+  IM_CHECK_RETV(non_finite == 0, false);
+  // The kept frame: the raw projection of the behind-eye endpoint — the shape the overlay
+  // would have submitted without the clip — sits far from anything submitted.
+  const auto& entry = gui::LastRay3DFrameInfo();
+  IM_CHECK_RETV(entry.valid && entry.frame_count == ImGui::GetFrameCount(), false);
+  IM_CHECK_RETV(TraceTextureQuadPresent(ctx), false);
+  ImVec2 raw_far;
+  {
+    float clip[4];
+    for (int row = 0; row < 4; ++row) {
+      clip[row] = entry.mvp[12 + row];
+      for (int k = 0; k < 3; ++k) {
+        clip[row] += entry.mvp[k * 4 + row] * s0[k];
+      }
+    }
+    raw_far = ImVec2(entry.canvas_min.x + (clip[0] / clip[3] + 1.0f) * 0.5f * entry.canvas_size.x,
+                     entry.canvas_min.y + (1.0f - clip[1] / clip[3]) * 0.5f * entry.canvas_size.y);
+  }
+  // The submitted entry line: the first run of the entry color. The production clips at the
+  // NEAR plane only — the submitted quad IS the visible part (pa -> pb), off-canvas extents
+  // included; the raster clip owns canvas bounds and leaves the vertex buffer alone.
+  const ImGuiWindow* region = PoseRegionWindow("##AnalyzeRaypath3D");
+  IM_CHECK_RETV(region != nullptr, false);
+  const ImDrawList* dl = region->DrawList;
+  const ImDrawVert* verts = dl->VtxBuffer.begin();
+  int cursor = 0;
+  const int total = dl->VtxBuffer.Size;
+  const ImU32 entry_rgb = gui::kRayTraceSegmentColors[0] & ~IM_COL32_A_MASK;
+  while (cursor < total && (verts[cursor].col & ~IM_COL32_A_MASK) != entry_rgb) {
+    ++cursor;
+  }
+  IM_CHECK_RETV(cursor < total, false);
+  ImRect submitted(verts[cursor].pos, verts[cursor].pos);
+  int run_verts = 0;
+  for (int j = cursor; j < total && (verts[j].col & ~IM_COL32_A_MASK) == entry_rgb; ++j) {
+    submitted.Add(verts[j].pos);
+    ++run_verts;
+  }
+  // ImRect does not normalize — the crossing (pa) may sit past c0 (pb) on either axis.
+  ImRect expected(ImVec2(std::min(pa.x, pb.x), std::min(pa.y, pb.y)),
+                  ImVec2(std::max(pa.x, pb.x), std::max(pa.y, pb.y)));
+  float edge_delta = 0.0f;
+  edge_delta = std::max(edge_delta, std::abs(submitted.Min.x - expected.Min.x));
+  edge_delta = std::max(edge_delta, std::abs(submitted.Min.y - expected.Min.y));
+  edge_delta = std::max(edge_delta, std::abs(submitted.Max.x - expected.Max.x));
+  edge_delta = std::max(edge_delta, std::abs(submitted.Max.y - expected.Max.y));
+  const float raw_gap = std::hypot(raw_far.x - submitted.Max.x, raw_far.y - submitted.Max.y);
+  ctx->LogInfo("[trace clip] submitted %d verts, expected bbox edge delta %.2f px, raw-behind gap %.1f px", run_verts,
+               edge_delta, raw_gap);
+  IM_CHECK_RETV(edge_delta < gui::UiPx(4.0f), false);  // the submitted geometry is the clipped visible part
+  IM_CHECK_RETV(raw_gap > gui::UiPx(20.0f), false);    // ... and nowhere near the behind-eye projection
+  return true;
+}
+
+// AC1's leg: the same pose's computing and drawn frames frame the crystal identically. The
+// executor's pickup gate parks the re-keyed ray query at its pickup instant (token armed,
+// engine call not yet run — the executor's own construction), so the frames AFTER the sample
+// switch are the named computing state, held deterministically until release; the released
+// query adopts and the drawn frame renders the SAME sample's pose. Mesh-only centre/fit and
+// the mesh's projected outline must agree; the overlay (contacts, segments, labels) leaves no
+// residue on the waiting frame.
+bool TraceFramingIsMeshAnchoredAcrossStates(ImGuiTestContext* ctx, bool crystal_view) {
+  auto& view = gui::g_state.analysis.point_view;
+  const int saved_sample = view.sample_index;
+  {
+    // The restore owns the mutated view fields for THIS block; the re-adoption wait below runs
+    // after it, against the restored cursor.
+    struct Restore {
+      int sample;
+      int frame;
+      Restore()
+          : sample(gui::g_state.analysis.point_view.sample_index),
+            frame(gui::g_state.analysis.point_view.crystal_frame ? 1 : 0) {}
+      ~Restore() {
+        auto& view = gui::g_state.analysis.point_view;
+        view.sample_index = sample;
+        view.crystal_frame = frame == 1;
+      }
+    } restore;
+    view.crystal_frame = crystal_view;
+    const int valid_count =
+        gui::PointValidSampleCount(*gui::g_state.analysis.point.adopted_result, view.component_index);
+    IM_CHECK_RETV(valid_count >= 2, false);  // the re-key needs another valid sample to move to
+    const int target = (saved_sample + 1) % valid_count;
+    IM_CHECK_RETV(target != saved_sample, false);
+    ScopedPointPickupHold hold(gui::QueryFace::kRay);
+    view.sample_index = target;
+    ctx->Yield(2);  // the pump re-keys and issues; the worker parks at the pickup — computing held
+    IM_CHECK_RETV(!hold.Voided(), false);
+    const auto& computing = gui::LastRay3DFrameInfo();
+    IM_CHECK_RETV(computing.valid && computing.frame_count == ImGui::GetFrameCount(), false);
+    const int target_stored =
+        gui::PointValidSampleIndexAt(*gui::g_state.analysis.point.adopted_result, view.component_index, target);
+    IM_CHECK_RETV(gui::RayTraceDisplayStateFor(gui::g_state.analysis.trace, { gui::g_state.analysis.point.intent_id,
+                                                                              view.component_index, target_stored }) ==
+                      gui::RayTraceDisplayState::kComputing,
+                  false);
+    IM_CHECK_RETV(TraceTextureQuadPresent(ctx), false);
+    // The waiting frame carries no overlay residue of the previous pose's light.
+    IM_CHECK_RETV(TraceCanvasVertices(gui::kRayTraceContactColor).empty(), false);
+    IM_CHECK_RETV(TraceCanvasVertices(gui::kRayTraceContactSolidColor).empty(), false);
+    IM_CHECK_RETV(TraceCanvasVertices(gui::kRayTraceLabelColor).empty(), false);
+    size_t residue = 0;
+    for (ImU32 color : gui::kRayTraceSegmentColors) {
+      residue += TraceCanvasVertices(color).size();
+    }
+    IM_CHECK_RETV(residue == 0, false);
+    // The mesh outline from the independent oracle, on the computing frame.
+    LUMICE_CrystalMesh mesh{};
+    std::vector<ImVec2> computing_mesh;
+    IM_CHECK_RETV(TraceOracleMesh(ctx, &mesh, &computing_mesh), false);
+    hold.Release();
+    // The parked query proceeds; the same key's answer adopts and draws.
+    IM_CHECK_RETV(DriveUntil(
+                      ctx,
+                      [&] {
+                        const auto& t = gui::g_state.analysis.trace;
+                        return t.adopted_result != nullptr && t.key.sample == target_stored &&
+                               gui::RayTraceDisplayStateFor(t, { t.key.point_id, t.key.component, t.key.sample }) ==
+                                   gui::RayTraceDisplayState::kDrawn;
+                      },
+                      60),
+                  false);
+    ctx->Yield(2);
+    const auto& drawn = gui::LastRay3DFrameInfo();
+    IM_CHECK_RETV(drawn.valid && drawn.frame_count == ImGui::GetFrameCount(), false);
+    IM_CHECK_RETV(TraceTextureQuadPresent(ctx), false);
+    // THE CLAIM: one pose, one framing — mesh-only centre/fit identical across the two states.
+    float centre_worst = 0.0f;
+    for (int k = 0; k < 3; ++k) {
+      centre_worst = std::max(centre_worst, std::fabs(computing.centre[k] - drawn.centre[k]));
+    }
+    IM_CHECK_RETV(centre_worst == 0.0f && computing.fit == drawn.fit, false);
+    LUMICE_CrystalMesh mesh2{};
+    std::vector<ImVec2> drawn_mesh;
+    IM_CHECK_RETV(TraceOracleMesh(ctx, &mesh2, &drawn_mesh), false);
+    IM_CHECK_RETV(computing_mesh.size() == drawn_mesh.size() && computing_mesh.size() > 3, false);
+    double worst = 0.0;
+    for (size_t v = 0; v < computing_mesh.size(); ++v) {
+      worst = std::max(worst, static_cast<double>(std::hypot(computing_mesh[v].x - drawn_mesh[v].x,
+                                                             computing_mesh[v].y - drawn_mesh[v].y)));
+    }
+    ctx->LogInfo("[trace framing] %s view: centre/fit identical, mesh outline worst delta %.4f px, fit=%.4f",
+                 crystal_view ? "crystal" : "world", worst, drawn.fit);
+    IM_CHECK_RETV(worst < 0.01, false);
+  }
+  // The restore above re-keys the cursor back; the original sample's trace re-adopts.
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [&] {
+                      const auto& t = gui::g_state.analysis.trace;
+                      const int stored =
+                          gui::PointValidSampleIndexAt(*gui::g_state.analysis.point.adopted_result,
+                                                       gui::g_state.analysis.point_view.component_index, saved_sample);
+                      return t.adopted_result != nullptr && t.key.sample == stored &&
+                             gui::RayTraceDisplayStateFor(t, { t.key.point_id, t.key.component, t.key.sample }) ==
+                                 gui::RayTraceDisplayState::kDrawn;
+                    },
+                    60),
+                false);
+  return true;
+}
+
 std::string CaptureWindowFrameText(ImGuiTestContext* ctx, const char* window_name);
 
 // A renderer-state fixture, not another async adoption test: the real consumer above has
@@ -3902,6 +4598,13 @@ bool RefusedTraceKeepsCrystalVisible(ImGuiTestContext* ctx, const gui::SelectedC
   const bool has_segments = std::any_of(std::begin(gui::kRayTraceSegmentColors), std::end(gui::kRayTraceSegmentColors),
                                         [](ImU32 color) { return !TraceCanvasVertices(color).empty(); });
   IM_CHECK_RETV(!has_segments, false);
+  // The refusal text sits below the report's fixed fold (the Fresnel-toggle row grew the
+  // report head), and the frame-text capture records only what a window actually shows
+  // (ItemUnclipByLog is off — clipped rows never reach the log buffer): scroll the report to
+  // the bottom before capturing.
+  ImGuiWindow* report = TraceReportWindow();
+  IM_CHECK_RETV(report != nullptr, false);
+  report->Scroll.y = report->ScrollMax.y;
   const std::string text = CaptureWindowFrameText(ctx, "Pose & trace");
   IM_CHECK_RETV(text.find("No legal path for this pose:") != std::string::npos, false);
   IM_CHECK_RETV(text.find(reason) != std::string::npos, false);
@@ -4084,6 +4787,15 @@ bool InternalReflectionTraceFromTheRealConsumer(ImGuiTestContext* ctx) {
                 false);
   gui::g_state.analysis.point_view.orbit_zoom = restore_view.zoom;
   ctx->Yield(2);
+  // The 2026-11-12 display-model legs (feedback #7/#8/#9), on the drawn chain at the test's
+  // standing orbit: mesh-only framing across the two states (both views), the energy widths,
+  // the ratio labels, the contact facing, and the near-plane extreme.
+  IM_CHECK_RETV(TraceFramingIsMeshAnchoredAcrossStates(ctx, /*crystal_view=*/false), false);
+  IM_CHECK_RETV(TraceFramingIsMeshAnchoredAcrossStates(ctx, /*crystal_view=*/true), false);
+  IM_CHECK_RETV(TraceWidthsFollowCumulativeEnergy(ctx), false);
+  IM_CHECK_RETV(TraceLabelsFollowTheToggle(ctx), false);
+  IM_CHECK_RETV(TraceContactShapesFollowTheRealFacing(ctx), false);
+  IM_CHECK_RETV(TraceOverlayClipsAtTheNearPlane(ctx), false);
   ctx->LogInfo("[v1 c03] the internal-reflection path drawn in the 3D region: entry, 3 internal, exit");
   IM_CHECK_RETV(RefusedTraceKeepsCrystalVisible(ctx, *identity), false);
   return true;
