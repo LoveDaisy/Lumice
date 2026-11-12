@@ -4161,6 +4161,8 @@ bool TraceLabelsFollowTheToggle(ImGuiTestContext* ctx) {
                 false);  // each label is a text run, more than one vertex
   ctx->LogInfo("[trace labels] %d labelled segments, %zu ink vertices, default-off leg held", labelled,
                label_ink.size());
+  IM_CHECK_RETV(SaveWindowPng(ctx, "//Pose & trace", GuiTestTempPath("analyze_c03_trace_fresnel_labels.png").string()),
+                false);
   ctx->ItemClick("**/Show Fresnel ratios##r3d_fresnel");
   ctx->Yield(2);
   IM_CHECK_RETV(view.show_fresnel_labels == false, false);
