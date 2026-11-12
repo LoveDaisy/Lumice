@@ -781,7 +781,8 @@ nav 焦点无（InvisibleButton 默认 NoNav）。主窗路径不传读出参数
   dash 相位画。verdict 图标的事实（颜色 + 虚线）随 drawn bit 一并记录（`OverlayLegendState`
   扩展两字段）。
 - **readout 标签 clamp**：贴边 readout 经 `src/util/label_viewport_clamp.hpp` 的共享
-  `ClampLabelPosToViewport` 压回画布矩形（视口 = 图区画布自身矩形），文字与底衬同移、尺寸不缩、
+  `ClampLabelPosToViewport` 压回**画布矩形与 draw-list 有效 clip（祖先裁剪）的交集**——窗口或
+  宿主视口部分遮挡画布时，约束标签的是可见交集，不是名义矩形；文字与底衬同移、尺寸不缩、
   退化轴不动（共享规则原文）；dispersion 与 verdict 两个消费面同 helper，不为本窗写第二份 clamp。
   marker 自然裁剪与 iso 圈 in-disk 物理边界不变，不开边缘指示通道。
 

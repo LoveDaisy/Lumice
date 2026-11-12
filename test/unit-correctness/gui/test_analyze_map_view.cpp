@@ -1308,16 +1308,16 @@ TEST_F(VerdictAnchorDraw, EdgeAnchorKeepsTheLabelInsideTheCanvas) {
     double delta;
     float pic_min_x;
     float pic_min_y;
-    bool glyph_wrap_assertable;  // the origin leg's canvas deliberately exceeds the screen
-                                 // viewport (that is what makes the non-zero origin visible to
-                                 // the clamp) — there the screen clip, not the canvas, bounds
-                                 // glyph emission, so the wrap fact is unassertable in this rig
+    float clip_max_x;  // >0: the leg pushes an effective draw-list clip narrower than the canvas
+                       // (the ancestors' clip the glyphs are actually cut by) — the clamp must
+                       // respect the intersection, not the nominal rectangle
   };
   const ViewProjection sun_vp = SunCamera();
   const Poke pokes[] = {
-    { "right-edge anchor", &sun_vp, 20.0, 88.0, 20.0, 0.0f, 0.0f, true },
-    { "top-edge anchor", &horizon_vp, 85.0, 0.0, 5.0, 0.0f, 0.0f, true },
-    { "right-edge anchor, non-zero canvas origin", &sun_vp, 20.0, 88.0, 20.0, 100.0f, 50.0f, false },
+    { "right-edge anchor", &sun_vp, 20.0, 88.0, 20.0, 0.0f, 0.0f, 0.0f },
+    { "top-edge anchor", &horizon_vp, 85.0, 0.0, 5.0, 0.0f, 0.0f, 0.0f },
+    { "right-edge anchor, non-zero canvas origin", &sun_vp, 20.0, 88.0, 20.0, 100.0f, 50.0f, 0.0f },
+    { "right-edge anchor, effective clip narrower than the canvas", &sun_vp, 20.0, 88.0, 20.0, 0.0f, 0.0f, 400.0f },
   };
   for (const Poke& poke : pokes) {
     VerdictAnchorInput in = Input(*poke.vp, /*shown=*/true, /*hover=*/false);
@@ -1330,7 +1330,13 @@ TEST_F(VerdictAnchorDraw, EdgeAnchorKeepsTheLabelInsideTheCanvas) {
     dl->CmdBuffer.resize(0);
     dl->_VtxCurrentIdx = 0;  // the quads' index values come from this — a partial reset reads OOB
     dl->AddDrawCmd();        // this rig's between-leg reset: PrimReserve assumes a live command
+    if (poke.clip_max_x > 0.0f) {
+      dl->PushClipRect(ImVec2(0.0f, 0.0f), ImVec2(poke.clip_max_x, 600.0f), true);
+    }
     DrawVerdictAnchor(dl, Diagnose("edge", "blue", poke.delta, true), in);
+    if (poke.clip_max_x > 0.0f) {
+      dl->PopClipRect();
+    }
     if (IndexCountForColour(kChromaticColourBlue) <= 0) {
       ADD_FAILURE() << poke.what << ": ring premise — the anchor must draw for the label to exist";
       continue;
@@ -1352,11 +1358,17 @@ TEST_F(VerdictAnchorDraw, EdgeAnchorKeepsTheLabelInsideTheCanvas) {
     EXPECT_LE(max_x, canvas_r) << poke.what << ": patch crosses the canvas right edge";
     EXPECT_GE(min_y, canvas_t) << poke.what << ": patch crosses the canvas top edge";
     EXPECT_LE(max_y, canvas_b) << poke.what << ": patch crosses the canvas bottom edge";
-    if (poke.glyph_wrap_assertable) {
+    if (poke.clip_max_x > 0.0f) {
+      // The reviewer's own probe: the effective clip is what cuts glyphs — the patch must sit
+      // inside the intersection, and the glyphs must all emit (the word stays whole).
+      EXPECT_LE(max_x, poke.clip_max_x) << poke.what << ": patch crosses the effective clip's right edge";
+    }
+    {
       // The glyphs ride the backing (text and backing move together): the label's text rect sits
       // inside the backing's box, and the backing wraps it with the pad — the patch moved, never
-      // shrank. The glyph box is the quad box, an advance narrower than CalcTextSize by the last
-      // glyph's own side bearing — hence the slack in the pad equality.
+      // shrank. The clamp holds the patch inside canvas ∩ effective clip, so the glyphs emit
+      // whole on every leg (the glyph box is the quad box, an advance narrower than CalcTextSize
+      // by the last glyph's own side bearing — hence the slack in the pad equality).
       float gmin_x = 0.0f;
       float gmin_y = 0.0f;
       float gmax_x = 0.0f;
@@ -1615,6 +1627,19 @@ TEST_F(ProfileHoverDraw, HonestyGateLegs) {
     DrawProfileHoverDevice(dl, probe, Input(vp, leg.sun_alt, leg.sun_az, leg.hover));
     EXPECT_EQ(RoseCount(), 0) << leg.what << ": nothing must draw";
   }
+}
+
+// The reviewer's own probe: the interval device's all-or-nothing rule is STRUCTURAL — a loop
+// that drew as it projected would leave an unqualified prefix on the draw list when a later
+// sample fell off the view. The front endpoint visible, the far end beyond the frustum: the
+// rose bucket must be EMPTY (no prefix lines, no endpoint markers), not a half-drawn separation.
+TEST_F(ProfileHoverDraw, PartialIntervalInViewDrawsNothing) {
+  const ViewProjection vp = SunCamera();
+  ImDrawList* dl = ImGui::GetBackgroundDrawList();
+  // δ=25 is well in view about the aimed sun; δ=100 lies 100° off the view axis, past the 90°
+  // frustum reach of the rig's 180° fisheye — the interval crosses the view's edge partway.
+  DrawProfileHoverDevice(dl, Probe(true, 0.0, 25.0, 100.0), Input(vp, 20.0, 0.0, SurveyProfileHover::kSeparation));
+  EXPECT_EQ(RoseCount(), 0) << "a partially-visible interval must leave the draw list untouched";
 }
 
 }  // namespace

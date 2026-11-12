@@ -759,17 +759,26 @@ IsoDeltaWalk WalkIsoDeltaCircle(ImDrawList* dl, const MapCanvasProjection& view,
 // colour (the dashed form may leave that sample on a skipped stretch — the anchor sits within one
 // dash cycle of the nearest submitted line). One body for both callers — the backing ink's
 // literal is the promoted kReadoutBackingInk and lives nowhere else. The patch is clamped into
-// the canvas rectangle through the ONE shared viewport clamp (util/label_viewport_clamp.hpp): a
-// readout anchored near the canvas edge must keep text AND backing inside (the unclamped draw
-// cropped the word on the edge), and the two move together — the clamp adjusts the position, never
-// the size, and leaves a degenerate axis (a canvas that cannot hold the patch plus the inset)
-// untouched, per the shared rule.
+// the canvas rectangle INTERSECTED WITH THE DRAW LIST'S EFFECTIVE CLIP (the ancestors' clip rect
+// the glyphs will actually be cut by — a window or viewport partially covering the canvas bounds
+// the visible label, not the nominal rectangle), through the ONE shared viewport clamp
+// (util/label_viewport_clamp.hpp): a readout anchored near the visible edge must keep text AND
+// backing inside (the unclamped draw cropped the word on the edge), and the two move together —
+// the clamp adjusts the position, never the size, and leaves a degenerate axis (a viewport that
+// cannot hold the patch plus the inset) untouched, per the shared rule.
 void DrawIsoDeltaReadoutLabel(ImDrawList* dl, const IsoDeltaWalk& walk, ImU32 colour, const char* text,
                               const LabelViewport& canvas) {
+  const ImVec2 clip_min = dl->GetClipRectMin();
+  const ImVec2 clip_max = dl->GetClipRectMax();
+  const float left = std::max(canvas.x, clip_min.x);
+  const float top = std::max(canvas.y, clip_min.y);
+  const float right = std::min(canvas.x + canvas.w, clip_max.x);
+  const float bottom = std::min(canvas.y + canvas.h, clip_max.y);
+  const LabelViewport visible{ left, top, std::max(right - left, 0.0f), std::max(bottom - top, 0.0f) };
   const ImVec2 ts = ImGui::CalcTextSize(text);
   LabelPos pos{ static_cast<float>(walk.top_x) - ts.x * 0.5f, static_cast<float>(walk.top_y) - ts.y };
   const LabelSize size{ ts.x + 6.0f, ts.y };  // the backing's full extent: the text plus 3pt each side
-  pos = ClampLabelPosToViewport(pos, size, canvas);
+  pos = ClampLabelPosToViewport(pos, size, visible);
   dl->AddRectFilled(ImVec2(pos.x - 3.0f, pos.y), ImVec2(pos.x + ts.x + 3.0f, pos.y + ts.y), kReadoutBackingInk);
   dl->AddText(ImVec2(pos.x, pos.y), colour, text);
 }
@@ -1296,29 +1305,32 @@ void DrawProfileHoverDevice(ImDrawList* dl, const SurveyProbeView& probe, const 
   if (in.hover == SurveyProfileHover::kSeparation) {
     // The radial interval between the two readings, walked along the profile line at a step the
     // map's own scale reads smoothly; any sample off the view voids the whole device (the
-    // all-or-nothing rule above). The endpoints carry the point device's own marker.
+    // all-or-nothing rule above). The rule is STRUCTURAL, not incidental: the whole bounded
+    // sample sequence projects FIRST, and only a fully-projecting interval submits anything — a
+    // loop that drew as it projected would leave an unqualified prefix on the draw list when a
+    // later sample fell off the view (submitted commands cannot be unsubmitted). The endpoints
+    // carry the point device's own marker.
     const double edge = probe.edge_deg;
     const double peak = probe.peak_deg;
     const double lo = std::min(edge, peak);
     const double hi = std::max(edge, peak);
     const int steps = std::min(64, std::max(2, static_cast<int>(std::ceil((hi - lo) * 2.0))));  // ~0.5° resolution
-    double prev_x = 0.0;
-    double prev_y = 0.0;
+    std::vector<ProfileScreenPoint> samples;
+    samples.reserve(static_cast<size_t>(steps) + 1);
     for (int s = 0; s <= steps; ++s) {
-      const double delta = lo + (hi - lo) * static_cast<double>(s) / static_cast<double>(steps);
-      const ProfileScreenPoint pt = device_point(delta);
+      const ProfileScreenPoint pt = device_point(lo + (hi - lo) * static_cast<double>(s) / static_cast<double>(steps));
       if (!pt.projected) {
-        return;
+        return;  // one sample off the view: the whole device stays undrawn, the draw list untouched
       }
-      if (s > 0) {
-        dl->AddLine(ImVec2(static_cast<float>(prev_x), static_cast<float>(prev_y)),
-                    ImVec2(static_cast<float>(pt.x), static_cast<float>(pt.y)), kProfileReadingColour, UiPx(2.0f));
-      }
-      prev_x = pt.x;
-      prev_y = pt.y;
+      samples.push_back(pt);
     }
-    DrawProfilePointMarker(dl, device_point(edge));
-    DrawProfilePointMarker(dl, device_point(peak));
+    for (size_t s = 1; s < samples.size(); ++s) {
+      dl->AddLine(ImVec2(static_cast<float>(samples[s - 1].x), static_cast<float>(samples[s - 1].y)),
+                  ImVec2(static_cast<float>(samples[s].x), static_cast<float>(samples[s].y)), kProfileReadingColour,
+                  UiPx(2.0f));
+    }
+    DrawProfilePointMarker(dl, samples.front());
+    DrawProfilePointMarker(dl, samples.back());
     return;
   }
   DrawProfilePointMarker(dl, device_point(in.hover == SurveyProfileHover::kEdge ? probe.edge_deg : probe.peak_deg));
