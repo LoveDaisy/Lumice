@@ -409,7 +409,10 @@ GIT_CLONE_TIMEOUT_S = 3600
 
 
 def _run(cmd: Sequence[str], **kw) -> subprocess.CompletedProcess:
-    return subprocess.run(list(cmd), capture_output=True, text=True, **kw)
+    # The capture boundary decodes with replacement: one stray non-UTF-8 byte in a
+    # child's output (another process's args in a `ps` row) degrades to U+FFFD
+    # instead of raising UnicodeDecodeError and losing the whole unattended run.
+    return subprocess.run(list(cmd), capture_output=True, text=True, errors="replace", **kw)
 
 
 def _physical_cores() -> int:
@@ -728,8 +731,10 @@ def ssh_argv(ctx: Ctx, *remote: str) -> List[str]:
 def remote_readings(ctx: Ctx) -> Readings:
     """Run this very file's collect_readings on the remote via `python3 -`."""
     try:
-        p = subprocess.run(ssh_argv(ctx, "python3", "-", "--collect-readings", "--wsl-host"),
-                           input=Path(__file__).read_text(), capture_output=True, text=True, timeout=180)
+        # Through the common _run entry, so remote output follows the same
+        # replace-decode rule as every other captured text.
+        p = _run(ssh_argv(ctx, "python3", "-", "--collect-readings", "--wsl-host"),
+                 input=Path(__file__).read_text(), timeout=180)
         if p.returncode != 0:
             raise RuntimeError(f"exit {p.returncode}: {p.stderr[-300:]}")
         return Readings.from_json(json.loads(p.stdout.strip().splitlines()[-1]))

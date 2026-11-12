@@ -8,7 +8,10 @@ rule is pinned by a red case next to its green one.
 """
 from __future__ import annotations
 
+import argparse
 import datetime as dt
+import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -226,3 +229,64 @@ def test_corrupt_state_is_moved_aside_not_fatal(tmp_path):
     st = g.load_state(tmp_path, now)
     assert st["legs"] == {} and st["pending_notifications"] == []
     assert any(p.name.startswith("state.json.corrupt-") for p in tmp_path.iterdir())
+
+
+# --- subprocess capture boundary (decode robustness) ---------------------------
+# The gate runs unattended at 03:30; one stray non-UTF-8 byte in any child's
+# output (another process's args in a `ps` row) must not raise and lose the run.
+# Both tests drive the real _run entry with a real child, not a mocked parameter.
+
+def test_run_replaces_invalid_utf8_bytes_from_a_real_subprocess():
+    child = ("import sys; sys.stdout.buffer.write(b'ok \\xffbad\\n'); "
+             "sys.stderr.buffer.write(b'err \\xfetail\\n'); sys.exit(3)")
+    p = g._run([sys.executable, "-c", child])
+    assert p.returncode == 3
+    assert p.stdout == "ok " + "�" + "bad\n"
+    assert p.stderr == "err " + "�" + "tail\n"
+
+
+def test_run_keeps_valid_text_and_return_code_untouched():
+    p = g._run([sys.executable, "-c", "print('plain')"])
+    assert p.returncode == 0
+    assert p.stdout == "plain\n" and p.stderr == ""
+
+
+# --- remote readings capture (cuda leg) ----------------------------------------
+
+def remote_ctx():
+    # ssh_argv reads ctx.args.remote / ctx.args.ssh_connect_timeout — a bare Ctx shape.
+    return argparse.Namespace(args=argparse.Namespace(remote="remote-host", ssh_connect_timeout=5))
+
+
+def test_remote_readings_reuses_the_common_capture_entry(monkeypatch):
+    """The cuda leg's readings ride the same tolerant capture boundary as every
+    other child: one entry, one decode rule — no second decoder beside it."""
+    captured = {}
+
+    def fake_run(cmd, **kw):
+        captured["cmd"], captured["kw"] = cmd, kw
+        payload = json.dumps(g.Readings(load1=0.1, physical_cores=8).to_json())
+        return subprocess.CompletedProcess(cmd, 0, stdout=payload + "\n", stderr="")
+
+    monkeypatch.setattr(g, "_run", fake_run)
+    r = g.remote_readings(remote_ctx())
+    assert (r.load1, r.physical_cores) == (0.1, 8)
+    assert captured["cmd"][0] == "ssh" and "remote-host" in captured["cmd"]
+    assert "--collect-readings" in captured["cmd"]
+    assert captured["kw"]["timeout"] == 180
+    # the gate still feeds itself to the remote interpreter on stdin
+    assert captured["kw"]["input"] == Path(g.__file__).read_text()
+
+
+def test_remote_readings_failures_degrade_to_an_error_reading(monkeypatch):
+    """Non-zero ssh exit and unparseable output keep the old contract: an error
+    reading (busy by verdict), not a raised exception."""
+    monkeypatch.setattr(g, "_run",
+                        lambda c, **kw: subprocess.CompletedProcess(c, 255, stdout="", stderr="no route"))
+    r = g.remote_readings(remote_ctx())
+    assert r.errors and "remote readings failed: exit 255" in r.errors[0]
+
+    monkeypatch.setattr(g, "_run",
+                        lambda c, **kw: subprocess.CompletedProcess(c, 0, stdout="not json\n", stderr=""))
+    r = g.remote_readings(remote_ctx())
+    assert r.errors and "remote readings failed" in r.errors[0]
