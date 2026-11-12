@@ -15,6 +15,7 @@
 #include "gui/analyze_survey.hpp"
 #include "gui/file_io.hpp"  // SceneDeleter's complete type — the map tests' include
 #include "gui/gui_state.hpp"
+#include "gui/theme.hpp"  // UiPx — the width mapping's scale, asserted at its endpoints
 #include "include/lumice_base.h"
 #include "include/lumice_editor.h"
 #include "include/lumice_raypath.h"
@@ -612,6 +613,148 @@ TEST(AnalyzePointView, CrystalFrameTransformIsTheInverseRotation) {
   EXPECT_NEAR(p[0], body_point[0], 1e-6);
   EXPECT_NEAR(p[1], body_point[1], 1e-6);
   EXPECT_NEAR(p[2], body_point[2], 1e-6);
+}
+
+// ---- The trace display's pure energy and facing rules (2026-11-12 feedback #8/#9) --------------------
+
+TEST(AnalyzePointView, RayTraceCumulativeEnergiesFollowTheInterfaceChain) {
+  // The plan's hand anchor: q=[0.8,0.5,0.25] -> E=[1,0.8,0.4,0.1] (entry 1.0, every interface
+  // consumed exactly once, the last segment including the exit factor).
+  const double q1[] = { 0.8, 0.5, 0.25 };
+  const std::vector<RayTraceSegmentEnergy> e1 = RayTraceCumulativeEnergies(q1, 3);
+  ASSERT_EQ(e1.size(), 4U);
+  const float want1[] = { 1.0f, 0.8f, 0.4f, 0.1f };
+  for (size_t s = 0; s < e1.size(); ++s) {
+    EXPECT_TRUE(e1[s].valid);
+    EXPECT_FLOAT_EQ(e1[s].value, want1[s]);
+  }
+  // Total internal reflection (R=1) keeps the energy; it does not multiply it down.
+  const double q2[] = { 0.9, 1.0, 0.5 };
+  const std::vector<RayTraceSegmentEnergy> e2 = RayTraceCumulativeEnergies(q2, 3);
+  ASSERT_EQ(e2.size(), 4U);
+  EXPECT_FLOAT_EQ(e2[1].value, 0.9f);
+  EXPECT_FLOAT_EQ(e2[2].value, 0.9f);
+  EXPECT_FLOAT_EQ(e2[3].value, 0.45f);
+  // An exact zero ends the energy from that interface on — a legal declared zero, still valid
+  // (no ink, the contact markers stay, the label reads 0%).
+  const double q3[] = { 0.5, 0.0, 0.7 };
+  const std::vector<RayTraceSegmentEnergy> e3 = RayTraceCumulativeEnergies(q3, 3);
+  ASSERT_EQ(e3.size(), 4U);
+  EXPECT_FLOAT_EQ(e3[1].value, 0.5f);
+  EXPECT_EQ(e3[2].value, 0.0f);
+  EXPECT_TRUE(e3[2].valid);
+  EXPECT_EQ(e3[3].value, 0.0f);
+  // An unusable factor (NaN, or beyond the rounding band) stops the energy claim from the next
+  // segment on; the honest prefix before it survives verbatim.
+  const double q4[] = { 0.5, NAN, 0.5 };
+  const std::vector<RayTraceSegmentEnergy> e4 = RayTraceCumulativeEnergies(q4, 3);
+  ASSERT_EQ(e4.size(), 4U);
+  EXPECT_TRUE(e4[0].valid);
+  EXPECT_TRUE(e4[1].valid);
+  EXPECT_FLOAT_EQ(e4[1].value, 0.5f);
+  EXPECT_FALSE(e4[2].valid);
+  EXPECT_FALSE(e4[3].valid);
+  const double q5[] = { 0.5, 5.0, 0.5 };
+  const std::vector<RayTraceSegmentEnergy> e5 = RayTraceCumulativeEnergies(q5, 3);
+  ASSERT_EQ(e5.size(), 4U);
+  EXPECT_TRUE(e5[1].valid);
+  EXPECT_FALSE(e5[2].valid);
+  // Rounding-magnitude overshoot clamps back into band (the recorded tolerance, not a physics
+  // rewrite): 1 + 1e-9 reads as the exact 1.
+  const double q6[] = { 1.0 + 1e-9 };
+  const std::vector<RayTraceSegmentEnergy> e6 = RayTraceCumulativeEnergies(q6, 1);
+  ASSERT_EQ(e6.size(), 2U);
+  EXPECT_TRUE(e6[1].valid);
+  EXPECT_FLOAT_EQ(e6[1].value, 1.0f);
+  // No factors -> just the entry leg at 1.0.
+  const std::vector<RayTraceSegmentEnergy> e0 = RayTraceCumulativeEnergies(nullptr, 0);
+  ASSERT_EQ(e0.size(), 1U);
+  EXPECT_FLOAT_EQ(e0[0].value, 1.0f);
+}
+
+TEST(AnalyzePointView, RayTraceEnergyWidthIsMonotoneAndZeroEnergyHasNoInk) {
+  // Strictly monotone over the positive range; a real decay chain's neighbours stay apart.
+  float prev = RayTraceEnergyWidth(1.0f);
+  EXPECT_FLOAT_EQ(prev, UiPx(kRayTraceWidthMaxUi));
+  for (float e : { 0.75f, 0.5f, 0.25f, 0.1f, 0.01f, 1e-4f, 1e-9f }) {
+    const float w = RayTraceEnergyWidth(e);
+    EXPECT_GT(w, 0.0f);
+    EXPECT_LT(w, prev) << "energy " << e;
+    EXPECT_GE(w, UiPx(kRayTraceWidthMinUi)) << "energy " << e;
+    prev = w;
+  }
+  // Zero and negative carry no ink (the renderer skips them); NaN likewise.
+  EXPECT_EQ(RayTraceEnergyWidth(0.0f), 0.0f);
+  EXPECT_EQ(RayTraceEnergyWidth(-0.5f), 0.0f);
+  EXPECT_EQ(RayTraceEnergyWidth(NAN), 0.0f);
+}
+
+TEST(AnalyzePointView, RayTraceEnergyLabelTextSpellsExactRatiosAndUnavailable) {
+  EXPECT_EQ(RayTraceEnergyLabelText(RayTraceSegmentEnergy{ 1.0f, true }), "100%");
+  EXPECT_EQ(RayTraceEnergyLabelText(RayTraceSegmentEnergy{ 0.4f, true }), "40%");
+  EXPECT_EQ(RayTraceEnergyLabelText(RayTraceSegmentEnergy{ 1.0f / 3.0f, true }), "33.3%");
+  // A tiny non-zero stays honest — never rounded into a fake 0%.
+  const std::string tiny = RayTraceEnergyLabelText(RayTraceSegmentEnergy{ 1e-9f, true });
+  EXPECT_NE(tiny, "0%");
+  EXPECT_NE(tiny.find("e-"), std::string::npos) << tiny;
+  EXPECT_EQ(RayTraceEnergyLabelText(RayTraceSegmentEnergy{ 0.0f, true }), "0%");
+  EXPECT_EQ(RayTraceEnergyLabelText(RayTraceSegmentEnergy{ 1.0f, false }), "n/a");
+}
+
+TEST(AnalyzePointView, RayTraceContactFaceNormalResolvesOnlyKnownFaces) {
+  // A nominal hex prism: the mesh's per-face table carries basal 1/2 and prism 3..8.
+  LUMICE_CrystalParam param{};
+  param.type = 0;
+  param.height = LUMICE_Distribution{ LUMICE_DIST_NO_RANDOM, 1.0f, 0.0f };
+  for (int i = 0; i < 6; ++i) {
+    param.face_distance[i] = LUMICE_Distribution{ LUMICE_DIST_NO_RANDOM, 1.0f, 0.0f };
+  }
+  LUMICE_CrystalMesh mesh{};
+  ASSERT_EQ(LUMICE_GetCrystalMesh(&param, 0, &mesh), LUMICE_OK);
+  ASSERT_GT(mesh.face_count, 0);
+  // A real face number resolves to a unit outward normal.
+  int prism_face = -1;
+  for (int f = 0; f < mesh.face_count; ++f) {
+    if (mesh.face_numbers_by_face[f] == 3) {
+      prism_face = f;
+      break;
+    }
+  }
+  ASSERT_GE(prism_face, 0);
+  const RayTraceContactFaceNormal known = RayTraceContactFaceNormalFor(mesh, 3);
+  EXPECT_TRUE(known.known);
+  float norm = 0.0f;
+  for (int k = 0; k < 3; ++k) {
+    norm += known.normal_body[k] * known.normal_body[k];
+  }
+  EXPECT_NEAR(std::sqrt(norm), 1.0f, 1e-5);
+  // The unknown vocabulary: a negative number (kInvalidId), a number the table does not
+  // carry, and an unpopulated table all answer known=false — hollow, never a guessed normal.
+  EXPECT_FALSE(RayTraceContactFaceNormalFor(mesh, -1).known);
+  EXPECT_FALSE(RayTraceContactFaceNormalFor(mesh, 99).known);
+  LUMICE_CrystalMesh unpopulated = mesh;
+  unpopulated.face_count = 0;
+  EXPECT_FALSE(RayTraceContactFaceNormalFor(unpopulated, 3).known);
+}
+
+TEST(AnalyzePointView, RayTraceContactFacingDotsTheRealCameraSide) {
+  const float n[3] = { 0.0f, 0.0f, 1.0f };
+  const float c[3] = { 0.0f, 0.0f, 0.0f };
+  // Eye on the normal's side: facing (solid).
+  const float eye_front[3] = { 0.0f, 0.0f, 5.0f };
+  EXPECT_TRUE(RayTraceContactFacesEye(n, c, eye_front));
+  // Eye behind the face: hollow.
+  const float eye_back[3] = { 0.0f, 0.0f, -5.0f };
+  EXPECT_FALSE(RayTraceContactFacesEye(n, c, eye_back));
+  // Exact tangency (zero dot) is hollow — the plan's tie rule.
+  const float eye_side[3] = { 5.0f, 0.0f, 0.0f };
+  EXPECT_FALSE(RayTraceContactFacesEye(n, c, eye_side));
+  // The contact's own position enters: the same normal, a contact off the origin, the eye
+  // placement decides per contact->eye, not the normal alone.
+  const float c2[3] = { 0.0f, 0.0f, 1.0f };
+  EXPECT_TRUE(RayTraceContactFacesEye(n, c2, eye_front));
+  const float c3[3] = { 0.0f, 0.0f, -1.0f };
+  EXPECT_FALSE(RayTraceContactFacesEye(n, c3, eye_back));
 }
 
 // ---- The pumps, over a real executor and a real scene -----------------------------------------------
