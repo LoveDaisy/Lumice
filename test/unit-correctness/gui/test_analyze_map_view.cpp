@@ -1697,6 +1697,58 @@ TEST_F(ProfileHoverDraw, IntervalAcrossTheLongitudeSeamDrawsNothing) {
   EXPECT_EQ(RoseCount(), 0) << "an interval across the longitude seam must leave the draw list untouched";
 }
 
+// The pole passed BETWEEN two adjacent samples: the reviewer's own probes, both phase offsets.
+// A radial interval on the sun's own meridian (probe azimuth 0 → φ = π) whose δ range straddles
+// the nadir — the pole falls strictly between two 0.5° samples, both individually projecting
+// (their horizontal norm sits just outside the anchor epsilon), their longitudes the meridian's
+// two sides (≈ π apart, just inside a half-turn allowance), the bridged chord half a canvas
+// wide along the map's bottom edge. The nadir sits at δ = 90° + altitude: 110.25 between the
+// [100, 120] grid's 110.0/110.5 pair, and 110.0 between the shifted [100.1, 120.1] grid's
+// 109.6/110.1 pair. All-or-nothing: the rose bucket must be empty for both.
+TEST_F(ProfileHoverDraw, IntervalAcrossThePoleBetweenSamplesDrawsNothing) {
+  const ViewProjection vp = RectangularCamera();
+  ImDrawList* dl = ImGui::GetBackgroundDrawList();
+  DrawProfileHoverDevice(dl, Probe(true, 0.0, 100.0, 120.0), Input(vp, 20.25, 0.0, SurveyProfileHover::kSeparation));
+  EXPECT_EQ(RoseCount(), 0) << "an interval with the nadir between two samples must leave the draw list untouched";
+  DrawProfileHoverDevice(dl, Probe(true, 0.0, 100.1, 120.1), Input(vp, 20.0, 0.0, SurveyProfileHover::kSeparation));
+  EXPECT_EQ(RoseCount(), 0) << "the phase-shifted straddle (nadir at 110.0, samples at 109.6/110.1) must void too";
+}
+
+// The anchored pole itself as an interval sample — the anchor rule's own direct leg. The δ grid
+// lands a sample exactly on the nadir (δ = 110.25 about the alt-20.25 sun, on the 0.5° grid of
+// [100.25, 120.25]): the sample's horizontal norm collapses into the anchor epsilon, its
+// longitude reads the anchored column, and every pair with it spans the anchored jump.
+// All-or-nothing: the bucket stays empty.
+TEST_F(ProfileHoverDraw, IntervalThroughTheAnchoredPoleSampleDrawsNothing) {
+  const ViewProjection vp = RectangularCamera();
+  ImDrawList* dl = ImGui::GetBackgroundDrawList();
+  DrawProfileHoverDevice(dl, Probe(true, 0.0, 100.25, 120.25), Input(vp, 20.25, 0.0, SurveyProfileHover::kSeparation));
+  EXPECT_EQ(RoseCount(), 0) << "an interval with a sample on the anchored pole must leave the draw list untouched";
+}
+
+// The positive face on the same meridian: an ordinary continuous interval with the nadir
+// (δ = 110.25) outside its δ range and the seam untouched — every pair same-side, the drawn
+// rose a bounded sliver along the map's centre column (the meridian's own longitude), never a
+// canvas-spanning chord. The bound leaves room for the endpoint markers' own ~11 px circles;
+// a bridged chord would read 300 px.
+TEST_F(ProfileHoverDraw, IntervalBesideThePoleDrawsOnTheRectangularMap) {
+  const ViewProjection vp = RectangularCamera();
+  ImDrawList* dl = ImGui::GetBackgroundDrawList();
+  DrawProfileHoverDevice(dl, Probe(true, 0.0, 100.0, 108.0), Input(vp, 20.25, 0.0, SurveyProfileHover::kSeparation));
+  ASSERT_GT(RoseCount(), 0) << "an interval clear of the pole and the seam must draw";
+  float min_x = FLT_MAX;
+  float max_x = -FLT_MAX;
+  for (int i = 0; i < dl->VtxBuffer.Size; ++i) {
+    const ImDrawVert& v = dl->VtxBuffer[i];
+    if (v.col != kProfileReadingColour) {
+      continue;
+    }
+    min_x = std::min(min_x, v.pos.x);
+    max_x = std::max(max_x, v.pos.x);
+  }
+  EXPECT_LT(max_x - min_x, 60.0f) << "a same-side meridian interval draws as a sliver, not a bridged chord";
+}
+
 // The same projection break, on the walk: a verdict ring about an alt-45 sun at δ=60 crosses
 // the horizon, and on the dual-fisheye camera its upper-half samples land in the left disk and
 // its lower-half ones in the right. The run must break at the split — no submitted segment
