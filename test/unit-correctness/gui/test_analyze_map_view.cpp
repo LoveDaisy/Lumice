@@ -1049,6 +1049,53 @@ class VerdictAnchorDraw : public ::testing::Test {
     }
   }
 
+  // One colour's whole vertex bounding box, both axes — the readout label patch's own read: the
+  // backing ink is unique in the frame, so its box IS the patch rect (text + backing together).
+  static void RectForColour(ImU32 colour, float* min_x, float* min_y, float* max_x, float* max_y) {
+    ImDrawList* dl = ImGui::GetBackgroundDrawList();
+    *min_x = FLT_MAX;
+    *min_y = FLT_MAX;
+    *max_x = -FLT_MAX;
+    *max_y = -FLT_MAX;
+    for (int i = 0; i < dl->VtxBuffer.Size; ++i) {
+      const ImDrawVert& v = dl->VtxBuffer[i];
+      if (v.col != colour) {
+        continue;
+      }
+      *min_x = std::min(*min_x, v.pos.x);
+      *min_y = std::min(*min_y, v.pos.y);
+      *max_x = std::max(*max_x, v.pos.x);
+      *max_y = std::max(*max_y, v.pos.y);
+    }
+  }
+
+  // The FONT-glyph vertices of one colour: the same bucket's vertices minus the geometry
+  // primitives — AddLine/AddRect/AddCircle all stamp the atlas's shared white pixel, font glyphs
+  // carry their own atlas coordinates. The label's text is the one glyph consumer of the anchor
+  // colour, so this box IS the text rect (ring and glyphs share the bucket; the white-pixel
+  // discriminator is what tells them apart).
+  static void GlyphRectForColour(ImU32 colour, float* min_x, float* min_y, float* max_x, float* max_y) {
+    ImDrawList* dl = ImGui::GetBackgroundDrawList();
+    const ImVec2 white = ImGui::GetIO().Fonts->TexUvWhitePixel;
+    *min_x = FLT_MAX;
+    *min_y = FLT_MAX;
+    *max_x = -FLT_MAX;
+    *max_y = -FLT_MAX;
+    for (int i = 0; i < dl->VtxBuffer.Size; ++i) {
+      const ImDrawVert& v = dl->VtxBuffer[i];
+      if (v.col != colour) {
+        continue;
+      }
+      if (std::fabs(v.uv.x - white.x) < 1e-3f && std::fabs(v.uv.y - white.y) < 1e-3f) {
+        continue;  // a geometry primitive's white-pixel vertex, not a glyph
+      }
+      *min_x = std::min(*min_x, v.pos.x);
+      *min_y = std::min(*min_y, v.pos.y);
+      *max_x = std::max(*max_x, v.pos.x);
+      *max_y = std::max(*max_y, v.pos.y);
+    }
+  }
+
   ImGuiContext* ctx_ = nullptr;
 };
 
@@ -1205,6 +1252,98 @@ TEST_F(VerdictAnchorDraw, IncompleteCoverageDrawsTheDashedForm) {
   ASSERT_GT(blue_max_x, blue_min_x);
   ASSERT_GT(red_max_x, red_min_x);
   EXPECT_NEAR((blue_max_x - blue_min_x) / (red_max_x - red_min_x), 1.0f, 0.01f);
+}
+
+// The readout label's viewport clamp: a readout anchored near the canvas edge must keep its
+// whole patch — backing AND glyphs — inside the canvas rectangle. The unclamped draw centred the
+// text on the walk's topmost in-disk sample with no inset: an edge-close anchor cropped the word
+// on the canvas edge (the owner's screenshot cut "verdict" to "dict"). The backing ink
+// (16,17,20,170 — DrawIsoDeltaReadoutLabel's own literal) is unique in the frame, so its vertex
+// box IS the patch rect; the glyph bucket (the anchor's colour) must sit inside it, text and
+// backing moving together. Two independent pokes — the canvas's right edge (the owner's cut) and
+// its top edge — plus the non-zero-origin face: the rectangle the patch must respect is the
+// canvas's own [pic_min, pic_min + size], not the screen's.
+//
+// Camera premise (independent of the production projection): the rig's 180° equidistant fisheye
+// puts a direction at angular distance θ from the view axis at screen radius img_radius·θ/90° —
+// the sun at (alt 20, az 88) sits ~81° off the axis near the canvas's right edge, and the sun at
+// (alt 85, az 0) ~65° off it high on the canvas; the δ rings about them keep in-disk samples
+// whose topmost one anchors the label within a half-text-width of the named edge.
+TEST_F(VerdictAnchorDraw, EdgeAnchorKeepsTheLabelInsideTheCanvas) {
+  ImDrawList* dl = ImGui::GetBackgroundDrawList();
+  const ViewProjection horizon_vp = [] {
+    ViewProjection vp = SunCamera();
+    vp.elevation = 0.0f;  // aiming at the horizon: the high sun rides near the canvas's top edge
+    return vp;
+  }();
+
+  struct Poke {
+    const char* what;
+    const ViewProjection* vp;
+    double sun_alt;
+    double sun_az;
+    double delta;
+    float pic_min_x;
+    float pic_min_y;
+  };
+  const ViewProjection sun_vp = SunCamera();
+  const Poke pokes[] = {
+    { "right-edge anchor", &sun_vp, 20.0, 88.0, 20.0, 0.0f, 0.0f },
+    { "top-edge anchor", &horizon_vp, 85.0, 0.0, 5.0, 0.0f, 0.0f },
+    { "right-edge anchor, non-zero canvas origin", &sun_vp, 20.0, 88.0, 20.0, 100.0f, 50.0f },
+  };
+  for (const Poke& poke : pokes) {
+    VerdictAnchorInput in = Input(*poke.vp, /*shown=*/true, /*hover=*/false);
+    in.sun.altitude_deg = poke.sun_alt;
+    in.sun.azimuth_deg = poke.sun_az;
+    in.pic_min_x = poke.pic_min_x;
+    in.pic_min_y = poke.pic_min_y;
+    dl->VtxBuffer.resize(0);
+    dl->IdxBuffer.resize(0);
+    dl->CmdBuffer.resize(0);
+    dl->_VtxCurrentIdx = 0;  // the quads' index values come from this — a partial reset reads OOB
+    dl->AddDrawCmd();        // this rig's between-leg reset: PrimReserve assumes a live command
+    DrawVerdictAnchor(dl, Diagnose("edge", "blue", poke.delta, true), in);
+    if (IndexCountForColour(kChromaticColourBlue) <= 0) {
+      ADD_FAILURE() << poke.what << ": ring premise — the anchor must draw for the label to exist";
+      continue;
+    }
+    float min_x = 0.0f;
+    float min_y = 0.0f;
+    float max_x = 0.0f;
+    float max_y = 0.0f;
+    RectForColour(IM_COL32(16, 17, 20, 170), &min_x, &min_y, &max_x, &max_y);
+    if (max_x <= min_x) {
+      ADD_FAILURE() << poke.what << ": the label backing must have drawn";
+      continue;
+    }
+    const float canvas_l = in.pic_min_x;
+    const float canvas_t = in.pic_min_y;
+    const float canvas_r = in.pic_min_x + in.width_pt;
+    const float canvas_b = in.pic_min_y + in.height_pt;
+    EXPECT_GE(min_x, canvas_l) << poke.what << ": patch crosses the canvas left edge";
+    EXPECT_LE(max_x, canvas_r) << poke.what << ": patch crosses the canvas right edge";
+    EXPECT_GE(min_y, canvas_t) << poke.what << ": patch crosses the canvas top edge";
+    EXPECT_LE(max_y, canvas_b) << poke.what << ": patch crosses the canvas bottom edge";
+    // The glyphs ride the backing (text and backing move together): the label's text rect sits
+    // inside the backing's box, and the backing wraps it with the pad on both sides — the patch
+    // moved, never shrank (the glyph box is the text's own width; the ring shares the bucket and
+    // is excluded by the white-pixel discriminator).
+    float gmin_x = 0.0f;
+    float gmin_y = 0.0f;
+    float gmax_x = 0.0f;
+    float gmax_y = 0.0f;
+    GlyphRectForColour(kChromaticColourBlue, &gmin_x, &gmin_y, &gmax_x, &gmax_y);
+    if (gmax_x <= gmin_x) {
+      ADD_FAILURE() << poke.what << ": glyphs must have drawn";
+      continue;
+    }
+    EXPECT_GE(gmin_x, min_x - 0.5f) << poke.what << ": glyph left of backing";
+    EXPECT_LE(gmax_x, max_x + 0.5f) << poke.what << ": glyph right of backing";
+    EXPECT_GE(gmin_y, min_y - 0.5f) << poke.what << ": glyph above backing";
+    EXPECT_LE(gmax_y, max_y + 0.5f) << poke.what << ": glyph below backing";
+    EXPECT_NEAR(max_x - min_x, (gmax_x - gmin_x) + 6.0f, 2.0f) << poke.what << ": backing wraps the text";
+  }
 }
 
 }  // namespace
