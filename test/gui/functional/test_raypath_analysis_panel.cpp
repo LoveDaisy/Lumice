@@ -2970,9 +2970,12 @@ bool ProfileRowsHighlightAndDrawOnTheMap(ImGuiTestContext* ctx) {
   // ink's existence; the unit tier owns the positions).
   IM_CHECK_RETV(hover_row("**/###profile_peak_row", gui::SurveyProfileHover::kPeak), false);
   IM_CHECK_RETV(MapWindowIndexCountForColour(gui::kProfileReadingColour) > 0, false);
-  // The separation row: the interval device.
+  // The separation row: the interval device. Same-source frames for the human eye: the row
+  // highlight and the interval are the two things a screenshot judges better than a bucket read.
   IM_CHECK_RETV(hover_row("**/###profile_separation_row", gui::SurveyProfileHover::kSeparation), false);
   IM_CHECK_RETV(MapWindowIndexCountForColour(gui::kProfileReadingColour) > 0, false);
+  IM_CHECK_RETV(SaveWindowPng(ctx, "//Raypath view", GuiTestTempPath("analysis_profile_hover_separation.png").string()),
+                false);
   // Off the rows: both the identity and the ink leave (the overwrite's own closure).
   ctx->MouseMoveToPos(ImVec2(-100.0f, -100.0f));
   ctx->Yield(3);
@@ -2999,8 +3002,13 @@ bool ProfileRowsHighlightAndDrawOnTheMap(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(hover_row("**/###diagnose_verdict_row", gui::g_state.analysis.profile_row_hover), false);
   ctx->MouseMoveToPos(ImVec2(-100.0f, -100.0f));
   ctx->Yield(3);
-  // The legend icons (AC4): the frame anchors drew (full sky) — the report window carries the
-  // sun's gold fill and the zenith/horizon greys; the anchor's icon rides its toggle.
+  // The legend icons (AC4): scroll the report to its legend, then assert the icons' colour
+  // buckets — the frame anchors drew (full sky), so the sun's gold and the zenith/horizon greys
+  // stand; the anchor's icon rides its toggle.
+  if (ImGuiWindow* report = MapReportWindow()) {
+    report->Scroll.y = report->ScrollMax.y;
+  }
+  ctx->Yield(2);
   IM_CHECK_RETV(MapReportIndexCountForColour(IM_COL32(255, 231, 168, 255)) > 0, false);
   IM_CHECK_RETV(MapReportIndexCountForColour(IM_COL32(200, 205, 215, 110)) > 0, false);
   ctx->ItemClick("**/Verdict anchors##map");
@@ -3008,6 +3016,7 @@ bool ProfileRowsHighlightAndDrawOnTheMap(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(gui::LastMapOverlayLegend().verdict_anchor, false);
   const ImU32 anchor_ink = gui::LastMapOverlayLegend().verdict_anchor_colour;
   IM_CHECK_RETV(MapReportIndexCountForColour(anchor_ink) > 0, false);
+  IM_CHECK_RETV(SaveWindowPng(ctx, "//Raypath view", GuiTestTempPath("analysis_legend_icons.png").string()), false);
   ctx->ItemClick("**/Verdict anchors##map");
   ctx->Yield(2);
   ctx->WindowClose("//Raypath view");
