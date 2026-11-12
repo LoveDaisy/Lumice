@@ -696,6 +696,14 @@ bool BuildRayTracePolyline(const LUMICE_RepresentativeRay& ray, float extension,
       legs.leg_count != contacts.contact_count + 1) {
     return false;
   }
+  // The per-segment cumulative Fresnel relative energies, straight from the contacts' own
+  // factors (T at entry/exit, R at internal reflections — the payload's semantics verbatim, no
+  // complement). N contacts -> N+1 segments, one energy each.
+  std::vector<double> factors(contacts.contact_count);
+  for (size_t i = 0; i < contacts.contact_count; ++i) {
+    factors[i] = contacts.contacts[i].transmittance;
+  }
+  out->seg_energy = RayTraceCumulativeEnergies(factors.data(), factors.size());
   // The contacts' own spread sets the display scale (the extension is relative to it). The
   // readers hand back doubles; the display polyline is float — one explicit narrowing each.
   float spread = 0.0f;
@@ -752,6 +760,94 @@ void RayTracePointToCrystalFrame(const double pose[9], float point[3]) {
   point[0] = static_cast<float>(pose[0] * x + pose[3] * y + pose[6] * z);
   point[1] = static_cast<float>(pose[1] * x + pose[4] * y + pose[7] * z);
   point[2] = static_cast<float>(pose[2] * x + pose[5] * y + pose[8] * z);
+}
+
+// ---- The trace display's pure energy and facing rules (declared in the hpp) -------------------------
+
+// The rounding band a Fresnel interface factor must sit in to be usable: the engine's Fresnel
+// math runs in double precision and overshoots [0,1] only by rounding magnitude, so in-band
+// overshoot clamps back; beyond the band the value is not a rounding artifact and the energy
+// claim stops (the prefix stays, the suffix draws neutral).
+constexpr double kRayTraceFactorBand = 1e-6;
+
+std::vector<RayTraceSegmentEnergy> RayTraceCumulativeEnergies(const double* factors, size_t count) {
+  // E[0] = 1 (the entry leg, before the first interface), then E[k+1] = E[k] * q[k] — every
+  // interface consumed exactly once, the last segment including the exit factor. An internal
+  // reflection with R = 1 keeps the energy; an exact zero ends it (a legal declared zero).
+  std::vector<RayTraceSegmentEnergy> out;
+  out.reserve(count + 1);
+  float energy = 1.0f;
+  bool valid = true;
+  out.push_back(RayTraceSegmentEnergy{ energy, valid });
+  for (size_t k = 0; k < count; ++k) {
+    const double q = factors != nullptr ? factors[k] : 0.0;
+    if (valid && std::isfinite(q) && q >= -kRayTraceFactorBand && q <= 1.0 + kRayTraceFactorBand) {
+      const double clamped = std::min(1.0, std::max(0.0, q));
+      energy = static_cast<float>(static_cast<double>(energy) * clamped);
+    } else {
+      // Unusable factor: everything from the segment after it on carries no energy claim. The
+      // stored value is the last honest prefix — unused while invalid, kept for inspection.
+      valid = false;
+    }
+    out.push_back(RayTraceSegmentEnergy{ energy, valid });
+  }
+  return out;
+}
+
+float RayTraceEnergyWidth(float energy) {
+  // The fixed sqrt monotone visual mapping over the positive range (the plan's chosen gamma: a
+  // linear map presses small positives into sub-pixel lines, buckets lose the segment order).
+  // E <= 0 (or non-finite) answers 0 — no ink; the contact markers stay.
+  if (!(energy > 0.0f)) {
+    return 0.0f;
+  }
+  const float e = std::min(1.0f, energy);
+  return UiPx(kRayTraceWidthMinUi) + (UiPx(kRayTraceWidthMaxUi) - UiPx(kRayTraceWidthMinUi)) * std::sqrt(e);
+}
+
+std::string RayTraceEnergyLabelText(const RayTraceSegmentEnergy& energy) {
+  if (!energy.valid) {
+    return "n/a";
+  }
+  char buf[32];
+  // %.3g keeps tiny non-zero values honest (1e-9 -> "1e-07%") without fabricating digits for
+  // the common range; an exact zero reads as "0%".
+  std::snprintf(buf, sizeof(buf), "%.3g%%", static_cast<double>(energy.value) * 100.0);
+  return buf;
+}
+
+RayTraceContactFaceNormal RayTraceContactFaceNormalFor(const LUMICE_CrystalMesh& mesh, int face_number) {
+  RayTraceContactFaceNormal out;
+  if (face_number < 0) {
+    return out;  // kInvalidId — the unknown vocabulary, never matched against the table
+  }
+  for (int f = 0; f < mesh.face_count; ++f) {
+    if (mesh.face_numbers_by_face[f] != face_number) {
+      continue;
+    }
+    const float* n = &mesh.face_normals[static_cast<size_t>(f) * 3];
+    const float norm = std::sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
+    if (std::isfinite(norm) && norm > 0.5f) {  // unit-length by contract; half of it is degenerate
+      out.known = true;
+      out.normal_body[0] = n[0];
+      out.normal_body[1] = n[1];
+      out.normal_body[2] = n[2];
+    }
+    break;  // the first table hit decides — the numbering is unique per face by contract
+  }
+  return out;
+}
+
+bool RayTraceContactFacesEye(const float normal_display[3], const float contact_scene[3], const float eye_scene[3]) {
+  // dot(normal, eye - contact) in the scene metric: the normal is a display-frame direction, the
+  // eye/contact pair scene-frame points — scene is display translated and uniformly positively
+  // scaled (fit >= 1e-4), and neither moves the dot's sign.
+  const double dx = static_cast<double>(eye_scene[0]) - contact_scene[0];
+  const double dy = static_cast<double>(eye_scene[1]) - contact_scene[1];
+  const double dz = static_cast<double>(eye_scene[2]) - contact_scene[2];
+  const double dot = static_cast<double>(normal_display[0]) * dx + static_cast<double>(normal_display[1]) * dy +
+                     static_cast<double>(normal_display[2]) * dz;
+  return dot > 0.0;  // exact zero is tangent — hollow (the plan's tie rule)
 }
 
 RayTraceDisplayState RayTraceDisplayStateFor(const RayTraceSession& trace, const RayTraceKey& current_key) {
@@ -1021,16 +1117,57 @@ std::array<float, 3> ToRay3DScene(const float display[3], const Ray3DFrameInfo& 
            (display[2] - frame.centre[2]) / frame.fit };
 }
 
-ImVec2 ProjectSceneToPixel(const float display[3], const Ray3DFrameInfo& frame) {
-  const auto p = ToRay3DScene(display, frame);
-  const float* m = frame.mvp;
-  const float w = m[3] * p[0] + m[7] * p[1] + m[11] * p[2] + m[15];
-  // All content is inside the unit bounding sphere. The camera's focal half-height stays
-  // above 0.3, so its eye distance exceeds 0.3 / tan(15deg) > 1 and perspective w is positive.
-  const float x = (m[0] * p[0] + m[4] * p[1] + m[8] * p[2] + m[12]) / w;
-  const float y = (m[1] * p[0] + m[5] * p[1] + m[9] * p[2] + m[13]) / w;
+// The homogeneous clip coordinates of a scene point, row-major over the column-major MVP — the
+// same math TraceOracleProject (the gui_test's oracle) mirrors; keep the two in lockstep.
+std::array<float, 4> ToRay3DClip(const float scene[3], const Ray3DFrameInfo& frame) {
+  std::array<float, 4> clip = {};
+  for (int row = 0; row < 4; ++row) {
+    clip[row] = frame.mvp[12 + row];
+    for (int k = 0; k < 3; ++k) {
+      clip[row] += frame.mvp[k * 4 + row] * scene[k];
+    }
+  }
+  return clip;
+}
+
+// Pixel position of an in-frustum clip point. Callers clip first: with the mesh-only fit the
+// trace's display extensions can sit behind the camera, and a w <= 0 point must never divide.
+ImVec2 RayTraceClipToPixel(const float clip[4], const Ray3DFrameInfo& frame) {
+  const float w = clip[3];
+  const float x = clip[0] / w;
+  const float y = clip[1] / w;
   return ImVec2(frame.canvas_min.x + (x + 1.0f) * 0.5f * frame.canvas_size.x,
                 frame.canvas_min.y + (1.0f - y) * 0.5f * frame.canvas_size.y);
+}
+
+// Clips the scene segment against the camera's near plane (w >= near_w — the same plane
+// ComputeMvp builds the GL frustum with) and answers the visible part's pixel endpoints. False
+// when the whole segment sits behind the near plane. Clip coordinates are affine along the
+// segment, so interpolating them at the crossing parameter gives the exact intersection.
+bool RayTraceClipSegmentToPixel(const float scene_a[3], const float scene_b[3], float near_w,
+                                const Ray3DFrameInfo& frame, ImVec2* pa, ImVec2* pb) {
+  const std::array<float, 4> ca = ToRay3DClip(scene_a, frame);
+  const std::array<float, 4> cb = ToRay3DClip(scene_b, frame);
+  if (ca[3] < near_w && cb[3] < near_w) {
+    return false;
+  }
+  float t0 = 0.0f;
+  float t1 = 1.0f;
+  if (ca[3] < near_w) {
+    t0 = (near_w - ca[3]) / (cb[3] - ca[3]);
+  }
+  if (cb[3] < near_w) {
+    t1 = (near_w - ca[3]) / (cb[3] - ca[3]);
+  }
+  float a[4] = {};
+  float b[4] = {};
+  for (int k = 0; k < 4; ++k) {
+    a[k] = ca[k] + (cb[k] - ca[k]) * t0;
+    b[k] = ca[k] + (cb[k] - ca[k]) * t1;
+  }
+  *pa = RayTraceClipToPixel(a, frame);
+  *pb = RayTraceClipToPixel(b, frame);
+  return true;
 }
 
 // The crystal param in the analysis geometry's OWN caliber (scene_to_analytic's Nominal rule):
@@ -1531,6 +1668,12 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
         "One pose's real path in the crystal: drag orbits, wheel zooms. Same physical state, two "
         "views.");
     ImGui::PopStyleColor();
+    // The per-segment Fresnel ratio numbers: a session display preference (default off; kept
+    // across sample/component switches, point adoptions and window reopen — the same survival
+    // set as the other toggles; reset only by the whole-state new-document paths). This report
+    // head is its one site, reachable in every query state; the canvas keeps its fixed report
+    // quota, so the toggle moves no geometry.
+    ImGui::Checkbox("Show Fresnel ratios##r3d_fresnel", &view.show_fresnel_labels);
 
     const PointQueryState st = PointQueryStateFor(point);
     if (st == PointQueryState::kNoIntent) {
@@ -1628,6 +1771,15 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
       DisabledWrappedText("The path's readers answered empty — nothing to draw.");
       return;
     }
+    // The request's face sequence (the Info reader's own): one face number per contact by
+    // contract. A failed read, a count mismatch or a null sequence falls back to the
+    // facing-unknown vocabulary below — every real contact keeps its marker either way.
+    LUMICE_RepresentativeRayInfo ray_info{};
+    ray_info.struct_size = sizeof(ray_info);
+    const bool faces_usable =
+        display_state == RayTraceDisplayState::kDrawn &&
+        LUMICE_RepresentativeRayGetInfo(trace.adopted_result.get(), &ray_info) == LUMICE_PATH_READ_OK &&
+        ray_info.face_count == static_cast<int>(line.seg_kinds.size() - 1) && ray_info.faces != nullptr;
 
     // The frame switch is a display transform (AC4): world view rotates the body-frame mesh to the
     // pose's world; crystal view rotates the world-frame path back. One physical state, two views.
@@ -1655,84 +1807,42 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
       }
     };
 
-    // Content bounds over everything on show (mesh + trace), for the fit and the orbit centre.
+    // The frozen mesh is the ONLY framing anchor (2026-11-12 feedback #7): centre and the
+    // normalization radius come from the mesh alone — the trace's display extensions (1.1x the
+    // contacts' own spread, well outside the crystal) no longer inflate either. The old content
+    // fit counted the polyline: a pose with light on show shrank its crystal, the waiting frame
+    // filled it back — the reported size jump between the two states of ONE pose. The polyline
+    // may now reach beyond the unit bounding sphere; the overlay below clips against the
+    // camera's near plane instead of growing the fit to hide it.
     float lo[3] = { 0.0f, 0.0f, 0.0f };
     float hi[3] = { 0.0f, 0.0f, 0.0f };
-    bool have_bounds = false;
-    auto accumulate = [&](const float p[3]) {
-      if (!have_bounds) {
-        for (int k = 0; k < 3; ++k) {
-          lo[k] = hi[k] = p[k];
-        }
-        have_bounds = true;
-        return;
-      }
-      for (int k = 0; k < 3; ++k) {
-        lo[k] = std::min(lo[k], p[k]);
-        hi[k] = std::max(hi[k], p[k]);
-      }
-    };
-    for (int v = 0; v < cache.mesh.vertex_count; ++v) {
-      float d[3];
-      to_display(&cache.mesh.vertices[v * 3], d);
-      accumulate(d);
-    }
-    // The crystal's own centre, in the same display frame: the sun arrow's anchor (the crystal-frame
-    // view's u direction radiates from the CRYSTAL, not from a content box the display extensions
-    // inflate).
-    float mesh_lo[3] = { 0.0f, 0.0f, 0.0f };
-    float mesh_hi[3] = { 0.0f, 0.0f, 0.0f };
-    for (int k = 0; k < 3; ++k) {
-      mesh_lo[k] = mesh_hi[k] = lo[k];
-    }
     {
-      bool have_mesh_bounds = false;
+      bool first = true;
       for (int v = 0; v < cache.mesh.vertex_count; ++v) {
         float d[3];
         to_display(&cache.mesh.vertices[v * 3], d);
-        if (!have_mesh_bounds) {
+        if (first) {
           for (int k = 0; k < 3; ++k) {
-            mesh_lo[k] = mesh_hi[k] = d[k];
+            lo[k] = hi[k] = d[k];
           }
-          have_mesh_bounds = true;
+          first = false;
           continue;
         }
         for (int k = 0; k < 3; ++k) {
-          mesh_lo[k] = std::min(mesh_lo[k], d[k]);
-          mesh_hi[k] = std::max(mesh_hi[k], d[k]);
+          lo[k] = std::min(lo[k], d[k]);
+          hi[k] = std::max(hi[k], d[k]);
         }
       }
     }
-    const float mesh_centre[3] = { (mesh_lo[0] + mesh_hi[0]) * 0.5f, (mesh_lo[1] + mesh_hi[1]) * 0.5f,
-                                   (mesh_lo[2] + mesh_hi[2]) * 0.5f };
-    for (size_t i = 0; i + 2 < line.points.size(); i += 3) {
-      const float p[3] = { line.points[i], line.points[i + 1], line.points[i + 2] };
-      float d[3];
-      point_to_display(p, d);
-      accumulate(d);
-    }
-    if (!have_bounds) {
-      ImGui::TextDisabled("Nothing on show.");
-      return;
-    }
     const float centre[3] = { (lo[0] + hi[0]) * 0.5f, (lo[1] + hi[1]) * 0.5f, (lo[2] + hi[2]) * 0.5f };
     float fit = 0.0f;
-    auto accumulate_radius = [&](const float p[3]) {
-      const float dx = p[0] - centre[0];
-      const float dy = p[1] - centre[1];
-      const float dz = p[2] - centre[2];
-      fit = std::max(fit, std::sqrt(dx * dx + dy * dy + dz * dz));
-    };
     for (int v = 0; v < cache.mesh.vertex_count; ++v) {
       float d[3];
       to_display(&cache.mesh.vertices[v * 3], d);
-      accumulate_radius(d);
-    }
-    for (size_t i = 0; i + 2 < line.points.size(); i += 3) {
-      const float p[3] = { line.points[i], line.points[i + 1], line.points[i + 2] };
-      float d[3];
-      point_to_display(p, d);
-      accumulate_radius(d);
+      const float dx = d[0] - centre[0];
+      const float dy = d[1] - centre[1];
+      const float dz = d[2] - centre[2];
+      fit = std::max(fit, std::sqrt(dx * dx + dy * dy + dz * dz));
     }
     fit = std::max(fit, 1e-4f);
 
@@ -1780,6 +1890,17 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
           DisabledWrappedText("The crystal renderer could not initialize — no 3D canvas available.");
           return;
         }
+        // Zoom is the focal-plane half-height shared by Render, ComputeMvp and the frame info
+        // (the overlay's near-plane clip and the frame tests' camera both derive from it);
+        // compensate portrait aspect to preserve the old short-side fit. At zoom=1, a
+        // focal-plane radius spans 42% of the short side, matching the old fit. A positive
+        // stand-off keeps the eye outside the unit sphere at every zoom without a clamp
+        // plateau; wheel magnification remains strictly monotone across the full range.
+        constexpr float kFitHalfHeight = 0.5f / 0.42f;
+        constexpr float kCameraStandOff = 0.3f;
+        const float zoom =
+            (kCameraStandOff + (kFitHalfHeight - kCameraStandOff) / std::clamp(view.orbit_zoom, 0.25f, 8.0f)) *
+            std::max(1.0f, static_cast<float>(height) / width);
 
         Ray3DFrameInfo& rendered = g_ray3d_frame;
         rendered.canvas_min = canvas_min;
@@ -1791,6 +1912,7 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
         rendered.crystal_frame = view.crystal_frame;
         rendered.frame_count = ImGui::GetFrameCount();
         rendered.texture_id = gl.renderer.GetTextureId();
+        rendered.zoom = zoom;
         std::array<double, 9> pose_key;
         std::copy_n(pose, 9, pose_key.begin());
         const PointMeshUploadKey upload_key{
@@ -1825,16 +1947,6 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
         }
         view_rotation[15] = 1.0f;
         constexpr float kIdentity[16] = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
-        // The mesh and overlay are now in a unit bounding sphere. Zoom is its focal-plane
-        // half-height; compensate portrait aspect to preserve the old short-side fit.
-        // At zoom=1, a focal-plane radius spans 42% of the short side, matching the old fit.
-        // A positive stand-off keeps the eye outside the unit sphere at every zoom without a
-        // clamp plateau; wheel magnification remains strictly monotone across the full range.
-        constexpr float kFitHalfHeight = 0.5f / 0.42f;
-        constexpr float kCameraStandOff = 0.3f;
-        const float zoom =
-            (kCameraStandOff + (kFitHalfHeight - kCameraStandOff) / std::clamp(view.orbit_zoom, 0.25f, 8.0f)) *
-            std::max(1.0f, static_cast<float>(height) / width);
         gl.renderer.Render(kIdentity, zoom, CrystalStyle::kXRay, view_rotation);
         // Use the ACTUAL integer FBO dimensions on both sides. Its aspect only differs from the
         // logical canvas by pixel quantization; both texture and overlay undergo the same stretch.
@@ -1845,36 +1957,117 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
         // AddImage is the Image quad without a second layout item: the existing InvisibleButton
         // remains the sole canvas interaction target, at its existing ##r3d_canvas identity.
         dl->AddImage(static_cast<ImTextureID>(rendered.texture_id), canvas_min, canvas_max, ImVec2(0, 1), ImVec2(1, 0));
-        const auto project = [&](const float p[3]) { return ProjectSceneToPixel(p, rendered); };
+        // The overlay draws in scene coordinates with the REAL camera: the eye sits on the
+        // -fwd axis at ComputeDist, the near plane is ComputeNearPlane's — both the same
+        // formulas ComputeMvp builds the frustum from. With the mesh-only fit the trace's
+        // display extensions reach beyond the unit bounding sphere and can cross the near
+        // plane at high zoom, so every primitive clips first: a segment draws its visible
+        // part only, a behind-eye point never projects.
+        const float near_w = CrystalRenderer::ComputeNearPlane(zoom);
+        const float eye_dist = CrystalRenderer::ComputeDist(zoom);
+        const float eye_scene[3] = { static_cast<float>(-eye_dist * fwd[0]), static_cast<float>(-eye_dist * fwd[1]),
+                                     static_cast<float>(-eye_dist * fwd[2]) };
+        const auto scene_of = [&](const float p[3]) {
+          float d[3];
+          point_to_display(p, d);
+          return ToRay3DScene(d, rendered);
+        };
         for (size_t s = 0; s < line.seg_kinds.size(); ++s) {
           const float* p0 = &line.points[s * 6];
           const float* p1 = p0 + 3;
-          float d0[3];
-          float d1[3];
-          point_to_display(p0, d0);
-          point_to_display(p1, d1);
-          dl->AddLine(project(d0), project(d1), SegmentColor(line.seg_kinds[s], 1.0f), 2.0f);
+          const auto s0 = scene_of(p0);
+          const auto s1 = scene_of(p1);
+          ImVec2 pa;
+          ImVec2 pb;
+          if (!RayTraceClipSegmentToPixel(s0.data(), s1.data(), near_w, rendered, &pa, &pb)) {
+            continue;  // the whole segment sits behind the near plane — nothing to draw
+          }
+          const RayTraceSegmentEnergy& energy = line.seg_energy[s];
+          // Width follows the cumulative Fresnel relative energy (the sqrt visual mapping); a
+          // segment past an unusable interface factor draws a fixed neutral line — no energy
+          // claim — and an exact zero draws no ink at all: the contact markers carry those
+          // spots, the labels (when shown) read 0%.
+          const bool draw_ink = !energy.valid || energy.value > 0.0f;
+          if (draw_ink) {
+            const float width = energy.valid ? RayTraceEnergyWidth(energy.value) : UiPx(kRayTraceWidthNeutralUi);
+            dl->AddLine(pa, pb, SegmentColor(line.seg_kinds[s], 1.0f), width);
+          }
+          if (view.show_fresnel_labels) {
+            // The ratio label rides the VISIBLE part's midpoint, offset off the line and
+            // clamped into the canvas — the anchor stays a real visible position, and a
+            // segment with nothing of it on show takes no fabricated edge slot.
+            const bool touches_canvas = std::max(pa.x, pb.x) >= canvas_min.x && std::min(pa.x, pb.x) <= canvas_max.x &&
+                                        std::max(pa.y, pb.y) >= canvas_min.y && std::min(pa.y, pb.y) <= canvas_max.y;
+            if (touches_canvas) {
+              const std::string text = RayTraceEnergyLabelText(energy);
+              const ImVec2 text_size = ImGui::CalcTextSize(text.c_str());
+              const ImVec2 mid((pa.x + pb.x) * 0.5f, (pa.y + pb.y) * 0.5f);
+              ImVec2 dir(pb.x - pa.x, pb.y - pa.y);
+              const float len = std::sqrt(dir.x * dir.x + dir.y * dir.y);
+              if (len > 1e-3f) {
+                dir.x /= len;
+                dir.y /= len;
+              } else {
+                dir.x = 0.0f;
+                dir.y = -1.0f;
+              }
+              ImVec2 anchor(mid.x + dir.y * UiPx(7.0f), mid.y - dir.x * UiPx(7.0f));
+              anchor.x = std::clamp(anchor.x, canvas_min.x + UiPx(2.0f),
+                                    std::max(canvas_min.x + UiPx(2.0f), canvas_max.x - text_size.x - UiPx(2.0f)));
+              anchor.y = std::clamp(anchor.y, canvas_min.y + UiPx(1.0f),
+                                    std::max(canvas_min.y + UiPx(1.0f), canvas_max.y - text_size.y - UiPx(1.0f)));
+              dl->AddText(anchor, kRayTraceLabelColor, text.c_str());
+            }
+          }
         }
         // The contacts: one marker per REAL contact of the recovery. The polyline's point layout is
         // [entry_start, c0, c0, c1, ..., cl, exit_end] — odd indices 1..2N-1 are the N contacts, index
         // 0 the entry extension's start and the LAST index the exit extension's end, both this TU's
-        // display synthesis and marked by nothing.
+        // display synthesis and marked by nothing. A contact whose face looks at the real camera
+        // (the face's outward normal, display-rotated, dotted against contact->eye in the scene
+        // metric — never a global fwd approximation) draws solid; back-facing and facing-unknown
+        // draw hollow. The legend carries the vocabulary; unknown never masquerades as back-facing.
         for (size_t idx = 1; idx + 1 < line.points.size() / 3; idx += 2) {
+          const size_t contact_index = (idx - 1) / 2;
           const float* p = &line.points[idx * 3];
-          float d[3];
-          point_to_display(p, d);
-          dl->AddCircle(project(d), UiPx(2.5f), kRayTraceContactColor, 0, 1.0f);
+          const auto s = scene_of(p);
+          const std::array<float, 4> clip = ToRay3DClip(s.data(), rendered);
+          if (clip[3] < near_w) {
+            continue;  // a contact marker never projects past the near plane
+          }
+          bool solid = false;
+          if (faces_usable) {
+            const RayTraceContactFaceNormal face =
+                RayTraceContactFaceNormalFor(cache.mesh, ray_info.faces[contact_index]);
+            if (face.known) {
+              float n_display[3];
+              to_display(face.normal_body, n_display);
+              solid = RayTraceContactFacesEye(n_display, s.data(), eye_scene);
+            }
+          }
+          const ImVec2 pos = RayTraceClipToPixel(clip.data(), rendered);
+          if (solid) {
+            dl->AddCircleFilled(pos, UiPx(2.5f), kRayTraceContactSolidColor);
+          } else {
+            dl->AddCircle(pos, UiPx(2.5f), kRayTraceContactColor, 0, 1.0f);
+          }
         }
         // The crystal-frame sun direction: one short arrow along u radiating from the crystal's own
         // centre (the crystal view's own anchor; the world view's entry leg already carries the
-        // incident). The tip rides the content fit's scale, the anchor does not.
+        // incident). The tip rides the mesh fit's scale, the anchor does not.
         if (display_state == RayTraceDisplayState::kDrawn && view.crystal_frame) {
           const float u[3] = { static_cast<float>(current->sample.sun_in_crystal[0]),
                                static_cast<float>(current->sample.sun_in_crystal[1]),
                                static_cast<float>(current->sample.sun_in_crystal[2]) };
-          const float tip[3] = { mesh_centre[0] + u[0] * fit * 0.6f, mesh_centre[1] + u[1] * fit * 0.6f,
-                                 mesh_centre[2] + u[2] * fit * 0.6f };
-          dl->AddLine(project(mesh_centre), project(tip), ImGui::ColorConvertFloat4ToU32(AccentColor()), 1.5f);
+          const float tip[3] = { centre[0] + u[0] * fit * 0.6f, centre[1] + u[1] * fit * 0.6f,
+                                 centre[2] + u[2] * fit * 0.6f };
+          const auto a0 = scene_of(centre);
+          const auto a1 = scene_of(tip);
+          ImVec2 pa;
+          ImVec2 pb;
+          if (RayTraceClipSegmentToPixel(a0.data(), a1.data(), near_w, rendered, &pa, &pb)) {
+            dl->AddLine(pa, pb, ImGui::ColorConvertFloat4ToU32(AccentColor()), 1.5f);
+          }
         }
         dl->PopClipRect();
       };
@@ -1926,6 +2119,14 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
       ImGui::SameLine();
       ImGui::TextDisabled("%s", labels[kind]);
     }
+    // The display semantics' legend (2026-11-12 feedback #8/#9): the width mapping's honesty
+    // note (visual sqrt scaling, no absorption — the ratio numbers, when shown, carry the
+    // exact values), the contact shapes' vocabulary, and the unusable-factor boundary.
+    DisabledWrappedText(
+        "Width follows cumulative Fresnel relative energy (no absorption); visual scaling — the "
+        "ratio numbers, when shown, carry the exact values. Contacts: solid = facing the camera, "
+        "hollow = back-facing or facing unknown. A segment past an unusable interface factor "
+        "draws neutral (n/a).");
     if (current->sample.interface_count >= 2) {
       char transmittance[96];
       std::snprintf(transmittance, sizeof(transmittance), "face transmittance: entry %.3f, exit %.3f",

@@ -38,6 +38,12 @@ class CrystalRenderer {
   // share a single source of truth.
   static float ComputeDist(float zoom);
 
+  // The camera's near-plane distance for `zoom`: the far side of the stand-off
+  // band (dist - 10), floored at 0.1. ComputeMvp builds the frustum with it and
+  // the ray-trace overlay clips its primitives against the same plane — one
+  // formula, two consumers.
+  static float ComputeNearPlane(float zoom);
+
   // Build the same MVP matrix (column-major) used inside Render().
   // Exposed so overlays can project CPU-side points to the identical screen
   // coordinates; changing this function must keep Render's internal use in sync.
