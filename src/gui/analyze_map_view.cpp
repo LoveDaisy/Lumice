@@ -620,9 +620,10 @@ bool ProjectToRect(const MapCanvasProjection& view, const double pos[3], const I
 // travel direction goes straight in) splits the sky into two disks by the travel direction's z
 // sign: consecutive samples on opposite sides of the split belong to different disks, and the
 // segment between them does not exist on the picture. The rectangular equirect wraps at
-// longitude ±π and anchors the pole itself to longitude 0 — a pair straddling the seam (or
-// touching the anchored pole) screens farther apart than the samples' own bounded step can
-// explain, and the chord between them is likewise not the path. One predicate, two consumers —
+// longitude ±π and anchors the pole itself to longitude 0 — a pair straddling the seam, touching
+// the anchored pole, or with the pole passed between its two samples screens farther apart than
+// the samples' own bounded step can explain, and the chord between them is likewise not the
+// path. One predicate, two consumers —
 // the iso-delta walk (a break starts a fresh polyline at the next in-disk pair) and the profile
 // device (a break voids the all-or-nothing interval). The single-fisheye family and the globe
 // project into one contiguous region with a behind-camera sentinel, where a projected pair is
@@ -643,7 +644,17 @@ bool ProjectionContinuous(int lens_type, double travel_prev_z, double travel_nex
     }
     const double lon_a = std::atan2(-travel_prev[1], -travel_prev[0]);
     const double lon_b = std::atan2(-travel_next[1], -travel_next[0]);
-    return std::fabs(lon_a - lon_b) <= kPiD;  // beyond a half turn = the ±π seam straddled
+    // A swing past a quarter turn is beyond any same-side pair's own span at these sampling
+    // densities (a pair whose path keeps farther from the pole than roughly its own separation
+    // swings under a quarter turn), so it marks one of the projection's own breaks: the ±π seam
+    // straddled (a represented swing past π), or the pole passed BETWEEN the two samples — the
+    // meridian's two sides read half a canvas apart while the path between them clips the pole
+    // column. Both are breaks: under-draw a near-pole graze, never draw a chord the projection
+    // does not carry. The walk's own pole passages land on a sample (the radial basis is
+    // zenith-referenced and kOverlaySegments is even, so the passage sits at φ = 0/π) and the
+    // anchor rule above fires there; the profile interval's δ grid does not align — that
+    // straddle is exactly what this bound catches.
+    return std::fabs(lon_a - lon_b) <= kPiD / 2.0;
   }
   return true;
 }
