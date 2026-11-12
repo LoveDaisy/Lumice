@@ -479,6 +479,17 @@ bool AnalyzeOperationBarNeedsScroll(float width);
 void RenderAnalyzeOperationBar(GuiState& state, LUMICE_Server* server);
 void RenderAnalyzeStatus(GuiState& state, LUMICE_Server* server);
 
+// The cone-centre drift warning's fixed band (779.1): the predicate is
+// ConeCenterDriftedFromResult's, untouched — this face only moves WHERE the warning shows. It
+// is the main view's own row between the picture and the status viewport, never inside the
+// viewport's scroll flow (the viewport is two lines tall and the warning sat past its fold —
+// the owner measured that as no failure sign at all). The height is the wrapped text's own
+// footprint at the band's real wrap width, measured with the same call TextEx sizes the item
+// with: the host window never scrolls, so a guessed line count would clip the band, not scroll
+// it. `wrap_width` is the region's content width the caller took `avail.x` from.
+float AnalyzeDriftWarningHeight(float wrap_width);
+void RenderAnalyzeDriftWarning(GuiState& state, float wrap_width);
+
 // The operation bar's Whole sky / Point radios with direct-gesture guidance.
 void RenderPanoramaRoiControls(GuiState& state, bool join_point);
 

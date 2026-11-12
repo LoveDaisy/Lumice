@@ -491,14 +491,26 @@ void RenderScenePanorama(GLFWwindow* window) {
   const float gap = ImGui::GetStyle().ItemSpacing.y;
   const float bar_h = AnalyzeOperationBarHeight(avail.x);
   const float status_h = ImGui::GetTextLineHeight() * 2.0f + gap;
-  const float picture_h = std::max(1.0f, avail.y - bar_h - status_h - gap * 2.0f);
+  // The cone-centre drift warning's fixed band (779.1): its own row between the picture and the
+  // status viewport, never inside the viewport's scroll flow — the viewport is two lines tall
+  // and the warning sat past its fold, which the owner measured as no failure sign at all. The
+  // height is the wrapped text's measured footprint at the band's wrap width (the region's
+  // content width: the cursor at the draw site below is the same line start this avail.x is
+  // taken from). Appearing and disappearing changes the picture's height only — no divider
+  // ratio moves and no business state is written.
+  const bool centre_drifted = ConeCenterDriftedFromResult(g_state);
+  const float warn_h = centre_drifted ? AnalyzeDriftWarningHeight(avail.x) : 0.0f;
+  const float picture_h = std::max(1.0f, avail.y - bar_h - status_h - warn_h - gap * 3.0f);
   RenderAnalyzeMainPicture(window, picture_h);
+  if (centre_drifted) {
+    RenderAnalyzeDriftWarning(g_state, avail.x);
+  }
   ImGui::BeginChild("##AnalyzePictureStatus", ImVec2(0.0f, status_h));
   RenderAnalyzeStatus(g_state, g_server);
   ImGui::EndChild();
   // Only genuinely compressed geometry scrolls controls. The normal two templates render flat,
   // preserving the controls' existing IDs; query state never enters this decision.
-  if (AnalyzeOperationBarNeedsScroll(avail.x) || picture_h + status_h + bar_h + gap * 2.0f > avail.y) {
+  if (AnalyzeOperationBarNeedsScroll(avail.x) || picture_h + status_h + warn_h + bar_h + gap * 3.0f > avail.y) {
     ImGui::BeginChild("##AnalyzeOpBarScroll", ImVec2(0.0f, std::max(1.0f, bar_h)));
     RenderAnalyzeOperationBar(g_state, g_server);
     ImGui::EndChild();
@@ -801,6 +813,7 @@ void RenderAnalyzeWorkspace(GLFWwindow* window, float window_width, float window
     feedback.point_wait_line_details.clear();
     feedback.share_list_busy_dots.clear();
     feedback.entry_hint_line.clear();
+    feedback.cone_center_drift_warning.clear();
   }
 
   // The viewport publications are cleared once at the dispatch point (RenderWorkspacePanels);

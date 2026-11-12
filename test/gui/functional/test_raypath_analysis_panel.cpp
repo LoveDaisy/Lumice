@@ -12014,6 +12014,10 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       ScopedServerGuard guard;
       IM_CHECK(BringUpHaloScene(ctx, /*infinite=*/false));
       OpenWindow(ctx);
+      // The splitter ratios the manual-priority contract owns (§9.3): the band's appear and
+      // its later clear must not rewrite either — captured before anything runs.
+      const float d1_ratio_before = gui::g_state.workspace.right_column_ratio;
+      const float d2_ratio_before = gui::g_state.workspace.right_list_ratio;
       ctx->SetRef(PanoramaRegionRef());
       ctx->ItemClick("Point");
       ctx->Yield(2);
@@ -12094,6 +12098,41 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       // anchor for.
       IM_CHECK(after_drag.found);
       IM_CHECK(!after_drag.clipped);
+      // AC1's full text, read the way the render site reports it (the field is cleared at the
+      // workspace's frame entry and is the band's only other writer): both clauses the AC
+      // names, the icon drawn by the same call.
+      const std::string& drawn = gui::g_state.analysis.wait_feedback_texts.cone_center_drift_warning;
+      IM_CHECK(drawn.find("Centre has moved") != std::string::npos);
+      IM_CHECK(drawn.find("Analyze") != std::string::npos);
+      // The band replaced the viewport's own warning line (779.1): the status child draws no
+      // warning-coloured ink any more, and the band's ink ends at or above the viewport's top
+      // edge — one face, no duplicate, no overlap.
+      int status_warning_vertices = 0;
+      for (const ImDrawVert& v : status->DrawList->VtxBuffer) {
+        status_warning_vertices += v.col == warn_colour ? 1 : 0;
+      }
+      IM_CHECK_EQ(status_warning_vertices, 0);
+      IM_CHECK_LE(after_drag.bbox.Max.y, status->InnerClipRect.Min.y + 0.5f);
+      // The viewport stays a bounded, genuinely scrollable viewport (AC4): its remaining
+      // content still overflows the two-line fold, real scrolling moves it, and the band —
+      // outside the flow — is untouched by that scroll. Not a ScrollMaxY==0 leg: the overflow
+      // is asserted first.
+      IM_CHECK_GT(status->ScrollMax.y, 0.0f);
+      status->Scroll.y = status->ScrollMax.y;
+      ctx->Yield(2);
+      IM_CHECK_GT(status->Scroll.y, 0.0f);
+      const PanoramaWarningInk after_scroll = CollectPanoramaWarningInk(warn_colour);
+      IM_CHECK(after_scroll.found);
+      IM_CHECK(!after_scroll.clipped);
+      status->Scroll.y = 0.0f;
+      ctx->Yield(1);
+      // The picture region is still submitted with a real height, and the splitter ratios the
+      // manual-priority contract owns (§9.3) never saw the band appear or disappear.
+      ImGuiWindow* picture = PanoramaPictureWindow();
+      IM_CHECK(picture != nullptr);
+      IM_CHECK(picture->Size.y > 1.0f);
+      IM_CHECK_EQ(gui::g_state.workspace.right_column_ratio, d1_ratio_before);
+      IM_CHECK_EQ(gui::g_state.workspace.right_list_ratio, d2_ratio_before);
       // The chrome window itself never scrolls for the warning: the band's height is part of
       // the column's vertical stack, not a window-level overflow.
       IM_CHECK_EQ(host->ScrollMax.y, 0.0f);

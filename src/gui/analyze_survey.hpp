@@ -315,14 +315,15 @@ std::string PointWaitLineFor(const PointQuerySession& point, double now_s, const
 // Analyze workspace is hidden (its render is the writer); the status bar field has no such
 // window.
 struct WaitFeedbackTexts {
-  std::string survey_wait_line;          // analyze_workspace.cpp, the overview's kWaiting line
-  std::string map_wait_line;             // analyze_map_view.cpp, the kWaiting branch's one text
-  std::string map_superseding_note;      // analyze_map_view.cpp, the Retry supersession note
-  std::string point_wait_line_fiber;     // analyze_point_view.cpp, the fiber region's kWaiting
-  std::string point_wait_line_details;   // analyze_point_view.cpp, the details' kWaiting
-  std::string share_list_busy_dots;      // analysis_panel.cpp, the selected row's activity dots
-  std::string status_bar_query_segment;  // app_panels.cpp, the status bar's active segment
-  std::string entry_hint_line;           // analyze_workspace.cpp, the Selection header's hint slot
+  std::string survey_wait_line;           // analyze_workspace.cpp, the overview's kWaiting line
+  std::string map_wait_line;              // analyze_map_view.cpp, the kWaiting branch's one text
+  std::string map_superseding_note;       // analyze_map_view.cpp, the Retry supersession note
+  std::string point_wait_line_fiber;      // analyze_point_view.cpp, the fiber region's kWaiting
+  std::string point_wait_line_details;    // analyze_point_view.cpp, the details' kWaiting
+  std::string share_list_busy_dots;       // analysis_panel.cpp, the selected row's activity dots
+  std::string status_bar_query_segment;   // app_panels.cpp, the status bar's active segment
+  std::string entry_hint_line;            // analyze_workspace.cpp, the Selection header's hint slot
+  std::string cone_center_drift_warning;  // analysis_panel.cpp, the drift band's fixed text
 };
 
 // ---- The ray face's session (742.6) ----------------------------------------------------------------
