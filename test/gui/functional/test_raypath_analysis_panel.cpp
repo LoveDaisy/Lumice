@@ -8977,6 +8977,43 @@ bool CheckMapCellSteps(ImGuiTestContext* ctx, const std::string& text, const LUM
 }
 
 bool CheckMapQualityText(ImGuiTestContext* ctx, const std::string& stem) {
+  // The shipped default, proven with the non-diagnostic premises group OPEN: the "Map
+  // diagnostics" header is unsubmitted (the gate, not a closed fold), and neither the grid /
+  // execution lines nor the engine's raw geometry-basis string leak into the capture.
+  {
+    const ScopedDebugDetailsEnv env_unset(DebugDetailsState::kUnset);
+    ctx->Yield(2);
+    IM_CHECK_RETV(ctx->ItemInfo("**/Map diagnostics##map_caliber", ImGuiTestOpFlags_NoError).ID == 0, false);
+    ImGuiWindow* report = MapReportWindow();
+    IM_CHECK_RETV(report != nullptr, false);
+    const ImGuiID prem_id = report->GetID("Map quantity & premises##map_caliber");
+    ImGuiStorage* prem_storage = &report->StateStorage;
+    const bool prem_open = prem_storage->GetInt(prem_id, 0) != 0;
+    if (!prem_open) {
+      ctx->ItemClick("**/Map quantity & premises##map_caliber");
+      ctx->Yield(2);
+    }
+    const std::string default_text = CaptureMapFrameText(ctx);
+    // The premises group is open, so its full-definition row is in the capture.
+    IM_CHECK_RETV(default_text.find("Quantity: ") != std::string::npos, false);
+    IM_CHECK_RETV(default_text.find("Reference cell") == std::string::npos, false);
+    IM_CHECK_RETV(default_text.find("Source-fixed scale") == std::string::npos, false);
+    IM_CHECK_RETV(default_text.find(" members \xC2\xB7 kept ") == std::string::npos, false);
+    LUMICE_PathSurveyEvidence evidence{};
+    evidence.struct_size = sizeof(evidence);
+    IM_CHECK_RETV(
+        LUMICE_PathMapGetEvidence(gui::g_state.analysis.map.adopted_result.get(), &evidence) == LUMICE_PATH_READ_OK,
+        false);
+    if (evidence.geometry_basis.length > 0) {
+      const std::string basis(evidence.geometry_basis.data, evidence.geometry_basis.length);
+      // The engine's raw basis string is a diagnostics row.
+      IM_CHECK_RETV(default_text.find(basis) == std::string::npos, false);
+    }
+    if (!prem_open) {
+      prem_storage->SetInt(prem_id, 0);  // restore the default-closed shape
+      ctx->Yield(1);
+    }
+  }
   // The caliber's diagnostics group is env-gated: the helper runs under "1" (the group's
   // header, idempotent-open and restore logic all ride the gate being on).
   const ScopedDebugDetailsEnv env_on(DebugDetailsState::kOn);
@@ -11071,18 +11108,42 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
     static gui::GuiState grid_probe;
     static bool draw_grid_probe = false;
     static std::string grid_report;
+    static gui::GuiState backdrop_probe;
+    static bool draw_backdrop_probe = false;
+    static int backdrop_probe_vertices = -1;
     t->GuiFunc = [](ImGuiTestContext*) {
-      if (!draw_grid_probe) {
-        return;
+      if (draw_grid_probe) {
+        ImGui::SetNextWindowPos(ImVec2(40.0f, 60.0f), ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(320.0f, 170.0f), ImGuiCond_Always);
+        ImGui::Begin("Compressed grid probe", nullptr, ImGuiWindowFlags_NoResize);
+        ImGui::LogToBuffer();
+        gui::RenderAnalyzeSunGlobeRegion(grid_probe, ImGui::GetContentRegionAvail());
+        grid_report = ImGui::GetCurrentContext()->LogBuffer.c_str();
+        ImGui::LogFinish();
+        ImGui::End();
       }
-      ImGui::SetNextWindowPos(ImVec2(40.0f, 60.0f), ImGuiCond_Always);
-      ImGui::SetNextWindowSize(ImVec2(320.0f, 170.0f), ImGuiCond_Always);
-      ImGui::Begin("Compressed grid probe", nullptr, ImGuiWindowFlags_NoResize);
-      ImGui::LogToBuffer();
-      gui::RenderAnalyzeSunGlobeRegion(grid_probe, ImGui::GetContentRegionAvail());
-      grid_report = ImGui::GetCurrentContext()->LogBuffer.c_str();
-      ImGui::LogFinish();
-      ImGui::End();
+      if (draw_backdrop_probe) {
+        // The backdrop probe must be tall enough for the canvas to exist (the compressed probe
+        // above is deliberately canvas-less — its ##globe_canvas absence is asserted): the
+        // grid's cell quads are the only state-driven vertex difference between two
+        // identically-sized frames (fixed window, fixed state → deterministic counts). The
+        // region's BeginChild body renders into the CHILD's own draw list, so the count sums
+        // the probe window and its direct children (skip a child that shares the parent's list,
+        // or its vertices would count twice).
+        ImGui::SetNextWindowPos(ImVec2(400.0f, 60.0f), ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(320.0f, 460.0f), ImGuiCond_Always);
+        ImGui::Begin("Grid backdrop probe", nullptr, ImGuiWindowFlags_NoResize);
+        ImGuiWindow* probe_win = ImGui::GetCurrentWindow();
+        gui::RenderAnalyzeSunGlobeRegion(backdrop_probe, ImGui::GetContentRegionAvail());
+        int vtx = probe_win->DrawList->VtxBuffer.Size;
+        for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
+          if (w->ParentWindow == probe_win && w->DrawList != nullptr && w->DrawList != probe_win->DrawList) {
+            vtx += w->DrawList->VtxBuffer.Size;
+          }
+        }
+        backdrop_probe_vertices = vtx;
+        ImGui::End();
+      }
     };
     t->TestFunc = [](ImGuiTestContext* ctx) {
       IM_CHECK(PoseCurveRegionDrawsAndMovesTheSharedCursor(ctx));
@@ -11109,6 +11170,43 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       IM_CHECK(grid_report.find("Crystal-frame sun directions") != std::string::npos);
       IM_CHECK(grid_report.find("no sun grid in this document") == std::string::npos);
       ctx->SetRef("");
+      // The backdrop is the toggle's DISPLAY EFFECT, gated at the draw site by the diagnostics
+      // env: with the grid document in hand and the toggle's default-true session value, the
+      // env off (unset and explicit "0" alike) keeps the canvas at its grid-free vertex count,
+      // "1" adds the cell quads, and off→on restores them without a second click (the
+      // preference was never cleared). The baseline is the same document with the toggle off.
+      backdrop_probe = gui::GuiState{};
+      backdrop_probe.analysis.point = gui::g_state.analysis.point;
+      backdrop_probe.analysis.point_view = gui::g_state.analysis.point_view;
+      IM_CHECK(backdrop_probe.analysis.point.adopted_result != nullptr);
+      draw_backdrop_probe = true;
+      struct BackdropLease {
+        ~BackdropLease() {
+          draw_backdrop_probe = false;
+          backdrop_probe = gui::GuiState{};
+        }
+      } backdrop_lease;
+      {
+        const ScopedDebugDetailsEnv env_on(DebugDetailsState::kOn);
+        backdrop_probe.analysis.point_view.show_deviation_grid = false;
+        ctx->Yield(3);
+        const int base = backdrop_probe_vertices;
+        IM_CHECK_GT(base, 0);
+        backdrop_probe.analysis.point_view.show_deviation_grid = true;
+        {
+          const ScopedDebugDetailsEnv env_unset(DebugDetailsState::kUnset);
+          ctx->Yield(3);
+          IM_CHECK_EQ(backdrop_probe_vertices, base);
+        }
+        {
+          const ScopedDebugDetailsEnv env_off(DebugDetailsState::kOff);
+          ctx->Yield(3);
+          IM_CHECK_EQ(backdrop_probe_vertices, base);
+        }
+        // Back inside the still-active "1" scope: the cells return, no click in between.
+        ctx->Yield(3);
+        IM_CHECK_GT(backdrop_probe_vertices, base);
+      }
     };
   }
 

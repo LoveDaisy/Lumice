@@ -1345,10 +1345,16 @@ void RenderAnalyzeSunGlobeRegion(GuiState& state, const ImVec2& size) {
       });
       return;
     }
-    // Payload availability is independent of whether this geometry can show the canvas.
+    // Payload availability is independent of whether this geometry can show the canvas. The
+    // backdrop is the toggle's DISPLAY EFFECT, so its eligibility is the diagnostics env gate
+    // itself, not the toggle's alone: the toggle's session default is true, and gating only
+    // the factors-region control left the diagnostic backdrop rendering in the shipped
+    // default state with the checkbox that turns it off hidden. Gating the draw site — not by
+    // clearing the flag or the payload — keeps the session preference intact: env on again
+    // redraws without a second click.
     LUMICE_PathSunGrid grid{};
     grid.struct_size = sizeof(grid);
-    const bool have_grid = view.show_deviation_grid &&
+    const bool have_grid = env::AnalyzeDebugDetails() && view.show_deviation_grid &&
                            LUMICE_PathPointGetSunGrid(point.adopted_result.get(), &grid) == LUMICE_PATH_READ_OK &&
                            grid.cell_count > 0;
     if (graph_side > 0.0f) {
@@ -1368,8 +1374,9 @@ void RenderAnalyzeSunGlobeRegion(GuiState& state, const ImVec2& size) {
       dl->AddCircleFilled(centre_px, radius_px, IM_COL32(16, 18, 22, 255));
       dl->AddCircle(centre_px, radius_px, IM_COL32(70, 74, 82, 200), 0, 1.0f);
 
-      // The deviation backdrop: only when the document carries a grid (AC2's named-absence rule) and
-      // the toggle stands.
+      // The deviation backdrop: only when the diagnostics env admits it, the document carries
+      // a grid (AC2's named-absence rule) and the toggle stands — the three conditions ride
+      // `have_grid` above.
       if (have_grid) {
         const double deg_to_rad = 3.14159265358979323846 / 180.0;
         for (int i = 0; i < grid.lat_count; ++i) {
@@ -2639,9 +2646,10 @@ void RenderPoseFactorsRegion(GuiState& state, const ImVec2& size) {
     // state lives in the pose window's ImGui storage — session-sticky, no GuiState field, the
     // same convention every answer host follows. The diagnostics group is env-gated as a
     // whole: with LUMICE_ANALYZE_DEBUG_DETAILS off, neither its header nor the deviation-grid
-    // toggle inside it renders, and the toggle's stored true value cannot re-display the grid
-    // either (the grid's backdrop reader gates on the toggle, which stays parked until the
-    // env returns). ----
+    // toggle inside it renders. The toggle's display effect is gated at the globe's own draw
+    // site (see RenderAnalyzeSunGlobeRegion's have_grid), so the toggle's default-true session
+    // value cannot show the backdrop while the gate is off — and the value is never cleared,
+    // so env on again restores the backdrop without a second click. ----
     if (FoldOpen(kPoseTransmissionLabel, "pose_factors")) {
       // The per-interface transmittances: T's optical premises — the ladder's evidence rows,
       // not the default layer's conclusions.
