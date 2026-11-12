@@ -1,56 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794334962749,
+  "lastUpdate": 1794502414630,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "6e0a5b01d67218589710fdc63aaa96e5c9bab05d",
-          "message": "Merge pull request #480 from LoveDaisy/fix/dual-fisheye-fold-boundary-loss\n\nfix(raypath): clamp dual-fisheye fold-boundary pixels into canvas (task-670)",
-          "timestamp": "2026-10-10T22:52:34+08:00",
-          "tree_id": "9b991e7eb24effad677fcd4328ccfd41633c9d4f",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/6e0a5b01d67218589710fdc63aaa96e5c9bab05d"
-        },
-        "date": 1791644140574,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 385508.5,
-            "unit": "rays/sec",
-            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 504767.8,
-            "unit": "rays/sec",
-            "extra": "CPU: Neoverse-N2\\nCores: 4"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 366579.9,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 7763 64-Core Processor\\nCores: 4"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 313054.8,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -4794,6 +4746,54 @@ window.BENCHMARK_DATA = {
             "value": 338580.4,
             "unit": "rays/sec",
             "extra": "CPU: Intel(R) Xeon(R) Platinum 8370C CPU @ 2.80GHz\\nCores: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c207e85cf26ec4a62529bac078bef0ffd2964f2d",
+          "message": "Merge pull request #583 from LoveDaisy/feat/gate-metal-env-resilience\n\nfix(gate): metal leg env resilience - tolerant decode + build-tools pre-check",
+          "timestamp": "2026-11-13T00:49:24+08:00",
+          "tree_id": "a6b283103069e94aa0ec31d7665b93f3dd6ca6bd",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/c207e85cf26ec4a62529bac078bef0ffd2964f2d"
+        },
+        "date": 1794502413144,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 369815.1,
+            "unit": "rays/sec",
+            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 505509.4,
+            "unit": "rays/sec",
+            "extra": "CPU: Neoverse-N2\\nCores: 4"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 366172.5,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 7763 64-Core Processor\\nCores: 4"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 339097.3,
+            "unit": "rays/sec",
+            "extra": "CPU: INTEL(R) XEON(R) PLATINUM 8573C\\nCores: 4"
           }
         ]
       }
