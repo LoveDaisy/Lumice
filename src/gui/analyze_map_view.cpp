@@ -615,6 +615,21 @@ bool ProjectToRect(const MapCanvasProjection& view, const double pos[3], const I
   return true;
 }
 
+// A projected pair's disk continuity: the dual-fisheye family (a full-sky lens — no view
+// transform, the world travel direction goes straight in) splits the sky into two disks by the
+// travel direction's z sign, so consecutive samples on opposite sides of the split belong to
+// different disks and the segment between them does not exist on the picture. One predicate, two
+// consumers — the iso-delta walk (a flip breaks the run: a fresh polyline starts at the next
+// in-disk pair) and the profile device (a flip voids the all-or-nothing interval). Every other
+// lens projects into one contiguous region, where a projected pair is always continuous.
+bool SameProjectionDisk(int lens_type, double travel_prev_z, double travel_next_z) {
+  if (lens_type == kLensTypeDualFisheyeEqualArea || lens_type == kLensTypeDualFisheyeEquidist ||
+      lens_type == kLensTypeDualFisheyeStereographic || lens_type == kLensTypeDualFisheyeOrthographic) {
+    return (travel_prev_z < 0.0) == (travel_next_z < 0.0);
+  }
+  return true;
+}
+
 // One drawn segment of the iso-deviation circle's walk: whether any point landed in the disk,
 // and the topmost (smallest screen y) of them — the label anchor the curve's readout sits at.
 struct IsoDeltaWalk {
@@ -726,6 +741,7 @@ IsoDeltaWalk WalkIsoDeltaCircle(ImDrawList* dl, const MapCanvasProjection& view,
   IsoDeltaWalk walk;
   double last_x = 0.0;
   double last_y = 0.0;
+  double prev_travel_z = 0.0;
   for (int s = 0; s <= kOverlaySegments; ++s) {
     const double phi = 2.0 * kPiD * s / kOverlaySegments;
     double p[3];
@@ -737,10 +753,16 @@ IsoDeltaWalk WalkIsoDeltaCircle(ImDrawList* dl, const MapCanvasProjection& view,
       continue;
     }
     ++walk.samples_in_disk;
-    if (walk.drawn > 0 && (!dashed || (s / kDashCycleSegments) % 2 == 0)) {
+    const double travel_z = -p[2];  // the projection's own input (ProjectToRect negates)
+    const bool same_disk = s == 0 || SameProjectionDisk(view.camera.lens_type, prev_travel_z, travel_z);
+    prev_travel_z = travel_z;
+    if (walk.drawn > 0 && same_disk && (!dashed || (s / kDashCycleSegments) % 2 == 0)) {
       dl->AddLine(ImVec2(static_cast<float>(last_x), static_cast<float>(last_y)),
                   ImVec2(static_cast<float>(x), static_cast<float>(y)), colour, thickness);
       ++walk.lines_submitted;
+    }
+    if (!same_disk) {
+      walk.drawn = 0;  // a disk flip breaks the run the same way an off-view sample does
     }
     last_x = x;
     last_y = y;
@@ -1317,12 +1339,27 @@ void DrawProfileHoverDevice(ImDrawList* dl, const SurveyProbeView& probe, const 
     const int steps = std::min(64, std::max(2, static_cast<int>(std::ceil((hi - lo) * 2.0))));  // ~0.5° resolution
     std::vector<ProfileScreenPoint> samples;
     samples.reserve(static_cast<size_t>(steps) + 1);
+    double prev_travel_z = 0.0;
     for (int s = 0; s <= steps; ++s) {
-      const ProfileScreenPoint pt = device_point(lo + (hi - lo) * static_cast<double>(s) / static_cast<double>(steps));
-      if (!pt.projected) {
+      const double delta = lo + (hi - lo) * static_cast<double>(s) / static_cast<double>(steps);
+      double p[3];
+      SkyPointAboutSun(sun_pos, u, v, delta, phi, p);
+      const double travel_z = -p[2];
+      if (s > 0 && !SameProjectionDisk(view.camera.lens_type, prev_travel_z, travel_z)) {
+        return;  // the interval spans the dual-fisheye disk split: the bridged chord does not
+                 // exist on the picture, and the all-or-nothing rule keeps the list untouched
+      }
+      prev_travel_z = travel_z;
+      double x = 0.0;
+      double y = 0.0;
+      ProfileScreenPoint out;
+      out.projected = ProjectToRect(view, p, pic_min, in.pic_px, &x, &y);
+      out.x = x;
+      out.y = y;
+      if (!out.projected) {
         return;  // one sample off the view: the whole device stays undrawn, the draw list untouched
       }
-      samples.push_back(pt);
+      samples.push_back(out);
     }
     for (size_t s = 1; s < samples.size(); ++s) {
       dl->AddLine(ImVec2(static_cast<float>(samples[s - 1].x), static_cast<float>(samples[s - 1].y)),

@@ -980,6 +980,22 @@ class MapDeviceDrawRig : public ::testing::Test {
     return vp;
   }
 
+  // The dual-fisheye camera (a full-sky lens, no view transform): the sky splits into two disks
+  // by the travel direction's z sign — the left disk holds the upper hemisphere, the right one
+  // the lower — so a device whose sample sequence crosses the horizon meets the projection's own
+  // break, the one a naive "every sample projects" reading misses.
+  static ViewProjection DualFisheyeCamera() {
+    ViewProjection vp;
+    vp.lens_type = kLensTypeDualFisheyeEquidist;
+    vp.fov = 180.0f;
+    vp.elevation = 20.0f;
+    vp.azimuth = 0.0f;
+    vp.roll = 0.0f;
+    vp.visible = kVisibleFull;
+    vp.front = false;
+    return vp;
+  }
+
   static SurveyDiagnoseView Diagnose(const char* kind, const char* colour, double delta_deg, bool coverage) {
     SurveyDiagnoseView d;
     d.available = true;
@@ -1640,6 +1656,59 @@ TEST_F(ProfileHoverDraw, PartialIntervalInViewDrawsNothing) {
   // frustum reach of the rig's 180° fisheye — the interval crosses the view's edge partway.
   DrawProfileHoverDevice(dl, Probe(true, 0.0, 25.0, 100.0), Input(vp, 20.0, 0.0, SurveyProfileHover::kSeparation));
   EXPECT_EQ(RoseCount(), 0) << "a partially-visible interval must leave the draw list untouched";
+}
+
+// The reviewer's dual-fisheye probe: every sample individually projects, but the interval
+// straddles the horizon — the sky's disk split — so consecutive samples belong to DIFFERENT
+// disks and the bridged chord does not exist on the picture. Sun at alt 45, the probe's radial
+// line at φ=π: the interval δ∈[20,80] crosses z=0 at δ=45. All-or-nothing: the rose bucket must
+// be empty.
+TEST_F(ProfileHoverDraw, IntervalAcrossTheDiskSplitDrawsNothing) {
+  const ViewProjection vp = DualFisheyeCamera();
+  ImDrawList* dl = ImGui::GetBackgroundDrawList();
+  DrawProfileHoverDevice(dl, Probe(true, 0.0, 20.0, 80.0), Input(vp, 45.0, 0.0, SurveyProfileHover::kSeparation));
+  EXPECT_EQ(RoseCount(), 0) << "an interval across the disk split must leave the draw list untouched";
+}
+
+// The same projection break, on the walk: a verdict ring about an alt-45 sun at δ=60 crosses
+// the horizon, and on the dual-fisheye camera its upper-half samples land in the left disk and
+// its lower-half ones in the right. The run must break at the split — no submitted segment
+// straddles the disks' shared edge (canvas x = 300), which is where a naive "every pair draws"
+// walk would bridge the halves. Pre-fix this ring drew exactly such a chord; the segments are
+// read as white-uv quads of the anchor colour (the label's glyphs carry atlas uv and stay out).
+TEST_F(VerdictAnchorDraw, WalkBreaksAtTheDualFisheyeDiskSplit) {
+  const ViewProjection vp = DualFisheyeCamera();
+  VerdictAnchorInput in = Input(vp, /*shown=*/true, /*hover=*/false);
+  in.sun.altitude_deg = 45.0;
+  in.sun.azimuth_deg = 0.0;
+  ImDrawList* dl = ImGui::GetBackgroundDrawList();
+  DrawVerdictAnchor(dl, Diagnose("edge", "blue", 60.0, true), in);
+  ASSERT_GT(IndexCountForColour(kChromaticColourBlue), 0) << "the ring must draw for the walk to be read";
+  const ImVec2 white = ImGui::GetIO().Fonts->TexUvWhitePixel;
+  std::vector<std::array<float, 2>> geom;
+  for (int i = 0; i < dl->VtxBuffer.Size; ++i) {
+    const ImDrawVert& v = dl->VtxBuffer[i];
+    if (v.col != kChromaticColourBlue) {
+      continue;
+    }
+    if (std::fabs(v.uv.x - white.x) < 1e-3f && std::fabs(v.uv.y - white.y) < 1e-3f) {
+      geom.push_back({ v.pos.x, v.pos.y });
+    }
+  }
+  ASSERT_EQ(geom.size() % 4, 0u) << "the ring's segments come in line quads";
+  int straddling = 0;
+  for (size_t q = 0; q + 3 < geom.size(); q += 4) {
+    float qmin_x = FLT_MAX;
+    float qmax_x = -FLT_MAX;
+    for (int k = 0; k < 4; ++k) {
+      qmin_x = std::min(qmin_x, geom[q + k][0]);
+      qmax_x = std::max(qmax_x, geom[q + k][0]);
+    }
+    if (qmin_x < 299.0f && qmax_x > 301.0f) {
+      ++straddling;
+    }
+  }
+  EXPECT_EQ(straddling, 0) << "no walk segment may bridge the two disks";
 }
 
 }  // namespace
