@@ -1895,6 +1895,19 @@ struct GuiState {
     // the canvas's verdict anchor draw (analyze_map_view.cpp DrawSurveyOverlays).
     bool verdict_anchor_shown = false;
     bool verdict_anchor_hover = false;
+    // The reference profile's hover standing (§16.1.3's extension): which of the class answer's
+    // three profile reading rows the pointer stood on — the profile device's read, written by the
+    // same class-answer render path that owns the verdict hover above, consumed by the canvas the
+    // NEXT frame (the same one-frame lag), and reset by the same three seams (the absent branch,
+    // the closed early-return, the Begin-false branch). Session tier like its sibling: never
+    // persisted, not in ConfigSnapshot or the dirty diff, Revert keeps them. The ratio row keeps
+    // its feedback local and never enters this identity (it names no spatial payload).
+    // WRITERS (the audit set): RenderAnalyzeMapRegion's ##MapReport class-answer host (the
+    // overwrite, and the absent branch's reset); RenderAnalyzeRaypathViewWindow's closed-window
+    // seams (both the closed early-return and the Begin-false branch). No other write path by
+    // construction. READER: the canvas's profile device draw (analyze_map_view.cpp
+    // DrawSurveyOverlays).
+    SurveyProfileHover profile_row_hover = SurveyProfileHover::kNone;
     // The sun the frozen scene binding was built with, captured at DoAnalyze (the GUI's sun is
     // always due north). The map request's window geometry derives from the sun the ENGINE will
     // evaluate against — the executor's frozen scene, not the live document, which the user may

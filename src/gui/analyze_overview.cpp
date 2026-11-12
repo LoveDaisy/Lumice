@@ -157,6 +157,8 @@ void ReadProbe(const LUMICE_PathSurvey& result, SurveyOverviewModel* model) {
   view.mode = SurveyTextString(probe.reason);
   view.wavelength_nm = probe.wavelength_nm;
   view.refractive_index = probe.refractive_index;
+  view.azimuth_available = probe.azimuth_available != 0;
+  view.azimuth_deg = probe.azimuth_deg;
   view.edge_available = probe.edge_available != 0;
   view.edge_deg = probe.edge_deg;
   view.peak_available = probe.peak_available != 0;
@@ -546,20 +548,30 @@ void TextDeg(const char* label, double deg) {
   ImGui::TextWrapped("%s %s", label, FormatDeg(deg).c_str());
 }
 
-// The row's addressable hover surface (the verdict anchor's read, §16.1's A2 pilot): an
-// invisible button spanning the LAST item's own rect, submitted right after it. Plain text has
-// no ID — without an item there is neither a hover affordance nor the tests' addressing; the
-// button carries both and draws nothing. Submitted from the item's own rect top, ItemSize
-// replays the flow cursor exactly where the text item left it (the line's y restarts at the set
-// position, x returns to the line start), so both hosts' pixels and layout are the text's own —
-// SameLine after the row reads the button's rect, which IS the text's. Call immediately after
-// the row's text item; the call site owns OR-ing this into the frame's readout.
-bool HoverableRowOverlay(const char* id) {
+// The row's addressable hover surface and THIS-frame's highlight (the §16.1 A2 pilot's row
+// overlay, extended by the 2026-11-12 feedback wave: the row must also be locally perceivable —
+// the owner overturned the "fully transparent, no highlight" form). An invisible button spanning
+// the LAST item's own rect, submitted right after it; on hover a theme-interaction background is
+// drawn UNDER the row's text — into the window's background channel, which the caller split for
+// exactly this purpose (channels: 0 background, 1 content; the merge puts 0 under 1), so the
+// text stays in the foreground and the highlight never mixes with a semantic colour. Plain text
+// has no ID — the button carries both the hover affordance and the tests' addressing. Call
+// immediately after the row's text item; the call site owns the row's identity write.
+// `highlight_armed` is the interactive host's flag; without it the surface is the pilot's
+// original fully transparent one and nothing is drawn.
+bool HoverableRow(const char* id, bool highlight_armed) {
   const ImVec2 tmin = ImGui::GetItemRectMin();
   const ImVec2 tmax = ImGui::GetItemRectMax();
   ImGui::SetCursorScreenPos(tmin);
   ImGui::InvisibleButton(id, ImVec2(tmax.x - tmin.x, tmax.y - tmin.y));
-  return ImGui::IsItemHovered();
+  const bool hovered = ImGui::IsItemHovered();
+  if (hovered && highlight_armed) {
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->ChannelsSetCurrent(0);
+    dl->AddRectFilled(tmin, tmax, ImGui::GetColorU32(ImGuiCol_HeaderHovered));
+    dl->ChannelsSetCurrent(1);
+  }
+  return hovered;
 }
 
 // The region's text wraps, never clips: ImGui's Text/TextDisabled/BulletText size a single line
@@ -584,10 +596,21 @@ void DisabledWrapped(const char* fmt, ...) {
 // verdict, the tint and TIR readings the conclusions don't already carry — read the same model
 // fields here, so both hosts see them without a second model.
 //
-// `verdict_hover_readout` is the verdict anchor's hover read; the two linked diagnose rows (the
-// verdict line and the Position line) gain their addressable hover surface only when it is
-// non-null — see RenderSurveyOverviewModel's declaration for the read contract.
-void RenderSurveyDefaultLayer(const SurveyOverviewModel& model, bool* verdict_hover_readout = nullptr) {
+// `row_readout` is the interactive host's read: non-null, the hoverable rows (the two linked
+// diagnose rows, the three profile reading rows and the ratio row) carry their addressable
+// surfaces and their THIS-frame highlight feedback, and every standing lands in the readout —
+// the verdict rows OR theirs, the profile rows write an exclusive standing the canvas consumes
+// next frame; the ratio row's feedback is local only (it names no spatial payload). The
+// highlight channel split wraps exactly the row-carrying body; the main-window summary passes
+// null and renders byte-identically to its previous shape.
+void RenderSurveyDefaultLayer(const SurveyOverviewModel& model, SurveyRowHoverReadout* row_readout = nullptr) {
+  // The interactive host's highlight channel: the window's own splitter, channel 1 carrying all
+  // normal content, the hover backgrounds landing in channel 0 — the merge below puts them under
+  // the text. No split on the summary host (null readout): no extra commands, byte-identical.
+  if (row_readout != nullptr) {
+    ImGui::GetWindowDrawList()->ChannelsSplit(2);
+    ImGui::GetWindowDrawList()->ChannelsSetCurrent(1);
+  }
   // The limits first (§16.1: state honesty covers both layers; the disabled block the header
   // used to carry keeps its content, minus the counts line that moved into Calculation
   // details).
@@ -631,13 +654,13 @@ void RenderSurveyDefaultLayer(const SurveyOverviewModel& model, bool* verdict_ho
     ImGui::Bullet();
     ImGui::TextWrapped("Weight colour: %s, %s, %s.", model.diagnose.verdict_kind.c_str(), model.diagnose.color.c_str(),
                        model.diagnose.visible ? "visible" : "not visible");
-    if (verdict_hover_readout != nullptr) {
-      *verdict_hover_readout |= HoverableRowOverlay("###diagnose_verdict_row");
+    if (row_readout != nullptr) {
+      row_readout->verdict |= HoverableRow("###diagnose_verdict_row", true);
     }
     if (model.diagnose.position_available) {
       TextDeg("Position:", model.diagnose.position_deg);
-      if (verdict_hover_readout != nullptr) {
-        *verdict_hover_readout |= HoverableRowOverlay("###diagnose_position_row");
+      if (row_readout != nullptr) {
+        row_readout->verdict |= HoverableRow("###diagnose_position_row", true);
       }
     }
     if (!model.diagnose.coverage_complete) {
@@ -652,6 +675,12 @@ void RenderSurveyDefaultLayer(const SurveyOverviewModel& model, bool* verdict_ho
   if (model.tint.available && model.tint.reading_available && model.arm != SurveyArm::kIdentity) {
     ImGui::Bullet();
     ImGui::TextWrapped("Blue/red ratio %.3f — %s.", model.tint.ratio, DirectionProse(model.tint.direction).c_str());
+    // The ratio row's hover surface and highlight are LOCAL only: the ratio names no spatial
+    // payload, so it enters no session identity and drives no map geometry (the plan's honest
+    // absence — a row feedback that cannot fabricate a location from a number it does not have).
+    if (row_readout != nullptr) {
+      HoverableRow("###tint_ratio_row", true);
+    }
   } else if (model.tint.available && !model.tint.reading_available) {
     DisabledWrapped("Weight tint: no reading (%s).", SurveyStateName(model.tint.state));
   }
@@ -663,17 +692,30 @@ void RenderSurveyDefaultLayer(const SurveyOverviewModel& model, bool* verdict_ho
   if (model.probe.available && model.probe.state == LUMICE_PATH_STATE_REFUSED) {
     DisabledWrapped("Probe refused (%s) — no readings claimed.", model.probe.mode.c_str());
   } else if (model.probe.available && model.arm != SurveyArm::kFullDimensional) {
+    // The three reading rows: the profile device's trigger set (§16.1.3's extension). Each row
+    // carries its hover surface and highlight; the standing is EXCLUSIVE — one pointer, one row
+    // — and lands in the readout as the canvas's next-frame identity. The rows' own words stay
+    // byte-identical: only the interaction surfaces are new.
     if (model.probe.edge_available) {
       ImGui::Bullet();
       ImGui::TextWrapped("Profile edge %s", FormatDeg(model.probe.edge_deg).c_str());
+      if (row_readout != nullptr && HoverableRow("###profile_edge_row", true)) {
+        row_readout->profile = SurveyProfileHover::kEdge;
+      }
     }
     if (model.probe.peak_available) {
       ImGui::Bullet();
       ImGui::TextWrapped("Profile peak %s", FormatDeg(model.probe.peak_deg).c_str());
+      if (row_readout != nullptr && HoverableRow("###profile_peak_row", true)) {
+        row_readout->profile = SurveyProfileHover::kPeak;
+      }
     }
     if (model.probe.separation_available) {
       ImGui::Bullet();
       ImGui::TextWrapped("Peak–edge separation %s", FormatDeg(model.probe.separation_deg).c_str());
+      if (row_readout != nullptr && HoverableRow("###profile_separation_row", true)) {
+        row_readout->profile = SurveyProfileHover::kSeparation;
+      }
     }
   }
   // The witness's quantitative reading on the arms whose conclusions don't carry the witness
@@ -699,6 +741,11 @@ void RenderSurveyDefaultLayer(const SurveyOverviewModel& model, bool* verdict_ho
     } else {
       DisabledWrapped("Internal-reflection share %s (%s).", SurveyStateName(model.tir.state), model.tir.mode.c_str());
     }
+  }
+  // The highlight channel's merge: the background channel (0) renders under the content channel
+  // (1) — the hover backgrounds the rows drew. Only the interactive host ever split.
+  if (row_readout != nullptr) {
+    ImGui::GetWindowDrawList()->ChannelsMerge();
   }
 }
 
@@ -905,12 +952,12 @@ void RenderSurveyCalculationDetails(const SurveyOverviewModel& model) {
 
 }  // namespace
 
-void RenderSurveyOverviewModel(const SurveyOverviewModel& model, bool* verdict_hover_readout) {
+void RenderSurveyOverviewModel(const SurveyOverviewModel& model, SurveyRowHoverReadout* row_readout) {
   if (!model.valid) {
     ImGui::TextUnformatted("Survey document unreadable.");
     return;
   }
-  RenderSurveyDefaultLayer(model, verdict_hover_readout);
+  RenderSurveyDefaultLayer(model, row_readout);
   ImGui::Spacing();
   if (FoldOpen(kSurveyPhysicsDetailsLabel, "sv_answer")) {
     RenderSurveyPhysicsDetails(model);

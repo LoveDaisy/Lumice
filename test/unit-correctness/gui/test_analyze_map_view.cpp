@@ -944,7 +944,7 @@ TEST(AnalyzeMapView, OverlayMarkerStyleSolidOnlyForConcludedClaims) {
 // curve's colour; the x-extent reading below survives them because the label's patch sits inside
 // the ring's own).
 
-class VerdictAnchorDraw : public ::testing::Test {
+class MapDeviceDrawRig : public ::testing::Test {
  protected:
   void SetUp() override {
     ctx_ = ImGui::CreateContext();
@@ -1098,6 +1098,9 @@ class VerdictAnchorDraw : public ::testing::Test {
 
   ImGuiContext* ctx_ = nullptr;
 };
+
+// The verdict-anchor fixture shares the rig wholesale.
+class VerdictAnchorDraw : public MapDeviceDrawRig {};
 
 // The honesty gate on a synthetic diagnose — the injection seam the SurveyDiagnoseView plain
 // struct provides, and the only tier that can hold the drawn legs: the engine reaches a
@@ -1349,6 +1352,248 @@ TEST_F(VerdictAnchorDraw, EdgeAnchorKeepsTheLabelInsideTheCanvas) {
       EXPECT_LE(gmax_y, max_y + 0.5f) << poke.what << ": glyph below backing";
       EXPECT_NEAR(max_x - min_x, (gmax_x - gmin_x) + 6.0f, 4.0f) << poke.what << ": backing wraps the text";
     }
+  }
+}
+
+// ---- The reference profile's hover device (§16.1.3's extension) --------------------------------------
+//
+// The same headless rig as the verdict anchor's. The positioning assertions read the drawn point
+// against THE TEST'S OWN projection of THE TEST'S OWN sky math — AltAz→world, the walk basis, the
+// φ = π − az azimuth mapping, the equidistant law and the canvas mapping, all spelled locally
+// below — never a readback of the production conversion (an independent anchor is two
+// implementations of one spec, not one implementation reading itself). The anchor is pinned to
+// the rig's SunCamera (elevation 20, azimuth 0, roll 0); the asymmetric-sun legs are what keep it
+// honest (a mirrored azimuth mapping or a swapped basis vector would land the point 180° or 90°
+// away, far outside the tolerance).
+
+class ProfileHoverDraw : public MapDeviceDrawRig {
+ protected:
+  static SurveyProbeView Probe(bool az_available, double az_deg, double edge_deg, double peak_deg, int state = 0) {
+    SurveyProbeView p;
+    p.available = true;
+    p.state = state;  // 0 = the finite default: the honesty gate only refuses LUMICE_PATH_STATE_REFUSED
+    p.azimuth_available = az_available;
+    p.azimuth_deg = az_deg;
+    p.edge_available = true;
+    p.edge_deg = edge_deg;
+    p.peak_available = true;
+    p.peak_deg = peak_deg;
+    p.separation_available = true;
+    p.separation_deg = peak_deg - edge_deg;
+    return p;
+  }
+
+  static ProfileHoverInput Input(const ViewProjection& vp, double sun_alt, double sun_az, SurveyProfileHover hover) {
+    ProfileHoverInput in;
+    in.camera = &vp;
+    in.width_px = 600;
+    in.height_px = 600;
+    in.width_pt = 600.0f;
+    in.height_pt = 600.0f;
+    in.pic_min_x = 0.0f;
+    in.pic_min_y = 0.0f;
+    in.pic_px = 600.0f;
+    in.sun.altitude_deg = sun_alt;
+    in.sun.azimuth_deg = sun_az;
+    in.hover = hover;
+    return in;
+  }
+
+  // The colour bucket's vertex bounding box's centre — the drawn point's own read (the marker is
+  // an evenly-tessellated fan about its centre; the rose bucket carries no other primitive).
+  static void RoseCentre(double* cx, double* cy) {
+    ImDrawList* dl = ImGui::GetBackgroundDrawList();
+    float min_x = FLT_MAX;
+    float min_y = FLT_MAX;
+    float max_x = -FLT_MAX;
+    float max_y = -FLT_MAX;
+    for (int i = 0; i < dl->VtxBuffer.Size; ++i) {
+      const ImDrawVert& v = dl->VtxBuffer[i];
+      if (v.col != kProfileReadingColour) {
+        continue;
+      }
+      min_x = std::min(min_x, v.pos.x);
+      min_y = std::min(min_y, v.pos.y);
+      max_x = std::max(max_x, v.pos.x);
+      max_y = std::max(max_y, v.pos.y);
+    }
+    *cx = (min_x + max_x) * 0.5;
+    *cy = (min_y + max_y) * 0.5;
+  }
+
+  // The test's own projection: sky point (δ on the probe's radial line at az) → screen, with the
+  // view matrix and the equidistant law inlined for the rig's SunCamera. Returns screen pt coords.
+  static std::array<double, 2> ExpectedScreenPoint(double sun_alt, double sun_az, double delta_deg,
+                                                   double probe_az_deg) {
+    double sun[3];
+    SkyPositionOf(sun_alt, sun_az, sun);
+    double u[3] = { 0.0, 0.0, 1.0 };
+    double dot = u[0] * sun[0] + u[1] * sun[1] + u[2] * sun[2];
+    if (std::fabs(dot) > 0.9) {
+      u[0] = 1.0;
+      u[1] = 0.0;
+      u[2] = 0.0;
+      dot = u[0] * sun[0] + u[1] * sun[1] + u[2] * sun[2];
+    }
+    for (int k = 0; k < 3; ++k) {
+      u[k] -= dot * sun[k];
+    }
+    double un = std::sqrt(u[0] * u[0] + u[1] * u[1] + u[2] * u[2]);
+    for (int k = 0; k < 3; ++k) {
+      u[k] /= un;
+    }
+    double v[3] = { sun[1] * u[2] - sun[2] * u[1], sun[2] * u[0] - sun[0] * u[2], sun[0] * u[1] - sun[1] * u[0] };
+    const double phi = kPiD - probe_az_deg * kD2R;  // the mapping the device claims
+    const double delta = delta_deg * kD2R;
+    double p[3];
+    for (int k = 0; k < 3; ++k) {
+      p[k] = std::cos(delta) * sun[k] + std::sin(delta) * (std::cos(phi) * u[k] + std::sin(phi) * v[k]);
+    }
+    // travel = −p, the rig's view (elevation 20, azimuth 0, roll 0): right/up/forward spelled at
+    // those values; the equidistant fisheye: screen radius = img_radius·θ/half_fov.
+    const double travel[3] = { -p[0], -p[1], -p[2] };
+    const double e = 20.0 * kD2R;
+    const double right[3] = { 0.0, -1.0, 0.0 };
+    const double up[3] = { std::sin(e), 0.0, -std::cos(e) };
+    const double fwd[3] = { std::cos(e), 0.0, std::sin(e) };
+    const double vd[3] = { right[0] * travel[0] + right[1] * travel[1] + right[2] * travel[2],
+                           up[0] * travel[0] + up[1] * travel[1] + up[2] * travel[2],
+                           fwd[0] * travel[0] + fwd[1] * travel[1] + fwd[2] * travel[2] };
+    const double theta = std::acos(std::clamp(-vd[2], -1.0, 1.0));
+    const double rr = 300.0 * theta / (kPiD / 2.0);
+    const double phi_s = std::atan2(vd[1], vd[0]);
+    const double sx = rr * std::cos(phi_s);
+    const double sy = rr * std::sin(phi_s);
+    return { (sx / 600.0 + 0.5) * 600.0, (0.5 - sy / 600.0) * 600.0 };
+  }
+
+  static int RoseCount() {
+    ImDrawList* dl = ImGui::GetBackgroundDrawList();
+    int count = 0;
+    for (int i = 0; i < dl->VtxBuffer.Size; ++i) {
+      if (dl->VtxBuffer[i].col == kProfileReadingColour) {
+        ++count;
+      }
+    }
+    return count;
+  }
+};
+
+// The device's ONE positioning fact: the drawn point sits at the sky position the probe's own
+// azimuth names — (δ on the radial line, the φ = π − az mapping) — computed by the test's own
+// math above, on an asymmetric sun so neither a mirrored mapping nor a stale azimuth can pass.
+TEST_F(ProfileHoverDraw, PointLandsAtTheProbeAzimuthsSkyPosition) {
+  const ViewProjection vp = SunCamera();
+  struct Leg {
+    const char* what;
+    double sun_alt;
+    double sun_az;
+    double delta;
+    double probe_az;
+  };
+  const Leg legs[] = {
+    { "aimed sun, built-in azimuth", 20.0, 0.0, 22.0, 0.0 },
+    { "aimed sun, non-trivial azimuth", 20.0, 0.0, 22.0, 90.0 },
+    { "asymmetric sun, built-in azimuth", 35.0, 55.0, 18.0, 0.0 },
+    { "asymmetric sun, non-trivial azimuth", 35.0, 55.0, 30.0, 200.0 },
+  };
+  for (const Leg& leg : legs) {
+    ImDrawList* dl = ImGui::GetBackgroundDrawList();
+    dl->VtxBuffer.resize(0);
+    dl->IdxBuffer.resize(0);
+    dl->CmdBuffer.resize(0);
+    dl->_VtxCurrentIdx = 0;
+    dl->AddDrawCmd();
+    DrawProfileHoverDevice(dl, Probe(true, leg.probe_az, leg.delta, leg.delta + 10.0),
+                           Input(vp, leg.sun_alt, leg.sun_az, SurveyProfileHover::kEdge));
+    if (RoseCount() <= 0) {
+      ADD_FAILURE() << leg.what << ": the point must draw";
+      continue;
+    }
+    double cx = 0.0;
+    double cy = 0.0;
+    RoseCentre(&cx, &cy);
+    const auto expect = ExpectedScreenPoint(leg.sun_alt, leg.sun_az, leg.delta, leg.probe_az);
+    EXPECT_NEAR(cx, expect[0], 2.5) << leg.what << ": point x against the test's own projection";
+    EXPECT_NEAR(cy, expect[1], 2.5) << leg.what << ": point y against the test's own projection";
+  }
+}
+
+// The separation device's shape: the radial INTERVAL between the two readings, endpoints marked
+// — the drawn rose bucket must span both endpoints (the test's own projection) and stay a
+// bounded sliver along the line, never a ring or an annulus (a ring at either delta would blow
+// the sliver's size band).
+TEST_F(ProfileHoverDraw, SeparationIntervalSpansTheTwoReadings) {
+  const ViewProjection vp = SunCamera();
+  ImDrawList* dl = ImGui::GetBackgroundDrawList();
+  const SurveyProbeView probe = Probe(true, 0.0, 25.0, 40.0);
+  DrawProfileHoverDevice(dl, probe, Input(vp, 20.0, 0.0, SurveyProfileHover::kSeparation));
+  ASSERT_GT(RoseCount(), 0) << "the interval must draw";
+  float min_x = FLT_MAX;
+  float min_y = FLT_MAX;
+  float max_x = -FLT_MAX;
+  float max_y = -FLT_MAX;
+  for (int i = 0; i < dl->VtxBuffer.Size; ++i) {
+    const ImDrawVert& vtx = dl->VtxBuffer[i];
+    if (vtx.col != kProfileReadingColour) {
+      continue;
+    }
+    min_x = std::min(min_x, vtx.pos.x);
+    min_y = std::min(min_y, vtx.pos.y);
+    max_x = std::max(max_x, vtx.pos.x);
+    max_y = std::max(max_y, vtx.pos.y);
+  }
+  const auto edge_pt = ExpectedScreenPoint(20.0, 0.0, 25.0, 0.0);
+  const auto peak_pt = ExpectedScreenPoint(20.0, 0.0, 40.0, 0.0);
+  EXPECT_GE(min_x, std::min(edge_pt[0], peak_pt[0]) - 8.0) << "edge endpoint inside the bucket's box";
+  EXPECT_LE(max_x, std::max(edge_pt[0], peak_pt[0]) + 8.0) << "no extent beyond the two endpoints";
+  EXPECT_GE(min_y, std::min(edge_pt[1], peak_pt[1]) - 8.0) << "edge endpoint inside the bucket's box";
+  EXPECT_LE(max_y, std::max(edge_pt[1], peak_pt[1]) + 8.0) << "no extent beyond the two endpoints";
+  // The sliver band: a 15° radial interval at the equidistant scale is ~50pt of extent, the two
+  // endpoint dots ~9pt each — a ring (diameter ~250pt) or an annulus sits far outside.
+  EXPECT_LT(std::max(max_x - min_x, max_y - min_y), 90.0f) << "the device is an interval, not a ring";
+}
+
+// The honesty gates, in the draw's short-circuit order: no standing, a refused probe, an unknown
+// azimuth, the named reading absent, an endpoint off the view — each draws nothing. Not drawing
+// is the honest state; the row's own words carry the absence.
+TEST_F(ProfileHoverDraw, HonestyGateLegs) {
+  const ViewProjection vp = SunCamera();
+  ImDrawList* dl = ImGui::GetBackgroundDrawList();
+  struct Leg {
+    const char* what;
+    SurveyProfileHover hover;
+    bool az_available;
+    double probe_az;
+    double edge;
+    double peak;
+    int state;
+    double sun_alt;
+    double sun_az;
+  };
+  const Leg legs[] = {
+    { "no standing", SurveyProfileHover::kNone, true, 0.0, 22.0, 32.0, 0, 20.0, 0.0 },
+    { "refused probe", SurveyProfileHover::kEdge, true, 0.0, 22.0, 32.0, LUMICE_PATH_STATE_REFUSED, 20.0, 0.0 },
+    { "unknown azimuth", SurveyProfileHover::kEdge, false, 0.0, 22.0, 32.0, 0, 20.0, 0.0 },
+    { "edge reading absent", SurveyProfileHover::kEdge, true, 0.0, 22.0, 32.0, 0, 20.0, 0.0 },
+    { "separation missing one endpoint", SurveyProfileHover::kSeparation, true, 0.0, 22.0, 32.0, 0, 20.0, 0.0 },
+    { "endpoint beyond the frustum", SurveyProfileHover::kEdge, true, 0.0, 150.0, 160.0, 0, 20.0, 0.0 },
+  };
+  for (const Leg& leg : legs) {
+    dl->VtxBuffer.resize(0);
+    dl->IdxBuffer.resize(0);
+    dl->CmdBuffer.resize(0);
+    dl->_VtxCurrentIdx = 0;
+    dl->AddDrawCmd();
+    SurveyProbeView probe = Probe(leg.az_available, leg.probe_az, leg.edge, leg.peak, leg.state);
+    if (std::string(leg.what) == "edge reading absent") {
+      probe.edge_available = false;
+    }
+    if (std::string(leg.what) == "separation missing one endpoint") {
+      probe.peak_available = false;
+    }
+    DrawProfileHoverDevice(dl, probe, Input(vp, leg.sun_alt, leg.sun_az, leg.hover));
+    EXPECT_EQ(RoseCount(), 0) << leg.what << ": nothing must draw";
   }
 }
 

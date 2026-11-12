@@ -44,7 +44,29 @@ inline constexpr unsigned int kChromaticColourBlue = (235u << 24) | (240u << 16)
 // and the test), a compile-time pin against the original literal.
 inline constexpr unsigned int kReadoutBackingInk = (170u << 24) | (20u << 16) | (17u << 8) | 16u;
 
+// The reference profile's semantic colour (the hover device's point/arc on the map): a rose
+// distinct from every existing semantic hue on the map (the chromatic pair's red/blue, the sun's
+// gold, the object kinds' five, the sky point's white) — the profile's readings are brightness
+// facts, not chromatic ones, so they take their own name. One value, two consumers (the draw and
+// the test), pinned like the pair above.
+inline constexpr unsigned int kProfileReadingColour = (255u << 24) | (182u << 16) | (114u << 8) | 244u;
+
 // ---- Session-facing types -------------------------------------------------------------------------
+
+// Which reference-profile reading row the pointer stood on (the class answer's three profile
+// rows): the session identity the map's profile device consumes, one frame behind the row write
+// (the same lag the verdict anchor's hover owns). The ratio row keeps its feedback local — it
+// names no spatial payload, so it never enters this identity.
+enum class SurveyProfileHover { kNone, kEdge, kPeak, kSeparation };
+
+// The interactive class-answer host's per-row hover read (§16.1's A2 pilot family): the renderer
+// writes every row's standing each frame it draws them, the canvas consumes the session copy the
+// NEXT frame. `verdict` is the two linked diagnose rows' OR (the verdict anchor's read);
+// `profile` is the three profile reading rows' exclusive standing (the profile device's read).
+struct SurveyRowHoverReadout {
+  bool verdict = false;
+  SurveyProfileHover profile = SurveyProfileHover::kNone;
+};
 
 // The user's sky-point intent (AC3): WHERE in the sky they are asking about, independent of any
 // class, ROI or share-list state. `dir` is the light-travel direction of the point (the engine's
@@ -238,6 +260,42 @@ struct MapObservationTiming {
   int height = 0;
 };
 MapObservationTiming LastMapObservationTiming();
+
+// ---- The reference profile's hover device (contract §16.1.3's extension) ----------------------------
+
+struct SurveyProbeView;  // gui/analyze_overview.hpp — the probe's readings, by reference
+
+// The profile device's caller-side geometry: the same mirror discipline as VerdictAnchorInput's
+// projection quintet (a new MapCanvasProjection field must be added to BOTH sides or the rebuilt
+// view silently defaults), with the SURVEY document's own sun echo — the probe frame's premise is
+// the survey's observation, not the map's anchor fallback.
+struct ProfileHoverInput {
+  const ViewProjection* camera = nullptr;
+  int width_px = 1;
+  int height_px = 1;
+  float width_pt = 1.0f;
+  float height_pt = 1.0f;
+  float pic_min_x = 0.0f;
+  float pic_min_y = 0.0f;
+  float pic_px = 1.0f;
+  SkySunAnchor sun;
+  SurveyProfileHover hover = SurveyProfileHover::kNone;
+};
+
+// The hovered profile row's reading drawn on the map (the vocabulary's point/interval device):
+// the point sits at the named reading's deviation on the radial line the probe sampled — the
+// probe's own azimuth in its own frame (engine-side `MakeProbeFrame` from the incident direction,
+// whose basis coincides with the map walk's (u, v) by construction, with the azimuth mapping
+// φ = π − az; see the cpp's derivation comment) — NOT a whole-circle visibility or global-peak
+// claim, and the separation row draws the radial INTERVAL between the two readings, never an
+// annulus. Honesty gates, in short-circuit order: no row standing, a refused probe, an unknown
+// probe azimuth, or the named readings unavailable draw NOTHING (the row's own words carry the
+// absence); an endpoint outside the view leaves the device undrawn rather than bridging across
+// the projection break. No legend entry: the device is hover-transient, the driving row is the
+// explanation (the contract's sync records the exemption). Surfaced whole for the unit layer's
+// draw-list assertions; the map's overlay path calls it with the cache model and the session's
+// profile standing.
+void DrawProfileHoverDevice(ImDrawList* dl, const SurveyProbeView& probe, const ProfileHoverInput& in);
 
 // ---- The pump and the renderer (GuiState-dependent, defined in the .cpp) ---------------------------
 
