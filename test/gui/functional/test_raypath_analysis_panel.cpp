@@ -9694,37 +9694,45 @@ bool CheckMapQualityText(ImGuiTestContext* ctx, const std::string& stem) {
   // (the gate, not a closed fold), and neither the grid / execution lines nor the engine's raw
   // geometry-basis string leak into the capture.
   for (const DebugDetailsState gate_state : { DebugDetailsState::kUnset, DebugDetailsState::kOff }) {
-    const ScopedDebugDetailsEnv env_off(gate_state);
-    ctx->Yield(2);
-    IM_CHECK_RETV(ctx->ItemInfo("**/Map diagnostics##map_caliber", ImGuiTestOpFlags_NoError).ID == 0, false);
-    ImGuiWindow* report = MapReportWindow();
-    IM_CHECK_RETV(report != nullptr, false);
-    const ImGuiID prem_id = report->GetID("Map quantity & premises##map_caliber");
-    ImGuiStorage* prem_storage = &report->StateStorage;
-    const bool prem_open = prem_storage->GetInt(prem_id, 0) != 0;
-    if (!prem_open) {
-      ctx->ItemClick("**/Map quantity & premises##map_caliber");
+    // One gate state's checks run inside an immediate lambda (the loop-fatal-assert rule: a
+    // fatal assert directly in a for body aborts the remaining gate states).
+    const bool leg_ok = [&](DebugDetailsState) {
+      const ScopedDebugDetailsEnv env_off(gate_state);
       ctx->Yield(2);
-    }
-    const std::string default_text = CaptureMapFrameText(ctx);
-    // The premises group is open, so its full-definition row is in the capture.
-    IM_CHECK_RETV(default_text.find("Quantity: ") != std::string::npos, false);
-    IM_CHECK_RETV(default_text.find("Reference cell") == std::string::npos, false);
-    IM_CHECK_RETV(default_text.find("Source-fixed scale") == std::string::npos, false);
-    IM_CHECK_RETV(default_text.find(" members \xC2\xB7 kept ") == std::string::npos, false);
-    LUMICE_PathSurveyEvidence evidence{};
-    evidence.struct_size = sizeof(evidence);
-    IM_CHECK_RETV(
-        LUMICE_PathMapGetEvidence(gui::g_state.analysis.map.adopted_result.get(), &evidence) == LUMICE_PATH_READ_OK,
-        false);
-    if (evidence.geometry_basis.length > 0) {
-      const std::string basis(evidence.geometry_basis.data, evidence.geometry_basis.length);
-      // The engine's raw basis string is a diagnostics row.
-      IM_CHECK_RETV(default_text.find(basis) == std::string::npos, false);
-    }
-    if (!prem_open) {
-      prem_storage->SetInt(prem_id, 0);  // restore the default-closed shape
-      ctx->Yield(1);
+      IM_CHECK_RETV(ctx->ItemInfo("**/Map diagnostics##map_caliber", ImGuiTestOpFlags_NoError).ID == 0, false);
+      ImGuiWindow* report = MapReportWindow();
+      IM_CHECK_RETV(report != nullptr, false);
+      const ImGuiID prem_id = report->GetID("Map quantity & premises##map_caliber");
+      ImGuiStorage* prem_storage = &report->StateStorage;
+      const bool prem_open = prem_storage->GetInt(prem_id, 0) != 0;
+      if (!prem_open) {
+        ctx->ItemClick("**/Map quantity & premises##map_caliber");
+        ctx->Yield(2);
+      }
+      const std::string default_text = CaptureMapFrameText(ctx);
+      // The premises group is open, so its full-definition row is in the capture.
+      IM_CHECK_RETV(default_text.find("Quantity: ") != std::string::npos, false);
+      IM_CHECK_RETV(default_text.find("Reference cell") == std::string::npos, false);
+      IM_CHECK_RETV(default_text.find("Source-fixed scale") == std::string::npos, false);
+      IM_CHECK_RETV(default_text.find(" members \xC2\xB7 kept ") == std::string::npos, false);
+      LUMICE_PathSurveyEvidence evidence{};
+      evidence.struct_size = sizeof(evidence);
+      IM_CHECK_RETV(
+          LUMICE_PathMapGetEvidence(gui::g_state.analysis.map.adopted_result.get(), &evidence) == LUMICE_PATH_READ_OK,
+          false);
+      if (evidence.geometry_basis.length > 0) {
+        const std::string basis(evidence.geometry_basis.data, evidence.geometry_basis.length);
+        // The engine's raw basis string is a diagnostics row.
+        IM_CHECK_RETV(default_text.find(basis) == std::string::npos, false);
+      }
+      if (!prem_open) {
+        prem_storage->SetInt(prem_id, 0);  // restore the default-closed shape
+        ctx->Yield(1);
+      }
+      return true;
+    }(gate_state);
+    if (!leg_ok) {
+      return false;  // the leg's own IM_CHECK named the failure
     }
   }
   // The caliber's diagnostics group is env-gated: the helper runs under "1" (the group's
