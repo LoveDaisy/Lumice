@@ -167,6 +167,39 @@ const char* const kThreeLayerLongChainJson = R"({
               "resolution": [64, 64], "view": {"elevation": 20}}]
 })";
 
+// The plate scene (the family-arm face's own): a basal plate with a uniform azimuth axis — its
+// arc rows route to the restricted plate family, whose survey walks the freezing ladder and runs
+// the probe on the representative (the profile rows' home arm).
+const char* const kPlateJson = R"({
+  "crystal": [ { "id": 1, "type": "prism",
+                 "shape": { "height": 0.3, "face_distance": [1,1,1,1,1,1] },
+                 "axis": { "zenith": 0, "azimuth": {"type": "uniform", "mean": 0, "std": 360}, "roll": 0 } } ],
+  "filter": [],
+  "scene": { "light_source": { "type": "sun", "altitude": 20, "azimuth": 0, "diameter": 0.5,
+                               "spectrum": [ { "wavelength": 550, "weight": 1 } ] },
+             "ray_num": 1000, "max_hits": 7,
+             "scattering": [ { "prob": 0, "entries": [ { "crystal": 1, "proportion": 1 } ] } ] },
+  "render": []
+})";
+
+// The narrow-plate scene (the profile-hover face's own): a plate whose zenith is a Gaussian
+// concentration and whose roll is free — an arc row routes to the restricted plate family AND
+// carries a pose density, so the family arm runs its quantification legs (a fixed zenith or roll
+// maps to no density and skips the probe among them, leaving the profile rows nothing to draw).
+const char* const kNarrowPlateJson = R"({
+  "crystal": [ { "id": 1, "type": "prism",
+                 "shape": { "height": 0.3, "face_distance": [1,1,1,1,1,1] },
+                 "axis": { "zenith": { "type": "gauss", "mean": 0, "std": 2 },
+                           "azimuth": {"type": "uniform", "mean": 0, "std": 360},
+                           "roll": {"type": "uniform", "mean": 0, "std": 360} } } ],
+  "filter": [],
+  "scene": { "light_source": { "type": "sun", "altitude": 20, "azimuth": 0, "diameter": 0.5,
+                               "spectrum": [ { "wavelength": 550, "weight": 1 } ] },
+             "ray_num": 1000, "max_hits": 7,
+             "scattering": [ { "prob": 0, "entries": [ { "crystal": 1, "proportion": 1 } ] } ] },
+  "render": []
+})";
+
 // Same shape as test_gui_sim_smoke.cpp's guard, for the same reason: IM_CHECK returns out of
 // the case, and a server left running would be inherited by the next one.
 struct ScopedServerGuard {
@@ -2539,17 +2572,6 @@ bool PointInspectorShowsThePointFiberAndThePath(ImGuiTestContext* ctx) {
 // chain sends the sun's image straight through — the point at the sun itself is a point mass,
 // not a fiber). Fixed-dt pool: the mass arm answers in milliseconds.
 bool PointMassArmIsHonestAndForcesNoFiber(ImGuiTestContext* ctx) {
-  static const char* const kPlateJson = R"({
-    "crystal": [ { "id": 1, "type": "prism",
-                   "shape": { "height": 0.3, "face_distance": [1,1,1,1,1,1] },
-                   "axis": { "zenith": 0, "azimuth": {"type": "uniform", "mean": 0, "std": 360}, "roll": 0 } } ],
-    "filter": [],
-    "scene": { "light_source": { "type": "sun", "altitude": 20, "azimuth": 0, "diameter": 0.5,
-                                 "spectrum": [ { "wavelength": 550, "weight": 1 } ] },
-               "ray_num": 1000, "max_hits": 7,
-               "scattering": [ { "prob": 0, "entries": [ { "crystal": 1, "proportion": 1 } ] } ] },
-    "render": []
-  })";
   ScopedServerGuard guard;
   IM_CHECK_RETV(BringUpScene(ctx, kPlateJson, /*infinite=*/false, /*gpu=*/false), false);
   OpenWindow(ctx);
@@ -2808,6 +2830,191 @@ bool VerdictAnchorHoverAndToggleOnTheMap(ImGuiTestContext* ctx) {
 // The engine's named refusal, on the two-layer scene: a multi-layer class is a legitimate
 // selection and the survey answers it with multi_layer_unsupported — shown, not fabricated
 // around (R5/R7; the multi-layer evidence the plan's M3-5 asks to be on file).
+// The report window's colour-bucket count (the map face's own read, one window over): the
+// legend icons are the only consumers of their colours inside ##MapReport — the map's own markers
+// live in the map region's window.
+int MapReportIndexCountForColour(ImU32 colour) {
+  const ImGuiWindow* report = MapReportWindow();
+  if (report == nullptr) {
+    return 0;
+  }
+  const ImDrawList* dl = report->DrawList;
+  int count = 0;
+  for (int i = 0; i + 5 < dl->IdxBuffer.Size; i += 6) {
+    bool matches = true;
+    for (int k = 0; k < 6; ++k) {
+      if (dl->VtxBuffer[static_cast<int>(dl->IdxBuffer[i + k])].col != colour) {
+        matches = false;
+        break;
+      }
+    }
+    if (matches) {
+      count += 6;
+    }
+  }
+  return count;
+}
+
+// The row-highlight read: the bbox of one colour's vertices inside ##MapReport (the theme's
+// hovered-header ink the row backgrounds draw with), false when nothing drew in it.
+bool ReportHighlightBBox(ImU32 colour, ImVec2* out_min, ImVec2* out_max) {
+  const ImGuiWindow* report = MapReportWindow();
+  if (report == nullptr) {
+    return false;
+  }
+  const ImDrawList* dl = report->DrawList;
+  bool any = false;
+  for (int i = 0; i < dl->VtxBuffer.Size; ++i) {
+    const ImDrawVert& v = dl->VtxBuffer[i];
+    if (v.col != colour) {
+      continue;
+    }
+    *out_min = any ? ImVec2(std::min(out_min->x, v.pos.x), std::min(out_min->y, v.pos.y)) : ImVec2(v.pos.x, v.pos.y);
+    *out_max = any ? ImVec2(std::max(out_max->x, v.pos.x), std::max(out_max->y, v.pos.y)) : ImVec2(v.pos.x, v.pos.y);
+    any = true;
+  }
+  return any;
+}
+
+// The 2026-11-12 feedback wave's interaction face (contract §16.1.3's extension): the class
+// answer's rows highlight where the pointer stands (AC1/AC3 — the ratio row's feedback is local
+// by design, it names no spatial payload), the three profile reading rows drive the map's profile
+// device one frame later (AC2 — a point at the edge/peak reading, the radial interval between
+// them for separation), the Overlays gate holds the device back while the row feedback stays (the
+// total gate's own leg), and the four anchor legend entries carry their icons (AC4). Fixture: the
+// narrow-plate scene — its arc rows route to the restricted plate family, whose survey runs the
+// probe. Flake attribution, should this ever red: the premise asserts below (the family arm's
+// probe readings, the azimuth availability, the sun echo) are the FIRST suspects — the survey's
+// quantification legs complete in seconds of an unseeded whole-sky analysis, so a red premise is
+// a data/ranking or budget-truncation event, not an interaction-chain defect.
+bool ProfileRowsHighlightAndDrawOnTheMap(ImGuiTestContext* ctx) {
+  ScopedServerGuard guard;
+  IM_CHECK_RETV(BringUpScene(ctx, kNarrowPlateJson, /*infinite=*/false, /*gpu=*/false), false);
+  OpenWindow(ctx);
+  IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
+  // The explicit chain row: the first 2+ face row in the display order (single-face rows refuse
+  // as invalid paths; the traversal's rule is the explicit part, the premise asserts below are
+  // what make the physical basis real).
+  std::string target;
+  for (const size_t idx : gui::g_state.analysis_result.display_order) {
+    const std::string d = gui::g_state.analysis_result.payload->entries[idx].display;
+    if (d != "1-2" && d.find('-') != std::string::npos) {
+      target = d;
+      break;
+    }
+  }
+  IM_CHECK_RETV(!target.empty(), false);
+  SetListRef(ctx);
+  ctx->ItemClick((std::string("**/") + target).c_str());
+  ctx->SetRef("");
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      return gui::SurveyOverviewStateFor(gui::g_state.analysis.survey) ==
+                             gui::SurveyOverviewState::kCompleted;
+                    },
+                    60),
+                false);
+  const gui::SurveyOverviewModel model = gui::BuildSurveyOverviewModel(*gui::g_state.analysis.survey.adopted_result);
+  IM_CHECK_RETV(model.valid && model.arm == gui::SurveyArm::kFamily, false);
+  IM_CHECK_RETV(model.probe.available && model.probe.edge_available && model.probe.peak_available &&
+                    model.probe.separation_available,
+                false);
+  IM_CHECK_RETV(model.probe.azimuth_available, false);
+  IM_CHECK_RETV(model.sun_available, false);
+  ctx->LogInfo("[profile hover] %s: edge %.3f peak %.3f sep %.3f az %.1f sun %.1f/%.1f", target.c_str(),
+               model.probe.edge_deg, model.probe.peak_deg, model.probe.separation_deg, model.probe.azimuth_deg,
+               model.sun_altitude_deg, model.sun_azimuth_deg);
+  // The row click opened the Raypath view (§16.3's content shortcut); the Full-sky preset is the
+  // robust aim (the verdict face's lesson): every reading keeps in-view samples there.
+  IM_CHECK_RETV(gui::g_state.analyze_raypath_view_open, false);
+  ctx->ItemClick("**/Full sky##map");
+  ctx->Yield(3);
+  // The default frame: no hover, no profile ink — the map is the picture it always was.
+  const ImU32 hovered_ink = ImGui::GetColorU32(ImGuiCol_HeaderHovered);
+  IM_CHECK_RETV(gui::g_state.analysis.profile_row_hover == gui::SurveyProfileHover::kNone, false);
+  IM_CHECK_RETV(MapWindowIndexCountForColour(gui::kProfileReadingColour) == 0, false);
+  auto hover_row = [&](const char* id, gui::SurveyProfileHover expect) -> bool {
+    ctx->ScrollToItem(id, ImGuiAxis_Y);
+    ctx->Yield(1);
+    const ImVec2 center = ctx->ItemInfo(id).RectFull.GetCenter();
+    ctx->MouseMoveToPos(center);
+    ctx->Yield(3);
+    if (gui::g_state.analysis.profile_row_hover != expect) {
+      ctx->LogError("[profile hover] %s: session identity is %d, expected %d", id,
+                    static_cast<int>(gui::g_state.analysis.profile_row_hover), static_cast<int>(expect));
+      return false;
+    }
+    // The row's own highlight, THIS frame: the theme ink's bbox in the report window intersects
+    // the row's own rect (the background rides the text, under it — the text stays foreground).
+    ImVec2 hmin(0.0f, 0.0f);
+    ImVec2 hmax(0.0f, 0.0f);
+    if (!ReportHighlightBBox(hovered_ink, &hmin, &hmax)) {
+      ctx->LogError("[profile hover] %s: no highlight ink in the report window", id);
+      return false;
+    }
+    const ImRect row = ctx->ItemInfo(id).RectFull;
+    if ((hmax.x < row.Min.x || hmin.x > row.Max.x) && (hmax.y < row.Min.y || hmin.y > row.Max.y)) {
+      ctx->LogError(
+          "[profile hover] %s: highlight bbox (%.0f,%.0f)-(%.0f,%.0f) misses the row rect (%.0f,%.0f)-(%.0f,%.0f)", id,
+          hmin.x, hmin.y, hmax.x, hmax.y, row.Min.x, row.Min.y, row.Max.x, row.Max.y);
+      return false;
+    }
+    return true;
+  };
+  // The edge row: the point device on the map, the highlight on the row.
+  IM_CHECK_RETV(hover_row("**/###profile_edge_row", gui::SurveyProfileHover::kEdge), false);
+  IM_CHECK_RETV(MapWindowIndexCountForColour(gui::kProfileReadingColour) > 0, false);
+  // The peak row: the point moves (the readings differ by tens of degrees — the count alone
+  // cannot tell a stuck point from a moved one, so this leg reads the session identity and the
+  // ink's existence; the unit tier owns the positions).
+  IM_CHECK_RETV(hover_row("**/###profile_peak_row", gui::SurveyProfileHover::kPeak), false);
+  IM_CHECK_RETV(MapWindowIndexCountForColour(gui::kProfileReadingColour) > 0, false);
+  // The separation row: the interval device.
+  IM_CHECK_RETV(hover_row("**/###profile_separation_row", gui::SurveyProfileHover::kSeparation), false);
+  IM_CHECK_RETV(MapWindowIndexCountForColour(gui::kProfileReadingColour) > 0, false);
+  // Off the rows: both the identity and the ink leave (the overwrite's own closure).
+  ctx->MouseMoveToPos(ImVec2(-100.0f, -100.0f));
+  ctx->Yield(3);
+  IM_CHECK_RETV(gui::g_state.analysis.profile_row_hover == gui::SurveyProfileHover::kNone, false);
+  IM_CHECK_RETV(MapWindowIndexCountForColour(gui::kProfileReadingColour) == 0, false);
+  {
+    ImVec2 hmin(0.0f, 0.0f);
+    ImVec2 hmax(0.0f, 0.0f);
+    IM_CHECK_RETV(!ReportHighlightBBox(hovered_ink, &hmin, &hmax), false);
+  }
+  // The Overlays gate: off, the row's highlight and identity stand, the map draws nothing —
+  // the profile device nests under the gate exactly like the verdict anchor does.
+  ctx->ItemClick("**/Overlays##map");
+  ctx->Yield(2);
+  IM_CHECK_RETV(hover_row("**/###profile_edge_row", gui::SurveyProfileHover::kEdge), false);
+  IM_CHECK_RETV(MapWindowIndexCountForColour(gui::kProfileReadingColour) == 0, false);
+  ctx->ItemClick("**/Overlays##map");
+  ctx->Yield(2);
+  // The ratio row: highlight present, no map geometry (AC3's honest local feedback).
+  IM_CHECK_RETV(hover_row("**/###tint_ratio_row", gui::g_state.analysis.profile_row_hover), false);
+  IM_CHECK_RETV(MapWindowIndexCountForColour(gui::kProfileReadingColour) == 0, false);
+  // The verdict row (AC1's existing-rows leg): the two pilot rows now highlight too — the anchor
+  // draw itself is the verdict face's own test.
+  IM_CHECK_RETV(hover_row("**/###diagnose_verdict_row", gui::g_state.analysis.profile_row_hover), false);
+  ctx->MouseMoveToPos(ImVec2(-100.0f, -100.0f));
+  ctx->Yield(3);
+  // The legend icons (AC4): the frame anchors drew (full sky) — the report window carries the
+  // sun's gold fill and the zenith/horizon greys; the anchor's icon rides its toggle.
+  IM_CHECK_RETV(MapReportIndexCountForColour(IM_COL32(255, 231, 168, 255)) > 0, false);
+  IM_CHECK_RETV(MapReportIndexCountForColour(IM_COL32(200, 205, 215, 110)) > 0, false);
+  ctx->ItemClick("**/Verdict anchors##map");
+  ctx->Yield(3);
+  IM_CHECK_RETV(gui::LastMapOverlayLegend().verdict_anchor, false);
+  const ImU32 anchor_ink = gui::LastMapOverlayLegend().verdict_anchor_colour;
+  IM_CHECK_RETV(MapReportIndexCountForColour(anchor_ink) > 0, false);
+  ctx->ItemClick("**/Verdict anchors##map");
+  ctx->Yield(2);
+  ctx->WindowClose("//Raypath view");
+  ctx->Yield(1);
+  return true;
+}
+
 bool SurveyRefusesMultilayerClassByName(ImGuiTestContext* ctx) {
   ScopedServerGuard guard;
   IM_CHECK_RETV(BringUpScene(ctx, kPcTwoLayerJson, /*infinite=*/false, /*gpu=*/false), false);
@@ -13308,6 +13515,12 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
   {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "survey_refuses_multilayer_class_by_name");
     t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(SurveyRefusesMultilayerClassByName(ctx)); };
+  }
+  // The 2026-11-12 feedback wave's interaction face: row highlights, the profile device, the
+  // legend icons. Real-timing pool: the family-arm survey's quantification legs are wall-clock.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "profile_rows_highlight_and_draw_on_the_map");
+    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(ProfileRowsHighlightAndDrawOnTheMap(ctx)); };
   }
   // The map region (742.5): real chain, real click, real isolation — see the function's comment.
   // Real-timing pool: the map answers behind the survey's chromatic legs on the one worker, the
