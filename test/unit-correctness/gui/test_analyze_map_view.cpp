@@ -1168,9 +1168,15 @@ TEST_F(VerdictAnchorDraw, HoverAndToggleEachAnchor) {
   DrawVerdictAnchor(ImGui::GetBackgroundDrawList(), Diagnose("edge", "blue", 40.0, true), in);
   EXPECT_GT(IndexCountForColour(kChromaticColourBlue), 0);
   EXPECT_TRUE(legend.verdict_anchor);
+  // The icon's own facts, recorded with the bit: the palette entry that drew, the solid form.
+  EXPECT_EQ(legend.verdict_anchor_colour, kChromaticColourBlue);
+  EXPECT_FALSE(legend.verdict_anchor_dashed);
   in = Input(vp, /*shown=*/true, /*hover=*/false);
+  in.legend = &legend;
   DrawVerdictAnchor(ImGui::GetBackgroundDrawList(), Diagnose("gate_edge", "red", 60.0, true), in);
   EXPECT_GT(IndexCountForColour(kChromaticColourRed), 0);
+  EXPECT_EQ(legend.verdict_anchor_colour, kChromaticColourRed);
+  EXPECT_FALSE(legend.verdict_anchor_dashed);
 }
 
 // The switch standing but the ring wholly outside the frustum: nothing draws and no legend bit
@@ -1237,6 +1243,20 @@ TEST_F(VerdictAnchorDraw, IncompleteCoverageDrawsTheDashedForm) {
   const ViewProjection vp = SunCamera();
   VerdictAnchorInput in = Input(vp, /*shown=*/true, /*hover=*/false);
   ImDrawList* dl = ImGui::GetBackgroundDrawList();
+  // The legend record leg, isolated in its own draw: the dashed red form's bits (the icon reads
+  // what actually drew), with no other draw's ink in the buffer.
+  OverlayLegendState legend;
+  in.legend = &legend;
+  DrawVerdictAnchor(dl, Diagnose("edge", "red", 40.0, /*coverage=*/false), in);
+  EXPECT_TRUE(legend.verdict_anchor);
+  EXPECT_TRUE(legend.verdict_anchor_dashed);
+  EXPECT_EQ(legend.verdict_anchor_colour, kChromaticColourRed);
+  // The two forms' own comparison, in a fresh buffer.
+  dl->VtxBuffer.resize(0);
+  dl->IdxBuffer.resize(0);
+  dl->CmdBuffer.resize(0);
+  dl->_VtxCurrentIdx = 0;
+  dl->AddDrawCmd();
   DrawVerdictAnchor(dl, Diagnose("edge", "blue", 40.0, /*coverage=*/true), in);
   DrawVerdictAnchor(dl, Diagnose("edge", "red", 40.0, /*coverage=*/false), in);
   const int solid = IndexCountForColour(kChromaticColourBlue);

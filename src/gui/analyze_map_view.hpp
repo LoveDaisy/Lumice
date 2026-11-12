@@ -200,10 +200,14 @@ struct OverlayLegendState {
   std::vector<std::string> object_kinds;  // unique, in first-draw order
   bool dispersion_red = false;
   bool dispersion_blue = false;
-  bool dispersion_partial = false;  // any drawn circle left the view disk (the arc-in-view wording)
-  bool verdict_anchor = false;      // the verdict anchor drew (solid or dashed) — one bit: the
-                                    // legend entry names the category, the dashed form's honesty
-                                    // wording rides the Legend explanations group
+  bool dispersion_partial = false;         // any drawn circle left the view disk (the arc-in-view wording)
+  bool verdict_anchor = false;             // the verdict anchor drew (solid or dashed) — one bit: the
+                                           // legend entry names the category, the dashed form's honesty
+                                           // wording rides the Legend explanations group
+  unsigned int verdict_anchor_colour = 0;  // the drawn anchor's palette entry (kChromaticColour*)
+                                           // — the legend icon's own colour, recorded with the bit
+                                           // so the icon reads what actually drew
+  bool verdict_anchor_dashed = false;      // the drawn form's weakening — the icon carries it too
   bool sky_point = false;
 };
 

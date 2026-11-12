@@ -703,6 +703,17 @@ void DrawProfilePointMarker(ImDrawList* dl, const ProfileScreenPoint& pt) {
   dl->AddCircleFilled(c, UiPx(4.0f), kProfileReadingColour);
 }
 
+// The legend icon slot (the object kinds' own pattern): the icon draws at the current cursor
+// inside a frame-height cell, then the entry's words continue on the same line. The cell is the
+// slot's whole layout claim — the icon's geometry reads the cursor itself, so all four anchor
+// icons and the kinds share one placement rule.
+template <typename DrawIcon>
+void DrawLegendIconSlot(DrawIcon&& draw_icon) {
+  draw_icon();
+  ImGui::Dummy(ImVec2(ImGui::GetFrameHeight(), 0.0f));
+  ImGui::SameLine(0.0f, 0.0f);
+}
+
 IsoDeltaWalk WalkIsoDeltaCircle(ImDrawList* dl, const MapCanvasProjection& view, const ImVec2& pic_min, float pic_px,
                                 const double sun_pos[3], double delta_deg, ImU32 colour, float thickness,
                                 bool dashed = false) {
@@ -1202,6 +1213,8 @@ void DrawVerdictAnchor(ImDrawList* dl, const SurveyDiagnoseView& diagnose, const
   if (walk.lines_submitted > 0) {
     if (in.legend != nullptr) {
       in.legend->verdict_anchor = true;
+      in.legend->verdict_anchor_colour = colour;
+      in.legend->verdict_anchor_dashed = dashed;
     }
     char line[96];
     std::snprintf(line, sizeof(line), "verdict · %.3f°%s", diagnose.position_deg,
@@ -2040,14 +2053,36 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
     // overflow channel.
     if (legend.anchor_sun) {
       ImGui::Bullet();
+      DrawLegendIconSlot([legend_dl = ImGui::GetWindowDrawList(), p = ImGui::GetCursorScreenPos()]() {
+        // The sun's own marker at icon scale: the gold fill and the fainter ring, the map's
+        // proportions (UiPx(4) fill, UiPx(6) ring) shrunk into the slot.
+        const float r = UiPx(4.0f);
+        const ImVec2 c(p.x + ImGui::GetFrameHeight() * 0.5f - UiPx(3.0f), p.y + ImGui::GetTextLineHeight() * 0.5f);
+        legend_dl->AddCircleFilled(c, r * 0.8f, IM_COL32(255, 231, 168, 255));
+        legend_dl->AddCircle(c, r, IM_COL32(255, 231, 168, 128), 0, 1.0f);
+      });
       ImGui::TextWrapped("sun marker");
     }
     if (legend.anchor_zenith) {
       ImGui::Bullet();
+      DrawLegendIconSlot([legend_dl = ImGui::GetWindowDrawList(), p = ImGui::GetCursorScreenPos()]() {
+        // The cross's own two lines, the map's colour and span.
+        const float a = UiPx(3.0f);
+        const ImVec2 c(p.x + ImGui::GetFrameHeight() * 0.5f - UiPx(3.0f), p.y + ImGui::GetTextLineHeight() * 0.5f);
+        legend_dl->AddLine(ImVec2(c.x - a, c.y), ImVec2(c.x + a, c.y), IM_COL32(200, 205, 215, 110), 1.0f);
+        legend_dl->AddLine(ImVec2(c.x, c.y - a), ImVec2(c.x, c.y + a), IM_COL32(200, 205, 215, 110), 1.0f);
+      });
       ImGui::TextWrapped("zenith cross");
     }
     if (legend.anchor_horizon) {
       ImGui::Bullet();
+      DrawLegendIconSlot([legend_dl = ImGui::GetWindowDrawList(), p = ImGui::GetCursorScreenPos()]() {
+        // The horizon's own circle, in the horizon's hue. The map draws it at alpha 60 — a
+        // large reference circle reads there, an icon-size one does not; the legend icon takes
+        // the zenith's alpha (the hue is the correspondence, the alpha the icon's legibility).
+        const ImVec2 c(p.x + ImGui::GetFrameHeight() * 0.5f - UiPx(3.0f), p.y + ImGui::GetTextLineHeight() * 0.5f);
+        legend_dl->AddCircle(c, UiPx(4.0f), IM_COL32(200, 205, 215, 110), 0, 1.2f);
+      });
       ImGui::TextWrapped("horizon circle");
     }
     for (const std::string& kind : legend.object_kinds) {
@@ -2098,6 +2133,27 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
     }
     if (legend.verdict_anchor) {
       ImGui::Bullet();
+      DrawLegendIconSlot([legend_dl = ImGui::GetWindowDrawList(), p = ImGui::GetCursorScreenPos(), &legend]() {
+        // The anchor's own circle in the palette entry that actually drew — dashed when the
+        // drawn form was (the walk's own dash phase, 4 samples on, 4 off, so the icon reads the
+        // same visual grammar the anchor drew).
+        const ImVec2 c(p.x + ImGui::GetFrameHeight() * 0.5f - UiPx(3.0f), p.y + ImGui::GetTextLineHeight() * 0.5f);
+        const float r = UiPx(4.0f);
+        if (legend.verdict_anchor_dashed) {
+          constexpr int kSamples = 24;
+          ImVec2 prev(0.0f, 0.0f);
+          for (int s = 0; s <= kSamples; ++s) {
+            const float a = 2.0f * static_cast<float>(kPiD) * s / kSamples;
+            const ImVec2 pt(c.x + r * std::cos(a), c.y + r * std::sin(a));
+            if (s > 0 && (s / 4) % 2 == 0) {
+              legend_dl->AddLine(prev, pt, legend.verdict_anchor_colour, UiPx(1.2f));
+            }
+            prev = pt;
+          }
+        } else {
+          legend_dl->AddCircle(c, r, legend.verdict_anchor_colour, 0, UiPx(1.2f));
+        }
+      });
       ImGui::TextWrapped("verdict anchor");
     }
     if (legend.sky_point) {
