@@ -57,8 +57,10 @@ ImFont* AddBodyFont(ImGuiIO& io, float size_px, float raster_density) {
     ImFontGlyphRangesBuilder ranges;
     ranges.AddRanges(io.Fonts->GetGlyphRangesDefault());
     ranges.AddRanges(kGeneralPunctuationRange);
-    // Built-in map text uses delta for deviation and lambda for wavelength. The embedded
-    // Roboto has both: load these observed gaps, not the entire Greek block.
+    // Legacy coverage note: built-in map text once transcribed delta/lambda as Greek glyphs, so
+    // 0x03B4 and 0x03BB were added to the observed gaps. The UI has since moved to descriptive
+    // words (dev/wl) and keeps ° (already in the default range); the two Greek code points stay
+    // loaded — removing them would repack the atlas and drift content-unrelated screenshots.
     ranges.AddChar(0x03B4);
     ranges.AddChar(0x03BB);
     ranges.BuildRanges(&g_body_glyph_ranges);

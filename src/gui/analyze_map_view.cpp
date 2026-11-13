@@ -185,8 +185,9 @@ const char* PoseButtonTooltip() {
 // finite-zero / rank-0-mass facts; the PHYSICS lines carry the full quantity definition, the
 // sun premise and the engine's own geometry basis (byte for byte); the CALCULATION lines carry
 // the grid and execution numbers a check reads — reference cell, view window, lattice,
-// members, kept events — plus the source-fixed-scale note. The λ is NOT in any line: the λ
-// row's same-control echo is the reading's one owner (a repeated echo is deleted, not moved).
+// members, kept events — plus the source-fixed-scale note. The wavelength is NOT in any line:
+// the wl row's same-control echo is the reading's one owner (a repeated echo is deleted, not
+// moved).
 
 std::vector<std::string> MapCaliberDefaultLines(const MapCaliberInput& in) {
   std::vector<std::string> lines;
@@ -263,13 +264,13 @@ std::vector<std::string> MapCaliberDiagnosticsLines(const MapCaliberInput& in) {
     lines.emplace_back(in.evidence.geometry_basis.data, in.evidence.geometry_basis.length);
   }
   if (info.view_full_sky != 0) {
-    std::snprintf(line, sizeof(line), "Reference cell δ %.7g° × az %.7g° · view: full sky %d×%d · n=%d lattice",
+    std::snprintf(line, sizeof(line), "Reference cell dev %.7g° × az %.7g° · view: full sky %d×%d · n=%d lattice",
                   (info.view_delta_max_deg - info.view_delta_min_deg) / info.view_rows,
                   (info.view_az_max_deg - info.view_az_min_deg) / info.view_cols, info.view_rows, info.view_cols,
                   info.sample_count);
   } else {
     std::snprintf(line, sizeof(line),
-                  "Reference cell δ %.7g° × az %.7g° · view: δ [%.1f, %.1f]° az [%.1f, %.1f]° %d×%d · n=%d lattice",
+                  "Reference cell dev %.7g° × az %.7g° · view: dev [%.1f, %.1f]° az [%.1f, %.1f]° %d×%d · n=%d lattice",
                   (info.view_delta_max_deg - info.view_delta_min_deg) / info.view_rows,
                   (info.view_az_max_deg - info.view_az_min_deg) / info.view_cols, info.view_delta_min_deg,
                   info.view_delta_max_deg, info.view_az_min_deg, info.view_az_max_deg, info.view_rows, info.view_cols,
@@ -1664,7 +1665,7 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
           ImGui::Text("Reference r%zu c%zu · status %u", i / info.view_cols, i % info.view_cols,
                       static_cast<unsigned>(cell->pixels.status[i]));
           ImGui::Text("%.17g per sr · count %d", cell->pixels.values[i], cell->pixels.counts[i]);
-          ImGui::Text("cell δ %.7g° × az %.7g° · %d/%d · λ %.1f · n=%d",
+          ImGui::Text("cell dev %.7g° × az %.7g° · %d/%d · wl %.1f · n=%d",
                       (info.view_delta_max_deg - info.view_delta_min_deg) / info.view_rows,
                       (info.view_az_max_deg - info.view_az_min_deg) / info.view_cols, info.members_evaluated,
                       info.member_count, info.wavelength_nm, info.sample_count);
@@ -1842,11 +1843,11 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   }
   const float reference_w = ImGui::CalcTextSize("reference").x + ImGui::GetStyle().FramePadding.x * 2.0f;
   float lambda_track = UiPx(140.0f);
-  lambda_track = std::min(lambda_track, ImGui::GetContentRegionAvail().x - ImGui::CalcTextSize("λ").x -
+  lambda_track = std::min(lambda_track, ImGui::GetContentRegionAvail().x - ImGui::CalcTextSize("wl").x -
                                             ImGui::GetStyle().ItemInnerSpacing.x);
   lambda_track = std::max(lambda_track, UiPx(60.0f));
   ImGui::SetNextItemWidth(lambda_track);
-  if (ImGui::SliderFloat("λ##map", &lambda_scratch, 350.0f, 900.0f, "%.0f nm", ImGuiSliderFlags_AlwaysClamp)) {
+  if (ImGui::SliderFloat("wl##map", &lambda_scratch, 350.0f, 900.0f, "%.0f nm", ImGuiSliderFlags_AlwaysClamp)) {
     state.analysis.map_wavelength_nm = static_cast<double>(lambda_scratch);
   }
   // The λ reading's one owner is this control's own echo; its tooltip names the source rule
@@ -2267,7 +2268,7 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
     // closed-by-default fold (the ledger's Legend explanations group).
     if (FoldOpen(kMapLegendExplanationsLabel, "map_legend")) {
       if (legend.anchor_sun) {
-        ImGui::TextWrapped("sun marker — the delta axis's zero");
+        ImGui::TextWrapped("sun marker — zero deviation");
       }
       if (!legend.object_kinds.empty()) {
         ImGui::TextWrapped("each kind's marker — the survey's located conclusion, at the position the card names");

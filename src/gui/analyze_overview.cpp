@@ -314,7 +314,7 @@ void BuildConclusions(const LUMICE_PathSurvey& result, SurveyOverviewModel* mode
     }
     case SurveyArm::kRefused: {
       lines.push_back("Support refused (" + model->evidence_mode +
-                      "): the class's delta-axis support is unknown. This names a geometry the axis machine could "
+                      "): the class's deviation-axis support is unknown. This names a geometry the axis machine could "
                       "not partition — it is not a statement that the class carries no light.");
       if (model->witness.available && model->witness.value_available) {
         lines.push_back(
@@ -866,7 +866,7 @@ void RenderSurveyClassEvidence(const SurveyOverviewModel& model) {
     ImGui::TextDisabled("Independent witness");
     if (model.witness.value_available) {
       ImGui::TextWrapped("Max kept weight %.4g.", model.witness.weight);
-      DisabledWrapped("Read on the declared source's own lattice — independent of the refused delta axis.");
+      DisabledWrapped("Read on the declared source's own lattice — independent of the refused deviation axis.");
     } else {
       DisabledWrapped("No readable witness value.");
     }

@@ -265,10 +265,10 @@ std::vector<std::string> PointFactorHeadLines(const LUMICE_PathPointSample& samp
   char buf[192];
   // Orientation: the pose's own angle words, the degeneracy named (R4 — a spin-degenerate pose
   // says so; the angles do not pretend to locate it).
-  std::snprintf(buf, sizeof(buf), "pose: zenith %.2f deg, azimuth %.2f deg, roll %.2f deg%s", sample.zenith_deg,
+  std::snprintf(buf, sizeof(buf), "pose: zenith %.2f°, azimuth %.2f°, roll %.2f°%s", sample.zenith_deg,
                 sample.azimuth_deg, sample.roll_deg, sample.angles_degenerate != 0 ? " (degenerate)" : "");
   lines.emplace_back(buf);
-  std::snprintf(buf, sizeof(buf), "rho = %.6g rad^-3", sample.rho);
+  std::snprintf(buf, sizeof(buf), "axis density = %.6g rad^-3", sample.rho);
   lines.emplace_back(buf);
   std::snprintf(buf, sizeof(buf), "A_P = %.6g, A/a^2 = %.6g", sample.entry_measure, sample.entry_measure_a2);
   lines.emplace_back(buf);
@@ -280,12 +280,12 @@ std::vector<std::string> PointFactorHeadLines(const LUMICE_PathPointSample& samp
     lines.emplace_back(buf);
     std::snprintf(buf, sizeof(buf), "K = 1/(J+eps) = %.6g", sample.k_carea);
     lines.emplace_back(buf);
-    std::snprintf(buf, sizeof(buf), "rho*A/a^2*T*K = %.6g", sample.factor_product);
+    std::snprintf(buf, sizeof(buf), "axis density × A/a^2 × T × K = %.6g", sample.factor_product);
     lines.emplace_back(buf);
   } else {
     lines.emplace_back("J (jacobian): unavailable");
     lines.emplace_back("K = 1/(J+eps): unavailable");
-    lines.emplace_back("rho*A/a^2*T*K: unavailable");
+    lines.emplace_back("axis density × A/a^2 × T × K: unavailable");
   }
   return lines;
 }
@@ -313,7 +313,7 @@ std::vector<std::string> PointFactorLines(const LUMICE_PathPointSample& sample) 
 std::vector<std::string> PointCaliberLines(const LUMICE_PathPointInfo& info) {
   std::vector<std::string> lines;
   char buf[256];
-  std::snprintf(buf, sizeof(buf), "target: alt %.3f deg, az %.3f deg (deviation %.3f deg)", info.target_altitude_deg,
+  std::snprintf(buf, sizeof(buf), "target: alt %.3f°, az %.3f° (deviation %.3f°)", info.target_altitude_deg,
                 info.target_azimuth_deg, info.target_deviation_deg);
   lines.emplace_back(buf);
   std::string faces_text;
@@ -339,8 +339,8 @@ std::vector<std::string> PointCaliberLines(const LUMICE_PathPointInfo& info) {
 std::vector<std::string> PointMassLines(const LUMICE_PathPointMass& mass) {
   std::vector<std::string> lines;
   char buf[256];
-  std::snprintf(buf, sizeof(buf), "point mass at alt %.3f deg, az %.3f deg (target separation %.3e deg)",
-                mass.altitude_deg, mass.azimuth_deg, mass.target_separation_deg);
+  std::snprintf(buf, sizeof(buf), "point mass at alt %.3f°, az %.3f° (target separation %.3e°)", mass.altitude_deg,
+                mass.azimuth_deg, mass.target_separation_deg);
   lines.emplace_back(buf);
   if (mass.orbit_available != 0) {
     std::snprintf(buf, sizeof(buf), "orbit integral over %s: %.6g (%d/%d samples kept)",
@@ -2543,16 +2543,17 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
                     static_cast<int>(n), span_rad, seed_x, echo);
     }
     disabled_line("%s", title);
-    // J7's constant: the caliber is DECLARED, never inferred — on plate-family scenes rho (and
-    // the product and the integral with it) reads identically zero in this convention, while the
-    // other arms stay informative per their own flags (audit §4).
+    // J7's constant: the caliber is DECLARED, never inferred — on plate-family scenes the axis
+    // density (the `rho` field, and the product and the integral with it) reads identically zero
+    // in this convention, while the other arms stay informative per their own flags (audit §4).
     disabled_line("angle-Lebesgue · arclength axis in rad");
 
     // ---- The legend: one swatch + short symbol per arm, the units in the factor readouts' own
     // vocabulary; an arm with no positive value names the fact (J4's legend naming). SameLine is
     // a judgment (the 3D legend's rule): an entry wraps below when it no longer fits. ----
     const ImU32* const arm_colors = kPointCurveArmColors;  // the one palette (the tests read it too)
-    const char* arm_labels[kCurveArms] = { "rho rad^-3", "A/a^2", "T total", "K 1/(J+eps)", "rho*A/a^2*T*K" };
+    const char* arm_labels[kCurveArms] = { "axis density rad^-3", "A/a^2", "T total", "K 1/(J+eps)",
+                                           "axis density × A/a^2 × T × K" };
     const auto value_of = [&](int arm, size_t i) -> double { return curve.points[i].*kCurveArmFields[arm].value; };
     const auto kind_of = [&](int arm, size_t i) { return curve.points[i].*kCurveArmFields[arm].kind; };
     int positive_seen[kCurveArms] = { 0, 0, 0, 0, 0 };
@@ -2618,7 +2619,7 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
       char head[64];
       std::snprintf(head, sizeof(head), "sample %d/%d @ %.3f rad", position + 1, valid_count, p.x_rad);
       std::string out = head;
-      const char* names[kCurveArms] = { "rho", "A/a^2", "T", "K", "product" };
+      const char* names[kCurveArms] = { "axis density", "A/a^2", "T", "K", "product" };
       for (int arm = 0; arm < kCurveArms; ++arm) {
         out += " · ";
         out += names[arm];

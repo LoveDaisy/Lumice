@@ -114,7 +114,7 @@ void RenderAnalysisIdleDiagnostics(GuiState& state) {
       float alt = 0.0f;
       float az = 0.0f;
       DirToAltAz(a.cone_center_dir, &alt, &az);
-      disabled_bullet_wrapped("Cone centre: altitude %.1f deg, azimuth %.1f deg", alt, az);
+      disabled_bullet_wrapped("Cone centre: altitude %.1f°, azimuth %.1f°", alt, az);
     } else {
       disabled_bullet_wrapped("Cone centre: not set");
     }

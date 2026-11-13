@@ -1380,7 +1380,7 @@ void RenderRadiusSlider(GuiState& state, float width) {
   // Track and visible label share the template's complete footprint, independent of payload.
   const float label_w = ImGui::CalcTextSize("Radius").x;
   ImGui::SetNextItemWidth(std::max(UiPx(40.0f), width - label_w - ImGui::GetStyle().ItemInnerSpacing.x));
-  if (ImGui::SliderFloat("Radius###Radius_narrow", &state.analysis.cone_radius_deg, min_deg, cone_deg, "%.1f deg")) {
+  if (ImGui::SliderFloat("Radius###Radius_narrow", &state.analysis.cone_radius_deg, min_deg, cone_deg, "%.1f°")) {
     RecomputeAnalysisDisplayOrder(state);
   }
   if (ImGui::IsItemHovered()) {
@@ -2038,7 +2038,7 @@ void RenderAnalyzeStatus(GuiState& state, LUMICE_Server* server) {
     float az = 0.0f;
     DirToAltAz(state.analysis.cone_center_dir, &alt, &az);
     if (state.analysis.cone_center_valid) {
-      ImGui::TextWrapped("Centre: altitude %.1f deg, azimuth %.1f deg", alt, az);
+      ImGui::TextWrapped("Centre: altitude %.1f°, azimuth %.1f°", alt, az);
     } else {
       ImGui::TextWrapped("No centre yet.");
     }

@@ -2285,7 +2285,7 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
       gui::g_state.analyze_raypath_view_open = true;
       ctx->Yield(2);
       ImGuiWindow* map =
-          AnalyzeRegionWindow("##AnalyzeRaypathInfo");  // the λ row and view buttons live in the info region (D3)
+          AnalyzeRegionWindow("##AnalyzeRaypathInfo");  // the wl row and view buttons live in the info region (D3)
       IM_CHECK(map != nullptr);
       gui::g_state.analysis.map_wavelength_nm = 550.0;
       ctx->Yield(2);

@@ -5411,7 +5411,7 @@ bool IdentityClassShowsTheMassArmAndTheMapAnswers(ImGuiTestContext* ctx) {
     // The point summary's own closed-windows legs (§16.2): the mass answer in full, the target
     // line, and the pointer naming where its omitted caliber detail lives.
     IM_CHECK_RETV(frame_text.find("Rank-0 point mass") != std::string::npos, false);
-    IM_CHECK_RETV(frame_text.find("target: alt 20.000 deg") != std::string::npos, false);
+    IM_CHECK_RETV(frame_text.find("target: alt 20.000°") != std::string::npos, false);
   }
   // The env gate on the survey and point hosts, the shipped default: the evidence groups
   // stand closed, the diagnostics groups are unsubmitted entirely — the gate is display
@@ -5425,14 +5425,16 @@ bool IdentityClassShowsTheMassArmAndTheMapAnswers(ImGuiTestContext* ctx) {
     IM_CHECK_RETV(identity_report.find("Class answer") != std::string::npos, false);
     IM_CHECK_RETV(identity_report.find("member(s)") == std::string::npos, false);
     {
-      // λ single-owner (the ledger's L5): the slider row's echo is the window's only λ glyph —
-      // the survey and point answers spell "wavelength", the caliber carries none, the legend none.
+      // The descriptive words' single-owner echo, flipped with the wording change (AC3): the
+      // window's text carries NO Greek λ glyph at all now — the slider's label is the ASCII
+      // "wl", the survey and point answers spell "wavelength", the caliber carries none, the
+      // legend none. The disabled representation is absent from the whole face.
       size_t lambda_count = 0;
       for (size_t at = identity_report.find("\xCE\xBB"); at != std::string::npos;
            at = identity_report.find("\xCE\xBB", at + 2)) {
         ++lambda_count;
       }
-      IM_CHECK_RETV(lambda_count == 1, false);
+      IM_CHECK_RETV(lambda_count == 0, false);
     }
     IM_CHECK_RETV(ctx->ItemInfo("**/Class evidence##sv_answer", ImGuiTestOpFlags_NoError).ID != 0, false);
     IM_CHECK_RETV(ctx->ItemInfo("**/Class diagnostics##sv_answer", ImGuiTestOpFlags_NoError).ID == 0, false);
@@ -5669,7 +5671,7 @@ bool RefusedClassBlockadesNothing(ImGuiTestContext* ctx) {
   {
     const std::string frame_text = CaptureFrameText(ctx);
     IM_CHECK_RETV(frame_text.find("component(s):") != std::string::npos, false);
-    IM_CHECK_RETV(frame_text.find("target: alt 38.000 deg") != std::string::npos, false);
+    IM_CHECK_RETV(frame_text.find("target: alt 38.000°") != std::string::npos, false);
     IM_CHECK_RETV(frame_text.find("The complete answer is in the Raypath view.") != std::string::npos, false);
     IM_CHECK_RETV(frame_text.find("1: ") == std::string::npos, false);
   }
@@ -6614,7 +6616,7 @@ bool AnalyzeResultCarriesAcrossScaleTiers(ImGuiTestContext* ctx) {
       ImGui::SetWindowSize(win_l, ImVec2(500.0f, 320.0f), ImGuiCond_Always);
       ctx->Yield(2);
     }
-    const ImGuiTestItemInfo lambda_e = ctx->ItemInfo("**/λ##map", ImGuiTestOpFlags_NoError);
+    const ImGuiTestItemInfo lambda_e = ctx->ItemInfo("**/wl##map", ImGuiTestOpFlags_NoError);
     IM_CHECK_RETV(lambda_e.ID != 0, false);
     {
       // The λ row lives in the INFO region since the D3 split; the containment reads its host.
@@ -7214,14 +7216,14 @@ bool NarrowColumnClippedRowsKeepTheirEntities(ImGuiTestContext* ctx) {
     PinRaypathViewOnScreen(ctx);
     ImGuiWindow* map_c = MapInfoRegionWindow();  // the λ row lives in the info region (D3)
     IM_CHECK_RETV(map_c != nullptr, false);
-    const ImGuiTestItemInfo lambda_c = ctx->ItemInfo("**/λ##map", ImGuiTestOpFlags_NoError);
+    const ImGuiTestItemInfo lambda_c = ctx->ItemInfo("**/wl##map", ImGuiTestOpFlags_NoError);
     IM_CHECK_RETV(lambda_c.ID != 0, false);
     IM_CHECK_RETV(lambda_c.RectFull.Min.x >= map_c->InnerClipRect.Min.x - 0.5f &&
                       lambda_c.RectFull.Max.x <= map_c->InnerClipRect.Max.x + 0.5f &&
                       lambda_c.RectFull.Min.y >= map_c->InnerClipRect.Min.y - 0.5f &&
                       lambda_c.RectFull.Max.y <= map_c->InnerClipRect.Max.y + 0.5f,
                   false);
-    ctx->ItemInputValue("**/λ##map", 600.0f);
+    ctx->ItemInputValue("**/wl##map", 600.0f);
     ctx->Yield(2);
     IM_CHECK_RETV(gui::g_state.analysis.map_wavelength_nm > 599.0 && gui::g_state.analysis.map_wavelength_nm < 601.0,
                   false);
@@ -9825,7 +9827,7 @@ bool RaypathViewNarrowestWindowKeepsControlsReachable(ImGuiTestContext* ctx) {
   // The info region's rows wrap instead of clip: the λ slider, the Set button and the state
   // line all resolve inside the info region's clip (RectFull containment — a wrapped control
   // that lost its tail would fail the Max edges).
-  const ImGuiTestItemInfo lambda_n = ctx->ItemInfo("**/λ##map", ImGuiTestOpFlags_NoError);
+  const ImGuiTestItemInfo lambda_n = ctx->ItemInfo("**/wl##map", ImGuiTestOpFlags_NoError);
   IM_CHECK_RETV(lambda_n.ID != 0, false);
   IM_CHECK_RETV(lambda_n.RectFull.Max.x <= info->InnerClipRect.Max.x + 0.5f, false);
   const ImGuiTestItemInfo set_n = ctx->ItemInfo("**/Set sky point###sky_set", ImGuiTestOpFlags_NoError);
@@ -10467,7 +10469,7 @@ bool CheckMapCellSteps(ImGuiTestContext* ctx, const std::string& text, const LUM
     IM_CHECK_RETV(std::isfinite(value) && std::abs(value - expected) <= std::abs(expected) * 1e-6, false);
     return true;
   };
-  IM_CHECK_RETV(check_axis("δ ", (info.view_delta_max_deg - info.view_delta_min_deg) / info.view_rows), false);
+  IM_CHECK_RETV(check_axis("dev ", (info.view_delta_max_deg - info.view_delta_min_deg) / info.view_rows), false);
   IM_CHECK_RETV(check_axis("az ", (info.view_az_max_deg - info.view_az_min_deg) / info.view_cols), false);
   return true;
 }
@@ -10546,7 +10548,7 @@ bool CheckMapQualityText(ImGuiTestContext* ctx, const std::string& stem) {
     LUMICE_PathMapInfo info{};
     info.struct_size = sizeof(info);
     IM_CHECK_RETV(LUMICE_PathMapGetInfo(reference.get(), &info) == LUMICE_PATH_READ_OK, false);
-    const std::string line = MapTextLine(report_text, source, "δ ");
+    const std::string line = MapTextLine(report_text, source, "cell dev ");
     IM_CHECK_RETV(CheckMapCellSteps(ctx, line, info), false);
     // The full-sky reader's known one-degree grid is an anchor independent of display formatting.
     {
@@ -10555,7 +10557,7 @@ bool CheckMapQualityText(ImGuiTestContext* ctx, const std::string& stem) {
       IM_CHECK_RETV(info.view_az_max_deg - info.view_az_min_deg == 360.0, false);
     }
     IM_CHECK_RETV(CheckMapTextGlyphs(ctx, source, line), false);
-    IM_CHECK_RETV(line.find("cell δ ") != std::string::npos, false);
+    IM_CHECK_RETV(line.find("cell dev ") != std::string::npos, false);
     return true;
   };
   IM_CHECK_RETV(check_source(), false);
@@ -10573,7 +10575,7 @@ bool CheckMapQualityText(ImGuiTestContext* ctx, const std::string& stem) {
   LUMICE_PathMapInfo cursor_info{};
   cursor_info.struct_size = sizeof(cursor_info);
   IM_CHECK_RETV(LUMICE_PathMapGetInfo(reference.get(), &cursor_info) == LUMICE_PATH_READ_OK, false);
-  const std::string cursor_line = MapTextLine(cursor_text, "δ ", "az ");
+  const std::string cursor_line = MapTextLine(cursor_text, "cell dev ", "az ");
   IM_CHECK_RETV(CheckMapCellSteps(ctx, cursor_line, cursor_info), false);
   IM_CHECK_RETV(CheckMapTextGlyphs(ctx, "cursor", cursor_line), false);
   const auto save_tooltip = [&](const char* suffix) -> bool {
@@ -10631,7 +10633,7 @@ bool CheckMapGlyphsAcrossUiScale(ImGuiTestContext* ctx) {
         static_cast<unsigned long long>(atlas->TexID), lambda->AdvanceX, delta->AdvanceX, body->FallbackAdvanceX);
     ctx->SetRef("//Raypath view");
     // This independent UTF-8 anchor also tests the compiled slider label's encoding.
-    const ImGuiTestItemInfo slider = ctx->ItemInfo("**/\xCE\xBB##map", ImGuiTestOpFlags_NoError);
+    const ImGuiTestItemInfo slider = ctx->ItemInfo("**/wl##map", ImGuiTestOpFlags_NoError);
     IM_CHECK_RETV(slider.ID != 0, false);
     ImGuiWindow* info_region = MapInfoRegionWindow();
     IM_CHECK_RETV(info_region != nullptr, false);
@@ -10646,23 +10648,18 @@ bool CheckMapGlyphsAcrossUiScale(ImGuiTestContext* ctx) {
         LUMICE_PathMapGetInfo(gui::g_state.analysis.map.adopted_result.get(), &caliber.info) == LUMICE_PATH_READ_OK &&
             caliber.info.kept_count > 0,
         false);
-    // The caliber's diagnostics tier carries the grid numbers (the ledger's tiering); the λ
-    // is deliberately absent from every caliber line — the slider row's echo is its owner — so
-    // the glyph audit reads the cell line's δ and the slider's λ label for the two codepoints.
+    // The caliber's diagnostics tier carries the grid numbers (the ledger's tiering); the
+    // wavelength is deliberately absent from every caliber line — the slider row's echo is its
+    // owner — and the descriptive-policy layer (D4's second contract, stacked over — never
+    // instead of — the per-codepoint coverage) pins the submitted face: neither Greek glyph
+    // rides the diagnostics text (the disabled representation), the dev descriptor it replaced
+    // does, and the slider's new ASCII label resolves as an item (the wl ItemInfo above).
     // This input carries no evidence, so the diagnostics lines' front is the grid line itself.
     const std::string metrics = gui::MapCaliberDiagnosticsLines(caliber).front();
     IM_CHECK_RETV(metrics.find("\xCE\xBB") == std::string::npos, false);
-    IM_CHECK_RETV(metrics.find("\xCE\xB4") != std::string::npos, false);
-    std::string old_metrics = metrics;
-    {
-      const size_t at = old_metrics.find("\xCE\xB4");
-      if (at != std::string::npos) {
-        old_metrics.replace(at, 2, "?");
-      }
-    }
-    ctx->LogInfo("[map glyphs] label width %.3f -> %.3f; metrics width %.3f -> %.3f: %s", ImGui::CalcTextSize("?").x,
-                 ImGui::CalcTextSize("\xCE\xBB").x, ImGui::CalcTextSize(old_metrics.c_str()).x,
-                 ImGui::CalcTextSize(metrics.c_str()).x, metrics.c_str());
+    IM_CHECK_RETV(metrics.find("\xCE\xB4") == std::string::npos, false);
+    IM_CHECK_RETV(metrics.find("cell dev ") != std::string::npos, false);
+    ctx->LogInfo("[map glyphs] metrics: %s", metrics.c_str());
     ctx->MouseMoveToPos(ImVec2(2.0f, 2.0f));
     ctx->Yield(2);
     const std::string stem = std::string("map_glyphs_") + suffix;
@@ -15466,7 +15463,7 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       // The separate fake state exercises layout branches only. Actual query adoption and
       // physical interaction remain the real-consumer cases' responsibility.
       const char* refs[] = { "**/##map_canvas",
-                             "**/λ##map",
+                             "**/wl##map",
                              "**/alt°##sky",
                              "**/az°##sky",
                              "**/Set sky point###sky_set",
