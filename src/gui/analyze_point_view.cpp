@@ -2695,10 +2695,24 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
       }
       const PointCurveAxisRange before_wheel = PointCurveVisibleRange(fit, &view.curve_axis);
       const std::string before_summary = summary_for(before_wheel);
-      const float before_plot_h = std::max(1.0f, canvas_h - UiPx(10.0f) - footer_height(before_summary));
+      // The Y-input availability boundary, judged BEFORE any state write: the frame's own window
+      // (the one the summary was read from) and its real footer budget decide whether the Y
+      // gestures exist. Once the footer leaves nothing positive, a pan or a zoom would write
+      // state nothing shows — both stay dead and the pan latch dies here; the draw side
+      // re-judges below on the frame's final footer for the ink. The D7 floor's click-to-select
+      // contract survives this (the x mapping is width-defined; the write sits outside this
+      // boundary), and the shared wheel arbitration is untouched — the claim stands, the
+      // unconsumed event just passes.
+      const float before_real_h = canvas_h - UiPx(10.0f) - footer_height(before_summary);
+      const bool y_inputs_live = before_real_h >= UiPx(kPoseViewCurveMinPlot);
+      if (!y_inputs_live) {
+        view.curve_pan_active = false;  // the plot is gone; a held pan does not survive it
+      }
+      const float before_plot_h = std::max(1.0f, before_real_h);
       const double mouse_anchor = 1.0 - (ImGui::GetIO().MousePos.y - canvas_min.y - UiPx(10.0f)) / before_plot_h;
       const double anchor = mouse_anchor >= 0.0 && mouse_anchor <= 1.0 ? mouse_anchor : 0.5;
-      const double wheel = AnalyzeRegionWheelStanding() && canvas_hovered ? ImGui::GetIO().MouseWheel : 0.0;
+      const double wheel =
+          AnalyzeRegionWheelStanding() && canvas_hovered && y_inputs_live ? ImGui::GetIO().MouseWheel : 0.0;
       PointCurveAxisRange visible = PointCurveVisibleRange(fit, &view.curve_axis, wheel, anchor);
       // The pan rides the post-zoom window (a wheel event during a drag still zooms exactly once,
       // and the pan continues from the event's effective window): the drag's per-frame delta as a
@@ -2707,8 +2721,9 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
       // there would pan by the approach movement a mere right-click carried in with it. Pan
       // writes no cursor, stops no playback and touches no query identity — the view window is
       // its only subject.
-      const float pan_dy =
-          view.curve_pan_active && !ImGui::IsMouseClicked(ImGuiMouseButton_Right) ? ImGui::GetIO().MouseDelta.y : 0.0f;
+      const float pan_dy = view.curve_pan_active && y_inputs_live && !ImGui::IsMouseClicked(ImGuiMouseButton_Right) ?
+                               ImGui::GetIO().MouseDelta.y :
+                               0.0f;
       if (pan_dy != 0.0f) {
         visible = PointCurvePanRange(fit, &view.curve_axis, static_cast<double>(pan_dy) / before_plot_h);
       }
@@ -2718,16 +2733,14 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
       const std::string outside_label = wheel == 0.0 && pan_dy == 0.0f ? before_summary : summary_for(visible);
       const float pad_b = footer_height(outside_label);
       const float rough_plot_h = std::max(1.0f, canvas_h - UiPx(10.0f) - pad_b);
-      // The footer's real budget decides whether a plot exists this frame: below the honest
-      // minimum the canvas switches to its recoverable note form — no inverted rect, no clipped
-      // labels posing as present (§3.2's degradation); input stays off and the plot returns with
-      // the space. The check consumes the same arithmetic the layout spends, so the drawn rect
-      // and the hit mapping can never disagree about the plot's existence.
+      // The draw side of the availability boundary: the frame's FINAL footer (this frame's wheel
+      // or pan may have changed the summary's row count) decides whether the plot ink exists.
+      // Below the honest minimum the canvas renders its recoverable note form — no inverted
+      // rect, no clipped labels posing as present (§3.2's degradation) — and the Y-input side
+      // above already kept the hidden window untouched. The two judgments are the same
+      // arithmetic on the same canvas; they can only disagree across one transition frame.
       const float real_plot_h = canvas_h - UiPx(10.0f) - pad_b;
       const bool plot_fits = real_plot_h >= UiPx(kPoseViewCurveMinPlot);
-      if (!plot_fits) {
-        view.curve_pan_active = false;  // the plot is gone; a held pan does not survive it
-      }
       const int label_step = have_range ? PointCurveLogLabelStep(v_min, v_max, rough_plot_h, line_h) : 1;
       float widest_lab = 0.0f;
       bool have_labelled_major = false;

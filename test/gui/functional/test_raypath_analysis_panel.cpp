@@ -9434,6 +9434,17 @@ bool PoseCurvePanMovesTheWindowAndKeepsTheXLabels(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(view.curve_axis.log_lo == log_lo_degraded, false);
   ctx->MouseUp(1);
   ctx->Yield(1);
+  // The degraded form's wheel leg: the hidden window must not move either — both endpoints hold
+  // while the note form owns the canvas, and a wheel after the restore works again (the two
+  // judgments, input and ink, are the same arithmetic; only one transition frame can differ).
+  const double lo_before_degraded_wheel = view.curve_axis.log_lo;
+  const double hi_before_degraded_wheel = view.curve_axis.log_hi;
+  ctx->MouseMoveToPos(canvas_rect().GetCenter());
+  ctx->Yield(2);
+  ctx->MouseWheelY(-3.0f);  // zoom OUT: this leg's window already sits at the 0.25-decade span
+  ctx->Yield(2);            // floor, so a zoom-in would be a clamp no-op with no discriminative power
+  IM_CHECK_RETV(view.curve_axis.log_lo == lo_before_degraded_wheel, false);
+  IM_CHECK_RETV(view.curve_axis.log_hi == hi_before_degraded_wheel, false);
   bool restored = false;
   strip_ok = true;
   for (int i = 0; i < 10 && !restored && strip_ok; ++i) {
@@ -9445,6 +9456,12 @@ bool PoseCurvePanMovesTheWindowAndKeepsTheXLabels(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(strip_ok, false);
   IM_CHECK_RETV(restored, false);
   IM_CHECK_RETV(check_footer_rows(), false);  // the two rows are intact again at the grown canvas
+  ctx->MouseMoveToPos(canvas_rect().GetCenter());
+  ctx->Yield(2);
+  ctx->MouseWheelY(-2.0f);  // zoom out: the deep window is not at the fit's full span, so it moves
+  ctx->Yield(2);
+  IM_CHECK_RETV(view.curve_axis.log_hi - view.curve_axis.log_lo > hi_before_degraded_wheel - lo_before_degraded_wheel,
+                false);  // the restored canvas zooms again
 
   // ---- AC4: leave the fit by zoom and pan, then a REAL new adoption resets the window — and a
   // right button held across the adoption does not resurrect the gesture (no new press, no pan). ----
@@ -9525,6 +9542,14 @@ bool PoseCurvePanMovesTheWindowAndKeepsTheXLabels(ImGuiTestContext* ctx) {
       IM_CHECK_RETV(!glyphs_in(center).empty(), false);
       ctx->LogInfo("[pose curve pan] degraded at 1.5x, canvas %.0fpx — the note form holds", (double)zone.GetHeight());
     }
+    // The 1.5x wheel leg: the same hidden-window boundary at the other calibration point.
+    const double lo15 = view.curve_axis.log_lo;
+    const double hi15 = view.curve_axis.log_hi;
+    ctx->MouseMoveToPos(canvas_rect().GetCenter());
+    ctx->Yield(2);
+    ctx->MouseWheelY(2.0f);  // zoom IN: this leg's window sits at the fit's full span, so a
+    ctx->Yield(2);           // zoom-out would be a clamp no-op with no discriminative power
+    IM_CHECK_RETV(view.curve_axis.log_lo == lo15 && view.curve_axis.log_hi == hi15, false);
     bool restored_15 = false;
     strip_ok_15 = true;
     for (int i = 0; i < 10 && !restored_15 && strip_ok_15; ++i) {
