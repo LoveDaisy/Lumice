@@ -73,8 +73,9 @@ struct SurveyRowHoverReadout {
 // at-point convention — the same units cone_center_dir carries), so a 742.6 point query can fill
 // its target field verbatim; the map pick writes the negated projection result, the coordinate
 // input converts (altitude, azimuth) through the engine's own label rule. `from_map_pick` is the
-// expression source, kept because the two paths are visible states (a pick shows a marker on the
-// map; a typed coordinate does not depend on any map existing).
+// expression source only — the tooltip's provenance word reads it; it gates nothing. The
+// marker's draw gate is `valid` alone: every writer of a valid intent (pick, drag, the Set sky
+// point button) draws the same ink.
 struct SkyPointIntent {
   bool valid = false;
   float dir[3] = { 0.0f, 0.0f, 0.0f };

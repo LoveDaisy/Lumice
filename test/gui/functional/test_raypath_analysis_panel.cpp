@@ -2044,6 +2044,13 @@ bool MapRegionShowsTheClassMapAndTakesThePick(ImGuiTestContext* ctx) {
   ctx->KeyUp(ImGuiMod_Alt);
   ctx->Yield(1);
   IM_CHECK_RETV(gui::g_state.analysis.sky_point.from_map_pick, false);
+  // The pick's own direction, saved before the button leg rewrites it: a canvas-picked
+  // direction projects back onto the view by construction — the marker ink probe's marked leg
+  // carries the button path's SHAPE (valid, not from a map pick) over this direction, so the
+  // projection-failure arm stays out of the measurement. (A button direction outside the
+  // current view draws nothing — that arm is the projection's honesty, kept as is.)
+  const float picked_dir[3] = { gui::g_state.analysis.sky_point.dir[0], gui::g_state.analysis.sky_point.dir[1],
+                                gui::g_state.analysis.sky_point.dir[2] };
   IM_CHECK_RETV(!gui::g_state.analyze_pose_view_open, false);
   IM_CHECK_RETV(gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kWaiting, false);
   const auto pending_point_id = gui::g_state.analysis.point.intent_id;
@@ -2107,7 +2114,14 @@ bool MapRegionShowsTheClassMapAndTakesThePick(ImGuiTestContext* ctx) {
     ctx->Yield(3);
     const int base = marker_probe_vertices;
     IM_CHECK_RETV(base > 0, false);
-    marker_probe.analysis.sky_point = gui::g_state.analysis.sky_point;
+    // The marked leg: the button path's written shape — valid, NOT from a map pick — over the
+    // saved pick direction (in view by construction). The ink this leg adds is exactly what
+    // the source gate admits or suppresses.
+    marker_probe.analysis.sky_point.valid = true;
+    marker_probe.analysis.sky_point.from_map_pick = false;
+    marker_probe.analysis.sky_point.dir[0] = picked_dir[0];
+    marker_probe.analysis.sky_point.dir[1] = picked_dir[1];
+    marker_probe.analysis.sky_point.dir[2] = picked_dir[2];
     ctx->Yield(3);
     IM_CHECK_RETV(marker_probe_vertices > base, false);
     ctx->LogInfo("[sky point marker] button-path ink: %d -> %d vertices", base, marker_probe_vertices);

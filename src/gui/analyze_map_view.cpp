@@ -1201,7 +1201,12 @@ void DrawSurveyOverlays(ImDrawList* dl, GuiState& state, const MapCanvasProjecti
 
 void DrawSkyPointMarker(ImDrawList* dl, const MapCanvasProjection& view, const SkyPointIntent& intent,
                         const ImVec2& pic_min, float pic_px, float* out_marker_px, float* out_marker_py) {
-  if (!intent.valid || !intent.from_map_pick) {
+  // The marker rides the intent's VALIDITY, not its source: every path that writes a valid
+  // intent — a map pick, marker drag, the typed-coordinate Set sky point button — draws the
+  // same ink (AC1's style unity holds by construction: one draw site, one shape). A typed
+  // coordinate is a first-class citizen of the map: it names a sky direction that projects
+  // exactly like a picked one.
+  if (!intent.valid) {
     return;
   }
   const double pos[3] = { -static_cast<double>(intent.dir[0]), -static_cast<double>(intent.dir[1]),
