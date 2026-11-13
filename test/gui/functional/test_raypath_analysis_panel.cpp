@@ -5290,6 +5290,34 @@ bool NewDocumentClearsEveryAnalyzeFace(ImGuiTestContext* ctx) {
 // session where "direction identity" is the answer, nothing else degrades with it (AC2's
 // 不整页封锁 on this scene's own identity family). Fixed-dt pool: the rank-0 survey
 // early-stops (certified, no chromatic legs) and the mass arm answers in milliseconds.
+// Open the class-answer diagnostics group and park its header near the report child's top, so
+// the opened body is inside the child's visible slice. The frame capture reads visible text
+// only, and the group's resting slot rides the fixed-slot layout above the report child —
+// whether an opened body lands inside that slice is a layout accident (the click's own
+// auto-scroll only reaches far enough when the resting slot is already partially clipped).
+// The expansion state is normalized by the group's own click semantics — click, and click
+// again only if the storage still says closed — so the end state is open whatever the engine's
+// item queries surfaced along the way.
+bool OpenAndParkClassDiagnostics(ImGuiTestContext* ctx) {
+  ImGuiWindow* report_win = MapReportWindow();
+  IM_CHECK_RETV(report_win != nullptr, false);
+  const ImGuiID diag_id = report_win->GetID("Class diagnostics##sv_answer");
+  ctx->ItemClick("**/Class diagnostics##sv_answer");
+  ctx->Yield(2);
+  if (!report_win->DC.StateStorage->GetBool(diag_id, false)) {
+    ctx->ItemClick("**/Class diagnostics##sv_answer");
+    ctx->Yield(2);
+  }
+  const ImGuiTestItemInfo diag_item = ctx->ItemInfo("**/Class diagnostics##sv_answer", ImGuiTestOpFlags_NoError);
+  IM_CHECK_RETV(diag_item.ID != 0, false);
+  const float header_top_in_view = diag_item.RectFull.Min.y - report_win->InnerClipRect.Min.y;
+  if (header_top_in_view > 0.0f) {
+    ImGui::SetScrollY(report_win, report_win->Scroll.y + header_top_in_view);
+    ctx->Yield(2);
+  }
+  return true;
+}
+
 bool IdentityClassShowsTheMassArmAndTheMapAnswers(ImGuiTestContext* ctx) {
   ScopedServerGuard guard;
   IM_CHECK_RETV(BringUpScene(ctx, kFullyRandomJson, /*infinite=*/false, /*gpu=*/false), false);
@@ -5435,8 +5463,7 @@ bool IdentityClassShowsTheMassArmAndTheMapAnswers(ImGuiTestContext* ctx) {
     const ScopedDebugDetailsEnv env_on(DebugDetailsState::kOn);
     ctx->Yield(2);
     IM_CHECK_RETV(ctx->ItemInfo("**/Class diagnostics##sv_answer", ImGuiTestOpFlags_NoError).ID != 0, false);
-    ctx->ItemClick("**/Class diagnostics##sv_answer");
-    ctx->Yield(2);
+    IM_CHECK_RETV(OpenAndParkClassDiagnostics(ctx), false);
     {
       const std::string opened_text = CaptureMapFrameText(ctx);
       IM_CHECK_RETV(opened_text.find("member(s)") != std::string::npos, false);
@@ -5445,6 +5472,9 @@ bool IdentityClassShowsTheMassArmAndTheMapAnswers(ImGuiTestContext* ctx) {
     ctx->Yield(1);
     ctx->ItemClick("**/Raypath view###main_raypath_open");
     ctx->Yield(2);
+    // The reopened child's viewport resets to its top while the group stays expanded from the
+    // window storage — re-park the header so its body is inside the visible slice again.
+    IM_CHECK_RETV(OpenAndParkClassDiagnostics(ctx), false);
     {
       const std::string reopened_text = CaptureMapFrameText(ctx);
       IM_CHECK_RETV(reopened_text.find("member(s)") != std::string::npos, false);
