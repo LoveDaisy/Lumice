@@ -15729,18 +15729,20 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
         const auto run = ctx->ItemInfo(kAnalyzeButton);
         const auto budget = ctx->ItemInfo("##Rays(M)_input");
         const auto ring = ctx->ItemInfo("Radius###Radius_narrow");
+        const auto infinite = ctx->ItemInfo("Infinite rays");
         ImGuiWindow* host = ctx->GetWindowByRef(PanoramaRegionRef());
         IM_CHECK_RETV(host != nullptr, false);
         const bool one_row = std::abs(run.RectFull.Min.y - budget.RectFull.Min.y) < 0.5f;
-        ctx->LogInfo("[operation boundary diagnostic] width=%.1f run-y=%.1f budget-y=%.1f radius-y=%.1f height=%.1f",
-                     host->Size.x - padding, run.RectFull.Min.y, budget.RectFull.Min.y, ring.RectFull.Min.y,
-                     gui::AnalyzeOperationBarHeight(host->Size.x - padding));
+        ctx->LogInfo(
+            "[operation boundary diagnostic] width=%.1f run-y=%.1f budget-y=%.1f radius-y=%.1f height=%.1f row1=%.1f",
+            host->Size.x - padding, run.RectFull.Min.y, budget.RectFull.Min.y, ring.RectFull.Min.y,
+            gui::AnalyzeOperationBarHeight(host->Size.x - padding),
+            infinite.RectFull.Max.x - ctx->ItemInfo("Whole sky").RectFull.Min.x);
         IM_CHECK_RETV(one_row == single, false);
         // Nothing clips at either template: the two-row form's row 1 ends at Infinite rays and
         // row 2 at the Rays(M) label; the one-row form's only end is that same label.
-        const auto row1_end = ctx->ItemInfo("Infinite rays");
         const auto last_end = ctx->ItemInfo("##Rays(M)_label");
-        IM_CHECK_RETV(row1_end.RectFull.Max.x <= host->InnerClipRect.Max.x + 0.5f, false);
+        IM_CHECK_RETV(infinite.RectFull.Max.x <= host->InnerClipRect.Max.x + 0.5f, false);
         IM_CHECK_RETV(last_end.RectFull.Max.x <= host->InnerClipRect.Max.x + 0.5f, false);
         const ImRect point_picture = PanoramaPictureWindow()->Rect();
         gui::g_state.analysis.roi_mode = LUMICE_RAYPATH_ROI_FULL_SKY;
