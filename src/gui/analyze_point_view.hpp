@@ -233,6 +233,14 @@ inline constexpr double kCurveAxisZoomFactor = 1.12;
 // The window never extends beyond the fit; spans stop at 0.25 decade or the full fit span.
 PointCurveAxisRange PointCurveVisibleRange(const PointCurveAxisRange& fit, PointCurveZoom* zoom, double wheel = 0.0,
                                            double anchor = 0.5);
+// Pan the log window toward larger values for a drag DOWN (dy_norm > 0 — the ink follows the hand)
+// and toward smaller values for a drag up. `dy_norm` is the vertical drag as a fraction of the
+// plot height, so the same visual fraction of the plot always moves the same fraction of the
+// window's own log span, whatever the DPI or the data. Both endpoints shift by the same amount
+// and PointCurveVisibleRange's reconcile stays the ONE clamp: the window slides as a whole and
+// stops flush at the fit's edges, never compressed. A full-span window, a degenerate single-value
+// domain or an invalid fit has nothing to reveal and answers unchanged.
+PointCurveAxisRange PointCurvePanRange(const PointCurveAxisRange& fit, PointCurveZoom* zoom, double dy_norm);
 
 // Counts stored points, not (arm, point) pairs: multiple hidden arms at one point count once.
 // The extrema cover only hidden positive values; zeros and unavailable cells never count.

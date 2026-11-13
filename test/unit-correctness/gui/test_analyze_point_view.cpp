@@ -481,6 +481,58 @@ TEST(AnalyzePointView, CurveWindowZoomsAtAnchorClampsAndResetsOnAdoption) {
   EXPECT_FALSE(PointCurveVisibleRange({}, &view.curve_axis).valid);
 }
 
+TEST(AnalyzePointView, CurveWindowPansAsAWholeAndClampsAtTheFitEdges) {
+  const PointCurveAxisRange fit{ true, 1e-6, 1.0 };  // the log domain [-6, 0]
+  PointViewState view;
+  // Zoom once at the bottom anchor: the window rides the fit's floor with headroom above.
+  PointCurveVisibleRange(fit, &view.curve_axis, 1.0, 0.0);
+  const double span = view.curve_axis.log_hi - view.curve_axis.log_lo;
+  EXPECT_NEAR(span, 6.0 / 1.12, 1e-12);
+  const double lo_before = view.curve_axis.log_lo;
+  // A drag DOWN of a tenth of the plot moves the window a tenth of ITS OWN span toward larger
+  // values — the expected shift is plain arithmetic on the window the zoom left behind, never
+  // the pan helper's own math.
+  const PointCurveAxisRange panned = PointCurvePanRange(fit, &view.curve_axis, 0.1);
+  EXPECT_NEAR(view.curve_axis.log_lo, lo_before + 0.1 * span, 1e-12);
+  EXPECT_NEAR(view.curve_axis.log_hi - view.curve_axis.log_lo, span, 1e-12);  // span preserved
+  EXPECT_NEAR(panned.lo, std::pow(10.0, lo_before + 0.1 * span), 1e-9);
+  EXPECT_LT(panned.hi, fit.hi);  // no edge was reached — the interior keeps log/pow positions
+  // A drag UP moves back by the same rule.
+  PointCurvePanRange(fit, &view.curve_axis, -0.1);
+  EXPECT_NEAR(view.curve_axis.log_lo, lo_before, 1e-12);
+  // Dragging past the top edge slides the whole window flush against it — span never compressed.
+  PointCurvePanRange(fit, &view.curve_axis, 100.0);
+  EXPECT_DOUBLE_EQ(view.curve_axis.log_hi, 0.0);  // flush at the fit's top
+  EXPECT_NEAR(view.curve_axis.log_hi - view.curve_axis.log_lo, span, 1e-12);
+  EXPECT_DOUBLE_EQ(PointCurvePanRange(fit, &view.curve_axis, 100.0).hi, fit.hi);
+  // ... and past the bottom edge flush against it, still the same span.
+  PointCurvePanRange(fit, &view.curve_axis, -100.0);
+  EXPECT_DOUBLE_EQ(view.curve_axis.log_lo, -6.0);
+  EXPECT_NEAR(view.curve_axis.log_hi - view.curve_axis.log_lo, span, 1e-12);
+  // A full-span window has nothing to reveal: the pan is a no-op even for a huge drag.
+  PointCurveVisibleRange(fit, &view.curve_axis, -10000.0, 0.0);  // wheel back out to the full span
+  const PointCurveZoom full = view.curve_axis;
+  EXPECT_DOUBLE_EQ(PointCurvePanRange(fit, &view.curve_axis, 5.0).lo, fit.lo);
+  EXPECT_DOUBLE_EQ(view.curve_axis.log_lo, full.log_lo);
+  EXPECT_DOUBLE_EQ(view.curve_axis.log_hi, full.log_hi);
+  // A degenerate single-value domain keeps its reconcile form; an invalid fit answers invalid;
+  // a zero drag writes nothing.
+  const PointCurveAxisRange one{ true, 2.0, 2.0 };
+  PointCurvePanRange(one, &view.curve_axis, 1.0);
+  EXPECT_DOUBLE_EQ(view.curve_axis.log_lo, std::log10(2.0));
+  EXPECT_DOUBLE_EQ(view.curve_axis.log_hi, std::log10(2.0) + 1.0);
+  const PointCurveZoom untouched = view.curve_axis;
+  EXPECT_DOUBLE_EQ(PointCurvePanRange(one, &view.curve_axis, 0.0).lo, 2.0);
+  EXPECT_DOUBLE_EQ(view.curve_axis.log_lo, untouched.log_lo);
+  EXPECT_FALSE(PointCurvePanRange({}, &view.curve_axis, 1.0).valid);
+  // The adoption reset also drops a latched pan gesture — a held drag never leaks across
+  // documents (it needs a new press inside the canvas to latch again).
+  view.curve_pan_active = true;
+  ResetPointViewStateForNewAdoption(&view);
+  EXPECT_FALSE(view.curve_pan_active);
+  EXPECT_DOUBLE_EQ(view.curve_axis.log_lo, 0.0);
+}
+
 TEST(AnalyzePointView, CurveWindowBreaksRunsAtBothBoundsWithoutDroppingSingletons) {
   using K = PointCurveValueKind;
   const K kinds[] = { K::kPositive, K::kPositive, K::kPositive, K::kPositive, K::kPositive, K::kExactZero };

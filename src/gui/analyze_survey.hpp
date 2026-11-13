@@ -391,6 +391,10 @@ struct PointViewState {
   int sample_index = 0;     // index into that component's VALID samples
   bool playing = false;     // playback advances sample_index; never any other state (AC3)
   double last_play_step_s = 0.0;
+  bool curve_pan_active = false;     // a right-button pan drag latched on the curve canvas: true from
+                                     // a press that began inside the canvas until the button's release,
+                                     // a new adoption or the canvas's own invalidation — all clear it,
+                                     // so a held gesture never leaks across documents or dead canvases
   bool show_deviation_grid = true;   // the sun grid's backdrop: drawn only when the result carries one
   bool show_fresnel_labels = false;  // the 3D trace's per-segment Fresnel ratio numbers: a session
                                      // display preference with the same survival set as the other
