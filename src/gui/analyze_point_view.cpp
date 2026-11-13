@@ -2947,10 +2947,15 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
 
       // The canvas writes the ONE selection: click or drag maps the mouse's x to the nearest
       // VALID sample (invalid points are unreachable, the slider's domain) and stops the
-      // playback — the slider's own write discipline, no second cursor state (J3). Dead on the
-      // degraded form: the plot's hit mapping does not exist there.
-      if (plot_fits && x_hi > 0.0) {
-        if (canvas_hovered) {
+      // playback — the slider's own write discipline, no second cursor state (J3). The write
+      // SURVIVES the degraded form: the x mapping is width-defined (it never touches the
+      // inverted dimension) and the selection is the one global state the globe, the 3D trace
+      // and the factors follow — the D7 floor's contract is that the canvas answers a click at
+      // its 40pt real-slice floor, where the plot ink cannot exist but the selection still can.
+      // The Y gestures stay dead there: a pan or a zoom with no visible plot writes state
+      // nothing shows (the pan latch is cleared by the degrade above).
+      if (x_hi > 0.0) {
+        if (plot_fits && canvas_hovered) {
           hover_position = PointCurveValidPositionNearX(curve, x_at_px(ImGui::GetIO().MousePos.x));
         }
         const auto write_cursor_from_mouse = [&]() {
