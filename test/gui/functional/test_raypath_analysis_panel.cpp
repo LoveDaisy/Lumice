@@ -9031,11 +9031,20 @@ bool PoseCurvePanMovesTheWindowAndKeepsTheXLabels(ImGuiTestContext* ctx) {
 
   // The plot-rect oracle: the submitted border vertices give the real plot rect (the same read
   // the cursor case's render oracle makes, widened to x) — every pixel prediction below builds
-  // on this rect, never on the renderer's helpers.
+  // on this rect, never on the renderer's helpers. The canvas rect is re-read per call: the D7
+  // legs below move it, and a rect captured at case start would filter the wrong area.
+  const auto canvas_rect = [&]() {
+    const ImGuiTestItemInfo c = ctx->ItemInfo("**/##pose_curve_canvas", ImGuiTestOpFlags_NoError);
+    return c.ID != 0 ? c.RectFull : ImRect(0.0f, 0.0f, -1.0f, -1.0f);
+  };
   const auto plot_rect = [&]() {
+    const ImRect zone = canvas_rect();
     ImRect rect(ImVec2(FLT_MAX, FLT_MAX), ImVec2(-FLT_MAX, -FLT_MAX));
+    if (zone.Min.x > zone.Max.x) {
+      return rect;  // no canvas item — no plot, whatever the stale frame drew
+    }
     for (const ImDrawVert& vertex : curve->DrawList->VtxBuffer) {
-      if (canvas.RectFull.Contains(vertex.pos) && vertex.col == gui::kPointCurvePlotBorderColor) {
+      if (zone.Contains(vertex.pos) && vertex.col == gui::kPointCurvePlotBorderColor) {
         rect.Add(vertex.pos);
       }
     }
@@ -9084,28 +9093,33 @@ bool PoseCurvePanMovesTheWindowAndKeepsTheXLabels(ImGuiTestContext* ctx) {
 
   // ---- AC2: with a non-empty outside count, the three x labels, the summary and the rad unit
   // are all on screen — the labels on their own row, the summary on the row below, nothing
-  // spanning both. ----
-  const ImRect plot0 = plot_rect();
-  IM_CHECK_RETV(plot0.Min.x < plot0.Max.x && plot0.Min.y < plot0.Max.y, false);
-  const ImRect row_a(plot0.Min.x - gui::UiPx(gui::kAnalyzeSplitterSize), plot0.Max.y + gui::UiPx(8.0f),
-                     plot0.Max.x + gui::UiPx(4.0f), plot0.Max.y + gui::UiPx(13.0f) + line_h + 1.5f);
-  const std::vector<ImRect> label_glyphs = glyphs_in(row_a);
-  IM_CHECK_RETV(label_glyphs.size() >= 3, false);
-  const auto cluster_at = [&](float x) {
-    return std::any_of(label_glyphs.begin(), label_glyphs.end(),
-                       [x](const ImRect& g) { return g.Min.x - 2.0f <= x && x <= g.Max.x + 2.0f; });
+  // spanning both. The check is reusable: the degrade leg below must find the same rows again
+  // after growing the canvas back. ----
+  const auto check_footer_rows = [&]() -> bool {
+    const ImRect plot = plot_rect();
+    IM_CHECK_RETV(plot.Min.x < plot.Max.x && plot.Min.y < plot.Max.y, false);  // the plot rect is ordered
+    const ImRect row_a(plot.Min.x - gui::UiPx(gui::kAnalyzeSplitterSize), plot.Max.y + gui::UiPx(8.0f),
+                       plot.Max.x + gui::UiPx(4.0f), plot.Max.y + gui::UiPx(13.0f) + line_h + 1.5f);
+    const std::vector<ImRect> label_glyphs = glyphs_in(row_a);
+    IM_CHECK_RETV(label_glyphs.size() >= 3, false);
+    const auto cluster_at = [&](float x) {
+      return std::any_of(label_glyphs.begin(), label_glyphs.end(),
+                         [x](const ImRect& g) { return g.Min.x - 2.0f <= x && x <= g.Max.x + 2.0f; });
+    };
+    IM_CHECK_RETV(cluster_at(plot.Min.x), false);                        // "0" centred on the left edge
+    IM_CHECK_RETV(cluster_at((plot.Min.x + plot.Max.x) * 0.5f), false);  // the mid label
+    IM_CHECK_RETV(cluster_at(plot.Max.x - 1.0f), false);                 // the right-aligned hi label
+    const ImRect zone = canvas_rect();
+    const ImRect row_b(plot.Min.x - gui::UiPx(gui::kAnalyzeSplitterSize), row_a.Max.y + 1.0f, zone.Max.x, zone.Max.y);
+    IM_CHECK_RETV(!glyphs_in(row_b).empty(), false);  // the summary's own row below the labels
+    bool spans_both_rows = false;
+    for (const ImRect& g : glyphs_in(ImRect(row_a.Min.x, row_a.Min.y, row_b.Max.x, row_b.Max.y))) {
+      spans_both_rows = spans_both_rows || (g.Min.y < row_a.Max.y && g.Max.y > row_b.Min.y);
+    }
+    IM_CHECK_RETV(!spans_both_rows, false);  // no glyph spans both rows
+    return true;
   };
-  IM_CHECK_RETV(cluster_at(plot0.Min.x), false);                         // "0" centred on the left edge
-  IM_CHECK_RETV(cluster_at((plot0.Min.x + plot0.Max.x) * 0.5f), false);  // the mid label
-  IM_CHECK_RETV(cluster_at(plot0.Max.x - 1.0f), false);                  // the right-aligned hi label
-  const ImRect row_b(plot0.Min.x - gui::UiPx(gui::kAnalyzeSplitterSize), row_a.Max.y + 1.0f, canvas.RectFull.Max.x,
-                     canvas.RectFull.Max.y);
-  IM_CHECK_RETV(!glyphs_in(row_b).empty(), false);  // the summary's own row below the labels
-  bool spans_both_rows = false;
-  for (const ImRect& g : glyphs_in(ImRect(row_a.Min.x, row_a.Min.y, row_b.Max.x, row_b.Max.y))) {
-    spans_both_rows = spans_both_rows || (g.Min.y < row_a.Max.y && g.Max.y > row_b.Min.y);
-  }
-  IM_CHECK_RETV(!spans_both_rows, false);  // no glyph spans both rows
+  IM_CHECK_RETV(check_footer_rows(), false);
   const ImRect rad_zone(canvas.RectFull.Max.x - ImGui::CalcTextSize("rad").x - gui::UiPx(8.0f), canvas.RectFull.Min.y,
                         canvas.RectFull.Max.x, canvas.RectFull.Min.y + line_h + gui::UiPx(6.0f));
   IM_CHECK_RETV(!glyphs_in(rad_zone).empty(), false);
@@ -9113,6 +9127,8 @@ bool PoseCurvePanMovesTheWindowAndKeepsTheXLabels(ImGuiTestContext* ctx) {
   // ---- AC1: press right inside the canvas, drag DOWN — the window slides toward larger values
   // until it sits flush at the fit's top (the clamp's whole-window shape), span never moving. ----
   const double span_before = view.curve_axis.log_hi - view.curve_axis.log_lo;
+  const ImRect plot0 = plot_rect();
+  IM_CHECK_RETV(plot0.Min.x < plot0.Max.x && plot0.Min.y < plot0.Max.y, false);
   const float plot_h0 = plot0.Max.y - plot0.Min.y;
   const float drag_bottom = canvas.RectFull.GetCenter().y + plot_h0;
   ctx->MouseDown(1);
@@ -9276,6 +9292,66 @@ bool PoseCurvePanMovesTheWindowAndKeepsTheXLabels(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(host->Pos.x == host_pos_before.x && host->Pos.y == host_pos_before.y, false);
   IM_CHECK_RETV(curve->Scroll.y == scroll_before, false);
 
+  // ---- Major-2 regression: the press frame establishes ownership only. The approach move
+  // lands in the SAME input frame as the press (MouseTeleportToPos NoYield + MouseDown), and a
+  // mere right-click must not pan by the movement it carried in — the window holds. ----
+  ctx->MouseMoveToPos(canvas.RectFull.GetCenter());
+  ctx->Yield(3);
+  ctx->MouseWheelY(-14.0f);  // a known mid-fit window: back out to the full span, then one notch
+  ctx->Yield(2);             // in at the centre anchor — room on both sides for the drag below
+  ctx->MouseWheelY(1.0f);
+  ctx->Yield(2);
+  const double log_lo_before_click = view.curve_axis.log_lo;
+  ctx->MouseTeleportToPos(ImVec2(canvas.RectFull.GetCenter().x, canvas.RectFull.GetCenter().y - 60.0f),
+                          ImGuiTestOpFlags_NoYield);
+  ctx->MouseDown(1);
+  ctx->Yield(2);
+  IM_CHECK_RETV(view.curve_axis.log_lo == log_lo_before_click, false);  // no jump from the approach move
+  ctx->MouseUp(1);
+  ctx->Yield(1);
+  // A real drag after the same-frame press still pans (the ownership carries into the drag) —
+  // dragged UP: the window moves toward smaller values with room below.
+  ctx->MouseDown(1);
+  ctx->MouseMoveToPos(ImVec2(canvas.RectFull.GetCenter().x, canvas.RectFull.GetCenter().y - 180.0f));
+  ctx->Yield(2);
+  ctx->MouseUp(1);
+  ctx->Yield(2);
+  IM_CHECK_RETV(view.curve_axis.log_lo != log_lo_before_click, false);  // the drag moved the window
+  IM_CHECK_RETV(!view.curve_pan_active, false);
+
+  // ---- Major-3 regression: a left press begun during a pan stays swallowed until released —
+  // releasing the RIGHT button first must not wake the held left drag into a cursor write. The
+  // playback is the discriminator (the write path always stops it, J3 — index moves are
+  // playback's own, not a gesture's): a woken write would end it, the swallow lets it run. ----
+  view.playing = true;
+  ctx->MouseMoveToPos(canvas.RectFull.GetCenter());
+  ctx->Yield(2);
+  ctx->MouseDown(1);  // the pan owns the gesture
+  ctx->Yield(1);
+  IM_CHECK_RETV(view.curve_pan_active, false);
+  ctx->MouseDown(0);  // the left press begins UNDER the pan
+  ctx->Yield(1);
+  ctx->MouseMoveToPos(ImVec2(canvas.RectFull.GetCenter().x + 40.0f, canvas.RectFull.GetCenter().y));
+  ctx->Yield(2);    // both held, dragging
+  ctx->MouseUp(1);  // the pan ends first — the held left drag must NOT wake into a cursor write
+  ctx->Yield(2);
+  IM_CHECK_RETV(!view.curve_pan_active, false);
+  IM_CHECK_RETV(view.playing, false);  // the playback ran on through the whole overlap
+  ctx->MouseUp(0);
+  ctx->Yield(2);
+  IM_CHECK_RETV(view.playing, false);  // releasing the swallowed press itself stops nothing
+  // A fresh left press afterwards selects normally (a resolved click stops the playback).
+  view.playing = true;
+  ctx->Yield(1);
+  ctx->MouseMoveToPos(ImVec2(canvas.RectFull.Min.x + canvas.RectFull.GetWidth() * 0.3f, canvas.RectFull.GetCenter().y));
+  ctx->Yield(2);
+  ctx->MouseDown(0);
+  ctx->Yield(2);
+  ctx->MouseUp(0);
+  ctx->Yield(2);
+  IM_CHECK_RETV(!view.playing, false);  // the fresh press resolved and stopped it — no swallow
+  view.playing = false;
+
   // ---- AC3's narrow window: zoom to a sub-decade span and pan it strictly between two decade
   // exponents — no labelled major, and the window's own boundary values are the only numeric
   // reference, drawn in the gutter at the plot's top and bottom frame, fully inside the canvas. ----
@@ -9327,6 +9403,49 @@ bool PoseCurvePanMovesTheWindowAndKeepsTheXLabels(ImGuiTestContext* ctx) {
                   false);
   }
 
+  // ---- The small-canvas degrade (the footer's real budget): with a non-empty outside summary,
+  // shrink the curve canvas through D7 until the footer leaves no real plot — the named note
+  // form replaces the plot (no inverted rect, no clipped labels), the pan dies, and growing
+  // back restores the full form. The predicate consumes live line heights, so it is scale-free;
+  // the 1.5x leg at the case's end re-runs the same shape at the other calibration point. ----
+  bool degraded = false;
+  bool strip_ok = true;
+  for (int i = 0; i < 10 && !degraded && strip_ok; ++i) {
+    strip_ok = PoseDragStrip(ctx, "**/##PoseCurveSplitter", 0.0f, -30.0f);  // the drag helpers'
+    ctx->Yield(2);                                                          // verdict judges once, after
+    const ImRect plot_d = plot_rect();
+    degraded = !(plot_d.Min.y < plot_d.Max.y);  // the plot border is gone — no inverted rect drawn
+  }
+  IM_CHECK_RETV(strip_ok, false);
+  IM_CHECK_RETV(degraded, false);
+  {
+    const ImRect zone = canvas_rect();
+    const ImRect center(zone.Min.x, zone.GetCenter().y - line_h, zone.Max.x, zone.GetCenter().y + line_h);
+    IM_CHECK_RETV(!glyphs_in(center).empty(), false);  // the note's ink, centred where the plot was
+    ctx->LogInfo("[pose curve pan] degraded canvas %.0fpx — the note form holds", (double)zone.GetHeight());
+  }
+  const double log_lo_degraded = view.curve_axis.log_lo;
+  ctx->MouseMoveToPos(canvas_rect().GetCenter());
+  ctx->Yield(2);
+  ctx->MouseDown(1);
+  ctx->MouseMoveToPos(ImVec2(canvas_rect().GetCenter().x, canvas_rect().GetCenter().y + 40.0f));
+  ctx->Yield(2);
+  IM_CHECK_RETV(!view.curve_pan_active, false);  // the degraded canvas takes no pan
+  IM_CHECK_RETV(view.curve_axis.log_lo == log_lo_degraded, false);
+  ctx->MouseUp(1);
+  ctx->Yield(1);
+  bool restored = false;
+  strip_ok = true;
+  for (int i = 0; i < 10 && !restored && strip_ok; ++i) {
+    strip_ok = PoseDragStrip(ctx, "**/##PoseCurveSplitter", 0.0f, 40.0f);
+    ctx->Yield(2);
+    const ImRect plot_r = plot_rect();
+    restored = plot_r.Min.y < plot_r.Max.y;
+  }
+  IM_CHECK_RETV(strip_ok, false);
+  IM_CHECK_RETV(restored, false);
+  IM_CHECK_RETV(check_footer_rows(), false);  // the two rows are intact again at the grown canvas
+
   // ---- AC4: leave the fit by zoom and pan, then a REAL new adoption resets the window — and a
   // right button held across the adoption does not resurrect the gesture (no new press, no pan). ----
   ctx->MouseMoveToPos(canvas.RectFull.GetCenter());
@@ -9368,6 +9487,56 @@ bool PoseCurvePanMovesTheWindowAndKeepsTheXLabels(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(!view.curve_pan_active, false);
   ctx->MouseUp(1);
   ctx->Yield(1);
+
+  // ---- The same degrade at 1.5x (the §16.4.1 calibration duty, this task's share): the
+  // predicate consumes UiPx and live line heights, so the note form must hold at the other
+  // calibration point too. The scale restores before the case ends — this leg's write must not
+  // become the scale a later case inherits. ----
+  {
+    const auto set_scale = [&](float multiplier) -> bool {
+      gui::g_ui_scale_multiplier = multiplier;
+      gui::g_ui_scale_dirty = true;
+      for (int i = 0;
+           i < 60 && !(gui::UiPx(gui::kAnalyzeLeftPanelWidth) > multiplier * gui::kAnalyzeLeftPanelWidth - 0.5f &&
+                       gui::UiPx(gui::kAnalyzeLeftPanelWidth) < multiplier * gui::kAnalyzeLeftPanelWidth + 0.5f);
+           ++i) {
+        ctx->Yield(1);
+      }
+      IM_CHECK_RETV(fabsf(gui::UiPx(gui::kAnalyzeLeftPanelWidth) - multiplier * gui::kAnalyzeLeftPanelWidth) < 0.5f,
+                    false);
+      ctx->Yield(4);
+      return true;
+    };
+    IM_CHECK_RETV(set_scale(1.5f), false);
+    bool degraded_15 = false;
+    bool strip_ok_15 = true;
+    for (int i = 0; i < 10 && !degraded_15 && strip_ok_15; ++i) {
+      strip_ok_15 = PoseDragStrip(ctx, "**/##PoseCurveSplitter", 0.0f, -40.0f);
+      ctx->Yield(2);
+      const ImRect plot_d = plot_rect();
+      degraded_15 = !(plot_d.Min.y < plot_d.Max.y);
+    }
+    IM_CHECK_RETV(strip_ok_15, false);
+    IM_CHECK_RETV(degraded_15, false);
+    {
+      const ImRect zone = canvas_rect();
+      const ImRect center(zone.Min.x, zone.GetCenter().y - ImGui::GetTextLineHeight(), zone.Max.x,
+                          zone.GetCenter().y + ImGui::GetTextLineHeight());
+      IM_CHECK_RETV(!glyphs_in(center).empty(), false);
+      ctx->LogInfo("[pose curve pan] degraded at 1.5x, canvas %.0fpx — the note form holds", (double)zone.GetHeight());
+    }
+    bool restored_15 = false;
+    strip_ok_15 = true;
+    for (int i = 0; i < 10 && !restored_15 && strip_ok_15; ++i) {
+      strip_ok_15 = PoseDragStrip(ctx, "**/##PoseCurveSplitter", 0.0f, 40.0f);
+      ctx->Yield(2);
+      const ImRect plot_r = plot_rect();
+      restored_15 = plot_r.Min.y < plot_r.Max.y;
+    }
+    IM_CHECK_RETV(strip_ok_15, false);
+    IM_CHECK_RETV(restored_15, false);
+    IM_CHECK_RETV(set_scale(gui::kFactoryUiScaleMultiplier), false);
+  }
   return true;
 }
 
