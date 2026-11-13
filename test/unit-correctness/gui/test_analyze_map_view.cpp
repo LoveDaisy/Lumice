@@ -31,7 +31,6 @@ namespace {
 
 constexpr double kPiD = 3.14159265358979323846;
 constexpr double kD2R = kPiD / 180.0;
-constexpr double kR2D = 180.0 / kPiD;
 
 // The position vector of the sky label (alt, az) in degrees — the tests' own §12 spelling.
 void SkyPositionOf(double alt_deg, double az_deg, double pos[3]) {
@@ -40,14 +39,6 @@ void SkyPositionOf(double alt_deg, double az_deg, double pos[3]) {
   pos[0] = std::cos(alt) * std::cos(az);
   pos[1] = std::cos(alt) * std::sin(az);
   pos[2] = std::sin(alt);
-}
-
-double DotOf(const double a[3], const double b[3]) {
-  return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-}
-
-double AngleBetween(const double a[3], const double b[3]) {
-  return std::acos(std::max(-1.0, std::min(1.0, DotOf(a, b))));
 }
 
 TEST(AnalyzeMapView, RequestCarriesClassViewLambdaAndTheConstants) {
@@ -139,52 +130,6 @@ struct SyntheticGrid {
 };
 
 }  // namespace
-
-TEST(AnalyzeMapView, FitFindsTheWeightedCentroidAndTheMassRadius) {
-  // Two lit cells: a heavy one and a light one a known angular distance away (the cells' sky
-  // positions spelled through the test's own frame reading).
-  SyntheticGrid g = SyntheticGrid::Make(40, 40, 1.0);
-  const auto cell_pos = [&](double delta_deg, double az_deg, double pos[3]) {
-    const double d = delta_deg * kD2R;
-    const double a = az_deg * kD2R;
-    // The test's own frame: incident (−1,0,0), e1 (0,0,1), e2 (0,1,0).
-    const double travel[3] = { -std::cos(d), std::sin(d) * std::sin(a), std::sin(d) * std::cos(a) };
-    pos[0] = -travel[0];
-    pos[1] = -travel[1];
-    pos[2] = -travel[2];
-  };
-  // The cells' CENTRES sit at (row + 0.5, col + 0.5) degrees — what the pixel columns echo and
-  // what the fit reads.
-  double heavy[3];
-  cell_pos(20.5, 0.5, heavy);
-  double light[3];
-  cell_pos(20.5, 30.5, light);
-  g.values[g.At(20, 0)] = 9.0;
-  g.counts[g.At(20, 0)] = 100;
-  g.values[g.At(20, 30)] = 1.0;
-  g.counts[g.At(20, 30)] = 10;
-  const MapFitResult fit = FitMapViewFromPixels(g.pixels, g.info);
-  ASSERT_TRUE(fit.ok);
-  // The centroid leans 9:1 toward the heavy cell.
-  double centroid[3] = { (9.0 * heavy[0] + 1.0 * light[0]) / 10.0, (9.0 * heavy[1] + 1.0 * light[1]) / 10.0,
-                         (9.0 * heavy[2] + 1.0 * light[2]) / 10.0 };
-  const double cn = std::sqrt(DotOf(centroid, centroid));
-  for (int k = 0; k < 3; ++k) {
-    centroid[k] /= cn;
-  }
-  const double got[3] = { fit.centre_pos[0], fit.centre_pos[1], fit.centre_pos[2] };
-  EXPECT_NEAR(AngleBetween(got, centroid), 0.0, 1e-6);  // the fit result is float-quantized
-  // radius95: the heavy cell covers 90% alone, so the radius reaches the light cell — measured
-  // from the FIT CENTROID (the prototype's radius95 is a distance from the centre it just
-  // found), times the prototype's 1.4 headroom, clamped.
-  EXPECT_NEAR(fit.radius_deg, AngleBetween(centroid, light) * kR2D * 1.4, 1e-6);
-}
-
-TEST(AnalyzeMapView, FitRejectsAnHonestAllZeroMap) {
-  SyntheticGrid g = SyntheticGrid::Make(20, 20, 1.0);
-  const MapFitResult fit = FitMapViewFromPixels(g.pixels, g.info);
-  EXPECT_FALSE(fit.ok);
-}
 
 TEST(AnalyzeMapView, NormIsTheRobustMaximumOfThePositiveValues) {
   SyntheticGrid g = SyntheticGrid::Make(10, 100, 1.0);  // 1000 cells
@@ -506,7 +451,7 @@ void ExpectAdoptedMap(const GuiState& state, const std::vector<int>& faces, bool
   EXPECT_EQ(pixels.pixel_count, info.pixel_count);
   ASSERT_NE(pixels.values, nullptr);
   ASSERT_NE(pixels.status, nullptr);
-  // A valid zero-valued window is possible; the full-sky fit fixture must actually carry light.
+  // A valid zero-valued window is possible; the full-sky fixture must actually carry light.
   if (full_sky) {
     bool positive = false;
     for (size_t i = 0; i < pixels.pixel_count; ++i) {

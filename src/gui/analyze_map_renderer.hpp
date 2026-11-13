@@ -31,7 +31,6 @@ struct MapDisplayFrame {
   bool partial = false;
   int members_evaluated = 0;
   int member_count = 0;
-  MapFitResult fit;
   double adoption_ms = 0.0;
   SurveyQueryId source_adopted_id;
   double observation_ms = 0.0;

@@ -55,10 +55,6 @@ constexpr double kPiD = 3.14159265358979323846;
 constexpr double kDeg2RadD = kPiD / 180.0;
 constexpr double kRad2DegD = 180.0 / kPiD;
 
-double Clamp1(double v) {
-  return std::max(-1.0, std::min(1.0, v));
-}
-
 double Dot3(const double a[3], const double b[3]) {
   return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 }
@@ -93,7 +89,7 @@ void SkyPosition(double alt_deg, double az_deg, double pos[3]) {
 }
 
 // The sky position a map cell displays: the header's cell-direction formula (travel), negated
-// (the §12 display rule). One implementation here, consumed by the raster, the Fit and the
+// (the §12 display rule). One implementation here, consumed by the raster and the
 // anchors — never a second spelling.
 void CellPosition(const LUMICE_PathMapInfo& info, double delta_deg, double az_deg, double out_pos[3]) {
   const double delta = delta_deg * kDeg2RadD;
@@ -338,86 +334,7 @@ LUMICE_PathMapRequest MakeMapRequestForKey(const MapIntentKey& key, std::vector<
   return request;
 }
 
-// ---- Fit, normalization, colour --------------------------------------------------------------------
-
-MapFitResult FitMapViewFromPixels(const LUMICE_PathMapPixels& pixels, const LUMICE_PathMapInfo& info,
-                                  size_t* temporary_bytes) {
-  if (temporary_bytes)
-    *temporary_bytes = 0;
-  MapFitResult fit;
-  double cx = 0.0;
-  double cy = 0.0;
-  double cz = 0.0;
-  double total = 0.0;
-  std::vector<double> weights;
-  std::vector<double> distances;  // angular distance from the centroid, same order (filled later)
-  size_t positive_count = 0;
-  for (size_t i = 0; i < pixels.pixel_count; ++i) {
-    const uint8_t status = pixels.status[i];
-    if (status != LUMICE_PATH_MAP_PIXEL_OK) {
-      continue;
-    }
-    const double v = pixels.values[i];
-    if (!std::isfinite(v) || v <= 0.0) {
-      continue;
-    }
-    double pos[3];
-    CellPosition(info, pixels.delta_deg[i], pixels.azimuth_deg[i], pos);
-    cx += pos[0] * v;
-    cy += pos[1] * v;
-    cz += pos[2] * v;
-    total += v;
-    ++positive_count;
-  }
-  if (total <= 0.0) {
-    return fit;  // ok=false: an honest all-zero map asks for no Fit
-  }
-  double centre[3] = { cx / total, cy / total, cz / total };
-  Normalize3(centre);
-  if (Len3(centre) < 1e-12)
-    return fit;
-  weights.reserve(positive_count);
-  distances.reserve(positive_count);
-  for (size_t i = 0; i < pixels.pixel_count; ++i) {
-    const uint8_t status = pixels.status[i];
-    if (status != LUMICE_PATH_MAP_PIXEL_OK) {
-      continue;
-    }
-    const double v = pixels.values[i];
-    if (!std::isfinite(v) || v <= 0.0) {
-      continue;
-    }
-    double pos[3];
-    CellPosition(info, pixels.delta_deg[i], pixels.azimuth_deg[i], pos);
-    const double cos_a = Clamp1(Dot3(pos, centre));
-    weights.push_back(v);
-    distances.push_back(std::acos(cos_a));
-  }
-  // 95% of the value mass, by ascending distance (the prototype's radius95).
-  std::vector<size_t> order(weights.size());
-  if (temporary_bytes)
-    *temporary_bytes = (weights.capacity() + distances.capacity()) * sizeof(double) + order.capacity() * sizeof(size_t);
-  for (size_t i = 0; i < order.size(); ++i) {
-    order[i] = i;
-  }
-  std::sort(order.begin(), order.end(), [&](size_t a, size_t b) { return distances[a] < distances[b]; });
-  double r95 = 0.0;
-  double acc = 0.0;
-  for (const size_t idx : order) {
-    acc += weights[idx];
-    r95 = distances[idx];
-    if (acc >= 0.95 * total) {
-      break;
-    }
-  }
-  const double radius_deg = std::clamp(r95 * kRad2DegD * 1.4, 3.0, 180.0);
-  fit.ok = true;
-  for (int k = 0; k < 3; ++k) {
-    fit.centre_pos[k] = static_cast<float>(centre[k]);
-  }
-  fit.radius_deg = static_cast<float>(radius_deg);
-  return fit;
-}
+// ---- Normalization, colour -------------------------------------------------------------------------
 
 MapDisplayNorm MapDisplayNormFor(const LUMICE_PathMapPixels& pixels, size_t* temporary_bytes) {
   MapDisplayNorm norm;
@@ -1429,14 +1346,13 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   // D3 — the reference-map | info split (contract §4.2), drawn by this function: the window's
   // content area splits into the LEFT region (the raster, its gestures and its state line,
   // under the region's own name ##AnalyzeRaypathView) and the RIGHT region (the wavelength,
-  // the view buttons, the caliber block, the sky-point input and the legend — its own child,
+  // the caliber block, the sky-point input and the legend — its own child,
   // ##AnalyzeRaypathInfo, native wheel scroll), with the draggable strip between. The stored
   // ratio is the split's identity (manual priority, §9.3 — no query result or selection ever
   // writes it); the frame derives pixels and clamps them at the two floors: ① the info region
   // stops at its floor and the map absorbs the rest, ② the map stops at its floor and both
   // pin, ③ — only when both floors cannot fit — the floors share the span proportionally and
   // the regions' internal scrolls take over (the map's manual route, the info's native wheel).
-  const float style_spacing_x = ImGui::GetStyle().ItemSpacing.x;
   const float splitter_w = UiPx(kAnalyzeSplitterSize);
   const float avail_w = std::max(0.0f, size.x);
   const float map_floor = UiPx(kRaypathViewMapMinSize);
@@ -1688,7 +1604,7 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   ImGui::BeginChild("##MapState", RemainingReportSize());
   // The state line (the four visible states + the two supersession notes). It reads the
   // picture's own query state, so it stays with the picture; the controls it names — the
-  // wavelength, the view buttons, the sky-point input — live in the info region beside it.
+  // wavelength, the sky-point input — live in the info region beside it.
   if (display.partial)
     ImGui::TextWrapped("Partial map: %d/%d completed members", display.members_evaluated, display.member_count);
   const MapQueryState st = MapQueryStateFor(map);
@@ -1770,7 +1686,7 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   }
 
   // ---- The info region: the picture's companion facts (contract §6's right side) ----
-  // The wavelength, the two view buttons, the caliber block, the sky-point input and (Step 4)
+  // The wavelength, the caliber block, the sky-point input and (Step 4)
   // the legend. It scrolls natively: the wheel over it is not claimed by any region, so
   // ImGui's own dispatch scrolls it — the reach whose existence does not depend on measuring
   // the content that decides the measure (the same ladder rung the old single-column region
@@ -1864,53 +1780,10 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
     state.analysis.map_wavelength_nm = 0.0;
   }
   ImGui::EndDisabled();
-  // The view buttons: the map's two steering verbs, beside the wavelength they steer with.
-  // The row joins only while it fits — the info floor's narrowest width wraps them onto their
-  // own line rather than clip a view button.
-  const float fit_w = ImGui::CalcTextSize("Fit##map").x + ImGui::GetStyle().FramePadding.x * 2.0f;
-  const float full_sky_w = ImGui::CalcTextSize("Full sky##map").x + ImGui::GetStyle().FramePadding.x * 2.0f;
-  if (fits_on_line(fit_w + style_spacing_x + full_sky_w)) {
-    ImGui::SameLine();
-  }
-  ImGui::BeginDisabled(!display.fit.ok);
-  if (ImGui::SmallButton("Fit##map")) {
-    const auto& fit = display.fit;
-    UnlockLookAt(state);
-    if (2.0f * fit.radius_deg > LUMICE_MaxFov(static_cast<LUMICE_LensType>(LUMICE_LENS_TYPE_FISHEYE_EQUIDISTANT))) {
-      SelectLensType(state, kLensTypeRectangular);
-      state.renderer.visible = kVisibleFull;
-      state.renderer.front = false;
-    } else {
-      SelectLensType(state, kLensTypeFisheyeEquidist);
-      state.renderer.fov = 2.0f * fit.radius_deg;
-      state.renderer.elevation = std::asin(std::clamp(fit.centre_pos[2], -1.0f, 1.0f)) * static_cast<float>(kRad2DegD);
-      state.renderer.azimuth = std::atan2(fit.centre_pos[1], fit.centre_pos[0]) * static_cast<float>(kRad2DegD);
-      state.renderer.roll = 0.0f;
-    }
-    ClampRendererViewInvariants(state.renderer);
-  }
-  ImGui::EndDisabled();
-  if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-    ImGui::SetTooltip(
-        "Fit sampled map — changes BOTH pictures using the frozen full-sky reference."
-        "\nPartial samples are not a full-class support certificate. No map calculation.");
-  if (fits_on_line(full_sky_w))
-    ImGui::SameLine();
-  if (ImGui::SmallButton("Full sky##map")) {
-    UnlockLookAt(state);
-    SelectLensType(state, kLensTypeRectangular);
-    state.renderer.visible = kVisibleFull;
-    state.renderer.front = false;
-    ClampRendererViewInvariants(state.renderer);
-  }
-  if (ImGui::IsItemHovered())
-    ImGui::SetTooltip("Shared full-sky preset — changes BOTH pictures, keeps the frozen map.");
-  // The steering group's one "shared view" mark (the disposition ledger): both verbs move BOTH
-  // pictures, and the column says so once beside them — the tooltips carry the per-verb rest.
-  if (fits_on_line(ImGui::CalcTextSize("· shared view").x)) {
-    ImGui::SameLine();
-  }
-  ImGui::TextDisabled("· shared view");
+  // The view steering verbs are retired (2026-11-13 owner call: the pictures share one synced
+  // view and both respond to the mouse, so one-shot Fit/Full-sky presets had no work left);
+  // framing now happens on the pictures themselves — wheel to zoom out to the full sky, drag
+  // to re-aim (§6.3 of the camera contract keeps the retirement record).
 
   // ---- The sky-point input: always available (AC3: no map required to name a target) ----------
   ImGui::Separator();

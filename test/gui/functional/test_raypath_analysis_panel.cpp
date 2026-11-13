@@ -728,8 +728,8 @@ int MapWindowIndexCountForColour(ImU32 colour) {
   }
   return count;
 }
-// The info region beside the map (##AnalyzeRaypathInfo): the wavelength, the view buttons,
-// the caliber block and the sky-point input. The D3 split (contract §4.2) puts the picture's
+// The info region beside the map (##AnalyzeRaypathInfo): the wavelength, the caliber block
+// and the sky-point input. The D3 split (contract §4.2) puts the picture's
 // facts here; the containment asserts for those controls anchor to THIS child.
 ImGuiWindow* MapInfoRegionWindow() {
   return RegionWindowUnder("Raypath view", "##AnalyzeRaypathInfo");
@@ -2199,7 +2199,7 @@ bool MapRegionShowsTheClassMapAndTakesThePick(ImGuiTestContext* ctx) {
   // scroll, the degradation ladder's rung. The original reserve defect (742.4) showed as scroll
   // PINNED to the bottom with the header cut off — that is what Scroll.y == 0 forbids; a
   // nonzero ScrollMax (the caliber block's wrapped bulk) is the designed budget overflow,
-  // wheel-reachable, not the defect. The view buttons live in the INFO region now.
+  // wheel-reachable, not the defect.
   {
     ImGuiWindow* region = MapRegionWindow();
     ImGuiWindow* info = MapInfoRegionWindow();
@@ -2208,37 +2208,17 @@ bool MapRegionShowsTheClassMapAndTakesThePick(ImGuiTestContext* ctx) {
                  region->Scroll.y, info->ScrollMax.y, info->Scroll.y);
     IM_CHECK_RETV(region->Scroll.y == 0.0f, false);
     IM_CHECK_RETV(info->Scroll.y == 0.0f, false);
-    // The adopted completion's head row: both view buttons sit contained in the info region,
-    // and Fit takes a real click on the adopted map (the matrix's adopted-branch row; the λ
-    // reference branch's click is the shell suite's λ-branch case — an explicit λ on an
-    // adopted map re-asks the engine, a second wall-clock map this leg does not need).
-    const ImGuiTestItemInfo fit = ctx->ItemInfo("**/Fit##map", ImGuiTestOpFlags_NoError);
-    IM_CHECK_RETV(fit.ID != 0, false);
-    IM_CHECK_RETV(fit.RectFull.Min.x >= info->InnerClipRect.Min.x - 0.5f, false);
-    IM_CHECK_RETV(fit.RectFull.Max.x <= info->InnerClipRect.Max.x + 0.5f, false);
-    IM_CHECK_RETV(fit.RectFull.Min.y >= info->InnerClipRect.Min.y - 0.5f, false);
-    IM_CHECK_RETV(fit.RectFull.Max.y <= info->InnerClipRect.Max.y + 0.5f, false);
-    const ImGuiTestItemInfo full_sky = ctx->ItemInfo("**/Full sky##map", ImGuiTestOpFlags_NoError);
-    IM_CHECK_RETV(full_sky.ID != 0, false);
-    IM_CHECK_RETV(full_sky.RectFull.Max.x <= info->InnerClipRect.Max.x + 0.5f, false);
-    IM_CHECK_RETV(full_sky.RectFull.Max.y <= info->InnerClipRect.Max.y + 0.5f, false);
-    ctx->ItemClick("**/Fit##map");
-    ctx->Yield(3);
-    ctx->LogInfo("[map view] shared camera after Fit: lens %d FOV %.1f el/az %.1f/%.1f",
-                 gui::g_state.renderer.lens_type, static_cast<double>(gui::g_state.renderer.fov),
-                 static_cast<double>(gui::g_state.renderer.elevation),
-                 static_cast<double>(gui::g_state.renderer.azimuth));
   }
 
   // The flip falsifier: a full-sky view puts the sun far off the disk's centre, so the halo
   // ring surrounds the sun MARKER only when the raster's row order and the anchors agree — the
   // one view where a vertical mirror of the picture is visible to the eye. Screenshot on file.
-  // (The view arrives by the same write the Full sky button performs — the gesture click paths
-  // are already covered by the pick above; the test engine's hover on this chrome layout is
-  // addressed separately.)
-  ctx->ItemClick("**/Full sky##map");
+  // (The view premise arrives as a direct product-state write — the shared presets are
+  // retired; the test engine's hover on this chrome layout is addressed separately.)
+  gui::SelectLensType(gui::g_state, gui::kLensTypeRectangular);
+  gui::g_state.renderer.visible = gui::kVisibleFull;
+  gui::g_state.renderer.front = false;
   ctx->Yield(2);
-  IM_CHECK_RETV(gui::g_state.renderer.lens_type == gui::kLensTypeRectangular, false);
   IM_CHECK_RETV(DriveUntil(
                     ctx,
                     [] {
@@ -2279,7 +2259,7 @@ bool WorkspaceScrollRegionsAreStructurallyFixed(ImGuiTestContext* ctx) {
   {
     // The window's own structural pin (independent of the workspace bases below): BOTH regions
     // fit their stacks — the map side (state line + canvas) with no scroll, and the info side
-    // (λ row, view buttons, the two-row sky-point input) with no scroll.
+    // (λ row, the two-row sky-point input) with no scroll.
     gui::g_state.analyze_raypath_view_open = true;
     ctx->Yield(2);
     ImGuiWindow* region = MapRegionWindow();
@@ -2900,8 +2880,11 @@ bool VerdictAnchorHoverAndToggleOnTheMap(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(gui::g_state.analyze_raypath_view_open, false);
   // The pilot's ring is the far side of the sky (its delta is ~117° about the sun — the default
   // linear 60° view cannot hold a single sample of it, and the walk would submit nothing). The
-  // map's own Full-sky preset is the robust aim: every circle has in-view samples there.
-  ctx->ItemClick("**/Full sky##map");
+  // full-sky rectangular view — written directly, the shared presets being retired — is the
+  // robust aim: every circle has in-view samples there.
+  gui::SelectLensType(gui::g_state, gui::kLensTypeRectangular);
+  gui::g_state.renderer.visible = gui::kVisibleFull;
+  gui::g_state.renderer.front = false;
   ctx->Yield(3);
   ctx->Yield(3);
   // The default frame: no hover, the toggle off — the anchor drew nothing even with the ring in
@@ -3055,10 +3038,13 @@ bool ProfileRowsHighlightAndDrawOnTheMap(ImGuiTestContext* ctx) {
   ctx->LogInfo("[profile hover] %s: edge %.3f peak %.3f sep %.3f az %.1f sun %.1f/%.1f", target.c_str(),
                model.probe.edge_deg, model.probe.peak_deg, model.probe.separation_deg, model.probe.azimuth_deg,
                model.sun_altitude_deg, model.sun_azimuth_deg);
-  // The row click opened the Raypath view (§16.3's content shortcut); the Full-sky preset is the
-  // robust aim (the verdict face's lesson): every reading keeps in-view samples there.
+  // The row click opened the Raypath view (§16.3's content shortcut); the full-sky rectangular
+  // view — written directly, the shared presets being retired — is the robust aim (the verdict
+  // face's lesson): every reading keeps in-view samples there.
   IM_CHECK_RETV(gui::g_state.analyze_raypath_view_open, false);
-  ctx->ItemClick("**/Full sky##map");
+  gui::SelectLensType(gui::g_state, gui::kLensTypeRectangular);
+  gui::g_state.renderer.visible = gui::kVisibleFull;
+  gui::g_state.renderer.front = false;
   ctx->Yield(3);
   // The default frame: no hover, no profile ink — the map is the picture it always was.
   const ImU32 hovered_ink = ImGui::GetColorU32(ImGuiCol_HeaderHovered);
@@ -7441,9 +7427,11 @@ bool RaypathViewSplitIsManualAndFloored(ImGuiTestContext* ctx) {
   // ScrollMax.x == 0 is the region-wide form of that (a single-line BulletText here reads as
   // content wider than a region with no horizontal scrollbar, which is exactly how the
   // dispersion entry's qualifier got clipped before). The adopted map carries the real red/blue
-  // circles, so the longest entry is in the region. Both circle states are pinned: the
-  // post-adoption fit (the in-view arc state) and Full sky (whole circles in view — the main
-  // entry's qualifier is then the ONLY explanation, no partial note behind it).
+  // circles, so the longest entry is in the region. Both circle states are pinned: the case's
+  // own post-adoption view and the full-sky rectangle it switches to and back from (whole
+  // circles in view — the main entry's qualifier is then the ONLY explanation, no partial note
+  // behind it). The retired shared presets' premises arrive as direct product-state writes; the
+  // switch back restores the captured view.
   {
     ImGuiWindow* info_leg = MapReportWindow();
     IM_CHECK_RETV(info_leg != nullptr, false);
@@ -7452,25 +7440,40 @@ bool RaypathViewSplitIsManualAndFloored(ImGuiTestContext* ctx) {
                  static_cast<double>(info_leg->ScrollMax.x), static_cast<double>(info_leg->ScrollMax.y));
     IM_CHECK_RETV(info_leg->ScrollMax.x == 0.0f, false);
     ctx->SetRef("");
-    ctx->ItemClick("**/Full sky##map");
+    const int lens_before = gui::g_state.renderer.lens_type;
+    const float fov_before = gui::g_state.renderer.fov;
+    const float elevation_before = gui::g_state.renderer.elevation;
+    const float azimuth_before = gui::g_state.renderer.azimuth;
+    const float roll_before = gui::g_state.renderer.roll;
+    const int visible_before = gui::g_state.renderer.visible;
+    const bool front_before = gui::g_state.renderer.front;
+    gui::SelectLensType(gui::g_state, gui::kLensTypeRectangular);
+    gui::g_state.renderer.visible = gui::kVisibleFull;
+    gui::g_state.renderer.front = false;
     ctx->Yield(3);
     info_leg = MapReportWindow();
     IM_CHECK_RETV(info_leg != nullptr, false);
-    ctx->LogInfo("[legend] Full sky (whole circles): ScrollMax (%.1f, %.1f)",
+    ctx->LogInfo("[legend] full sky (whole circles): ScrollMax (%.1f, %.1f)",
                  static_cast<double>(info_leg->ScrollMax.x), static_cast<double>(info_leg->ScrollMax.y));
     IM_CHECK_RETV(info_leg->ScrollMax.x == 0.0f, false);
-    ctx->ItemClick("**/Fit##map");
+    gui::g_state.renderer.lens_type = lens_before;
+    gui::g_state.renderer.fov = fov_before;
+    gui::g_state.renderer.elevation = elevation_before;
+    gui::g_state.renderer.azimuth = azimuth_before;
+    gui::g_state.renderer.roll = roll_before;
+    gui::g_state.renderer.visible = visible_before;
+    gui::g_state.renderer.front = front_before;
     ctx->Yield(3);
     info_leg = MapReportWindow();
     IM_CHECK_RETV(info_leg != nullptr, false);
-    ctx->LogInfo("[legend] back to the fit (arc state): ScrollMax (%.1f, %.1f)",
+    ctx->LogInfo("[legend] back to the case's own view: ScrollMax (%.1f, %.1f)",
                  static_cast<double>(info_leg->ScrollMax.x), static_cast<double>(info_leg->ScrollMax.y));
     IM_CHECK_RETV(info_leg->ScrollMax.x == 0.0f, false);
     // The entries follow the DRAWN arcs, both directions (the legend describes the drawn
     // picture): a short window makes the region overflow, so the legend's line count reads
     // through ScrollMax.y. Parking the view at the nadir with a 5° disk takes both circles out
     // of it (their nearest sky is tens of degrees away) — nothing draws, the entries leave, the
-    // content shrinks; Full sky brings both back, content restored.
+    // content shrinks; the full-sky write below brings both back, content restored.
     ImGuiWindow* win_leg = ctx->GetWindowByRef("//Raypath view");
     IM_CHECK_RETV(win_leg != nullptr, false);
     ImGui::SetWindowSize(win_leg, ImVec2(480.0f, 360.0f), ImGuiCond_Always);
@@ -7490,7 +7493,9 @@ bool RaypathViewSplitIsManualAndFloored(ImGuiTestContext* ctx) {
     ctx->LogInfo("[legend] circles out of the disk: ScrollMax.y %.1f", static_cast<double>(info_leg->ScrollMax.y));
     const auto hidden_legend = gui::LastMapOverlayLegend();
     IM_CHECK_RETV(!hidden_legend.dispersion_red && !hidden_legend.dispersion_blue, false);
-    ctx->ItemClick("**/Full sky##map");
+    gui::SelectLensType(gui::g_state, gui::kLensTypeRectangular);
+    gui::g_state.renderer.visible = gui::kVisibleFull;
+    gui::g_state.renderer.front = false;
     ctx->Yield(3);
     info_leg = MapReportWindow();
     IM_CHECK_RETV(info_leg != nullptr, false);
@@ -12067,7 +12072,7 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       gui::g_state.analyze_raypath_view_open = true;
       ctx->Yield(2);
       {
-        // All the driven controls (inputs, Set, the view buttons) live in the INFO region since
+        // All the driven controls (inputs, Set) live in the INFO region since
         // the D3 split — the containment's host is that child.
         ImGuiWindow* info = MapInfoRegionWindow();
         IM_CHECK(info != nullptr);
@@ -12085,18 +12090,12 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
         IM_CHECK(az_in.ID != 0);
         const ImGuiTestItemInfo set_btn = ctx->ItemInfo("**/Set sky point###sky_set", ImGuiTestOpFlags_NoError);
         IM_CHECK(set_btn.ID != 0);
-        const ImGuiTestItemInfo fit_btn = ctx->ItemInfo("**/Fit##map", ImGuiTestOpFlags_NoError);
-        IM_CHECK(fit_btn.ID != 0);
-        const ImGuiTestItemInfo full_sky_btn = ctx->ItemInfo("**/Full sky##map", ImGuiTestOpFlags_NoError);
-        IM_CHECK(full_sky_btn.ID != 0);
         ctx->LogInfo("[side-by-side] info w=%.0f, alt right %.0f, az right %.0f, set right %.0f, clip right %.0f",
                      info->Size.x, alt_in.RectFull.Max.x, az_in.RectFull.Max.x, set_btn.RectFull.Max.x,
                      info->InnerClipRect.Max.x);
         IM_CHECK(contained(alt_in));
         IM_CHECK(contained(az_in));
         IM_CHECK(contained(set_btn));
-        IM_CHECK(contained(fit_btn));  // the view buttons wrap onto their own line at this width
-        IM_CHECK(contained(full_sky_btn));
         ctx->ItemInputValue("**/alt°##sky", 30.0f);
         ctx->ItemInputValue("**/az°##sky", 180.0f);
         ctx->ItemClick("**/Set sky point###sky_set");

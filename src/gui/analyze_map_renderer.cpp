@@ -32,7 +32,6 @@ struct SourceTexture {
   unsigned int texture = 0;
   SurveyQueryId id;
   LUMICE_PathMapInfo info{};
-  MapFitResult fit;
   size_t bytes = 0;
 };
 struct DisplayCache {
@@ -272,10 +271,9 @@ bool UploadSource(SourceTexture& slot, const MapHandle& source, SurveyQueryId id
       pixels.pixel_count != static_cast<size_t>(info.view_rows) * info.view_cols) {
     return false;
   }
-  size_t norm_temporary = 0, fit_temporary = 0;
+  size_t norm_temporary = 0;
   const auto norm = MapDisplayNormFor(pixels, &norm_temporary);
-  const auto fit = FitMapViewFromPixels(pixels, info, &fit_temporary);
-  frame->sort_peak_bytes = std::max({ frame->sort_peak_bytes, norm_temporary, fit_temporary });
+  frame->sort_peak_bytes = std::max(frame->sort_peak_bytes, norm_temporary);
   // Grid dimensions are mathematical metadata, not GL allocation dimensions. A legal narrow
   // grid can have thousands of azimuth columns; pack the immutable row-major cells so every
   // <=262144-cell source also fits the minimum supported 2D texture-size guarantee.
@@ -293,7 +291,6 @@ bool UploadSource(SourceTexture& slot, const MapHandle& source, SurveyQueryId id
   SourceTexture prepared;
   prepared.id = id;
   prepared.info = info;
-  prepared.fit = fit;
   prepared.bytes = pixels.pixel_count * sizeof(colors[0]);
   glGenTextures(1, &prepared.texture);
   glBindTexture(GL_TEXTURE_2D, prepared.texture);
@@ -531,7 +528,6 @@ MapDisplayFrame DrawFrozenMap(const MapQuerySession& map, const ViewProjection& 
     frame.member_count = g_display.reference.info.member_count;
     frame.partial = g_display.reference.info.truncated || frame.members_evaluated < frame.member_count;
   }
-  frame.fit = g_display.reference.fit;
   const auto start = Clock::now();
   glBindFramebuffer(GL_FRAMEBUFFER, g_display.fbo);
   if (sources_ok && glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE) {

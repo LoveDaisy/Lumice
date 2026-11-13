@@ -23,7 +23,6 @@ struct GuiState;  // gui/gui_state.hpp — the pump and the renderer take it; th
 
 // ---- The view's own constants (spelled before the session types that default to them) --------------
 
-inline constexpr float kMapFullSkyRadiusDeg = 180.0f;
 // Every map request uses this lattice sample count. The caliber line echoes the result's Info
 // so the picture never claims a finer sample than it ran.
 inline constexpr int kMapQuerySampleCount = 500000;
@@ -101,20 +100,7 @@ bool SkySunAnchorFor(const GuiState& state, SkySunAnchor* out);
 LUMICE_PathMapRequest MakeMapRequestForKey(const MapIntentKey& key, std::vector<int>* faces, std::vector<int>* counts,
                                            std::vector<double>* wavelengths);
 
-// ---- Map-driven Fit and display normalization ------------------------------------------------------
-
-// The view the adopted map's own cells ask for (the prototype's fitRaypath rule, the plan's
-// default): the value-weighted centroid of the positive cells in POSITION space, and a radius
-// covering 95% of the value mass about it, times the prototype's 1.4 headroom, clamped to
-// [3, 180] degrees. ok=false when no positive cell exists (a rank-0 map's texture is an honest
-// zero — the mass arm is a marker, not a Fit target) — the caller keeps the current view.
-struct MapFitResult {
-  bool ok = false;
-  float centre_pos[3] = { 0.0f, 0.0f, 1.0f };
-  float radius_deg = kMapFullSkyRadiusDeg;
-};
-MapFitResult FitMapViewFromPixels(const LUMICE_PathMapPixels& pixels, const LUMICE_PathMapInfo& info,
-                                  size_t* temporary_bytes = nullptr);
+// ---- Map display normalization ---------------------------------------------------------------------
 
 // The display normalization: the robust maximum of the map's own finite positive values (99th
 // percentile — the halo's peak must not grey out its whole ring system). valid=false when the
@@ -321,7 +307,7 @@ void CancelMap(GuiState& state, SurveyExecutor& executor);
 // capability into the window in one piece). Draws the D3 split (contract §4.2): the LEFT
 // region (the raster, its gestures and the query's state line, under the region's own name
 // ##AnalyzeRaypathView — the tests' anchor) and the RIGHT info region (##AnalyzeRaypathInfo:
-// the wavelength, the view buttons, the caliber block, the sky-point input, the legend), with
+// the wavelength, the caliber block, the sky-point input, the legend), with
 // the draggable strip between writing the session ratio
 // GuiState::analyze_raypath_view_info_ratio. The raster itself is the .cpp's cached GL
 // texture; the overlays, the cursor readout and the coordinate input live with their halves.

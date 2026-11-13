@@ -262,7 +262,7 @@ Render 与 Analyze 共享**同一份**取景/曝光/辅助线显示状态（disp
 
 > **现役共享相机/冻结源合同**：[共享相机与冻结结果显示](raypath-view-camera.md) §6–8为唯一规则。
 > 两图同源镜头与输入，纯观察重投影单一全天空 reference；固定槽忙时 Cancel，取消/错误后 Retry，idle 禁用 Retry。
-> 原角宽/完成前缀/λ/n可辨。2026-11-08 owner 决定移除 refine 整链（设计史与理由见相机合同§7），不再捕获取景。Fit/Full sky是会影响主图的共享预设；首图auto-Fit及隐式第二次查询已退役。
+> 原角宽/完成前缀/λ/n可辨。2026-11-08 owner 决定移除 refine 整链（设计史与理由见相机合同§7），不再捕获取景。Fit/Full sky 共享预设已退役（2026-11-13，见相机合同§6.3）；首图auto-Fit及隐式第二次查询已退役。
 > 正确性/资源持有证据与未签成本边界见该文§10，不把设计离屏数据当最终双窗呈现证书。
 > 本节仍拥有稳定操作/状态/报告区域与Pose双入口，新增质量动作不进入共享顶栏、不推挤画布。
 
@@ -271,7 +271,7 @@ Render 与 Analyze 共享**同一份**取景/曝光/辅助线显示状态（disp
 > （信息区比例存会话 `GuiState::analyze_raypath_view_info_ratio`，两下限 200/160 钳制，§4.2 的
 > 实现片校准值）；窗级最小尺寸 480×360（§11 R3）由 `SetNextWindowSizeConstraints` 逐帧钳制落实，
 > 用户可达的最小窗即验收过的最窄布局域；右区（`##AnalyzeRaypathInfo`）= 类身份行（列表同词
-> `SelectedClassRowLabelFor`，无选择空态）、λ 控制、Fit/Full sky、caliber 块、天空点输入、图例
+> `SelectedClassRowLabelFor`，无选择空态）、λ 控制、caliber 块、天空点输入、图例
 > （原生滚轮滚动；全部条目 Bullet+TextWrapped 换行——限定语在最窄信息区可读）；左区 = raster +
 > 手势 + 四态状态行（画布侧）；cursor 读数按既有裁决留在画布。Overlay 三件套落地：标记按引擎
 > kind 词汇形状/配色（certified/finite 实心、其余描边）、单位置单 tooltip（按观测键分组、同键
@@ -282,7 +282,7 @@ Render 与 Analyze 共享**同一份**取景/曝光/辅助线显示状态（disp
 | 打开目标 | **光路列表类行点击** = 选中该类并确保窗口打开（已打开则同步内容）。同型先例：晶体卡片点击开 Entry Edit（用户举例的「自然的内容点击」）。关闭后再次点击类行重新打开 |
 | 常开同步 | 打开期间跟随当前选中类：切类 → 窗内容同步（地图面按既有机制丢弃旧类会话、新意图重发，`analyze_survey.hpp:157-163`）；不要求关闭再打开 |
 | 未选中类时 | 窗可开着但显示诚实空态（无选择态文案沿用） |
-| 内容 | 左区 = 类天空分布参考图（raster + 叠加对象 + 手势：同源相机滚轮/裸图转轨/Alt或Option设天空点/拖marker）；右区 = 图面读数与操作：λ 控制、Fit/Full sky、天空点输入、Pose & trace 就地入口及 3D 用途/前置说明，后接身份/caliber/图例的滚动报告（cursor 读数留在画布——画布反馈归画布的既有裁决） |
+| 内容 | 左区 = 类天空分布参考图（raster + 叠加对象 + 手势：同源相机滚轮/裸图转轨/Alt或Option设天空点/拖marker）；右区 = 图面读数与操作：λ 控制、天空点输入、Pose & trace 就地入口及 3D 用途/前置说明，后接身份/caliber/图例的滚动报告（cursor 读数留在画布——画布反馈归画布的既有裁决） |
 | Overlay 整理 | 图例先行（标记含义可理解）；悬停按对象组织（每对象一条，重叠对象聚合为一组说明）；同位置同含义聚合展示、不同来源保留可检索信息——具体标记形状、聚合与选中交互是 §14 自由度 |
 | 与主窗分工 | 右区只放图面伴读信息；survey 报告/类概览只在主窗右下（§2.2 不重复堆放） |
 | 关闭重开 | 关窗不关文档、不取消在途查询（§8）；重开显示当前采纳结果或如实等待态 |
@@ -472,7 +472,7 @@ Analyze 按钮、In frame/Point 单选共用该门控，`analysis_panel.cpp:1383
 | ② 半球试错 | panorama 固定 dual equal-area 180°，定位仅靠 Upper/Lower 切换 | `analyze_workspace.cpp:133-137,210-216` |
 | ② 半径 | Radius 滑条（显示期重求和，不起跑） | `analysis_panel.cpp:1456-1486` |
 | ②′ In frame 区域语义 | 画幅 = 点击时刻预览画幅（无预览时文档分辨率） | `app.cpp:1816-1824` |
-| ③ 地图呈现与手势 | 类行选中后地图自动呈现于下行左半；同源相机滚轮/裸图转轨/Alt或Option设天空点/拖marker；Fit/Full sky；λ 滑条 | `analyze_map_view.cpp:1076-1078,1121-1147,1243-1316` |
+| ③ 地图呈现与手势 | 类行选中后地图自动呈现于下行左半；同源相机滚轮/裸图转轨/Alt或Option设天空点/拖marker；λ 滑条 | `analyze_map_view.cpp:1076-1078,1121-1147,1243-1316` |
 | ④ 天空点输入 | 地图点选/拖 marker；alt-az 输入 Set sky point | `analyze_map_view.cpp:1257-1313,1381-1419` |
 | ④ 姿态呈现与交互 | globe＋Raypath 3D＋因素读数聚于 Pose & trace 窗（755.5 起，§16.4）；窗入口=主窗 Selection 头部与 Raypath view 就位的两只命名按钮（§16.3 as-built），Point detail 正文链接退役；分量/样本/播放/帧/orbit | `analyze_workspace.cpp`（RenderAnalyzeEntryActions）；`analyze_map_view.cpp`（就地按钮）；`analyze_point_view.cpp`（窗体与三面） |
 | ⑤ 场景编辑 | 左栏 Sun/Simulation 组就地；晶体行点击开 Entry Edit | `panels.cpp:2162-2258`；`analyze_workspace.cpp:80-112`；`panels.cpp:2077-2095` |
@@ -585,7 +585,7 @@ Windows/Linux 真机输入已测。最终执行结果存于测试报告；这些
   表格吸收中间份额，空结果保留该份额，Exclude/CSV 贴底。极端倍率只按几何把固定头移入可恢复内滚，
   不由 stale 文案决定是否滚动。
 - **地图**：左侧 Overlays、方形 canvas、状态报告依次分配；waiting/retrying 不在 canvas 前加行。
-  右侧先 λ/reference、Fit/Full sky、alt/az、Set/Clear、Pose & trace 入口与常驻 3D 用途/类＋天空点说明；
+  右侧先 λ/reference、alt/az、Set/Clear、Pose & trace 入口与常驻 3D 用途/类＋天空点说明；
   后接身份/caliber/图例报告。入口的标签分行只按可见列宽决定；查询状态与报告滚动不改变其槽位。
   reference 与 Clear 不适用时保留禁用槽。cursor 仍是画布内非流式读数；地图在同身份 Retry 时保旧图，身份门不变。
 - **Pose**：globe 的分量槽（单分量禁用、无分量诚实占位）、canvas、样本/播放槽常驻；无样本时禁用，
@@ -651,8 +651,8 @@ Windows/Linux 真机输入已测。最终执行结果存于测试报告；这些
 
 #### 16.1.1 Raypath view 右栏逐项处置账（as-built 落位）
 
-右栏固定槽序（已交付）：**身份 → 短状态/Cancel或Retry（同一行）→ λ/reference → Fit/Full sky
-＋"· shared view" → 天空点输入/Set/Clear/target → Pose & trace → 可滚动答案区**。答案区内先
+右栏固定槽序（已交付）：**身份 → 短状态/Cancel或Retry（同一行）→ λ/reference → 天空点输入/Set/Clear/target
+→ Pose & trace → 可滚动答案区**。答案区内先
 类结论、再已设天空点答案，随后地图口径、短图例与各自折叠详情。图侧与右侧状态投影同一结果，
 不复制执行日志；partial/error/旧图限制同时成立不互相覆盖。小窗按完整操作足迹换行/几何退化，
 不靠隐藏按钮省空间（最窄 480×360 实测 `ScrollMax == 0`，由
@@ -663,7 +663,7 @@ Windows/Linux 真机输入已测。最终执行结果存于测试报告；这些
 | 类身份 | **默认**，右栏第一行 | `SelectedClassRowLabelFor` 词源不变；报告内旧副本删除 |
 | Cancel/Retry＋状态 | **默认**，同一行 | 按钮＋SameLine 状态文本；行高=按钮高恒定（§15 稳定空间）；idle 画按钮本身（禁用槽），常驻句删除、解释进 tooltip |
 | λ / reference | **默认**；λ 行同控件回显为唯一 owner | slider 回显＋tooltip 名来源规则；"尚未回显"句默认保留在报告；caliber 各行不再含 λ |
-| Fit / Full sky | **默认**；同组标一次 "· shared view" | 标记 fits 可容则同行、不容则换行（几何，不隐藏）；两 tooltip 各自解释影响两图且不重算 |
+| Fit / Full sky | **退役**（2026-11-13 owner 裁定：两面共享同一已同步相机、手势同时在两图生效，一键适配/回全天无独占工作） | 两按钮与同组 shared-view 注记拆除；取景归两图本身的 wheel/拖拽；退役记录与镜头切换入口见 [raypath-view-camera.md](raypath-view-camera.md) §6.3 |
 | alt/az、Set/Clear | **默认**输入组，当前目标紧邻 | target 行紧邻（意图与已采纳答案的区分保留：输入组 target = 意图，答案区 target = 采纳文档）；picked/typed 来源词进 target 行 tooltip；报告内回显删除 |
 | Pose & trace 与用途长文 | **默认**按钮；无类/无点短下一步 | 用途文进 tooltip（字节 pin `PoseButtonTooltip()`）；短下一步一行（"Select a class first." / "Set a sky point above."） |
 | reference cell δ/az 角宽、网格尺寸、sample_count、kept events、member 计数 | **Map diagnostics**（env 门控，`##map_caliber`） | `MapCaliberDiagnosticsLines`：geometry basis 原串（自证据组迁入）＋cell+view+lattice 一行、members+kept 一行；数值完整保留 |
