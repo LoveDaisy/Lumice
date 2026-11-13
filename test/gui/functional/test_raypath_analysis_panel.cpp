@@ -8548,9 +8548,9 @@ bool PoseViewNarrowestWindowKeepsTheFixedStackOperable(ImGuiTestContext* ctx) {
     IM_CHECK_RETV(globe != nullptr && factors != nullptr, false);
     // The fixed stack's controls, VISIBLE: each rect inside its region's live clip (the clip is
     // viewport-intersected — an off-viewport rect fails this even though the item registered).
-    // The deviation-grid toggle's home is the factors region's env-gated "Pose diagnostics"
-    // group (§16.4 — the toggle retired there with the relayout); its containment leg runs
-    // below, after the gate is on and the fold is open and the scroll has sought it into view.
+    // The deviation-grid toggle's home is the factors region's "Pose diagnostics" group (§16.4 —
+    // the toggle retired there with the relayout); its containment leg runs below, after the
+    // fold is open and the scroll has sought it into view.
     const ImGuiTestItemInfo sample = ctx->ItemInfo("**/##globe_sample", ImGuiTestOpFlags_NoError);
     IM_CHECK_RETV(sample.ID != 0, false);
     IM_CHECK_RETV(sample.RectFull.Max.x <= globe->InnerClipRect.Max.x + 0.5f &&
@@ -8561,38 +8561,33 @@ bool PoseViewNarrowestWindowKeepsTheFixedStackOperable(ImGuiTestContext* ctx) {
     IM_CHECK_RETV(play.RectFull.Max.y <= globe->InnerClipRect.Max.y + 0.5f, false);
 
     // REAL operations, the review's demand: the toggle flips for true. The toggle lives in the
-    // factors region's "Pose diagnostics" group — closed by default AND env-gated, its content
-    // past the factor readouts in the scroll — so the leg turns the gate on, opens the fold,
-    // seeks the scroll to its end, and only then addresses the checkbox (the §16.1 fold
-    // discipline: the fold's expansion is session-sticky window storage; the leg closes it
-    // again at the end, leaving the next case the default-closed shape). The gate is display
-    // eligibility only: with it off, the toggle is not renderable at any expansion state.
-    {
-      const ScopedDebugDetailsEnv env_on(DebugDetailsState::kOn);
-      ctx->Yield(2);
-      ctx->ItemClick("**/Pose diagnostics##pose_factors");
-      ctx->Yield(2);
-      ImGuiWindow* factors_scroll = PoseRegionScrollChild("##AnalyzePoseFactors", "##PoseFactorsScroll");
-      IM_CHECK_RETV(factors_scroll != nullptr, false);
-      factors_scroll->Scroll.y = factors_scroll->ScrollMax.y;  // belt-and-braces seek, the globe leg's idiom
-      ctx->Yield(2);
-      // The toggle's own containment leg: its rect inside the factors region's live clip — the
-      // same visibility demand the fixed-stack controls above answer, relocated with its region.
-      const ImGuiTestItemInfo toggle =
-          ctx->ItemInfo("**/Deviation grid###pose_factors_dev_grid", ImGuiTestOpFlags_NoError);
-      IM_CHECK_RETV(toggle.ID != 0, false);
-      IM_CHECK_RETV(toggle.RectFull.Min.x >= factors->InnerClipRect.Min.x - 0.5f &&
-                        toggle.RectFull.Max.x <= factors->InnerClipRect.Max.x + 0.5f &&
-                        toggle.RectFull.Min.y >= factors->InnerClipRect.Min.y - 0.5f &&
-                        toggle.RectFull.Max.y <= factors->InnerClipRect.Max.y + 0.5f,
-                    false);
-      const bool grid_before = gui::g_state.analysis.point_view.show_deviation_grid;
-      ctx->ItemClick("**/Deviation grid###pose_factors_dev_grid");
-      ctx->Yield(2);
-      IM_CHECK_RETV(gui::g_state.analysis.point_view.show_deviation_grid != grid_before, false);
-      ctx->ItemClick("**/Pose diagnostics##pose_factors");  // restore the default-closed shape
-      ctx->Yield(2);
-    }
+    // factors region's "Pose diagnostics" group — closed by default, its content past the
+    // factor readouts in the scroll — so the leg opens the fold, seeks the scroll to its end,
+    // and only then addresses the checkbox (the §16.1 fold discipline: the fold's expansion is
+    // session-sticky window storage; the leg closes it again at the end, leaving the next case
+    // the default-closed shape). No env rides the group: the toggle renders in every state.
+    ctx->ItemClick("**/Pose diagnostics##pose_factors");
+    ctx->Yield(2);
+    ImGuiWindow* factors_scroll = PoseRegionScrollChild("##AnalyzePoseFactors", "##PoseFactorsScroll");
+    IM_CHECK_RETV(factors_scroll != nullptr, false);
+    factors_scroll->Scroll.y = factors_scroll->ScrollMax.y;  // belt-and-braces seek, the globe leg's idiom
+    ctx->Yield(2);
+    // The toggle's own containment leg: its rect inside the factors region's live clip — the
+    // same visibility demand the fixed-stack controls above answer, relocated with its region.
+    const ImGuiTestItemInfo toggle =
+        ctx->ItemInfo("**/Deviation grid###pose_factors_dev_grid", ImGuiTestOpFlags_NoError);
+    IM_CHECK_RETV(toggle.ID != 0, false);
+    IM_CHECK_RETV(toggle.RectFull.Min.x >= factors->InnerClipRect.Min.x - 0.5f &&
+                      toggle.RectFull.Max.x <= factors->InnerClipRect.Max.x + 0.5f &&
+                      toggle.RectFull.Min.y >= factors->InnerClipRect.Min.y - 0.5f &&
+                      toggle.RectFull.Max.y <= factors->InnerClipRect.Max.y + 0.5f,
+                  false);
+    const bool grid_before = gui::g_state.analysis.point_view.show_deviation_grid;
+    ctx->ItemClick("**/Deviation grid###pose_factors_dev_grid");
+    ctx->Yield(2);
+    IM_CHECK_RETV(gui::g_state.analysis.point_view.show_deviation_grid != grid_before, false);
+    ctx->ItemClick("**/Pose diagnostics##pose_factors");  // restore the default-closed shape
+    ctx->Yield(2);
     // a running playback is stopped by a hand on the slider (the click moves the cursor),
     gui::g_state.analysis.point_view.playing = true;
     ctx->Yield(2);
@@ -8753,12 +8748,13 @@ bool PoseCurveRegionDrawsAndMovesTheSharedCursor(ImGuiTestContext* ctx) {
   // logged for the hands-on record (the note rides the default layer by construction; this
   // scene may not carry a gap to exercise it). ----
   {
-    // The env gate, pose host: with the variable unset the "Pose diagnostics" header is not
-    // submitted at all; under "1" both fold headers stand and are contained (default-closed;
-    // the toggle's flip legs live in the narrowest case).
+    // The pose host, every env state: both fold headers stand with the variable unset (the
+    // diagnostics group is not gated here — its toggle is a user-facing control; only the
+    // Class/Point/Map diagnostics groups keep the gate). Default-closed; the toggle's flip
+    // legs live in the narrowest case.
     const ScopedDebugDetailsEnv env_unset(DebugDetailsState::kUnset);
     ctx->Yield(2);
-    IM_CHECK_RETV(ctx->ItemInfo("**/Pose diagnostics##pose_factors", ImGuiTestOpFlags_NoError).ID == 0, false);
+    IM_CHECK_RETV(ctx->ItemInfo("**/Pose diagnostics##pose_factors", ImGuiTestOpFlags_NoError).ID != 0, false);
     IM_CHECK_RETV(ctx->ItemInfo("**/Interface transmission##pose_factors", ImGuiTestOpFlags_NoError).ID != 0, false);
   }
   {
@@ -12632,11 +12628,12 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       IM_CHECK(grid_report.find("Crystal-frame sun directions") != std::string::npos);
       IM_CHECK(grid_report.find("no sun grid in this document") == std::string::npos);
       ctx->SetRef("");
-      // The backdrop is the toggle's DISPLAY EFFECT, gated at the draw site by the diagnostics
-      // env: with the grid document in hand and the toggle's default-true session value, the
-      // env off (unset and explicit "0" alike) keeps the canvas at its grid-free vertex count,
-      // "1" adds the cell quads, and off→on restores them without a second click (the
-      // preference was never cleared). The baseline is the same document with the toggle off.
+      // The backdrop is the toggle's DISPLAY EFFECT, gated at the draw site by the toggle and
+      // the payload alone — the diagnostics env no longer rides `have_grid`. The three legs:
+      // with the variable unset, the toggle's off state holds the canvas at its grid-free
+      // vertex count; flipping the toggle alone adds the cell quads; and turning the env on
+      // with the toggle still on changes nothing (the same count — the knob is not read by
+      // this path at all). The baseline is the same document with the toggle off, env unset.
       backdrop_probe = gui::GuiState{};
       backdrop_probe.analysis.point = gui::g_state.analysis.point;
       backdrop_probe.analysis.point_view = gui::g_state.analysis.point_view;
@@ -12649,25 +12646,21 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
         }
       } backdrop_lease;
       {
-        const ScopedDebugDetailsEnv env_on(DebugDetailsState::kOn);
+        const ScopedDebugDetailsEnv env_unset(DebugDetailsState::kUnset);
         backdrop_probe.analysis.point_view.show_deviation_grid = false;
         ctx->Yield(3);
         const int base = backdrop_probe_vertices;
         IM_CHECK_GT(base, 0);
         backdrop_probe.analysis.point_view.show_deviation_grid = true;
-        {
-          const ScopedDebugDetailsEnv env_unset(DebugDetailsState::kUnset);
-          ctx->Yield(3);
-          IM_CHECK_EQ(backdrop_probe_vertices, base);
-        }
-        {
-          const ScopedDebugDetailsEnv env_off(DebugDetailsState::kOff);
-          ctx->Yield(3);
-          IM_CHECK_EQ(backdrop_probe_vertices, base);
-        }
-        // Back inside the still-active "1" scope: the cells return, no click in between.
         ctx->Yield(3);
         IM_CHECK_GT(backdrop_probe_vertices, base);
+        const int cells_unset = backdrop_probe_vertices;
+        {
+          const ScopedDebugDetailsEnv env_on(DebugDetailsState::kOn);
+          ctx->Yield(3);
+          IM_CHECK_EQ(backdrop_probe_vertices, cells_unset);
+          IM_CHECK_GT(backdrop_probe_vertices, base);
+        }
       }
     };
   }

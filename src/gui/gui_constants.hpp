@@ -187,11 +187,13 @@ constexpr const char* kPoseViewWindowTitle = "Pose & trace";
 // re-spell themselves apart (a56). The four answer hosts no longer share the generic
 // "Physics details" / "Calculation details" pair (four same-named pairs confused them with
 // each other); each host names its non-diagnostic evidence group and its dev-diagnostics
-// group instead. The evidence groups render in every state; the diagnostics groups render
-// only while LUMICE_ANALYZE_DEBUG_DETAILS is set (env::AnalyzeDebugDetails) — the env gate
-// sits BEFORE the CollapsingHeader call, so a closed env submits neither header nor body,
-// and the storage's old expansion state survives behind the absent header for env-on to
-// restore within the same session. No flag carries `DefaultOpen`: a group is closed by
+// group instead. The evidence groups render in every state; of the diagnostics groups, the
+// Class/Point/Map diagnostics groups render only while LUMICE_ANALYZE_DEBUG_DETAILS is set
+// (env::AnalyzeDebugDetails) — the env gate sits BEFORE the CollapsingHeader call, so a closed
+// env submits neither header nor body, and the storage's old expansion state survives behind
+// the absent header for env-on to restore within the same session. The pose host's diagnostics
+// group renders in every state too: its deviation-grid toggle is a user-facing control, not a
+// dev diagnostic, so no env rides it. No flag carries `DefaultOpen`: a group is closed by
 // default, its expansion state lives in the host window's ImGui storage (session-sticky,
 // reset by restart — io.IniFilename is null, so nothing persists across processes), and each
 // window's storage is its own, so the windows' groups count independently without any

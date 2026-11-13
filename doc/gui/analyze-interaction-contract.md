@@ -990,9 +990,10 @@ labelled decade major 的窄窗以窗口上下边界值补位（置于绘图框�
 可容纳者），左栏宽度计入边界值标签。
 因素区（`RenderPoseFactorsRegion`）承载：`PointFactorLines` 的默认层读数（永远绑
 `view.sample_index`，hover 不改它所指样本）＋measure note（默认可见）＋`Interface transmission`
-折叠组（逐接口透射率——T 的光学前提，判据梯 L3 证据行）＋env 门控的 `Pose diagnostics` 折叠组
-（deviation grid 开关自 globe 常驻栈迁入，no-grid 注记随 toggle；env 关时整组不提交，globe 本体
-与其余姿态功能不随门控）。§16.1 判据梯逐行机械套用：
+折叠组（逐接口透射率——T 的光学前提，判据梯 L3 证据行）＋`Pose diagnostics` 折叠组
+（deviation grid 开关自 globe 常驻栈迁入，no-grid 注记随 toggle；整组不设 env 门——开关是
+用户面控制项而非实现级条目——任何环境都提交，globe 本体与其余姿态功能不随门控）。
+§16.1 判据梯逐行机械套用：
 接口透射率行=P3 证据行；因素结论=L1/L2 默认层。积分/测度不可用等限制在相关读数旁默认可读。
 右上保 globe/分量/姿态游标/播放。
 
