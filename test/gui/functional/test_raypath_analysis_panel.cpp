@@ -4156,6 +4156,7 @@ bool TraceLabelsFollowTheToggle(ImGuiTestContext* ctx) {
   std::vector<TraceExpectedLine> expected;
   IM_CHECK_RETV(TraceBuildExpectedLines(frame, chain, &expected), false);
   const std::vector<ImVec2> label_ink = TraceCanvasVertices(gui::kRayTraceLabelColor);
+  std::vector<ImRect> placed_rects;
   int labelled = 0;
   for (const TraceExpectedLine& e : expected) {
     // One segment's checks run inside an immediate lambda (the loop-fatal-assert rule).
@@ -4165,19 +4166,36 @@ bool TraceLabelsFollowTheToggle(ImGuiTestContext* ctx) {
         IM_CHECK_RETV(drawn_text.empty(), false);  // nothing submitted or nothing on show — no slot
         return true;
       }
-      const std::string want = gui::RayTraceEnergyLabelText(gui::RayTraceSegmentEnergy{
-          static_cast<float>(chain.energies[line.seg]), chain.valid[static_cast<size_t>(line.seg)] });
+      const std::string want = gui::RayTraceEnergyLabelText(
+          gui::RayTraceSegmentEnergy{ chain.energies[line.seg], chain.valid[static_cast<size_t>(line.seg)] });
       IM_CHECK_RETV(drawn_text == want, false);
-      // The ink exists near the visible part's midpoint (the anchor's offset + the text's extent
-      // keep a generous bound; the exact anchor is the renderer's clamp, not the claim).
+      // The per-label render feedback: the submitted text rect plus the placement kind. The
+      // rects are the READABILITY evidence (the reviewer's real-frame screenshot caught
+      // overlapping labels the old "some vertex nearby" check could not see); the leader's
+      // landing is the IDENTITY evidence for a non-default placement.
+      const float* rect = &gui::g_state.analysis.ray3d_fresnel_label_rects[static_cast<size_t>(line.seg) * 5];
+      IM_CHECK_RETV(rect[2] > rect[0] && rect[3] > rect[1], false);  // a real submitted rect
+      const ImRect placed(rect[0], rect[1], rect[2], rect[3]);
       const ImVec2 mid((line.pa.x + line.pb.x) * 0.5f, (line.pa.y + line.pb.y) * 0.5f);
-      const float bound = gui::UiPx(50.0f);
-      const bool near_mid = std::any_of(label_ink.begin(), label_ink.end(), [&](const ImVec2& v) {
-        const float dx = v.x - mid.x;
-        const float dy = v.y - mid.y;
-        return dx * dx + dy * dy < bound * bound;
-      });
-      IM_CHECK_RETV(near_mid, false);
+      const int kind = static_cast<int>(rect[4]);
+      if (kind == 0) {
+        // The default offset: the rect stays next to its own visible midpoint (the rect-to-
+        // point distance — nearest-edge gap — under the default offset's reach).
+        const float gap_x = std::max(std::max(mid.x - placed.Max.x, placed.Min.x - mid.x), 0.0f);
+        const float gap_y = std::max(std::max(mid.y - placed.Max.y, placed.Min.y - mid.y), 0.0f);
+        IM_CHECK_RETV(std::hypot(gap_x, gap_y) < gui::UiPx(12.0f), false);
+      } else {
+        // Shifted / leader fallback: the leader lands a few px short of the visible midpoint —
+        // the label bucket must carry a vertex there (the identity the plan forbids losing).
+        const float bound = gui::UiPx(6.0f);
+        const bool leader_lands = std::any_of(label_ink.begin(), label_ink.end(), [&](const ImVec2& v) {
+          const float dx = v.x - mid.x;
+          const float dy = v.y - mid.y;
+          return dx * dx + dy * dy < bound * bound;
+        });
+        IM_CHECK_RETV(leader_lands, false);
+      }
+      placed_rects.push_back(placed);
       return true;
     }(e);
     if (!seg_ok) {
@@ -4188,10 +4206,51 @@ bool TraceLabelsFollowTheToggle(ImGuiTestContext* ctx) {
     }
   }
   IM_CHECK_RETV(labelled >= 3, false);
-  IM_CHECK_RETV(label_ink.size() > static_cast<size_t>(labelled),
-                false);  // each label is a text run, more than one vertex
-  ctx->LogInfo("[trace labels] %d labelled segments, %zu ink vertices, default-off leg held", labelled,
-               label_ink.size());
+  // The readability claim itself: no two placed text rects touch or overlap, and every ink
+  // vertex is owned — inside some submitted text rect, or on a non-default placement's leader
+  // corridor (the line from that text's centre to its segment's visible midpoint).
+  bool rects_overlap = false;
+  for (size_t a = 0; a < placed_rects.size() && !rects_overlap; ++a) {
+    for (size_t b = a + 1; b < placed_rects.size() && !rects_overlap; ++b) {
+      const ImRect& ra = placed_rects[a];
+      const ImRect& rb = placed_rects[b];
+      rects_overlap = ra.Min.x < rb.Max.x && rb.Min.x < ra.Max.x && ra.Min.y < rb.Max.y && rb.Min.y < ra.Max.y;
+    }
+  }
+  IM_CHECK_RETV(!rects_overlap, false);
+  std::vector<std::pair<ImVec2, ImVec2>> leader_corridors;
+  for (const TraceExpectedLine& e : expected) {
+    if (!e.drawn || !e.touches_canvas) {
+      continue;
+    }
+    const float* rect = &gui::g_state.analysis.ray3d_fresnel_label_rects[static_cast<size_t>(e.seg) * 5];
+    if (rect[4] != 0.0f) {
+      leader_corridors.emplace_back(ImVec2((rect[0] + rect[2]) * 0.5f, (rect[1] + rect[3]) * 0.5f),
+                                    ImVec2((e.pa.x + e.pb.x) * 0.5f, (e.pa.y + e.pb.y) * 0.5f));
+    }
+  }
+  const bool ink_owned = std::all_of(label_ink.begin(), label_ink.end(), [&](const ImVec2& v) {
+    const bool in_rect = std::any_of(placed_rects.begin(), placed_rects.end(), [&](const ImRect& r) {
+      return v.x >= r.Min.x - 1.0f && v.x <= r.Max.x + 1.0f && v.y >= r.Min.y - 1.0f && v.y <= r.Max.y + 1.0f;
+    });
+    if (in_rect) {
+      return true;
+    }
+    const double corridor_tol = gui::UiPx(2.5f);
+    return std::any_of(leader_corridors.begin(), leader_corridors.end(), [&](const std::pair<ImVec2, ImVec2>& c) {
+      const double dx = c.second.x - c.first.x;
+      const double dy = c.second.y - c.first.y;
+      const double len2 = dx * dx + dy * dy;
+      double t = len2 > 0.0 ? ((v.x - c.first.x) * dx + (v.y - c.first.y) * dy) / len2 : 0.0;
+      t = std::clamp(t, 0.0, 1.0);
+      const double px = c.first.x + dx * t;
+      const double py = c.first.y + dy * t;
+      return std::hypot(v.x - px, v.y - py) < corridor_tol;
+    });
+  });
+  IM_CHECK_RETV(ink_owned, false);
+  ctx->LogInfo("[trace labels] %d labelled segments, %zu ink vertices, %zu rects pairwise apart, default-off leg held",
+               labelled, label_ink.size(), placed_rects.size());
   IM_CHECK_RETV(SaveWindowPng(ctx, "//Pose & trace", GuiTestTempPath("analyze_c03_trace_fresnel_labels.png").string()),
                 false);
   ctx->ItemClick("**/Show Fresnel ratios##r3d_fresnel");
@@ -4577,7 +4636,11 @@ bool TraceFramingIsMeshAnchoredAcrossStates(ImGuiTestContext* ctx, bool crystal_
     view.sample_index = target;
     ctx->Yield(2);  // the pump re-keys and issues; the worker parks at the pickup — computing held
     IM_CHECK_RETV(!hold.Voided(), false);
-    const auto& computing = gui::LastRay3DFrameInfo();
+    // BY-VALUE snapshots: LastRay3DFrameInfo returns the one mutable global frame object the
+    // renderer updates in place every submission — two const references to it would alias each
+    // other and the centre/fit comparison below would be self-comparison, always true (the
+    // aliasing trap the learnings already recorded for state-transition asserts).
+    const gui::Ray3DFrameInfo computing = gui::LastRay3DFrameInfo();
     IM_CHECK_RETV(computing.valid && computing.frame_count == ImGui::GetFrameCount(), false);
     const int target_stored =
         gui::PointValidSampleIndexAt(*gui::g_state.analysis.point.adopted_result, view.component_index, target);
@@ -4612,8 +4675,9 @@ bool TraceFramingIsMeshAnchoredAcrossStates(ImGuiTestContext* ctx, bool crystal_
                       60),
                   false);
     ctx->Yield(2);
-    const auto& drawn = gui::LastRay3DFrameInfo();
+    const gui::Ray3DFrameInfo drawn = gui::LastRay3DFrameInfo();  // by value — the second snapshot
     IM_CHECK_RETV(drawn.valid && drawn.frame_count == ImGui::GetFrameCount(), false);
+    IM_CHECK_RETV(computing.frame_count != drawn.frame_count, false);  // two DISTINCT frames compared
     IM_CHECK_RETV(TraceTextureQuadPresent(ctx), false);
     // THE CLAIM: one pose, one framing — mesh-only centre/fit identical across the two states.
     float centre_worst = 0.0f;
