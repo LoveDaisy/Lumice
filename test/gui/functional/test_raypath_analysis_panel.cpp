@@ -12966,6 +12966,51 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
     };
   }
 
+  // The greyed-radius form (analyze-interaction-contract.md §15): the radius slider's enabled
+  // state answers to the REQUEST mode alone. Whole sky greys it — disabled, visible, owning its
+  // slot — whatever result is on hand; Point enables it whether or not a result exists. A mode
+  // switch flips only the slider's interaction face: the payload and the list stand still.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "radius_slider_greyed_in_whole_sky");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ScopedServerGuard guard;
+      IM_CHECK(BringUpHaloScene(ctx, /*infinite=*/false));
+      OpenWindow(ctx);
+      ctx->SetRef(PanoramaRegionRef());
+      // Whole sky with no cone result: the slider is present (it owns its slot in both modes)
+      // and disabled.
+      IM_CHECK(gui::g_state.analysis.roi_mode == LUMICE_RAYPATH_ROI_FULL_SKY);
+      IM_CHECK(!gui::g_state.analysis_result.payload);
+      IM_CHECK(ctx->ItemInfo("Radius###Radius_narrow").ID != 0);
+      IM_CHECK(IsDisabled(ctx->ItemInfo("Radius###Radius_narrow")));
+      // A Point result on hand: enabled. Back to Whole sky: disabled again, and the result
+      // stands untouched — the mode ruling closed the re-sum interaction face, not the result
+      // semantics.
+      IM_CHECK(RunPointAnalysisToCompletion(ctx));
+      ctx->SetRef(PanoramaRegionRef());  // the completion helper resets the ref to the root
+      const auto payload_before = gui::g_state.analysis_result.payload;
+      const size_t rows_before = gui::g_state.analysis_result.payload->entries.size();
+      IM_CHECK(ctx->ItemInfo("Radius###Radius_narrow").ID != 0);
+      IM_CHECK(!IsDisabled(ctx->ItemInfo("Radius###Radius_narrow")));
+      ctx->ItemClick("Whole sky");
+      ctx->Yield(2);
+      IM_CHECK(gui::g_state.analysis.roi_mode == LUMICE_RAYPATH_ROI_FULL_SKY);
+      IM_CHECK(ctx->ItemInfo("Radius###Radius_narrow").ID != 0);
+      IM_CHECK(IsDisabled(ctx->ItemInfo("Radius###Radius_narrow")));
+      IM_CHECK(gui::g_state.analysis_result.payload == payload_before);
+      IM_CHECK(gui::g_state.analysis_result.payload->entries.size() == rows_before);
+      // Back to Point: enabled and drivable again.
+      ctx->ItemClick("Point");
+      ctx->Yield(2);
+      IM_CHECK(ctx->ItemInfo("Radius###Radius_narrow").ID != 0);
+      IM_CHECK(!IsDisabled(ctx->ItemInfo("Radius###Radius_narrow")));
+      ctx->ItemInputValue("Radius###Radius_narrow", 10.0f);
+      ctx->Yield(2);
+      IM_CHECK_FLOAT_NEAR(gui::g_state.analysis.cone_radius_deg, 10.0f, 1e-3f);
+      ctx->SetRef("");
+    };
+  }
+
   // The request's parameters are the panel's own session inputs: Rays(M) / Infinite rays open
   // with the document's values and then move independently of them; editing either starts
   // nothing and dirties nothing.
@@ -15664,17 +15709,16 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       IM_CHECK_FLOAT_NEAR(settled.Min.x, before.Min.x, 0.5f);
       IM_CHECK_FLOAT_NEAR(settled.Min.y, before.Min.y, 0.5f);
       // Calibrate the boundary from complete rendered item footprints, not the product's
-      // template formula. The label probe includes the budget pair's trailing label column.
+      // template formula. The bar's last control is the Rays(M) pair, and its trailing label is
+      // probe-registered at the text's own rect (TextWithLabelProbe), so the label's right edge
+      // closes the footprint — no font-advance arithmetic on a frame-only ruler.
       const float span = ImGui::GetIO().DisplaySize.x - gui::UiPx(gui::kAnalyzeLeftPanelWidth);
       gui::g_state.workspace.right_column_ratio = 0.2f;
       ctx->Yield(3);
       const auto whole = ctx->ItemInfo("Whole sky");
-      const auto radius = ctx->ItemInfo("Radius###Radius_narrow");
-      IM_CHECK_FLOAT_NEAR(whole.RectFull.Min.y, radius.RectFull.Min.y, 0.5f);
-      // The test engine exposes a scalar slider's frame, not its trailing label. Include
-      // the actual font advance too; a frame-only ruler misses the clipped control name.
-      const float radius_label_width = ImGui::GetStyle().ItemInnerSpacing.x + ImGui::CalcTextSize("Radius").x;
-      const float full_footprint = radius.RectFull.Max.x - whole.RectFull.Min.x + radius_label_width;
+      const auto budget_label = ctx->ItemInfo("##Rays(M)_label");
+      IM_CHECK_FLOAT_NEAR(whole.RectFull.Min.y, budget_label.RectFull.Min.y, 0.5f);
+      const float full_footprint = budget_label.RectFull.Max.x - whole.RectFull.Min.x;
       const float padding = ImGui::GetStyle().WindowPadding.x * 2.0f;
       const auto at_width = [&](float content_width, bool single) -> bool {
         gui::g_state.workspace.right_column_ratio =
@@ -15692,7 +15736,12 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
                      host->Size.x - padding, run.RectFull.Min.y, budget.RectFull.Min.y, ring.RectFull.Min.y,
                      gui::AnalyzeOperationBarHeight(host->Size.x - padding));
         IM_CHECK_RETV(one_row == single, false);
-        IM_CHECK_RETV(ring.RectFull.Max.x + radius_label_width <= host->InnerClipRect.Max.x + 0.5f, false);
+        // Nothing clips at either template: the two-row form's row 1 ends at Infinite rays and
+        // row 2 at the Rays(M) label; the one-row form's only end is that same label.
+        const auto row1_end = ctx->ItemInfo("Infinite rays");
+        const auto last_end = ctx->ItemInfo("##Rays(M)_label");
+        IM_CHECK_RETV(row1_end.RectFull.Max.x <= host->InnerClipRect.Max.x + 0.5f, false);
+        IM_CHECK_RETV(last_end.RectFull.Max.x <= host->InnerClipRect.Max.x + 0.5f, false);
         const ImRect point_picture = PanoramaPictureWindow()->Rect();
         gui::g_state.analysis.roi_mode = LUMICE_RAYPATH_ROI_FULL_SKY;
         ctx->Yield(1);
@@ -15714,8 +15763,51 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       };
       IM_CHECK(at_width(full_footprint - 1.0f, false));
       IM_CHECK(at_width(full_footprint + 1.0f, true));
-      IM_CHECK(at_width(gui::UiPx(gui::kAnalyzeMainViewMinWidth) - padding, false));
+      // The narrowest reachable width: row 1's own demand exceeds it, so the host arms the bar's
+      // scroll child — the two-row template's degrade — and the wrapped rows stay reachable
+      // through it: a real wheel over the child brings the far rows back into the slice (the
+      // mechanism the scale-tiers case probes with; culled rows register nothing, so the probes
+      // below must run AFTER the wheel).
+      {
+        const float narrow = gui::UiPx(gui::kAnalyzeMainViewMinWidth) - padding;
+        IM_CHECK(gui::AnalyzeOperationBarNeedsScroll(narrow));
+        gui::g_state.workspace.right_column_ratio =
+            (span - gui::UiPx(gui::kAnalyzeSplitterSize) - narrow - padding) / span;
+        ctx->Yield(2);
+        ImGuiWindow* bar_child = nullptr;
+        for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
+          if (w != nullptr && w->Active && std::strstr(w->Name, "##AnalyzeOpBarScroll") != nullptr) {
+            bar_child = w;
+            break;
+          }
+        }
+        IM_CHECK(bar_child != nullptr);
+        ctx->MouseMoveToPos(bar_child->Rect().GetCenter());
+        ctx->Yield(1);
+        for (int i = 0; i < 12 && bar_child->Scroll.y < bar_child->ScrollMax.y - 0.5f; ++i) {
+          ctx->MouseWheelY(-1.0f);
+          ctx->Yield(1);
+        }
+        const auto far_infinite = ctx->ItemInfo("**/Infinite rays", ImGuiTestOpFlags_NoError);
+        const auto far_input = ctx->ItemInfo("**/##Rays(M)_input", ImGuiTestOpFlags_NoError);
+        ctx->LogInfo("[operation boundary] narrowest width %.1f: scroll %.0f of %.0f, infinite %s, rays %s", narrow,
+                     static_cast<double>(bar_child->Scroll.y), static_cast<double>(bar_child->ScrollMax.y),
+                     far_infinite.ID != 0 ? "reached" : "culled", far_input.ID != 0 ? "reached" : "culled");
+        IM_CHECK(far_infinite.ID != 0 && far_input.ID != 0);
+      }
       gui::g_state.workspace.right_column_ratio = gui::kAnalyzeRightColumnDefaultRatio;
+      ctx->Yield(2);
+      // The Rays(M) track's calibration leg: at the default (wide) layout the rendered track is
+      // the slot's calibrated width — the same value the slot budget reserves for it (the pair's
+      // usable-track floor must never arm at ordinary widths).
+      {
+        const auto track = ctx->ItemInfo("**/##Rays(M)_slider", ImGuiTestOpFlags_NoError);
+        IM_CHECK(track.ID != 0);
+        const float expected = gui::UiPx(gui::kAnalysisRayBudgetTrackPt);
+        ctx->LogInfo("[operation boundary] Rays(M) track %.1f px, calibrated %.1f px",
+                     static_cast<double>(track.RectFull.GetWidth()), static_cast<double>(expected));
+        IM_CHECK_FLOAT_NEAR(track.RectFull.GetWidth(), expected, 5.0f);
+      }
       ctx->SetRef("");
       // A real Run from Analyze: record every completed GUI frame, including the first
       // uploaded picture, without a polling API that could skip that transition frame.

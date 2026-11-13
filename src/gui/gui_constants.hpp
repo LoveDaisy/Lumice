@@ -368,6 +368,16 @@ static_assert(kAnalysisConeRingCount >= 1 && kAnalysisConeRingCount <= LUMICE_MA
               "the cone ring count must be a request the C API accepts (it rejects, not truncates)");
 static_assert(kAnalysisConeDefaultRadiusDeg > 0.0f && kAnalysisConeDefaultRadiusDeg <= kAnalysisConeMaxRadiusDeg,
               "the default radius must lie inside the cone the request asks for");
+
+// The Analyze operation bar's Rays(M) slider track, in logical points: the width the bar's slot
+// budget reserves for the track proper (SliderWithInput lays the pair out inside it, the label
+// column on top of it). gui_test's operation-boundary case asserts the rendered track at this
+// value +-5 pt and the two-row template at the widths this demand produces, so a change here is
+// a re-calibration, not a tweak. It must stay far above the pair's 40 pt usable-track floor: at
+// ordinary bar widths the floor must never arm — it only catches widths the bar genuinely
+// cannot hold.
+constexpr float kAnalysisRayBudgetTrackPt = 120.0f;
+static_assert(kAnalysisRayBudgetTrackPt >= 100.0f, "the track stays well above the 40 pt usable-track floor");
 // The cone-centre marker's grab radius on the preview, in logical points around the projected
 // centre: inside it the cursor is a hand and a press drags the marker instead of orbiting the
 // camera. A feel value, not a ruling — there is no proxy to measure it by, so it is one number in

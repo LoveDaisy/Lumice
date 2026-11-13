@@ -1364,20 +1364,23 @@ void RenderRunControls(GuiState& state, LUMICE_Server* server, bool join_line) {
 void RenderRadiusSlider(GuiState& state, float width) {
   const auto& payload = state.analysis_result.payload;
   const bool cone_result = payload && payload->roi_mode == LUMICE_RAYPATH_ROI_CONE && payload->cone_ring_count > 0;
-  if (state.analysis.roi_mode != LUMICE_RAYPATH_ROI_CONE && !cone_result) {
-    return;
-  }
   // The slider's range is the result's cone when there is one, the request's otherwise (they are
   // the same numbers unless the constants changed between the run and now).
   const float cone_deg = cone_result ? payload->cone_radius_rad * kRad2Deg : kAnalysisConeMaxRadiusDeg;
   const int rings = cone_result ? payload->cone_ring_count : kAnalysisConeRingCount;
   const float min_deg = cone_deg / static_cast<float>(std::max(rings, 1));
-  // Never disabled: the radius is display-time state whether or not a result exists yet. Before
-  // one, it sizes the ring on the panorama (DrawPanoramaRoiRing's ring reads it every frame) so
-  // the user sees the region the list will be summed over; after one, it re-sums the rings on
-  // hand. Either way the request is the full cone and nothing here starts a run.
+  // Enabled by the REQUEST mode alone — the greyed-radius form analyze-interaction-contract.md
+  // §15 records: in Whole sky the slider is greyed out, never hidden and never draggable,
+  // whatever result is on hand. A cone result keeps its list and payload; re-summing it from
+  // Whole sky was an interaction face, and the mode-level ruling closed that face, not the
+  // result semantics (DrawPanoramaRoiRing's mode gate already keeps the ring Whole-sky-free).
+  // In Point mode it is enabled whether or not a result exists: before one, it sizes the ring
+  // on the panorama (the ring reads it every frame) so the user sees the region the list will
+  // be summed over; after one, it re-sums the rings on hand. Either way the request is the
+  // full cone and nothing here starts a run.
   //
   // Track and visible label share the template's complete footprint, independent of payload.
+  ImGui::BeginDisabled(state.analysis.roi_mode != LUMICE_RAYPATH_ROI_CONE);
   const float label_w = ImGui::CalcTextSize("Radius").x;
   ImGui::SetNextItemWidth(std::max(UiPx(40.0f), width - label_w - ImGui::GetStyle().ItemInnerSpacing.x));
   if (ImGui::SliderFloat("Radius###Radius_narrow", &state.analysis.cone_radius_deg, min_deg, cone_deg, "%.1f°")) {
@@ -1389,6 +1392,7 @@ void RenderRadiusSlider(GuiState& state, float width) {
                           "How far from the picked point will count, shown as the ring on the preview.\n"
                           "The analysis always traces the whole cone; this picks the part the list sums.");
   }
+  ImGui::EndDisabled();
 }
 
 // The P/B/D checkboxes — the filter editor's own widget — and the read they drive: a change
@@ -1952,23 +1956,35 @@ void RenderPanoramaRoiControls(GuiState& state, bool join_point) {
 }
 
 namespace {
+// The operation bar's width demands, in the bar order the owner ruled (2026-11-13): Whole sky |
+// Point | Radius | Analyze/Stop | Infinite rays | Rays(M). Each cumulative field is the demand
+// THROUGH its segment — the same quantity the join judgments consume — so the chain composes
+// into the two templates: row 1 of the two-row form runs through Infinite rays, row 2 is the
+// Rays(M) segment alone, and the one-row form is the whole chain. The Rays(M) segment carries
+// both of its widths: the reservation its slider+input+label pair lays out within (the pair's
+// label column is reserved, not consumed) and its actual consumption, which is what row demands
+// count — the gui_test calibration legs measure that same advance.
 struct OperationWidths {
-  float modes;
-  float with_run;
-  float first;
-  float budget;
-  float radius;
-  float single;
+  float modes;        // demand through Point — the radio pair's joint line
+  float radius_slot;  // the Radius control alone: track + inner spacing + label advance
+  float radius;       // demand through Radius (it rides Point's line)
+  float run;          // demand through Analyze/Stop
+  float first;        // demand through Infinite rays — row 1 of the two-row template
+  float rays_slot;    // the Rays(M) pair's layout reservation (passed to the pair)
+  float rays_row;     // the Rays(M) segment's own consumption — row 2 of the two-row template
+  float single;       // demand through Rays(M) — the one-row demand
 };
 OperationWidths MeasureOperationWidths() {
   const float gap = ImGui::GetStyle().ItemSpacing.x;
   OperationWidths w;
   w.modes = InlineLabelledControlWidth("Whole sky") + InlineLabelledControlWidth("Point") + gap;
-  w.with_run = w.modes + InlineButtonWidth(ICON_FA_PLAY " Analyze") + gap;
-  w.first = w.with_run + InlineLabelledControlWidth("Infinite rays") + gap;
-  w.budget = UiPx(40.0f + kInputWidth + kLabelColWidth) + gap + LabelColumnGapX();
-  w.radius = UiPx(80.0f) + ImGui::GetStyle().ItemInnerSpacing.x + ImGui::CalcTextSize("Radius").x;
-  w.single = w.first + w.budget + w.radius + gap * 2.0f;
+  w.radius_slot = UiPx(80.0f) + ImGui::GetStyle().ItemInnerSpacing.x + ImGui::CalcTextSize("Radius").x;
+  w.radius = w.modes + gap + w.radius_slot;
+  w.run = w.radius + gap + InlineButtonWidth(ICON_FA_PLAY " Analyze");
+  w.first = w.run + gap + InlineLabelledControlWidth("Infinite rays");
+  w.rays_slot = UiPx(kAnalysisRayBudgetTrackPt + kInputWidth + kLabelColWidth) + gap + LabelColumnGapX();
+  w.rays_row = w.rays_slot - UiPx(kLabelColWidth) + ImGui::CalcTextSize("Rays(M)").x;
+  w.single = w.first + gap + w.rays_row;
   return w;
 }
 }  // namespace
@@ -1980,7 +1996,8 @@ float AnalyzeOperationBarHeight(float width) {
 
 bool AnalyzeOperationBarNeedsScroll(float width) {
   const OperationWidths w = MeasureOperationWidths();
-  return width < std::max(w.first, w.budget + w.radius + ImGui::GetStyle().ItemSpacing.x);
+  // The two-row template's demand: its widest row. The one-row collapse above is the other face.
+  return width < std::max(w.first, w.rays_row);
 }
 
 void RenderAnalyzeOperationBar(GuiState& state, LUMICE_Server* server) {
@@ -1988,7 +2005,14 @@ void RenderAnalyzeOperationBar(GuiState& state, LUMICE_Server* server) {
   const OperationWidths w = MeasureOperationWidths();
   const bool single = width >= w.single;
   RenderPanoramaRoiControls(state, width >= w.modes);
-  RenderRunControls(state, server, width >= w.with_run);
+  // Radius rides Point's line — the owner's order puts it directly after the region radios —
+  // and owns its slot in both modes: Whole sky greys it (RenderRadiusSlider), it is never
+  // absent, so it never lends height back to the picture either.
+  if (width >= w.radius) {
+    ImGui::SameLine();
+  }
+  RenderRadiusSlider(state, std::min(w.radius_slot, width));
+  RenderRunControls(state, server, width >= w.run);
   if (width >= w.first) {
     ImGui::SameLine();
   }
@@ -1996,22 +2020,11 @@ void RenderAnalyzeOperationBar(GuiState& state, LUMICE_Server* server) {
   if (ImGui::IsItemHovered()) {
     ImGui::SetTooltip("Trace until stopped.");
   }
+  // Rays(M) closes the bar; the two-row template keeps it alone on row 2.
   if (single) {
     ImGui::SameLine();
   }
-  const ImVec2 budget_origin = ImGui::GetCursorScreenPos();
-  RenderRequestParamsControls(state, std::min(w.budget, width));
-  if (width >= w.budget + w.radius + ImGui::GetStyle().ItemSpacing.x) {
-    ImGui::SameLine();
-    ImGui::SetCursorScreenPos(ImVec2(budget_origin.x + w.budget + ImGui::GetStyle().ItemSpacing.x, budget_origin.y));
-  }
-  // The absent Point control owns its slot too; it never lends height back to the picture.
-  if (state.analysis.roi_mode == LUMICE_RAYPATH_ROI_CONE ||
-      (state.analysis_result.payload && state.analysis_result.payload->roi_mode == LUMICE_RAYPATH_ROI_CONE)) {
-    RenderRadiusSlider(state, std::min(w.radius, width));
-  } else {
-    ImGui::Dummy(ImVec2(std::min(w.radius, width), ImGui::GetFrameHeight()));
-  }
+  RenderRequestParamsControls(state, std::min(w.rays_slot, width));
 }
 
 void RenderAnalyzeStatus(GuiState& state, LUMICE_Server* server) {
