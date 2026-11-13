@@ -157,9 +157,20 @@ if(NOT MSVC)
 endif()
 
 # Main executable (links stubs for test engine hooks — no-ops in production)
+# util/env_knobs.cpp is compiled into the shell binary itself: GUI TUs consume
+# env::AnalyzeDebugDetails() directly (env-var-policy.md — pure display knob, re-read
+# per call, never cached), and src/util/ is outside the gui C-API prohibition. But the
+# registry is a *compiled* foundation TU: in the shared flavor LumiceGUI links only
+# liblumice.so, whose Release build hides every internal symbol (-fvisibility=hidden,
+# export surface = the capability-header whitelist), so the shell cannot take the
+# symbol from the library the way the static archive allowed. Compiling the registry
+# into the executable keeps the single source implementation; the library's own copy
+# stays hidden for engine-internal callers, and in the static flavor the archive
+# member is never pulled because the explicit object already defines the symbols.
 add_executable(LumiceGUI
     ${PROJ_SRC_DIR}/gui/main.cpp
-    ${PROJ_SRC_DIR}/gui/imgui_te_stubs.cpp)
+    ${PROJ_SRC_DIR}/gui/imgui_te_stubs.cpp
+    ${PROJ_SRC_DIR}/util/env_knobs.cpp)
 # `lumice` (shared: the dylib; static: the archive) — the product keeps reaching core
 # through the C API only.
 target_link_libraries(LumiceGUI PRIVATE lumice_gui_obj lumice)
