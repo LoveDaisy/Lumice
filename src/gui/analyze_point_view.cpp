@@ -1663,6 +1663,7 @@ void RenderAnalyzeSunGlobeRegion(GuiState& state, const ImVec2& size) {
 void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
   g_ray3d_frame.valid = false;
   state.analysis.ray3d_fresnel_labels.clear();
+  state.analysis.ray3d_fresnel_label_rects.clear();
   // The canvas and frame controls never scroll with result prose. The report scrolls
   // natively; only the actual canvas registers the orbit wheel claim.
   ImGui::BeginChild("##AnalyzeRaypath3D", size, ImGuiChildFlags_Borders, ImGuiWindowFlags_NoScrollWithMouse);
@@ -1827,8 +1828,10 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
         LUMICE_RepresentativeRayGetInfo(trace.adopted_result.get(), &ray_info) == LUMICE_PATH_READ_OK &&
         ray_info.face_count == static_cast<int>(line.seg_kinds.size() - 1) && ray_info.faces != nullptr;
     // The labels' render feedback: one slot per segment, filled only where a label actually
-    // drew this frame (the toggle's leg reads positions from the primitives and content here).
+    // drew this frame (the toggle's leg reads positions from the primitives and content here),
+    // with 5 rect/placement floats beside each.
     state.analysis.ray3d_fresnel_labels.assign(line.seg_kinds.size(), std::string{});
+    state.analysis.ray3d_fresnel_label_rects.assign(line.seg_kinds.size() * 5, 0.0f);
 
     // The frame switch is a display transform (AC4): world view rotates the body-frame mesh to the
     // pose's world; crystal view rotates the world-frame path back. One physical state, two views.
@@ -2021,6 +2024,7 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
           point_to_display(p, d);
           return ToRay3DScene(d, rendered);
         };
+        std::vector<ImRect> placed_label_rects;  // the labels' placed text rects, in order
         for (size_t s = 0; s < line.seg_kinds.size(); ++s) {
           const float* p0 = &line.points[s * 6];
           const float* p1 = p0 + 3;
@@ -2064,11 +2068,79 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
                 dir.x = 0.0f;
                 dir.y = -1.0f;
               }
-              ImVec2 anchor(mid.x + dir.y * UiPx(7.0f), mid.y - dir.x * UiPx(7.0f));
-              anchor.x = std::clamp(anchor.x, canvas_min.x + UiPx(2.0f),
-                                    std::max(canvas_min.x + UiPx(2.0f), canvas_max.x - text_size.x - UiPx(2.0f)));
-              anchor.y = std::clamp(anchor.y, canvas_min.y + UiPx(1.0f),
-                                    std::max(canvas_min.y + UiPx(1.0f), canvas_max.y - text_size.y - UiPx(1.0f)));
+              // The collision ladder: labels stay individually readable (AC3) — a placed text
+              // rect may overlap NO already-placed rect. Candidates: the default offset, then
+              // the opposite side, then stepped distances on both sides. A label every
+              // candidate of which still collides takes the least-colliding candidate and a
+              // short leader line back to its segment's visible midpoint — the ratio is never
+              // hidden, and the leader keeps the segment identity the plan forbids losing.
+              int placement = 2;
+              int candidate_index = 0;
+              bool placed = false;
+              float best_overlap = -1.0f;
+              ImVec2 best_anchor;
+              ImVec2 anchor;
+              for (const float dist : { UiPx(7.0f), UiPx(15.0f), UiPx(23.0f) }) {
+                for (const float side : { 1.0f, -1.0f }) {
+                  ImVec2 candidate(mid.x + dir.y * side * dist, mid.y - dir.x * side * dist);
+                  candidate.x =
+                      std::clamp(candidate.x, canvas_min.x + UiPx(2.0f),
+                                 std::max(canvas_min.x + UiPx(2.0f), canvas_max.x - text_size.x - UiPx(2.0f)));
+                  candidate.y =
+                      std::clamp(candidate.y, canvas_min.y + UiPx(1.0f),
+                                 std::max(canvas_min.y + UiPx(1.0f), canvas_max.y - text_size.y - UiPx(1.0f)));
+                  const ImRect candidate_rect(candidate, ImVec2(candidate.x + text_size.x, candidate.y + text_size.y));
+                  float overlap = 0.0f;
+                  for (const ImRect& placed_rect : placed_label_rects) {
+                    ImRect common = candidate_rect;
+                    common.ClipWithFull(placed_rect);
+                    if (common.Min.x < common.Max.x && common.Min.y < common.Max.y) {
+                      overlap += common.GetWidth() * common.GetHeight();
+                    }
+                  }
+                  if (overlap <= 0.0f) {
+                    anchor = candidate;
+                    placement = candidate_index == 0 ? 0 : 1;  // 0 = the default offset, 1 = shifted
+                    placed = true;
+                    break;
+                  }
+                  if (best_overlap < 0.0f || overlap < best_overlap) {
+                    best_overlap = overlap;
+                    best_anchor = candidate;
+                  }
+                  ++candidate_index;
+                }
+                if (placed) {
+                  break;
+                }
+              }
+              if (!placed) {
+                anchor = best_anchor;  // the leader fallback — the least-colliding slot plus a leader
+              }
+              if (placement != 0) {
+                // The leader: a short line from the text's near edge to the visible midpoint —
+                // every non-default placement keeps its segment identity explicit (proximity
+                // alone cannot carry it once the ladder has moved the text).
+                ImVec2 from(anchor.x + text_size.x * 0.5f, anchor.y + text_size.y * 0.5f);
+                ImVec2 to(mid);
+                ImVec2 step(to.x - from.x, to.y - from.y);
+                const float gap = UiPx(3.0f);
+                const float step_len = std::sqrt(step.x * step.x + step.y * step.y);
+                if (step_len > gap) {
+                  step.x *= gap / step_len;
+                  step.y *= gap / step_len;
+                  to.x -= step.x;
+                  to.y -= step.y;
+                }
+                dl->AddLine(from, to, kRayTraceLabelColor, 1.0f);
+              }
+              placed_label_rects.push_back(ImRect(anchor, ImVec2(anchor.x + text_size.x, anchor.y + text_size.y)));
+              float* rect_feedback = &state.analysis.ray3d_fresnel_label_rects[s * 5];
+              rect_feedback[0] = placed_label_rects.back().Min.x;
+              rect_feedback[1] = placed_label_rects.back().Min.y;
+              rect_feedback[2] = placed_label_rects.back().Max.x;
+              rect_feedback[3] = placed_label_rects.back().Max.y;
+              rect_feedback[4] = static_cast<float>(placement);
               dl->AddText(anchor, kRayTraceLabelColor, text.c_str());
               state.analysis.ray3d_fresnel_labels[s] = text;
             }

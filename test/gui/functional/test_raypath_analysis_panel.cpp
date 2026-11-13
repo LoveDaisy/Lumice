@@ -4156,6 +4156,9 @@ bool TraceLabelsFollowTheToggle(ImGuiTestContext* ctx) {
   std::vector<TraceExpectedLine> expected;
   IM_CHECK_RETV(TraceBuildExpectedLines(frame, chain, &expected), false);
   const std::vector<ImVec2> label_ink = TraceCanvasVertices(gui::kRayTraceLabelColor);
+  // The rect feedback's contract first: five floats per segment, or a missing production
+  // writer fails HERE instead of indexing an empty vector.
+  IM_CHECK_RETV(gui::g_state.analysis.ray3d_fresnel_label_rects.size() == expected.size() * 5, false);
   std::vector<ImRect> placed_rects;
   int labelled = 0;
   for (const TraceExpectedLine& e : expected) {
