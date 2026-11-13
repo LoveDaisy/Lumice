@@ -2000,6 +2000,12 @@ struct ScopedWatchdogGuard {
   }
 };
 
+// The marker ink probe's shared face (the AC1 red-green pin): the helper drives the two legs,
+// the registration block's GuiFunc renders and counts. File-scope because the two live apart.
+static gui::GuiState marker_probe;
+static bool draw_marker_probe = false;
+static int marker_probe_vertices = -1;
+
 bool MapRegionShowsTheClassMapAndTakesThePick(ImGuiTestContext* ctx) {
   ScopedServerGuard guard;
   IM_CHECK_RETV(BringUpScene(ctx, kFullyRandomJson, /*infinite=*/false, /*gpu=*/false), false);
@@ -2079,6 +2085,33 @@ bool MapRegionShowsTheClassMapAndTakesThePick(ImGuiTestContext* ctx) {
   };
   IM_CHECK_RETV(same_rect(map_wait_rect, ctx->ItemInfo("**/##map_canvas").RectFull), false);
   IM_CHECK_RETV(same_rect(sky_wait_rect, ctx->ItemInfo("**/alt°##sky").RectFull), false);
+  // The marker ink probe (AC1's red-green pin): the button path's written state — valid, NOT
+  // from a map pick — must draw the same sky-point marker ink a pick draws. A controlled probe
+  // window renders the adopted reference with everything but the intent fixed; the counted list
+  // is the probe's map area child's own (the canvas picture, its overlays and the marker all
+  // draw there; the info side's state text and the report live on other lists and stay out).
+  // Asserted as an increment between two otherwise-identical frames — the button-written
+  // intent against the same state with the intent invalid — so unrelated fixed ink cancels.
+  {
+    marker_probe = gui::g_state;
+    IM_CHECK_RETV(marker_probe.analysis.map.adopted_result != nullptr, false);
+    IM_CHECK_RETV(marker_probe.analysis.sky_point.valid && !marker_probe.analysis.sky_point.from_map_pick, false);
+    draw_marker_probe = true;
+    struct MarkerLease {
+      ~MarkerLease() {
+        draw_marker_probe = false;
+        marker_probe = gui::GuiState{};
+      }
+    } marker_lease;
+    marker_probe.analysis.sky_point.valid = false;
+    ctx->Yield(3);
+    const int base = marker_probe_vertices;
+    IM_CHECK_RETV(base > 0, false);
+    marker_probe.analysis.sky_point = gui::g_state.analysis.sky_point;
+    ctx->Yield(3);
+    IM_CHECK_RETV(marker_probe_vertices > base, false);
+    ctx->LogInfo("[sky point marker] button-path ink: %d -> %d vertices", base, marker_probe_vertices);
+  }
   const gui::MapQuerySession& map = gui::g_state.analysis.map;
   LUMICE_PathMapInfo info{};
   info.struct_size = sizeof(info);
@@ -15251,6 +15284,23 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
   // same wall-clock shape that put the survey overview case there.
   {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "map_region_shows_the_class_map_and_takes_the_pick");
+    t->GuiFunc = [](ImGuiTestContext*) {
+      if (draw_marker_probe) {
+        ImGui::SetNextWindowPos(ImVec2(760.0f, 60.0f), ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(420.0f, 460.0f), ImGuiCond_Always);
+        ImGui::Begin("Sky point marker probe", nullptr, ImGuiWindowFlags_NoResize);
+        ImGuiWindow* probe_win = ImGui::GetCurrentWindow();
+        gui::RenderAnalyzeMapRegion(marker_probe, ImGui::GetContentRegionAvail());
+        marker_probe_vertices = -1;
+        for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
+          if (w != nullptr && w->Active && w->DrawList != nullptr && w->DrawList != probe_win->DrawList &&
+              w->ParentWindow == probe_win && std::strstr(w->Name, "##AnalyzeRaypathView") != nullptr) {
+            marker_probe_vertices = w->DrawList->VtxBuffer.Size;
+          }
+        }
+        ImGui::End();
+      }
+    };
     t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(MapRegionShowsTheClassMapAndTakesThePick(ctx)); };
   }
   // The point inspector (742.6): the real chain pick → point → component → slider/trace →
