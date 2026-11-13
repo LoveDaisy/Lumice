@@ -249,9 +249,9 @@ TEST(AnalyzeMapView, CaliberLinesCarryTheReaderFieldsVerbatim) {
   in.completed = true;
 
   // The tiers: DEFAULT = the short quantity name with its unit and the scene-vs-nominal limit;
-  // PHYSICS = the full definition, the sun premise and the engine's basis verbatim; CALCULATION
-  // = the grid and execution numbers. The lambda is in NO line — the slider row's echo is its
-  // one owner.
+  // PHYSICS = the full definition and the sun premise (the readable scene/nominal caliber);
+  // DIAGNOSTICS = the engine's basis verbatim plus the grid and execution numbers. The lambda
+  // is in NO line — the slider row's echo is its one owner.
   const std::vector<std::string> default_lines = MapCaliberDefaultLines(in);
   ASSERT_GE(default_lines.size(), 2u);
   EXPECT_NE(default_lines[0].find("band-sum"), std::string::npos);
@@ -260,27 +260,31 @@ TEST(AnalyzeMapView, CaliberLinesCarryTheReaderFieldsVerbatim) {
   EXPECT_NE(default_lines[1].find("Scene geometry"), std::string::npos)
       << "a non-nominal shape names the limit at the default tier";
 
+  // The tiers: DEFAULT = the short quantity name with its unit and the scene-vs-nominal limit;
+  // PHYSICS = the full definition and the sun premise (the readable scene/nominal caliber);
+  // DIAGNOSTICS = the engine's basis verbatim plus the grid and execution numbers. The lambda
+  // is in NO line \u2014 the slider row's echo is its one owner.
   const std::vector<std::string> physics = MapCaliberPhysicsLines(in);
-  ASSERT_GE(physics.size(), 4u);
+  ASSERT_GE(physics.size(), 3u);
   EXPECT_NE(physics[0].find("band-sum"), std::string::npos);
   EXPECT_NE(physics[0].find("physical class"), std::string::npos);
   EXPECT_NE(physics[0].find("per sr"), std::string::npos);
   EXPECT_NE(physics[1].find("Sun at altitude 20.0"), std::string::npos);
   EXPECT_NE(physics[2].find("Scene geometry"), std::string::npos);
-  EXPECT_EQ(physics[3], kBasis);  // the engine's geometry string, byte for byte
 
-  const std::vector<std::string> calc = MapCaliberCalculationLines(in);
-  ASSERT_GE(calc.size(), 3u);
+  const std::vector<std::string> calc = MapCaliberDiagnosticsLines(in);
+  ASSERT_GE(calc.size(), 4u);
+  EXPECT_EQ(calc[0], kBasis) << "the engine's geometry string, byte for byte, leads the diagnostics tier";
   for (const std::string& l : calc) {
     EXPECT_EQ(l.find("550.0 nm"), std::string::npos) << "the lambda echo is deleted, not moved";
   }
-  EXPECT_NE(calc[0].find("n=500000"), std::string::npos);
-  EXPECT_NE(calc[0].find("[3.5, 48.5]"), std::string::npos);
-  EXPECT_NE(calc[0].find("[-100.0, 260.0]"), std::string::npos);
-  EXPECT_NE(calc[0].find("182\u00d71440"), std::string::npos) << "grid dims echo the Info's own";
-  EXPECT_NE(calc[1].find("9/12 members"), std::string::npos);
-  EXPECT_NE(calc[1].find("12345 events"), std::string::npos);
-  EXPECT_NE(calc[2].find("Source-fixed scale"), std::string::npos);
+  EXPECT_NE(calc[1].find("n=500000"), std::string::npos);
+  EXPECT_NE(calc[1].find("[3.5, 48.5]"), std::string::npos);
+  EXPECT_NE(calc[1].find("[-100.0, 260.0]"), std::string::npos);
+  EXPECT_NE(calc[1].find("182\u00d71440"), std::string::npos) << "grid dims echo the Info's own";
+  EXPECT_NE(calc[2].find("9/12 members"), std::string::npos);
+  EXPECT_NE(calc[2].find("12345 events"), std::string::npos);
+  EXPECT_NE(calc[3].find("Source-fixed scale"), std::string::npos);
 
   // A nominal shape says so (its limit rides Physics); a full-sky view names the all-sky grid.
   in.info.shape_is_nominal = 1;
@@ -293,8 +297,8 @@ TEST(AnalyzeMapView, CaliberLinesCarryTheReaderFieldsVerbatim) {
   }
   const std::vector<std::string> nominal_physics = MapCaliberPhysicsLines(in);
   EXPECT_NE(nominal_physics[2].find("Nominal geometry"), std::string::npos);
-  const std::vector<std::string> full = MapCaliberCalculationLines(in);
-  EXPECT_NE(full[0].find("full sky 180\u00d7360"), std::string::npos);
+  const std::vector<std::string> full = MapCaliberDiagnosticsLines(in);
+  EXPECT_NE(full[1].find("full sky 180\u00d7360"), std::string::npos);
 }
 
 TEST(AnalyzeMapView, CaliberLinesSpellTruncationFiniteZeroAndRank0) {
@@ -944,7 +948,7 @@ TEST(AnalyzeMapView, OverlayMarkerStyleSolidOnlyForConcludedClaims) {
 // curve's colour; the x-extent reading below survives them because the label's patch sits inside
 // the ring's own).
 
-class VerdictAnchorDraw : public ::testing::Test {
+class MapDeviceDrawRig : public ::testing::Test {
  protected:
   void SetUp() override {
     ctx_ = ImGui::CreateContext();
@@ -971,6 +975,37 @@ class VerdictAnchorDraw : public ::testing::Test {
   static ViewProjection SunCamera() {
     ViewProjection vp;
     vp.lens_type = kLensTypeFisheyeEquidist;
+    vp.fov = 180.0f;
+    vp.elevation = 20.0f;
+    vp.azimuth = 0.0f;
+    vp.roll = 0.0f;
+    vp.visible = kVisibleFull;
+    vp.front = false;
+    return vp;
+  }
+
+  // The dual-fisheye camera (a full-sky lens, no view transform): the sky splits into two disks
+  // by the travel direction's z sign — the left disk holds the upper hemisphere, the right one
+  // the lower — so a device whose sample sequence crosses the horizon meets the projection's own
+  // break, the one a naive "every sample projects" reading misses.
+  static ViewProjection DualFisheyeCamera() {
+    ViewProjection vp;
+    vp.lens_type = kLensTypeDualFisheyeEquidist;
+    vp.fov = 180.0f;
+    vp.elevation = 20.0f;
+    vp.azimuth = 0.0f;
+    vp.roll = 0.0f;
+    vp.visible = kVisibleFull;
+    vp.front = false;
+    return vp;
+  }
+
+  // The rectangular equirect camera: a full-canvas longitude/latitude map that WRAPS at
+  // longitude ±π and anchors the pole itself to longitude 0 — the projection's own screen
+  // discontinuities, which a per-sample "it projects" reading never sees.
+  static ViewProjection RectangularCamera() {
+    ViewProjection vp;
+    vp.lens_type = kLensTypeRectangular;
     vp.fov = 180.0f;
     vp.elevation = 20.0f;
     vp.azimuth = 0.0f;
@@ -1049,8 +1084,58 @@ class VerdictAnchorDraw : public ::testing::Test {
     }
   }
 
+  // One colour's whole vertex bounding box, both axes — the readout label patch's own read: the
+  // backing ink is unique in the frame, so its box IS the patch rect (text + backing together).
+  static void RectForColour(ImU32 colour, float* min_x, float* min_y, float* max_x, float* max_y) {
+    ImDrawList* dl = ImGui::GetBackgroundDrawList();
+    *min_x = FLT_MAX;
+    *min_y = FLT_MAX;
+    *max_x = -FLT_MAX;
+    *max_y = -FLT_MAX;
+    for (int i = 0; i < dl->VtxBuffer.Size; ++i) {
+      const ImDrawVert& v = dl->VtxBuffer[i];
+      if (v.col != colour) {
+        continue;
+      }
+      *min_x = std::min(*min_x, v.pos.x);
+      *min_y = std::min(*min_y, v.pos.y);
+      *max_x = std::max(*max_x, v.pos.x);
+      *max_y = std::max(*max_y, v.pos.y);
+    }
+  }
+
+  // The FONT-glyph vertices of one colour: the same bucket's vertices minus the geometry
+  // primitives — AddLine/AddRect/AddCircle all stamp the atlas's shared white pixel, font glyphs
+  // carry their own atlas coordinates. The label's text is the one glyph consumer of the anchor
+  // colour, so this box IS the text rect (ring and glyphs share the bucket; the white-pixel
+  // discriminator is what tells them apart).
+  static void GlyphRectForColour(ImU32 colour, float* min_x, float* min_y, float* max_x, float* max_y) {
+    ImDrawList* dl = ImGui::GetBackgroundDrawList();
+    const ImVec2 white = ImGui::GetIO().Fonts->TexUvWhitePixel;
+    *min_x = FLT_MAX;
+    *min_y = FLT_MAX;
+    *max_x = -FLT_MAX;
+    *max_y = -FLT_MAX;
+    for (int i = 0; i < dl->VtxBuffer.Size; ++i) {
+      const ImDrawVert& v = dl->VtxBuffer[i];
+      if (v.col != colour) {
+        continue;
+      }
+      if (std::fabs(v.uv.x - white.x) < 1e-3f && std::fabs(v.uv.y - white.y) < 1e-3f) {
+        continue;  // a geometry primitive's white-pixel vertex, not a glyph
+      }
+      *min_x = std::min(*min_x, v.pos.x);
+      *min_y = std::min(*min_y, v.pos.y);
+      *max_x = std::max(*max_x, v.pos.x);
+      *max_y = std::max(*max_y, v.pos.y);
+    }
+  }
+
   ImGuiContext* ctx_ = nullptr;
 };
+
+// The verdict-anchor fixture shares the rig wholesale.
+class VerdictAnchorDraw : public MapDeviceDrawRig {};
 
 // The honesty gate on a synthetic diagnose — the injection seam the SurveyDiagnoseView plain
 // struct provides, and the only tier that can hold the drawn legs: the engine reaches a
@@ -1118,9 +1203,15 @@ TEST_F(VerdictAnchorDraw, HoverAndToggleEachAnchor) {
   DrawVerdictAnchor(ImGui::GetBackgroundDrawList(), Diagnose("edge", "blue", 40.0, true), in);
   EXPECT_GT(IndexCountForColour(kChromaticColourBlue), 0);
   EXPECT_TRUE(legend.verdict_anchor);
+  // The icon's own facts, recorded with the bit: the palette entry that drew, the solid form.
+  EXPECT_EQ(legend.verdict_anchor_colour, kChromaticColourBlue);
+  EXPECT_FALSE(legend.verdict_anchor_dashed);
   in = Input(vp, /*shown=*/true, /*hover=*/false);
+  in.legend = &legend;
   DrawVerdictAnchor(ImGui::GetBackgroundDrawList(), Diagnose("gate_edge", "red", 60.0, true), in);
   EXPECT_GT(IndexCountForColour(kChromaticColourRed), 0);
+  EXPECT_EQ(legend.verdict_anchor_colour, kChromaticColourRed);
+  EXPECT_FALSE(legend.verdict_anchor_dashed);
 }
 
 // The switch standing but the ring wholly outside the frustum: nothing draws and no legend bit
@@ -1187,6 +1278,20 @@ TEST_F(VerdictAnchorDraw, IncompleteCoverageDrawsTheDashedForm) {
   const ViewProjection vp = SunCamera();
   VerdictAnchorInput in = Input(vp, /*shown=*/true, /*hover=*/false);
   ImDrawList* dl = ImGui::GetBackgroundDrawList();
+  // The legend record leg, isolated in its own draw: the dashed red form's bits (the icon reads
+  // what actually drew), with no other draw's ink in the buffer.
+  OverlayLegendState legend;
+  in.legend = &legend;
+  DrawVerdictAnchor(dl, Diagnose("edge", "red", 40.0, /*coverage=*/false), in);
+  EXPECT_TRUE(legend.verdict_anchor);
+  EXPECT_TRUE(legend.verdict_anchor_dashed);
+  EXPECT_EQ(legend.verdict_anchor_colour, kChromaticColourRed);
+  // The two forms' own comparison, in a fresh buffer.
+  dl->VtxBuffer.resize(0);
+  dl->IdxBuffer.resize(0);
+  dl->CmdBuffer.resize(0);
+  dl->_VtxCurrentIdx = 0;
+  dl->AddDrawCmd();
   DrawVerdictAnchor(dl, Diagnose("edge", "blue", 40.0, /*coverage=*/true), in);
   DrawVerdictAnchor(dl, Diagnose("edge", "red", 40.0, /*coverage=*/false), in);
   const int solid = IndexCountForColour(kChromaticColourBlue);
@@ -1205,6 +1310,526 @@ TEST_F(VerdictAnchorDraw, IncompleteCoverageDrawsTheDashedForm) {
   ASSERT_GT(blue_max_x, blue_min_x);
   ASSERT_GT(red_max_x, red_min_x);
   EXPECT_NEAR((blue_max_x - blue_min_x) / (red_max_x - red_min_x), 1.0f, 0.01f);
+}
+
+// The readout label's viewport clamp: a readout anchored near the canvas edge must keep its
+// whole patch — backing AND glyphs — inside the canvas rectangle. The unclamped draw centred the
+// text on the walk's topmost in-disk sample with no inset: an edge-close anchor cropped the word
+// on the canvas edge (the owner's screenshot cut "verdict" to "dict"). The backing ink
+// (16,17,20,170 — DrawIsoDeltaReadoutLabel's own literal) is unique in the frame, so its vertex
+// box IS the patch rect; the glyph bucket (the anchor's colour) must sit inside it, text and
+// backing moving together. Two independent pokes — the canvas's right edge (the owner's cut) and
+// its top edge — plus the non-zero-origin face: the rectangle the patch must respect is the
+// canvas's own [pic_min, pic_min + size], not the screen's.
+//
+// Camera premise (independent of the production projection): the rig's 180° equidistant fisheye
+// puts a direction at angular distance θ from the view axis at screen radius img_radius·θ/90° —
+// the sun at (alt 20, az 88) sits ~81° off the axis near the canvas's right edge, and the sun at
+// (alt 85, az 0) ~65° off it high on the canvas; the δ rings about them keep in-disk samples
+// whose topmost one anchors the label within a half-text-width of the named edge.
+TEST_F(VerdictAnchorDraw, EdgeAnchorKeepsTheLabelInsideTheCanvas) {
+  ImDrawList* dl = ImGui::GetBackgroundDrawList();
+  const ViewProjection horizon_vp = [] {
+    ViewProjection vp = SunCamera();
+    vp.elevation = 0.0f;  // aiming at the horizon: the high sun rides near the canvas's top edge
+    return vp;
+  }();
+
+  struct Poke {
+    const char* what;
+    const ViewProjection* vp;
+    double sun_alt;
+    double sun_az;
+    double delta;
+    float pic_min_x;
+    float pic_min_y;
+    float clip_max_x;  // >0: the leg pushes an effective draw-list clip narrower than the canvas
+                       // (the ancestors' clip the glyphs are actually cut by) — the clamp must
+                       // respect the intersection, not the nominal rectangle
+  };
+  const ViewProjection sun_vp = SunCamera();
+  const Poke pokes[] = {
+    { "right-edge anchor", &sun_vp, 20.0, 88.0, 20.0, 0.0f, 0.0f, 0.0f },
+    { "top-edge anchor", &horizon_vp, 85.0, 0.0, 5.0, 0.0f, 0.0f, 0.0f },
+    { "right-edge anchor, non-zero canvas origin", &sun_vp, 20.0, 88.0, 20.0, 100.0f, 50.0f, 0.0f },
+    { "right-edge anchor, effective clip narrower than the canvas", &sun_vp, 20.0, 88.0, 20.0, 0.0f, 0.0f, 400.0f },
+  };
+  for (const Poke& poke : pokes) {
+    VerdictAnchorInput in = Input(*poke.vp, /*shown=*/true, /*hover=*/false);
+    in.sun.altitude_deg = poke.sun_alt;
+    in.sun.azimuth_deg = poke.sun_az;
+    in.pic_min_x = poke.pic_min_x;
+    in.pic_min_y = poke.pic_min_y;
+    dl->VtxBuffer.resize(0);
+    dl->IdxBuffer.resize(0);
+    dl->CmdBuffer.resize(0);
+    dl->_VtxCurrentIdx = 0;  // the quads' index values come from this — a partial reset reads OOB
+    dl->AddDrawCmd();        // this rig's between-leg reset: PrimReserve assumes a live command
+    if (poke.clip_max_x > 0.0f) {
+      dl->PushClipRect(ImVec2(0.0f, 0.0f), ImVec2(poke.clip_max_x, 600.0f), true);
+    }
+    DrawVerdictAnchor(dl, Diagnose("edge", "blue", poke.delta, true), in);
+    if (poke.clip_max_x > 0.0f) {
+      dl->PopClipRect();
+    }
+    if (IndexCountForColour(kChromaticColourBlue) <= 0) {
+      ADD_FAILURE() << poke.what << ": ring premise — the anchor must draw for the label to exist";
+      continue;
+    }
+    float min_x = 0.0f;
+    float min_y = 0.0f;
+    float max_x = 0.0f;
+    float max_y = 0.0f;
+    RectForColour(kReadoutBackingInk, &min_x, &min_y, &max_x, &max_y);
+    if (max_x <= min_x) {
+      ADD_FAILURE() << poke.what << ": the label backing must have drawn";
+      continue;
+    }
+    const float canvas_l = in.pic_min_x;
+    const float canvas_t = in.pic_min_y;
+    const float canvas_r = in.pic_min_x + in.width_pt;
+    const float canvas_b = in.pic_min_y + in.height_pt;
+    EXPECT_GE(min_x, canvas_l) << poke.what << ": patch crosses the canvas left edge";
+    EXPECT_LE(max_x, canvas_r) << poke.what << ": patch crosses the canvas right edge";
+    EXPECT_GE(min_y, canvas_t) << poke.what << ": patch crosses the canvas top edge";
+    EXPECT_LE(max_y, canvas_b) << poke.what << ": patch crosses the canvas bottom edge";
+    if (poke.clip_max_x > 0.0f) {
+      // The reviewer's own probe: the effective clip is what cuts glyphs — the patch must sit
+      // inside the intersection, and the glyphs must all emit (the word stays whole).
+      EXPECT_LE(max_x, poke.clip_max_x) << poke.what << ": patch crosses the effective clip's right edge";
+    }
+    {
+      // The glyphs ride the backing (text and backing move together): the label's text rect sits
+      // inside the backing's box, and the backing wraps it with the pad — the patch moved, never
+      // shrank. The clamp holds the patch inside canvas ∩ effective clip, so the glyphs emit
+      // whole on every leg (the glyph box is the quad box, an advance narrower than CalcTextSize
+      // by the last glyph's own side bearing — hence the slack in the pad equality).
+      float gmin_x = 0.0f;
+      float gmin_y = 0.0f;
+      float gmax_x = 0.0f;
+      float gmax_y = 0.0f;
+      GlyphRectForColour(kChromaticColourBlue, &gmin_x, &gmin_y, &gmax_x, &gmax_y);
+      if (gmax_x <= gmin_x) {
+        ADD_FAILURE() << poke.what << ": glyphs must have drawn";
+        continue;
+      }
+      EXPECT_GE(gmin_x, min_x - 0.5f) << poke.what << ": glyph left of backing";
+      EXPECT_LE(gmax_x, max_x + 0.5f) << poke.what << ": glyph right of backing";
+      EXPECT_GE(gmin_y, min_y - 0.5f) << poke.what << ": glyph above backing";
+      EXPECT_LE(gmax_y, max_y + 0.5f) << poke.what << ": glyph below backing";
+      EXPECT_NEAR(max_x - min_x, (gmax_x - gmin_x) + 6.0f, 4.0f) << poke.what << ": backing wraps the text";
+    }
+  }
+}
+
+// ---- The reference profile's hover device (§16.1.3's extension) --------------------------------------
+//
+// The same headless rig as the verdict anchor's. The positioning assertions read the drawn point
+// against THE TEST'S OWN projection of THE TEST'S OWN sky math — AltAz→world, the walk basis, the
+// φ = π − az azimuth mapping, the equidistant law and the canvas mapping, all spelled locally
+// below — never a readback of the production conversion (an independent anchor is two
+// implementations of one spec, not one implementation reading itself). The anchor is pinned to
+// the rig's SunCamera (elevation 20, azimuth 0, roll 0); the asymmetric-sun legs are what keep it
+// honest (a mirrored azimuth mapping or a swapped basis vector would land the point 180° or 90°
+// away, far outside the tolerance).
+
+class ProfileHoverDraw : public MapDeviceDrawRig {
+ protected:
+  static SurveyProbeView Probe(bool az_available, double az_deg, double edge_deg, double peak_deg, int state = 0) {
+    SurveyProbeView p;
+    p.available = true;
+    p.state = state;  // 0 = the finite default: the honesty gate only refuses LUMICE_PATH_STATE_REFUSED
+    p.azimuth_available = az_available;
+    p.azimuth_deg = az_deg;
+    p.edge_available = true;
+    p.edge_deg = edge_deg;
+    p.peak_available = true;
+    p.peak_deg = peak_deg;
+    p.separation_available = true;
+    p.separation_deg = peak_deg - edge_deg;
+    return p;
+  }
+
+  static ProfileHoverInput Input(const ViewProjection& vp, double sun_alt, double sun_az, SurveyProfileHover hover) {
+    ProfileHoverInput in;
+    in.camera = &vp;
+    in.width_px = 600;
+    in.height_px = 600;
+    in.width_pt = 600.0f;
+    in.height_pt = 600.0f;
+    in.pic_min_x = 0.0f;
+    in.pic_min_y = 0.0f;
+    in.pic_px = 600.0f;
+    in.sun.altitude_deg = sun_alt;
+    in.sun.azimuth_deg = sun_az;
+    in.hover = hover;
+    return in;
+  }
+
+  // The colour bucket's vertex bounding box's centre — the drawn point's own read (the marker is
+  // an evenly-tessellated fan about its centre; the rose bucket carries no other primitive).
+  static void RoseCentre(double* cx, double* cy) {
+    ImDrawList* dl = ImGui::GetBackgroundDrawList();
+    float min_x = FLT_MAX;
+    float min_y = FLT_MAX;
+    float max_x = -FLT_MAX;
+    float max_y = -FLT_MAX;
+    for (int i = 0; i < dl->VtxBuffer.Size; ++i) {
+      const ImDrawVert& v = dl->VtxBuffer[i];
+      if (v.col != kProfileReadingColour) {
+        continue;
+      }
+      min_x = std::min(min_x, v.pos.x);
+      min_y = std::min(min_y, v.pos.y);
+      max_x = std::max(max_x, v.pos.x);
+      max_y = std::max(max_y, v.pos.y);
+    }
+    *cx = (min_x + max_x) * 0.5;
+    *cy = (min_y + max_y) * 0.5;
+  }
+
+  // The test's own projection: sky point (δ on the probe's radial line at az) → screen, with the
+  // view matrix and the equidistant law inlined for the rig's SunCamera. Returns screen pt coords.
+  static std::array<double, 2> ExpectedScreenPoint(double sun_alt, double sun_az, double delta_deg,
+                                                   double probe_az_deg) {
+    double sun[3];
+    SkyPositionOf(sun_alt, sun_az, sun);
+    double u[3] = { 0.0, 0.0, 1.0 };
+    double dot = u[0] * sun[0] + u[1] * sun[1] + u[2] * sun[2];
+    if (std::fabs(dot) > 0.9) {
+      u[0] = 1.0;
+      u[1] = 0.0;
+      u[2] = 0.0;
+      dot = u[0] * sun[0] + u[1] * sun[1] + u[2] * sun[2];
+    }
+    for (int k = 0; k < 3; ++k) {
+      u[k] -= dot * sun[k];
+    }
+    double un = std::sqrt(u[0] * u[0] + u[1] * u[1] + u[2] * u[2]);
+    for (int k = 0; k < 3; ++k) {
+      u[k] /= un;
+    }
+    double v[3] = { sun[1] * u[2] - sun[2] * u[1], sun[2] * u[0] - sun[0] * u[2], sun[0] * u[1] - sun[1] * u[0] };
+    const double phi = kPiD - probe_az_deg * kD2R;  // the mapping the device claims
+    const double delta = delta_deg * kD2R;
+    double p[3];
+    for (int k = 0; k < 3; ++k) {
+      p[k] = std::cos(delta) * sun[k] + std::sin(delta) * (std::cos(phi) * u[k] + std::sin(phi) * v[k]);
+    }
+    // travel = −p, the rig's view (elevation 20, azimuth 0, roll 0): right/up/forward spelled at
+    // those values; the equidistant fisheye: screen radius = img_radius·θ/half_fov.
+    const double travel[3] = { -p[0], -p[1], -p[2] };
+    const double e = 20.0 * kD2R;
+    const double right[3] = { 0.0, -1.0, 0.0 };
+    const double up[3] = { std::sin(e), 0.0, -std::cos(e) };
+    const double fwd[3] = { std::cos(e), 0.0, std::sin(e) };
+    const double vd[3] = { right[0] * travel[0] + right[1] * travel[1] + right[2] * travel[2],
+                           up[0] * travel[0] + up[1] * travel[1] + up[2] * travel[2],
+                           fwd[0] * travel[0] + fwd[1] * travel[1] + fwd[2] * travel[2] };
+    const double theta = std::acos(std::clamp(-vd[2], -1.0, 1.0));
+    const double rr = 300.0 * theta / (kPiD / 2.0);
+    const double phi_s = std::atan2(vd[1], vd[0]);
+    const double sx = rr * std::cos(phi_s);
+    const double sy = rr * std::sin(phi_s);
+    return { (sx / 600.0 + 0.5) * 600.0, (0.5 - sy / 600.0) * 600.0 };
+  }
+
+  static int RoseCount() {
+    ImDrawList* dl = ImGui::GetBackgroundDrawList();
+    int count = 0;
+    for (int i = 0; i < dl->VtxBuffer.Size; ++i) {
+      if (dl->VtxBuffer[i].col == kProfileReadingColour) {
+        ++count;
+      }
+    }
+    return count;
+  }
+};
+
+// The device's ONE positioning fact: the drawn point sits at the sky position the probe's own
+// azimuth names — (δ on the radial line, the φ = π − az mapping) — computed by the test's own
+// math above, on an asymmetric sun so neither a mirrored mapping nor a stale azimuth can pass.
+TEST_F(ProfileHoverDraw, PointLandsAtTheProbeAzimuthsSkyPosition) {
+  const ViewProjection vp = SunCamera();
+  struct Leg {
+    const char* what;
+    double sun_alt;
+    double sun_az;
+    double delta;
+    double probe_az;
+  };
+  const Leg legs[] = {
+    { "aimed sun, built-in azimuth", 20.0, 0.0, 22.0, 0.0 },
+    { "aimed sun, non-trivial azimuth", 20.0, 0.0, 22.0, 90.0 },
+    { "asymmetric sun, built-in azimuth", 35.0, 55.0, 18.0, 0.0 },
+    { "asymmetric sun, non-trivial azimuth", 35.0, 55.0, 30.0, 200.0 },
+  };
+  for (const Leg& leg : legs) {
+    ImDrawList* dl = ImGui::GetBackgroundDrawList();
+    dl->VtxBuffer.resize(0);
+    dl->IdxBuffer.resize(0);
+    dl->CmdBuffer.resize(0);
+    dl->_VtxCurrentIdx = 0;
+    dl->AddDrawCmd();
+    DrawProfileHoverDevice(dl, Probe(true, leg.probe_az, leg.delta, leg.delta + 10.0),
+                           Input(vp, leg.sun_alt, leg.sun_az, SurveyProfileHover::kEdge));
+    if (RoseCount() <= 0) {
+      ADD_FAILURE() << leg.what << ": the point must draw";
+      continue;
+    }
+    double cx = 0.0;
+    double cy = 0.0;
+    RoseCentre(&cx, &cy);
+    const auto expect = ExpectedScreenPoint(leg.sun_alt, leg.sun_az, leg.delta, leg.probe_az);
+    EXPECT_NEAR(cx, expect[0], 2.5) << leg.what << ": point x against the test's own projection";
+    EXPECT_NEAR(cy, expect[1], 2.5) << leg.what << ": point y against the test's own projection";
+  }
+}
+
+// The separation device's shape: the radial INTERVAL between the two readings, endpoints marked
+// — the drawn rose bucket must span both endpoints (the test's own projection) and stay a
+// bounded sliver along the line, never a ring or an annulus (a ring at either delta would blow
+// the sliver's size band).
+TEST_F(ProfileHoverDraw, SeparationIntervalSpansTheTwoReadings) {
+  const ViewProjection vp = SunCamera();
+  ImDrawList* dl = ImGui::GetBackgroundDrawList();
+  const SurveyProbeView probe = Probe(true, 0.0, 25.0, 40.0);
+  DrawProfileHoverDevice(dl, probe, Input(vp, 20.0, 0.0, SurveyProfileHover::kSeparation));
+  ASSERT_GT(RoseCount(), 0) << "the interval must draw";
+  float min_x = FLT_MAX;
+  float min_y = FLT_MAX;
+  float max_x = -FLT_MAX;
+  float max_y = -FLT_MAX;
+  for (int i = 0; i < dl->VtxBuffer.Size; ++i) {
+    const ImDrawVert& vtx = dl->VtxBuffer[i];
+    if (vtx.col != kProfileReadingColour) {
+      continue;
+    }
+    min_x = std::min(min_x, vtx.pos.x);
+    min_y = std::min(min_y, vtx.pos.y);
+    max_x = std::max(max_x, vtx.pos.x);
+    max_y = std::max(max_y, vtx.pos.y);
+  }
+  const auto edge_pt = ExpectedScreenPoint(20.0, 0.0, 25.0, 0.0);
+  const auto peak_pt = ExpectedScreenPoint(20.0, 0.0, 40.0, 0.0);
+  EXPECT_GE(min_x, std::min(edge_pt[0], peak_pt[0]) - 8.0) << "edge endpoint inside the bucket's box";
+  EXPECT_LE(max_x, std::max(edge_pt[0], peak_pt[0]) + 8.0) << "no extent beyond the two endpoints";
+  EXPECT_GE(min_y, std::min(edge_pt[1], peak_pt[1]) - 8.0) << "edge endpoint inside the bucket's box";
+  EXPECT_LE(max_y, std::max(edge_pt[1], peak_pt[1]) + 8.0) << "no extent beyond the two endpoints";
+  // The sliver band: a 15° radial interval at the equidistant scale is ~50pt of extent, the two
+  // endpoint dots ~9pt each — a ring (diameter ~250pt) or an annulus sits far outside.
+  EXPECT_LT(std::max(max_x - min_x, max_y - min_y), 90.0f) << "the device is an interval, not a ring";
+}
+
+// The honesty gates, in the draw's short-circuit order: no standing, a refused probe, an unknown
+// azimuth, the named reading absent, an endpoint off the view — each draws nothing. Not drawing
+// is the honest state; the row's own words carry the absence.
+TEST_F(ProfileHoverDraw, HonestyGateLegs) {
+  const ViewProjection vp = SunCamera();
+  ImDrawList* dl = ImGui::GetBackgroundDrawList();
+  struct Leg {
+    const char* what;
+    SurveyProfileHover hover;
+    bool az_available;
+    double probe_az;
+    double edge;
+    double peak;
+    int state;
+    double sun_alt;
+    double sun_az;
+  };
+  const Leg legs[] = {
+    { "no standing", SurveyProfileHover::kNone, true, 0.0, 22.0, 32.0, 0, 20.0, 0.0 },
+    { "refused probe", SurveyProfileHover::kEdge, true, 0.0, 22.0, 32.0, LUMICE_PATH_STATE_REFUSED, 20.0, 0.0 },
+    { "unknown azimuth", SurveyProfileHover::kEdge, false, 0.0, 22.0, 32.0, 0, 20.0, 0.0 },
+    { "edge reading absent", SurveyProfileHover::kEdge, true, 0.0, 22.0, 32.0, 0, 20.0, 0.0 },
+    { "separation missing one endpoint", SurveyProfileHover::kSeparation, true, 0.0, 22.0, 32.0, 0, 20.0, 0.0 },
+    { "endpoint beyond the frustum", SurveyProfileHover::kEdge, true, 0.0, 150.0, 160.0, 0, 20.0, 0.0 },
+  };
+  for (const Leg& leg : legs) {
+    dl->VtxBuffer.resize(0);
+    dl->IdxBuffer.resize(0);
+    dl->CmdBuffer.resize(0);
+    dl->_VtxCurrentIdx = 0;
+    dl->AddDrawCmd();
+    SurveyProbeView probe = Probe(leg.az_available, leg.probe_az, leg.edge, leg.peak, leg.state);
+    if (std::string(leg.what) == "edge reading absent") {
+      probe.edge_available = false;
+    }
+    if (std::string(leg.what) == "separation missing one endpoint") {
+      probe.peak_available = false;
+    }
+    DrawProfileHoverDevice(dl, probe, Input(vp, leg.sun_alt, leg.sun_az, leg.hover));
+    EXPECT_EQ(RoseCount(), 0) << leg.what << ": nothing must draw";
+  }
+}
+
+// The reviewer's own probe: the interval device's all-or-nothing rule is STRUCTURAL — a loop
+// that drew as it projected would leave an unqualified prefix on the draw list when a later
+// sample fell off the view. The front endpoint visible, the far end beyond the frustum: the
+// rose bucket must be EMPTY (no prefix lines, no endpoint markers), not a half-drawn separation.
+TEST_F(ProfileHoverDraw, PartialIntervalInViewDrawsNothing) {
+  const ViewProjection vp = SunCamera();
+  ImDrawList* dl = ImGui::GetBackgroundDrawList();
+  // δ=25 is well in view about the aimed sun; δ=100 lies 100° off the view axis, past the 90°
+  // frustum reach of the rig's 180° fisheye — the interval crosses the view's edge partway.
+  DrawProfileHoverDevice(dl, Probe(true, 0.0, 25.0, 100.0), Input(vp, 20.0, 0.0, SurveyProfileHover::kSeparation));
+  EXPECT_EQ(RoseCount(), 0) << "a partially-visible interval must leave the draw list untouched";
+}
+
+// The reviewer's dual-fisheye probe: every sample individually projects, but the interval
+// straddles the horizon — the sky's disk split — so consecutive samples belong to DIFFERENT
+// disks and the bridged chord does not exist on the picture. Sun at alt 45, the probe's radial
+// line at φ=π: the interval δ∈[20,80] crosses z=0 at δ=45. All-or-nothing: the rose bucket must
+// be empty.
+TEST_F(ProfileHoverDraw, IntervalAcrossTheDiskSplitDrawsNothing) {
+  const ViewProjection vp = DualFisheyeCamera();
+  ImDrawList* dl = ImGui::GetBackgroundDrawList();
+  DrawProfileHoverDevice(dl, Probe(true, 0.0, 20.0, 80.0), Input(vp, 45.0, 0.0, SurveyProfileHover::kSeparation));
+  EXPECT_EQ(RoseCount(), 0) << "an interval across the disk split must leave the draw list untouched";
+}
+
+// The reviewer's rectangular probe: the equirect wraps at longitude ±π — an interval whose
+// sample sequence crosses the seam draws a full-canvas horizontal chord between two
+// neighbouring samples, both individually projecting. Sun at (alt 20, az 170), the probe's
+// radial line at φ = −π/2: the sequence's longitude crosses ±π at δ ≈ 9.4°, inside the interval
+// [5, 60]. All-or-nothing: the rose bucket must be empty.
+TEST_F(ProfileHoverDraw, IntervalAcrossTheLongitudeSeamDrawsNothing) {
+  const ViewProjection vp = RectangularCamera();
+  ImDrawList* dl = ImGui::GetBackgroundDrawList();
+  DrawProfileHoverDevice(dl, Probe(true, 270.0, 5.0, 60.0), Input(vp, 20.0, 170.0, SurveyProfileHover::kSeparation));
+  EXPECT_EQ(RoseCount(), 0) << "an interval across the longitude seam must leave the draw list untouched";
+}
+
+// The pole passed BETWEEN two adjacent samples: the reviewer's own probes, both phase offsets.
+// A radial interval on the sun's own meridian (probe azimuth 0 → φ = π) whose δ range straddles
+// the nadir — the pole falls strictly between two 0.5° samples, both individually projecting
+// (their horizontal norm sits just outside the anchor epsilon), their longitudes the meridian's
+// two sides (≈ π apart, just inside a half-turn allowance), the bridged chord half a canvas
+// wide along the map's bottom edge. The nadir sits at δ = 90° + altitude: 110.25 between the
+// [100, 120] grid's 110.0/110.5 pair, and 110.0 between the shifted [100.1, 120.1] grid's
+// 109.6/110.1 pair. All-or-nothing: the rose bucket must be empty for both.
+TEST_F(ProfileHoverDraw, IntervalAcrossThePoleBetweenSamplesDrawsNothing) {
+  const ViewProjection vp = RectangularCamera();
+  ImDrawList* dl = ImGui::GetBackgroundDrawList();
+  DrawProfileHoverDevice(dl, Probe(true, 0.0, 100.0, 120.0), Input(vp, 20.25, 0.0, SurveyProfileHover::kSeparation));
+  EXPECT_EQ(RoseCount(), 0) << "an interval with the nadir between two samples must leave the draw list untouched";
+  DrawProfileHoverDevice(dl, Probe(true, 0.0, 100.1, 120.1), Input(vp, 20.0, 0.0, SurveyProfileHover::kSeparation));
+  EXPECT_EQ(RoseCount(), 0) << "the phase-shifted straddle (nadir at 110.0, samples at 109.6/110.1) must void too";
+}
+
+// The anchored pole itself as an interval sample — the anchor rule's own direct leg. The δ grid
+// lands a sample exactly on the nadir (δ = 110.25 about the alt-20.25 sun, on the 0.5° grid of
+// [100.25, 120.25]): the sample's horizontal norm collapses into the anchor epsilon, its
+// longitude reads the anchored column, and every pair with it spans the anchored jump.
+// All-or-nothing: the bucket stays empty.
+TEST_F(ProfileHoverDraw, IntervalThroughTheAnchoredPoleSampleDrawsNothing) {
+  const ViewProjection vp = RectangularCamera();
+  ImDrawList* dl = ImGui::GetBackgroundDrawList();
+  DrawProfileHoverDevice(dl, Probe(true, 0.0, 100.25, 120.25), Input(vp, 20.25, 0.0, SurveyProfileHover::kSeparation));
+  EXPECT_EQ(RoseCount(), 0) << "an interval with a sample on the anchored pole must leave the draw list untouched";
+}
+
+// The positive face on the same meridian: an ordinary continuous interval with the nadir
+// (δ = 110.25) outside its δ range and the seam untouched — every pair same-side, the drawn
+// rose a bounded sliver along the map's centre column (the meridian's own longitude), never a
+// canvas-spanning chord. The bound leaves room for the endpoint markers' own ~11 px circles;
+// a bridged chord would read 300 px.
+TEST_F(ProfileHoverDraw, IntervalBesideThePoleDrawsOnTheRectangularMap) {
+  const ViewProjection vp = RectangularCamera();
+  ImDrawList* dl = ImGui::GetBackgroundDrawList();
+  DrawProfileHoverDevice(dl, Probe(true, 0.0, 100.0, 108.0), Input(vp, 20.25, 0.0, SurveyProfileHover::kSeparation));
+  ASSERT_GT(RoseCount(), 0) << "an interval clear of the pole and the seam must draw";
+  float min_x = FLT_MAX;
+  float max_x = -FLT_MAX;
+  for (int i = 0; i < dl->VtxBuffer.Size; ++i) {
+    const ImDrawVert& v = dl->VtxBuffer[i];
+    if (v.col != kProfileReadingColour) {
+      continue;
+    }
+    min_x = std::min(min_x, v.pos.x);
+    max_x = std::max(max_x, v.pos.x);
+  }
+  EXPECT_LT(max_x - min_x, 60.0f) << "a same-side meridian interval draws as a sliver, not a bridged chord";
+}
+
+// The same projection break, on the walk: a verdict ring about an alt-45 sun at δ=60 crosses
+// the horizon, and on the dual-fisheye camera its upper-half samples land in the left disk and
+// its lower-half ones in the right. The run must break at the split — no submitted segment
+// straddles the disks' shared edge (canvas x = 300), which is where a naive "every pair draws"
+// walk would bridge the halves. Pre-fix this ring drew exactly such a chord; the segments are
+// read as white-uv quads of the anchor colour (the label's glyphs carry atlas uv and stay out).
+TEST_F(VerdictAnchorDraw, WalkBreaksAtTheDualFisheyeDiskSplit) {
+  const ViewProjection vp = DualFisheyeCamera();
+  VerdictAnchorInput in = Input(vp, /*shown=*/true, /*hover=*/false);
+  in.sun.altitude_deg = 45.0;
+  in.sun.azimuth_deg = 0.0;
+  ImDrawList* dl = ImGui::GetBackgroundDrawList();
+  DrawVerdictAnchor(dl, Diagnose("edge", "blue", 60.0, true), in);
+  ASSERT_GT(IndexCountForColour(kChromaticColourBlue), 0) << "the ring must draw for the walk to be read";
+  const ImVec2 white = ImGui::GetIO().Fonts->TexUvWhitePixel;
+  std::vector<std::array<float, 2>> geom;
+  for (int i = 0; i < dl->VtxBuffer.Size; ++i) {
+    const ImDrawVert& v = dl->VtxBuffer[i];
+    if (v.col != kChromaticColourBlue) {
+      continue;
+    }
+    if (std::fabs(v.uv.x - white.x) < 1e-3f && std::fabs(v.uv.y - white.y) < 1e-3f) {
+      geom.push_back({ v.pos.x, v.pos.y });
+    }
+  }
+  ASSERT_EQ(geom.size() % 4, 0u) << "the ring's segments come in line quads";
+  int straddling = 0;
+  for (size_t q = 0; q + 3 < geom.size(); q += 4) {
+    float qmin_x = FLT_MAX;
+    float qmax_x = -FLT_MAX;
+    for (int k = 0; k < 4; ++k) {
+      qmin_x = std::min(qmin_x, geom[q + k][0]);
+      qmax_x = std::max(qmax_x, geom[q + k][0]);
+    }
+    if (qmin_x < 299.0f && qmax_x > 301.0f) {
+      ++straddling;
+    }
+  }
+  EXPECT_EQ(straddling, 0) << "no walk segment may bridge the two disks";
+}
+
+// The same break, on the rectangular camera: a δ=60 ring about an (alt 20, az 170) sun wraps
+// across longitude ±π, where neighbouring samples project to opposite canvas edges. No walk
+// segment may span that jump — a legit segment on this ring is a few pixels of longitude arc;
+// the seam chord is the whole canvas.
+TEST_F(VerdictAnchorDraw, WalkBreaksAtTheRectangularSeam) {
+  const ViewProjection vp = RectangularCamera();
+  VerdictAnchorInput in = Input(vp, /*shown=*/true, /*hover=*/false);
+  in.sun.altitude_deg = 20.0;
+  in.sun.azimuth_deg = 170.0;
+  ImDrawList* dl = ImGui::GetBackgroundDrawList();
+  DrawVerdictAnchor(dl, Diagnose("edge", "blue", 60.0, true), in);
+  ASSERT_GT(IndexCountForColour(kChromaticColourBlue), 0) << "the ring must draw for the walk to be read";
+  const ImVec2 white = ImGui::GetIO().Fonts->TexUvWhitePixel;
+  std::vector<std::array<float, 2>> geom;
+  for (int i = 0; i < dl->VtxBuffer.Size; ++i) {
+    const ImDrawVert& v = dl->VtxBuffer[i];
+    if (v.col != kChromaticColourBlue) {
+      continue;
+    }
+    if (std::fabs(v.uv.x - white.x) < 1e-3f && std::fabs(v.uv.y - white.y) < 1e-3f) {
+      geom.push_back({ v.pos.x, v.pos.y });
+    }
+  }
+  int too_wide = 0;
+  for (size_t q = 0; q + 3 < geom.size(); q += 4) {
+    float qmin_x = FLT_MAX;
+    float qmax_x = -FLT_MAX;
+    for (int k = 0; k < 4; ++k) {
+      qmin_x = std::min(qmin_x, geom[q + k][0]);
+      qmax_x = std::max(qmax_x, geom[q + k][0]);
+    }
+    if (qmax_x - qmin_x > 150.0f) {
+      ++too_wide;
+    }
+  }
+  EXPECT_EQ(too_wide, 0) << "no walk segment may span the longitude seam's canvas-wide jump";
 }
 
 }  // namespace

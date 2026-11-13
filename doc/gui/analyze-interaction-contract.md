@@ -574,8 +574,10 @@ Windows/Linux 真机输入已测。最终执行结果存于测试报告；这些
   宽档单行，窄档两行：第一行 Whole sky/Point、Analyze/Stop、Infinite rays，第二行 Rays(M)/Radius。
   阈值是完整 Point 控制足迹（字形、frame、输入框、标签、间距）的和，由实际主列宽和主题倍率判断。
   Whole sky 不画无关半径值，但保留同档槽高。小到两行完整足迹也不能容纳时，操作带内部滚动，
-  不产生水平滚动、不把预算或执行动作永久裁掉。中心、rings、结果计数、截断、运行与旧图提示
-  在固定高度状态视口；同时成立的事实分别保留，全文能内滚读取。
+  不产生水平滚动、不把预算或执行动作永久裁掉。锥心漂移告警（分析完成后挪动锥心）是主图与
+  状态视口之间的独立固定带（779.1）：高度按活字体与实际宽度实测换行，出现／消失只改变主图
+  高度，不在状态视口的滚动流内，也不改分隔比例；其存在期间旧结果与动作照常。中心、rings、
+  结果计数、截断、运行与旧图提示在固定高度状态视口；同时成立的事实分别保留，全文能内滚读取。
 - **列表**：对称/搜索是稳定头；stale 和实际对称口径在其后独立状态视口，不插到搜索前。
   表格吸收中间份额，空结果保留该份额，Exclude/CSV 贴底。极端倍率只按几何把固定头移入可恢复内滚，
   不由 stale 文案决定是否滚动。
@@ -606,7 +608,7 @@ Windows/Linux 真机输入已测。最终执行结果存于测试报告；这些
 > 本节随 scrum 778 片 A1（ia-layering-text）落地翻为 as-built：下列为已交付形态，不再是建议。
 > 证据锚点以符号定位（`analyze_overview.cpp` 的 `RenderSurveyOverviewModel` /
 > `RenderSurveyDefaultLayer`、`analyze_map_view.cpp` 的右栏槽序与 `MapCaliber{Default,Physics,
-> Calculation}Lines`、`analyze_point_view.cpp` 的 `RenderPointDetailsBlock` /
+> Diagnostics}Lines`、`analyze_point_view.cpp` 的 `RenderPointDetailsBlock` /
 > `RenderPointAnswerBlock`）；处置账附录（§16.1.2）收录判据梯未覆盖边缘的逐项处置，owner
 > 上手批量复核。
 
@@ -617,14 +619,22 @@ Windows/Linux 真机输入已测。最终执行结果存于测试报告；这些
   L1/L2 读法（`RenderSurveyDefaultLayer` / 点答案的 target/λ/质量或分量摘要）：partial 与
   unevaluated 限定、λ/太阳前提、结论行、色彩 verdict、色调与 TIR 读数、截断/有限零/质量
   说明、分量计数与不可用限定、无有效样本事实。
-- **次级层收纳**：两组默认关闭的就地折叠组——`Physics details`（光学前提/证据方法/完整
-  定义/证据行）与 `Calculation details`（数值核查/执行计数/预算/容差）。拼写单源
-  （`gui_constants.hpp` 的 `kSurveyPhysicsDetailsLabel` / `kSurveyCalculationDetailsLabel` /
-  `kMapLegendExplanationsLabel`）；无 `DefaultOpen`：默认关，展开态存宿主 window 的 ImGui
-  storage——会话内 sticky、重启重置（`io.IniFilename = nullptr`），两窗各自 window 天然
-  独立计态，无 GuiState 字段。同窗多份答案（survey + point + 地图口径）以 `##sv_answer` /
-  `##pt_answer` / `##map_caliber` 后缀分隔 ID，各自独立计态。主窗摘要不带任何折叠组——
-  省略的明细全部在 Raypath view。
+- **次级层收纳**：四个答案宿主各有一对默认关闭的就地折叠组——非诊断的**证据组**（光学前提/
+  证据方法/完整定义/证据行）与**诊断组**（数值核查/执行计数/预算/容差及各宿主的实现级细目）。
+  旧实现里四个宿主共享同名 `Physics details` / `Calculation details` 两词面，四对同名组互相
+  混淆，已按宿主语义去同名（拼写单源 `gui_constants.hpp`）：survey 类答案 `Class evidence` /
+  `Class diagnostics`、sky point 答案 `Point evidence` / `Point diagnostics`、地图口径
+  `Map quantity & premises` / `Map diagnostics`、Pose 因素区 `Interface transmission` /
+  `Pose diagnostics`。**诊断组整体受 `LUMICE_ANALYZE_DEBUG_DETAILS` 门控**（`env::
+  AnalyzeDebugDetails`，`doc/env-var-policy.md` §2 A 类登记）：开发诊断展示通道，默认关
+  （未设置/空/`0`），关时诊断组头与 body 均不提交渲染（门控先于 `CollapsingHeader`，不是
+  仅隐藏已展开 body）；开时可展开访问全部保留细节。门控只改展示资格，不删数据读取与计算；
+  诊断组曾展开的 storage 态在 env 关时被压过（不显示），env 再开恢复同一会话的展开偏好。
+  证据组两态都可用。无 `DefaultOpen`：默认关，展开态存宿主 window 的 ImGui storage——会话内
+  sticky、重启重置（`io.IniFilename = nullptr`），各窗各自 window 天然独立计态，无 GuiState
+  字段。同窗多份答案（survey + point + 地图口径）以 `##sv_answer` / `##pt_answer` /
+  `##map_caliber` 后缀分隔 ID（Pose 为 `##pose_factors`），各自独立计态。主窗摘要不带任何
+  折叠组——省略的明细全部在 Raypath view。
 - **删除呈现**：重复回显、线程/内部机制自述、不影响结论的常驻无事发生说明。已删：接口线程
   自述句、idle 常驻 "Observe · no calculation" 句、报告内身份行与 sky-point 回显、caliber
   首行的 λ 回显（λ 的唯一 owner = λ 行同控件回显，来源规则进 λ tooltip）、图例长词典（进
@@ -653,12 +663,12 @@ Windows/Linux 真机输入已测。最终执行结果存于测试报告；这些
 | Fit / Full sky | **默认**；同组标一次 "· shared view" | 标记 fits 可容则同行、不容则换行（几何，不隐藏）；两 tooltip 各自解释影响两图且不重算 |
 | alt/az、Set/Clear | **默认**输入组，当前目标紧邻 | target 行紧邻（意图与已采纳答案的区分保留：输入组 target = 意图，答案区 target = 采纳文档）；picked/typed 来源词进 target 行 tooltip；报告内回显删除 |
 | Pose & trace 与用途长文 | **默认**按钮；无类/无点短下一步 | 用途文进 tooltip（字节 pin `PoseButtonTooltip()`）；短下一步一行（"Select a class first." / "Set a sky point above."） |
-| reference cell δ/az 角宽、网格尺寸、sample_count、kept events、member 计数 | **Calculation details**（`##map_caliber`） | `MapCaliberCalculationLines`：cell+view+lattice 一行、members+kept 一行；数值完整保留 |
+| reference cell δ/az 角宽、网格尺寸、sample_count、kept events、member 计数 | **Map diagnostics**（env 门控，`##map_caliber`） | `MapCaliberDiagnosticsLines`：geometry basis 原串（自证据组迁入）＋cell+view+lattice 一行、members+kept 一行；数值完整保留 |
 | reference λ 重复回显、engine reference 来源句 | λ 回显**删除**；来源进 λ tooltip；"尚未回显"默认 | 见 λ 行 |
-| source-fixed scale / cells do not interpolate | **Calculation details** | 颜色尺度对应物理量及单位默认（短量名行带单位） |
+| source-fixed scale / cells do not interpolate | **Map diagnostics**（env 门控） | 颜色尺度对应物理量及单位默认（短量名行带单位） |
 | stripes = unknown / purple = singular | **默认短图例**；详细解释可展开 | 短句保留默认；图例长释义进 `Legend explanations` |
 | quantity kind / aggregation / unit | **默认短量名＋单位**；完整定义进 Physics | `MapCaliberDefaultLines`："kind, unit."；`MapCaliberPhysicsLines` 首行带 aggregation 全名 |
-| sun / scene-vs-nominal shape / geometry basis | **Physics details**；名义≠场景的限定**默认** | sun+shape 进 Physics；shape≠nominal 时 "Scene geometry — …" 限定默认 |
+| sun / scene-vs-nominal shape | **Map quantity & premises**（证据组）；名义≠场景的限定**默认** | sun+shape 进证据组；shape≠nominal 时 "Scene geometry — …" 限定默认。geometry basis 原串迁入 env 门控的 Map diagnostics（可读口径已由默认/证据层承载，原串是实现定义细项） |
 | truncated / finite-zero / rank-0 mass | **默认答案** | 三行文本未改（结论+限定+量纲已成形）；methods 随 mass 行 |
 | sun/zenith/horizon/kind/dispersion/sky-point 图例 | **默认**短形状/颜色键；长词典进 `Legend explanations` | 键=形状+名称；两条短形式限定默认（positions-not-visibility、arc-in-view）；释义进折叠 |
 | canvas cursor / Overlays | **保持原 owner** | 未动 |
@@ -737,18 +747,52 @@ dispersion 双圈与 verdict 锚定同走线同措辞）；②弧 = 带方位向
   下不可感知）。覆写契约 = 类答案区渲染路径每帧覆写（无 hover 显式 false）；复位接缝两处 =
   类答案缺席分支 + 关窗/被裁剪分支——标志只在写它的 region 在屏期间为真。
 
-**行可寻址化的交互面增量（as-built 形态）**：联动两行保留 `Bullet + TextWrapped` 逐字节渲染
-（wrap 纪律：Selectable 的 RenderTextClipped 不换行，弃用）；行上叠加**透明 InvisibleButton**
-（ID 面向测试寻址：`###diagnose_verdict_row` / `###diagnose_position_row`）。交互面增量两面：
-hover 即标注（无高亮——InvisibleButton 不画任何东西）；行点击被吞占（一帧 ActiveId，无视觉
-后果）；键盘 nav 焦点无（InvisibleButton 默认 NoNav）。主窗路径不传读出参数 = 零新 item、
-零交互态。
+**行可寻址化的交互面增量（as-built 形态；2026-11-12 反馈波推翻高亮形态）**：联动行保留
+`Bullet + TextWrapped` 逐字节渲染（wrap 纪律：Selectable 的 RenderTextClipped 不换行，弃用）；
+行上叠加 InvisibleButton（ID 面向测试寻址：`###diagnose_verdict_row` /
+`###diagnose_position_row`）。交互面增量两面：行点击被吞占（一帧 ActiveId，无视觉后果）；键盘
+nav 焦点无（InvisibleButton 默认 NoNav）。主窗路径不传读出参数 = 零新 item、零交互态。
+**2026-11-12 修订（owner 上手反馈，原「无高亮」形态被明示推翻）**：hover 行在本帧即获得可见
+行反馈——主题交互色（`ImGuiCol_HeaderHovered`）的背景，绘入窗口通道 0（内容在通道 1，合并后
+背景在文字之下），行命中面与高亮视觉面一致（同为文字 item 矩形）；主窗摘要宿主仍零联动。
 
 **语义色板（单源提升）**：dispersion 双圈的两个内联色值提升为命名常量
 （`analyze_map_view.hpp` `kChromaticColourRed/Blue`，cpp 侧 static_assert 逐字节钉旧字面量
 等值）；dispersion 与 verdict 锚定共同引用——改值是双消费点变更，不是单侧重调。读数标签
 （顶点 + 底衬 + δ 值 + "· arc in view"）为 dispersion 与 verdict 的共享 helper，背衬墨色
-字面量单点。
+字面量单点（提升为 `kReadoutBackingInk`，测试按该常量读 patch）。
+
+**2026-11-12 反馈波扩展（as-built）**：
+
+- **profile 设备（词汇表扩展）**：参考剖线悬停设备 = ③点的第二消费（edge/peak 读数在剖线上的
+  位置点标）+ **径向区间**新设备（separation 行 = edge 到 peak 的剖线区间段，沿线采样，**不是**
+  等偏角弧、不是两圈间环带——预留的②弧（方位向延展）仍未接线）。帧前提 = **survey 文档自己的
+  太阳回显 + probe 自己的方位帧**：引擎 probe 帧以 incident = −太阳天位向量构造，与地图 walk
+  基 (u,v) 逐点重合（e1=u、e2=−v，含同一 fallback），probe 方位 az 映射到 walk 圆参数
+  φ = π − az；内建 probe 的 `azimuth_deg=0` 是代表楔的显式 schema 值（方位自由剖面的代表线），
+  非缺省未知。点标语义 = 「参考剖线上的读数位置」，不是全域峰或全圆可见性声明。
+- **profile 触发集（封闭）**：类答案区三条读数行（`###profile_edge_row`/`###profile_peak_row`/
+  `###profile_separation_row`）各自携带 hover 面，写会话 `profile_row_hover`（互斥身份，覆写
+  契约与复位接缝与 verdict hover 完全同构）。设备的诚实门短路序：无身份、probe 拒答、方位
+  不可用、具名读数缺席 → 不画（行文字承载缺席）；端点出视 → 整体不画（全有或全无，不跨投影
+  断裂桥接，无「arc in view」类限定可承载的部分画法）。probe 行只在非 full-dimensional 臂渲染
+  （echo 规则不变）——固定 zenith/roll 的 family 臂无 pose density、量化腿全跳，profile 行天然
+  缺席。
+- **ratio 行 = 仅本地反馈**：Blue/red ratio 行有 hover 面与行高亮，无任何地图几何——ratio 无
+  空间载荷，不为它虚构位置（AC3 的合法完成态）。
+- **profile 设备不进图例**：设备为 hover 瞬态，驱动它的行本身就是解释；图例「画了才亮」的
+  常驻类别记账不含它（verdict hover 联动仍点亮 verdict 图例位，不变）。
+- **图例四锚图标**：sun marker / zenith cross / horizon circle / verdict anchor 四条目各带与
+  地图形状、颜色对应的小图标（同一图标槽位模式，object kinds 先例）：日 = 金色实心圆+外环，
+  天顶 = 双线，地平 = 圆圈（地图地平线 alpha 60 在图标尺寸不可辨，取天顶 alpha——色相是对应、
+  透明度是图例自身可辨性），verdict = 实际画法所在调色板条目的圆圈，虚线形态按 walk 的
+  dash 相位画。verdict 图标的事实（颜色 + 虚线）随 drawn bit 一并记录（`OverlayLegendState`
+  扩展两字段）。
+- **readout 标签 clamp**：贴边 readout 经 `src/util/label_viewport_clamp.hpp` 的共享
+  `ClampLabelPosToViewport` 压回**画布矩形与 draw-list 有效 clip（祖先裁剪）的交集**——窗口或
+  宿主视口部分遮挡画布时，约束标签的是可见交集，不是名义矩形；文字与底衬同移、尺寸不缩、
+  退化轴不动（共享规则原文）；dispersion 与 verdict 两个消费面同 helper，不为本窗写第二份 clamp。
+  marker 自然裁剪与 iso 圈 in-disk 物理边界不变，不开边缘指示通道。
 
 ### 16.2 诊断归属：主窗摘要＋Raypath view 完整答案（as-built 2026-11-10）
 
@@ -907,14 +951,48 @@ D4 是贯穿窗体的列间分隔，不是右列内部横线。边界实际清�
 写入路径）。新比例归会话显示态不持久化；旧 globe 比例保原含义。
 
 **内容 owner（as-built）**：3D 用当前 GL 晶体与同 MVP 光路/标记/太阳箭头；无合法轨迹仍保晶体。
+2026-11-12 反馈片（779.4）起 3D 显示语义如下（`analyze_point_view.cpp`，gui_test
+`internal_reflection_trace_from_the_real_consumer` 的五条显示腿持有）：**取景锚只钉冻结 mesh**——
+centre/归一化半径仅由 mesh 推导，光路显示延长点不参与（同姿态等待/到达两态不再跳变尺寸；
+延长线可越出单位球，叠加层在透视除法前按真实相机近裁面裁剪，跨面段只画可见部分，镜后点不出
+图元）；**线宽 ∝ 沿程 Fresnel 累计相对透射**（entry 起逐接口乘积链，固定平方根视觉映射
+`w_min+(w_max-w_min)·√E`，端点 1.2/3.5 UI 布局单位——只作视觉缩放不是能量标尺；E=0 段不出墨，
+不可用因子后的段画固定中性线）；**逐段比例数字**由报告头的 `Show Fresnel ratios` 开关控制
+（会话显示偏好：默认关、随采纳/重开保留、文档切换才复位；数字与线宽消费同一累计值，`%.3g%`
+诚实精度、n/a 标不可用；canvas 几何不随开关移动）；**交点按面前/背向区分**——请求面号在 mesh
+逐面表匹配外法向、经显示旋转与真实 contact→eye 点积判定（透视判据，非全局 fwd 近似）：
+朝向相机实心、背向空心；面号 -1/未匹配/法向缺失兜底空心并注明 facing unknown。图例保留
+entry/internal/exit 色义并补上述三句语义。参考图审计：无注册参考捕获 Pose 画布
+（GROUPS 无 analyze 组、references/ 无 pose 文件），本片无重拍对象。
 曲线在左下，保五臂、真实弧长/闭环、共享 log 轴、精确零行、不可用断线、seed、正值分位数拟合、
 窗外点计数/实际最值及滚轮 Y 缩放；点击/拖拽仍写同一游标并停播放。曲线伴读（D7 之下）保留
 图例（含 0-throughout/unavailable 命名）、量纲行（angle-Lebesgue · rad）、积分回显（标题行）、
 当前/hover 读数行、partial note；**measure registration note 与当前姿态因素行迁至右下因素区**。
+
+**曲线手势三分与 footer 两行（779.5，as-built 2026-11-13）**：曲线画布上的三种输入各自独立写域，
+互不抢夺——**左键点/拖**写共享样本游标并停播放（原语义不变）；**滚轮**做 Y log 缩放（原仲裁与
+锚光标不变）；**右键纵拖**平移 Y log 窗口（新增，`PointCurvePanRange`，2026-11-12 反馈 #10）：
+按住须从画布内起按（画布外起按不接管），墨迹随手移动——向下拖窗口移向更大正值、向上反之；
+同一绘图区高度占比的拖动对应同一 log 跨度占比（与 DPI、数据量无关）；平移只改窗口位置、跨度
+不变，到拟合域边界整体钳制不压缩；全域窗口/单值退化域/无效拟合为 no-op。手势互斥：一次已开始
+的拖动不被另一键夺走——左键拖进行中右键按下不启动 pan；**右键持有期间左键事件不进入游标写
+路径**（点击不写游标、不停播放）。pan 的副作用仅限窗口本身：不写游标、不停播放、不改点/轨迹
+查询身份、不 dirty；播放自然推进样本不算 pan 写入。生命周期：新采纳重置窗口（775.3 语义）并
+清除 pan 锁存（`PointViewState::curve_pan_active`），持键跨采纳不复活手势，须画布内重新按下；
+窗口关闭或画布退化（D7 无画布形态）同样清除。右键拖出画布手势继续（拖的所有权在起按点），
+不转为宿主窗口移动或区域滚动，松开立即结束。画布 hover 出现不占版面的提示墨迹
+（"L select · wheel zoom · R pan Y"，位于 rad 单位左侧；窄面放不下时不出现）。pan 与 wheel
+同帧并存时滚轮仍只消费一次，pan 使用滚轮后有效窗口。footer 由单条带改两行：**X 三刻度与
+`rad` 单位无条件在场**（不再因 outside 计数非空而被省略或挤压），摘要（真实点数与实际最值）
+在 X 标签行之下独立一行、按真实文本宽高换行，零值行保持独立位于两者之上；footer 高度同时计
+入 X 行与摘要行，绘图区随之响应式收缩（不扩大窗最小尺寸、不吞文案）。Y 刻度对平移后不含
+labelled decade major 的窄窗以窗口上下边界值补位（置于绘图框上/下缘左栏，装不下两个时保留
+可容纳者），左栏宽度计入边界值标签。
 因素区（`RenderPoseFactorsRegion`）承载：`PointFactorLines` 的默认层读数（永远绑
-`view.sample_index`，hover 不改它所指样本）＋measure note（默认可见）＋`Physics details`
-折叠组（逐接口透射率——T 的光学前提，判据梯 L3 证据行）＋`Calculation details` 折叠组
-（deviation grid 开关自 globe 常驻栈迁入，no-grid 注记随 toggle）。§16.1 判据梯逐行机械套用：
+`view.sample_index`，hover 不改它所指样本）＋measure note（默认可见）＋`Interface transmission`
+折叠组（逐接口透射率——T 的光学前提，判据梯 L3 证据行）＋env 门控的 `Pose diagnostics` 折叠组
+（deviation grid 开关自 globe 常驻栈迁入，no-grid 注记随 toggle；env 关时整组不提交，globe 本体
+与其余姿态功能不随门控）。§16.1 判据梯逐行机械套用：
 接口透射率行=P3 证据行；因素结论=L1/L2 默认层。积分/测度不可用等限制在相关读数旁默认可读。
 右上保 globe/分量/姿态游标/播放。
 

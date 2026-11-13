@@ -182,16 +182,28 @@ constexpr float kPoseView3dReportQuota = 48.0f;
 // only multi-space spelling); it never re-spells the words.
 constexpr const char* kRaypathViewWindowTitle = "Raypath view";
 constexpr const char* kPoseViewWindowTitle = "Pose & trace";
-// The information-layering fold groups (contract §16.1): the two secondary tiers the survey and
-// point answers sort their evidence into, plus the map legend's long dictionary. The spellings
-// are ONE source — every CollapsingHeader that opens one of these groups draws this constant, so
-// the two windows' groups cannot re-spell themselves apart (a56). No flag carries `DefaultOpen`:
-// a group is closed by default, its expansion state lives in the host window's ImGui storage
-// (session-sticky, reset by restart — io.IniFilename is null, so nothing persists across
-// processes), and each window's storage is its own, so the two windows' groups count
-// independently without any GuiState field.
-constexpr const char* kSurveyPhysicsDetailsLabel = "Physics details";
-constexpr const char* kSurveyCalculationDetailsLabel = "Calculation details";
+// The information-layering fold groups (contract §16.1), one spelling per group — every
+// CollapsingHeader that opens one of these groups draws its constant, so no two hosts can
+// re-spell themselves apart (a56). The four answer hosts no longer share the generic
+// "Physics details" / "Calculation details" pair (four same-named pairs confused them with
+// each other); each host names its non-diagnostic evidence group and its dev-diagnostics
+// group instead. The evidence groups render in every state; the diagnostics groups render
+// only while LUMICE_ANALYZE_DEBUG_DETAILS is set (env::AnalyzeDebugDetails) — the env gate
+// sits BEFORE the CollapsingHeader call, so a closed env submits neither header nor body,
+// and the storage's old expansion state survives behind the absent header for env-on to
+// restore within the same session. No flag carries `DefaultOpen`: a group is closed by
+// default, its expansion state lives in the host window's ImGui storage (session-sticky,
+// reset by restart — io.IniFilename is null, so nothing persists across processes), and each
+// window's storage is its own, so the windows' groups count independently without any
+// GuiState field.
+constexpr const char* kSurveyClassEvidenceLabel = "Class evidence";
+constexpr const char* kSurveyClassDiagnosticsLabel = "Class diagnostics";
+constexpr const char* kPointEvidenceLabel = "Point evidence";
+constexpr const char* kPointDiagnosticsLabel = "Point diagnostics";
+constexpr const char* kMapCaliberPremisesLabel = "Map quantity & premises";
+constexpr const char* kMapCaliberDiagnosticsLabel = "Map diagnostics";
+constexpr const char* kPoseTransmissionLabel = "Interface transmission";
+constexpr const char* kPoseDiagnosticsLabel = "Pose diagnostics";
 constexpr const char* kMapLegendExplanationsLabel = "Legend explanations";
 // The split strips' thickness (the workspace dividers' 8 pt recipe, shared by the pose window's
 // two splitters).

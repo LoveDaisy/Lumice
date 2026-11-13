@@ -43,6 +43,7 @@
 #if defined(LUMICE_ENGINE_DELAY_LOADED)
 #include "launcher/win_engine_loader.h"
 #endif
+#include "util/env_knobs.hpp"  // LUMICE_ANALYZE_DEBUG_DETAILS — the Analyze diagnostics knob
 #include "util/path_utils.hpp"
 
 namespace gui = lumice::gui;
@@ -344,6 +345,17 @@ int main(int argc, char** argv) {
     // Sync panel dropdowns with CLI-set levels
     gui::g_state.gui_log_level = static_cast<int>(gui_level);
     gui::g_state.core_log_level = static_cast<int>(core_level);
+  }
+
+  // LUMICE_ANALYZE_DEBUG_DETAILS (doc/env-var-policy.md §2 A-class): the Analyze GUI's four
+  // diagnostics fold groups render only while this is set. The knob's value is re-read every
+  // render by the gate sites (env_knobs.hpp explains why this one logs nothing there); this
+  // startup line is the once-only enable record, issued on the GUI logger lane so it reaches
+  // the panel ring buffer, the console and the file sink a GUI user actually greps — and it
+  // fires here, after the sinks exist and whether or not an Analyze window is ever opened.
+  // The level parse above ran first, so this INFO respects the level the user asked for.
+  if (lumice::env::AnalyzeDebugDetails()) {
+    GUI_LOG_INFO("[GUI] env override: LUMICE_ANALYZE_DEBUG_DETAILS=1 (Analyze diagnostics groups visible)");
   }
 
   // Compile display programs at GL startup, never on an observation/adoption frame.

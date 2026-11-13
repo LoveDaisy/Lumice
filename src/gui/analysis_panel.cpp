@@ -6,9 +6,11 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <ctime>
 #include <filesystem>
 #include <iterator>
+#include <limits>
 #include <map>
 #include <string>
 #include <string_view>
@@ -2041,14 +2043,59 @@ void RenderAnalyzeStatus(GuiState& state, LUMICE_Server* server) {
       ImGui::TextWrapped("No centre yet.");
     }
   }
-  if (ConeCenterDriftedFromResult(state)) {
-    ImGui::PushStyleColor(ImGuiCol_Text, WarningTextColor());
-    ImGui::TextWrapped(ICON_FA_TRIANGLE_EXCLAMATION " Centre has moved — press Analyze to update the list.");
-    ImGui::PopStyleColor();
-  }
+  // The cone-centre drift warning is NOT part of this viewport's flow (779.1): it is the fixed
+  // band RenderScenePanorama draws above this child — inside a two-line viewport it sat past
+  // the fold, which the owner measured as no failure sign at all. The band is the warning's
+  // only face; the predicate and the clearing re-analysis are unchanged.
   if (const char* notice = AnalysisPictureNotice(state.run_intent, state.sim_state)) {
     ImGui::TextWrapped("%s", notice);
   }
+}
+
+// ---- The cone-centre drift warning's fixed band -----------------------------------------------------
+
+namespace {
+
+// The drift warning's one text (a56): the band draws it and the render-feedback field carries
+// the same string — what the gui_test layer reads is what was drawn. The render site is the
+// field's only writer.
+constexpr const char* kConeCenterDriftWarningText =
+    ICON_FA_TRIANGLE_EXCLAMATION " Centre has moved — press Analyze to update the list.";
+
+}  // namespace
+
+float AnalyzeDriftWarningHeight(float wrap_width) {
+  const char* const text = kConeCenterDriftWarningText;
+  // The same call TextEx runs to size the wrapped item (ImGui::CalcTextSize with a wrap width
+  // lands here too): same font, same size, same wrap width — the budget cannot drift from what
+  // the draw occupies.
+  return ImGui::GetFont()
+      ->CalcTextSizeA(ImGui::GetFontSize(), std::numeric_limits<float>::max(), wrap_width, text,
+                      text + std::strlen(text))
+      .y;
+}
+
+void RenderAnalyzeDriftWarning(GuiState& state, float wrap_width) {
+  // Pin the wrap width the height was measured at: TextWrapped keeps an already-set wrap
+  // position, so this push — not the viewport's own width guessing — is what the draw wraps at.
+  ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + wrap_width);
+  ImGui::PushStyleColor(ImGuiCol_Text, WarningTextColor());
+  ImGui::TextWrapped("%s", kConeCenterDriftWarningText);
+  ImGui::PopStyleColor();
+  ImGui::PopTextWrapPos();
+  // The submitted item's FULL rect: the layout footprint of every wrapped line, independent of
+  // which vertices RenderText went on to emit (it stops at the clip bottom, so a line clipped
+  // away leaves ink but never the rect — the rect is the completeness face, the vertices the
+  // ink face; the gui_test layer asserts their conjunction). Four plain floats: the
+  // render-feedback header keeps imgui off its include chain.
+  const ImVec2 rect_min = ImGui::GetItemRectMin();
+  const ImVec2 rect_max = ImGui::GetItemRectMax();
+  auto& drift_feedback = state.analysis.wait_feedback_texts;
+  drift_feedback.cone_center_drift_warning_rect_min_x = rect_min.x;
+  drift_feedback.cone_center_drift_warning_rect_min_y = rect_min.y;
+  drift_feedback.cone_center_drift_warning_rect_max_x = rect_max.x;
+  drift_feedback.cone_center_drift_warning_rect_max_y = rect_max.y;
+  drift_feedback.cone_center_drift_warning = kConeCenterDriftWarningText;
 }
 
 namespace {

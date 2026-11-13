@@ -315,14 +315,26 @@ std::string PointWaitLineFor(const PointQuerySession& point, double now_s, const
 // Analyze workspace is hidden (its render is the writer); the status bar field has no such
 // window.
 struct WaitFeedbackTexts {
-  std::string survey_wait_line;          // analyze_workspace.cpp, the overview's kWaiting line
-  std::string map_wait_line;             // analyze_map_view.cpp, the kWaiting branch's one text
-  std::string map_superseding_note;      // analyze_map_view.cpp, the Retry supersession note
-  std::string point_wait_line_fiber;     // analyze_point_view.cpp, the fiber region's kWaiting
-  std::string point_wait_line_details;   // analyze_point_view.cpp, the details' kWaiting
-  std::string share_list_busy_dots;      // analysis_panel.cpp, the selected row's activity dots
-  std::string status_bar_query_segment;  // app_panels.cpp, the status bar's active segment
-  std::string entry_hint_line;           // analyze_workspace.cpp, the Selection header's hint slot
+  std::string survey_wait_line;           // analyze_workspace.cpp, the overview's kWaiting line
+  std::string map_wait_line;              // analyze_map_view.cpp, the kWaiting branch's one text
+  std::string map_superseding_note;       // analyze_map_view.cpp, the Retry supersession note
+  std::string point_wait_line_fiber;      // analyze_point_view.cpp, the fiber region's kWaiting
+  std::string point_wait_line_details;    // analyze_point_view.cpp, the details' kWaiting
+  std::string share_list_busy_dots;       // analysis_panel.cpp, the selected row's activity dots
+  std::string status_bar_query_segment;   // app_panels.cpp, the status bar's active segment
+  std::string entry_hint_line;            // analyze_workspace.cpp, the Selection header's hint slot
+  std::string cone_center_drift_warning;  // analysis_panel.cpp, the drift band's fixed text
+  // The band's FULL item rect as submitted (GetItemRectMin/Max right after the draw), four
+  // plain floats — this header keeps imgui off its include chain (the unit-test TUs compile it
+  // without imgui's paths): min x, min y, max x, max y. The layout footprint every wrapped
+  // line occupies whether or not the renderer emitted its vertices — a line clipped away
+  // leaves the rect untouched, so this rect, not the drawn vertices, is the completeness
+  // evidence (the vertices answer for the ink, the rect for the text). Zeroed with the other
+  // fields at the workspace's frame entry.
+  float cone_center_drift_warning_rect_min_x = 0.0f;
+  float cone_center_drift_warning_rect_min_y = 0.0f;
+  float cone_center_drift_warning_rect_max_x = 0.0f;
+  float cone_center_drift_warning_rect_max_y = 0.0f;
 };
 
 // ---- The ray face's session (742.6) ----------------------------------------------------------------
@@ -379,10 +391,23 @@ struct PointViewState {
   int sample_index = 0;     // index into that component's VALID samples
   bool playing = false;     // playback advances sample_index; never any other state (AC3)
   double last_play_step_s = 0.0;
-  bool show_deviation_grid = true;  // the sun grid's backdrop: drawn only when the result carries one
-  bool crystal_frame = false;       // the 3D view's frame: false = world, true = crystal (AC4's one
-                                    // physical state, two views — a display transform, nothing else)
-  float orbit_yaw_deg = 35.0f;      // the 3D orbit camera (drag to rotate, wheel to zoom)
+  bool curve_pan_active = false;          // a right-button pan drag latched on the curve canvas: true from
+                                          // a press that began inside the canvas until the button's release,
+                                          // a new adoption or the canvas's own invalidation — all clear it,
+                                          // so a held gesture never leaks across documents or dead canvases
+  bool curve_left_press_ignored = false;  // a left press that BEGAN during a pan is swallowed until
+                                          // released: releasing the right button first must not wake
+                                          // the held left drag into a cursor write (§3.1's mutex)
+  bool show_deviation_grid = true;        // the sun grid's backdrop: drawn only when the result carries one
+  bool show_fresnel_labels = false;       // the 3D trace's per-segment Fresnel ratio numbers: a session
+                                          // display preference with the same survival set as the other
+                                          // toggles (kept across adoptions and window reopen; default
+                                          // off for a new process/document; never persisted, never in
+                                          // a query key) — the ratio numbers stay honest relative
+                                          // values, the width mapping stays the only visual encoding
+  bool crystal_frame = false;             // the 3D view's frame: false = world, true = crystal (AC4's one
+                                          // physical state, two views — a display transform, nothing else)
+  float orbit_yaw_deg = 35.0f;            // the 3D orbit camera (drag to rotate, wheel to zoom)
   float orbit_pitch_deg = 22.0f;
   float orbit_zoom = 1.0f;    // 1 = the fit-to-content default
   PointCurveZoom curve_axis;  // session view state, clamped to the current component's fit range

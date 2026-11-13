@@ -15,6 +15,7 @@
 #include "gui/analyze_survey.hpp"
 #include "gui/file_io.hpp"  // SceneDeleter's complete type — the map tests' include
 #include "gui/gui_state.hpp"
+#include "gui/theme.hpp"  // UiPx — the width mapping's scale, asserted at its endpoints
 #include "include/lumice_base.h"
 #include "include/lumice_editor.h"
 #include "include/lumice_raypath.h"
@@ -480,6 +481,58 @@ TEST(AnalyzePointView, CurveWindowZoomsAtAnchorClampsAndResetsOnAdoption) {
   EXPECT_FALSE(PointCurveVisibleRange({}, &view.curve_axis).valid);
 }
 
+TEST(AnalyzePointView, CurveWindowPansAsAWholeAndClampsAtTheFitEdges) {
+  const PointCurveAxisRange fit{ true, 1e-6, 1.0 };  // the log domain [-6, 0]
+  PointViewState view;
+  // Zoom once at the bottom anchor: the window rides the fit's floor with headroom above.
+  PointCurveVisibleRange(fit, &view.curve_axis, 1.0, 0.0);
+  const double span = view.curve_axis.log_hi - view.curve_axis.log_lo;
+  EXPECT_NEAR(span, 6.0 / 1.12, 1e-12);
+  const double lo_before = view.curve_axis.log_lo;
+  // A drag DOWN of a tenth of the plot moves the window a tenth of ITS OWN span toward larger
+  // values — the expected shift is plain arithmetic on the window the zoom left behind, never
+  // the pan helper's own math.
+  const PointCurveAxisRange panned = PointCurvePanRange(fit, &view.curve_axis, 0.1);
+  EXPECT_NEAR(view.curve_axis.log_lo, lo_before + 0.1 * span, 1e-12);
+  EXPECT_NEAR(view.curve_axis.log_hi - view.curve_axis.log_lo, span, 1e-12);  // span preserved
+  EXPECT_NEAR(panned.lo, std::pow(10.0, lo_before + 0.1 * span), 1e-9);
+  EXPECT_LT(panned.hi, fit.hi);  // no edge was reached — the interior keeps log/pow positions
+  // A drag UP moves back by the same rule.
+  PointCurvePanRange(fit, &view.curve_axis, -0.1);
+  EXPECT_NEAR(view.curve_axis.log_lo, lo_before, 1e-12);
+  // Dragging past the top edge slides the whole window flush against it — span never compressed.
+  PointCurvePanRange(fit, &view.curve_axis, 100.0);
+  EXPECT_DOUBLE_EQ(view.curve_axis.log_hi, 0.0);  // flush at the fit's top
+  EXPECT_NEAR(view.curve_axis.log_hi - view.curve_axis.log_lo, span, 1e-12);
+  EXPECT_DOUBLE_EQ(PointCurvePanRange(fit, &view.curve_axis, 100.0).hi, fit.hi);
+  // ... and past the bottom edge flush against it, still the same span.
+  PointCurvePanRange(fit, &view.curve_axis, -100.0);
+  EXPECT_DOUBLE_EQ(view.curve_axis.log_lo, -6.0);
+  EXPECT_NEAR(view.curve_axis.log_hi - view.curve_axis.log_lo, span, 1e-12);
+  // A full-span window has nothing to reveal: the pan is a no-op even for a huge drag.
+  PointCurveVisibleRange(fit, &view.curve_axis, -10000.0, 0.0);  // wheel back out to the full span
+  const PointCurveZoom full = view.curve_axis;
+  EXPECT_DOUBLE_EQ(PointCurvePanRange(fit, &view.curve_axis, 5.0).lo, fit.lo);
+  EXPECT_DOUBLE_EQ(view.curve_axis.log_lo, full.log_lo);
+  EXPECT_DOUBLE_EQ(view.curve_axis.log_hi, full.log_hi);
+  // A degenerate single-value domain keeps its reconcile form; an invalid fit answers invalid;
+  // a zero drag writes nothing.
+  const PointCurveAxisRange one{ true, 2.0, 2.0 };
+  PointCurvePanRange(one, &view.curve_axis, 1.0);
+  EXPECT_DOUBLE_EQ(view.curve_axis.log_lo, std::log10(2.0));
+  EXPECT_DOUBLE_EQ(view.curve_axis.log_hi, std::log10(2.0) + 1.0);
+  const PointCurveZoom untouched = view.curve_axis;
+  EXPECT_DOUBLE_EQ(PointCurvePanRange(one, &view.curve_axis, 0.0).lo, 2.0);
+  EXPECT_DOUBLE_EQ(view.curve_axis.log_lo, untouched.log_lo);
+  EXPECT_FALSE(PointCurvePanRange({}, &view.curve_axis, 1.0).valid);
+  // The adoption reset also drops a latched pan gesture — a held drag never leaks across
+  // documents (it needs a new press inside the canvas to latch again).
+  view.curve_pan_active = true;
+  ResetPointViewStateForNewAdoption(&view);
+  EXPECT_FALSE(view.curve_pan_active);
+  EXPECT_DOUBLE_EQ(view.curve_axis.log_lo, 0.0);
+}
+
 TEST(AnalyzePointView, CurveWindowBreaksRunsAtBothBoundsWithoutDroppingSingletons) {
   using K = PointCurveValueKind;
   const K kinds[] = { K::kPositive, K::kPositive, K::kPositive, K::kPositive, K::kPositive, K::kExactZero };
@@ -612,6 +665,205 @@ TEST(AnalyzePointView, CrystalFrameTransformIsTheInverseRotation) {
   EXPECT_NEAR(p[0], body_point[0], 1e-6);
   EXPECT_NEAR(p[1], body_point[1], 1e-6);
   EXPECT_NEAR(p[2], body_point[2], 1e-6);
+}
+
+// ---- The trace display's pure energy and facing rules (2026-11-12 feedback #8/#9) --------------------
+
+TEST(AnalyzePointView, RayTraceCumulativeEnergiesFollowTheInterfaceChain) {
+  // The plan's hand anchor: q=[0.8,0.5,0.25] -> E=[1,0.8,0.4,0.1] (entry 1.0, every interface
+  // consumed exactly once, the last segment including the exit factor).
+  const double q1[] = { 0.8, 0.5, 0.25 };
+  const std::vector<RayTraceSegmentEnergy> e1 = RayTraceCumulativeEnergies(q1, 3);
+  ASSERT_EQ(e1.size(), 4U);
+  const float want1[] = { 1.0f, 0.8f, 0.4f, 0.1f };
+  for (size_t s = 0; s < e1.size(); ++s) {
+    EXPECT_TRUE(e1[s].valid);
+    EXPECT_FLOAT_EQ(e1[s].value, want1[s]);
+  }
+  // Total internal reflection (R=1) keeps the energy; it does not multiply it down.
+  const double q2[] = { 0.9, 1.0, 0.5 };
+  const std::vector<RayTraceSegmentEnergy> e2 = RayTraceCumulativeEnergies(q2, 3);
+  ASSERT_EQ(e2.size(), 4U);
+  EXPECT_FLOAT_EQ(e2[1].value, 0.9f);
+  EXPECT_FLOAT_EQ(e2[2].value, 0.9f);
+  EXPECT_FLOAT_EQ(e2[3].value, 0.45f);
+  // An exact zero ends the energy from that interface on — a legal declared zero, still valid
+  // (no ink, the contact markers stay, the label reads 0%).
+  const double q3[] = { 0.5, 0.0, 0.7 };
+  const std::vector<RayTraceSegmentEnergy> e3 = RayTraceCumulativeEnergies(q3, 3);
+  ASSERT_EQ(e3.size(), 4U);
+  EXPECT_FLOAT_EQ(e3[1].value, 0.5f);
+  EXPECT_EQ(e3[2].value, 0.0f);
+  EXPECT_TRUE(e3[2].valid);
+  EXPECT_EQ(e3[3].value, 0.0f);
+  // An unusable factor (NaN, or beyond the rounding band) stops the energy claim from the next
+  // segment on; the honest prefix before it survives verbatim.
+  const double q4[] = { 0.5, NAN, 0.5 };
+  const std::vector<RayTraceSegmentEnergy> e4 = RayTraceCumulativeEnergies(q4, 3);
+  ASSERT_EQ(e4.size(), 4U);
+  EXPECT_TRUE(e4[0].valid);
+  EXPECT_TRUE(e4[1].valid);
+  EXPECT_FLOAT_EQ(e4[1].value, 0.5f);
+  EXPECT_FALSE(e4[2].valid);
+  EXPECT_FALSE(e4[3].valid);
+  const double q5[] = { 0.5, 5.0, 0.5 };
+  const std::vector<RayTraceSegmentEnergy> e5 = RayTraceCumulativeEnergies(q5, 3);
+  ASSERT_EQ(e5.size(), 4U);
+  EXPECT_TRUE(e5[1].valid);
+  EXPECT_FALSE(e5[2].valid);
+  // Rounding-magnitude overshoot clamps back into band (the recorded tolerance, not a physics
+  // rewrite): 1 + 1e-9 reads as the exact 1.
+  const double q6[] = { 1.0 + 1e-9 };
+  const std::vector<RayTraceSegmentEnergy> e6 = RayTraceCumulativeEnergies(q6, 1);
+  ASSERT_EQ(e6.size(), 2U);
+  EXPECT_TRUE(e6[1].valid);
+  EXPECT_FLOAT_EQ(e6[1].value, 1.0f);
+  // No factors -> just the entry leg at 1.0.
+  const std::vector<RayTraceSegmentEnergy> e0 = RayTraceCumulativeEnergies(nullptr, 0);
+  ASSERT_EQ(e0.size(), 1U);
+  EXPECT_FLOAT_EQ(e0[0].value, 1.0f);
+}
+
+TEST(AnalyzePointView, RayTraceEnergyWidthIsMonotoneAndZeroEnergyHasNoInk) {
+  // Strictly monotone over the positive range; a real decay chain's neighbours stay apart.
+  float prev = RayTraceEnergyWidth(1.0f);
+  EXPECT_FLOAT_EQ(prev, UiPx(kRayTraceWidthMaxUi));
+  for (float e : { 0.75f, 0.5f, 0.25f, 0.1f, 0.01f, 1e-4f, 1e-9f }) {
+    const float w = RayTraceEnergyWidth(e);
+    EXPECT_GT(w, 0.0f);
+    EXPECT_LT(w, prev) << "energy " << e;
+    EXPECT_GE(w, UiPx(kRayTraceWidthMinUi)) << "energy " << e;
+    prev = w;
+  }
+  // Zero and negative carry no ink (the renderer skips them); NaN likewise.
+  EXPECT_EQ(RayTraceEnergyWidth(0.0f), 0.0f);
+  EXPECT_EQ(RayTraceEnergyWidth(-0.5f), 0.0f);
+  EXPECT_EQ(RayTraceEnergyWidth(NAN), 0.0f);
+}
+
+TEST(AnalyzePointView, RayTraceEnergyLabelTextSpellsExactRatiosAndUnavailable) {
+  EXPECT_EQ(RayTraceEnergyLabelText(RayTraceSegmentEnergy{ 1.0f, true }), "100%");
+  EXPECT_EQ(RayTraceEnergyLabelText(RayTraceSegmentEnergy{ 0.4f, true }), "40%");
+  EXPECT_EQ(RayTraceEnergyLabelText(RayTraceSegmentEnergy{ 1.0f / 3.0f, true }), "33.3%");
+  // A tiny non-zero stays honest — never rounded into a fake 0%.
+  const std::string tiny = RayTraceEnergyLabelText(RayTraceSegmentEnergy{ 1e-9f, true });
+  EXPECT_NE(tiny, "0%");
+  EXPECT_NE(tiny.find("e-"), std::string::npos) << tiny;
+  EXPECT_EQ(RayTraceEnergyLabelText(RayTraceSegmentEnergy{ 0.0f, true }), "0%");
+  EXPECT_EQ(RayTraceEnergyLabelText(RayTraceSegmentEnergy{ 1.0f, false }), "n/a");
+}
+
+TEST(AnalyzePointView, RayTraceCumulativeEnergiesStayPositiveThroughLegalLongChains) {
+  // A long chain of small legal factors is exactly the case the sqrt width mapping exists to
+  // keep readable: the double accumulation must NOT underflow into a fabricated exact zero
+  // (no ink, a wrong 0% label) while the honest product is still positive. 0.02^27 ~ 1.3e-46
+  // sits far below float's denormal floor — the historical float-per-step narrowing read it
+  // as zero by the 27th interface.
+  std::vector<double> factors(27, 0.02);
+  const std::vector<RayTraceSegmentEnergy> chain = RayTraceCumulativeEnergies(factors.data(), factors.size());
+  ASSERT_EQ(chain.size(), 28U);
+  for (size_t s = 0; s < chain.size(); ++s) {
+    EXPECT_TRUE(chain[s].valid);
+    EXPECT_GT(chain[s].value, 0.0) << "segment " << s;
+  }
+  const std::string tail = RayTraceEnergyLabelText(chain.back());
+  EXPECT_NE(tail, "0%") << tail;
+  EXPECT_GT(RayTraceEnergyWidth(chain.back().value), 0.0f);  // the tail keeps its ink
+  // Even deeper: 30 factors (~1.1e-49) still carries its honest positive energy.
+  std::vector<double> deeper(30, 0.02);
+  const std::vector<RayTraceSegmentEnergy> deep = RayTraceCumulativeEnergies(deeper.data(), deeper.size());
+  EXPECT_GT(deep.back().value, 0.0);
+  EXPECT_TRUE(deep.back().valid);
+  // A REAL exact zero still reads as one — the underflow fix must not hide the declared zero.
+  std::vector<double> zeroed(27, 0.02);
+  zeroed[10] = 0.0;
+  const std::vector<RayTraceSegmentEnergy> mixed = RayTraceCumulativeEnergies(zeroed.data(), zeroed.size());
+  EXPECT_EQ(mixed[11].value, 0.0);
+  EXPECT_EQ(RayTraceEnergyLabelText(mixed[11]), "0%");
+  EXPECT_EQ(RayTraceEnergyWidth(mixed[11].value), 0.0f);
+}
+
+TEST(AnalyzePointView, RayTraceSegmentOnCanvasRejectsBboxOverlapWithoutIntersection) {
+  // The AABB overlap is only necessary: a segment skimming past the canvas corner has an
+  // overlapping bbox and NO visible point — the historical touches_canvas proxy would have
+  // anchored a ghost label there. Canvas [0,100]^2.
+  const ImVec2 lo(0.0f, 0.0f);
+  const ImVec2 hi(100.0f, 100.0f);
+  double t0 = 0.0;
+  double t1 = 1.0;
+  // Past the top-right corner: bbox overlaps, the segment (x - y = 30 throughout) never enters.
+  EXPECT_FALSE(RayTraceSegmentOnCanvas(ImVec2(90.0f, -20.0f), ImVec2(120.0f, 10.0f), lo, hi, &t0, &t1));
+  // Past the top-left corner: the reviewer's counterexample family (x + y = -50).
+  EXPECT_FALSE(RayTraceSegmentOnCanvas(ImVec2(-100.0f, 50.0f), ImVec2(50.0f, -100.0f), lo, hi, &t0, &t1));
+  // Fully outside on one axis.
+  EXPECT_FALSE(RayTraceSegmentOnCanvas(ImVec2(-50.0f, 10.0f), ImVec2(-10.0f, 90.0f), lo, hi));
+  // A real crossing: one end far outside, the visible part parameterized honestly.
+  ASSERT_TRUE(RayTraceSegmentOnCanvas(ImVec2(-100.0f, 50.0f), ImVec2(150.0f, 50.0f), lo, hi, &t0, &t1));
+  EXPECT_NEAR(t0, 0.4, 1e-9);  // enters at x=0
+  EXPECT_NEAR(t1, 0.8, 1e-9);  // leaves at x=100
+  // Fully inside.
+  EXPECT_TRUE(RayTraceSegmentOnCanvas(ImVec2(10.0f, 10.0f), ImVec2(90.0f, 90.0f), lo, hi, &t0, &t1));
+  EXPECT_NEAR(t0, 0.0, 1e-9);
+  EXPECT_NEAR(t1, 1.0, 1e-9);
+  // A degenerate segment answers its own containment.
+  EXPECT_TRUE(RayTraceSegmentOnCanvas(ImVec2(50.0f, 50.0f), ImVec2(50.0f, 50.0f), lo, hi));
+  EXPECT_FALSE(RayTraceSegmentOnCanvas(ImVec2(150.0f, 50.0f), ImVec2(150.0f, 50.0f), lo, hi));
+}
+
+TEST(AnalyzePointView, RayTraceContactFaceNormalResolvesOnlyKnownFaces) {
+  // A nominal hex prism: the mesh's per-face table carries basal 1/2 and prism 3..8.
+  LUMICE_CrystalParam param{};
+  param.type = 0;
+  param.height = LUMICE_Distribution{ LUMICE_DIST_NO_RANDOM, 1.0f, 0.0f };
+  for (int i = 0; i < 6; ++i) {
+    param.face_distance[i] = LUMICE_Distribution{ LUMICE_DIST_NO_RANDOM, 1.0f, 0.0f };
+  }
+  LUMICE_CrystalMesh mesh{};
+  ASSERT_EQ(LUMICE_GetCrystalMesh(&param, 0, &mesh), LUMICE_OK);
+  ASSERT_GT(mesh.face_count, 0);
+  // A real face number resolves to a unit outward normal.
+  int prism_face = -1;
+  for (int f = 0; f < mesh.face_count; ++f) {
+    if (mesh.face_numbers_by_face[f] == 3) {
+      prism_face = f;
+      break;
+    }
+  }
+  ASSERT_GE(prism_face, 0);
+  const RayTraceContactFaceNormal known = RayTraceContactFaceNormalFor(mesh, 3);
+  EXPECT_TRUE(known.known);
+  float norm = 0.0f;
+  for (int k = 0; k < 3; ++k) {
+    norm += known.normal_body[k] * known.normal_body[k];
+  }
+  EXPECT_NEAR(std::sqrt(norm), 1.0f, 1e-5);
+  // The unknown vocabulary: a negative number (kInvalidId), a number the table does not
+  // carry, and an unpopulated table all answer known=false — hollow, never a guessed normal.
+  EXPECT_FALSE(RayTraceContactFaceNormalFor(mesh, -1).known);
+  EXPECT_FALSE(RayTraceContactFaceNormalFor(mesh, 99).known);
+  LUMICE_CrystalMesh unpopulated = mesh;
+  unpopulated.face_count = 0;
+  EXPECT_FALSE(RayTraceContactFaceNormalFor(unpopulated, 3).known);
+}
+
+TEST(AnalyzePointView, RayTraceContactFacingDotsTheRealCameraSide) {
+  const float n[3] = { 0.0f, 0.0f, 1.0f };
+  const float c[3] = { 0.0f, 0.0f, 0.0f };
+  // Eye on the normal's side: facing (solid).
+  const float eye_front[3] = { 0.0f, 0.0f, 5.0f };
+  EXPECT_TRUE(RayTraceContactFacesEye(n, c, eye_front));
+  // Eye behind the face: hollow.
+  const float eye_back[3] = { 0.0f, 0.0f, -5.0f };
+  EXPECT_FALSE(RayTraceContactFacesEye(n, c, eye_back));
+  // Exact tangency (zero dot) is hollow — the plan's tie rule.
+  const float eye_side[3] = { 5.0f, 0.0f, 0.0f };
+  EXPECT_FALSE(RayTraceContactFacesEye(n, c, eye_side));
+  // The contact's own position enters: the same normal, a contact off the origin, the eye
+  // placement decides per contact->eye, not the normal alone.
+  const float c2[3] = { 0.0f, 0.0f, 1.0f };
+  EXPECT_TRUE(RayTraceContactFacesEye(n, c2, eye_front));
+  const float c3[3] = { 0.0f, 0.0f, -1.0f };
+  EXPECT_FALSE(RayTraceContactFacesEye(n, c3, eye_back));
 }
 
 // ---- The pumps, over a real executor and a real scene -----------------------------------------------

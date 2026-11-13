@@ -67,7 +67,14 @@ add_executable(gui_test
     ${IMGUI_TE_DIR}/imgui_te_exporters.cpp
     ${IMGUI_TE_DIR}/imgui_te_ui.cpp
     ${IMGUI_TE_DIR}/imgui_te_perftool.cpp
-    ${IMGUI_TE_DIR}/imgui_capture_tool.cpp)
+    ${IMGUI_TE_DIR}/imgui_capture_tool.cpp
+    # Same reason LumiceGUI compiles util/env_knobs.cpp into itself (see
+    # src/gui/CMakeLists.txt): this target links `lumice` only — no foundation objects —
+    # so the GUI TUs' env::AnalyzeDebugDetails() consumption has to be satisfied by an
+    # object on this target's own link line in the shared flavor. gui_unit_test, the
+    # third lumice_gui_obj consumer, must NOT grow this file: it links
+    # lumice_foundation_obj by name, and a second copy would be a duplicate definition.
+    ${PROJ_SRC_DIR}/util/env_knobs.cpp)
 
 # ${PROJ_TEST_DIR} (the test/ root) is on the list so gui_test can reach the target-agnostic
 # helpers under test/support/ by their "support/..." path — the same spelling gui_unit_test uses,

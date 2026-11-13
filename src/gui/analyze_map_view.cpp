@@ -26,6 +26,8 @@
 #include "gui/theme.hpp"
 #include "gui/view_look_at.hpp"
 #include "imgui.h"
+#include "util/env_knobs.hpp"             // env::AnalyzeDebugDetails — the diagnostics groups' env gate
+#include "util/label_viewport_clamp.hpp"  // the ONE viewport clamp — the readout label's shared rule
 #include "util/sky_direction.hpp"
 
 namespace lumice::gui {
@@ -40,6 +42,8 @@ namespace {
 // change the constant's comment demands.
 static_assert(kChromaticColourRed == IM_COL32(242, 108, 92, 235), "the promoted red must equal its literal");
 static_assert(kChromaticColourBlue == IM_COL32(96, 145, 240, 235), "the promoted blue must equal its literal");
+static_assert(kReadoutBackingInk == IM_COL32(16, 17, 20, 170), "the promoted backing ink must equal its literal");
+static_assert(kProfileReadingColour == IM_COL32(244, 114, 182, 255), "the promoted rose must equal its literal");
 
 OverlayLegendState g_map_legend;
 MapObservationTiming g_map_observation_timing;
@@ -244,16 +248,20 @@ std::vector<std::string> MapCaliberPhysicsLines(const MapCaliberInput& in) {
       lines.emplace_back("Scene geometry.");
     }
   }
-  if (in.have_evidence && in.evidence.geometry_basis.length > 0) {
-    lines.emplace_back(in.evidence.geometry_basis.data, in.evidence.geometry_basis.length);
-  }
   return lines;
 }
 
-std::vector<std::string> MapCaliberCalculationLines(const MapCaliberInput& in) {
+// The caliber's diagnostics group: the engine's raw geometry_basis explanation string plus the
+// grid and execution facts — rendered only while LUMICE_ANALYZE_DEBUG_DETAILS is set. The
+// readable scene/nominal caliber stays in the evidence group above, so the raw basis string
+// hides nothing a default or evidence line does not already say in user words.
+std::vector<std::string> MapCaliberDiagnosticsLines(const MapCaliberInput& in) {
   std::vector<std::string> lines;
   char line[512];
   const LUMICE_PathMapInfo& info = in.info;
+  if (in.have_evidence && in.evidence.geometry_basis.length > 0) {
+    lines.emplace_back(in.evidence.geometry_basis.data, in.evidence.geometry_basis.length);
+  }
   if (info.view_full_sky != 0) {
     std::snprintf(line, sizeof(line), "Reference cell δ %.7g° × az %.7g° · view: full sky %d×%d · n=%d lattice",
                   (info.view_delta_max_deg - info.view_delta_min_deg) / info.view_rows,
@@ -612,6 +620,50 @@ bool ProjectToRect(const MapCanvasProjection& view, const double pos[3], const I
   return true;
 }
 
+// One projected pair's screen continuity — the projection's own discontinuities, not a
+// per-sample property. The dual-fisheye family (a full-sky lens — no view transform, the world
+// travel direction goes straight in) splits the sky into two disks by the travel direction's z
+// sign: consecutive samples on opposite sides of the split belong to different disks, and the
+// segment between them does not exist on the picture. The rectangular equirect wraps at
+// longitude ±π and anchors the pole itself to longitude 0 — a pair straddling the seam, touching
+// the anchored pole, or with the pole passed between its two samples screens farther apart than
+// the samples' own bounded step can explain, and the chord between them is likewise not the
+// path. One predicate, two consumers —
+// the iso-delta walk (a break starts a fresh polyline at the next in-disk pair) and the profile
+// device (a break voids the all-or-nothing interval). The single-fisheye family and the globe
+// project into one contiguous region with a behind-camera sentinel, where a projected pair is
+// always continuous.
+bool ProjectionContinuous(int lens_type, double travel_prev_z, double travel_next_z, const double travel_prev[3],
+                          const double travel_next[3]) {
+  if (lens_type == kLensTypeDualFisheyeEqualArea || lens_type == kLensTypeDualFisheyeEquidist ||
+      lens_type == kLensTypeDualFisheyeStereographic || lens_type == kLensTypeDualFisheyeOrthographic) {
+    return (travel_prev_z < 0.0) == (travel_next_z < 0.0);
+  }
+  if (lens_type == kLensTypeRectangular) {
+    // The travel directions' own longitudes, spelled as ProjectRectangular spells them; the
+    // pole anchor's epsilon is that branch's own (the squared x-y norm below it).
+    const double prev_pole = travel_prev[0] * travel_prev[0] + travel_prev[1] * travel_prev[1] < 1e-6;
+    const double next_pole = travel_next[0] * travel_next[0] + travel_next[1] * travel_next[1] < 1e-6;
+    if (prev_pole || next_pole) {
+      return false;  // the anchored pole column: a neighbour pairs with it across a whole-canvas jump
+    }
+    const double lon_a = std::atan2(-travel_prev[1], -travel_prev[0]);
+    const double lon_b = std::atan2(-travel_next[1], -travel_next[0]);
+    // A swing past a quarter turn is beyond any same-side pair's own span at these sampling
+    // densities (a pair whose path keeps farther from the pole than roughly its own separation
+    // swings under a quarter turn), so it marks one of the projection's own breaks: the ±π seam
+    // straddled (a represented swing past π), or the pole passed BETWEEN the two samples — the
+    // meridian's two sides read half a canvas apart while the path between them clips the pole
+    // column. Both are breaks: under-draw a near-pole graze, never draw a chord the projection
+    // does not carry. The walk's own pole passages land on a sample (the radial basis is
+    // zenith-referenced and kOverlaySegments is even, so the passage sits at φ = 0/π) and the
+    // anchor rule above fires there; the profile interval's δ grid does not align — that
+    // straddle is exactly what this bound catches.
+    return std::fabs(lon_a - lon_b) <= kPiD / 2.0;
+  }
+  return true;
+}
+
 // One drawn segment of the iso-deviation circle's walk: whether any point landed in the disk,
 // and the topmost (smallest screen y) of them — the label anchor the curve's readout sits at.
 struct IsoDeltaWalk {
@@ -640,13 +692,17 @@ struct IsoDeltaWalk {
 // deterministic and view-independent — a run broken by the view disk does not restart the phase.
 // The solid form (dashed=false, every existing call) emits the same AddLine sequence it always
 // did, byte for byte.
-IsoDeltaWalk WalkIsoDeltaCircle(ImDrawList* dl, const MapCanvasProjection& view, const ImVec2& pic_min, float pic_px,
-                                const double sun_pos[3], double delta_deg, ImU32 colour, float thickness,
-                                bool dashed = false) {
-  constexpr int kDashCycleSegments = 4;  // one dash phase = 4 samples: 4 drawn, then 4 skipped
-                                         // (the %2 alternation makes the period 8) — a run broken
-                                         // by the view disk does not restart the phase
-  double u[3] = { 0.0, 0.0, 1.0 };
+// The radial basis about a sky direction — the one construction every sun-centred device shares:
+// u is the zenith axis projected onto the plane normal to `sun_pos` (the x axis as the fallback
+// when the zenith is too close to the sun), v = sun_pos × u. This is the same basis the engine's
+// probe frame builds from the incident direction (MakeProbeFrame, whose incident is this sun
+// position's negation): e1 = u and e2 = −v, identically, for every sun position — the profile
+// device's azimuth mapping (φ = π − az) rests on this identity, so it must have exactly ONE
+// spelling here.
+void SkyRadialBasis(const double sun_pos[3], double u[3], double v[3]) {
+  u[0] = 0.0;
+  u[1] = 0.0;
+  u[2] = 1.0;
   double dot = Dot3(u, sun_pos);
   if (std::fabs(dot) > 0.9) {
     u[0] = 1.0;
@@ -658,19 +714,73 @@ IsoDeltaWalk WalkIsoDeltaCircle(ImDrawList* dl, const MapCanvasProjection& view,
     u[k] -= dot * sun_pos[k];
   }
   Normalize3(u);
-  double v[3];
   Cross3(sun_pos, u, v);
+}
+
+// The sky direction at deviation `delta_deg` from the sun, at the walk's own circle parameter
+// `phi` in the basis above — the iso-deviation circle's one parameterization, shared by the
+// dispersion circles, the verdict anchor and the profile device.
+void SkyPointAboutSun(const double sun_pos[3], const double u[3], const double v[3], double delta_deg, double phi_rad,
+                      double out[3]) {
   const double delta = delta_deg * kDeg2RadD;
   const double cos_d = std::cos(delta);
   const double sin_d = std::sin(delta);
+  const double cos_p = std::cos(phi_rad);
+  const double sin_p = std::sin(phi_rad);
+  for (int k = 0; k < 3; ++k) {
+    out[k] = cos_d * sun_pos[k] + sin_d * (cos_p * u[k] + sin_p * v[k]);
+  }
+}
+
+// A profile device's screen point: the projection verdict travels with the coordinates — the
+// device's honesty gates read it (a point off the view draws nothing).
+struct ProfileScreenPoint {
+  bool projected = false;
+  double x = 0.0;
+  double y = 0.0;
+};
+
+// One profile reading's point marker (the vocabulary's point device as this feature draws it):
+// a dark rim under the rose fill, so the point stays legible over both bright curves and the
+// dark raster — the readout backing's ink family, not a new grey.
+void DrawProfilePointMarker(ImDrawList* dl, const ProfileScreenPoint& pt) {
+  if (!pt.projected) {
+    return;
+  }
+  const ImVec2 c(static_cast<float>(pt.x), static_cast<float>(pt.y));
+  dl->AddCircle(c, UiPx(5.0f), IM_COL32(16, 17, 20, 200), 0, UiPx(1.4f));
+  dl->AddCircleFilled(c, UiPx(4.0f), kProfileReadingColour);
+}
+
+// The legend icon slot (the object kinds' own pattern): the icon draws at the current cursor
+// inside a frame-height cell, then the entry's words continue on the same line. The cell is the
+// slot's whole layout claim — the icon's geometry reads the cursor itself, so all four anchor
+// icons and the kinds share one placement rule.
+template <typename DrawIcon>
+void DrawLegendIconSlot(DrawIcon&& draw_icon) {
+  draw_icon();
+  ImGui::Dummy(ImVec2(ImGui::GetFrameHeight(), 0.0f));
+  ImGui::SameLine(0.0f, 0.0f);
+}
+
+IsoDeltaWalk WalkIsoDeltaCircle(ImDrawList* dl, const MapCanvasProjection& view, const ImVec2& pic_min, float pic_px,
+                                const double sun_pos[3], double delta_deg, ImU32 colour, float thickness,
+                                bool dashed = false) {
+  constexpr int kDashCycleSegments = 4;  // one dash phase = 4 samples: 4 drawn, then 4 skipped
+                                         // (the %2 alternation makes the period 8) — a run broken
+                                         // by the view disk does not restart the phase
+  double u[3];
+  double v[3];
+  SkyRadialBasis(sun_pos, u, v);
   IsoDeltaWalk walk;
   double last_x = 0.0;
   double last_y = 0.0;
+  double prev_travel_z = 0.0;
+  double prev_travel[3] = { 0.0, 0.0, 0.0 };
   for (int s = 0; s <= kOverlaySegments; ++s) {
     const double phi = 2.0 * kPiD * s / kOverlaySegments;
-    const double p[3] = { cos_d * sun_pos[0] + sin_d * (std::cos(phi) * u[0] + std::sin(phi) * v[0]),
-                          cos_d * sun_pos[1] + sin_d * (std::cos(phi) * u[1] + std::sin(phi) * v[1]),
-                          cos_d * sun_pos[2] + sin_d * (std::cos(phi) * u[2] + std::sin(phi) * v[2]) };
+    double p[3];
+    SkyPointAboutSun(sun_pos, u, v, delta_deg, phi, p);
     double x = 0.0;
     double y = 0.0;
     if (!ProjectToRect(view, p, pic_min, pic_px, &x, &y)) {
@@ -678,10 +788,21 @@ IsoDeltaWalk WalkIsoDeltaCircle(ImDrawList* dl, const MapCanvasProjection& view,
       continue;
     }
     ++walk.samples_in_disk;
-    if (walk.drawn > 0 && (!dashed || (s / kDashCycleSegments) % 2 == 0)) {
+    const double travel[3] = { -p[0], -p[1], -p[2] };  // the projection's own input (ProjectToRect negates)
+    const bool same_disk =
+        s == 0 || ProjectionContinuous(view.camera.lens_type, prev_travel_z, travel[2], prev_travel, travel);
+    prev_travel_z = travel[2];
+    for (int k = 0; k < 3; ++k) {
+      prev_travel[k] = travel[k];
+    }
+    if (walk.drawn > 0 && same_disk && (!dashed || (s / kDashCycleSegments) % 2 == 0)) {
       dl->AddLine(ImVec2(static_cast<float>(last_x), static_cast<float>(last_y)),
                   ImVec2(static_cast<float>(x), static_cast<float>(y)), colour, thickness);
       ++walk.lines_submitted;
+    }
+    if (!same_disk) {
+      walk.drawn = 0;  // a projection break (disk flip or seam/pole jump) ends the run, the same
+                       // way an off-view sample does — the next in-disk pair starts fresh
     }
     last_x = x;
     last_y = y;
@@ -699,14 +820,29 @@ IsoDeltaWalk WalkIsoDeltaCircle(ImDrawList* dl, const MapCanvasProjection& view,
 // walk's topmost in-disk sample carries the text over a dark backing rect, in the curve's own
 // colour (the dashed form may leave that sample on a skipped stretch — the anchor sits within one
 // dash cycle of the nearest submitted line). One body for both callers — the backing ink's
-// literal lives here and nowhere else.
-void DrawIsoDeltaReadoutLabel(ImDrawList* dl, const IsoDeltaWalk& walk, ImU32 colour, const char* text) {
+// literal is the promoted kReadoutBackingInk and lives nowhere else. The patch is clamped into
+// the canvas rectangle INTERSECTED WITH THE DRAW LIST'S EFFECTIVE CLIP (the ancestors' clip rect
+// the glyphs will actually be cut by — a window or viewport partially covering the canvas bounds
+// the visible label, not the nominal rectangle), through the ONE shared viewport clamp
+// (util/label_viewport_clamp.hpp): a readout anchored near the visible edge must keep text AND
+// backing inside (the unclamped draw cropped the word on the edge), and the two move together —
+// the clamp adjusts the position, never the size, and leaves a degenerate axis (a viewport that
+// cannot hold the patch plus the inset) untouched, per the shared rule.
+void DrawIsoDeltaReadoutLabel(ImDrawList* dl, const IsoDeltaWalk& walk, ImU32 colour, const char* text,
+                              const LabelViewport& canvas) {
+  const ImVec2 clip_min = dl->GetClipRectMin();
+  const ImVec2 clip_max = dl->GetClipRectMax();
+  const float left = std::max(canvas.x, clip_min.x);
+  const float top = std::max(canvas.y, clip_min.y);
+  const float right = std::min(canvas.x + canvas.w, clip_max.x);
+  const float bottom = std::min(canvas.y + canvas.h, clip_max.y);
+  const LabelViewport visible{ left, top, std::max(right - left, 0.0f), std::max(bottom - top, 0.0f) };
   const ImVec2 ts = ImGui::CalcTextSize(text);
-  dl->AddRectFilled(ImVec2(static_cast<float>(walk.top_x) - ts.x * 0.5f - 3.0f, static_cast<float>(walk.top_y) - ts.y),
-                    ImVec2(static_cast<float>(walk.top_x) + ts.x * 0.5f + 3.0f, static_cast<float>(walk.top_y)),
-                    IM_COL32(16, 17, 20, 170));
-  dl->AddText(ImVec2(static_cast<float>(walk.top_x) - ts.x * 0.5f, static_cast<float>(walk.top_y) - ts.y), colour,
-              text);
+  LabelPos pos{ static_cast<float>(walk.top_x) - ts.x * 0.5f, static_cast<float>(walk.top_y) - ts.y };
+  const LabelSize size{ ts.x + 6.0f, ts.y };  // the backing's full extent: the text plus 3pt each side
+  pos = ClampLabelPosToViewport(pos, size, visible);
+  dl->AddRectFilled(ImVec2(pos.x - 3.0f, pos.y), ImVec2(pos.x + ts.x + 3.0f, pos.y + ts.y), kReadoutBackingInk);
+  dl->AddText(ImVec2(pos.x, pos.y), colour, text);
 }
 
 void DrawFrameAnchors(ImDrawList* dl, const MapCanvasProjection& view, const LUMICE_PathMapInfo& info,
@@ -1014,7 +1150,8 @@ void DrawSurveyOverlays(ImDrawList* dl, GuiState& state, const MapCanvasProjecti
         char line[112];
         std::snprintf(line, sizeof(line), "%s · %.3f°%s", curve.label->c_str(), curve.delta_deg,
                       walk.partial() ? " · arc in view" : "");
-        DrawIsoDeltaReadoutLabel(dl, walk, curve.colour, line);
+        DrawIsoDeltaReadoutLabel(dl, walk, curve.colour, line,
+                                 LabelViewport{ pic_min.x, pic_min.y, view.width_pt, view.height_pt });
       }
     }
   }
@@ -1037,6 +1174,29 @@ void DrawSurveyOverlays(ImDrawList* dl, GuiState& state, const MapCanvasProjecti
   verdict.hover = state.analysis.verdict_anchor_hover;
   verdict.legend = legend;
   DrawVerdictAnchor(dl, model.diagnose, verdict);
+  // The reference profile's hover device (§16.1.3's extension): the hovered profile row's
+  // reading, drawn on the radial line the probe sampled — the SURVEY document's own sun echo and
+  // its own azimuth frame (the probe's premise; not the map's anchor fallback, which may carry
+  // another generation's sun). Consumes LAST frame's row standing (the same one-frame lag the
+  // verdict hover owns). Under the Overlays gate by construction: this whole pass runs behind it,
+  // so the default frame adds no profile ink, and the verdict-anchors switch stays the verdict
+  // anchor's own — the profile device never joins the persistent set. No legend entry: the device
+  // is hover-transient and the driving row is its explanation (the contract's sync records it).
+  if (state.analysis.profile_row_hover != SurveyProfileHover::kNone && model.sun_available) {
+    ProfileHoverInput profile;
+    profile.camera = &view.camera;
+    profile.width_px = view.width;
+    profile.height_px = view.height;
+    profile.width_pt = view.width_pt;
+    profile.height_pt = view.height_pt;
+    profile.pic_min_x = pic_min.x;
+    profile.pic_min_y = pic_min.y;
+    profile.pic_px = pic_px;
+    profile.sun.altitude_deg = model.sun_altitude_deg;
+    profile.sun.azimuth_deg = model.sun_azimuth_deg;
+    profile.hover = state.analysis.profile_row_hover;
+    DrawProfileHoverDevice(dl, model.probe, profile);
+  }
 }
 
 void DrawSkyPointMarker(ImDrawList* dl, const MapCanvasProjection& view, const SkyPointIntent& intent,
@@ -1124,12 +1284,138 @@ void DrawVerdictAnchor(ImDrawList* dl, const SurveyDiagnoseView& diagnose, const
   if (walk.lines_submitted > 0) {
     if (in.legend != nullptr) {
       in.legend->verdict_anchor = true;
+      in.legend->verdict_anchor_colour = colour;
+      in.legend->verdict_anchor_dashed = dashed;
     }
     char line[96];
     std::snprintf(line, sizeof(line), "verdict · %.3f°%s", diagnose.position_deg,
                   walk.partial() ? " · arc in view" : "");
-    DrawIsoDeltaReadoutLabel(dl, walk, colour, line);
+    DrawIsoDeltaReadoutLabel(dl, walk, colour, line,
+                             LabelViewport{ in.pic_min_x, in.pic_min_y, in.width_pt, in.height_pt });
   }
+}
+
+// The reference profile's hover device (§16.1.3's extension). The spatial premise, derived once
+// and resting on ONE basis construction (SkyRadialBasis, shared with the dispersion walk): the
+// engine's probe frame is MakeProbeFrame(incident) with incident = SunIncidentDirection =
+// AltAzToDir(sun) = −SkyPosition(sun) — so the probe's basis about the incident coincides with
+// this file's walk basis about the sun (e1 = u, e2 = −v, identically for every sun position, the
+// same fallback included), and ProbeDirection's outgoing propagation at (δ, az) negates to the
+// sky point the map walk parameterizes at φ = π − az. The built-in survey probe's azimuth is the
+// representative wedge's own value (azimuth_available carries it; the probe's value formula makes
+// the uniform-density profile azimuth-free, so the drawn line is the sample line, not a claim
+// about every azimuth). The point device marks the named reading's position on that line; the
+// separation device draws the radial INTERVAL between the two readings, sampled along the line —
+// never an annulus between the two iso-deviation circles. All-or-nothing visibility: a reading
+// whose position leaves the view draws nothing (no bridging across a projection break, no
+// partial interval without a qualifier it cannot carry — the row's own words are the device's
+// only text).
+void DrawProfileHoverDevice(ImDrawList* dl, const SurveyProbeView& probe, const ProfileHoverInput& in) {
+  if (in.hover == SurveyProfileHover::kNone) {
+    return;
+  }
+  if (!probe.available || probe.state == LUMICE_PATH_STATE_REFUSED || !probe.azimuth_available) {
+    return;  // the honesty gates: no readings claimed, or the line azimuth unknown — no geometry
+  }
+  bool edge_needed = false;
+  bool peak_needed = false;
+  switch (in.hover) {
+    case SurveyProfileHover::kEdge:
+      edge_needed = true;
+      break;
+    case SurveyProfileHover::kPeak:
+      peak_needed = true;
+      break;
+    case SurveyProfileHover::kSeparation:
+      edge_needed = true;
+      peak_needed = true;
+      break;
+    case SurveyProfileHover::kNone:
+      return;
+  }
+  if ((edge_needed && !probe.edge_available) || (peak_needed && !probe.peak_available)) {
+    return;  // the named reading is absent — not drawing is the honest state
+  }
+  MapCanvasProjection view;
+  // The mirror of ProfileHoverInput's projection quintet (see its comment): a new
+  // MapCanvasProjection field must be copied here AND carried by the input struct, or this
+  // rebuilt view silently defaults while the dispersion circles move.
+  view.camera = *in.camera;
+  view.width = in.width_px;
+  view.height = in.height_px;
+  view.width_pt = in.width_pt;
+  view.height_pt = in.height_pt;
+  const ImVec2 pic_min(in.pic_min_x, in.pic_min_y);
+  double sun_pos[3];
+  SkyPosition(in.sun.altitude_deg, in.sun.azimuth_deg, sun_pos);
+  double u[3];
+  double v[3];
+  SkyRadialBasis(sun_pos, u, v);
+  // The probe azimuth's one mapping into the walk's circle parameter (the derivation above).
+  const double phi = kPiD - probe.azimuth_deg * kDeg2RadD;
+  auto device_point = [&](double delta_deg) {
+    double p[3];
+    SkyPointAboutSun(sun_pos, u, v, delta_deg, phi, p);
+    double x = 0.0;
+    double y = 0.0;
+    ProfileScreenPoint out;
+    out.projected = ProjectToRect(view, p, pic_min, in.pic_px, &x, &y);
+    out.x = x;
+    out.y = y;
+    return out;
+  };
+  if (in.hover == SurveyProfileHover::kSeparation) {
+    // The radial interval between the two readings, walked along the profile line at a step the
+    // map's own scale reads smoothly; any sample off the view voids the whole device (the
+    // all-or-nothing rule above). The rule is STRUCTURAL, not incidental: the whole bounded
+    // sample sequence projects FIRST, and only a fully-projecting interval submits anything — a
+    // loop that drew as it projected would leave an unqualified prefix on the draw list when a
+    // later sample fell off the view (submitted commands cannot be unsubmitted). The endpoints
+    // carry the point device's own marker.
+    const double edge = probe.edge_deg;
+    const double peak = probe.peak_deg;
+    const double lo = std::min(edge, peak);
+    const double hi = std::max(edge, peak);
+    const int steps = std::min(64, std::max(2, static_cast<int>(std::ceil((hi - lo) * 2.0))));  // ~0.5° resolution
+    std::vector<ProfileScreenPoint> samples;
+    samples.reserve(static_cast<size_t>(steps) + 1);
+    double prev_travel_z = 0.0;
+    double prev_travel[3] = { 0.0, 0.0, 0.0 };
+    for (int s = 0; s <= steps; ++s) {
+      const double delta = lo + (hi - lo) * static_cast<double>(s) / static_cast<double>(steps);
+      double p[3];
+      SkyPointAboutSun(sun_pos, u, v, delta, phi, p);
+      const double travel[3] = { -p[0], -p[1], -p[2] };
+      if (s > 0 && !ProjectionContinuous(view.camera.lens_type, prev_travel_z, travel[2], prev_travel, travel)) {
+        return;  // the interval spans one of the projection's own breaks (the dual-fisheye disk
+                 // split, the rectangular seam or pole anchor): the bridged chord does not exist
+                 // on the picture, and the all-or-nothing rule keeps the list untouched
+      }
+      prev_travel_z = travel[2];
+      for (int k = 0; k < 3; ++k) {
+        prev_travel[k] = travel[k];
+      }
+      double x = 0.0;
+      double y = 0.0;
+      ProfileScreenPoint out;
+      out.projected = ProjectToRect(view, p, pic_min, in.pic_px, &x, &y);
+      out.x = x;
+      out.y = y;
+      if (!out.projected) {
+        return;  // one sample off the view: the whole device stays undrawn, the draw list untouched
+      }
+      samples.push_back(out);
+    }
+    for (size_t s = 1; s < samples.size(); ++s) {
+      dl->AddLine(ImVec2(static_cast<float>(samples[s - 1].x), static_cast<float>(samples[s - 1].y)),
+                  ImVec2(static_cast<float>(samples[s].x), static_cast<float>(samples[s].y)), kProfileReadingColour,
+                  UiPx(2.0f));
+    }
+    DrawProfilePointMarker(dl, samples.front());
+    DrawProfilePointMarker(dl, samples.back());
+    return;
+  }
+  DrawProfilePointMarker(dl, device_point(in.hover == SurveyProfileHover::kEdge ? probe.edge_deg : probe.peak_deg));
 }
 
 void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
@@ -1756,18 +2042,20 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   if (state.analysis.survey.adopted_result) {
     const SurveyOverviewModel survey_model = BuildSurveyOverviewModel(*state.analysis.survey.adopted_result);
     ImGui::TextDisabled("Class answer");
-    // The verdict anchor's hover read (§16.1's A2 pilot): the class answer is the only site the
-    // linked diagnose rows render at, so this is the overwrite's owner — the row path writes the
-    // standing every frame (hover or explicit false), the canvas consumes it next frame.
-    bool verdict_row_hover = false;
-    RenderSurveyOverviewModel(survey_model, &verdict_row_hover);
-    state.analysis.verdict_anchor_hover = verdict_row_hover;
+    // The hover rows' read (§16.1's A2 pilot + §16.1.3's extension): the class answer is the only
+    // site the linked rows render at, so this is the overwrite's owner — the row path writes the
+    // standing every frame (hover or explicit none), the canvas consumes it next frame.
+    SurveyRowHoverReadout row_readout;
+    RenderSurveyOverviewModel(survey_model, &row_readout);
+    state.analysis.verdict_anchor_hover = row_readout.verdict;
+    state.analysis.profile_row_hover = row_readout.profile;
     ImGui::Separator();
   } else {
     // The class answer's absent frame (no adopted document): no rows render, so the overwrite
     // has no site — this branch is the reset's owner instead. Without it a document's last
     // hover standing would outlive the rows that carried it.
     state.analysis.verdict_anchor_hover = false;
+    state.analysis.profile_row_hover = SurveyProfileHover::kNone;
   }
   // The sky-point answer (contract §16.2): the adopted point document read in full, sorted
   // into its own fold pair. Sits after the class answer, before the map's own report — the
@@ -1783,9 +2071,10 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   ImGui::TextWrapped("Stripes = unknown, purple = singular (not zero).");
   // The identity line and the sky-point echo used to sit here; both moved up the fixed slots
   // (identity to the column's first row, the target beside the input group) and the report no
-  // longer repeats either. The old reference-cell line moved into the caliber's Calculation
-  // fold (the same numbers, the ledger's L4 tier); the source-fixed-scale sentence moved with
-  // it. The Separator keeps the picture-facts above apart from the answer block below.
+  // longer repeats either. The old reference-cell line moved into the caliber's env-gated
+  // diagnostics fold (the same numbers, the ledger's L4 tier); the source-fixed-scale sentence
+  // moved with it. The Separator keeps the picture-facts above apart from the answer block
+  // below.
   ImGui::Separator();
   if (state.analysis.map_wavelength_nm <= 0.0 && map.adopted_result == nullptr) {
     // The λ's unrechoiced state stays default (the ledger: 尚未回显的未知性默认) — the map has
@@ -1795,9 +2084,9 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   // The caliber block: every fact read back through the result's own readers into the pure
   // composers (the unit layer holds them to the readback), then drawn — the ledger's tiers:
   // the short quantity and its limits default, the full definition and premises behind
-  // Physics details, the grid and execution numbers behind Calculation details. The report
-  // follows every operation: its native scroll cannot overlap or reposition the
-  // typed-coordinate controls, even while a long caliber or refusal arrives.
+  // "Map quantity & premises", the grid and execution numbers behind the env-gated "Map
+  // diagnostics". The report follows every operation: its native scroll cannot overlap or
+  // reposition the typed-coordinate controls, even while a long caliber or refusal arrives.
   if (caliber_source && have_anchor_info) {
     ImGui::TextDisabled("Reference caliber");
     MapCaliberInput in;
@@ -1825,16 +2114,19 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
       ImGui::TextWrapped("%s", line.c_str());
     }
     ImGui::PopStyleColor();
-    if (FoldOpen(kSurveyPhysicsDetailsLabel, "map_caliber")) {
+    if (FoldOpen(kMapCaliberPremisesLabel, "map_caliber")) {
       ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
       for (const std::string& line : MapCaliberPhysicsLines(in)) {
         ImGui::TextWrapped("%s", line.c_str());
       }
       ImGui::PopStyleColor();
     }
-    if (FoldOpen(kSurveyCalculationDetailsLabel, "map_caliber")) {
+    // The diagnostics group is env-gated as a whole (header and body): with the env off
+    // neither the header nor the raw basis/grid/execution lines render, and the group's old
+    // expansion state survives behind the absent header for env-on to restore.
+    if (env::AnalyzeDebugDetails() && FoldOpen(kMapCaliberDiagnosticsLabel, "map_caliber")) {
       ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-      for (const std::string& line : MapCaliberCalculationLines(in)) {
+      for (const std::string& line : MapCaliberDiagnosticsLines(in)) {
         ImGui::TextWrapped("%s", line.c_str());
       }
       ImGui::PopStyleColor();
@@ -1859,14 +2151,36 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
     // overflow channel.
     if (legend.anchor_sun) {
       ImGui::Bullet();
+      DrawLegendIconSlot([legend_dl = ImGui::GetWindowDrawList(), p = ImGui::GetCursorScreenPos()]() {
+        // The sun's own marker at icon scale: the gold fill and the fainter ring, the map's
+        // proportions (UiPx(4) fill, UiPx(6) ring) shrunk into the slot.
+        const float r = UiPx(4.0f);
+        const ImVec2 c(p.x + ImGui::GetFrameHeight() * 0.5f - UiPx(3.0f), p.y + ImGui::GetTextLineHeight() * 0.5f);
+        legend_dl->AddCircleFilled(c, r * 0.8f, IM_COL32(255, 231, 168, 255));
+        legend_dl->AddCircle(c, r, IM_COL32(255, 231, 168, 128), 0, 1.0f);
+      });
       ImGui::TextWrapped("sun marker");
     }
     if (legend.anchor_zenith) {
       ImGui::Bullet();
+      DrawLegendIconSlot([legend_dl = ImGui::GetWindowDrawList(), p = ImGui::GetCursorScreenPos()]() {
+        // The cross's own two lines, the map's colour and span.
+        const float a = UiPx(3.0f);
+        const ImVec2 c(p.x + ImGui::GetFrameHeight() * 0.5f - UiPx(3.0f), p.y + ImGui::GetTextLineHeight() * 0.5f);
+        legend_dl->AddLine(ImVec2(c.x - a, c.y), ImVec2(c.x + a, c.y), IM_COL32(200, 205, 215, 110), 1.0f);
+        legend_dl->AddLine(ImVec2(c.x, c.y - a), ImVec2(c.x, c.y + a), IM_COL32(200, 205, 215, 110), 1.0f);
+      });
       ImGui::TextWrapped("zenith cross");
     }
     if (legend.anchor_horizon) {
       ImGui::Bullet();
+      DrawLegendIconSlot([legend_dl = ImGui::GetWindowDrawList(), p = ImGui::GetCursorScreenPos()]() {
+        // The horizon's own circle, in the horizon's hue. The map draws it at alpha 60 — a
+        // large reference circle reads there, an icon-size one does not; the legend icon takes
+        // the zenith's alpha (the hue is the correspondence, the alpha the icon's legibility).
+        const ImVec2 c(p.x + ImGui::GetFrameHeight() * 0.5f - UiPx(3.0f), p.y + ImGui::GetTextLineHeight() * 0.5f);
+        legend_dl->AddCircle(c, UiPx(4.0f), IM_COL32(200, 205, 215, 110), 0, 1.2f);
+      });
       ImGui::TextWrapped("horizon circle");
     }
     for (const std::string& kind : legend.object_kinds) {
@@ -1917,6 +2231,27 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
     }
     if (legend.verdict_anchor) {
       ImGui::Bullet();
+      DrawLegendIconSlot([legend_dl = ImGui::GetWindowDrawList(), p = ImGui::GetCursorScreenPos(), &legend]() {
+        // The anchor's own circle in the palette entry that actually drew — dashed when the
+        // drawn form was (the walk's own dash phase, 4 samples on, 4 off, so the icon reads the
+        // same visual grammar the anchor drew).
+        const ImVec2 c(p.x + ImGui::GetFrameHeight() * 0.5f - UiPx(3.0f), p.y + ImGui::GetTextLineHeight() * 0.5f);
+        const float r = UiPx(4.0f);
+        if (legend.verdict_anchor_dashed) {
+          constexpr int kSamples = 24;
+          ImVec2 prev(0.0f, 0.0f);
+          for (int s = 0; s <= kSamples; ++s) {
+            const float a = 2.0f * static_cast<float>(kPiD) * s / kSamples;
+            const ImVec2 pt(c.x + r * std::cos(a), c.y + r * std::sin(a));
+            if (s > 0 && (s / 4) % 2 == 0) {
+              legend_dl->AddLine(prev, pt, legend.verdict_anchor_colour, UiPx(1.2f));
+            }
+            prev = pt;
+          }
+        } else {
+          legend_dl->AddCircle(c, r, legend.verdict_anchor_colour, 0, UiPx(1.2f));
+        }
+      });
       ImGui::TextWrapped("verdict anchor");
     }
     if (legend.sky_point) {
@@ -1964,6 +2299,7 @@ void RenderAnalyzeRaypathViewWindow(GuiState& state) {
     // overwrite has no site — this seam owns the reset, and the first frame after a reopen reads
     // false instead of whatever the mouse was on when the window closed.
     state.analysis.verdict_anchor_hover = false;
+    state.analysis.profile_row_hover = SurveyProfileHover::kNone;
     if (state.workspace.map_press_owner != GuiState::AnalyzeWorkspaceSession::PanoramaPressOwner::kNone)
       state.workspace.map_press_owner = GuiState::AnalyzeWorkspaceSession::PanoramaPressOwner::kCancelled;
     return;
@@ -2011,6 +2347,7 @@ void RenderAnalyzeRaypathViewWindow(GuiState& state) {
     // The Begin-false frame (the window fully clipped): neither region renders, so the hover
     // standing's overwrite has no site here either — the same reset the closed seam owns.
     state.analysis.verdict_anchor_hover = false;
+    state.analysis.profile_row_hover = SurveyProfileHover::kNone;
     ImGui::End();
     if (state.workspace.map_press_owner != GuiState::AnalyzeWorkspaceSession::PanoramaPressOwner::kNone)
       state.workspace.map_press_owner = GuiState::AnalyzeWorkspaceSession::PanoramaPressOwner::kCancelled;

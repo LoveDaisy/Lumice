@@ -37,6 +37,7 @@
 #include "gui/analyze_point_view.hpp"
 #include "gui/analyze_workspace.hpp"
 #include "gui/angular_dist_picker.hpp"
+#include "gui/crystal_renderer.hpp"  // ComputeDist / ComputeNearPlane — the frame tests' camera
 #include "gui/edit_modals.hpp"
 #include "gui/export_fbo_renderer.hpp"
 #include "gui/file_io.hpp"
@@ -45,6 +46,7 @@
 #include "gui/log_sink.hpp"
 #include "gui/panels.hpp"
 #include "gui/raypath_segments.hpp"
+#include "gui/semantic_colors.hpp"  // WarningTextColor — the drift warning ink's colour probe
 #include "gui/sim_state_rules.hpp"
 #include "gui/theme.hpp"
 #include "gui/user_defaults.hpp"  // kFactoryUiScaleMultiplier — the scale tiers restore through it
@@ -54,6 +56,7 @@
 #include "include/lumice_editor.h"
 #include "include/lumice_engine.h"
 #include "include/lumice_render.h"
+#include "support/env_var.hpp"  // SetEnvVar / UnsetEnvVar — the LUMICE_ANALYZE_DEBUG_DETAILS legs
 #include "support/gui_server_lifetime.hpp"
 #include "test_gui_shared.hpp"
 #include "util/raypath_analysis_display.hpp"
@@ -63,6 +66,45 @@ namespace {
 
 using SimState = gui::GuiState::SimState;
 using PressOwner = gui::GuiState::AnalyzeWorkspaceSession::PanoramaPressOwner;
+
+// LUMICE_ANALYZE_DEBUG_DETAILS is a process-global the four answer hosts' diagnostics groups
+// read every frame, so every leg that asserts their presence or absence DECLARES its state
+// through this guard and restores the prior value (or its absence) on every exit path — the
+// IM_CHECK_RETV early returns included. No leg depends on execution order or on the shell's
+// environment: the three states are spelled kUnset (no variable, the shipped default), kOff
+// (an explicit "0") and kOn ("1", the dev diagnostic view).
+enum class DebugDetailsState { kUnset, kOff, kOn };
+
+class ScopedDebugDetailsEnv {
+ public:
+  explicit ScopedDebugDetailsEnv(DebugDetailsState state) {
+    const char* current = std::getenv("LUMICE_ANALYZE_DEBUG_DETAILS");
+    saved_ = current != nullptr ? std::optional<std::string>(current) : std::nullopt;
+    switch (state) {
+      case DebugDetailsState::kOn:
+        lumice::test::SetEnvVar("LUMICE_ANALYZE_DEBUG_DETAILS", "1");
+        break;
+      case DebugDetailsState::kOff:
+        lumice::test::SetEnvVar("LUMICE_ANALYZE_DEBUG_DETAILS", "0");
+        break;
+      case DebugDetailsState::kUnset:
+        lumice::test::UnsetEnvVar("LUMICE_ANALYZE_DEBUG_DETAILS");
+        break;
+    }
+  }
+  ScopedDebugDetailsEnv(const ScopedDebugDetailsEnv&) = delete;
+  ScopedDebugDetailsEnv& operator=(const ScopedDebugDetailsEnv&) = delete;
+  ~ScopedDebugDetailsEnv() {
+    if (saved_) {
+      lumice::test::SetEnvVar("LUMICE_ANALYZE_DEBUG_DETAILS", saved_->c_str());
+    } else {
+      lumice::test::UnsetEnvVar("LUMICE_ANALYZE_DEBUG_DETAILS");
+    }
+  }
+
+ private:
+  std::optional<std::string> saved_;
+};
 
 // The analysis tool lives in the Analyze workspace now: the share list in the middle area's
 // right column, the ROI controls above the panorama's picture. Both are TOP-LEVEL chrome windows
@@ -164,6 +206,39 @@ const char* const kThreeLayerLongChainJson = R"({
                                                      {"crystal": 2, "proportion": 10}]}]},
   "render": [{"ev_mode": "absolute", "id": 1, "lens": {"type": "fisheye_equal_area", "fov": 120},
               "resolution": [64, 64], "view": {"elevation": 20}}]
+})";
+
+// The plate scene (the family-arm face's own): a basal plate with a uniform azimuth axis — its
+// arc rows route to the restricted plate family, whose survey walks the freezing ladder and runs
+// the probe on the representative (the profile rows' home arm).
+const char* const kPlateJson = R"({
+  "crystal": [ { "id": 1, "type": "prism",
+                 "shape": { "height": 0.3, "face_distance": [1,1,1,1,1,1] },
+                 "axis": { "zenith": 0, "azimuth": {"type": "uniform", "mean": 0, "std": 360}, "roll": 0 } } ],
+  "filter": [],
+  "scene": { "light_source": { "type": "sun", "altitude": 20, "azimuth": 0, "diameter": 0.5,
+                               "spectrum": [ { "wavelength": 550, "weight": 1 } ] },
+             "ray_num": 1000, "max_hits": 7,
+             "scattering": [ { "prob": 0, "entries": [ { "crystal": 1, "proportion": 1 } ] } ] },
+  "render": []
+})";
+
+// The narrow-plate scene (the profile-hover face's own): a plate whose zenith is a Gaussian
+// concentration and whose roll is free — an arc row routes to the restricted plate family AND
+// carries a pose density, so the family arm runs its quantification legs (a fixed zenith or roll
+// maps to no density and skips the probe among them, leaving the profile rows nothing to draw).
+const char* const kNarrowPlateJson = R"({
+  "crystal": [ { "id": 1, "type": "prism",
+                 "shape": { "height": 0.3, "face_distance": [1,1,1,1,1,1] },
+                 "axis": { "zenith": { "type": "gauss", "mean": 0, "std": 2 },
+                           "azimuth": {"type": "uniform", "mean": 0, "std": 360},
+                           "roll": {"type": "uniform", "mean": 0, "std": 360} } } ],
+  "filter": [],
+  "scene": { "light_source": { "type": "sun", "altitude": 20, "azimuth": 0, "diameter": 0.5,
+                               "spectrum": [ { "wavelength": 550, "weight": 1 } ] },
+             "ray_num": 1000, "max_hits": 7,
+             "scattering": [ { "prob": 0, "entries": [ { "crystal": 1, "proportion": 1 } ] } ] },
+  "render": []
 })";
 
 // Same shape as test_gui_sim_smoke.cpp's guard, for the same reason: IM_CHECK returns out of
@@ -922,6 +997,83 @@ bool UnprojectMouse(float out[3]) {
       gui::PreviewAnnotationView(gui::g_state, gui::g_panorama_vp.vp_w, gui::g_panorama_vp.vp_h);
   int valid = 0;
   return LUMICE_UnprojectPixel(&view, px->px, px->py, out, &valid) == LUMICE_OK && valid == 1;
+}
+
+// The Analyze main view's chrome window (the picture child, the status viewport and the
+// operation bar all render inside it). The chrome window and the picture child share the name
+// segment ##AnalyzePanorama (the child spells "##AnalyzePanoramaPicture_<id>"), so the lookup is
+// exact-name, not a fragment match.
+ImGuiWindow* AnalyzePanoramaHostWindow() {
+  for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
+    if (w != nullptr && w->WasActive && std::strcmp(w->Name, "##AnalyzePanorama") == 0) {
+      return w;
+    }
+  }
+  return nullptr;
+}
+
+// The drift warning's ink over the Analyze main view, read off the draw lists the way the user
+// sees it. Every active window whose ancestor chain reaches the ##AnalyzePanorama chrome
+// contributes the vertices that carry the given text colour; the drift warning's glyphs are the
+// only warning-coloured ink that subtree draws (the marker and ring are accent, the status prose
+// is the regular text colour), so the probe answers for the warning line directly. The verdict
+// the callers need is the pair: whether any of it was drawn at all, and whether every vertex
+// sits inside its own window's InnerClipRect — a line scrolled past its child's fold is either
+// emitted below the clip or not emitted at all (RenderText stops at the clip bottom, and a
+// fully-culled item never reaches AddText), and both shapes fail the "visible without
+// scrolling" bar the drift warning's AC pins.
+struct PanoramaWarningInk {
+  bool found = false;
+  bool clipped = false;
+  ImRect bbox = ImRect(FLT_MAX, FLT_MAX, -FLT_MAX, -FLT_MAX);
+  int vertices = 0;
+};
+
+PanoramaWarningInk CollectPanoramaWarningInk(ImU32 colour) {
+  PanoramaWarningInk ink;
+  ImGuiWindow* host = AnalyzePanoramaHostWindow();
+  if (host == nullptr) {
+    return ink;
+  }
+  for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
+    if (w == nullptr || !w->WasActive || w->DrawList == nullptr) {
+      continue;
+    }
+    bool under_host = false;
+    for (const ImGuiWindow* p = w; p != nullptr; p = p->ParentWindow) {
+      if (p == host) {
+        under_host = true;
+        break;
+      }
+    }
+    if (!under_host) {
+      continue;
+    }
+    for (const ImDrawVert& v : w->DrawList->VtxBuffer) {
+      if (v.col != colour) {
+        continue;
+      }
+      ink.found = true;
+      ++ink.vertices;
+      ink.bbox.Add(v.pos);
+      // Half a pixel of rounding slack — the same containment tolerance the region pins use.
+      if (v.pos.x < w->InnerClipRect.Min.x - 0.5f || v.pos.x > w->InnerClipRect.Max.x + 0.5f ||
+          v.pos.y < w->InnerClipRect.Min.y - 0.5f || v.pos.y > w->InnerClipRect.Max.y + 0.5f) {
+        ink.clipped = true;
+      }
+    }
+  }
+  return ink;
+}
+
+// The exact packed colour the warning text's vertices carry, read the way the renderer reads it:
+// push the semantic colour, read ImGuiCol_Text back — so a theme change or a global alpha
+// factor cannot drift the probe away from what was actually drawn.
+ImU32 WarningTextVertexColour() {
+  ImGui::PushStyleColor(ImGuiCol_Text, gui::WarningTextColor());
+  const ImU32 colour = ImGui::GetColorU32(ImGuiCol_Text);
+  ImGui::PopStyleColor();
+  return colour;
 }
 
 // Whether the pick banner is on screen: the banner child exists and was submitted last frame
@@ -2461,17 +2613,6 @@ bool PointInspectorShowsThePointFiberAndThePath(ImGuiTestContext* ctx) {
 // chain sends the sun's image straight through — the point at the sun itself is a point mass,
 // not a fiber). Fixed-dt pool: the mass arm answers in milliseconds.
 bool PointMassArmIsHonestAndForcesNoFiber(ImGuiTestContext* ctx) {
-  static const char* const kPlateJson = R"({
-    "crystal": [ { "id": 1, "type": "prism",
-                   "shape": { "height": 0.3, "face_distance": [1,1,1,1,1,1] },
-                   "axis": { "zenith": 0, "azimuth": {"type": "uniform", "mean": 0, "std": 360}, "roll": 0 } } ],
-    "filter": [],
-    "scene": { "light_source": { "type": "sun", "altitude": 20, "azimuth": 0, "diameter": 0.5,
-                                 "spectrum": [ { "wavelength": 550, "weight": 1 } ] },
-               "ray_num": 1000, "max_hits": 7,
-               "scattering": [ { "prob": 0, "entries": [ { "crystal": 1, "proportion": 1 } ] } ] },
-    "render": []
-  })";
   ScopedServerGuard guard;
   IM_CHECK_RETV(BringUpScene(ctx, kPlateJson, /*infinite=*/false, /*gpu=*/false), false);
   OpenWindow(ctx);
@@ -2591,41 +2732,75 @@ bool SurveyOverviewShowsDispersionAndProfile(ImGuiTestContext* ctx) {
     IM_CHECK_RETV(frame_text.find("The complete answer is in the Raypath view.") != std::string::npos, false);
     IM_CHECK_RETV(frame_text.find("member(s)") == std::string::npos, false);
     IM_CHECK_RETV(frame_text.find("kept lattice events") == std::string::npos, false);
-    IM_CHECK_RETV(frame_text.find("Physics details") == std::string::npos, false);
+    IM_CHECK_RETV(frame_text.find("Class evidence") == std::string::npos, false);
+    IM_CHECK_RETV(frame_text.find("Class diagnostics") == std::string::npos, false);
   }
   // The complete answer lives in the Raypath view: open it and the class answer section draws
-  // the same document through the full renderer — fold groups present, both closed by default.
-  // The closed state is proven mechanically: a closed CollapsingHeader submits no body, so the
-  // counts line ("member(s)") and the profile section label are absent from the frame text
-  // while both groups stand unopened.
-  ctx->ItemClick("**/Raypath view###main_raypath_open");
-  ctx->Yield(2);
-  IM_CHECK_RETV(gui::g_state.analyze_raypath_view_open, false);
-  const std::string report_text = CaptureMapFrameText(ctx);
-  IM_CHECK_RETV(report_text.find("Class answer") != std::string::npos, false);
-  IM_CHECK_RETV(report_text.find("member(s)") == std::string::npos, false);
-  IM_CHECK_RETV(report_text.find("Reference profile") == std::string::npos, false);
-  const ImGuiID physics_fold = ctx->ItemInfo("**/Physics details##sv_answer", ImGuiTestOpFlags_NoError).ID;
-  const ImGuiID calculation_fold = ctx->ItemInfo("**/Calculation details##sv_answer", ImGuiTestOpFlags_NoError).ID;
-  IM_CHECK_RETV(physics_fold != 0 && calculation_fold != 0, false);
-  // The Physics group, expanded: the reference curve on screen is the human-readable half of
-  // the probe block's evidence (the samples and their gap rule are the model test's). The
-  // group header lives inside the map report child, so the item is addressed through the
-  // wildcard (the GUI test engine-addressing rule for items inside a named child).
-  ctx->ItemClick("**/Physics details##sv_answer");
-  ctx->Yield(2);
-  if (ImGuiWindow* report = MapReportWindow()) {
-    report->Scroll.y = report->ScrollMax.y;
-  }
-  ctx->Yield(2);
-  IM_CHECK_RETV(SaveWindowPng(ctx, "//Raypath view", GuiTestTempPath("analysis_survey_overview_profile.png").string()),
-                false);
-  // And the Calculation group: the L4 facts are one fold away, present in the same window.
-  ctx->ItemClick("**/Calculation details##sv_answer");
-  ctx->Yield(2);
+  // the same document through the full renderer. This leg is also the env gate's three-state
+  // spine on the survey host: the shipped default and an explicit "0" both leave the "Class
+  // diagnostics" group UNSUBMITTED (header and body — a closed CollapsingHeader submits no
+  // body, and a gated group submits no header either), while the evidence group stands in
+  // every state; "1" surfaces the diagnostics group, and the env going off again wins over
+  // the storage's still-open expansion state.
   {
+    const ScopedDebugDetailsEnv env_off(DebugDetailsState::kOff);
+    ctx->ItemClick("**/Raypath view###main_raypath_open");
+    ctx->Yield(2);
+    IM_CHECK_RETV(gui::g_state.analyze_raypath_view_open, false);
+    const std::string report_text = CaptureMapFrameText(ctx);
+    IM_CHECK_RETV(report_text.find("Class answer") != std::string::npos, false);
+    IM_CHECK_RETV(report_text.find("member(s)") == std::string::npos, false);
+    IM_CHECK_RETV(report_text.find("Reference profile") == std::string::npos, false);
+    const ImGuiID evidence_fold = ctx->ItemInfo("**/Class evidence##sv_answer", ImGuiTestOpFlags_NoError).ID;
+    const ImGuiID diagnostics_fold = ctx->ItemInfo("**/Class diagnostics##sv_answer", ImGuiTestOpFlags_NoError).ID;
+    IM_CHECK_RETV(evidence_fold != 0, false);
+    // An explicit "0" leaves the diagnostics header unsubmitted.
+    IM_CHECK_RETV(diagnostics_fold == 0, false);
+    // The evidence group, expanded: the reference curve on screen is the human-readable half
+    // of the probe block's evidence (the samples and their gap rule are the model test's).
+    // The group header lives inside the map report child, so the item is addressed through
+    // the wildcard (the GUI test engine-addressing rule for items inside a named child). The
+    // implementation-level rows the evidence group gave up — the engine's dispersion-table n
+    // pair, the freezing ladder's raw enumeration — stay absent here however far the group
+    // opens: they moved to the diagnostics group, not behind another fold.
+    ctx->ItemClick("**/Class evidence##sv_answer");
+    ctx->Yield(2);
+    if (ImGuiWindow* report = MapReportWindow()) {
+      report->Scroll.y = report->ScrollMax.y;
+    }
+    ctx->Yield(2);
+    IM_CHECK_RETV(
+        SaveWindowPng(ctx, "//Raypath view", GuiTestTempPath("analysis_survey_overview_profile.png").string()), false);
+    const std::string evidence_text = CaptureMapFrameText(ctx);
+    IM_CHECK_RETV(evidence_text.find("Deviation from") != std::string::npos, false);
+    IM_CHECK_RETV(evidence_text.find("Refractive indices n(") == std::string::npos, false);
+    IM_CHECK_RETV(evidence_text.find("member(s)") == std::string::npos, false);
+    ctx->ItemClick("**/Class evidence##sv_answer");  // restore the default-closed shape
+    ctx->Yield(2);
+  }
+  {
+    // The diagnostics group under "1": the header the "0" leg proved absent now stands (the
+    // gate is re-read every frame, never cached), and its body carries the execution counts
+    // plus the implementation rows the evidence group gave up.
+    const ScopedDebugDetailsEnv env_on(DebugDetailsState::kOn);
+    ctx->Yield(2);
+    const ImGuiID diagnostics_fold = ctx->ItemInfo("**/Class diagnostics##sv_answer", ImGuiTestOpFlags_NoError).ID;
+    IM_CHECK_RETV(diagnostics_fold != 0, false);
+    ctx->ItemClick("**/Class diagnostics##sv_answer");
+    ctx->Yield(2);
     const std::string opened_text = CaptureMapFrameText(ctx);
     IM_CHECK_RETV(opened_text.find("member(s)") != std::string::npos, false);
+    IM_CHECK_RETV(opened_text.find("Refractive indices n(") != std::string::npos, false);
+    ctx->ItemClick("**/Class diagnostics##sv_answer");  // restore the default-closed shape
+    ctx->Yield(2);
+  }
+  {
+    // The env off again, with the storage still remembering nothing open: the header is gone
+    // either way — gating is display eligibility, not an expansion state of its own.
+    const ScopedDebugDetailsEnv env_unset(DebugDetailsState::kUnset);
+    ctx->Yield(2);
+    const ImGuiID diagnostics_fold = ctx->ItemInfo("**/Class diagnostics##sv_answer", ImGuiTestOpFlags_NoError).ID;
+    IM_CHECK_RETV(diagnostics_fold == 0, false);
   }
   ctx->WindowClose("//Raypath view");
   ctx->Yield(1);
@@ -2730,6 +2905,216 @@ bool VerdictAnchorHoverAndToggleOnTheMap(ImGuiTestContext* ctx) {
 // The engine's named refusal, on the two-layer scene: a multi-layer class is a legitimate
 // selection and the survey answers it with multi_layer_unsupported — shown, not fabricated
 // around (R5/R7; the multi-layer evidence the plan's M3-5 asks to be on file).
+// The report window's colour-bucket count (the map face's own read, one window over): the
+// legend icons are the only consumers of their colours inside ##MapReport — the map's own markers
+// live in the map region's window.
+int MapReportIndexCountForColour(ImU32 colour) {
+  const ImGuiWindow* report = MapReportWindow();
+  if (report == nullptr) {
+    return 0;
+  }
+  const ImDrawList* dl = report->DrawList;
+  int count = 0;
+  for (int i = 0; i + 5 < dl->IdxBuffer.Size; i += 6) {
+    bool matches = true;
+    for (int k = 0; k < 6; ++k) {
+      if (dl->VtxBuffer[static_cast<int>(dl->IdxBuffer[i + k])].col != colour) {
+        matches = false;
+        break;
+      }
+    }
+    if (matches) {
+      count += 6;
+    }
+  }
+  return count;
+}
+
+// The row-highlight read: the bbox of one colour's vertices inside ##MapReport (the theme's
+// hovered-header ink the row backgrounds draw with), false when nothing drew in it.
+bool ReportHighlightBBox(ImU32 colour, ImVec2* out_min, ImVec2* out_max) {
+  const ImGuiWindow* report = MapReportWindow();
+  if (report == nullptr) {
+    return false;
+  }
+  const ImDrawList* dl = report->DrawList;
+  bool any = false;
+  for (int i = 0; i < dl->VtxBuffer.Size; ++i) {
+    const ImDrawVert& v = dl->VtxBuffer[i];
+    if (v.col != colour) {
+      continue;
+    }
+    *out_min = any ? ImVec2(std::min(out_min->x, v.pos.x), std::min(out_min->y, v.pos.y)) : ImVec2(v.pos.x, v.pos.y);
+    *out_max = any ? ImVec2(std::max(out_max->x, v.pos.x), std::max(out_max->y, v.pos.y)) : ImVec2(v.pos.x, v.pos.y);
+    any = true;
+  }
+  return any;
+}
+
+// Two rects intersect iff NEITHER axis separates them — the row highlight's own criterion. The
+// two axis separations join with OR: a highlight drawn one row above or below the target shares
+// the rows' x span, so only the OR rejects it (the AND-shaped mix the first draft had let exactly
+// that shape through).
+bool RowRectsIntersect(const ImRect& a, const ImRect& b) {
+  return (a.Min.x <= b.Max.x && a.Max.x >= b.Min.x) && (a.Min.y <= b.Max.y && a.Max.y >= b.Min.y);
+}
+
+// The 2026-11-12 feedback wave's interaction face (contract §16.1.3's extension): the class
+// answer's rows highlight where the pointer stands (AC1/AC3 — the ratio row's feedback is local
+// by design, it names no spatial payload), the three profile reading rows drive the map's profile
+// device one frame later (AC2 — a point at the edge/peak reading, the radial interval between
+// them for separation), the Overlays gate holds the device back while the row feedback stays (the
+// total gate's own leg), and the four anchor legend entries carry their icons (AC4). Fixture: the
+// narrow-plate scene — its arc rows route to the restricted plate family, whose survey runs the
+// probe. Flake attribution, should this ever red: the premise asserts below (the family arm's
+// probe readings, the azimuth availability, the sun echo) are the FIRST suspects — the survey's
+// quantification legs complete in seconds of an unseeded whole-sky analysis, so a red premise is
+// a data/ranking or budget-truncation event, not an interaction-chain defect.
+bool ProfileRowsHighlightAndDrawOnTheMap(ImGuiTestContext* ctx) {
+  ScopedServerGuard guard;
+  IM_CHECK_RETV(BringUpScene(ctx, kNarrowPlateJson, /*infinite=*/false, /*gpu=*/false), false);
+  OpenWindow(ctx);
+  IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
+  // The explicit chain row: the first 2+ face row in the display order (single-face rows refuse
+  // as invalid paths; the traversal's rule is the explicit part, the premise asserts below are
+  // what make the physical basis real).
+  std::string target;
+  for (const size_t idx : gui::g_state.analysis_result.display_order) {
+    const std::string d = gui::g_state.analysis_result.payload->entries[idx].display;
+    if (d != "1-2" && d.find('-') != std::string::npos) {
+      target = d;
+      break;
+    }
+  }
+  IM_CHECK_RETV(!target.empty(), false);
+  SetListRef(ctx);
+  ctx->ItemClick((std::string("**/") + target).c_str());
+  ctx->SetRef("");
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      return gui::SurveyOverviewStateFor(gui::g_state.analysis.survey) ==
+                             gui::SurveyOverviewState::kCompleted;
+                    },
+                    60),
+                false);
+  const gui::SurveyOverviewModel model = gui::BuildSurveyOverviewModel(*gui::g_state.analysis.survey.adopted_result);
+  IM_CHECK_RETV(model.valid && model.arm == gui::SurveyArm::kFamily, false);
+  IM_CHECK_RETV(model.probe.available && model.probe.edge_available && model.probe.peak_available &&
+                    model.probe.separation_available,
+                false);
+  IM_CHECK_RETV(model.probe.azimuth_available, false);
+  IM_CHECK_RETV(model.sun_available, false);
+  ctx->LogInfo("[profile hover] %s: edge %.3f peak %.3f sep %.3f az %.1f sun %.1f/%.1f", target.c_str(),
+               model.probe.edge_deg, model.probe.peak_deg, model.probe.separation_deg, model.probe.azimuth_deg,
+               model.sun_altitude_deg, model.sun_azimuth_deg);
+  // The row click opened the Raypath view (§16.3's content shortcut); the Full-sky preset is the
+  // robust aim (the verdict face's lesson): every reading keeps in-view samples there.
+  IM_CHECK_RETV(gui::g_state.analyze_raypath_view_open, false);
+  ctx->ItemClick("**/Full sky##map");
+  ctx->Yield(3);
+  // The default frame: no hover, no profile ink — the map is the picture it always was.
+  const ImU32 hovered_ink = ImGui::GetColorU32(ImGuiCol_HeaderHovered);
+  IM_CHECK_RETV(gui::g_state.analysis.profile_row_hover == gui::SurveyProfileHover::kNone, false);
+  IM_CHECK_RETV(MapWindowIndexCountForColour(gui::kProfileReadingColour) == 0, false);
+  // The intersection predicate's own legs, before the rows lean on it: the adjacent-row shape the
+  // OR form exists to reject (horizontal overlap, vertical separation — above and below), and a
+  // genuine overlap the predicate must still accept.
+  IM_CHECK_RETV(!RowRectsIntersect(ImRect(0, 0, 100, 10), ImRect(0, 20, 100, 30)), false);
+  IM_CHECK_RETV(!RowRectsIntersect(ImRect(0, 0, 100, 10), ImRect(0, -30, 100, -20)), false);
+  IM_CHECK_RETV(RowRectsIntersect(ImRect(0, 0, 100, 10), ImRect(0, 5, 100, 15)), false);
+  IM_CHECK_RETV(RowRectsIntersect(ImRect(0, 0, 100, 10), ImRect(50, 0, 150, 10)), false);
+  auto hover_row = [&](const char* id, gui::SurveyProfileHover expect) -> bool {
+    ctx->ScrollToItem(id, ImGuiAxis_Y);
+    ctx->Yield(1);
+    const ImVec2 center = ctx->ItemInfo(id).RectFull.GetCenter();
+    ctx->MouseMoveToPos(center);
+    ctx->Yield(3);
+    if (gui::g_state.analysis.profile_row_hover != expect) {
+      ctx->LogError("[profile hover] %s: session identity is %d, expected %d", id,
+                    static_cast<int>(gui::g_state.analysis.profile_row_hover), static_cast<int>(expect));
+      return false;
+    }
+    // The row's own highlight, THIS frame: the theme ink's bbox in the report window intersects
+    // the row's own rect (the background rides the text, under it — the text stays foreground).
+    ImVec2 hmin(0.0f, 0.0f);
+    ImVec2 hmax(0.0f, 0.0f);
+    if (!ReportHighlightBBox(hovered_ink, &hmin, &hmax)) {
+      ctx->LogError("[profile hover] %s: no highlight ink in the report window", id);
+      return false;
+    }
+    const ImRect row = ctx->ItemInfo(id).RectFull;
+    const ImRect highlight(hmin, hmax);
+    if (!RowRectsIntersect(highlight, row)) {
+      ctx->LogError(
+          "[profile hover] %s: highlight bbox (%.0f,%.0f)-(%.0f,%.0f) misses the row rect (%.0f,%.0f)-(%.0f,%.0f)", id,
+          hmin.x, hmin.y, hmax.x, hmax.y, row.Min.x, row.Min.y, row.Max.x, row.Max.y);
+      return false;
+    }
+    return true;
+  };
+  // The edge row: the point device on the map, the highlight on the row.
+  IM_CHECK_RETV(hover_row("**/###profile_edge_row", gui::SurveyProfileHover::kEdge), false);
+  IM_CHECK_RETV(MapWindowIndexCountForColour(gui::kProfileReadingColour) > 0, false);
+  // The peak row: the point moves (the readings differ by tens of degrees — the count alone
+  // cannot tell a stuck point from a moved one, so this leg reads the session identity and the
+  // ink's existence; the unit tier owns the positions).
+  IM_CHECK_RETV(hover_row("**/###profile_peak_row", gui::SurveyProfileHover::kPeak), false);
+  IM_CHECK_RETV(MapWindowIndexCountForColour(gui::kProfileReadingColour) > 0, false);
+  // The separation row: the interval device. Same-source frames for the human eye: the row
+  // highlight and the interval are the two things a screenshot judges better than a bucket read.
+  IM_CHECK_RETV(hover_row("**/###profile_separation_row", gui::SurveyProfileHover::kSeparation), false);
+  IM_CHECK_RETV(MapWindowIndexCountForColour(gui::kProfileReadingColour) > 0, false);
+  IM_CHECK_RETV(SaveWindowPng(ctx, "//Raypath view", GuiTestTempPath("analysis_profile_hover_separation.png").string()),
+                false);
+  // Off the rows: both the identity and the ink leave (the overwrite's own closure).
+  ctx->MouseMoveToPos(ImVec2(-100.0f, -100.0f));
+  ctx->Yield(3);
+  IM_CHECK_RETV(gui::g_state.analysis.profile_row_hover == gui::SurveyProfileHover::kNone, false);
+  IM_CHECK_RETV(MapWindowIndexCountForColour(gui::kProfileReadingColour) == 0, false);
+  {
+    ImVec2 hmin(0.0f, 0.0f);
+    ImVec2 hmax(0.0f, 0.0f);
+    IM_CHECK_RETV(!ReportHighlightBBox(hovered_ink, &hmin, &hmax), false);
+  }
+  // The Overlays gate: off, the row's highlight and identity stand, the map draws nothing —
+  // the profile device nests under the gate exactly like the verdict anchor does.
+  ctx->ItemClick("**/Overlays##map");
+  ctx->Yield(2);
+  IM_CHECK_RETV(hover_row("**/###profile_edge_row", gui::SurveyProfileHover::kEdge), false);
+  IM_CHECK_RETV(MapWindowIndexCountForColour(gui::kProfileReadingColour) == 0, false);
+  ctx->ItemClick("**/Overlays##map");
+  ctx->Yield(2);
+  // The ratio row: highlight present, no map geometry (AC3's honest local feedback).
+  IM_CHECK_RETV(hover_row("**/###tint_ratio_row", gui::g_state.analysis.profile_row_hover), false);
+  IM_CHECK_RETV(MapWindowIndexCountForColour(gui::kProfileReadingColour) == 0, false);
+  // The verdict row (AC1's existing-rows leg): the two pilot rows now highlight too — the anchor
+  // draw itself is the verdict face's own test.
+  IM_CHECK_RETV(hover_row("**/###diagnose_verdict_row", gui::g_state.analysis.profile_row_hover), false);
+  ctx->MouseMoveToPos(ImVec2(-100.0f, -100.0f));
+  ctx->Yield(3);
+  // The legend icons (AC4): scroll the report to its legend, then assert the icons' colour
+  // buckets — the frame anchors drew (full sky), so the sun's gold and the zenith/horizon greys
+  // stand; the anchor's icon rides its toggle.
+  if (ImGuiWindow* report = MapReportWindow()) {
+    report->Scroll.y = report->ScrollMax.y;
+  }
+  ctx->Yield(2);
+  IM_CHECK_RETV(MapReportIndexCountForColour(IM_COL32(255, 231, 168, 255)) > 0, false);
+  IM_CHECK_RETV(MapReportIndexCountForColour(IM_COL32(200, 205, 215, 110)) > 0, false);
+  ctx->ItemClick("**/Verdict anchors##map");
+  ctx->Yield(3);
+  IM_CHECK_RETV(gui::LastMapOverlayLegend().verdict_anchor, false);
+  const ImU32 anchor_ink = gui::LastMapOverlayLegend().verdict_anchor_colour;
+  IM_CHECK_RETV(MapReportIndexCountForColour(anchor_ink) > 0, false);
+  IM_CHECK_RETV(SaveWindowPng(ctx, "//Raypath view", GuiTestTempPath("analysis_legend_icons.png").string()), false);
+  ctx->ItemClick("**/Verdict anchors##map");
+  ctx->Yield(2);
+  ctx->WindowClose("//Raypath view");
+  ctx->Yield(1);
+  return true;
+}
+
 bool SurveyRefusesMultilayerClassByName(ImGuiTestContext* ctx) {
   ScopedServerGuard guard;
   IM_CHECK_RETV(BringUpScene(ctx, kPcTwoLayerJson, /*infinite=*/false, /*gpu=*/false), false);
@@ -3473,6 +3858,866 @@ bool TraceLegendSwatchesAvoidText(ImGuiTestContext* ctx) {
   return true;
 }
 
+// ---- The 2026-11-12 display-model legs (feedback #7/#8/#9): mesh-only framing, cumulative
+// Fresnel widths, ratio labels, contact facing. The oracle side reads the SAME persisted frame
+// fields (Ray3DFrameInfo) through the shared CrystalRenderer camera formulas and inspects the
+// submitted primitives — never a second copy of the renderer's internals. ----
+
+// The display-space point of a polyline/contact point (the frame switch's own transform: the
+// world view leaves a world point alone, the crystal view rotates it back by the pose).
+void TracePolylinePointToDisplay(const gui::Ray3DFrameInfo& frame, const float p[3], float out[3]) {
+  float tmp[3] = { p[0], p[1], p[2] };
+  if (frame.crystal_frame) {
+    gui::RayTracePointToCrystalFrame(frame.pose, tmp);
+  }
+  out[0] = tmp[0];
+  out[1] = tmp[1];
+  out[2] = tmp[2];
+}
+
+// The near-plane-clipped pixel endpoints of a display-space segment — the production clip's
+// independent twin: scene coordinates over frame.centre/fit, homogeneous clip over frame.mvp,
+// the plane from CrystalRenderer::ComputeNearPlane(frame.zoom) (the frustum's own near plane).
+// False when the whole segment sits behind the near plane.
+bool TraceOracleClipSegment(const gui::Ray3DFrameInfo& frame, const float display_a[3], const float display_b[3],
+                            ImVec2* pa, ImVec2* pb) {
+  const float near_w = gui::CrystalRenderer::ComputeNearPlane(frame.zoom);
+  float clip[2][4];
+  const float* displays[2] = { display_a, display_b };
+  for (int e = 0; e < 2; ++e) {
+    for (int row = 0; row < 4; ++row) {
+      clip[e][row] = frame.mvp[12 + row];
+      for (int k = 0; k < 3; ++k) {
+        clip[e][row] += frame.mvp[k * 4 + row] * ((displays[e][k] - frame.centre[k]) / frame.fit);
+      }
+    }
+  }
+  if (clip[0][3] < near_w && clip[1][3] < near_w) {
+    return false;
+  }
+  float t[2] = { 0.0f, 1.0f };
+  if (clip[0][3] < near_w) {
+    t[0] = (near_w - clip[0][3]) / (clip[1][3] - clip[0][3]);
+  }
+  if (clip[1][3] < near_w) {
+    t[1] = (near_w - clip[0][3]) / (clip[1][3] - clip[0][3]);
+  }
+  for (int e = 0; e < 2; ++e) {
+    float c[4];
+    for (int k = 0; k < 4; ++k) {
+      c[k] = clip[0][k] + (clip[1][k] - clip[0][k]) * t[e];
+    }
+    ImVec2& out = e == 0 ? *pa : *pb;
+    out = ImVec2(frame.canvas_min.x + (c[0] / c[3] + 1.0f) * 0.5f * frame.canvas_size.x,
+                 frame.canvas_min.y + (1.0f - c[1] / c[3]) * 0.5f * frame.canvas_size.y);
+  }
+  return true;
+}
+
+// The adopted chain's per-segment cumulative energies, multiplied test-side from the C readers
+// (the pure rule's hand anchors live in the unit layer; the same +-1e-6 usability band).
+struct TraceChainEnergies {
+  std::vector<double> energies;  // per segment, the entry leg 1.0
+  std::vector<bool> valid;       // false from the first unusable factor on
+};
+bool TraceReadChainEnergies(TraceChainEnergies* out) {
+  LUMICE_PathRayContacts contacts{};
+  contacts.struct_size = sizeof(contacts);
+  if (LUMICE_RepresentativeRayGetContacts(gui::g_state.analysis.trace.adopted_result.get(), &contacts) !=
+          LUMICE_PATH_READ_OK ||
+      contacts.contact_count == 0) {
+    return false;
+  }
+  const size_t segments = contacts.contact_count + 1;
+  out->energies.assign(segments, 1.0);
+  out->valid.assign(segments, true);
+  for (size_t k = 0; k < contacts.contact_count; ++k) {
+    const double q = contacts.contacts[k].transmittance;
+    out->valid[k + 1] = out->valid[k] && std::isfinite(q) && q >= -1e-6 && q <= 1.0 + 1e-6;
+    out->energies[k + 1] = out->valid[k + 1] ? out->energies[k] * std::clamp(q, 0.0, 1.0) : out->energies[k];
+  }
+  return true;
+}
+
+// What each segment SHOULD have submitted: the near-clipped endpoints, the shared mapping's
+// width (neutral past an unusable factor), and whether the segment drew at all (an exact zero
+// draws no ink) and whether anything of it is on the canvas.
+struct TraceExpectedLine {
+  int seg = 0;
+  int kind = 0;
+  ImVec2 pa;
+  ImVec2 pb;
+  float width = 0.0f;
+  double energy = 0.0;
+  bool drawn = false;
+  bool touches_canvas = false;
+};
+bool TraceBuildExpectedLines(const gui::Ray3DFrameInfo& frame, const TraceChainEnergies& chain,
+                             std::vector<TraceExpectedLine>* out) {
+  gui::RayTracePolyline line;
+  if (!gui::BuildRayTracePolyline(*gui::g_state.analysis.trace.adopted_result, 1.1f, &line) ||
+      line.seg_kinds.size() != chain.energies.size()) {
+    return false;
+  }
+  out->clear();
+  for (size_t s = 0; s < line.seg_kinds.size(); ++s) {
+    TraceExpectedLine e;
+    e.seg = static_cast<int>(s);
+    e.kind = line.seg_kinds[s];
+    e.energy = chain.energies[s];
+    e.width = chain.valid[s] ? gui::RayTraceEnergyWidth(static_cast<float>(chain.energies[s])) :
+                               gui::UiPx(gui::kRayTraceWidthNeutralUi);
+    e.drawn = chain.valid[s] ? chain.energies[s] > 0.0 : true;
+    if (e.drawn) {
+      float d0[3];
+      float d1[3];
+      TracePolylinePointToDisplay(frame, &line.points[s * 6], d0);
+      TracePolylinePointToDisplay(frame, &line.points[s * 6 + 3], d1);
+      if (!TraceOracleClipSegment(frame, d0, d1, &e.pa, &e.pb)) {
+        e.drawn = false;  // fully behind the near plane — nothing submitted
+      } else {
+        // The oracle's own segment-rect clip (Liang-Barsky, written out here independently of
+        // the producer's RayTraceSegmentOnCanvas — the expectation must not reuse the
+        // producer's visibility predicate): an AABB overlap is only necessary, and a segment
+        // skimming past a corner must expect no label.
+        const ImVec2 canvas_max(frame.canvas_min.x + frame.canvas_size.x, frame.canvas_min.y + frame.canvas_size.y);
+        double u0 = 0.0;
+        double u1 = 1.0;
+        const double dx = static_cast<double>(e.pb.x) - e.pa.x;
+        const double dy = static_cast<double>(e.pb.y) - e.pa.y;
+        const auto cut = [&](double q, double dir) {
+          if (std::abs(dir) < 1e-12) {
+            return q >= 0.0;
+          }
+          const double r = q / dir;
+          if (dir < 0.0) {
+            if (r > u1) {
+              return false;
+            }
+            if (r > u0) {
+              u0 = r;
+            }
+          } else {
+            if (r < u0) {
+              return false;
+            }
+            if (r < u1) {
+              u1 = r;
+            }
+          }
+          return true;
+        };
+        e.touches_canvas =
+            cut(static_cast<double>(e.pa.x) - frame.canvas_min.x, -dx) && cut(canvas_max.x - e.pa.x, dx) &&
+            cut(static_cast<double>(e.pa.y) - frame.canvas_min.y, -dy) && cut(canvas_max.y - e.pa.y, dy) && u1 > u0;
+      }
+    }
+    out->push_back(e);
+  }
+  return true;
+}
+
+// AC2's primitive leg: each drawn line's stroke span, measured off its exact-color vertices,
+// must track the shared mapping's width — the span-minus-thickness offset (the vendored AA
+// path's own constant, read off the draw list's flags) stays ONE value across every measured
+// line, so span differences equal width differences; the chain's real decay shows a visible
+// spread. Runs with the toggle off (no label ink interleaves between the lines).
+bool TraceWidthsFollowCumulativeEnergy(ImGuiTestContext* ctx) {
+  const auto& frame = gui::LastRay3DFrameInfo();
+  IM_CHECK_RETV(frame.valid && frame.frame_count == ImGui::GetFrameCount(), false);
+  IM_CHECK_RETV(gui::g_state.analysis.point_view.show_fresnel_labels == false, false);
+  TraceChainEnergies chain;
+  IM_CHECK_RETV(TraceReadChainEnergies(&chain), false);
+  std::vector<TraceExpectedLine> expected;
+  IM_CHECK_RETV(TraceBuildExpectedLines(frame, chain, &expected), false);
+  const int expected_drawn = static_cast<int>(
+      std::count_if(expected.begin(), expected.end(), [](const TraceExpectedLine& e) { return e.drawn; }));
+  IM_CHECK_RETV(expected_drawn >= 3, false);  // entry + at least one internal + exit: the chain's shape
+  const ImGuiWindow* region = PoseRegionWindow("##AnalyzeRaypath3D");
+  IM_CHECK_RETV(region != nullptr, false);
+  const ImDrawList* dl = region->DrawList;
+  const ImDrawVert* verts = dl->VtxBuffer.begin();
+  const int total = dl->VtxBuffer.Size;
+  const bool aa = (dl->Flags & ImDrawListFlags_AntiAliasedLines) != 0;
+  const bool aa_tex = (dl->Flags & ImDrawListFlags_AntiAliasedLinesUseTex) != 0;
+  int cursor = 0;
+  float offset = 0.0f;
+  bool have_offset = false;
+  float min_w = FLT_MAX;
+  float max_w = -FLT_MAX;
+  for (const TraceExpectedLine& e : expected) {
+    if (!e.drawn) {
+      continue;
+    }
+    // One line's checks run inside an immediate lambda (the loop-fatal-assert rule: a fatal
+    // assert directly in a for body aborts the remaining rows; inside the lambda it returns
+    // only the row, and the row's own IM_CHECK diagnostics survive).
+    const bool line_ok = [&](const TraceExpectedLine& line) {
+      const float t = line.width;
+      // The vendored AddPolyline's branch: baked-lines texture path for integer thickness below
+      // IM_DRAWLIST_TEX_LINES_WIDTH_MAX (4 verts, span t + 2), geometry path otherwise (8 verts,
+      // the exact-color inner pair at +- (t-1)/2, span t - 1), the non-AA path (4 verts, span t).
+      int per_line = 0;
+      float want_offset = 0.0f;
+      if (!aa) {
+        per_line = 4;
+        want_offset = 0.0f;
+      } else if (aa_tex && (t - static_cast<float>(static_cast<int>(t))) <= 0.00001f &&
+                 static_cast<int>(t) < IM_DRAWLIST_TEX_LINES_WIDTH_MAX) {
+        per_line = 4;
+        want_offset = 2.0f;
+      } else {
+        per_line = 8;
+        want_offset = -1.0f;  // the width floor stays above the 1.0 thin-line boundary
+      }
+      // The geometry AA path interleaves alpha-0 fringe verts with the opaque core (per point:
+      // fringe, core, core, fringe) — match the RGB family and anchor at the line's run start.
+      const ImU32 rgb = gui::kRayTraceSegmentColors[line.kind] & ~IM_COL32_A_MASK;
+      while (cursor < total && (verts[cursor].col & ~IM_COL32_A_MASK) != rgb) {
+        ++cursor;
+      }
+      IM_CHECK_RETV(cursor + per_line <= total, false);
+      ImVec2 dir(line.pb.x - line.pa.x, line.pb.y - line.pa.y);
+      const float len = std::sqrt(dir.x * dir.x + dir.y * dir.y);
+      IM_CHECK_RETV(len > 1e-3f, false);
+      dir.x /= len;
+      dir.y /= len;
+      const float npx = dir.y;
+      const float npy = -dir.x;
+      // The span comes from the OPAQUE core verts only: the geometry path's alpha-0 fringe sits
+      // one AA pixel outside them (it would read t + 1); the texture and non-AA paths are opaque
+      // throughout, so their whole quad measures.
+      float lo = FLT_MAX;
+      float hi = -FLT_MAX;
+      bool any_opaque = false;
+      int wrong_family = 0;
+      for (int k = 0; k < per_line; ++k) {
+        wrong_family += ((verts[cursor + k].col & ~IM_COL32_A_MASK) == rgb) ? 0 : 1;
+        if (verts[cursor + k].col != gui::kRayTraceSegmentColors[line.kind]) {
+          continue;
+        }
+        const float proj = (verts[cursor + k].pos.x - line.pa.x) * npx + (verts[cursor + k].pos.y - line.pa.y) * npy;
+        lo = std::min(lo, proj);
+        hi = std::max(hi, proj);
+        any_opaque = true;
+      }
+      cursor += per_line;
+      IM_CHECK_RETV(any_opaque && wrong_family == 0, false);
+      const float span = hi - lo;
+      ctx->LogInfo("[trace width] seg %d kind %d E=%.4g width=%.3f span=%.3f offset=%.3f", line.seg, line.kind,
+                   line.energy, t, span, span - t);
+      if (have_offset) {
+        IM_CHECK_RETV(std::abs(span - t - offset) < 0.05f, false);
+      } else {
+        offset = span - t;
+        have_offset = true;
+      }
+      IM_CHECK_RETV(std::abs(span - t - want_offset) < 0.05f, false);
+      return true;
+    }(e);
+    if (!line_ok) {
+      return false;  // the row's own IM_CHECK named the failure
+    }
+    min_w = std::min(min_w, e.width);
+    max_w = std::max(max_w, e.width);
+  }
+  IM_CHECK_RETV(have_offset && max_w - min_w > 0.0f, false);
+  ctx->LogInfo("[trace width] measured %d lines, width spread %.3f-%.3f, path offset %.2f", expected_drawn, min_w,
+               max_w, offset);
+  return true;
+}
+
+// AC3's primitive leg: the ratio numbers default off, a real click turns them on, every
+// canvas-touching drawn segment then carries its label — the ink near the visible part's
+// midpoint, the exact ratio text from the render-feedback slot (the draw-list carries no
+// strings), and the canvas geometry holds still across the toggle.
+bool TraceLabelsFollowTheToggle(ImGuiTestContext* ctx) {
+  auto& view = gui::g_state.analysis.point_view;
+  struct Restore {
+    bool saved = gui::g_state.analysis.point_view.show_fresnel_labels;
+    ~Restore() { gui::g_state.analysis.point_view.show_fresnel_labels = saved; }
+  } restore;
+  IM_CHECK_RETV(view.show_fresnel_labels == false, false);  // the AC's initial state
+  ctx->Yield(2);
+  IM_CHECK_RETV(TraceCanvasVertices(gui::kRayTraceLabelColor).empty(), false);
+  const gui::Ray3DFrameInfo before = gui::LastRay3DFrameInfo();
+  IM_CHECK_RETV(before.valid, false);
+  ctx->SetRef("//Pose & trace");
+  ctx->ItemClick("**/Show Fresnel ratios##r3d_fresnel");
+  ctx->Yield(2);
+  IM_CHECK_RETV(view.show_fresnel_labels == true, false);
+  const auto& frame = gui::LastRay3DFrameInfo();
+  IM_CHECK_RETV(frame.valid && frame.frame_count == ImGui::GetFrameCount(), false);
+  IM_CHECK_RETV(frame.canvas_min.x == before.canvas_min.x && frame.canvas_min.y == before.canvas_min.y &&
+                    frame.canvas_size.x == before.canvas_size.x && frame.canvas_size.y == before.canvas_size.y,
+                false);
+  TraceChainEnergies chain;
+  IM_CHECK_RETV(TraceReadChainEnergies(&chain), false);
+  std::vector<TraceExpectedLine> expected;
+  IM_CHECK_RETV(TraceBuildExpectedLines(frame, chain, &expected), false);
+  const std::vector<ImVec2> label_ink = TraceCanvasVertices(gui::kRayTraceLabelColor);
+  // The rect feedback's contract first: five floats per segment, or a missing production
+  // writer fails HERE instead of indexing an empty vector.
+  IM_CHECK_RETV(gui::g_state.analysis.ray3d_fresnel_label_rects.size() == expected.size() * 5, false);
+  std::vector<ImRect> placed_rects;
+  int labelled = 0;
+  for (const TraceExpectedLine& e : expected) {
+    // One segment's checks run inside an immediate lambda (the loop-fatal-assert rule).
+    const bool seg_ok = [&](const TraceExpectedLine& line) {
+      const std::string& drawn_text = gui::g_state.analysis.ray3d_fresnel_labels[static_cast<size_t>(line.seg)];
+      if (!line.drawn || !line.touches_canvas) {
+        IM_CHECK_RETV(drawn_text.empty(), false);  // nothing submitted or nothing on show — no slot
+        return true;
+      }
+      const std::string want = gui::RayTraceEnergyLabelText(
+          gui::RayTraceSegmentEnergy{ chain.energies[line.seg], chain.valid[static_cast<size_t>(line.seg)] });
+      IM_CHECK_RETV(drawn_text == want, false);
+      // The per-label render feedback: the submitted text rect plus the placement kind. The
+      // rects are the READABILITY evidence (the reviewer's real-frame screenshot caught
+      // overlapping labels the old "some vertex nearby" check could not see); the leader's
+      // landing is the IDENTITY evidence for a non-default placement.
+      const float* rect = &gui::g_state.analysis.ray3d_fresnel_label_rects[static_cast<size_t>(line.seg) * 5];
+      IM_CHECK_RETV(rect[2] > rect[0] && rect[3] > rect[1], false);  // a real submitted rect
+      const ImRect placed(rect[0], rect[1], rect[2], rect[3]);
+      const ImVec2 mid((line.pa.x + line.pb.x) * 0.5f, (line.pa.y + line.pb.y) * 0.5f);
+      const int kind = static_cast<int>(rect[4]);
+      if (kind == 0) {
+        // The default offset: the rect stays next to its own visible midpoint (the rect-to-
+        // point distance — nearest-edge gap — under the default offset's reach).
+        const float gap_x = std::max(std::max(mid.x - placed.Max.x, placed.Min.x - mid.x), 0.0f);
+        const float gap_y = std::max(std::max(mid.y - placed.Max.y, placed.Min.y - mid.y), 0.0f);
+        IM_CHECK_RETV(std::hypot(gap_x, gap_y) < gui::UiPx(12.0f), false);
+      } else {
+        // Shifted / leader fallback: the leader lands a few px short of the visible midpoint —
+        // the label bucket must carry a vertex there (the identity the plan forbids losing).
+        const float bound = gui::UiPx(6.0f);
+        const bool leader_lands = std::any_of(label_ink.begin(), label_ink.end(), [&](const ImVec2& v) {
+          const float dx = v.x - mid.x;
+          const float dy = v.y - mid.y;
+          return dx * dx + dy * dy < bound * bound;
+        });
+        IM_CHECK_RETV(leader_lands, false);
+      }
+      placed_rects.push_back(placed);
+      return true;
+    }(e);
+    if (!seg_ok) {
+      return false;  // the row's own IM_CHECK named the failure
+    }
+    if (e.drawn && e.touches_canvas) {
+      ++labelled;
+    }
+  }
+  IM_CHECK_RETV(labelled >= 3, false);
+  // The readability claim itself: no two placed text rects touch or overlap, and every ink
+  // vertex is owned — inside some submitted text rect, or on a non-default placement's leader
+  // corridor (the line from that text's centre to its segment's visible midpoint).
+  bool rects_overlap = false;
+  for (size_t a = 0; a < placed_rects.size() && !rects_overlap; ++a) {
+    for (size_t b = a + 1; b < placed_rects.size() && !rects_overlap; ++b) {
+      const ImRect& ra = placed_rects[a];
+      const ImRect& rb = placed_rects[b];
+      rects_overlap = ra.Min.x < rb.Max.x && rb.Min.x < ra.Max.x && ra.Min.y < rb.Max.y && rb.Min.y < ra.Max.y;
+    }
+  }
+  IM_CHECK_RETV(!rects_overlap, false);
+  std::vector<std::pair<ImVec2, ImVec2>> leader_corridors;
+  for (const TraceExpectedLine& e : expected) {
+    if (!e.drawn || !e.touches_canvas) {
+      continue;
+    }
+    const float* rect = &gui::g_state.analysis.ray3d_fresnel_label_rects[static_cast<size_t>(e.seg) * 5];
+    if (rect[4] != 0.0f) {
+      leader_corridors.emplace_back(ImVec2((rect[0] + rect[2]) * 0.5f, (rect[1] + rect[3]) * 0.5f),
+                                    ImVec2((e.pa.x + e.pb.x) * 0.5f, (e.pa.y + e.pb.y) * 0.5f));
+    }
+  }
+  const bool ink_owned = std::all_of(label_ink.begin(), label_ink.end(), [&](const ImVec2& v) {
+    const bool in_rect = std::any_of(placed_rects.begin(), placed_rects.end(), [&](const ImRect& r) {
+      return v.x >= r.Min.x - 1.0f && v.x <= r.Max.x + 1.0f && v.y >= r.Min.y - 1.0f && v.y <= r.Max.y + 1.0f;
+    });
+    if (in_rect) {
+      return true;
+    }
+    const double corridor_tol = gui::UiPx(2.5f);
+    return std::any_of(leader_corridors.begin(), leader_corridors.end(), [&](const std::pair<ImVec2, ImVec2>& c) {
+      const double dx = c.second.x - c.first.x;
+      const double dy = c.second.y - c.first.y;
+      const double len2 = dx * dx + dy * dy;
+      double t = len2 > 0.0 ? ((v.x - c.first.x) * dx + (v.y - c.first.y) * dy) / len2 : 0.0;
+      t = std::clamp(t, 0.0, 1.0);
+      const double px = c.first.x + dx * t;
+      const double py = c.first.y + dy * t;
+      return std::hypot(v.x - px, v.y - py) < corridor_tol;
+    });
+  });
+  IM_CHECK_RETV(ink_owned, false);
+  ctx->LogInfo("[trace labels] %d labelled segments, %zu ink vertices, %zu rects pairwise apart, default-off leg held",
+               labelled, label_ink.size(), placed_rects.size());
+  IM_CHECK_RETV(SaveWindowPng(ctx, "//Pose & trace", GuiTestTempPath("analyze_c03_trace_fresnel_labels.png").string()),
+                false);
+  ctx->ItemClick("**/Show Fresnel ratios##r3d_fresnel");
+  ctx->Yield(2);
+  IM_CHECK_RETV(view.show_fresnel_labels == false, false);
+  IM_CHECK_RETV(TraceCanvasVertices(gui::kRayTraceLabelColor).empty(), false);
+  return true;
+}
+
+// AC4's primitive leg: each contact's marker shape follows the REAL facing — the request's own
+// face number resolved in the mesh's per-face table (the test's own scan), the normal rotated
+// by the frame switch, dotted against contact->eye with the REAL camera (ComputeDist over the
+// persisted zoom; never a global fwd proxy). At least one contact must sit where the
+// perspective test and its fwd approximation disagree — the leg's own proof that the proxy
+// would have answered differently.
+bool TraceContactShapesFollowTheRealFacing(ImGuiTestContext* ctx) {
+  const auto& frame = gui::LastRay3DFrameInfo();
+  IM_CHECK_RETV(frame.valid && frame.frame_count == ImGui::GetFrameCount(), false);
+  LUMICE_CrystalMesh mesh{};
+  std::vector<ImVec2> mesh_pixels;
+  IM_CHECK_RETV(TraceOracleMesh(ctx, &mesh, &mesh_pixels), false);
+  LUMICE_PathRayContacts contacts{};
+  contacts.struct_size = sizeof(contacts);
+  IM_CHECK_RETV(LUMICE_RepresentativeRayGetContacts(gui::g_state.analysis.trace.adopted_result.get(), &contacts) ==
+                    LUMICE_PATH_READ_OK,
+                false);
+  LUMICE_RepresentativeRayInfo info{};
+  info.struct_size = sizeof(info);
+  IM_CHECK_RETV(
+      LUMICE_RepresentativeRayGetInfo(gui::g_state.analysis.trace.adopted_result.get(), &info) == LUMICE_PATH_READ_OK,
+      false);
+  IM_CHECK_RETV(info.face_count == static_cast<int>(contacts.contact_count) && info.faces != nullptr, false);
+  const auto& orbit = gui::g_state.analysis.point_view;
+  double fwd[3];
+  double right[3];
+  double up[3];
+  gui::OrbitBasis(orbit.orbit_yaw_deg, orbit.orbit_pitch_deg, fwd, right, up);
+  const float eye_dist = gui::CrystalRenderer::ComputeDist(frame.zoom);
+  const float eye[3] = { static_cast<float>(-eye_dist * fwd[0]), static_cast<float>(-eye_dist * fwd[1]),
+                         static_cast<float>(-eye_dist * fwd[2]) };
+  const double tolerance = gui::UiPx(6.0f);
+  int solid_expected = 0;
+  int hollow_expected = 0;
+  int discriminating = 0;
+  for (size_t i = 0; i < contacts.contact_count; ++i) {
+    // One contact's checks run inside an immediate lambda (the loop-fatal-assert rule: a fatal
+    // assert directly in a for body aborts the remaining rows); the counters advance only on a
+    // passing row.
+    const bool contact_ok = [&](size_t ci) {
+      float c_display[3] = { static_cast<float>(contacts.contacts[ci].point[0]),
+                             static_cast<float>(contacts.contacts[ci].point[1]),
+                             static_cast<float>(contacts.contacts[ci].point[2]) };
+      if (frame.crystal_frame) {
+        gui::RayTracePointToCrystalFrame(frame.pose, c_display);
+      }
+      const ImVec2 pixel = TraceOracleProject(frame, c_display);
+      // The test's own face-number scan (the production helper is pinned in the unit layer; this
+      // leg reads the raw mesh fields independently).
+      bool known = false;
+      float n_body[3] = { 0.0f, 0.0f, 0.0f };
+      if (info.faces[ci] >= 0) {
+        for (int f = 0; f < mesh.face_count; ++f) {
+          if (mesh.face_numbers_by_face[f] != info.faces[ci]) {
+            continue;
+          }
+          const float* n = &mesh.face_normals[static_cast<size_t>(f) * 3];
+          const float norm = std::sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
+          if (norm > 0.5f) {
+            known = true;
+            n_body[0] = n[0];
+            n_body[1] = n[1];
+            n_body[2] = n[2];
+          }
+          break;
+        }
+      }
+      float n_display[3];
+      if (frame.crystal_frame) {
+        n_display[0] = n_body[0];
+        n_display[1] = n_body[1];
+        n_display[2] = n_body[2];
+      } else {
+        for (int row = 0; row < 3; ++row) {
+          n_display[row] = static_cast<float>(frame.pose[row * 3] * n_body[0] + frame.pose[row * 3 + 1] * n_body[1] +
+                                              frame.pose[row * 3 + 2] * n_body[2]);
+        }
+      }
+      float c_scene[3];
+      for (int k = 0; k < 3; ++k) {
+        c_scene[k] = (c_display[k] - frame.centre[k]) / frame.fit;
+      }
+      const double dot = static_cast<double>(n_display[0]) * (eye[0] - c_scene[0]) +
+                         static_cast<double>(n_display[1]) * (eye[1] - c_scene[1]) +
+                         static_cast<double>(n_display[2]) * (eye[2] - c_scene[2]);
+      const double dot_fwd = -(static_cast<double>(n_display[0]) * fwd[0] + static_cast<double>(n_display[1]) * fwd[1] +
+                               static_cast<double>(n_display[2]) * fwd[2]);
+      const bool solid = known && dot > 0.0;
+      const ImU32 want = solid ? gui::kRayTraceContactSolidColor : gui::kRayTraceContactColor;
+      const ImU32 other = solid ? gui::kRayTraceContactColor : gui::kRayTraceContactSolidColor;
+      bool want_near = false;
+      bool other_near = false;
+      for (const ImVec2& v : TraceCanvasVertices(want)) {
+        const double dx = v.x - pixel.x;
+        const double dy = v.y - pixel.y;
+        want_near = want_near || dx * dx + dy * dy < tolerance * tolerance;
+      }
+      for (const ImVec2& v : TraceCanvasVertices(other)) {
+        const double dx = v.x - pixel.x;
+        const double dy = v.y - pixel.y;
+        other_near = other_near || dx * dx + dy * dy < tolerance * tolerance;
+      }
+      ctx->LogInfo("[trace facing] contact %zu face %d known=%d dot=%.3f dot_fwd=%.3f -> %s", ci, info.faces[ci],
+                   known ? 1 : 0, dot, dot_fwd,
+                   solid ? "solid" :
+                   known ? "hollow(back)" :
+                           "hollow(unknown)");
+      IM_CHECK_RETV(want_near, false);
+      IM_CHECK_RETV(!other_near, false);
+      solid ? ++solid_expected : ++hollow_expected;
+      if ((dot > 0.0) != (dot_fwd > 0.0)) {
+        ++discriminating;
+      }
+      return true;
+    }(i);
+    if (!contact_ok) {
+      return false;  // the row's own IM_CHECK named the failure
+    }
+  }
+  IM_CHECK_RETV(solid_expected >= 1 && hollow_expected >= 1, false);
+  IM_CHECK_RETV(discriminating >= 1, false);  // the perspective anchor — a fwd proxy would flip this contact
+  ctx->LogInfo("[trace facing] solid %d hollow %d, %d contact(s) discriminate against the fwd proxy", solid_expected,
+               hollow_expected, discriminating);
+  return true;
+}
+
+// The crystal view's sun-direction arrow, anchored independently: the tip rides the C-API
+// sample's own sun_in_crystal from the display-frame mesh centre, so the submitted accent
+// primitives must lie on THAT line — a regression that re-applies the frame switch's inverse
+// rotation to already-display points (the scene_of refactor's coordinate-boundary defect)
+// bends the arrow off this line and fails the check. Runs in the crystal view.
+bool TraceSunArrowFollowsTheCrystalSun(ImGuiTestContext* ctx) {
+  const auto& frame = gui::LastRay3DFrameInfo();
+  IM_CHECK_RETV(frame.valid && frame.crystal_frame && frame.frame_count == ImGui::GetFrameCount(), false);
+  auto& view = gui::g_state.analysis.point_view;
+  LUMICE_PathPointSample sample{};
+  sample.struct_size = sizeof(sample);
+  const int stored = gui::PointValidSampleIndexAt(*gui::g_state.analysis.point.adopted_result, view.component_index,
+                                                  view.sample_index);
+  IM_CHECK_RETV(LUMICE_PathPointGetSample(gui::g_state.analysis.point.adopted_result.get(),
+                                          static_cast<size_t>(view.component_index), static_cast<size_t>(stored),
+                                          &sample) == LUMICE_PATH_READ_OK,
+                false);
+  // The expected arrow: display-frame mesh centre -> centre + u * 0.6 * fit (u verbatim from
+  // the sample; in the crystal view the display frame IS the body frame).
+  const float u[3] = { static_cast<float>(sample.sun_in_crystal[0]), static_cast<float>(sample.sun_in_crystal[1]),
+                       static_cast<float>(sample.sun_in_crystal[2]) };
+  const float un = std::sqrt(u[0] * u[0] + u[1] * u[1] + u[2] * u[2]);
+  IM_CHECK_RETV(un > 1e-6f, false);
+  const float centre[3] = { frame.centre[0], frame.centre[1], frame.centre[2] };
+  const float tip[3] = { centre[0] + u[0] / un * frame.fit * 0.6f, centre[1] + u[1] / un * frame.fit * 0.6f,
+                         centre[2] + u[2] / un * frame.fit * 0.6f };
+  const ImVec2 pc = TraceOracleProject(frame, centre);
+  const ImVec2 pt = TraceOracleProject(frame, tip);
+  // The pose must be non-identity here for the double-rotation regression to be visible.
+  double pose_dev = 0.0;
+  for (int k = 0; k < 9; ++k) {
+    pose_dev = std::max(pose_dev, std::abs(frame.pose[k] - (k % 4 == 0 ? 1.0 : 0.0)));
+  }
+  ctx->LogInfo("[trace arrow] pose deviation from identity %.3f, arrow pixels (%.0f,%.0f)->(%.0f,%.0f)", pose_dev, pc.x,
+               pc.y, pt.x, pt.y);
+  // The accent primitives INSIDE the canvas rect (the window's other accent ink — e.g. the
+  // checked radio's bullet — sits above the canvas and must not enter the bucket).
+  const ImU32 accent = ImGui::ColorConvertFloat4ToU32(gui::AccentColor());
+  const ImVec2 canvas_max(frame.canvas_min.x + frame.canvas_size.x, frame.canvas_min.y + frame.canvas_size.y);
+  std::vector<ImVec2> arrow_ink;
+  for (const ImVec2& v : TraceCanvasVertices(accent)) {
+    if (v.x >= frame.canvas_min.x && v.x <= canvas_max.x && v.y >= frame.canvas_min.y && v.y <= canvas_max.y) {
+      arrow_ink.push_back(v);
+    }
+  }
+  IM_CHECK_RETV(!arrow_ink.empty(), false);
+  // Every arrow vertex sits on the expected centre->tip segment (within the marker's AA
+  // envelope): the wrong-direction regression puts the ink on a different line.
+  const double seg_dx = static_cast<double>(pt.x) - pc.x;
+  const double seg_dy = static_cast<double>(pt.y) - pc.y;
+  const double seg_len = std::sqrt(seg_dx * seg_dx + seg_dy * seg_dy);
+  IM_CHECK_RETV(seg_len > 1.0, false);
+  const double tolerance = gui::UiPx(4.0);
+  double worst = 0.0;
+  for (const ImVec2& v : arrow_ink) {
+    const double t = ((v.x - pc.x) * seg_dx + (v.y - pc.y) * seg_dy) / (seg_len * seg_len);
+    const double px = pc.x + seg_dx * std::clamp(t, 0.0, 1.0);
+    const double py = pc.y + seg_dy * std::clamp(t, 0.0, 1.0);
+    worst = std::max(worst, std::hypot(v.x - px, v.y - py));
+  }
+  IM_CHECK_RETV(worst < tolerance, false);
+  ctx->LogInfo("[trace arrow] %zu ink vertices on the expected sun line, worst %.2f px", arrow_ink.size(), worst);
+  return true;
+}
+
+// The mesh-only fit's boundary leg: aimed straight down the entry leg at max zoom, the
+// incident extension runs at the camera and crosses the near plane. The submitted geometry
+// must stop at the crossing (the clipped bbox, not the raw behind-eye projection) and every
+// overlay vertex stays finite.
+bool TraceOverlayClipsAtTheNearPlane(ImGuiTestContext* ctx) {
+  const auto& base = gui::LastRay3DFrameInfo();
+  IM_CHECK_RETV(base.valid, false);
+  // Aim the camera OPPOSITE the entry extension's far endpoint (in scene units, at the CURRENT
+  // frame's framing): the far endpoint then sits straight behind the eye, w = dist - |p| < 0
+  // by construction, and the segment must cross the near plane at every max-zoom geometry —
+  // not just when the incident direction happens to point at the eye.
+  gui::RayTracePolyline line;
+  IM_CHECK_RETV(gui::BuildRayTracePolyline(*gui::g_state.analysis.trace.adopted_result, 1.1f, &line), false);
+  double p[3] = {};
+  double pn = 0.0;
+  for (size_t end : { size_t(0), line.points.size() / 3 - 1 }) {
+    float far_display[3];
+    TracePolylinePointToDisplay(base, &line.points[end * 3], far_display);
+    double q[3];
+    for (int k = 0; k < 3; ++k) {
+      q[k] = (far_display[k] - base.centre[k]) / base.fit;
+    }
+    const double qn = std::sqrt(q[0] * q[0] + q[1] * q[1] + q[2] * q[2]);
+    if (qn > pn) {
+      pn = qn;
+      std::copy_n(q, 3, p);
+    }
+  }
+  for (double& v : p) {
+    v /= pn;
+  }
+  ctx->LogInfo("[trace clip] far endpoint scene radius %.3f (crossing needs radius > eye distance)", pn);
+  struct Restore {
+    float yaw = gui::g_state.analysis.point_view.orbit_yaw_deg;
+    float pitch = gui::g_state.analysis.point_view.orbit_pitch_deg;
+    float zoom = gui::g_state.analysis.point_view.orbit_zoom;
+    ~Restore() {
+      auto& view = gui::g_state.analysis.point_view;
+      view.orbit_yaw_deg = yaw;
+      view.orbit_pitch_deg = pitch;
+      view.orbit_zoom = zoom;
+    }
+  } restore;
+  auto& view = gui::g_state.analysis.point_view;
+  // The display endpoints of segment 0 (its geometry is orbit-independent; only the camera
+  // moves). points is a FLAT xyz array: point k occupies [k*3, k*3+3), so segment 0 runs from
+  // points[0] (the display extension's far end) to points[3] (the first contact).
+  float d0[3];
+  float d1[3];
+  TracePolylinePointToDisplay(base, &line.points[0], d0);
+  TracePolylinePointToDisplay(base, &line.points[3], d1);
+  float s0[3];
+  float s1[3];
+  for (int k = 0; k < 3; ++k) {
+    s0[k] = (d0[k] - base.centre[k]) / base.fit;
+    s1[k] = (d1[k] - base.centre[k]) / base.fit;
+  }
+  // Aim OPPOSITE the far endpoint: the far endpoint then sits straight behind the eye
+  // (w = dist - |p| < 0), the segment must cross the near plane, and the submitted geometry
+  // is the visible part's quad — vertices MAY extend past the canvas (the raster clip, not
+  // the vertex buffer, owns canvas bounds), so the submitted run exists regardless.
+  view.orbit_yaw_deg = static_cast<float>(std::atan2(-p[1], -p[0]) * 180.0 / 3.14159265358979323846);
+  view.orbit_pitch_deg = static_cast<float>(std::asin(std::clamp(-p[2], -1.0, 1.0)) * 180.0 / 3.14159265358979323846);
+  view.orbit_zoom = 8.0f;
+  ctx->Yield(2);
+  const auto& frame = gui::LastRay3DFrameInfo();
+  IM_CHECK_RETV(frame.valid && frame.frame_count == ImGui::GetFrameCount(), false);
+  const float near_w = gui::CrystalRenderer::ComputeNearPlane(frame.zoom);
+  float clip_far[4];
+  for (int row = 0; row < 4; ++row) {
+    clip_far[row] = frame.mvp[12 + row];
+    for (int k = 0; k < 3; ++k) {
+      clip_far[row] += frame.mvp[k * 4 + row] * s0[k];
+    }
+  }
+  IM_CHECK_RETV(clip_far[3] < near_w, false);  // the far endpoint is behind the eye at this aim
+  ImVec2 pa;
+  ImVec2 pb;
+  IM_CHECK_RETV(TraceOracleClipSegment(frame, d0, d1, &pa, &pb), false);  // the near part stays visible
+  ctx->LogInfo("[trace clip] eye dist %.3f at frame zoom %.3f", gui::CrystalRenderer::ComputeDist(frame.zoom),
+               frame.zoom);
+  // All overlay ink finite — a behind-eye point that slipped through would divide by a
+  // non-positive w and land somewhere absurd. Vertices MAY sit past the canvas rect: a
+  // segment crossing the canvas edge submits its full geometry and the clip rect rasters only
+  // the visible part, so bounds belong to the raster, not to the vertex buffer.
+  int non_finite = 0;
+  for (ImU32 color : gui::kRayTraceSegmentColors) {
+    for (const ImVec2& v : TraceCanvasVertices(color)) {
+      non_finite += (std::isfinite(v.x) && std::isfinite(v.y)) ? 0 : 1;
+    }
+  }
+  for (ImU32 color : { gui::kRayTraceContactColor, gui::kRayTraceContactSolidColor }) {
+    for (const ImVec2& v : TraceCanvasVertices(color)) {
+      non_finite += (std::isfinite(v.x) && std::isfinite(v.y)) ? 0 : 1;
+    }
+  }
+  IM_CHECK_RETV(non_finite == 0, false);
+  // The kept frame: the raw projection of the behind-eye endpoint — the shape the overlay
+  // would have submitted without the clip — sits far from anything submitted.
+  const auto& entry = gui::LastRay3DFrameInfo();
+  IM_CHECK_RETV(entry.valid && entry.frame_count == ImGui::GetFrameCount(), false);
+  IM_CHECK_RETV(TraceTextureQuadPresent(ctx), false);
+  ImVec2 raw_far;
+  {
+    float clip[4];
+    for (int row = 0; row < 4; ++row) {
+      clip[row] = entry.mvp[12 + row];
+      for (int k = 0; k < 3; ++k) {
+        clip[row] += entry.mvp[k * 4 + row] * s0[k];
+      }
+    }
+    raw_far = ImVec2(entry.canvas_min.x + (clip[0] / clip[3] + 1.0f) * 0.5f * entry.canvas_size.x,
+                     entry.canvas_min.y + (1.0f - clip[1] / clip[3]) * 0.5f * entry.canvas_size.y);
+  }
+  // The submitted entry line: the first run of the entry color. The production clips at the
+  // NEAR plane only — the submitted quad IS the visible part (pa -> pb), off-canvas extents
+  // included; the raster clip owns canvas bounds and leaves the vertex buffer alone.
+  const ImGuiWindow* region = PoseRegionWindow("##AnalyzeRaypath3D");
+  IM_CHECK_RETV(region != nullptr, false);
+  const ImDrawList* dl = region->DrawList;
+  const ImDrawVert* verts = dl->VtxBuffer.begin();
+  int cursor = 0;
+  const int total = dl->VtxBuffer.Size;
+  const ImU32 entry_rgb = gui::kRayTraceSegmentColors[0] & ~IM_COL32_A_MASK;
+  while (cursor < total && (verts[cursor].col & ~IM_COL32_A_MASK) != entry_rgb) {
+    ++cursor;
+  }
+  IM_CHECK_RETV(cursor < total, false);
+  ImRect submitted(verts[cursor].pos, verts[cursor].pos);
+  int run_verts = 0;
+  for (int j = cursor; j < total && (verts[j].col & ~IM_COL32_A_MASK) == entry_rgb; ++j) {
+    submitted.Add(verts[j].pos);
+    ++run_verts;
+  }
+  // ImRect does not normalize — the crossing (pa) may sit past c0 (pb) on either axis.
+  ImRect expected(ImVec2(std::min(pa.x, pb.x), std::min(pa.y, pb.y)),
+                  ImVec2(std::max(pa.x, pb.x), std::max(pa.y, pb.y)));
+  float edge_delta = 0.0f;
+  edge_delta = std::max(edge_delta, std::abs(submitted.Min.x - expected.Min.x));
+  edge_delta = std::max(edge_delta, std::abs(submitted.Min.y - expected.Min.y));
+  edge_delta = std::max(edge_delta, std::abs(submitted.Max.x - expected.Max.x));
+  edge_delta = std::max(edge_delta, std::abs(submitted.Max.y - expected.Max.y));
+  const float raw_gap = std::hypot(raw_far.x - submitted.Max.x, raw_far.y - submitted.Max.y);
+  ctx->LogInfo("[trace clip] submitted %d verts, expected bbox edge delta %.2f px, raw-behind gap %.1f px", run_verts,
+               edge_delta, raw_gap);
+  IM_CHECK_RETV(edge_delta < gui::UiPx(4.0f), false);  // the submitted geometry is the clipped visible part
+  IM_CHECK_RETV(raw_gap > gui::UiPx(20.0f), false);    // ... and nowhere near the behind-eye projection
+  return true;
+}
+
+// AC1's leg: the same pose's computing and drawn frames frame the crystal identically. The
+// executor's pickup gate parks the re-keyed ray query at its pickup instant (token armed,
+// engine call not yet run — the executor's own construction), so the frames AFTER the sample
+// switch are the named computing state, held deterministically until release; the released
+// query adopts and the drawn frame renders the SAME sample's pose. Mesh-only centre/fit and
+// the mesh's projected outline must agree; the overlay (contacts, segments, labels) leaves no
+// residue on the waiting frame.
+bool TraceFramingIsMeshAnchoredAcrossStates(ImGuiTestContext* ctx, bool crystal_view) {
+  auto& view = gui::g_state.analysis.point_view;
+  const int saved_sample = view.sample_index;
+  {
+    // The restore owns the mutated view fields for THIS block; the re-adoption wait below runs
+    // after it, against the restored cursor.
+    struct Restore {
+      int sample;
+      int frame;
+      Restore()
+          : sample(gui::g_state.analysis.point_view.sample_index),
+            frame(gui::g_state.analysis.point_view.crystal_frame ? 1 : 0) {}
+      ~Restore() {
+        auto& view = gui::g_state.analysis.point_view;
+        view.sample_index = sample;
+        view.crystal_frame = frame == 1;
+      }
+    } restore;
+    view.crystal_frame = crystal_view;
+    const int valid_count =
+        gui::PointValidSampleCount(*gui::g_state.analysis.point.adopted_result, view.component_index);
+    IM_CHECK_RETV(valid_count >= 2, false);  // the re-key needs another valid sample to move to
+    const int target = (saved_sample + 1) % valid_count;
+    IM_CHECK_RETV(target != saved_sample, false);
+    ScopedPointPickupHold hold(gui::QueryFace::kRay);
+    view.sample_index = target;
+    ctx->Yield(2);  // the pump re-keys and issues; the worker parks at the pickup — computing held
+    IM_CHECK_RETV(!hold.Voided(), false);
+    // BY-VALUE snapshots: LastRay3DFrameInfo returns the one mutable global frame object the
+    // renderer updates in place every submission — two const references to it would alias each
+    // other and the centre/fit comparison below would be self-comparison, always true (the
+    // aliasing trap the learnings already recorded for state-transition asserts).
+    const gui::Ray3DFrameInfo computing = gui::LastRay3DFrameInfo();
+    IM_CHECK_RETV(computing.valid && computing.frame_count == ImGui::GetFrameCount(), false);
+    const int target_stored =
+        gui::PointValidSampleIndexAt(*gui::g_state.analysis.point.adopted_result, view.component_index, target);
+    IM_CHECK_RETV(gui::RayTraceDisplayStateFor(gui::g_state.analysis.trace, { gui::g_state.analysis.point.intent_id,
+                                                                              view.component_index, target_stored }) ==
+                      gui::RayTraceDisplayState::kComputing,
+                  false);
+    IM_CHECK_RETV(TraceTextureQuadPresent(ctx), false);
+    // The waiting frame carries no overlay residue of the previous pose's light.
+    IM_CHECK_RETV(TraceCanvasVertices(gui::kRayTraceContactColor).empty(), false);
+    IM_CHECK_RETV(TraceCanvasVertices(gui::kRayTraceContactSolidColor).empty(), false);
+    IM_CHECK_RETV(TraceCanvasVertices(gui::kRayTraceLabelColor).empty(), false);
+    size_t residue = 0;
+    for (ImU32 color : gui::kRayTraceSegmentColors) {
+      residue += TraceCanvasVertices(color).size();
+    }
+    IM_CHECK_RETV(residue == 0, false);
+    // The mesh outline from the independent oracle, on the computing frame.
+    LUMICE_CrystalMesh mesh{};
+    std::vector<ImVec2> computing_mesh;
+    IM_CHECK_RETV(TraceOracleMesh(ctx, &mesh, &computing_mesh), false);
+    hold.Release();
+    // The parked query proceeds; the same key's answer adopts and draws.
+    IM_CHECK_RETV(DriveUntil(
+                      ctx,
+                      [&] {
+                        const auto& t = gui::g_state.analysis.trace;
+                        return t.adopted_result != nullptr && t.key.sample == target_stored &&
+                               gui::RayTraceDisplayStateFor(t, { t.key.point_id, t.key.component, t.key.sample }) ==
+                                   gui::RayTraceDisplayState::kDrawn;
+                      },
+                      60),
+                  false);
+    ctx->Yield(2);
+    const gui::Ray3DFrameInfo drawn = gui::LastRay3DFrameInfo();  // by value — the second snapshot
+    IM_CHECK_RETV(drawn.valid && drawn.frame_count == ImGui::GetFrameCount(), false);
+    IM_CHECK_RETV(computing.frame_count != drawn.frame_count, false);  // two DISTINCT frames compared
+    IM_CHECK_RETV(TraceTextureQuadPresent(ctx), false);
+    // THE CLAIM: one pose, one framing — mesh-only centre/fit identical across the two states.
+    float centre_worst = 0.0f;
+    for (int k = 0; k < 3; ++k) {
+      centre_worst = std::max(centre_worst, std::fabs(computing.centre[k] - drawn.centre[k]));
+    }
+    IM_CHECK_RETV(centre_worst == 0.0f && computing.fit == drawn.fit, false);
+    LUMICE_CrystalMesh mesh2{};
+    std::vector<ImVec2> drawn_mesh;
+    IM_CHECK_RETV(TraceOracleMesh(ctx, &mesh2, &drawn_mesh), false);
+    IM_CHECK_RETV(computing_mesh.size() == drawn_mesh.size() && computing_mesh.size() > 3, false);
+    double worst = 0.0;
+    for (size_t v = 0; v < computing_mesh.size(); ++v) {
+      worst = std::max(worst, static_cast<double>(std::hypot(computing_mesh[v].x - drawn_mesh[v].x,
+                                                             computing_mesh[v].y - drawn_mesh[v].y)));
+    }
+    ctx->LogInfo("[trace framing] %s view: centre/fit identical, mesh outline worst delta %.4f px, fit=%.4f",
+                 crystal_view ? "crystal" : "world", worst, drawn.fit);
+    IM_CHECK_RETV(worst < 0.01, false);
+  }
+  // The restore above re-keys the cursor back; the original sample's trace re-adopts.
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [&] {
+                      const auto& t = gui::g_state.analysis.trace;
+                      const int stored =
+                          gui::PointValidSampleIndexAt(*gui::g_state.analysis.point.adopted_result,
+                                                       gui::g_state.analysis.point_view.component_index, saved_sample);
+                      return t.adopted_result != nullptr && t.key.sample == stored &&
+                             gui::RayTraceDisplayStateFor(t, { t.key.point_id, t.key.component, t.key.sample }) ==
+                                 gui::RayTraceDisplayState::kDrawn;
+                    },
+                    60),
+                false);
+  return true;
+}
+
 std::string CaptureWindowFrameText(ImGuiTestContext* ctx, const char* window_name);
 
 // A renderer-state fixture, not another async adoption test: the real consumer above has
@@ -3518,6 +4763,13 @@ bool RefusedTraceKeepsCrystalVisible(ImGuiTestContext* ctx, const gui::SelectedC
   const bool has_segments = std::any_of(std::begin(gui::kRayTraceSegmentColors), std::end(gui::kRayTraceSegmentColors),
                                         [](ImU32 color) { return !TraceCanvasVertices(color).empty(); });
   IM_CHECK_RETV(!has_segments, false);
+  // The refusal text sits below the report's fixed fold (the Fresnel-toggle row grew the
+  // report head), and the frame-text capture records only what a window actually shows
+  // (ItemUnclipByLog is off — clipped rows never reach the log buffer): scroll the report to
+  // the bottom before capturing.
+  ImGuiWindow* report = TraceReportWindow();
+  IM_CHECK_RETV(report != nullptr, false);
+  report->Scroll.y = report->ScrollMax.y;
   const std::string text = CaptureWindowFrameText(ctx, "Pose & trace");
   IM_CHECK_RETV(text.find("No legal path for this pose:") != std::string::npos, false);
   IM_CHECK_RETV(text.find(reason) != std::string::npos, false);
@@ -3700,6 +4952,16 @@ bool InternalReflectionTraceFromTheRealConsumer(ImGuiTestContext* ctx) {
                 false);
   gui::g_state.analysis.point_view.orbit_zoom = restore_view.zoom;
   ctx->Yield(2);
+  // The 2026-11-12 display-model legs (feedback #7/#8/#9), on the drawn chain at the test's
+  // standing orbit: mesh-only framing across the two states (both views), the energy widths,
+  // the ratio labels, the contact facing, and the near-plane extreme.
+  IM_CHECK_RETV(TraceFramingIsMeshAnchoredAcrossStates(ctx, /*crystal_view=*/false), false);
+  IM_CHECK_RETV(TraceFramingIsMeshAnchoredAcrossStates(ctx, /*crystal_view=*/true), false);
+  IM_CHECK_RETV(TraceWidthsFollowCumulativeEnergy(ctx), false);
+  IM_CHECK_RETV(TraceLabelsFollowTheToggle(ctx), false);
+  IM_CHECK_RETV(TraceContactShapesFollowTheRealFacing(ctx), false);
+  IM_CHECK_RETV(TraceSunArrowFollowsTheCrystalSun(ctx), false);
+  IM_CHECK_RETV(TraceOverlayClipsAtTheNearPlane(ctx), false);
   ctx->LogInfo("[v1 c03] the internal-reflection path drawn in the 3D region: entry, 3 internal, exit");
   IM_CHECK_RETV(RefusedTraceKeepsCrystalVisible(ctx, *identity), false);
   return true;
@@ -4098,63 +5360,105 @@ bool IdentityClassShowsTheMassArmAndTheMapAnswers(ImGuiTestContext* ctx) {
     IM_CHECK_RETV(frame_text.find("Weight tint:") != std::string::npos, false);
     IM_CHECK_RETV(frame_text.find("The complete answer is in the Raypath view.") != std::string::npos, false);
     IM_CHECK_RETV(frame_text.find("member(s)") == std::string::npos, false);
-    IM_CHECK_RETV(frame_text.find("Physics details") == std::string::npos, false);
+    IM_CHECK_RETV(frame_text.find("Class evidence") == std::string::npos, false);
     // The point summary's own closed-windows legs (§16.2): the mass answer in full, the target
     // line, and the pointer naming where its omitted caliber detail lives.
     IM_CHECK_RETV(frame_text.find("Rank-0 point mass") != std::string::npos, false);
     IM_CHECK_RETV(frame_text.find("target: alt 20.000 deg") != std::string::npos, false);
   }
-  ctx->ItemClick("**/Raypath view###main_raypath_open");
-  ctx->Yield(2);
-  IM_CHECK_RETV(gui::g_state.analyze_raypath_view_open, false);
-  const std::string identity_report = CaptureMapFrameText(ctx);
-  IM_CHECK_RETV(identity_report.find("Class answer") != std::string::npos, false);
-  IM_CHECK_RETV(identity_report.find("member(s)") == std::string::npos, false);
+  // The env gate on the survey and point hosts, the shipped default: the evidence groups
+  // stand closed, the diagnostics groups are unsubmitted entirely — the gate is display
+  // eligibility, so the header's absence is the proof, not a closed fold.
   {
-    // λ single-owner (the ledger's L5): the slider row's echo is the window's only λ glyph —
-    // the survey and point answers spell "wavelength", the caliber carries none, the legend none.
-    size_t lambda_count = 0;
-    for (size_t at = identity_report.find("\xCE\xBB"); at != std::string::npos;
-         at = identity_report.find("\xCE\xBB", at + 2)) {
-      ++lambda_count;
-    }
-    IM_CHECK_RETV(lambda_count == 1, false);
-  }
-  IM_CHECK_RETV(ctx->ItemInfo("**/Physics details##sv_answer", ImGuiTestOpFlags_NoError).ID != 0, false);
-  IM_CHECK_RETV(ctx->ItemInfo("**/Calculation details##sv_answer", ImGuiTestOpFlags_NoError).ID != 0, false);
-  ctx->ItemClick("**/Calculation details##sv_answer");
-  ctx->Yield(2);
-  {
-    const std::string opened_text = CaptureMapFrameText(ctx);
-    IM_CHECK_RETV(opened_text.find("member(s)") != std::string::npos, false);
-  }
-  // The expansion is the window-storage's own state: close the window and reopen it, and the
-  // group is still open (session-sticky); a fresh GuiState would start closed, but this leg's
-  // session stands — the reopen rides the same window storage.
-  ctx->WindowClose("//Raypath view");
-  ctx->Yield(1);
-  ctx->ItemClick("**/Raypath view###main_raypath_open");
-  ctx->Yield(2);
-  {
-    const std::string reopened_text = CaptureMapFrameText(ctx);
-    IM_CHECK_RETV(reopened_text.find("member(s)") != std::string::npos, false);
-    // The sky-point answer rides the same report: present at the default layer (the λ premise
-    // line), its own Calculation fold still closed — the execution triple is one fold away,
-    // and "Selected component" (a Physics-tier phrase) exists nowhere in this mass arm.
-    IM_CHECK_RETV(reopened_text.find("Sky point answer") != std::string::npos, false);
-    IM_CHECK_RETV(reopened_text.find("wavelength 550.00 nm") != std::string::npos, false);
-    IM_CHECK_RETV(reopened_text.find("discovery sample_count") == std::string::npos, false);
-    IM_CHECK_RETV(reopened_text.find("Selected component") == std::string::npos, false);
-    // The mass arm's fold pair is the SAME structure as the component arm's: opening the point
-    // answer's Physics group surfaces the member-faces premise line here too (the click's
-    // auto-scroll brings the header into the report child's clip; toggling back leaves the
-    // found state).
-    ctx->ItemClick("**/Physics details##pt_answer");
+    const ScopedDebugDetailsEnv env_unset(DebugDetailsState::kUnset);
+    ctx->ItemClick("**/Raypath view###main_raypath_open");
     ctx->Yield(2);
-    const std::string mass_physics_text = CaptureMapFrameText(ctx);
-    IM_CHECK_RETV(mass_physics_text.find("member faces") != std::string::npos, false);
-    ctx->ItemClick("**/Physics details##pt_answer");
+    IM_CHECK_RETV(gui::g_state.analyze_raypath_view_open, false);
+    const std::string identity_report = CaptureMapFrameText(ctx);
+    IM_CHECK_RETV(identity_report.find("Class answer") != std::string::npos, false);
+    IM_CHECK_RETV(identity_report.find("member(s)") == std::string::npos, false);
+    {
+      // λ single-owner (the ledger's L5): the slider row's echo is the window's only λ glyph —
+      // the survey and point answers spell "wavelength", the caliber carries none, the legend none.
+      size_t lambda_count = 0;
+      for (size_t at = identity_report.find("\xCE\xBB"); at != std::string::npos;
+           at = identity_report.find("\xCE\xBB", at + 2)) {
+        ++lambda_count;
+      }
+      IM_CHECK_RETV(lambda_count == 1, false);
+    }
+    IM_CHECK_RETV(ctx->ItemInfo("**/Class evidence##sv_answer", ImGuiTestOpFlags_NoError).ID != 0, false);
+    IM_CHECK_RETV(ctx->ItemInfo("**/Class diagnostics##sv_answer", ImGuiTestOpFlags_NoError).ID == 0, false);
+    IM_CHECK_RETV(ctx->ItemInfo("**/Point evidence##pt_answer", ImGuiTestOpFlags_NoError).ID != 0, false);
+    IM_CHECK_RETV(ctx->ItemInfo("**/Point diagnostics##pt_answer", ImGuiTestOpFlags_NoError).ID == 0, false);
+  }
+  {
+    // Under "1" the diagnostics groups surface and carry the L4 facts; the expansion is the
+    // window-storage's own state — close the window and reopen it, and the group is still
+    // open (session-sticky); a fresh GuiState would start closed, but this leg's session
+    // stands — the reopen rides the same window storage.
+    const ScopedDebugDetailsEnv env_on(DebugDetailsState::kOn);
+    ctx->Yield(2);
+    IM_CHECK_RETV(ctx->ItemInfo("**/Class diagnostics##sv_answer", ImGuiTestOpFlags_NoError).ID != 0, false);
+    ctx->ItemClick("**/Class diagnostics##sv_answer");
+    ctx->Yield(2);
+    {
+      const std::string opened_text = CaptureMapFrameText(ctx);
+      IM_CHECK_RETV(opened_text.find("member(s)") != std::string::npos, false);
+    }
+    ctx->WindowClose("//Raypath view");
     ctx->Yield(1);
+    ctx->ItemClick("**/Raypath view###main_raypath_open");
+    ctx->Yield(2);
+    {
+      const std::string reopened_text = CaptureMapFrameText(ctx);
+      IM_CHECK_RETV(reopened_text.find("member(s)") != std::string::npos, false);
+      // The sky-point answer rides the same report: present at the default layer (the λ premise
+      // line), its own diagnostics group present but still closed — the execution triple is one
+      // fold away, and "Selected component" (an evidence-tier phrase) exists nowhere in this
+      // mass arm.
+      IM_CHECK_RETV(reopened_text.find("Sky point answer") != std::string::npos, false);
+      IM_CHECK_RETV(reopened_text.find("wavelength 550.00 nm") != std::string::npos, false);
+      IM_CHECK_RETV(reopened_text.find("discovery sample_count") == std::string::npos, false);
+      IM_CHECK_RETV(reopened_text.find("Selected component") == std::string::npos, false);
+      // The mass arm's fold pair is the SAME structure as the component arm's: opening the
+      // point answer's evidence group surfaces the member-faces premise line here too, and
+      // opening its diagnostics group surfaces the execution triple (the click's auto-scroll
+      // brings the header into the report child's clip; toggling back leaves the found state).
+      ctx->ItemClick("**/Point evidence##pt_answer");
+      ctx->Yield(2);
+      const std::string mass_evidence_text = CaptureMapFrameText(ctx);
+      IM_CHECK_RETV(mass_evidence_text.find("member faces") != std::string::npos, false);
+      ctx->ItemClick("**/Point evidence##pt_answer");
+      ctx->Yield(1);
+      ctx->ItemClick("**/Point diagnostics##pt_answer");
+      ctx->Yield(2);
+      const std::string mass_diagnostics_text = CaptureMapFrameText(ctx);
+      IM_CHECK_RETV(mass_diagnostics_text.find("discovery sample_count") != std::string::npos, false);
+      ctx->ItemClick("**/Point diagnostics##pt_answer");
+      ctx->Yield(1);
+    }
+  }
+  {
+    // The gate's priority over the sticky state: the storage still says open (the env-on leg
+    // left the group expanded across its window reopen), but with the env unset the header is
+    // unsubmitted — an old expansion state cannot re-display a gated group.
+    const ScopedDebugDetailsEnv env_unset(DebugDetailsState::kUnset);
+    ctx->Yield(2);
+    IM_CHECK_RETV(ctx->ItemInfo("**/Class diagnostics##sv_answer", ImGuiTestOpFlags_NoError).ID == 0, false);
+  }
+  {
+    // Env on again, same session: the storage's own answer comes back — the group returns
+    // still expanded, no second click (the session's expansion preference survives the gate).
+    // The seek is the capture's own requirement: the env-off frames reflowed the report and
+    // the expanded body sits below the clip until scrolled to.
+    const ScopedDebugDetailsEnv env_on(DebugDetailsState::kOn);
+    ctx->Yield(2);
+    IM_CHECK_RETV(ctx->ItemInfo("**/Class diagnostics##sv_answer", ImGuiTestOpFlags_NoError).ID != 0, false);
+    ctx->ScrollToItem("**/Class diagnostics##sv_answer", ImGuiAxis_Y);
+    ctx->Yield(2);
+    const std::string restored_text = CaptureMapFrameText(ctx);
+    IM_CHECK_RETV(restored_text.find("member(s)") != std::string::npos, false);
   }
   ctx->WindowClose("//Raypath view");
   ctx->Yield(1);
@@ -4291,10 +5595,10 @@ bool RefusedClassBlockadesNothing(ImGuiTestContext* ctx) {
 
   // The point answer's split (§16.2), the component arm: the map window (open since the row
   // click) carries "Sky point answer" with its default-layer premise lines and BOTH fold
-  // groups closed — the evidence rows are the Physics tier's, and the frame text proves the
+  // groups closed — the evidence rows are the evidence tier's, and the frame text proves the
   // closed state mechanically (a closed CollapsingHeader submits no body). The fold's rendered
   // response to expansion is then read by writing the same window-storage key a user click
-  // writes (the click wiring itself is the identity case's Calculation-details leg).
+  // writes (the click wiring itself is the identity case's diagnostics leg).
   {
     ImGuiWindow* report = MapReportWindow();
     IM_CHECK_RETV(report != nullptr, false);
@@ -4303,12 +5607,12 @@ bool RefusedClassBlockadesNothing(ImGuiTestContext* ctx) {
     IM_CHECK_RETV(report_text.find("wavelength 550.00 nm") != std::string::npos, false);
     IM_CHECK_RETV(report_text.find("Selected component") == std::string::npos, false);
     IM_CHECK_RETV(report_text.find("discovery sample_count") == std::string::npos, false);
-    report->StateStorage.SetInt(report->GetID("Physics details##pt_answer"), 1);
+    report->StateStorage.SetInt(report->GetID("Point evidence##pt_answer"), 1);
     ctx->Yield(2);
     const std::string opened_text = CaptureMapFrameText(ctx);
     IM_CHECK_RETV(opened_text.find("Selected component") != std::string::npos, false);
     IM_CHECK_RETV(opened_text.find("member faces") != std::string::npos, false);
-    report->StateStorage.SetInt(report->GetID("Physics details##pt_answer"), 0);
+    report->StateStorage.SetInt(report->GetID("Point evidence##pt_answer"), 0);
     ctx->Yield(1);
   }
   // The main window's summary arm, both windows closed: the component count with its kinds,
@@ -7112,7 +8416,8 @@ bool PoseViewNarrowestBoundariesHoldBothEnds(ImGuiTestContext* ctx) {
       // sit past the visible clip at this extreme (registered, not contained — the same
       // addressable-is-not-visible distinction the narrowest case's lesson names), so the
       // standing claim here is reachability, not containment.
-      const ImGuiTestItemInfo physics_b = ctx->ItemInfo("**/Physics details##pose_factors", ImGuiTestOpFlags_NoError);
+      const ImGuiTestItemInfo physics_b =
+          ctx->ItemInfo("**/Interface transmission##pose_factors", ImGuiTestOpFlags_NoError);
       IM_CHECK_RETV(physics_b.ID != 0, false);
       ImGuiWindow* scroll_b = PoseRegionScrollChild("##AnalyzePoseFactors", "##PoseFactorsScroll");
       IM_CHECK_RETV(scroll_b != nullptr, false);
@@ -7243,9 +8548,9 @@ bool PoseViewNarrowestWindowKeepsTheFixedStackOperable(ImGuiTestContext* ctx) {
     IM_CHECK_RETV(globe != nullptr && factors != nullptr, false);
     // The fixed stack's controls, VISIBLE: each rect inside its region's live clip (the clip is
     // viewport-intersected — an off-viewport rect fails this even though the item registered).
-    // The deviation-grid toggle's home is the factors region's Calculation details (§16.4 —
-    // the toggle retired there with the relayout); its containment leg runs below, after the
-    // fold is open and the scroll has sought it into view.
+    // The deviation-grid toggle's home is the factors region's env-gated "Pose diagnostics"
+    // group (§16.4 — the toggle retired there with the relayout); its containment leg runs
+    // below, after the gate is on and the fold is open and the scroll has sought it into view.
     const ImGuiTestItemInfo sample = ctx->ItemInfo("**/##globe_sample", ImGuiTestOpFlags_NoError);
     IM_CHECK_RETV(sample.ID != 0, false);
     IM_CHECK_RETV(sample.RectFull.Max.x <= globe->InnerClipRect.Max.x + 0.5f &&
@@ -7256,33 +8561,38 @@ bool PoseViewNarrowestWindowKeepsTheFixedStackOperable(ImGuiTestContext* ctx) {
     IM_CHECK_RETV(play.RectFull.Max.y <= globe->InnerClipRect.Max.y + 0.5f, false);
 
     // REAL operations, the review's demand: the toggle flips for true. The toggle lives in the
-    // factors region's Calculation details fold — closed by default, its content past the
-    // factor readouts in the scroll — so the leg opens the fold, seeks the scroll to its end,
-    // and only then addresses the checkbox (the §16.1 fold discipline: the fold's expansion is
-    // session-sticky window storage; the leg closes it again at the end, leaving the next case
-    // the default-closed shape).
-    ctx->ItemClick("**/Calculation details##pose_factors");
-    ctx->Yield(2);
-    ImGuiWindow* factors_scroll = PoseRegionScrollChild("##AnalyzePoseFactors", "##PoseFactorsScroll");
-    IM_CHECK_RETV(factors_scroll != nullptr, false);
-    factors_scroll->Scroll.y = factors_scroll->ScrollMax.y;  // belt-and-braces seek, the globe leg's idiom
-    ctx->Yield(2);
-    // The toggle's own containment leg: its rect inside the factors region's live clip — the
-    // same visibility demand the fixed-stack controls above answer, relocated with its region.
-    const ImGuiTestItemInfo toggle =
-        ctx->ItemInfo("**/Deviation grid###pose_factors_dev_grid", ImGuiTestOpFlags_NoError);
-    IM_CHECK_RETV(toggle.ID != 0, false);
-    IM_CHECK_RETV(toggle.RectFull.Min.x >= factors->InnerClipRect.Min.x - 0.5f &&
-                      toggle.RectFull.Max.x <= factors->InnerClipRect.Max.x + 0.5f &&
-                      toggle.RectFull.Min.y >= factors->InnerClipRect.Min.y - 0.5f &&
-                      toggle.RectFull.Max.y <= factors->InnerClipRect.Max.y + 0.5f,
-                  false);
-    const bool grid_before = gui::g_state.analysis.point_view.show_deviation_grid;
-    ctx->ItemClick("**/Deviation grid###pose_factors_dev_grid");
-    ctx->Yield(2);
-    IM_CHECK_RETV(gui::g_state.analysis.point_view.show_deviation_grid != grid_before, false);
-    ctx->ItemClick("**/Calculation details##pose_factors");  // restore the default-closed shape
-    ctx->Yield(2);
+    // factors region's "Pose diagnostics" group — closed by default AND env-gated, its content
+    // past the factor readouts in the scroll — so the leg turns the gate on, opens the fold,
+    // seeks the scroll to its end, and only then addresses the checkbox (the §16.1 fold
+    // discipline: the fold's expansion is session-sticky window storage; the leg closes it
+    // again at the end, leaving the next case the default-closed shape). The gate is display
+    // eligibility only: with it off, the toggle is not renderable at any expansion state.
+    {
+      const ScopedDebugDetailsEnv env_on(DebugDetailsState::kOn);
+      ctx->Yield(2);
+      ctx->ItemClick("**/Pose diagnostics##pose_factors");
+      ctx->Yield(2);
+      ImGuiWindow* factors_scroll = PoseRegionScrollChild("##AnalyzePoseFactors", "##PoseFactorsScroll");
+      IM_CHECK_RETV(factors_scroll != nullptr, false);
+      factors_scroll->Scroll.y = factors_scroll->ScrollMax.y;  // belt-and-braces seek, the globe leg's idiom
+      ctx->Yield(2);
+      // The toggle's own containment leg: its rect inside the factors region's live clip — the
+      // same visibility demand the fixed-stack controls above answer, relocated with its region.
+      const ImGuiTestItemInfo toggle =
+          ctx->ItemInfo("**/Deviation grid###pose_factors_dev_grid", ImGuiTestOpFlags_NoError);
+      IM_CHECK_RETV(toggle.ID != 0, false);
+      IM_CHECK_RETV(toggle.RectFull.Min.x >= factors->InnerClipRect.Min.x - 0.5f &&
+                        toggle.RectFull.Max.x <= factors->InnerClipRect.Max.x + 0.5f &&
+                        toggle.RectFull.Min.y >= factors->InnerClipRect.Min.y - 0.5f &&
+                        toggle.RectFull.Max.y <= factors->InnerClipRect.Max.y + 0.5f,
+                    false);
+      const bool grid_before = gui::g_state.analysis.point_view.show_deviation_grid;
+      ctx->ItemClick("**/Deviation grid###pose_factors_dev_grid");
+      ctx->Yield(2);
+      IM_CHECK_RETV(gui::g_state.analysis.point_view.show_deviation_grid != grid_before, false);
+      ctx->ItemClick("**/Pose diagnostics##pose_factors");  // restore the default-closed shape
+      ctx->Yield(2);
+    }
     // a running playback is stopped by a hand on the slider (the click moves the cursor),
     gui::g_state.analysis.point_view.playing = true;
     ctx->Yield(2);
@@ -7443,11 +8753,23 @@ bool PoseCurveRegionDrawsAndMovesTheSharedCursor(ImGuiTestContext* ctx) {
   // logged for the hands-on record (the note rides the default layer by construction; this
   // scene may not carry a gap to exercise it). ----
   {
+    // The env gate, pose host: with the variable unset the "Pose diagnostics" header is not
+    // submitted at all; under "1" both fold headers stand and are contained (default-closed;
+    // the toggle's flip legs live in the narrowest case).
+    const ScopedDebugDetailsEnv env_unset(DebugDetailsState::kUnset);
+    ctx->Yield(2);
+    IM_CHECK_RETV(ctx->ItemInfo("**/Pose diagnostics##pose_factors", ImGuiTestOpFlags_NoError).ID == 0, false);
+    IM_CHECK_RETV(ctx->ItemInfo("**/Interface transmission##pose_factors", ImGuiTestOpFlags_NoError).ID != 0, false);
+  }
+  {
+    const ScopedDebugDetailsEnv env_on(DebugDetailsState::kOn);
+    ctx->Yield(2);
     ImGuiWindow* factors = PoseRegionWindow("##AnalyzePoseFactors");
     IM_CHECK_RETV(factors != nullptr, false);
-    const ImGuiTestItemInfo physics = ctx->ItemInfo("**/Physics details##pose_factors", ImGuiTestOpFlags_NoError);
+    const ImGuiTestItemInfo physics =
+        ctx->ItemInfo("**/Interface transmission##pose_factors", ImGuiTestOpFlags_NoError);
     IM_CHECK_RETV(physics.ID != 0, false);
-    const ImGuiTestItemInfo calc = ctx->ItemInfo("**/Calculation details##pose_factors", ImGuiTestOpFlags_NoError);
+    const ImGuiTestItemInfo calc = ctx->ItemInfo("**/Pose diagnostics##pose_factors", ImGuiTestOpFlags_NoError);
     IM_CHECK_RETV(calc.ID != 0, false);
     IM_CHECK_RETV(physics.RectFull.Max.y <= factors->InnerClipRect.Max.y + 0.5f, false);
     IM_CHECK_RETV(calc.RectFull.Max.y <= factors->InnerClipRect.Max.y + 0.5f, false);
@@ -7665,6 +8987,581 @@ bool PoseCurveRegionDrawsAndMovesTheSharedCursor(ImGuiTestContext* ctx) {
   ctx->Yield(2);
   gui::g_state.analyze_pose_view_open = false;
   ctx->Yield(2);
+  return true;
+}
+
+// 779.5 — the right-button Y pan and the two-row footer: the pan's real input leg (the window
+// slides as a whole, span preserved, and a value that entered the window draws its ink at the
+// independently predicted pixel), the footer's two rows (the three x labels and the outside
+// summary simultaneously present, on separate rows, with the rad unit), the boundary-value
+// labels of a window with no decade major, and the exclusivity/lifecycle negative legs (left
+// clicks under a held right button, a press begun outside, a drag carried out of the canvas,
+// a right button held across a real adoption). The oracle math reads the submitted border
+// vertices and the C-reader model — never the renderer's own helpers.
+bool PoseCurvePanMovesTheWindowAndKeepsTheXLabels(ImGuiTestContext* ctx) {
+  ScopedServerGuard guard;
+  IM_CHECK_RETV(BringUpHaloScene(ctx, /*infinite=*/false), false);
+  OpenWindow(ctx);
+  IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
+  IM_CHECK_RETV(SelectRowByDisplay(ctx, TopChainDisplay().c_str()) != std::nullopt, false);
+  gui::g_state.analyze_pose_view_open = true;
+  PinPoseViewOnScreen(ctx);
+  SetSkyPointTarget(42.0, 0.0);
+  IM_CHECK_RETV(
+      DriveUntil(
+          ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCompleted; },
+          60),
+      false);
+  gui::g_state.analyze_pose_view_open = true;
+  PinPoseViewOnScreen(ctx);
+  ctx->Yield(2);
+  ImGuiWindow* curve = PoseRegionWindow("##AnalyzePoseCurve");
+  IM_CHECK_RETV(curve != nullptr, false);
+  const ImGuiTestItemInfo canvas = ctx->ItemInfo("**/##pose_curve_canvas", ImGuiTestOpFlags_NoError);
+  IM_CHECK_RETV(canvas.ID != 0, false);
+  gui::PointViewState& view = gui::g_state.analysis.point_view;
+  const gui::PointIntentKey key_before = gui::g_state.analysis.point.key;
+  gui::PointContributionCurve model;
+  IM_CHECK_RETV(gui::BuildPointContributionCurve(*gui::g_state.analysis.point.adopted_result, 0, &model), false);
+  const gui::PointCurveAxisRange fit = gui::PointCurveAxisFit(model);
+  IM_CHECK_RETV(fit.valid, false);
+  const double fit_lo_log = std::log10(fit.lo);
+  const double fit_hi_log = std::log10(fit.hi);
+  IM_CHECK_RETV(fit_hi_log - fit_lo_log > 1.5, false);  // a domain the zoom/pan legs can work in
+
+  // The plot-rect oracle: the submitted border vertices give the real plot rect (the same read
+  // the cursor case's render oracle makes, widened to x) — every pixel prediction below builds
+  // on this rect, never on the renderer's helpers. The canvas rect is re-read per call: the D7
+  // legs below move it, and a rect captured at case start would filter the wrong area.
+  const auto canvas_rect = [&]() {
+    const ImGuiTestItemInfo c = ctx->ItemInfo("**/##pose_curve_canvas", ImGuiTestOpFlags_NoError);
+    return c.ID != 0 ? c.RectFull : ImRect(0.0f, 0.0f, -1.0f, -1.0f);
+  };
+  const auto plot_rect = [&]() {
+    const ImRect zone = canvas_rect();
+    ImRect rect(ImVec2(FLT_MAX, FLT_MAX), ImVec2(-FLT_MAX, -FLT_MAX));
+    if (zone.Min.x > zone.Max.x) {
+      return rect;  // no canvas item — no plot, whatever the stale frame drew
+    }
+    for (const ImDrawVert& vertex : curve->DrawList->VtxBuffer) {
+      if (zone.Contains(vertex.pos) && vertex.col == gui::kPointCurvePlotBorderColor) {
+        rect.Add(vertex.pos);
+      }
+    }
+    return rect;
+  };
+  const ImU32 text_color = ImGui::GetColorU32(ImGuiCol_TextDisabled);
+  const auto glyphs_in = [&](const ImRect& zone) {
+    std::vector<ImRect> glyphs;
+    const ImVector<ImDrawVert>& vertices = curve->DrawList->VtxBuffer;
+    for (int i = 0; i + 3 < vertices.Size;) {
+      if (vertices[i].col != text_color) {
+        ++i;
+        continue;
+      }
+      ImRect rect(vertices[i].pos, vertices[i].pos);
+      for (int k = 1; k < 4; ++k) {
+        rect.Add(vertices[i + k].pos);
+      }
+      i += 4;  // one glyph = one 4-vertex quad of one colour, the read the legend probe makes
+      if (zone.Overlaps(rect)) {
+        glyphs.push_back(rect);
+      }
+    }
+    return glyphs;
+  };
+  const float line_h = ImGui::GetTextLineHeight();
+
+  // ---- Zoom until the window hides real points (the outside summary's non-empty precondition)
+  // — bounded: the halo scene's positive pool spans decades, so a dozen notches must do it. ----
+  ctx->MouseMoveToPos(canvas.RectFull.GetCenter());
+  ctx->Yield(3);
+  int outside_points = 0;
+  for (int notch = 0; notch < 14; ++notch) {
+    ctx->MouseWheelY(3.0f);
+    ctx->Yield(2);
+    const gui::PointCurveAxisRange vis = gui::PointCurveVisibleRange(fit, &view.curve_axis);
+    outside_points = gui::PointCurveCountOutside(model, vis.lo, vis.hi).points;
+    if (outside_points > 0) {
+      break;
+    }
+  }
+  IM_CHECK_RETV(outside_points > 0, false);
+  const gui::PointCurveAxisRange zoomed = gui::PointCurveVisibleRange(fit, &view.curve_axis);
+  ctx->LogInfo("[pose curve pan] zoomed to outside=%d window [%.4g, %.4g] span %.3f dec", outside_points, zoomed.lo,
+               zoomed.hi, std::log10(zoomed.hi) - std::log10(zoomed.lo));
+
+  // ---- AC2: with a non-empty outside count, the three x labels, the summary and the rad unit
+  // are all on screen — the labels on their own row, the summary on the row below, nothing
+  // spanning both. The check is reusable: the degrade leg below must find the same rows again
+  // after growing the canvas back. ----
+  const auto check_footer_rows = [&]() -> bool {
+    const ImRect plot = plot_rect();
+    IM_CHECK_RETV(plot.Min.x < plot.Max.x && plot.Min.y < plot.Max.y, false);  // the plot rect is ordered
+    const ImRect row_a(plot.Min.x - gui::UiPx(gui::kAnalyzeSplitterSize), plot.Max.y + gui::UiPx(8.0f),
+                       plot.Max.x + gui::UiPx(4.0f), plot.Max.y + gui::UiPx(13.0f) + line_h + 1.5f);
+    const std::vector<ImRect> label_glyphs = glyphs_in(row_a);
+    IM_CHECK_RETV(label_glyphs.size() >= 3, false);
+    const auto cluster_at = [&](float x) {
+      return std::any_of(label_glyphs.begin(), label_glyphs.end(),
+                         [x](const ImRect& g) { return g.Min.x - 2.0f <= x && x <= g.Max.x + 2.0f; });
+    };
+    IM_CHECK_RETV(cluster_at(plot.Min.x), false);                        // "0" centred on the left edge
+    IM_CHECK_RETV(cluster_at((plot.Min.x + plot.Max.x) * 0.5f), false);  // the mid label
+    IM_CHECK_RETV(cluster_at(plot.Max.x - 1.0f), false);                 // the right-aligned hi label
+    const ImRect zone = canvas_rect();
+    const ImRect row_b(plot.Min.x - gui::UiPx(gui::kAnalyzeSplitterSize), row_a.Max.y + 1.0f, zone.Max.x, zone.Max.y);
+    IM_CHECK_RETV(!glyphs_in(row_b).empty(), false);  // the summary's own row below the labels
+    bool spans_both_rows = false;
+    for (const ImRect& g : glyphs_in(ImRect(row_a.Min.x, row_a.Min.y, row_b.Max.x, row_b.Max.y))) {
+      spans_both_rows = spans_both_rows || (g.Min.y < row_a.Max.y && g.Max.y > row_b.Min.y);
+    }
+    IM_CHECK_RETV(!spans_both_rows, false);  // no glyph spans both rows
+    return true;
+  };
+  IM_CHECK_RETV(check_footer_rows(), false);
+  const ImRect rad_zone(canvas.RectFull.Max.x - ImGui::CalcTextSize("rad").x - gui::UiPx(8.0f), canvas.RectFull.Min.y,
+                        canvas.RectFull.Max.x, canvas.RectFull.Min.y + line_h + gui::UiPx(6.0f));
+  IM_CHECK_RETV(!glyphs_in(rad_zone).empty(), false);
+
+  // ---- AC1: press right inside the canvas, drag DOWN — the window slides toward larger values
+  // until it sits flush at the fit's top (the clamp's whole-window shape), span never moving. ----
+  const double span_before = view.curve_axis.log_hi - view.curve_axis.log_lo;
+  const ImRect plot0 = plot_rect();
+  IM_CHECK_RETV(plot0.Min.x < plot0.Max.x && plot0.Min.y < plot0.Max.y, false);
+  const float plot_h0 = plot0.Max.y - plot0.Min.y;
+  const float drag_bottom = canvas.RectFull.GetCenter().y + plot_h0;
+  ctx->MouseDown(1);
+  ctx->Yield(1);
+  IM_CHECK_RETV(view.curve_pan_active, false);
+  for (float y = canvas.RectFull.GetCenter().y; y < drag_bottom; y += plot_h0 * 0.25f) {
+    ctx->MouseMoveToPos(ImVec2(canvas.RectFull.GetCenter().x, y));
+    ctx->Yield(1);
+  }
+  ctx->Yield(2);
+  IM_CHECK_RETV(std::abs(view.curve_axis.log_hi - fit_hi_log) < 1e-9, false);  // flush at the fit's top
+  IM_CHECK_RETV(std::abs(view.curve_axis.log_hi - view.curve_axis.log_lo - span_before) < 1e-9, false);
+
+  // ---- The measured leg: choose a real below-window product value as the pan target, drag UP
+  // by the distance the independent log math names, and verify the window covers it and its ink
+  // is drawn at the predicted pixel. The flushed window has unbounded room below — no clamp
+  // contaminates the arithmetic. ----
+  const gui::PointCurveAxisRange flushed = gui::PointCurveVisibleRange(fit, &view.curve_axis);
+  const auto arm_value = [](int arm, const gui::PointCurvePoint& p) -> double {
+    switch (arm) {
+      case 0:
+        return p.rho;
+      case 1:
+        return p.area;
+      case 2:
+        return p.transmission;
+      case 3:
+        return p.k_carea;
+      default:
+        return p.product;
+    }
+  };
+  const auto arm_kind = [](int arm, const gui::PointCurvePoint& p) -> gui::PointCurveValueKind {
+    switch (arm) {
+      case 0:
+        return p.rho_kind;
+      case 1:
+        return p.area_kind;
+      case 2:
+        return p.transmission_kind;
+      case 3:
+        return p.k_kind;
+      default:
+        return p.product_kind;
+    }
+  };
+  int target_arm = -1;
+  double target_value = 0.0;
+  for (int arm = 4; arm >= 0; --arm) {  // the product arm preferred, any honest arm acceptable
+    for (const gui::PointCurvePoint& point : model.points) {
+      if (arm_kind(arm, point) == gui::PointCurveValueKind::kPositive && arm_value(arm, point) < flushed.lo) {
+        target_arm = arm;
+        target_value = arm_value(arm, point);
+        break;
+      }
+    }
+    if (target_arm >= 0) {
+      break;
+    }
+  }
+  IM_CHECK_RETV(target_arm >= 0, false);
+  const double shift_log = std::log10(flushed.lo) - std::log10(target_value) + 0.15;  // +margin inside
+  const double shift_frac = shift_log / span_before;
+  const float drag_up = static_cast<float>(shift_frac * plot_h0);
+  const int cursor_before_pan = view.sample_index;
+  for (float y = canvas.RectFull.GetCenter().y + plot_h0; y > canvas.RectFull.GetCenter().y + plot_h0 - drag_up;
+       y -= plot_h0 * 0.2f) {
+    ctx->MouseMoveToPos(ImVec2(canvas.RectFull.GetCenter().x, y));
+    ctx->Yield(1);
+  }
+  // While the right button holds the pan, a left press must not write the cursor (§3.1's mutex).
+  // MouseDown/MouseUp or the button mask (MouseClick would replace it and drop the right button
+  // — the engine's own shape), which is exactly the overlap the gate must survive.
+  ctx->MouseDown(0);
+  ctx->Yield(2);
+  ctx->MouseUp(0);
+  ctx->Yield(2);
+  IM_CHECK_RETV(view.sample_index == cursor_before_pan, false);
+  IM_CHECK_RETV(view.curve_pan_active, false);  // ...and the pan keeps its latch through it
+  ctx->MouseUp(1);
+  ctx->Yield(2);
+  IM_CHECK_RETV(!view.curve_pan_active, false);
+  const double lo_after = view.curve_axis.log_lo;
+  const double hi_after = view.curve_axis.log_hi;
+  IM_CHECK_RETV(std::abs((hi_after - lo_after) - span_before) < 1e-9, false);  // span preserved
+  IM_CHECK_RETV(std::abs(hi_after - (fit_hi_log - shift_log)) < 0.2 * span_before,
+                false);  // the shift the drag named (± the footer's responsive plot height)
+  IM_CHECK_RETV(lo_after <= std::log10(target_value) && std::log10(target_value) <= hi_after, false);
+  // The entered value's ink: a vertex of the target arm's colour within 3px of the predicted
+  // pixel — predicted from the measured plot rect and the window the state carries (independent
+  // log math, the cursor case's oracle shape).
+  {
+    const ImRect plot1 = plot_rect();
+    const double log_lo = std::log10(view.curve_axis.log_lo <= fit_lo_log ? fit.lo : std::pow(10.0, lo_after));
+    const double log_hi = std::log10(view.curve_axis.log_hi >= fit_hi_log ? fit.hi : std::pow(10.0, hi_after));
+    const double predicted =
+        plot1.Min.y + (log_hi - std::log10(target_value)) / (log_hi - log_lo) * (plot1.Max.y - plot1.Min.y);
+    const ImU32 arm_color = gui::kPointCurveArmColors[target_arm];
+    bool ink_found = false;
+    for (const ImDrawVert& vertex : curve->DrawList->VtxBuffer) {
+      if (vertex.col == arm_color && plot1.Contains(vertex.pos) && std::abs(vertex.pos.y - predicted) <= 3.0f) {
+        ink_found = true;
+        break;
+      }
+    }
+    IM_CHECK_RETV(ink_found, false);
+    ctx->LogInfo("[pose curve pan] target %.4g (arm %d) predicted py %.1f — ink on screen", target_value, target_arm,
+                 (double)predicted);
+  }
+  IM_CHECK_RETV(view.sample_index == cursor_before_pan, false);
+  IM_CHECK_RETV(!view.playing, false);
+  IM_CHECK_RETV(gui::g_state.analysis.point.key == key_before, false);
+  IM_CHECK_RETV(curve->Scroll.y == 0.0f, false);
+  IM_CHECK_RETV(SaveWindowPng(ctx, "//Pose & trace", GuiTestTempPath("pose_curve_pan_target.png").string()), false);
+
+  // ---- The pan does not stop the playback: it runs on through a right-button drag. ----
+  view.playing = true;
+  ctx->MouseMoveToPos(canvas.RectFull.GetCenter());
+  ctx->Yield(2);
+  ctx->MouseDown(1);
+  ctx->Yield(1);
+  IM_CHECK_RETV(view.curve_pan_active, false);  // latched over the playback
+  ctx->MouseMoveToPos(ImVec2(canvas.RectFull.GetCenter().x, canvas.RectFull.GetCenter().y + 40.0f));
+  ctx->Yield(2);
+  ctx->MouseUp(1);
+  ctx->Yield(2);
+  IM_CHECK_RETV(view.playing, false);  // the pan never stopped it
+  view.playing = false;
+
+  // ---- Negative legs: a press begun outside the canvas never latches; a drag carried out of
+  // the canvas keeps panning (the gesture owns its drag), moves no host window, scrolls no
+  // region, and the release ends it. ----
+  const double log_lo_stable = view.curve_axis.log_lo;
+  ctx->MouseMoveToPos(ImVec2(canvas.RectFull.Min.x - 30.0f, canvas.RectFull.Min.y - 30.0f));
+  ctx->Yield(2);
+  ctx->MouseDown(1);
+  ctx->Yield(1);
+  IM_CHECK_RETV(!view.curve_pan_active, false);
+  ctx->MouseMoveToPos(canvas.RectFull.GetCenter());
+  ctx->Yield(2);
+  ctx->MouseUp(1);
+  ctx->Yield(1);
+  IM_CHECK_RETV(!view.curve_pan_active, false);
+  IM_CHECK_RETV(view.curve_axis.log_lo == log_lo_stable, false);
+
+  ImGuiWindow* host = ctx->GetWindowByRef("//Pose & trace");
+  IM_CHECK_RETV(host != nullptr, false);
+  const ImVec2 host_pos_before = host->Pos;
+  const float scroll_before = curve->Scroll.y;
+  ctx->MouseMoveToPos(canvas.RectFull.GetCenter());
+  ctx->Yield(2);
+  ctx->MouseDown(1);
+  ctx->Yield(1);
+  IM_CHECK_RETV(view.curve_pan_active, false);
+  ctx->MouseMoveToPos(ImVec2(canvas.RectFull.GetCenter().x, canvas.RectFull.Min.y - 80.0f));
+  ctx->Yield(2);
+  IM_CHECK_RETV(view.curve_pan_active, false);  // the gesture survives leaving the canvas
+  ctx->MouseUp(1);
+  ctx->Yield(2);
+  IM_CHECK_RETV(!view.curve_pan_active, false);
+  IM_CHECK_RETV(host->Pos.x == host_pos_before.x && host->Pos.y == host_pos_before.y, false);
+  IM_CHECK_RETV(curve->Scroll.y == scroll_before, false);
+
+  // ---- Major-2 regression: the press frame establishes ownership only. The approach move
+  // lands in the SAME input frame as the press (MouseTeleportToPos NoYield + MouseDown), and a
+  // mere right-click must not pan by the movement it carried in — the window holds. ----
+  ctx->MouseMoveToPos(canvas.RectFull.GetCenter());
+  ctx->Yield(3);
+  ctx->MouseWheelY(-14.0f);  // a known mid-fit window: back out to the full span, then one notch
+  ctx->Yield(2);             // in at the centre anchor — room on both sides for the drag below
+  ctx->MouseWheelY(1.0f);
+  ctx->Yield(2);
+  const double log_lo_before_click = view.curve_axis.log_lo;
+  ctx->MouseTeleportToPos(ImVec2(canvas.RectFull.GetCenter().x, canvas.RectFull.GetCenter().y - 60.0f),
+                          ImGuiTestOpFlags_NoYield);
+  ctx->MouseDown(1);
+  ctx->Yield(2);
+  IM_CHECK_RETV(view.curve_axis.log_lo == log_lo_before_click, false);  // no jump from the approach move
+  ctx->MouseUp(1);
+  ctx->Yield(1);
+  // A real drag after the same-frame press still pans (the ownership carries into the drag) —
+  // dragged UP: the window moves toward smaller values with room below.
+  ctx->MouseDown(1);
+  ctx->MouseMoveToPos(ImVec2(canvas.RectFull.GetCenter().x, canvas.RectFull.GetCenter().y - 180.0f));
+  ctx->Yield(2);
+  ctx->MouseUp(1);
+  ctx->Yield(2);
+  IM_CHECK_RETV(view.curve_axis.log_lo != log_lo_before_click, false);  // the drag moved the window
+  IM_CHECK_RETV(!view.curve_pan_active, false);
+
+  // ---- Major-3 regression: a left press begun during a pan stays swallowed until released —
+  // releasing the RIGHT button first must not wake the held left drag into a cursor write. The
+  // playback is the discriminator (the write path always stops it, J3 — index moves are
+  // playback's own, not a gesture's): a woken write would end it, the swallow lets it run. ----
+  view.playing = true;
+  ctx->MouseMoveToPos(canvas.RectFull.GetCenter());
+  ctx->Yield(2);
+  ctx->MouseDown(1);  // the pan owns the gesture
+  ctx->Yield(1);
+  IM_CHECK_RETV(view.curve_pan_active, false);
+  ctx->MouseDown(0);  // the left press begins UNDER the pan
+  ctx->Yield(1);
+  ctx->MouseMoveToPos(ImVec2(canvas.RectFull.GetCenter().x + 40.0f, canvas.RectFull.GetCenter().y));
+  ctx->Yield(2);    // both held, dragging
+  ctx->MouseUp(1);  // the pan ends first — the held left drag must NOT wake into a cursor write
+  ctx->Yield(2);
+  IM_CHECK_RETV(!view.curve_pan_active, false);
+  IM_CHECK_RETV(view.playing, false);  // the playback ran on through the whole overlap
+  ctx->MouseUp(0);
+  ctx->Yield(2);
+  IM_CHECK_RETV(view.playing, false);  // releasing the swallowed press itself stops nothing
+  // A fresh left press afterwards selects normally (a resolved click stops the playback).
+  view.playing = true;
+  ctx->Yield(1);
+  ctx->MouseMoveToPos(ImVec2(canvas.RectFull.Min.x + canvas.RectFull.GetWidth() * 0.3f, canvas.RectFull.GetCenter().y));
+  ctx->Yield(2);
+  ctx->MouseDown(0);
+  ctx->Yield(2);
+  ctx->MouseUp(0);
+  ctx->Yield(2);
+  IM_CHECK_RETV(!view.playing, false);  // the fresh press resolved and stopped it — no swallow
+  view.playing = false;
+
+  // ---- AC3's narrow window: zoom to a sub-decade span and pan it strictly between two decade
+  // exponents — no labelled major, and the window's own boundary values are the only numeric
+  // reference, drawn in the gutter at the plot's top and bottom frame, fully inside the canvas. ----
+  ctx->MouseMoveToPos(canvas.RectFull.GetCenter());
+  ctx->Yield(2);
+  for (int notch = 0; notch < 8; ++notch) {
+    ctx->MouseWheelY(3.0f);
+    ctx->Yield(1);
+  }
+  ctx->Yield(2);
+  const double deep_span = view.curve_axis.log_hi - view.curve_axis.log_lo;
+  IM_CHECK_RETV(deep_span < 0.9, false);
+  float pan_y = canvas.RectFull.GetCenter().y;
+  for (int step = 0; step < 20; ++step) {
+    const double lo = view.curve_axis.log_lo;
+    const double hi = view.curve_axis.log_hi;
+    if (std::ceil(lo) > hi) {
+      break;  // no integer exponent inside [lo, hi]
+    }
+    ctx->MouseMoveToPos(ImVec2(canvas.RectFull.GetCenter().x, pan_y));
+    ctx->Yield(1);
+    ctx->MouseDown(1);
+    ctx->MouseMoveToPos(ImVec2(canvas.RectFull.GetCenter().x, pan_y - 30.0f));  // drag up: window toward smaller
+    ctx->Yield(1);
+    ctx->MouseUp(1);
+    ctx->Yield(1);
+    pan_y -= 30.0f;
+  }
+  {
+    const double lo = view.curve_axis.log_lo;
+    const double hi = view.curve_axis.log_hi;
+    IM_CHECK_RETV(std::ceil(lo) > hi, false);  // strictly between two decades
+    ctx->LogInfo("[pose curve pan] no-major window [%.3f, %.3f]", lo, hi);
+  }
+  {
+    const ImRect plot2 = plot_rect();
+    IM_CHECK_RETV(plot2.Min.y < plot2.Max.y, false);
+    const ImRect gutter(canvas.RectFull.Min.x, canvas.RectFull.Min.y, plot2.Min.x - 3.0f, canvas.RectFull.Max.y);
+    const std::vector<ImRect> boundary = glyphs_in(gutter);
+    const auto band = [&](float py) {
+      return std::any_of(boundary.begin(), boundary.end(), [&](const ImRect& g) {
+        return g.Min.x >= canvas.RectFull.Min.x &&  // fully inside, not clipped by the canvas
+               std::abs((g.Min.y + g.Max.y) * 0.5f - py) <= line_h * 0.6f;
+      });
+    };
+    IM_CHECK_RETV(band(plot2.Min.y), false);  // the window's top boundary value
+    IM_CHECK_RETV(band(plot2.Max.y), false);  // the window's bottom boundary value
+    IM_CHECK_RETV(SaveWindowPng(ctx, "//Pose & trace", GuiTestTempPath("pose_curve_pan_boundary_labels.png").string()),
+                  false);
+  }
+
+  // ---- The small-canvas degrade (the footer's real budget): with a non-empty outside summary,
+  // shrink the curve canvas through D7 until the footer leaves no real plot — the named note
+  // form replaces the plot (no inverted rect, no clipped labels), the pan dies, and growing
+  // back restores the full form. The predicate consumes live line heights, so it is scale-free;
+  // the 1.5x leg at the case's end re-runs the same shape at the other calibration point. ----
+  bool degraded = false;
+  bool strip_ok = true;
+  for (int i = 0; i < 10 && !degraded && strip_ok; ++i) {
+    strip_ok = PoseDragStrip(ctx, "**/##PoseCurveSplitter", 0.0f, -30.0f);  // the drag helpers'
+    ctx->Yield(2);                                                          // verdict judges once, after
+    const ImRect plot_d = plot_rect();
+    degraded = !(plot_d.Min.y < plot_d.Max.y);  // the plot border is gone — no inverted rect drawn
+  }
+  IM_CHECK_RETV(strip_ok, false);
+  IM_CHECK_RETV(degraded, false);
+  {
+    const ImRect zone = canvas_rect();
+    const ImRect center(zone.Min.x, zone.GetCenter().y - line_h, zone.Max.x, zone.GetCenter().y + line_h);
+    IM_CHECK_RETV(!glyphs_in(center).empty(), false);  // the note's ink, centred where the plot was
+    ctx->LogInfo("[pose curve pan] degraded canvas %.0fpx — the note form holds", (double)zone.GetHeight());
+  }
+  const double log_lo_degraded = view.curve_axis.log_lo;
+  ctx->MouseMoveToPos(canvas_rect().GetCenter());
+  ctx->Yield(2);
+  ctx->MouseDown(1);
+  ctx->MouseMoveToPos(ImVec2(canvas_rect().GetCenter().x, canvas_rect().GetCenter().y + 40.0f));
+  ctx->Yield(2);
+  IM_CHECK_RETV(!view.curve_pan_active, false);  // the degraded canvas takes no pan
+  IM_CHECK_RETV(view.curve_axis.log_lo == log_lo_degraded, false);
+  ctx->MouseUp(1);
+  ctx->Yield(1);
+  // The degraded form's wheel leg: the hidden window must not move either — both endpoints hold
+  // while the note form owns the canvas, and a wheel after the restore works again (the two
+  // judgments, input and ink, are the same arithmetic; only one transition frame can differ).
+  const double lo_before_degraded_wheel = view.curve_axis.log_lo;
+  const double hi_before_degraded_wheel = view.curve_axis.log_hi;
+  ctx->MouseMoveToPos(canvas_rect().GetCenter());
+  ctx->Yield(2);
+  ctx->MouseWheelY(-3.0f);  // zoom OUT: this leg's window already sits at the 0.25-decade span
+  ctx->Yield(2);            // floor, so a zoom-in would be a clamp no-op with no discriminative power
+  IM_CHECK_RETV(view.curve_axis.log_lo == lo_before_degraded_wheel, false);
+  IM_CHECK_RETV(view.curve_axis.log_hi == hi_before_degraded_wheel, false);
+  bool restored = false;
+  strip_ok = true;
+  for (int i = 0; i < 10 && !restored && strip_ok; ++i) {
+    strip_ok = PoseDragStrip(ctx, "**/##PoseCurveSplitter", 0.0f, 40.0f);
+    ctx->Yield(2);
+    const ImRect plot_r = plot_rect();
+    restored = plot_r.Min.y < plot_r.Max.y;
+  }
+  IM_CHECK_RETV(strip_ok, false);
+  IM_CHECK_RETV(restored, false);
+  IM_CHECK_RETV(check_footer_rows(), false);  // the two rows are intact again at the grown canvas
+  ctx->MouseMoveToPos(canvas_rect().GetCenter());
+  ctx->Yield(2);
+  ctx->MouseWheelY(-2.0f);  // zoom out: the deep window is not at the fit's full span, so it moves
+  ctx->Yield(2);
+  IM_CHECK_RETV(view.curve_axis.log_hi - view.curve_axis.log_lo > hi_before_degraded_wheel - lo_before_degraded_wheel,
+                false);  // the restored canvas zooms again
+
+  // ---- AC4: leave the fit by zoom and pan, then a REAL new adoption resets the window — and a
+  // right button held across the adoption does not resurrect the gesture (no new press, no pan). ----
+  ctx->MouseMoveToPos(canvas.RectFull.GetCenter());
+  ctx->Yield(2);
+  ctx->MouseWheelY(8.0f);
+  ctx->Yield(2);
+  IM_CHECK_RETV(view.curve_axis.log_lo > fit_lo_log + 1e-9, false);  // the window left the fit's floor
+  ctx->MouseDown(1);
+  ctx->MouseMoveToPos(ImVec2(canvas.RectFull.GetCenter().x, canvas.RectFull.GetCenter().y - 50.0f));
+  ctx->Yield(2);
+  ctx->MouseUp(1);
+  ctx->Yield(1);
+  IM_CHECK_RETV(view.curve_axis.log_hi < fit_hi_log - 1e-9, false);  // ...and its ceiling
+  ctx->MouseDown(1);                                                 // held across the adoption that follows
+  ctx->Yield(1);
+  SetSkyPointTarget(43.0, 0.0);
+  // The key change DROPS the adoption first (the pump's AC5 rule): wait through the drop, then
+  // for the new document — a same-frame check would mistake the old result for the new one.
+  IM_CHECK_RETV(
+      DriveUntil(
+          ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) != gui::PointQueryState::kCompleted; },
+          30),
+      false);
+  IM_CHECK_RETV(
+      DriveUntil(
+          ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCompleted; },
+          60),
+      false);
+  ctx->Yield(2);
+  gui::PointContributionCurve model2;
+  IM_CHECK_RETV(gui::BuildPointContributionCurve(*gui::g_state.analysis.point.adopted_result, 0, &model2), false);
+  const gui::PointCurveAxisRange fit2 = gui::PointCurveAxisFit(model2);
+  IM_CHECK_RETV(fit2.valid, false);
+  IM_CHECK_RETV(std::abs(view.curve_axis.log_lo - std::log10(fit2.lo)) < 1e-9, false);  // back to the fit
+  IM_CHECK_RETV(std::abs(view.curve_axis.log_hi - std::log10(fit2.hi)) < 1e-9, false);
+  IM_CHECK_RETV(!view.curve_pan_active, false);
+  ctx->Yield(3);  // more frames with the button still down — no resurrection without a press
+  IM_CHECK_RETV(std::abs(view.curve_axis.log_lo - std::log10(fit2.lo)) < 1e-9, false);
+  IM_CHECK_RETV(!view.curve_pan_active, false);
+  ctx->MouseUp(1);
+  ctx->Yield(1);
+
+  // ---- The same degrade at 1.5x (the §16.4.1 calibration duty, this task's share): the
+  // predicate consumes UiPx and live line heights, so the note form must hold at the other
+  // calibration point too. The scale restores before the case ends — this leg's write must not
+  // become the scale a later case inherits. ----
+  {
+    const auto set_scale = [&](float multiplier) -> bool {
+      gui::g_ui_scale_multiplier = multiplier;
+      gui::g_ui_scale_dirty = true;
+      for (int i = 0;
+           i < 60 && !(gui::UiPx(gui::kAnalyzeLeftPanelWidth) > multiplier * gui::kAnalyzeLeftPanelWidth - 0.5f &&
+                       gui::UiPx(gui::kAnalyzeLeftPanelWidth) < multiplier * gui::kAnalyzeLeftPanelWidth + 0.5f);
+           ++i) {
+        ctx->Yield(1);
+      }
+      IM_CHECK_RETV(fabsf(gui::UiPx(gui::kAnalyzeLeftPanelWidth) - multiplier * gui::kAnalyzeLeftPanelWidth) < 0.5f,
+                    false);
+      ctx->Yield(4);
+      return true;
+    };
+    IM_CHECK_RETV(set_scale(1.5f), false);
+    bool degraded_15 = false;
+    bool strip_ok_15 = true;
+    for (int i = 0; i < 10 && !degraded_15 && strip_ok_15; ++i) {
+      strip_ok_15 = PoseDragStrip(ctx, "**/##PoseCurveSplitter", 0.0f, -40.0f);
+      ctx->Yield(2);
+      const ImRect plot_d = plot_rect();
+      degraded_15 = !(plot_d.Min.y < plot_d.Max.y);
+    }
+    IM_CHECK_RETV(strip_ok_15, false);
+    IM_CHECK_RETV(degraded_15, false);
+    {
+      const ImRect zone = canvas_rect();
+      const ImRect center(zone.Min.x, zone.GetCenter().y - ImGui::GetTextLineHeight(), zone.Max.x,
+                          zone.GetCenter().y + ImGui::GetTextLineHeight());
+      IM_CHECK_RETV(!glyphs_in(center).empty(), false);
+      ctx->LogInfo("[pose curve pan] degraded at 1.5x, canvas %.0fpx — the note form holds", (double)zone.GetHeight());
+    }
+    // The 1.5x wheel leg: the same hidden-window boundary at the other calibration point.
+    const double lo15 = view.curve_axis.log_lo;
+    const double hi15 = view.curve_axis.log_hi;
+    ctx->MouseMoveToPos(canvas_rect().GetCenter());
+    ctx->Yield(2);
+    ctx->MouseWheelY(2.0f);  // zoom IN: this leg's window sits at the fit's full span, so a
+    ctx->Yield(2);           // zoom-out would be a clamp no-op with no discriminative power
+    IM_CHECK_RETV(view.curve_axis.log_lo == lo15 && view.curve_axis.log_hi == hi15, false);
+    bool restored_15 = false;
+    strip_ok_15 = true;
+    for (int i = 0; i < 10 && !restored_15 && strip_ok_15; ++i) {
+      strip_ok_15 = PoseDragStrip(ctx, "**/##PoseCurveSplitter", 0.0f, 40.0f);
+      ctx->Yield(2);
+      const ImRect plot_r = plot_rect();
+      restored_15 = plot_r.Min.y < plot_r.Max.y;
+    }
+    IM_CHECK_RETV(strip_ok_15, false);
+    IM_CHECK_RETV(restored_15, false);
+    IM_CHECK_RETV(set_scale(gui::kFactoryUiScaleMultiplier), false);
+  }
   return true;
 }
 
@@ -8533,22 +10430,71 @@ bool CheckMapCellSteps(ImGuiTestContext* ctx, const std::string& text, const LUM
 }
 
 bool CheckMapQualityText(ImGuiTestContext* ctx, const std::string& stem) {
+  // The shipped default under BOTH off spellings — no variable, and an explicit "0" — proven
+  // with the non-diagnostic premises group OPEN: the "Map diagnostics" header is unsubmitted
+  // (the gate, not a closed fold), and neither the grid / execution lines nor the engine's raw
+  // geometry-basis string leak into the capture.
+  for (const DebugDetailsState gate_state : { DebugDetailsState::kUnset, DebugDetailsState::kOff }) {
+    // One gate state's checks run inside an immediate lambda (the loop-fatal-assert rule: a
+    // fatal assert directly in a for body aborts the remaining gate states).
+    const bool leg_ok = [&](DebugDetailsState) {
+      const ScopedDebugDetailsEnv env_off(gate_state);
+      ctx->Yield(2);
+      IM_CHECK_RETV(ctx->ItemInfo("**/Map diagnostics##map_caliber", ImGuiTestOpFlags_NoError).ID == 0, false);
+      ImGuiWindow* report = MapReportWindow();
+      IM_CHECK_RETV(report != nullptr, false);
+      const ImGuiID prem_id = report->GetID("Map quantity & premises##map_caliber");
+      ImGuiStorage* prem_storage = &report->StateStorage;
+      const bool prem_open = prem_storage->GetInt(prem_id, 0) != 0;
+      if (!prem_open) {
+        ctx->ItemClick("**/Map quantity & premises##map_caliber");
+        ctx->Yield(2);
+      }
+      const std::string default_text = CaptureMapFrameText(ctx);
+      // The premises group is open, so its full-definition row is in the capture.
+      IM_CHECK_RETV(default_text.find("Quantity: ") != std::string::npos, false);
+      IM_CHECK_RETV(default_text.find("Reference cell") == std::string::npos, false);
+      IM_CHECK_RETV(default_text.find("Source-fixed scale") == std::string::npos, false);
+      IM_CHECK_RETV(default_text.find(" members \xC2\xB7 kept ") == std::string::npos, false);
+      LUMICE_PathSurveyEvidence evidence{};
+      evidence.struct_size = sizeof(evidence);
+      IM_CHECK_RETV(
+          LUMICE_PathMapGetEvidence(gui::g_state.analysis.map.adopted_result.get(), &evidence) == LUMICE_PATH_READ_OK,
+          false);
+      if (evidence.geometry_basis.length > 0) {
+        const std::string basis(evidence.geometry_basis.data, evidence.geometry_basis.length);
+        // The engine's raw basis string is a diagnostics row.
+        IM_CHECK_RETV(default_text.find(basis) == std::string::npos, false);
+      }
+      if (!prem_open) {
+        prem_storage->SetInt(prem_id, 0);  // restore the default-closed shape
+        ctx->Yield(1);
+      }
+      return true;
+    }(gate_state);
+    if (!leg_ok) {
+      return false;  // the leg's own IM_CHECK named the failure
+    }
+  }
+  // The caliber's diagnostics group is env-gated: the helper runs under "1" (the group's
+  // header, idempotent-open and restore logic all ride the gate being on).
+  const ScopedDebugDetailsEnv env_on(DebugDetailsState::kOn);
   const auto& map = gui::g_state.analysis.map;
   const auto reference = map.adopted_result;
   ctx->MouseMoveToPos(ImVec2(2.0f, 2.0f));
   ImGuiWindow* report = MapReportWindow();
   IM_CHECK_RETV(report != nullptr, false);
   report->Scroll.y = 0.0f;
-  // The reference-cell line lives in the caliber's Calculation fold now (the ledger's L4
-  // tier) — open it IDEMPOTENTLY so the capture carries the numbers the checks read: the
-  // header is a toggle, and check_scale calls this helper three times (1x / 1.5x / back), so
-  // a blind click would close it on the second leg. The header's open state is the report
-  // child's own tree storage.
-  const ImGuiID calc_fold_id = report->GetID("Calculation details##map_caliber");
+  // The reference-cell line lives in the caliber's env-gated "Map diagnostics" group (the
+  // ledger's L4 tier) — open it IDEMPOTENTLY so the capture carries the numbers the checks
+  // read: the header is a toggle, and check_scale calls this helper three times (1x / 1.5x /
+  // back), so a blind click would close it on the second leg. The header's open state is the
+  // report child's own tree storage.
+  const ImGuiID calc_fold_id = report->GetID("Map diagnostics##map_caliber");
   ImGuiStorage* fold_storage = &report->StateStorage;
   const bool calc_fold_open = fold_storage->GetInt(calc_fold_id, 0) != 0;
   if (!calc_fold_open) {
-    ctx->ItemClick("**/Calculation details##map_caliber");
+    ctx->ItemClick("**/Map diagnostics##map_caliber");
     ctx->Yield(2);
   }
   const std::string report_text = CaptureMapFrameText(ctx);
@@ -8606,7 +10552,7 @@ bool CheckMapQualityText(ImGuiTestContext* ctx, const std::string& stem) {
   // Leave the fold as we found it: the report child's storage outlives this helper, and a
   // later case asserting the closed-by-default state must not inherit our open tier.
   if (!calc_fold_open && fold_storage->GetInt(calc_fold_id, 0) != 0) {
-    ctx->ItemClick("**/Calculation details##map_caliber");
+    ctx->ItemClick("**/Map diagnostics##map_caliber");
     ctx->Yield(2);
   }
   ctx->MouseMoveToPos(ImVec2(2.0f, 2.0f));
@@ -8657,10 +10603,11 @@ bool CheckMapGlyphsAcrossUiScale(ImGuiTestContext* ctx) {
         LUMICE_PathMapGetInfo(gui::g_state.analysis.map.adopted_result.get(), &caliber.info) == LUMICE_PATH_READ_OK &&
             caliber.info.kept_count > 0,
         false);
-    // The caliber's Calculation tier carries the grid numbers (the ledger's tiering); the λ
+    // The caliber's diagnostics tier carries the grid numbers (the ledger's tiering); the λ
     // is deliberately absent from every caliber line — the slider row's echo is its owner — so
     // the glyph audit reads the cell line's δ and the slider's λ label for the two codepoints.
-    const std::string metrics = gui::MapCaliberCalculationLines(caliber).front();
+    // This input carries no evidence, so the diagnostics lines' front is the grid line itself.
+    const std::string metrics = gui::MapCaliberDiagnosticsLines(caliber).front();
     IM_CHECK_RETV(metrics.find("\xCE\xBB") == std::string::npos, false);
     IM_CHECK_RETV(metrics.find("\xCE\xB4") != std::string::npos, false);
     std::string old_metrics = metrics;
@@ -10232,8 +12179,8 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
 
         // The pose window at the compressed tier, BEFORE any point intent: the fixed heads are
         // the two region titles — the globe's deviation-grid toggle retired to the factors
-        // region's Calculation details fold (§16.4), which lives in the discovered arm, so the
-        // pre-intent heads are titles + short status only (the pre-intent guide line IS the
+        // region's env-gated diagnostics group (§16.4), which lives in the discovered arm, so
+        // the pre-intent heads are titles + short status only (the pre-intent guide line IS the
         // factors region's forward pointer). The toggle's contain+flip legs live with the
         // completed document (the narrowest and narrow-column cases); the sample/play controls
         // belong to a completed point result and are driven by the point inspector's leg.
@@ -10623,18 +12570,42 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
     static gui::GuiState grid_probe;
     static bool draw_grid_probe = false;
     static std::string grid_report;
+    static gui::GuiState backdrop_probe;
+    static bool draw_backdrop_probe = false;
+    static int backdrop_probe_vertices = -1;
     t->GuiFunc = [](ImGuiTestContext*) {
-      if (!draw_grid_probe) {
-        return;
+      if (draw_grid_probe) {
+        ImGui::SetNextWindowPos(ImVec2(40.0f, 60.0f), ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(320.0f, 170.0f), ImGuiCond_Always);
+        ImGui::Begin("Compressed grid probe", nullptr, ImGuiWindowFlags_NoResize);
+        ImGui::LogToBuffer();
+        gui::RenderAnalyzeSunGlobeRegion(grid_probe, ImGui::GetContentRegionAvail());
+        grid_report = ImGui::GetCurrentContext()->LogBuffer.c_str();
+        ImGui::LogFinish();
+        ImGui::End();
       }
-      ImGui::SetNextWindowPos(ImVec2(40.0f, 60.0f), ImGuiCond_Always);
-      ImGui::SetNextWindowSize(ImVec2(320.0f, 170.0f), ImGuiCond_Always);
-      ImGui::Begin("Compressed grid probe", nullptr, ImGuiWindowFlags_NoResize);
-      ImGui::LogToBuffer();
-      gui::RenderAnalyzeSunGlobeRegion(grid_probe, ImGui::GetContentRegionAvail());
-      grid_report = ImGui::GetCurrentContext()->LogBuffer.c_str();
-      ImGui::LogFinish();
-      ImGui::End();
+      if (draw_backdrop_probe) {
+        // The backdrop probe must be tall enough for the canvas to exist (the compressed probe
+        // above is deliberately canvas-less — its ##globe_canvas absence is asserted): the
+        // grid's cell quads are the only state-driven vertex difference between two
+        // identically-sized frames (fixed window, fixed state → deterministic counts). The
+        // region's BeginChild body renders into the CHILD's own draw list, so the count sums
+        // the probe window and its direct children (skip a child that shares the parent's list,
+        // or its vertices would count twice).
+        ImGui::SetNextWindowPos(ImVec2(400.0f, 60.0f), ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(320.0f, 460.0f), ImGuiCond_Always);
+        ImGui::Begin("Grid backdrop probe", nullptr, ImGuiWindowFlags_NoResize);
+        ImGuiWindow* probe_win = ImGui::GetCurrentWindow();
+        gui::RenderAnalyzeSunGlobeRegion(backdrop_probe, ImGui::GetContentRegionAvail());
+        int vtx = probe_win->DrawList->VtxBuffer.Size;
+        for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
+          if (w->ParentWindow == probe_win && w->DrawList != nullptr && w->DrawList != probe_win->DrawList) {
+            vtx += w->DrawList->VtxBuffer.Size;
+          }
+        }
+        backdrop_probe_vertices = vtx;
+        ImGui::End();
+      }
     };
     t->TestFunc = [](ImGuiTestContext* ctx) {
       IM_CHECK(PoseCurveRegionDrawsAndMovesTheSharedCursor(ctx));
@@ -10661,7 +12632,52 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       IM_CHECK(grid_report.find("Crystal-frame sun directions") != std::string::npos);
       IM_CHECK(grid_report.find("no sun grid in this document") == std::string::npos);
       ctx->SetRef("");
+      // The backdrop is the toggle's DISPLAY EFFECT, gated at the draw site by the diagnostics
+      // env: with the grid document in hand and the toggle's default-true session value, the
+      // env off (unset and explicit "0" alike) keeps the canvas at its grid-free vertex count,
+      // "1" adds the cell quads, and off→on restores them without a second click (the
+      // preference was never cleared). The baseline is the same document with the toggle off.
+      backdrop_probe = gui::GuiState{};
+      backdrop_probe.analysis.point = gui::g_state.analysis.point;
+      backdrop_probe.analysis.point_view = gui::g_state.analysis.point_view;
+      IM_CHECK(backdrop_probe.analysis.point.adopted_result != nullptr);
+      draw_backdrop_probe = true;
+      struct BackdropLease {
+        ~BackdropLease() {
+          draw_backdrop_probe = false;
+          backdrop_probe = gui::GuiState{};
+        }
+      } backdrop_lease;
+      {
+        const ScopedDebugDetailsEnv env_on(DebugDetailsState::kOn);
+        backdrop_probe.analysis.point_view.show_deviation_grid = false;
+        ctx->Yield(3);
+        const int base = backdrop_probe_vertices;
+        IM_CHECK_GT(base, 0);
+        backdrop_probe.analysis.point_view.show_deviation_grid = true;
+        {
+          const ScopedDebugDetailsEnv env_unset(DebugDetailsState::kUnset);
+          ctx->Yield(3);
+          IM_CHECK_EQ(backdrop_probe_vertices, base);
+        }
+        {
+          const ScopedDebugDetailsEnv env_off(DebugDetailsState::kOff);
+          ctx->Yield(3);
+          IM_CHECK_EQ(backdrop_probe_vertices, base);
+        }
+        // Back inside the still-active "1" scope: the cells return, no click in between.
+        ctx->Yield(3);
+        IM_CHECK_GT(backdrop_probe_vertices, base);
+      }
     };
+  }
+
+  // 779.5 — the pan gesture's real-input legs and the two-row footer's ink (its own case: the
+  // failures stay locatable without walking the long cursor case again).
+  {
+    ImGuiTest* t =
+        IM_REGISTER_TEST(engine, "raypath_analysis", "pose_curve_pan_moves_the_window_and_keeps_the_x_labels");
+    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(PoseCurvePanMovesTheWindowAndKeepsTheXLabels(ctx)); };
   }
 
   // AC2's narrowest-window face: at 480x360 the floors hold and the info rows wrap, not clip
@@ -11923,6 +13939,353 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
     };
   }
 
+  // The cone-centre drift warning's fixed visibility (779.1): after a completed Point analysis,
+  // moving the centre must light the warning in the main view's info area WITHOUT scrolling and
+  // WITHOUT collapsing anything. The shape that failed the owner's real check drew the warning
+  // as the fourth line of the two-line status viewport, past its fold — equivalent to no failure
+  // sign at all. The judge is the drawn ink itself (CollectPanoramaWarningInk), never the
+  // predicate or an item id: the red state this case first recorded was the warning's glyphs
+  // absent from the main view's output entirely.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "cone_centre_drift_warning_fixed_visible");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ScopedServerGuard guard;
+      IM_CHECK(BringUpHaloScene(ctx, /*infinite=*/false));
+      OpenWindow(ctx);
+      // The splitter ratios the manual-priority contract owns (§9.3): the band's appear and
+      // its later clear must not rewrite either — captured before anything runs.
+      const float d1_ratio_before = gui::g_state.workspace.right_column_ratio;
+      const float d2_ratio_before = gui::g_state.workspace.right_list_ratio;
+      ctx->SetRef(PanoramaRegionRef());
+      ctx->ItemClick("Point");
+      ctx->Yield(2);
+      ctx->SetRef("");
+      const gui::CanvasPixel px = PickPanoramaCentre(ctx);
+      IM_CHECK(gui::g_state.analysis.cone_center_valid);
+      // Analyze, through the button; completion is the analysis's own end plus a result, the
+      // same gate point_pick_analyze_lists_chains uses — never a stale payload alone.
+      ctx->SetRef(PanoramaRegionRef());
+      ctx->ItemClick(kAnalyzeButton);
+      ctx->SetRef("");
+      IM_CHECK(gui::g_state.analysis.started);
+      IM_CHECK(DriveUntil(
+          ctx, [] { return !gui::g_state.analysis_run_in_progress && gui::g_state.analysis_result.payload != nullptr; },
+          60));
+      IM_CHECK_EQ(gui::g_state.analysis_result.payload->roi_mode, LUMICE_RAYPATH_ROI_CONE);
+
+      const ImU32 warn_colour = WarningTextVertexColour();
+      const PanoramaWarningInk before_drag = CollectPanoramaWarningInk(warn_colour);
+      IM_CHECK(!gui::ConeCenterDriftedFromResult(gui::g_state));
+      // AC3's positive control: no warning ink while the centre stands on the analysed one. If
+      // something else in this subtree ever draws the warning colour, this leg turns red and
+      // the probe needs a second discriminator — a deliberate tripwire, not a pass.
+      IM_CHECK(!before_drag.found);
+
+      // The real marker drag, the same gesture marker_drag_moves_the_centre_not_the_view pins:
+      // press on the marker, move to another sky point, release.
+      const std::optional<ImVec2> marker = MarkerScreenPos(ctx);
+      IM_CHECK(marker.has_value());
+      const float dir_before[3] = { gui::g_state.analysis.cone_center_dir[0], gui::g_state.analysis.cone_center_dir[1],
+                                    gui::g_state.analysis.cone_center_dir[2] };
+      ctx->MouseMoveToPos(*marker);
+      ctx->Yield(2);
+      ctx->MouseDown(0);
+      ctx->Yield(1);
+      IM_CHECK(gui::g_state.workspace.panorama_press_owner == PressOwner::kMarker);
+      ctx->MouseMoveToPos(ImVec2(marker->x + 45.0f, marker->y - 30.0f));
+      ctx->Yield(1);
+      ctx->KeyDown(ImGuiMod_Alt);
+      ctx->MouseMoveToPos(ImVec2(marker->x + 60.0f, marker->y - 40.0f));
+      ctx->Yield(2);
+      ctx->KeyUp(ImGuiMod_Alt);
+      ctx->MouseUp(0);
+      ctx->Yield(2);
+      IM_CHECK(gui::g_state.workspace.panorama_press_owner == PressOwner::kNone);
+      const float dir_after[3] = { gui::g_state.analysis.cone_center_dir[0], gui::g_state.analysis.cone_center_dir[1],
+                                   gui::g_state.analysis.cone_center_dir[2] };
+      IM_CHECK(std::memcmp(dir_before, dir_after, sizeof(dir_before)) != 0);
+      // The drag is only a re-aim (contract §8): no analysis may auto-start, and the completed
+      // result stays on show unchanged. `started` is the standing intent, not a progress flag —
+      // the judge for "nothing re-ran" is the derived in-progress flag and the payload pointer.
+      const auto* payload_before = gui::g_state.analysis_result.payload.get();
+      IM_CHECK(!gui::g_state.analysis_run_in_progress);
+      IM_CHECK(gui::ConeCenterDriftedFromResult(gui::g_state));
+
+      // AC1's judge, at rest, before any scroll: the warning must be ON SCREEN in the main
+      // view's info area. The drag gesture lives on the picture, so a scroll here would be the
+      // automatic kind the AC forbids. Telemetry first — a red assert prints its expression,
+      // these lines carry the geometry behind it.
+      ImGuiWindow* host = AnalyzePanoramaHostWindow();
+      IM_CHECK(host != nullptr);
+      ImGuiWindow* status = RegionWindowUnder("##AnalyzePanorama", "##AnalyzePictureStatus");
+      IM_CHECK(status != nullptr);
+      ctx->LogInfo(
+          "[drift band] status SM %.1f SC %.1f inner [%.0f..%.0f] h %.0f | chrome SM %.1f/%.1f avail %.0fx%.0f",
+          status->ScrollMax.y, status->Scroll.y, status->InnerClipRect.Min.y, status->InnerClipRect.Max.y,
+          status->InnerClipRect.GetHeight(), host->ScrollMax.x, host->ScrollMax.y, host->ContentRegionRect.GetWidth(),
+          host->ContentRegionRect.GetHeight());
+      IM_CHECK_EQ(status->Scroll.y, 0.0f);
+      const PanoramaWarningInk after_drag = CollectPanoramaWarningInk(warn_colour);
+      // The visibility bar: the warning's ink was drawn, and none of it sits outside its own
+      // window's clip. On the old placement the warning's item is culled past the viewport's
+      // fold and no vertex reaches the draw list — the red state this case is the regression
+      // anchor for.
+      // The visibility bar: the warning's ink was drawn, and none of it sits outside its own
+      // window's clip. On the old placement the warning's item is culled past the viewport's
+      // fold and no vertex reaches the draw list — the red state this case is the regression
+      // anchor for.
+      IM_CHECK(after_drag.found);
+      IM_CHECK(!after_drag.clipped);
+      // AC1's full text, read the way the render site reports it (the field is cleared at the
+      // workspace's frame entry and is the band's only other writer): both clauses the AC
+      // names, the icon drawn by the same call.
+      const std::string& drawn = gui::g_state.analysis.wait_feedback_texts.cone_center_drift_warning;
+      IM_CHECK(drawn.find("Centre has moved") != std::string::npos);
+      IM_CHECK(drawn.find("Analyze") != std::string::npos);
+      // The band replaced the viewport's own warning line (779.1): the status child draws no
+      // warning-coloured ink any more, and the band's ink ends at or above the viewport's top
+      // edge — one face, no duplicate, no overlap.
+      int status_warning_vertices = 0;
+      for (const ImDrawVert& v : status->DrawList->VtxBuffer) {
+        status_warning_vertices += v.col == warn_colour ? 1 : 0;
+      }
+      IM_CHECK_EQ(status_warning_vertices, 0);
+      IM_CHECK_LE(after_drag.bbox.Max.y, status->InnerClipRect.Min.y + 0.5f);
+      // The completeness face (review round 1's judge): the vertices answer for the ink, the
+      // recorded item rect answers for the text — the layout footprint every wrapped line
+      // occupies whether or not RenderText went on to emit it (it stops at the clip bottom,
+      // so a line clipped away leaves ink but never the rect; "only the first line visible"
+      // cannot pass this pair). The rect is the item's own bb: its height is the same
+      // CalcTextSizeA call the band's budget runs, so the two cannot disagree without breaking
+      // the stack arithmetic.
+      const auto& feedback = gui::g_state.analysis.wait_feedback_texts;
+      const ImRect band_rect(
+          ImVec2(feedback.cone_center_drift_warning_rect_min_x, feedback.cone_center_drift_warning_rect_min_y),
+          ImVec2(feedback.cone_center_drift_warning_rect_max_x, feedback.cone_center_drift_warning_rect_max_y));
+      IM_CHECK_FLOAT_NEAR(band_rect.GetHeight(), gui::AnalyzeDriftWarningHeight(host->ContentRegionRect.GetWidth()),
+                          1e-3f);
+      IM_CHECK(host->InnerClipRect.Contains(band_rect));
+      IM_CHECK(after_drag.bbox.Min.y >= band_rect.Min.y - 1.0f && after_drag.bbox.Max.y <= band_rect.Max.y + 1.0f);
+      // The viewport stays a bounded, genuinely scrollable viewport (AC4): its remaining
+      // content still overflows the two-line fold, real scrolling moves it, and the band —
+      // outside the flow — is untouched by that scroll. Not a ScrollMaxY==0 leg: the overflow
+      // is asserted first.
+      IM_CHECK_GT(status->ScrollMax.y, 0.0f);
+      status->Scroll.y = status->ScrollMax.y;
+      ctx->Yield(2);
+      IM_CHECK_GT(status->Scroll.y, 0.0f);
+      const PanoramaWarningInk after_scroll = CollectPanoramaWarningInk(warn_colour);
+      IM_CHECK(after_scroll.found);
+      IM_CHECK(!after_scroll.clipped);
+      status->Scroll.y = 0.0f;
+      ctx->Yield(1);
+      // The picture region is still submitted with a real height, and the splitter ratios the
+      // manual-priority contract owns (§9.3) never saw the band appear or disappear.
+      ImGuiWindow* picture = PanoramaPictureWindow();
+      IM_CHECK(picture != nullptr);
+      IM_CHECK(picture->Size.y > 1.0f);
+      IM_CHECK_EQ(gui::g_state.workspace.right_column_ratio, d1_ratio_before);
+      IM_CHECK_EQ(gui::g_state.workspace.right_list_ratio, d2_ratio_before);
+      // The chrome window itself never scrolls for the warning: the band's height is part of
+      // the column's vertical stack, not a window-level overflow.
+      IM_CHECK_EQ(host->ScrollMax.y, 0.0f);
+      IM_CHECK_EQ(host->Scroll.y, 0.0f);
+      // Still nothing auto-started several frames in (the adoption gate would have run by now).
+      ctx->Yield(3);
+      IM_CHECK(!gui::g_state.analysis_run_in_progress);
+      IM_CHECK_EQ(gui::g_state.analysis_result.payload.get(), payload_before);
+
+      // AC2, through the real chain: the button's new analysis runs to its own end and adopts
+      // the moved centre as the analysed one — the band is gone (no ink, no drawn text), and
+      // the button was reachable at rest when clicked.
+      ctx->SetRef(PanoramaRegionRef());
+      IM_CHECK(!IsDisabled(ctx->ItemInfo(kAnalyzeButton)));
+      ctx->ItemClick(kAnalyzeButton);
+      ctx->SetRef("");
+      IM_CHECK(gui::g_state.analysis.started);
+      IM_CHECK(DriveUntil(
+          ctx, [] { return !gui::g_state.analysis_run_in_progress && gui::g_state.analysis_result.payload != nullptr; },
+          60));
+      IM_CHECK(!gui::ConeCenterDriftedFromResult(gui::g_state));
+      const PanoramaWarningInk after_reanalyze = CollectPanoramaWarningInk(warn_colour);
+      IM_CHECK(!after_reanalyze.found);
+      IM_CHECK(gui::g_state.analysis.wait_feedback_texts.cone_center_drift_warning.empty());
+      IM_CHECK_EQ(gui::g_state.analysis.wait_feedback_texts.cone_center_drift_warning_rect_min_x, 0.0f);
+      IM_CHECK_EQ(gui::g_state.analysis.wait_feedback_texts.cone_center_drift_warning_rect_max_y, 0.0f);
+    };
+  }
+
+  // The band's boundary legs (779.1): the narrowest legal window and the 1x/1.5x/2x scale
+  // tiers — the wrap-width extremes the fixed height must survive. One completed analysis
+  // feeds every leg; each leg re-establishes the undrifted baseline (the state write is the
+  // display face of the pure predicate — the real gesture moved the centre in the main case),
+  // resets the viewport's scroll, then drags the marker through the same real gesture at THIS
+  // leg's geometry and reads the actual client off the drawn frame.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "cone_centre_drift_warning_narrow_and_scaled");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ScopedServerGuard guard;
+      const ScopedUiScaleAndBasisLease geometry_lease(ctx);
+      IM_CHECK(BringUpHaloScene(ctx, /*infinite=*/false));
+      OpenWindow(ctx);
+      ctx->SetRef(PanoramaRegionRef());
+      ctx->ItemClick("Point");
+      ctx->Yield(2);
+      ctx->SetRef("");
+      PickPanoramaCentre(ctx);
+      IM_CHECK(gui::g_state.analysis.cone_center_valid);
+      ctx->SetRef(PanoramaRegionRef());
+      ctx->ItemClick(kAnalyzeButton);
+      ctx->SetRef("");
+      IM_CHECK(DriveUntil(
+          ctx, [] { return !gui::g_state.analysis_run_in_progress && gui::g_state.analysis_result.payload != nullptr; },
+          60));
+      IM_CHECK_EQ(gui::g_state.analysis_result.payload->roi_mode, LUMICE_RAYPATH_ROI_CONE);
+
+      const auto set_scale = [&](float multiplier) -> bool {
+        gui::g_ui_scale_multiplier = multiplier;
+        gui::g_ui_scale_dirty = true;
+        for (int i = 0;
+             i < 60 && !(gui::UiPx(gui::kAnalyzeLeftPanelWidth) > multiplier * gui::kAnalyzeLeftPanelWidth - 0.5f &&
+                         gui::UiPx(gui::kAnalyzeLeftPanelWidth) < multiplier * gui::kAnalyzeLeftPanelWidth + 0.5f);
+             ++i) {
+          ctx->Yield(1);
+        }
+        IM_CHECK_RETV(fabsf(gui::UiPx(gui::kAnalyzeLeftPanelWidth) - multiplier * gui::kAnalyzeLeftPanelWidth) < 0.5f,
+                      false);
+        ctx->Yield(4);
+        return true;
+      };
+      const auto set_basis = [&](int w, int h) -> bool {
+        g_window_size_test.apply_aspect = false;
+        g_window_size_test.width = w;
+        g_window_size_test.height = h;
+        g_window_size_test.done.store(false);
+        g_window_size_test.requested.store(true);
+        for (int i = 0; i < 20 && !g_window_size_test.done.load(); ++i) {
+          ctx->Yield(1);
+        }
+        IM_CHECK_RETV(g_window_size_test.done.load(), false);
+        ctx->Yield(3);
+        return true;
+      };
+
+      const auto run_leg = [&](const char* label) -> bool {
+        const ImU32 warn_colour = WarningTextVertexColour();
+        // Undrifted baseline at THIS leg's geometry: the centre back on the analysed one (the
+        // display face of the pure predicate), the viewport's scroll reset, no ink.
+        std::memcpy(gui::g_state.analysis.cone_center_dir, gui::g_state.analysis.analyzed_cone_center_dir,
+                    sizeof(gui::g_state.analysis.cone_center_dir));
+        ImGuiWindow* status = RegionWindowUnder("##AnalyzePanorama", "##AnalyzePictureStatus");
+        IM_CHECK_RETV(status != nullptr, false);
+        status->Scroll.y = 0.0f;
+        ctx->Yield(2);
+        IM_CHECK_RETV(!gui::ConeCenterDriftedFromResult(gui::g_state), false);
+        const PanoramaWarningInk baseline = CollectPanoramaWarningInk(warn_colour);
+        IM_CHECK_RETV(!baseline.found, false);
+        // The real marker drag, the main case's gesture at this leg's geometry.
+        const std::optional<ImVec2> marker = MarkerScreenPos(ctx);
+        IM_CHECK_RETV(marker.has_value(), false);
+        ctx->MouseMoveToPos(*marker);
+        ctx->Yield(2);
+        ctx->MouseDown(0);
+        ctx->Yield(1);
+        IM_CHECK_RETV(gui::g_state.workspace.panorama_press_owner == PressOwner::kMarker, false);
+        ctx->MouseMoveToPos(ImVec2(marker->x + 45.0f, marker->y - 30.0f));
+        ctx->Yield(1);
+        ctx->KeyDown(ImGuiMod_Alt);
+        ctx->MouseMoveToPos(ImVec2(marker->x + 60.0f, marker->y - 40.0f));
+        ctx->Yield(2);
+        ctx->KeyUp(ImGuiMod_Alt);
+        ctx->MouseUp(0);
+        ctx->Yield(2);
+        IM_CHECK_RETV(gui::g_state.workspace.panorama_press_owner == PressOwner::kNone, false);
+        IM_CHECK_RETV(gui::ConeCenterDriftedFromResult(gui::g_state), false);
+        // AC1 at this geometry: both clauses drawn, the ink whole and inside every clip.
+        const std::string& drawn = gui::g_state.analysis.wait_feedback_texts.cone_center_drift_warning;
+        IM_CHECK_RETV(drawn.find("Centre has moved") != std::string::npos, false);
+        IM_CHECK_RETV(drawn.find("Analyze") != std::string::npos, false);
+        const PanoramaWarningInk band = CollectPanoramaWarningInk(warn_colour);
+        IM_CHECK_RETV(band.found, false);
+        IM_CHECK_RETV(!band.clipped, false);
+        // The layout floor at this geometry: at least one full readable text line of viewport
+        // client, the chrome window still unscrolled, and the Analyze control — the action the
+        // warning names — reachable.
+        IM_CHECK_RETV(status->InnerClipRect.GetHeight() >= ImGui::GetTextLineHeight() - 0.5f, false);
+        ImGuiWindow* host = AnalyzePanoramaHostWindow();
+        IM_CHECK_RETV(host != nullptr, false);
+        IM_CHECK_RETV(host->ScrollMax.y == 0.0f, false);
+        // The completeness face, per leg (the same pair the main case judges): the ink's
+        // vertices inside the recorded full item rect, and the rect itself inside the chrome's
+        // clip — a line RenderText skipped for the clip bottom leaves ink but never the rect,
+        // so "only the first line visible" cannot pass.
+        const auto& feedback = gui::g_state.analysis.wait_feedback_texts;
+        const ImRect band_rect(
+            ImVec2(feedback.cone_center_drift_warning_rect_min_x, feedback.cone_center_drift_warning_rect_min_y),
+            ImVec2(feedback.cone_center_drift_warning_rect_max_x, feedback.cone_center_drift_warning_rect_max_y));
+        IM_CHECK_RETV(
+            fabsf(band_rect.GetHeight() - gui::AnalyzeDriftWarningHeight(host->ContentRegionRect.GetWidth())) < 1e-3f,
+            false);
+        IM_CHECK_RETV(host->InnerClipRect.Contains(band_rect), false);
+        IM_CHECK_RETV(band.bbox.Min.y >= band_rect.Min.y - 1.0f && band.bbox.Max.y <= band_rect.Max.y + 1.0f, false);
+        // The negative control, on real geometry (review round 1): the same containment judge
+        // applied to the two-line status viewport's clip — the OLD placement's fold — must
+        // reject a band that wraps taller than it. Where this leg's band demonstrably wraps
+        // multi-line, the fold's rejection is exactly what would have failed the old shape
+        // under this judge; the judge discriminates, it is not a tautology of the vertex probe.
+        if (band_rect.GetHeight() > status->InnerClipRect.GetHeight()) {
+          IM_CHECK_RETV(!status->InnerClipRect.Contains(band_rect), false);
+        }
+        // "**/" roots the search — at the narrow tiers the op bar lives in its scroll child,
+        // which a chrome-window ref cannot address (child windows register as
+        // "Parent/Name_<id>"). The roomier tiers resolve the button at rest; at the extreme
+        // tier the bar's content stacks past the two budgeted rows, so the button registers
+        // only once the bar's OWN internal scroll — the contract's designed reach ("not
+        // permanently cut") — brings its row in view. A bounded sweep, not one scroll-to-end:
+        // the button sits mid-stack, and an end position can leave it past the fold in either
+        // direction. The containment reads at the same in-view frame; the rest state returns
+        // after.
+        ctx->SetRef(PanoramaRegionRef());
+        ImGuiTestItemInfo analyze_btn =
+            ctx->ItemInfo((std::string("**/") + kAnalyzeButton).c_str(), ImGuiTestOpFlags_NoError);
+        ctx->SetRef("");
+        ImGuiWindow* opbar_scroll = RegionWindowUnder("##AnalyzePanorama", "##AnalyzeOpBarScroll");
+        if (analyze_btn.ID == 0 && opbar_scroll != nullptr) {
+          const float max_scroll = opbar_scroll->ScrollMax.y;
+          const float step = std::max(1.0f, opbar_scroll->InnerClipRect.GetHeight() * 0.5f);
+          for (float s = 0.0f; analyze_btn.ID == 0 && s <= max_scroll + 0.5f; s += step) {
+            opbar_scroll->Scroll.y = std::min(s, max_scroll);
+            ctx->Yield(1);
+            ctx->SetRef(PanoramaRegionRef());
+            analyze_btn = ctx->ItemInfo((std::string("**/") + kAnalyzeButton).c_str(), ImGuiTestOpFlags_NoError);
+            ctx->SetRef("");
+          }
+        }
+        IM_CHECK_RETV(analyze_btn.ID != 0, false);
+        IM_CHECK_RETV(analyze_btn.RectFull.Min.y >= host->InnerClipRect.Min.y - 0.5f &&
+                          analyze_btn.RectFull.Max.y <= host->InnerClipRect.Max.y + 0.5f,
+                      false);
+        if (opbar_scroll != nullptr) {
+          opbar_scroll->Scroll.y = 0.0f;
+        }
+        ctx->Yield(1);
+        ctx->LogInfo("[drift band leg] %s: band %.0fx%.0f, status client h %.0f SM %.0f, avail %.0fx%.0f", label,
+                     band.bbox.GetWidth(), band.bbox.GetHeight(), status->InnerClipRect.GetHeight(),
+                     status->ScrollMax.y, host->ContentRegionRect.GetWidth(), host->ContentRegionRect.GetHeight());
+        return true;
+      };
+
+      IM_CHECK(set_basis(1024, 640));
+      IM_CHECK(run_leg("1024x640 1x"));
+      IM_CHECK(set_scale(1.5f));
+      IM_CHECK(set_basis(1024, 640));
+      IM_CHECK(run_leg("1024x640 1.5x"));
+      IM_CHECK(set_scale(2.0f));
+      IM_CHECK(set_basis(1024, 640));
+      IM_CHECK(run_leg("1024x640 2x"));
+    };
+  }
+
   // The marker is drawn on the preview window's own draw list, not the foreground one: a window
   // drawn after the preview covers it. Read off the screen, since which list a primitive went to
   // is not something the item registry sees: the pixel under the marker IS the accent colour with
@@ -12883,6 +15246,12 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
   {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "survey_refuses_multilayer_class_by_name");
     t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(SurveyRefusesMultilayerClassByName(ctx)); };
+  }
+  // The 2026-11-12 feedback wave's interaction face: row highlights, the profile device, the
+  // legend icons. Real-timing pool: the family-arm survey's quantification legs are wall-clock.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "profile_rows_highlight_and_draw_on_the_map");
+    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(ProfileRowsHighlightAndDrawOnTheMap(ctx)); };
   }
   // The map region (742.5): real chain, real click, real isolation — see the function's comment.
   // Real-timing pool: the map answers behind the survey's chromatic legs on the one worker, the

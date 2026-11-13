@@ -336,6 +336,10 @@ float CrystalRenderer::ComputeDist(float zoom) {
   return zoom / half_tan;
 }
 
+float CrystalRenderer::ComputeNearPlane(float zoom) {
+  return std::max(ComputeDist(zoom) - 10.0f, 0.1f);
+}
+
 // Resolve the view once for both the GPU projection and eye-space classification.
 static void ResolveEyeRotation(const float model[16], const float* view_rotation, float out[16]) {
   if (view_rotation != nullptr) {
@@ -352,7 +356,7 @@ void CrystalRenderer::ComputeMvp(const float model_rotation[16], float zoom, int
   float fov_rad = kFovDeg * kDeg2Rad;
   float half_tan = std::tan(fov_rad * 0.5f);
   float dist = ComputeDist(zoom);
-  float near_plane = std::max(dist - 10.0f, 0.1f);
+  float near_plane = ComputeNearPlane(zoom);
   float far_plane = dist + 10.0f;
   float f = 1.0f / half_tan;
 

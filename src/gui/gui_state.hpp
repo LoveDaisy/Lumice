@@ -1871,6 +1871,20 @@ struct GuiState {
     PointQuerySession point;
     RayTraceSession trace;
     PointViewState point_view;
+    // The 3D trace's per-segment Fresnel ratio labels, exactly as drawn this frame (the
+    // draw-list carries no strings; the positions come from the submitted primitives, the
+    // content from here). Parallel to the polyline's segments — empty string = no label drawn
+    // (the toggle off, a behind-eye segment, a segment with nothing on the canvas, or a
+    // non-drawn state). ray3d_fresnel_label_rects rides beside it, 5 floats per segment —
+    // the submitted text rect (min x, min y, max x, max y) and the placement kind (0 = the
+    // default offset, 1 = shifted by the collision ladder, 2 = the collision ladder's leader
+    // fallback) — the gui_test layer's per-label readability evidence (rects pairwise apart,
+    // ink inside). Cleared at the 3D region's submission entry — the same discipline as
+    // Ray3DFrameInfo's valid flag — and written only by the drawn arm; the pose window closed
+    // leaves it stale like every window-closed field. Per-frame render feedback for the gui_test
+    // layer, never read by production logic.
+    std::vector<std::string> ray3d_fresnel_labels;
+    std::vector<float> ray3d_fresnel_label_rects;
     // The wait displays' render feedback (analyze_survey.hpp WaitFeedbackTexts): what each wait
     // site drew this frame, for the gui_test layer to read (ImGui text has no ID to address).
     // Cleared at the Analyze workspace's frame entry; the render sites are the only writers.
@@ -1895,6 +1909,19 @@ struct GuiState {
     // the canvas's verdict anchor draw (analyze_map_view.cpp DrawSurveyOverlays).
     bool verdict_anchor_shown = false;
     bool verdict_anchor_hover = false;
+    // The reference profile's hover standing (§16.1.3's extension): which of the class answer's
+    // three profile reading rows the pointer stood on — the profile device's read, written by the
+    // same class-answer render path that owns the verdict hover above, consumed by the canvas the
+    // NEXT frame (the same one-frame lag), and reset by the same three seams (the absent branch,
+    // the closed early-return, the Begin-false branch). Session tier like its sibling: never
+    // persisted, not in ConfigSnapshot or the dirty diff, Revert keeps them. The ratio row keeps
+    // its feedback local and never enters this identity (it names no spatial payload).
+    // WRITERS (the audit set): RenderAnalyzeMapRegion's ##MapReport class-answer host (the
+    // overwrite, and the absent branch's reset); RenderAnalyzeRaypathViewWindow's closed-window
+    // seams (both the closed early-return and the Begin-false branch). No other write path by
+    // construction. READER: the canvas's profile device draw (analyze_map_view.cpp
+    // DrawSurveyOverlays).
+    SurveyProfileHover profile_row_hover = SurveyProfileHover::kNone;
     // The sun the frozen scene binding was built with, captured at DoAnalyze (the GUI's sun is
     // always due north). The map request's window geometry derives from the sun the ENGINE will
     // evaluate against — the executor's frozen scene, not the live document, which the user may

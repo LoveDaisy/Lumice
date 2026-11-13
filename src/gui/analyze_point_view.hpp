@@ -37,6 +37,7 @@
 #include "gui/analysis_panel.hpp"
 #include "gui/analyze_survey.hpp"
 #include "imgui.h"
+#include "include/lumice_editor.h"  // LUMICE_CrystalMesh — the contact-facing lookup's mesh type
 #include "include/lumice_raypath.h"
 
 struct ImDrawList;
@@ -119,8 +120,8 @@ std::vector<std::string> PointFactorLines(const LUMICE_PathPointSample& sample);
 // The two §16.1 ladder halves of the factor readouts (contract §16.4's factors region): the
 // head lines are the default layer's factor conclusions (pose, rho, A_P/A_a^2, T, J/K/product
 // or their named-unavailable forms); the interface lines are T's optical premises — the
-// per-interface transmittances, conditional on this path — the Physics details fold's rows.
-// The production callers are the factors region's two arms (default layer + fold); the
+// per-interface transmittances, conditional on this path — the Interface transmission fold's
+// rows. The production callers are the factors region's two arms (default layer + fold); the
 // concatenated spelling below survives as the partition's single-source anchor and the tests'
 // consumer (unit-correctness pins the per-state spellings, the functional chain asserts the
 // engine-facing read) — the halves and the concatenation cannot drift apart because the
@@ -214,6 +215,16 @@ int PointCurveValidPositionNearX(const PointContributionCurve& curve, double x_r
 
 inline constexpr ImU32 kPointCurveProductColor = IM_COL32(250, 250, 250, 255);
 inline constexpr ImU32 kPointCurvePlotBorderColor = IM_COL32(90, 94, 102, 120);
+// The five arms' series colours, in the curve's own arm order (rho, A/a^2, T, K, product — the
+// product the headline, brightest). One table: the renderer draws with it and the tests identify
+// the submitted ink with it — no second copy of the palette can drift.
+inline constexpr ImU32 kPointCurveArmColors[] = {
+  IM_COL32(96, 165, 250, 255),   // rho — blue
+  IM_COL32(251, 146, 60, 255),   // A/a^2 — orange
+  IM_COL32(74, 222, 128, 255),   // T — green
+  IM_COL32(232, 121, 249, 255),  // K — fuchsia
+  kPointCurveProductColor,
+};
 
 // The shared axis pools only kPositive values across all five arms. The nearest-rank P1
 // lower bound and the relative noise floor keep tiny tails from consuming the log axis.
@@ -232,6 +243,14 @@ inline constexpr double kCurveAxisZoomFactor = 1.12;
 // The window never extends beyond the fit; spans stop at 0.25 decade or the full fit span.
 PointCurveAxisRange PointCurveVisibleRange(const PointCurveAxisRange& fit, PointCurveZoom* zoom, double wheel = 0.0,
                                            double anchor = 0.5);
+// Pan the log window toward larger values for a drag DOWN (dy_norm > 0 — the ink follows the hand)
+// and toward smaller values for a drag up. `dy_norm` is the vertical drag as a fraction of the
+// plot height, so the same visual fraction of the plot always moves the same fraction of the
+// window's own log span, whatever the DPI or the data. Both endpoints shift by the same amount
+// and PointCurveVisibleRange's reconcile stays the ONE clamp: the window slides as a whole and
+// stops flush at the fit's edges, never compressed. A full-span window, a degenerate single-value
+// domain or an invalid fit has nothing to reveal and answers unchanged.
+PointCurveAxisRange PointCurvePanRange(const PointCurveAxisRange& fit, PointCurveZoom* zoom, double dy_norm);
 
 // Counts stored points, not (arm, point) pairs: multiple hidden arms at one point count once.
 // The extrema cover only hidden positive values; zeros and unavailable cells never count.
@@ -301,19 +320,88 @@ uint32_t SunGridCellColorRgba(double deviation_rad, uint8_t valid);
 // ---- The representative-ray display -----------------------------------------------------------------
 
 // Canvas and legend share the segment palette; frame tests inspect the submitted draw primitives.
-inline constexpr ImU32 kRayTraceContactColor = IM_COL32(240, 240, 240, 190);
+inline constexpr ImU32 kRayTraceContactColor = IM_COL32(240, 240, 240, 190);       // hollow contact markers
+inline constexpr ImU32 kRayTraceContactSolidColor = IM_COL32(240, 240, 240, 255);  // front-facing contact markers
+inline constexpr ImU32 kRayTraceLabelColor = IM_COL32(210, 210, 214, 255);         // per-segment ratio labels
 inline constexpr ImU32 kRayTraceSegmentColors[] = { IM_COL32(90, 160, 255, 255), IM_COL32(255, 165, 60, 255),
                                                     IM_COL32(90, 220, 120, 255) };
+
+// The width ends of the cumulative-Fresnel visual mapping, in UI layout units (UiPx at the use
+// site; 2026-11-12 feedback #8's calibration). The mapping is w_min + (w_max - w_min) * sqrt(E)
+// over the positive energies — strictly monotone, low values stay readable. The width is ONLY
+// visual scaling; the per-segment numbers (when shown) carry the exact ratio. A segment past an
+// unusable interface factor draws at the fixed neutral width — no energy claim. The ends stay
+// above the thin-line boundary (1.0 layout unit): below it ImGui's AA geometry changes shape and
+// a thin energy tail would become a hairline the draw-list cannot measure honestly.
+inline constexpr float kRayTraceWidthMinUi = 1.2f;
+inline constexpr float kRayTraceWidthMaxUi = 3.5f;
+inline constexpr float kRayTraceWidthNeutralUi = 2.0f;
+
+// One segment's cumulative Fresnel relative energy: the running product of the interface factors
+// already passed (the entry leg carries 1.0 — nothing absorbed yet; the exit leg the full-chain
+// product). The value stays DOUBLE end to end — the factors are double and a long chain of small
+// reflections is exactly the case the sqrt width mapping exists to keep readable; narrowing per
+// step would underflow legal positive energies (float's denormal floor ~1e-38) into a fabricated
+// exact zero (no ink, a wrong 0% label). `valid` false from the first unusable factor onward —
+// the prefix stays honest, the suffix carries no energy claim. An exact zero is a VALID energy
+// (the engine produced it): no ink, the contact markers stay, the label reads 0%.
+struct RayTraceSegmentEnergy {
+  double value = 1.0;
+  bool valid = true;
+};
 
 // The polyline the 3D view draws, straight from the 742.2 readers: entry leg (incident direction,
 // drawn from outside), the contacts' internal legs, the exit leg. The incident/exit segments'
 // display length is THIS file's presentation convention (the result carries physical quantities
 // only): `extension` times the contacts' own spread. Segment kinds index into the points array:
-// 0 = entry, 1 = internal, 2 = exit.
+// 0 = entry, 1 = internal, 2 = exit. seg_energy is parallel to seg_kinds.
 struct RayTracePolyline {
-  std::vector<float> points;   // xyz triples, world frame
-  std::vector<int> seg_kinds;  // one per segment, the kinds above
+  std::vector<float> points;                      // xyz triples, world frame
+  std::vector<int> seg_kinds;                     // one per segment, the kinds above
+  std::vector<RayTraceSegmentEnergy> seg_energy;  // one per segment, the energies above
 };
+
+// The cumulative relative energies for the N+1 segments over the N interface factors (E[0] = 1,
+// then E[k+1] = E[k] * q[k] — every interface consumed exactly once, the last segment including
+// the exit factor). A factor is unusable when non-finite or outside the rounding band
+// [-1e-6, 1+1e-6]: in-band overshoot clamps to [0,1] (a recorded rounding tolerance, not a
+// physics rewrite), and everything from the first unusable factor on is marked unavailable.
+// Pure; the gui_test's hand anchors live in the unit test.
+std::vector<RayTraceSegmentEnergy> RayTraceCumulativeEnergies(const double* factors, size_t count);
+
+// The visual line width (live UI scale) for a cumulative relative energy: the fixed sqrt
+// monotone mapping over the positive range; E <= 0 answers 0 — the renderer draws no ink for a
+// zero-energy segment. The mapping runs in double and narrows only at the returned width, so a
+// legal sub-float energy still carries ink. Not a physical scale: the legend says so.
+float RayTraceEnergyWidth(double energy);
+
+// The per-segment ratio label's text: the exact cumulative value as a percentage with enough
+// precision for tiny non-zero values (never a rounded-to-zero non-zero), "0%" for an exact zero,
+// "n/a" past an unusable factor.
+std::string RayTraceEnergyLabelText(const RayTraceSegmentEnergy& energy);
+
+// The canvas-visible parameter window [t0, t1] of a pixel-space segment, clipped against the
+// canvas rect (Liang-Barsky). False when NOTHING of the segment is on the canvas. This is the
+// label path's visibility gate: an axis-aligned bounding-box overlap is only a NECESSARY
+// condition — a segment skimming past a canvas corner has an overlapping bbox and no visible
+// point, and anchoring there would fabricate an edge label for light nothing of which shows.
+bool RayTraceSegmentOnCanvas(const ImVec2& a, const ImVec2& b, const ImVec2& canvas_min, const ImVec2& canvas_max,
+                             double* out_t0 = nullptr, double* out_t1 = nullptr);
+
+// One contact's outward face normal, read from the mesh's per-face table by face NUMBER (the
+// raypath filter numbering; never an array index — the table is scanned). `known` false for a
+// negative number (kInvalidId), a number the table does not carry, an unpopulated table, or a
+// missing/degenerate normal — the renderer's hollow fallback ("facing unknown" in the legend).
+struct RayTraceContactFaceNormal {
+  bool known = false;
+  float normal_body[3] = { 0.0f, 0.0f, 0.0f };
+};
+RayTraceContactFaceNormal RayTraceContactFaceNormalFor(const LUMICE_CrystalMesh& mesh, int face_number);
+
+// The facing sign rule: dot(display-frame normal, eye - contact) over the scene metric —
+// positive faces the camera (solid marker), zero or negative faces away or is tangent (hollow).
+// Pure; the caller supplies the real camera's eye position.
+bool RayTraceContactFacesEye(const float normal_display[3], const float contact_scene[3], const float eye_scene[3]);
 
 // Builds the display polyline from the handle's readers. ok=false on a refusal arm (the callers
 // render the named refusal instead — GetContacts/GetLegs answer NOT_AVAILABLE there).
@@ -360,6 +448,9 @@ struct Ray3DFrameInfo {
   int frame_count = -1;
   uintptr_t texture_id = 0;
   bool crystal_frame = false;
+  float zoom = 0.0f;  // the frame's effective zoom — ComputeDist/ComputeNearPlane's input, so
+                      // the frame tests can place the real camera (eye = -dist * fwd) and the
+                      // real near plane without a second distance formula
   bool valid = false;
 };
 const Ray3DFrameInfo& LastRay3DFrameInfo();

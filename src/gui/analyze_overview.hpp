@@ -13,7 +13,11 @@
 //     half the unit layer holds to rules without a frame.
 //   * RenderSurveyOverviewModel — the ImGui side. Draws the model with the panel idioms;
 //     expansion state lives in ImGui per-window storage, never in GuiState (R10: the overview
-//     is adopted_result + the current identity, purely rendered).
+//     is adopted_result + the current identity, purely rendered). With a non-null readout it is
+//     the INTERACTIVE host: the hoverable rows gain their addressable surfaces and this-frame's
+//     highlight feedback, and every row's standing lands in the readout (the canvas consumes the
+//     session copy next frame). The default null is the main window's summary projection — no
+//     new items, no interaction state, byte-identical to its previous shape.
 //
 // Honesty rules the builder inherits from the survey face (R7): a refused or unevaluated leg
 // shows the engine's named reason, an empty reading shows as no data (the probe's empty samples
@@ -106,6 +110,10 @@ struct SurveyProbeView {
   std::string mode;  // a refused probe names why (stop_requested)
   double wavelength_nm = 0.0;
   double refractive_index = 0.0;
+  bool azimuth_available = false;  // the profile's line azimuth in the probe's own frame — the
+                                   // hover device's spatial premise (the built-in probe always
+                                   // carries it: the representative wedge's choice, not a default)
+  double azimuth_deg = 0.0;
   bool edge_available = false;
   double edge_deg = 0.0;
   bool peak_available = false;
@@ -232,19 +240,22 @@ struct SurveyOverviewModel {
 SurveyOverviewModel BuildSurveyOverviewModel(const LUMICE_PathSurvey& result);
 
 // A fold group's header: the display spelling comes from the ONE label constant; the ID suffix
-// keeps same-label groups apart inside one window (the Raypath view hosts the survey answer and
-// the point answer side by side, each with its own Physics/Calculation pair — identical visible
+// keeps same-prefix groups apart inside one window (the Raypath view hosts the survey answer and
+// the point answer side by side, each with its own evidence/diagnostics pair — identical visible
 // labels would collide in the window's ID space and share one expansion state). No
 // DefaultOpen: closed by default, expansion in the host window's storage — session-sticky,
-// restart-reset (io.IniFilename is null), independent per window. Shared by both answer hosts.
+// restart-reset (io.IniFilename is null), independent per window. Shared by all four answer
+// hosts; the diagnostics half of each pair is additionally env-gated at its call site
+// (env::AnalyzeDebugDetails gates the header itself, so an off env submits neither header nor
+// body while the storage keeps the old expansion state).
 inline bool FoldOpen(const char* label, const char* suffix_id) {
   const std::string id = std::string(label) + "##" + suffix_id;
   return ImGui::CollapsingHeader(id.c_str());
 }
 
 // The ImGui half: the model as the complete answer draws it — the default layer (the answers
-// and their limits), then the two fold groups (contract §16.1: Physics details, Calculation
-// details, both closed by default). Assumes the region's four-state shell already dispatched
+// and their limits), then the evidence fold and the env-gated diagnostics fold (contract
+// §16.1, both closed by default). Assumes the region's four-state shell already dispatched
 // here (a completed, adopted document). This is the Raypath view's class-answer host.
 //
 // `verdict_hover_readout` is the verdict anchor's hover read (§16.1's A2 pilot): when non-null,
@@ -253,7 +264,10 @@ inline bool FoldOpen(const char* label, const char* suffix_id) {
 // row is under the pointer this frame, false otherwise (the caller writes it to the session
 // every frame). Null (the default) submits the same rows as plain text, no extra items, zero
 // interaction state — the main window's summary path passes nothing and renders byte-identically.
-void RenderSurveyOverviewModel(const SurveyOverviewModel& model, bool* verdict_hover_readout = nullptr);
+struct SurveyRowHoverReadout;  // gui/analyze_map_view.hpp — the rows' hover identity (the
+                               // interactive host's out-param; by pointer, so this header stays
+                               // off that include chain and the summary-only hosts see nothing)
+void RenderSurveyOverviewModel(const SurveyOverviewModel& model, SurveyRowHoverReadout* row_readout = nullptr);
 
 // The main window's summary projection (contract §16.2): the SAME model read through the SAME
 // default-layer renderer the complete answer uses — the summary is a read of it, never a second

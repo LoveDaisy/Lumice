@@ -26,6 +26,7 @@
 #include "gui/theme.hpp"
 #include "imgui.h"
 #include "include/lumice_editor.h"  // LUMICE_GetCrystalMesh — the crystal's true-scale wireframe
+#include "util/env_knobs.hpp"       // env::AnalyzeDebugDetails — the diagnostics groups' env gate
 #include "util/sky_direction.hpp"
 
 namespace lumice::gui {
@@ -100,6 +101,9 @@ void ResetPointViewStateForNewAdoption(PointViewState* view) {
   view->playing = false;
   view->last_play_step_s = 0.0;
   view->curve_axis = {};
+  view->curve_pan_active = false;          // a held pan does not carry across documents (it needs a new
+                                           // press inside the canvas to latch again)
+  view->curve_left_press_ignored = false;  // the swallow is a gesture-life state, same lifetime
   // The toggles and the camera survive: they are the user's display preferences for THIS
   // session, not per-document state.
 }
@@ -254,8 +258,8 @@ std::vector<int> CollectValidSampleIndices(const LUMICE_SinglePathResult& result
 // The default layer's half (contract §16.1's ladder, §16.4's factors region): the pose itself
 // and the four factor conclusions — or their named-unavailable forms (R4: no zero stands in
 // for a quantity the engine did not produce). The per-interface rows below are T's optical
-// premises, the Physics details fold's rows; PointFactorLines is the one concatenation (the
-// tests' consumer — the production readers take the halves directly).
+// premises, the Interface transmission fold's rows; PointFactorLines is the one concatenation
+// (the tests' consumer — the production readers take the halves directly).
 std::vector<std::string> PointFactorHeadLines(const LUMICE_PathPointSample& sample) {
   std::vector<std::string> lines;
   char buf[192];
@@ -515,6 +519,32 @@ PointCurveAxisRange PointCurveVisibleRange(const PointCurveAxisRange& fit, Point
            zoom->log_hi >= fit_hi ? fit.hi : std::pow(10.0, zoom->log_hi) };
 }
 
+PointCurveAxisRange PointCurvePanRange(const PointCurveAxisRange& fit, PointCurveZoom* zoom, double dy_norm) {
+  if (!fit.valid) {
+    return {};
+  }
+  // Degenerate and full-span windows have nothing to reveal; they keep the reconcile's own form.
+  if (fit.hi == fit.lo) {
+    return PointCurveVisibleRange(fit, zoom);
+  }
+  const double fit_lo = std::log10(fit.lo);
+  const double fit_hi = std::log10(fit.hi);
+  const double full_span = fit_hi - fit_lo;
+  const double span = zoom->log_hi - zoom->log_lo;
+  if (!(span > 0.0) || full_span - span <= full_span * 1e-12) {
+    return PointCurveVisibleRange(fit, zoom);
+  }
+  // The ink follows the hand: dragged down (dy_norm > 0) the window moves toward larger values.
+  // BOTH endpoints shift — the reconcile derives the span from log_hi - log_lo, so moving only
+  // log_lo would present it a compressed span and shrink the window. With both shifted the
+  // reconcile stays the ONE clamp: the window slides as a whole and stops flush at an edge,
+  // never compressed.
+  const double shift = dy_norm * span;
+  zoom->log_lo += shift;
+  zoom->log_hi += shift;
+  return PointCurveVisibleRange(fit, zoom);
+}
+
 PointCurveOutsideCount PointCurveCountOutside(const PointContributionCurve& curve, double lo, double hi) {
   PointCurveOutsideCount outside;
   for (const PointCurvePoint& point : curve.points) {
@@ -695,6 +725,14 @@ bool BuildRayTracePolyline(const LUMICE_RepresentativeRay& ray, float extension,
       legs.leg_count != contacts.contact_count + 1) {
     return false;
   }
+  // The per-segment cumulative Fresnel relative energies, straight from the contacts' own
+  // factors (T at entry/exit, R at internal reflections — the payload's semantics verbatim, no
+  // complement). N contacts -> N+1 segments, one energy each.
+  std::vector<double> factors(contacts.contact_count);
+  for (size_t i = 0; i < contacts.contact_count; ++i) {
+    factors[i] = contacts.contacts[i].transmittance;
+  }
+  out->seg_energy = RayTraceCumulativeEnergies(factors.data(), factors.size());
   // The contacts' own spread sets the display scale (the extension is relative to it). The
   // readers hand back doubles; the display polyline is float — one explicit narrowing each.
   float spread = 0.0f;
@@ -751,6 +789,139 @@ void RayTracePointToCrystalFrame(const double pose[9], float point[3]) {
   point[0] = static_cast<float>(pose[0] * x + pose[3] * y + pose[6] * z);
   point[1] = static_cast<float>(pose[1] * x + pose[4] * y + pose[7] * z);
   point[2] = static_cast<float>(pose[2] * x + pose[5] * y + pose[8] * z);
+}
+
+// ---- The trace display's pure energy and facing rules (declared in the hpp) -------------------------
+
+// The rounding band a Fresnel interface factor must sit in to be usable: the engine's Fresnel
+// math runs in double precision and overshoots [0,1] only by rounding magnitude, so in-band
+// overshoot clamps back; beyond the band the value is not a rounding artifact and the energy
+// claim stops (the prefix stays, the suffix draws neutral).
+constexpr double kRayTraceFactorBand = 1e-6;
+
+std::vector<RayTraceSegmentEnergy> RayTraceCumulativeEnergies(const double* factors, size_t count) {
+  // E[0] = 1 (the entry leg, before the first interface), then E[k+1] = E[k] * q[k] — every
+  // interface consumed exactly once, the last segment including the exit factor. An internal
+  // reflection with R = 1 keeps the energy; an exact zero ends it (a legal declared zero). The
+  // accumulation stays DOUBLE: narrowing per step would underflow a long chain of small factors
+  // (0.02^27 ~ 1.3e-46) into a fabricated exact zero while the honest value is still positive.
+  std::vector<RayTraceSegmentEnergy> out;
+  out.reserve(count + 1);
+  double energy = 1.0;
+  bool valid = true;
+  out.push_back(RayTraceSegmentEnergy{ energy, valid });
+  for (size_t k = 0; k < count; ++k) {
+    const double q = factors != nullptr ? factors[k] : 0.0;
+    if (valid && std::isfinite(q) && q >= -kRayTraceFactorBand && q <= 1.0 + kRayTraceFactorBand) {
+      const double clamped = std::min(1.0, std::max(0.0, q));
+      energy = energy * clamped;
+    } else {
+      // Unusable factor: everything from the segment after it on carries no energy claim. The
+      // stored value is the last honest prefix — unused while invalid, kept for inspection.
+      valid = false;
+    }
+    out.push_back(RayTraceSegmentEnergy{ energy, valid });
+  }
+  return out;
+}
+
+float RayTraceEnergyWidth(double energy) {
+  // The fixed sqrt monotone visual mapping over the positive range (the plan's chosen gamma: a
+  // linear map presses small positives into sub-pixel lines, buckets lose the segment order).
+  // E <= 0 (or non-finite) answers 0 — no ink; the contact markers stay. The mapping runs in
+  // double and narrows only at the returned width.
+  if (!(energy > 0.0)) {
+    return 0.0f;
+  }
+  const double e = std::min(1.0, energy);
+  return static_cast<float>(UiPx(kRayTraceWidthMinUi) +
+                            (UiPx(kRayTraceWidthMaxUi) - UiPx(kRayTraceWidthMinUi)) * std::sqrt(e));
+}
+
+std::string RayTraceEnergyLabelText(const RayTraceSegmentEnergy& energy) {
+  if (!energy.valid) {
+    return "n/a";
+  }
+  char buf[32];
+  // %.3g keeps tiny non-zero values honest (1e-9 -> "1e-07%") without fabricating digits for
+  // the common range; an exact zero reads as "0%".
+  std::snprintf(buf, sizeof(buf), "%.3g%%", static_cast<double>(energy.value) * 100.0);
+  return buf;
+}
+
+bool RayTraceSegmentOnCanvas(const ImVec2& a, const ImVec2& b, const ImVec2& canvas_min, const ImVec2& canvas_max,
+                             double* out_t0, double* out_t1) {
+  // Liang-Barsky against the canvas rect. Degenerate (zero-length) segments answer the point's
+  // own containment.
+  double t0 = 0.0;
+  double t1 = 1.0;
+  const double dx = static_cast<double>(b.x) - a.x;
+  const double dy = static_cast<double>(b.y) - a.y;
+  const auto bound = [&](double p, double q) {
+    if (std::abs(p) < 1e-12) {
+      return q >= 0.0;
+    }
+    const double r = q / p;
+    if (p < 0.0) {
+      if (r > t1) {
+        return false;
+      }
+      if (r > t0) {
+        t0 = r;
+      }
+    } else {
+      if (r < t0) {
+        return false;
+      }
+      if (r < t1) {
+        t1 = r;
+      }
+    }
+    return true;
+  };
+  const bool visible = bound(-dx, static_cast<double>(a.x) - canvas_min.x) && bound(dx, canvas_max.x - a.x) &&
+                       bound(-dy, static_cast<double>(a.y) - canvas_min.y) && bound(dy, canvas_max.y - a.y);
+  if (out_t0 != nullptr) {
+    *out_t0 = t0;
+  }
+  if (out_t1 != nullptr) {
+    *out_t1 = t1;
+  }
+  return visible;
+}
+
+RayTraceContactFaceNormal RayTraceContactFaceNormalFor(const LUMICE_CrystalMesh& mesh, int face_number) {
+  RayTraceContactFaceNormal out;
+  if (face_number < 0) {
+    return out;  // kInvalidId — the unknown vocabulary, never matched against the table
+  }
+  for (int f = 0; f < mesh.face_count; ++f) {
+    if (mesh.face_numbers_by_face[f] != face_number) {
+      continue;
+    }
+    const float* n = &mesh.face_normals[static_cast<size_t>(f) * 3];
+    const float norm = std::sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
+    if (std::isfinite(norm) && norm > 0.5f) {  // unit-length by contract; half of it is degenerate
+      out.known = true;
+      out.normal_body[0] = n[0];
+      out.normal_body[1] = n[1];
+      out.normal_body[2] = n[2];
+    }
+    break;  // the first table hit decides — the numbering is unique per face by contract
+  }
+  return out;
+}
+
+bool RayTraceContactFacesEye(const float normal_display[3], const float contact_scene[3], const float eye_scene[3]) {
+  // dot(normal, eye - contact) in the scene metric: the normal is a display-frame direction, the
+  // eye/contact pair scene-frame points — scene is display translated and uniformly positively
+  // scaled (fit >= 1e-4), and neither moves the dot's sign.
+  const double dx = static_cast<double>(eye_scene[0]) - contact_scene[0];
+  const double dy = static_cast<double>(eye_scene[1]) - contact_scene[1];
+  const double dz = static_cast<double>(eye_scene[2]) - contact_scene[2];
+  const double dot = static_cast<double>(normal_display[0]) * dx + static_cast<double>(normal_display[1]) * dy +
+                     static_cast<double>(normal_display[2]) * dz;
+  return dot > 0.0;  // exact zero is tangent — hollow (the plan's tie rule)
 }
 
 RayTraceDisplayState RayTraceDisplayStateFor(const RayTraceSession& trace, const RayTraceKey& current_key) {
@@ -1020,16 +1191,57 @@ std::array<float, 3> ToRay3DScene(const float display[3], const Ray3DFrameInfo& 
            (display[2] - frame.centre[2]) / frame.fit };
 }
 
-ImVec2 ProjectSceneToPixel(const float display[3], const Ray3DFrameInfo& frame) {
-  const auto p = ToRay3DScene(display, frame);
-  const float* m = frame.mvp;
-  const float w = m[3] * p[0] + m[7] * p[1] + m[11] * p[2] + m[15];
-  // All content is inside the unit bounding sphere. The camera's focal half-height stays
-  // above 0.3, so its eye distance exceeds 0.3 / tan(15deg) > 1 and perspective w is positive.
-  const float x = (m[0] * p[0] + m[4] * p[1] + m[8] * p[2] + m[12]) / w;
-  const float y = (m[1] * p[0] + m[5] * p[1] + m[9] * p[2] + m[13]) / w;
+// The homogeneous clip coordinates of a scene point, row-major over the column-major MVP — the
+// same math TraceOracleProject (the gui_test's oracle) mirrors; keep the two in lockstep.
+std::array<float, 4> ToRay3DClip(const float scene[3], const Ray3DFrameInfo& frame) {
+  std::array<float, 4> clip = {};
+  for (int row = 0; row < 4; ++row) {
+    clip[row] = frame.mvp[12 + row];
+    for (int k = 0; k < 3; ++k) {
+      clip[row] += frame.mvp[k * 4 + row] * scene[k];
+    }
+  }
+  return clip;
+}
+
+// Pixel position of an in-frustum clip point. Callers clip first: with the mesh-only fit the
+// trace's display extensions can sit behind the camera, and a w <= 0 point must never divide.
+ImVec2 RayTraceClipToPixel(const float clip[4], const Ray3DFrameInfo& frame) {
+  const float w = clip[3];
+  const float x = clip[0] / w;
+  const float y = clip[1] / w;
   return ImVec2(frame.canvas_min.x + (x + 1.0f) * 0.5f * frame.canvas_size.x,
                 frame.canvas_min.y + (1.0f - y) * 0.5f * frame.canvas_size.y);
+}
+
+// Clips the scene segment against the camera's near plane (w >= near_w — the same plane
+// ComputeMvp builds the GL frustum with) and answers the visible part's pixel endpoints. False
+// when the whole segment sits behind the near plane. Clip coordinates are affine along the
+// segment, so interpolating them at the crossing parameter gives the exact intersection.
+bool RayTraceClipSegmentToPixel(const float scene_a[3], const float scene_b[3], float near_w,
+                                const Ray3DFrameInfo& frame, ImVec2* pa, ImVec2* pb) {
+  const std::array<float, 4> ca = ToRay3DClip(scene_a, frame);
+  const std::array<float, 4> cb = ToRay3DClip(scene_b, frame);
+  if (ca[3] < near_w && cb[3] < near_w) {
+    return false;
+  }
+  float t0 = 0.0f;
+  float t1 = 1.0f;
+  if (ca[3] < near_w) {
+    t0 = (near_w - ca[3]) / (cb[3] - ca[3]);
+  }
+  if (cb[3] < near_w) {
+    t1 = (near_w - ca[3]) / (cb[3] - ca[3]);
+  }
+  float a[4] = {};
+  float b[4] = {};
+  for (int k = 0; k < 4; ++k) {
+    a[k] = ca[k] + (cb[k] - ca[k]) * t0;
+    b[k] = ca[k] + (cb[k] - ca[k]) * t1;
+  }
+  *pa = RayTraceClipToPixel(a, frame);
+  *pb = RayTraceClipToPixel(b, frame);
+  return true;
 }
 
 // The crystal param in the analysis geometry's OWN caliber (scene_to_analytic's Nominal rule):
@@ -1172,8 +1384,8 @@ void RenderAnalyzeSunGlobeRegion(GuiState& state, const ImVec2& size) {
 
   // ---- The fixed interaction stack (R4): the controls a hand must reach are submitted outside
   // any scrolling region at every cell the window's minimum admits — the title here (the
-  // deviation-grid toggle retired to the factors region's Calculation details, §16.4); the
-  // combo, the canvas, the weight bar and the slider/play row in the discovered arm below. ----
+  // deviation-grid toggle retired to the factors region's env-gated diagnostics group, §16.4);
+  // the combo, the canvas, the weight bar and the slider/play row in the discovered arm below. ----
   ImGui::TextUnformatted("Sun direction globe");
 
   const auto info = point.adopted_result ? ReadPointInfo(*point.adopted_result) : std::nullopt;
@@ -1344,10 +1556,16 @@ void RenderAnalyzeSunGlobeRegion(GuiState& state, const ImVec2& size) {
       });
       return;
     }
-    // Payload availability is independent of whether this geometry can show the canvas.
+    // Payload availability is independent of whether this geometry can show the canvas. The
+    // backdrop is the toggle's DISPLAY EFFECT, so its eligibility is the diagnostics env gate
+    // itself, not the toggle's alone: the toggle's session default is true, and gating only
+    // the factors-region control left the diagnostic backdrop rendering in the shipped
+    // default state with the checkbox that turns it off hidden. Gating the draw site — not by
+    // clearing the flag or the payload — keeps the session preference intact: env on again
+    // redraws without a second click.
     LUMICE_PathSunGrid grid{};
     grid.struct_size = sizeof(grid);
-    const bool have_grid = view.show_deviation_grid &&
+    const bool have_grid = env::AnalyzeDebugDetails() && view.show_deviation_grid &&
                            LUMICE_PathPointGetSunGrid(point.adopted_result.get(), &grid) == LUMICE_PATH_READ_OK &&
                            grid.cell_count > 0;
     if (graph_side > 0.0f) {
@@ -1367,8 +1585,9 @@ void RenderAnalyzeSunGlobeRegion(GuiState& state, const ImVec2& size) {
       dl->AddCircleFilled(centre_px, radius_px, IM_COL32(16, 18, 22, 255));
       dl->AddCircle(centre_px, radius_px, IM_COL32(70, 74, 82, 200), 0, 1.0f);
 
-      // The deviation backdrop: only when the document carries a grid (AC2's named-absence rule) and
-      // the toggle stands.
+      // The deviation backdrop: only when the diagnostics env admits it, the document carries
+      // a grid (AC2's named-absence rule) and the toggle stands — the three conditions ride
+      // `have_grid` above.
       if (have_grid) {
         const double deg_to_rad = 3.14159265358979323846 / 180.0;
         for (int i = 0; i < grid.lat_count; ++i) {
@@ -1441,9 +1660,9 @@ void RenderAnalyzeSunGlobeRegion(GuiState& state, const ImVec2& size) {
     }
     // ---- The state area (R4's scroll set): the description, the partial note, the weight note
     // and the sample readout — all reachable by scrolling, none deleted. The grid-absence note
-    // moved with the toggle to the factors region's Calculation details (§16.4); the readout's
-    // old fits_on_line join is gone with the form: the state area is where these lines live at
-    // every width. ----
+    // moved with the toggle to the factors region's env-gated diagnostics group (§16.4); the
+    // readout's old fits_on_line join is gone with the form: the state area is where these
+    // lines live at every width. ----
     const std::optional<CurrentSample> current = CurrentSampleOf(*point.adopted_result, view, valid_indices);
     render_state_area([&] {
       DisabledWrappedText("Crystal-frame sun directions — a pose projection, not the full SO(3).");
@@ -1472,6 +1691,8 @@ void RenderAnalyzeSunGlobeRegion(GuiState& state, const ImVec2& size) {
 
 void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
   g_ray3d_frame.valid = false;
+  state.analysis.ray3d_fresnel_labels.clear();
+  state.analysis.ray3d_fresnel_label_rects.clear();
   // The canvas and frame controls never scroll with result prose. The report scrolls
   // natively; only the actual canvas registers the orbit wheel claim.
   ImGui::BeginChild("##AnalyzeRaypath3D", size, ImGuiChildFlags_Borders, ImGuiWindowFlags_NoScrollWithMouse);
@@ -1523,6 +1744,12 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
         "One pose's real path in the crystal: drag orbits, wheel zooms. Same physical state, two "
         "views.");
     ImGui::PopStyleColor();
+    // The per-segment Fresnel ratio numbers: a session display preference (default off; kept
+    // across sample/component switches, point adoptions and window reopen — the same survival
+    // set as the other toggles; reset only by the whole-state new-document paths). This report
+    // head is its one site, reachable in every query state; the canvas keeps its fixed report
+    // quota, so the toggle moves no geometry.
+    ImGui::Checkbox("Show Fresnel ratios##r3d_fresnel", &view.show_fresnel_labels);
 
     const PointQueryState st = PointQueryStateFor(point);
     if (st == PointQueryState::kNoIntent) {
@@ -1620,6 +1847,20 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
       DisabledWrappedText("The path's readers answered empty — nothing to draw.");
       return;
     }
+    // The request's face sequence (the Info reader's own): one face number per contact by
+    // contract. A failed read, a count mismatch or a null sequence falls back to the
+    // facing-unknown vocabulary below — every real contact keeps its marker either way.
+    LUMICE_RepresentativeRayInfo ray_info{};
+    ray_info.struct_size = sizeof(ray_info);
+    const bool faces_usable =
+        display_state == RayTraceDisplayState::kDrawn &&
+        LUMICE_RepresentativeRayGetInfo(trace.adopted_result.get(), &ray_info) == LUMICE_PATH_READ_OK &&
+        ray_info.face_count == static_cast<int>(line.seg_kinds.size() - 1) && ray_info.faces != nullptr;
+    // The labels' render feedback: one slot per segment, filled only where a label actually
+    // drew this frame (the toggle's leg reads positions from the primitives and content here),
+    // with 5 rect/placement floats beside each.
+    state.analysis.ray3d_fresnel_labels.assign(line.seg_kinds.size(), std::string{});
+    state.analysis.ray3d_fresnel_label_rects.assign(line.seg_kinds.size() * 5, 0.0f);
 
     // The frame switch is a display transform (AC4): world view rotates the body-frame mesh to the
     // pose's world; crystal view rotates the world-frame path back. One physical state, two views.
@@ -1647,84 +1888,42 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
       }
     };
 
-    // Content bounds over everything on show (mesh + trace), for the fit and the orbit centre.
+    // The frozen mesh is the ONLY framing anchor (2026-11-12 feedback #7): centre and the
+    // normalization radius come from the mesh alone — the trace's display extensions (1.1x the
+    // contacts' own spread, well outside the crystal) no longer inflate either. The old content
+    // fit counted the polyline: a pose with light on show shrank its crystal, the waiting frame
+    // filled it back — the reported size jump between the two states of ONE pose. The polyline
+    // may now reach beyond the unit bounding sphere; the overlay below clips against the
+    // camera's near plane instead of growing the fit to hide it.
     float lo[3] = { 0.0f, 0.0f, 0.0f };
     float hi[3] = { 0.0f, 0.0f, 0.0f };
-    bool have_bounds = false;
-    auto accumulate = [&](const float p[3]) {
-      if (!have_bounds) {
-        for (int k = 0; k < 3; ++k) {
-          lo[k] = hi[k] = p[k];
-        }
-        have_bounds = true;
-        return;
-      }
-      for (int k = 0; k < 3; ++k) {
-        lo[k] = std::min(lo[k], p[k]);
-        hi[k] = std::max(hi[k], p[k]);
-      }
-    };
-    for (int v = 0; v < cache.mesh.vertex_count; ++v) {
-      float d[3];
-      to_display(&cache.mesh.vertices[v * 3], d);
-      accumulate(d);
-    }
-    // The crystal's own centre, in the same display frame: the sun arrow's anchor (the crystal-frame
-    // view's u direction radiates from the CRYSTAL, not from a content box the display extensions
-    // inflate).
-    float mesh_lo[3] = { 0.0f, 0.0f, 0.0f };
-    float mesh_hi[3] = { 0.0f, 0.0f, 0.0f };
-    for (int k = 0; k < 3; ++k) {
-      mesh_lo[k] = mesh_hi[k] = lo[k];
-    }
     {
-      bool have_mesh_bounds = false;
+      bool first = true;
       for (int v = 0; v < cache.mesh.vertex_count; ++v) {
         float d[3];
         to_display(&cache.mesh.vertices[v * 3], d);
-        if (!have_mesh_bounds) {
+        if (first) {
           for (int k = 0; k < 3; ++k) {
-            mesh_lo[k] = mesh_hi[k] = d[k];
+            lo[k] = hi[k] = d[k];
           }
-          have_mesh_bounds = true;
+          first = false;
           continue;
         }
         for (int k = 0; k < 3; ++k) {
-          mesh_lo[k] = std::min(mesh_lo[k], d[k]);
-          mesh_hi[k] = std::max(mesh_hi[k], d[k]);
+          lo[k] = std::min(lo[k], d[k]);
+          hi[k] = std::max(hi[k], d[k]);
         }
       }
     }
-    const float mesh_centre[3] = { (mesh_lo[0] + mesh_hi[0]) * 0.5f, (mesh_lo[1] + mesh_hi[1]) * 0.5f,
-                                   (mesh_lo[2] + mesh_hi[2]) * 0.5f };
-    for (size_t i = 0; i + 2 < line.points.size(); i += 3) {
-      const float p[3] = { line.points[i], line.points[i + 1], line.points[i + 2] };
-      float d[3];
-      point_to_display(p, d);
-      accumulate(d);
-    }
-    if (!have_bounds) {
-      ImGui::TextDisabled("Nothing on show.");
-      return;
-    }
     const float centre[3] = { (lo[0] + hi[0]) * 0.5f, (lo[1] + hi[1]) * 0.5f, (lo[2] + hi[2]) * 0.5f };
     float fit = 0.0f;
-    auto accumulate_radius = [&](const float p[3]) {
-      const float dx = p[0] - centre[0];
-      const float dy = p[1] - centre[1];
-      const float dz = p[2] - centre[2];
-      fit = std::max(fit, std::sqrt(dx * dx + dy * dy + dz * dz));
-    };
     for (int v = 0; v < cache.mesh.vertex_count; ++v) {
       float d[3];
       to_display(&cache.mesh.vertices[v * 3], d);
-      accumulate_radius(d);
-    }
-    for (size_t i = 0; i + 2 < line.points.size(); i += 3) {
-      const float p[3] = { line.points[i], line.points[i + 1], line.points[i + 2] };
-      float d[3];
-      point_to_display(p, d);
-      accumulate_radius(d);
+      const float dx = d[0] - centre[0];
+      const float dy = d[1] - centre[1];
+      const float dz = d[2] - centre[2];
+      fit = std::max(fit, std::sqrt(dx * dx + dy * dy + dz * dz));
     }
     fit = std::max(fit, 1e-4f);
 
@@ -1772,6 +1971,17 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
           DisabledWrappedText("The crystal renderer could not initialize — no 3D canvas available.");
           return;
         }
+        // Zoom is the focal-plane half-height shared by Render, ComputeMvp and the frame info
+        // (the overlay's near-plane clip and the frame tests' camera both derive from it);
+        // compensate portrait aspect to preserve the old short-side fit. At zoom=1, a
+        // focal-plane radius spans 42% of the short side, matching the old fit. A positive
+        // stand-off keeps the eye outside the unit sphere at every zoom without a clamp
+        // plateau; wheel magnification remains strictly monotone across the full range.
+        constexpr float kFitHalfHeight = 0.5f / 0.42f;
+        constexpr float kCameraStandOff = 0.3f;
+        const float zoom =
+            (kCameraStandOff + (kFitHalfHeight - kCameraStandOff) / std::clamp(view.orbit_zoom, 0.25f, 8.0f)) *
+            std::max(1.0f, static_cast<float>(height) / width);
 
         Ray3DFrameInfo& rendered = g_ray3d_frame;
         rendered.canvas_min = canvas_min;
@@ -1783,6 +1993,7 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
         rendered.crystal_frame = view.crystal_frame;
         rendered.frame_count = ImGui::GetFrameCount();
         rendered.texture_id = gl.renderer.GetTextureId();
+        rendered.zoom = zoom;
         std::array<double, 9> pose_key;
         std::copy_n(pose, 9, pose_key.begin());
         const PointMeshUploadKey upload_key{
@@ -1817,16 +2028,6 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
         }
         view_rotation[15] = 1.0f;
         constexpr float kIdentity[16] = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
-        // The mesh and overlay are now in a unit bounding sphere. Zoom is its focal-plane
-        // half-height; compensate portrait aspect to preserve the old short-side fit.
-        // At zoom=1, a focal-plane radius spans 42% of the short side, matching the old fit.
-        // A positive stand-off keeps the eye outside the unit sphere at every zoom without a
-        // clamp plateau; wheel magnification remains strictly monotone across the full range.
-        constexpr float kFitHalfHeight = 0.5f / 0.42f;
-        constexpr float kCameraStandOff = 0.3f;
-        const float zoom =
-            (kCameraStandOff + (kFitHalfHeight - kCameraStandOff) / std::clamp(view.orbit_zoom, 0.25f, 8.0f)) *
-            std::max(1.0f, static_cast<float>(height) / width);
         gl.renderer.Render(kIdentity, zoom, CrystalStyle::kXRay, view_rotation);
         // Use the ACTUAL integer FBO dimensions on both sides. Its aspect only differs from the
         // logical canvas by pixel quantization; both texture and overlay undergo the same stretch.
@@ -1837,36 +2038,195 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
         // AddImage is the Image quad without a second layout item: the existing InvisibleButton
         // remains the sole canvas interaction target, at its existing ##r3d_canvas identity.
         dl->AddImage(static_cast<ImTextureID>(rendered.texture_id), canvas_min, canvas_max, ImVec2(0, 1), ImVec2(1, 0));
-        const auto project = [&](const float p[3]) { return ProjectSceneToPixel(p, rendered); };
+        // The overlay draws in scene coordinates with the REAL camera: the eye sits on the
+        // -fwd axis at ComputeDist, the near plane is ComputeNearPlane's — both the same
+        // formulas ComputeMvp builds the frustum from. With the mesh-only fit the trace's
+        // display extensions reach beyond the unit bounding sphere and can cross the near
+        // plane at high zoom, so every primitive clips first: a segment draws its visible
+        // part only, a behind-eye point never projects.
+        const float near_w = CrystalRenderer::ComputeNearPlane(zoom);
+        const float eye_dist = CrystalRenderer::ComputeDist(zoom);
+        const float eye_scene[3] = { static_cast<float>(-eye_dist * fwd[0]), static_cast<float>(-eye_dist * fwd[1]),
+                                     static_cast<float>(-eye_dist * fwd[2]) };
+        const auto scene_of = [&](const float p[3]) {
+          float d[3];
+          point_to_display(p, d);
+          return ToRay3DScene(d, rendered);
+        };
+        std::vector<ImRect> placed_label_rects;  // the labels' placed text rects, in order
         for (size_t s = 0; s < line.seg_kinds.size(); ++s) {
           const float* p0 = &line.points[s * 6];
           const float* p1 = p0 + 3;
-          float d0[3];
-          float d1[3];
-          point_to_display(p0, d0);
-          point_to_display(p1, d1);
-          dl->AddLine(project(d0), project(d1), SegmentColor(line.seg_kinds[s], 1.0f), 2.0f);
+          const auto s0 = scene_of(p0);
+          const auto s1 = scene_of(p1);
+          ImVec2 pa;
+          ImVec2 pb;
+          if (!RayTraceClipSegmentToPixel(s0.data(), s1.data(), near_w, rendered, &pa, &pb)) {
+            continue;  // the whole segment sits behind the near plane — nothing to draw
+          }
+          const RayTraceSegmentEnergy& energy = line.seg_energy[s];
+          // Width follows the cumulative Fresnel relative energy (the sqrt visual mapping); a
+          // segment past an unusable interface factor draws a fixed neutral line — no energy
+          // claim — and an exact zero draws no ink at all: the contact markers carry those
+          // spots, the labels (when shown) read 0%.
+          const bool draw_ink = !energy.valid || energy.value > 0.0;
+          if (draw_ink) {
+            const float width = energy.valid ? RayTraceEnergyWidth(energy.value) : UiPx(kRayTraceWidthNeutralUi);
+            dl->AddLine(pa, pb, SegmentColor(line.seg_kinds[s], 1.0f), width);
+          }
+          if (view.show_fresnel_labels) {
+            // The ratio label rides the VISIBLE part's midpoint, offset off the line and
+            // clamped into the canvas — the anchor stays a real visible position. Visibility
+            // is the REAL segment-rect clip (an AABB overlap is only necessary: a segment
+            // skimming past a corner must take no fabricated edge slot).
+            double vis_t0 = 0.0;
+            double vis_t1 = 1.0;
+            const ImVec2 canvas_max(canvas_min.x + canvas_size.x, canvas_min.y + canvas_size.y);
+            const bool on_canvas = RayTraceSegmentOnCanvas(pa, pb, canvas_min, canvas_max, &vis_t0, &vis_t1);
+            if (on_canvas && vis_t1 > vis_t0) {
+              const std::string text = RayTraceEnergyLabelText(energy);
+              const ImVec2 text_size = ImGui::CalcTextSize(text.c_str());
+              const ImVec2 mid(pa.x + static_cast<float>((pb.x - pa.x) * (vis_t0 + vis_t1) * 0.5),
+                               pa.y + static_cast<float>((pb.y - pa.y) * (vis_t0 + vis_t1) * 0.5));
+              ImVec2 dir(pb.x - pa.x, pb.y - pa.y);
+              const float len = std::sqrt(dir.x * dir.x + dir.y * dir.y);
+              if (len > 1e-3f) {
+                dir.x /= len;
+                dir.y /= len;
+              } else {
+                dir.x = 0.0f;
+                dir.y = -1.0f;
+              }
+              // The collision ladder: labels stay individually readable (AC3) — a placed text
+              // rect may overlap NO already-placed rect. Candidates: the default offset, then
+              // the opposite side, then stepped distances on both sides. A label every
+              // candidate of which still collides takes the least-colliding candidate and a
+              // short leader line back to its segment's visible midpoint — the ratio is never
+              // hidden, and the leader keeps the segment identity the plan forbids losing.
+              int placement = 2;
+              int candidate_index = 0;
+              bool placed = false;
+              float best_overlap = -1.0f;
+              ImVec2 best_anchor;
+              ImVec2 anchor;
+              for (const float dist : { UiPx(7.0f), UiPx(15.0f), UiPx(23.0f) }) {
+                for (const float side : { 1.0f, -1.0f }) {
+                  ImVec2 candidate(mid.x + dir.y * side * dist, mid.y - dir.x * side * dist);
+                  candidate.x =
+                      std::clamp(candidate.x, canvas_min.x + UiPx(2.0f),
+                                 std::max(canvas_min.x + UiPx(2.0f), canvas_max.x - text_size.x - UiPx(2.0f)));
+                  candidate.y =
+                      std::clamp(candidate.y, canvas_min.y + UiPx(1.0f),
+                                 std::max(canvas_min.y + UiPx(1.0f), canvas_max.y - text_size.y - UiPx(1.0f)));
+                  const ImRect candidate_rect(candidate, ImVec2(candidate.x + text_size.x, candidate.y + text_size.y));
+                  float overlap = 0.0f;
+                  for (const ImRect& placed_rect : placed_label_rects) {
+                    ImRect common = candidate_rect;
+                    common.ClipWithFull(placed_rect);
+                    if (common.Min.x < common.Max.x && common.Min.y < common.Max.y) {
+                      overlap += common.GetWidth() * common.GetHeight();
+                    }
+                  }
+                  if (overlap <= 0.0f) {
+                    anchor = candidate;
+                    placement = candidate_index == 0 ? 0 : 1;  // 0 = the default offset, 1 = shifted
+                    placed = true;
+                    break;
+                  }
+                  if (best_overlap < 0.0f || overlap < best_overlap) {
+                    best_overlap = overlap;
+                    best_anchor = candidate;
+                  }
+                  ++candidate_index;
+                }
+                if (placed) {
+                  break;
+                }
+              }
+              if (!placed) {
+                anchor = best_anchor;  // the leader fallback — the least-colliding slot plus a leader
+              }
+              if (placement != 0) {
+                // The leader: a short line from the text's near edge to the visible midpoint —
+                // every non-default placement keeps its segment identity explicit (proximity
+                // alone cannot carry it once the ladder has moved the text).
+                ImVec2 from(anchor.x + text_size.x * 0.5f, anchor.y + text_size.y * 0.5f);
+                ImVec2 to(mid);
+                ImVec2 step(to.x - from.x, to.y - from.y);
+                const float gap = UiPx(3.0f);
+                const float step_len = std::sqrt(step.x * step.x + step.y * step.y);
+                if (step_len > gap) {
+                  step.x *= gap / step_len;
+                  step.y *= gap / step_len;
+                  to.x -= step.x;
+                  to.y -= step.y;
+                }
+                dl->AddLine(from, to, kRayTraceLabelColor, 1.0f);
+              }
+              placed_label_rects.push_back(ImRect(anchor, ImVec2(anchor.x + text_size.x, anchor.y + text_size.y)));
+              float* rect_feedback = &state.analysis.ray3d_fresnel_label_rects[s * 5];
+              rect_feedback[0] = placed_label_rects.back().Min.x;
+              rect_feedback[1] = placed_label_rects.back().Min.y;
+              rect_feedback[2] = placed_label_rects.back().Max.x;
+              rect_feedback[3] = placed_label_rects.back().Max.y;
+              rect_feedback[4] = static_cast<float>(placement);
+              dl->AddText(anchor, kRayTraceLabelColor, text.c_str());
+              state.analysis.ray3d_fresnel_labels[s] = text;
+            }
+          }
         }
         // The contacts: one marker per REAL contact of the recovery. The polyline's point layout is
         // [entry_start, c0, c0, c1, ..., cl, exit_end] — odd indices 1..2N-1 are the N contacts, index
         // 0 the entry extension's start and the LAST index the exit extension's end, both this TU's
-        // display synthesis and marked by nothing.
+        // display synthesis and marked by nothing. A contact whose face looks at the real camera
+        // (the face's outward normal, display-rotated, dotted against contact->eye in the scene
+        // metric — never a global fwd approximation) draws solid; back-facing and facing-unknown
+        // draw hollow. The legend carries the vocabulary; unknown never masquerades as back-facing.
         for (size_t idx = 1; idx + 1 < line.points.size() / 3; idx += 2) {
+          const size_t contact_index = (idx - 1) / 2;
           const float* p = &line.points[idx * 3];
-          float d[3];
-          point_to_display(p, d);
-          dl->AddCircle(project(d), UiPx(2.5f), kRayTraceContactColor, 0, 1.0f);
+          const auto s = scene_of(p);
+          const std::array<float, 4> clip = ToRay3DClip(s.data(), rendered);
+          if (clip[3] < near_w) {
+            continue;  // a contact marker never projects past the near plane
+          }
+          bool solid = false;
+          if (faces_usable) {
+            const RayTraceContactFaceNormal face =
+                RayTraceContactFaceNormalFor(cache.mesh, ray_info.faces[contact_index]);
+            if (face.known) {
+              float n_display[3];
+              to_display(face.normal_body, n_display);
+              solid = RayTraceContactFacesEye(n_display, s.data(), eye_scene);
+            }
+          }
+          const ImVec2 pos = RayTraceClipToPixel(clip.data(), rendered);
+          if (solid) {
+            dl->AddCircleFilled(pos, UiPx(2.5f), kRayTraceContactSolidColor);
+          } else {
+            dl->AddCircle(pos, UiPx(2.5f), kRayTraceContactColor, 0, 1.0f);
+          }
         }
         // The crystal-frame sun direction: one short arrow along u radiating from the crystal's own
         // centre (the crystal view's own anchor; the world view's entry leg already carries the
-        // incident). The tip rides the content fit's scale, the anchor does not.
+        // incident). The tip rides the mesh fit's scale, the anchor does not.
         if (display_state == RayTraceDisplayState::kDrawn && view.crystal_frame) {
           const float u[3] = { static_cast<float>(current->sample.sun_in_crystal[0]),
                                static_cast<float>(current->sample.sun_in_crystal[1]),
                                static_cast<float>(current->sample.sun_in_crystal[2]) };
-          const float tip[3] = { mesh_centre[0] + u[0] * fit * 0.6f, mesh_centre[1] + u[1] * fit * 0.6f,
-                                 mesh_centre[2] + u[2] * fit * 0.6f };
-          dl->AddLine(project(mesh_centre), project(tip), ImGui::ColorConvertFloat4ToU32(AccentColor()), 1.5f);
+          const float tip[3] = { centre[0] + u[0] * fit * 0.6f, centre[1] + u[1] * fit * 0.6f,
+                                 centre[2] + u[2] * fit * 0.6f };
+          // centre/tip are ALREADY display points (the crystal view's mesh centre, and the
+          // tip built from the body-frame sun direction in that same view): normalize
+          // directly. scene_of would apply the frame switch's point transform a SECOND time
+          // (an extra inverse rotation that bends the arrow off the true sun direction).
+          const auto a0 = ToRay3DScene(centre, rendered);
+          const auto a1 = ToRay3DScene(tip, rendered);
+          ImVec2 pa;
+          ImVec2 pb;
+          if (RayTraceClipSegmentToPixel(a0.data(), a1.data(), near_w, rendered, &pa, &pb)) {
+            dl->AddLine(pa, pb, ImGui::ColorConvertFloat4ToU32(AccentColor()), 1.5f);
+          }
         }
         dl->PopClipRect();
       };
@@ -1918,6 +2278,14 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
       ImGui::SameLine();
       ImGui::TextDisabled("%s", labels[kind]);
     }
+    // The display semantics' legend (2026-11-12 feedback #8/#9): the width mapping's honesty
+    // note (visual sqrt scaling, no absorption — the ratio numbers, when shown, carry the
+    // exact values), the contact shapes' vocabulary, and the unusable-factor boundary.
+    DisabledWrappedText(
+        "Width follows cumulative Fresnel relative energy (no absorption); visual scaling — the "
+        "ratio numbers, when shown, carry the exact values. Contacts: solid = facing the camera, "
+        "hollow = back-facing or facing unknown. A segment past an unusable interface factor "
+        "draws neutral (n/a).");
     if (current->sample.interface_count >= 2) {
       char transmittance[96];
       std::snprintf(transmittance, sizeof(transmittance), "face transmittance: entry %.3f, exit %.3f",
@@ -1949,6 +2317,12 @@ namespace {
 // captured runtime value to MSVC (C2131), while clang folds it, so the two compilers disagree
 // unless the constant is unambiguously namespace-scope.
 constexpr int kCurveArms = static_cast<int>(std::size(kCurveArmFields));
+
+// The curve canvas's smallest honest plot, in layout units: below this the two-row footer plus
+// the top pad leave no real drawing area, and the canvas switches to its recoverable note form
+// instead of drawing an inverted rect or clipped labels posing as present (§3.2's degradation —
+// the plot comes back when the space does, no floor change, no swallowed content).
+constexpr float kPoseViewCurveMinPlot = 12.0f;
 
 // D4 — the Pose & trace window's vertical strip between the 3D region and the right column
 // (contract §4.2): the D3 splitter's recipe (invisible button + hover/active line + the one
@@ -2061,6 +2435,9 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
     }
   }
   const ImVec2 graph_size(available.x, graph_h);
+  if (graph_h <= 0.0f) {
+    view.curve_pan_active = false;  // the canvas is gone; a held pan does not survive it (§3.1)
+  }
   const ImVec2 graph_min = ImGui::GetCursorScreenPos();
   ImDrawList* graph_draw_list = ImGui::GetWindowDrawList();
   bool graph_hovered = false;
@@ -2179,13 +2556,7 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
     // ---- The legend: one swatch + short symbol per arm, the units in the factor readouts' own
     // vocabulary; an arm with no positive value names the fact (J4's legend naming). SameLine is
     // a judgment (the 3D legend's rule): an entry wraps below when it no longer fits. ----
-    const ImU32 arm_colors[kCurveArms] = {
-      IM_COL32(96, 165, 250, 255),   // rho — blue
-      IM_COL32(251, 146, 60, 255),   // A/a^2 — orange
-      IM_COL32(74, 222, 128, 255),   // T — green
-      IM_COL32(232, 121, 249, 255),  // K — fuchsia
-      kPointCurveProductColor,       // product — the headline quantity, brightest
-    };
+    const ImU32* const arm_colors = kPointCurveArmColors;  // the one palette (the tests read it too)
     const char* arm_labels[kCurveArms] = { "rho rad^-3", "A/a^2", "T total", "K 1/(J+eps)", "rho*A/a^2*T*K" };
     const auto value_of = [&](int arm, size_t i) -> double { return curve.points[i].*kCurveArmFields[arm].value; };
     const auto kind_of = [&](int arm, size_t i) { return curve.points[i].*kCurveArmFields[arm].kind; };
@@ -2291,36 +2662,108 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
         }
         return text;
       };
+      // The footer's two rows (§3.2): the X labels own their line unconditionally — an outside
+      // count no longer omits or displaces them — and the summary adds its real wrapped height
+      // on the row below. The zero row sits above both; the same arithmetic sizes the plot rect
+      // the layout spends and the mouse mapping consumes.
       const auto footer_height = [&](const std::string& text) {
-        if (text.empty()) {
-          return UiPx(28.0f);
+        const float x_row = UiPx(13.0f) + ImGui::GetTextLineHeight();
+        float h = std::max(UiPx(28.0f), x_row);
+        if (!text.empty()) {
+          h = std::max(h, x_row + ImGui::GetStyle().ItemSpacing.y +
+                              ImGui::CalcTextSize(text.c_str(), nullptr, false, summary_wrap).y);
         }
-        return std::max(UiPx(28.0f), UiPx(16.0f) + ImGui::CalcTextSize(text.c_str(), nullptr, false, summary_wrap).y);
+        return h;
       };
+      // The pan latch (§3.1's gesture contract): a right press that begins on the canvas owns the
+      // gesture until the button's release; a drag already owned by the left button is not stolen,
+      // and a press that began elsewhere never latches. Adoption and canvas invalidation clear the
+      // latch on their own paths (the reset and the degraded forms below).
+      if (!ImGui::IsMouseDown(ImGuiMouseButton_Right)) {
+        view.curve_pan_active = false;
+      } else if (canvas_hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Right) && !canvas_active) {
+        view.curve_pan_active = true;
+      }
+      // A left press that begins while the pan owns the gesture is swallowed for its whole life:
+      // the press still activates the canvas item (it accepts the left button), and releasing the
+      // RIGHT button first must not wake that held drag into a cursor write — a fresh left press
+      // afterwards selects normally (§3.1's mutex, both release orders).
+      if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+        view.curve_left_press_ignored = false;
+      } else if (view.curve_pan_active && canvas_hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+        view.curve_left_press_ignored = true;
+      }
       const PointCurveAxisRange before_wheel = PointCurveVisibleRange(fit, &view.curve_axis);
       const std::string before_summary = summary_for(before_wheel);
-      const float before_plot_h = std::max(1.0f, canvas_h - UiPx(10.0f) - footer_height(before_summary));
+      // The Y-input availability boundary, judged BEFORE any state write: the frame's own window
+      // (the one the summary was read from) and its real footer budget decide whether the Y
+      // gestures exist. Once the footer leaves nothing positive, a pan or a zoom would write
+      // state nothing shows — both stay dead and the pan latch dies here; the draw side
+      // re-judges below on the frame's final footer for the ink. The D7 floor's click-to-select
+      // contract survives this (the x mapping is width-defined; the write sits outside this
+      // boundary), and the shared wheel arbitration is untouched — the claim stands, the
+      // unconsumed event just passes.
+      const float before_real_h = canvas_h - UiPx(10.0f) - footer_height(before_summary);
+      const bool y_inputs_live = before_real_h >= UiPx(kPoseViewCurveMinPlot);
+      if (!y_inputs_live) {
+        view.curve_pan_active = false;  // the plot is gone; a held pan does not survive it
+      }
+      const float before_plot_h = std::max(1.0f, before_real_h);
       const double mouse_anchor = 1.0 - (ImGui::GetIO().MousePos.y - canvas_min.y - UiPx(10.0f)) / before_plot_h;
       const double anchor = mouse_anchor >= 0.0 && mouse_anchor <= 1.0 ? mouse_anchor : 0.5;
-      const double wheel = AnalyzeRegionWheelStanding() && canvas_hovered ? ImGui::GetIO().MouseWheel : 0.0;
-      const PointCurveAxisRange visible = PointCurveVisibleRange(fit, &view.curve_axis, wheel, anchor);
+      const double wheel =
+          AnalyzeRegionWheelStanding() && canvas_hovered && y_inputs_live ? ImGui::GetIO().MouseWheel : 0.0;
+      PointCurveAxisRange visible = PointCurveVisibleRange(fit, &view.curve_axis, wheel, anchor);
+      // The pan rides the post-zoom window (a wheel event during a drag still zooms exactly once,
+      // and the pan continues from the event's effective window): the drag's per-frame delta as a
+      // fraction of the same pre-write plot height the anchor uses. The press frame establishes
+      // ownership only — MouseDelta.y is the move relative to the PREVIOUS frame, so consuming it
+      // there would pan by the approach movement a mere right-click carried in with it. Pan
+      // writes no cursor, stops no playback and touches no query identity — the view window is
+      // its only subject.
+      const float pan_dy = view.curve_pan_active && y_inputs_live && !ImGui::IsMouseClicked(ImGuiMouseButton_Right) ?
+                               ImGui::GetIO().MouseDelta.y :
+                               0.0f;
+      if (pan_dy != 0.0f) {
+        visible = PointCurvePanRange(fit, &view.curve_axis, static_cast<double>(pan_dy) / before_plot_h);
+      }
       const double v_min = visible.lo;
       const double v_max = visible.hi;
       const bool have_range = visible.valid && x_hi > 0.0;
-      const std::string outside_label = wheel == 0.0 ? before_summary : summary_for(visible);
+      const std::string outside_label = wheel == 0.0 && pan_dy == 0.0f ? before_summary : summary_for(visible);
       const float pad_b = footer_height(outside_label);
       const float rough_plot_h = std::max(1.0f, canvas_h - UiPx(10.0f) - pad_b);
+      // The draw side of the availability boundary: the frame's FINAL footer (this frame's wheel
+      // or pan may have changed the summary's row count) decides whether the plot ink exists.
+      // Below the honest minimum the canvas renders its recoverable note form — no inverted
+      // rect, no clipped labels posing as present (§3.2's degradation) — and the Y-input side
+      // above already kept the hidden window untouched. The two judgments are the same
+      // arithmetic on the same canvas; they can only disagree across one transition frame.
+      const float real_plot_h = canvas_h - UiPx(10.0f) - pad_b;
+      const bool plot_fits = real_plot_h >= UiPx(kPoseViewCurveMinPlot);
       const int label_step = have_range ? PointCurveLogLabelStep(v_min, v_max, rough_plot_h, line_h) : 1;
       float widest_lab = 0.0f;
+      bool have_labelled_major = false;
       if (have_range) {
         for (const PointCurveLogTick& tick : PointCurveLogTicks(v_min, v_max)) {
           const int exp10 = static_cast<int>(std::lround(std::log10(tick.value)));
           if (!tick.major || exp10 % label_step != 0) {
             continue;
           }
+          have_labelled_major = true;
           char lab[16];
           std::snprintf(lab, sizeof(lab), "%.0e", tick.value);
           widest_lab = std::max(widest_lab, ImGui::CalcTextSize(lab).x);
+        }
+        if (!have_labelled_major) {
+          // A panned narrow window can sit strictly between decade majors — no labelled tick, no
+          // numeric reference. The window's own boundary values become the axis's labels (§3.2),
+          // and the left gutter must host them exactly like the decade labels they stand in for.
+          for (const double boundary : { v_min, v_max }) {
+            char lab[24];
+            std::snprintf(lab, sizeof(lab), "%.3g", boundary);
+            widest_lab = std::max(widest_lab, ImGui::CalcTextSize(lab).x);
+          }
         }
       }
       const float pad_l = std::max(UiPx(34.0f), widest_lab + UiPx(10.0f));  // decade labels live left of the plot
@@ -2342,6 +2785,17 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
 
       dl->AddRectFilled(canvas_min, canvas_max, IM_COL32(16, 18, 22, 255));
       dl->AddRect(canvas_min, canvas_max, IM_COL32(70, 74, 82, 160));
+      // The gesture hint (§3.1): hover-only ink beside the rad unit — no permanent layout, and it
+      // yields when the top strip cannot host it (the narrowest faces keep their honest form).
+      if (canvas_hovered) {
+        const char* hint = "L select · wheel zoom · R pan Y";
+        const float hint_w = ImGui::CalcTextSize(hint).x;
+        const float hint_right = canvas_max.x - UiPx(6.0f) - ImGui::CalcTextSize("rad").x - UiPx(12.0f);
+        if (hint_right - hint_w >= canvas_min.x + UiPx(4.0f)) {
+          dl->AddText(ImVec2(hint_right - hint_w, canvas_min.y + UiPx(4.0f)), ImGui::GetColorU32(ImGuiCol_TextDisabled),
+                      hint);
+        }
+      }
 
       const auto v_to_py = [&](double v) {
         const double log_lo = have_range ? std::log10(v_min) : 0.0;
@@ -2352,7 +2806,7 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
         const double t = (std::log10(v) - log_lo) / (log_hi - log_lo);
         return plot_min.y + static_cast<float>((1.0 - std::clamp(t, 0.0, 1.0)) * plot_h);
       };
-      if (have_range) {
+      if (plot_fits && have_range) {
         const bool minors_fit =
             label_step == 1 && plot_h / std::max(1.0, std::log10(v_max) - std::log10(v_min)) >= UiPx(12.0f);
         for (const PointCurveLogTick& tick : PointCurveLogTicks(v_min, v_max)) {
@@ -2373,32 +2827,53 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
             dl->AddLine(ImVec2(plot_min.x - UiPx(3.0f), py), ImVec2(plot_min.x, py), IM_COL32(90, 94, 102, 140), 1.0f);
           }
         }
+        // The boundary labels' drawing (the gutter rule above): the window's own edges at the
+        // plot's top and bottom frame — the top one always fits (its upper half rides pad_t),
+        // the bottom one only while the plot can host both without overlap. A reference that
+        // fits beats none; nothing is squeezed over an existing label (§3.2).
+        if (!have_labelled_major) {
+          const auto boundary_lab = [&](double v, float py) {
+            char lab[24];
+            std::snprintf(lab, sizeof(lab), "%.3g", v);
+            const ImVec2 ts = ImGui::CalcTextSize(lab);
+            dl->AddText(ImVec2(plot_min.x - ts.x - UiPx(5.0f), py - ts.y * 0.5f),
+                        ImGui::GetColorU32(ImGuiCol_TextDisabled), lab);
+          };
+          boundary_lab(v_max, plot_min.y);
+          if (plot_h >= line_h * 2.0f) {
+            boundary_lab(v_min, plot_max.y);
+          }
+        }
       }
-      // Fit the honest tail summary beside the x labels, leaving the zero markers untouched.
-      const ImVec2 summary_size = ImGui::CalcTextSize(outside_label.c_str(), nullptr, false, summary_wrap);
-      const float summary_x = canvas_max.x - UiPx(6.0f) - summary_size.x;
-      if (!outside_label.empty()) {
-        dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(summary_x, plot_max.y + UiPx(13.0f)),
+      // The honest tail summary owns the row BELOW the x labels (§3.2's two rows): the outside
+      // count and its extrema never displace or cover the axis numbers, and the wrap width is
+      // the summary's own budget, not the labels' yield. Only where the plot itself fits — the
+      // degraded form names the missing plot instead of presenting cropped text.
+      if (plot_fits && !outside_label.empty()) {
+        const ImVec2 summary_size = ImGui::CalcTextSize(outside_label.c_str(), nullptr, false, summary_wrap);
+        const float summary_x = canvas_max.x - UiPx(6.0f) - summary_size.x;
+        const float summary_y = plot_max.y + UiPx(13.0f) + ImGui::GetTextLineHeight() + ImGui::GetStyle().ItemSpacing.y;
+        dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(summary_x, summary_y),
                     ImGui::GetColorU32(ImGuiCol_TextDisabled), outside_label.c_str(), nullptr, summary_wrap);
       }
-      // The plot's frame, the x labels and the axis unit (the caliber line names rad; the axis
-      // shows where its numbers sit). The summary owns its strip; omit colliding x labels.
+      // The plot's frame and the x labels — the labels are always in place now (§3.2): the
+      // summary's own row below carries the outside count, so the axis numbers never yield.
       const auto x_label = [&](float x, float y, const char* text) {
-        if (outside_label.empty() || x + ImGui::CalcTextSize(text).x + UiPx(5.0f) < summary_x) {
-          dl->AddText(ImVec2(x, y), ImGui::GetColorU32(ImGuiCol_TextDisabled), text);
-        }
+        dl->AddText(ImVec2(x, y), ImGui::GetColorU32(ImGuiCol_TextDisabled), text);
       };
-      dl->AddRect(plot_min, plot_max, kPointCurvePlotBorderColor, 0.0f, 0, 1.0f);
-      if (x_hi > 0.0) {
-        char lab[24];
-        const char* fmt = x_hi < 10.0 ? "%.2f" : (x_hi < 100.0 ? "%.1f" : "%.0f");
-        const float axis_lab_y = plot_max.y + UiPx(13.0f);
-        std::snprintf(lab, sizeof(lab), fmt, 0.0);
-        x_label(plot_min.x - ImGui::CalcTextSize(lab).x * 0.5f, axis_lab_y, lab);
-        std::snprintf(lab, sizeof(lab), fmt, x_hi * 0.5);
-        x_label(x_to_px(x_hi * 0.5) - ImGui::CalcTextSize(lab).x * 0.5f, axis_lab_y, lab);
-        std::snprintf(lab, sizeof(lab), fmt, x_hi);
-        x_label(plot_max.x - ImGui::CalcTextSize(lab).x, axis_lab_y, lab);
+      if (plot_fits) {
+        dl->AddRect(plot_min, plot_max, kPointCurvePlotBorderColor, 0.0f, 0, 1.0f);
+        if (x_hi > 0.0) {
+          char lab[24];
+          const char* fmt = x_hi < 10.0 ? "%.2f" : (x_hi < 100.0 ? "%.1f" : "%.0f");
+          const float axis_lab_y = plot_max.y + UiPx(13.0f);
+          std::snprintf(lab, sizeof(lab), fmt, 0.0);
+          x_label(plot_min.x - ImGui::CalcTextSize(lab).x * 0.5f, axis_lab_y, lab);
+          std::snprintf(lab, sizeof(lab), fmt, x_hi * 0.5);
+          x_label(x_to_px(x_hi * 0.5) - ImGui::CalcTextSize(lab).x * 0.5f, axis_lab_y, lab);
+          std::snprintf(lab, sizeof(lab), fmt, x_hi);
+          x_label(plot_max.x - ImGui::CalcTextSize(lab).x, axis_lab_y, lab);
+        }
       }
       {
         const char* unit = "rad";
@@ -2407,8 +2882,9 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
       }
 
       // The zero row: the exact zeros sit here, in their arm's colour — never mapped onto the
-      // log axis, never patched with an epsilon (J4).
-      if (x_hi > 0.0) {
+      // log axis, never patched with an epsilon (J4). The whole plot body draws only where the
+      // footer's budget leaves a real area; the too-short canvas names its honest form instead.
+      if (plot_fits && x_hi > 0.0) {
         const float zero_y = plot_max.y + UiPx(5.0f);
         dl->AddLine(ImVec2(plot_min.x, zero_y), ImVec2(plot_max.x, zero_y), IM_COL32(60, 64, 72, 90), 1.0f);
         for (int arm = 0; arm < kCurveArms; ++arm) {
@@ -2466,18 +2942,33 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
           dl->AddLine(ImVec2(cpx, plot_min.y), ImVec2(cpx, plot_max.y), ImGui::ColorConvertFloat4ToU32(AccentColor()),
                       1.5f);
         }
-      } else {
+      } else if (!have_range) {
         const char* note = "no positive value on this component — the log axis has no range";
         const ImVec2 ts = ImGui::CalcTextSize(note);
         dl->AddText(ImVec2(canvas_min.x + (avail.x - ts.x) * 0.5f, canvas_min.y + (canvas_h - ts.y) * 0.5f),
                     ImGui::GetColorU32(ImGuiCol_TextDisabled), note);
+      } else {
+        // The too-short canvas: the footer's two rows left no real plot. The named note is the
+        // recoverable degradation — no inverted rect, no cropped labels, input off (the pan latch
+        // cleared above); growing the splitter or the window back restores the full form.
+        const char* note = "the canvas is too short for the curve plot — grow it back with the splitter or the window";
+        const ImVec2 ts = ImGui::CalcTextSize(note, nullptr, false, summary_wrap);
+        dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(),
+                    ImVec2(canvas_min.x + UiPx(8.0f), canvas_min.y + (canvas_h - ts.y) * 0.5f),
+                    ImGui::GetColorU32(ImGuiCol_TextDisabled), note, nullptr, summary_wrap);
       }
 
       // The canvas writes the ONE selection: click or drag maps the mouse's x to the nearest
       // VALID sample (invalid points are unreachable, the slider's domain) and stops the
-      // playback — the slider's own write discipline, no second cursor state (J3).
+      // playback — the slider's own write discipline, no second cursor state (J3). The write
+      // SURVIVES the degraded form: the x mapping is width-defined (it never touches the
+      // inverted dimension) and the selection is the one global state the globe, the 3D trace
+      // and the factors follow — the D7 floor's contract is that the canvas answers a click at
+      // its 40pt real-slice floor, where the plot ink cannot exist but the selection still can.
+      // The Y gestures stay dead there: a pan or a zoom with no visible plot writes state
+      // nothing shows (the pan latch is cleared by the degrade above).
       if (x_hi > 0.0) {
-        if (canvas_hovered) {
+        if (plot_fits && canvas_hovered) {
           hover_position = PointCurveValidPositionNearX(curve, x_at_px(ImGui::GetIO().MousePos.x));
         }
         const auto write_cursor_from_mouse = [&]() {
@@ -2492,8 +2983,12 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
           }
           view.playing = false;
         };
-        if ((canvas_hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) ||
-            (canvas_active && ImGui::IsMouseDragging(ImGuiMouseButton_Left))) {
+        // While the right button holds a pan, left events never reach the cursor write path —
+        // and a left press that began during the pan stays swallowed until it is released, so
+        // the two gestures are mutually exclusive for the whole life of the drag (§3.1).
+        if (!view.curve_left_press_ignored && !ImGui::IsMouseDown(ImGuiMouseButton_Right) &&
+            ((canvas_hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) ||
+             (canvas_active && ImGui::IsMouseDragging(ImGuiMouseButton_Left)))) {
           write_cursor_from_mouse();
         }
       }
@@ -2636,8 +3131,13 @@ void RenderPoseFactorsRegion(GuiState& state, const ImVec2& size) {
     }
     // ---- The two §16.1 fold groups: A1's label constants, one spelling (a56); the expansion
     // state lives in the pose window's ImGui storage — session-sticky, no GuiState field, the
-    // same convention every answer host follows. ----
-    if (FoldOpen(kSurveyPhysicsDetailsLabel, "pose_factors")) {
+    // same convention every answer host follows. The diagnostics group is env-gated as a
+    // whole: with LUMICE_ANALYZE_DEBUG_DETAILS off, neither its header nor the deviation-grid
+    // toggle inside it renders. The toggle's display effect is gated at the globe's own draw
+    // site (see RenderAnalyzeSunGlobeRegion's have_grid), so the toggle's default-true session
+    // value cannot show the backdrop while the gate is off — and the value is never cleared,
+    // so env on again restores the backdrop without a second click. ----
+    if (FoldOpen(kPoseTransmissionLabel, "pose_factors")) {
       // The per-interface transmittances: T's optical premises — the ladder's evidence rows,
       // not the default layer's conclusions.
       for (const std::string& line_text : PointFactorInterfaceLines(current->sample)) {
@@ -2645,7 +3145,7 @@ void RenderPoseFactorsRegion(GuiState& state, const ImVec2& size) {
         ImGui::TextWrapped("%s", line_text.c_str());
       }
     }
-    if (FoldOpen(kSurveyCalculationDetailsLabel, "pose_factors")) {
+    if (env::AnalyzeDebugDetails() && FoldOpen(kPoseDiagnosticsLabel, "pose_factors")) {
       // The deviation-grid toggle: a calculation aid retired here from the globe's fixed stack
       // (§16.4); its reader — the globe's backdrop — keeps its own region. The requested-but-
       // absent note travels with the toggle: it is the toggle request's fact, not the globe's.
@@ -2679,6 +3179,8 @@ void RenderPoseFactorsRegion(GuiState& state, const ImVec2& size) {
 
 void RenderAnalyzePoseViewWindow(GuiState& state) {
   if (!state.analyze_pose_view_open) {
+    state.analysis.point_view.curve_pan_active = false;  // the curve canvas is gone with the
+                                                         // window; a held pan does not survive it
     return;
   }
   // The pumps run at RenderWorkspacePanels' entry (every GUI frame — windows open or not); this
@@ -3074,10 +3576,10 @@ void RenderPointAnswerBlock(GuiState& state) {
   }
 
   // The fold pairs, the SAME structure on every arm — the complete-answer promise means every
-  // premise line has a home on every document shape (the member-faces line and the execution
-  // triple are PointCaliberLines' unconditional rows; the component evidence is the component
-  // arm's extra content inside the same groups).
-  if (FoldOpen(kSurveyPhysicsDetailsLabel, "pt_answer")) {
+  // premise line has a home on every document shape (the member-faces line is
+  // PointCaliberLines' unconditional evidence row; the component evidence is the component
+  // arm's extra content inside the same group; the diagnostics group is env-gated as a whole).
+  if (FoldOpen(kPointEvidenceLabel, "pt_answer")) {
     if (caliber.size() > 1) {  // the member faces / crystal / kind premise line
       DisabledWrappedText("%s", caliber[1].c_str());
     }
@@ -3085,7 +3587,10 @@ void RenderPointAnswerBlock(GuiState& state) {
       // The component evidence rows: kind, ends, coverage and integral availability — the
       // ledger's Physics tier. The rows are read-only (the component selector's one
       // interaction owner is the pose window's globe combo); each row's hover tooltip names
-      // its full text. The render cap's truncation note stays AT the truncated list.
+      // its full text. The render cap's truncation note stays AT the truncated list. The
+      // integral row keeps its value and its availability verdict — the covers/points-usable
+      // counts inside the parentheses are implementation coverage numbers and moved to the
+      // diagnostics group.
       const size_t true_component_count = static_cast<size_t>(info.component_count);
       ImGui::TextDisabled("Components");
       for (int i = 0; i < component_total; ++i) {
@@ -3101,11 +3606,9 @@ void RenderPointAnswerBlock(GuiState& state) {
       const int component = std::clamp(view.component_index, 0, component_total - 1);
       const PointComponentRow& selected = rows[static_cast<size_t>(component)];
       if (selected.integral_available) {
-        DisabledWrappedText("Selected component's fiber integral %.6g (covers %d/%d points' arclength).",
-                            selected.fiber_integral, selected.available_points, selected.total_points);
+        DisabledWrappedText("Selected component's fiber integral %.6g.", selected.fiber_integral);
       } else {
-        DisabledWrappedText("Selected component's fiber integral: unavailable (%d/%d points usable).",
-                            selected.available_points, selected.total_points);
+        DisabledWrappedText("Selected component's fiber integral: unavailable.");
       }
       if (true_component_count > static_cast<size_t>(component_total)) {
         DisabledWrappedText("+ %zu more component(s) — beyond this view's render cap.",
@@ -3113,12 +3616,23 @@ void RenderPointAnswerBlock(GuiState& state) {
       }
     }
   }
-  if (FoldOpen(kSurveyCalculationDetailsLabel, "pt_answer")) {
+  // The diagnostics group, env-gated as a whole (header and body): the discovery execution
+  // triple, the per-component coverage counts and the valid/total sample ratio. The default
+  // partial/no-valid-sample limits stay at the default layer regardless of this group.
+  if (env::AnalyzeDebugDetails() && FoldOpen(kPointDiagnosticsLabel, "pt_answer")) {
     if (caliber.size() > 3) {  // discovery sample_count / budget / execution
       DisabledWrappedText("%s", caliber[3].c_str());
     }
     if (has_components) {
       const int component = std::clamp(view.component_index, 0, component_total - 1);
+      const PointComponentRow& selected = rows[static_cast<size_t>(component)];
+      if (selected.integral_available) {
+        DisabledWrappedText("Selected component's fiber integral covers %d/%d points' arclength.",
+                            selected.available_points, selected.total_points);
+      } else {
+        DisabledWrappedText("Selected component's fiber integral: %d/%d points usable.", selected.available_points,
+                            selected.total_points);
+      }
       const std::vector<int> valid_indices = CollectValidSampleIndices(*point.adopted_result, component);
       DisabledWrappedText("Selected component: %d valid sample(s) of %d.", static_cast<int>(valid_indices.size()),
                           rows[static_cast<size_t>(component)].point_count);

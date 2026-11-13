@@ -129,6 +129,24 @@ bool DisableMetalSourceCompile(Logger& logger);
 // True when set to a non-empty, non-"0" value. INFO once when enabled.
 bool DisableDeviceGen(Logger& logger);
 
+// LUMICE_ANALYZE_DEBUG_DETAILS — dev diagnostic visibility for the Analyze GUI's four answer
+// hosts (survey class answer, sky point answer, map reference caliber, Pose & trace factors
+// region). True when set to a non-empty, non-"0" value (the shared IsTruthy convention);
+// unset / empty / "0" is the default off, in which state the diagnostics fold groups (the
+// former Calculation details tiers and the implementation-level rows inside them) do not
+// render at all — display eligibility only, never a data or computation change.
+//
+// Unlike every other knob above, this one logs nothing here: its only consumer is the GUI,
+// whose logger is the GUI-side spdlog instance (gui_logger.hpp) that this translation unit
+// cannot reach — a core-Logger line would land on the shared dist sink and MISS the GUI log
+// panel and file sink, the surfaces a GUI user actually greps. The non-default enable record
+// is therefore issued once at startup by gui/main.cpp (GUI_LOG_INFO), which satisfies the
+// policy's observability rule on the GUI's own sink boundary; per-frame render reads take
+// only the value. The value is RE-READ on every call on purpose — the GUI flips the variable
+// between states within one process (single-process GUI tests) and the display must follow;
+// nothing caches the first read.
+bool AnalyzeDebugDetails();
+
 }  // namespace lumice::env
 
 #endif  // LUMICE_UTIL_ENV_KNOBS_HPP

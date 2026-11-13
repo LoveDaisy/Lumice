@@ -109,9 +109,10 @@ words.
 
 The completed overview in the card is the class's **summary**: a few main conclusions, the
 limits that qualify them, and a pointer to the complete answer (which lives in the Raypath
-view's class-answer section, sorted into two closed-by-default fold groups — **Physics
-details** for the optical premises and evidence methods, **Calculation details** for the
-sampling and execution numbers):
+view's class-answer section, sorted into closed-by-default fold groups — **Class evidence**
+for the optical premises and evidence methods, and a **Class diagnostics** group for the
+sampling and execution numbers that is hidden unless the development diagnostics variable
+`LUMICE_ANALYZE_DEBUG_DETAILS` is set):
 
 - **A direction-invariant class** (every pose sends its light back to the sun's own direction)
   shows the certified **source image** at the sun, the **weight tint** reading (e.g.
@@ -145,12 +146,14 @@ class first, then keeps the quality action with its state beside it, the wavelen
 slider echoes the reading; its tooltip names whether an explicit value or the engine's
 reference is in force), the shared-view presets, the sky-point controls with the current
 target beside them, and the **Pose & trace** entry — all above an independently scrolling
-report that carries, in order: the **class answer** (the complete survey, with its Physics
-details / Calculation details fold groups), the **sky-point answer** (the complete point
-document, with its own fold pair), the map's caliber (the short quantity and its limits, the
-grid and execution numbers in folds), and a legend of short shape keys whose longer meanings
-sit behind a **Legend explanations** fold. Closing a window only hides it: results
-and in-flight work survive. Clicking the selected row opens it again.
+report that carries, in order: the **class answer** (the complete survey, with its evidence
+and diagnostics fold groups), the **sky-point answer** (the complete point document, with its
+own fold pair), the map's caliber (the short quantity and its limits, its premises behind
+**Map quantity & premises**), and a legend of short shape keys whose longer meanings
+sit behind a **Legend explanations** fold — each key carries a small icon of the shape it
+names, in the shape's own colour. Each host's diagnostics group (implementation and execution
+numbers) renders only with `LUMICE_ANALYZE_DEBUG_DETAILS` set. Closing a window only hides it:
+results and in-flight work survive. Clicking the selected row opens it again.
 
 **One camera, two pictures.** The main picture and the map use the same lens, FOV, orientation
 and display clips. Drag bare sky to orbit that camera; the wheel applies the main picture's
@@ -200,6 +203,26 @@ names itself **not visible**, and one the class answer carries no position for, 
 (the text is the answer there, not a missing marker), and a verdict with **incomplete coverage**
 draws its circle dashed. The legend lists "verdict anchor" only on frames where one actually
 drew — its absence means no anchor is on the map, not that the verdict is gone.
+
+**Row highlights and the reference profile's readings.** Every hoverable row in the class answer
+highlights while the pointer stands on it — the theme's own hover colour under the row's text —
+so the row you are on is readable without looking at the map. Three of the rows are also spatial:
+**Profile edge**, **Profile peak** and **Peak–edge separation**. Hovering edge or peak draws a
+point on the map at that reading's position on the survey's reference profile — the radial line
+the probe sampled at its own azimuth, anchored on the survey document's own sun. Hovering
+separation draws the interval between the two readings along that line (a segment between two
+points, not a filled band between two circles). The readings' honesty carries to the map: a
+refused profile, an unknown profile azimuth, or a missing reading draws nothing, and a reading
+whose position is off the view draws nothing — the row's own words are the answer there. The
+Blue/red ratio row highlights too but names no position, so it drives no map geometry. The
+profile drawings are hover-transient: no row standing, no ink, and Overlays off holds them back
+while the row highlight stays.
+
+**Readout labels stay inside the view.** The delta labels on the dispersion circles and the
+verdict anchor move inside the map's bounds when their anchor sits near an edge — the word stays
+whole (text and backing move together), and a view too small to hold a label keeps that label
+where the curve put it. The map's other drawings are unchanged: the sun marker may still be
+cut by the view's edge, and the circles still end at the view's own physical boundary.
 
 ## 8. The point inspector (the Pose & trace window, point detail)
 
@@ -256,7 +279,8 @@ each valid sample is one pose where the sun sits somewhere in the crystal (the `
 polyline walks them in order, and the highlighted marker is the current sample. The deviation
 grid colours the sphere by where each sun direction deflected the light — drawn only when the
 document carries the grid, absent otherwise, never painted as zero; its toggle lives in the
-factors region's **Calculation details** fold, together with the note that names a requested
+factors region's **Pose diagnostics** group (visible only with the development diagnostics
+variable `LUMICE_ANALYZE_DEBUG_DETAILS` set), together with the note that names a requested
 grid the document does not carry. Under the disk: the sample slider and **Play**. Dragging the
 slider or playing moves through the poses that already came back in the document; the sky
 point itself never moves — playing changes the pose you are looking at, not the direction you
@@ -298,7 +322,7 @@ the class.
 **Current pose factors** (the window's lower right region) reads the current pose's own
 numbers — the orientation angles, ρ, the entry measures, the total transmission, the Jacobian
 with its named-unavailable state, K, and their product. Each interface's transmittance,
-labelled as conditional on this path, lives one fold deeper under **Physics details**. The
+labelled as conditional on this path, lives one fold deeper under **Interface transmission**. The
 region also carries the measure registration's note beside the numbers it limits, and short
 state lines that name the honest empty, waiting or refused forms. Hovering the curve canvas
 temporarily overrides the curve's own readout line only — these factors always describe the
