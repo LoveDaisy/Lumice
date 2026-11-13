@@ -8990,6 +8990,387 @@ bool PoseCurveRegionDrawsAndMovesTheSharedCursor(ImGuiTestContext* ctx) {
   return true;
 }
 
+// 779.5 — the right-button Y pan and the two-row footer: the pan's real input leg (the window
+// slides as a whole, span preserved, and a value that entered the window draws its ink at the
+// independently predicted pixel), the footer's two rows (the three x labels and the outside
+// summary simultaneously present, on separate rows, with the rad unit), the boundary-value
+// labels of a window with no decade major, and the exclusivity/lifecycle negative legs (left
+// clicks under a held right button, a press begun outside, a drag carried out of the canvas,
+// a right button held across a real adoption). The oracle math reads the submitted border
+// vertices and the C-reader model — never the renderer's own helpers.
+bool PoseCurvePanMovesTheWindowAndKeepsTheXLabels(ImGuiTestContext* ctx) {
+  ScopedServerGuard guard;
+  IM_CHECK_RETV(BringUpHaloScene(ctx, /*infinite=*/false), false);
+  OpenWindow(ctx);
+  IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
+  IM_CHECK_RETV(SelectRowByDisplay(ctx, TopChainDisplay().c_str()) != std::nullopt, false);
+  gui::g_state.analyze_pose_view_open = true;
+  PinPoseViewOnScreen(ctx);
+  SetSkyPointTarget(42.0, 0.0);
+  IM_CHECK_RETV(
+      DriveUntil(
+          ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCompleted; },
+          60),
+      false);
+  gui::g_state.analyze_pose_view_open = true;
+  PinPoseViewOnScreen(ctx);
+  ctx->Yield(2);
+  ImGuiWindow* curve = PoseRegionWindow("##AnalyzePoseCurve");
+  IM_CHECK_RETV(curve != nullptr, false);
+  const ImGuiTestItemInfo canvas = ctx->ItemInfo("**/##pose_curve_canvas", ImGuiTestOpFlags_NoError);
+  IM_CHECK_RETV(canvas.ID != 0, false);
+  gui::PointViewState& view = gui::g_state.analysis.point_view;
+  const gui::PointIntentKey key_before = gui::g_state.analysis.point.key;
+  gui::PointContributionCurve model;
+  IM_CHECK_RETV(gui::BuildPointContributionCurve(*gui::g_state.analysis.point.adopted_result, 0, &model), false);
+  const gui::PointCurveAxisRange fit = gui::PointCurveAxisFit(model);
+  IM_CHECK_RETV(fit.valid, false);
+  const double fit_lo_log = std::log10(fit.lo);
+  const double fit_hi_log = std::log10(fit.hi);
+  IM_CHECK_RETV(fit_hi_log - fit_lo_log > 1.5, false);  // a domain the zoom/pan legs can work in
+
+  // The plot-rect oracle: the submitted border vertices give the real plot rect (the same read
+  // the cursor case's render oracle makes, widened to x) — every pixel prediction below builds
+  // on this rect, never on the renderer's helpers.
+  const auto plot_rect = [&]() {
+    ImRect rect(ImVec2(FLT_MAX, FLT_MAX), ImVec2(-FLT_MAX, -FLT_MAX));
+    for (const ImDrawVert& vertex : curve->DrawList->VtxBuffer) {
+      if (canvas.RectFull.Contains(vertex.pos) && vertex.col == gui::kPointCurvePlotBorderColor) {
+        rect.Add(vertex.pos);
+      }
+    }
+    return rect;
+  };
+  const ImU32 text_color = ImGui::GetColorU32(ImGuiCol_TextDisabled);
+  const auto glyphs_in = [&](const ImRect& zone) {
+    std::vector<ImRect> glyphs;
+    const ImVector<ImDrawVert>& vertices = curve->DrawList->VtxBuffer;
+    for (int i = 0; i + 3 < vertices.Size;) {
+      if (vertices[i].col != text_color) {
+        ++i;
+        continue;
+      }
+      ImRect rect(vertices[i].pos, vertices[i].pos);
+      for (int k = 1; k < 4; ++k) {
+        rect.Add(vertices[i + k].pos);
+      }
+      i += 4;  // one glyph = one 4-vertex quad of one colour, the read the legend probe makes
+      if (zone.Overlaps(rect)) {
+        glyphs.push_back(rect);
+      }
+    }
+    return glyphs;
+  };
+  const float line_h = ImGui::GetTextLineHeight();
+
+  // ---- Zoom until the window hides real points (the outside summary's non-empty precondition)
+  // — bounded: the halo scene's positive pool spans decades, so a dozen notches must do it. ----
+  ctx->MouseMoveToPos(canvas.RectFull.GetCenter());
+  ctx->Yield(3);
+  int outside_points = 0;
+  for (int notch = 0; notch < 14; ++notch) {
+    ctx->MouseWheelY(3.0f);
+    ctx->Yield(2);
+    const gui::PointCurveAxisRange vis = gui::PointCurveVisibleRange(fit, &view.curve_axis);
+    outside_points = gui::PointCurveCountOutside(model, vis.lo, vis.hi).points;
+    if (outside_points > 0) {
+      break;
+    }
+  }
+  IM_CHECK_RETV(outside_points > 0, false);
+  const gui::PointCurveAxisRange zoomed = gui::PointCurveVisibleRange(fit, &view.curve_axis);
+  ctx->LogInfo("[pose curve pan] zoomed to outside=%d window [%.4g, %.4g] span %.3f dec", outside_points, zoomed.lo,
+               zoomed.hi, std::log10(zoomed.hi) - std::log10(zoomed.lo));
+
+  // ---- AC2: with a non-empty outside count, the three x labels, the summary and the rad unit
+  // are all on screen — the labels on their own row, the summary on the row below, nothing
+  // spanning both. ----
+  const ImRect plot0 = plot_rect();
+  IM_CHECK_RETV(plot0.Min.x < plot0.Max.x && plot0.Min.y < plot0.Max.y, false);
+  const ImRect row_a(plot0.Min.x - gui::UiPx(gui::kAnalyzeSplitterSize), plot0.Max.y + gui::UiPx(8.0f),
+                     plot0.Max.x + gui::UiPx(4.0f), plot0.Max.y + gui::UiPx(13.0f) + line_h + 1.5f);
+  const std::vector<ImRect> label_glyphs = glyphs_in(row_a);
+  IM_CHECK_RETV(label_glyphs.size() >= 3, false);
+  const auto cluster_at = [&](float x) {
+    return std::any_of(label_glyphs.begin(), label_glyphs.end(),
+                       [x](const ImRect& g) { return g.Min.x - 2.0f <= x && x <= g.Max.x + 2.0f; });
+  };
+  IM_CHECK_RETV(cluster_at(plot0.Min.x), false);                         // "0" centred on the left edge
+  IM_CHECK_RETV(cluster_at((plot0.Min.x + plot0.Max.x) * 0.5f), false);  // the mid label
+  IM_CHECK_RETV(cluster_at(plot0.Max.x - 1.0f), false);                  // the right-aligned hi label
+  const ImRect row_b(plot0.Min.x - gui::UiPx(gui::kAnalyzeSplitterSize), row_a.Max.y + 1.0f, canvas.RectFull.Max.x,
+                     canvas.RectFull.Max.y);
+  IM_CHECK_RETV(!glyphs_in(row_b).empty(), false);  // the summary's own row below the labels
+  bool spans_both_rows = false;
+  for (const ImRect& g : glyphs_in(ImRect(row_a.Min.x, row_a.Min.y, row_b.Max.x, row_b.Max.y))) {
+    spans_both_rows = spans_both_rows || (g.Min.y < row_a.Max.y && g.Max.y > row_b.Min.y);
+  }
+  IM_CHECK_RETV(!spans_both_rows, false);  // no glyph spans both rows
+  const ImRect rad_zone(canvas.RectFull.Max.x - ImGui::CalcTextSize("rad").x - gui::UiPx(8.0f), canvas.RectFull.Min.y,
+                        canvas.RectFull.Max.x, canvas.RectFull.Min.y + line_h + gui::UiPx(6.0f));
+  IM_CHECK_RETV(!glyphs_in(rad_zone).empty(), false);
+
+  // ---- AC1: press right inside the canvas, drag DOWN — the window slides toward larger values
+  // until it sits flush at the fit's top (the clamp's whole-window shape), span never moving. ----
+  const double span_before = view.curve_axis.log_hi - view.curve_axis.log_lo;
+  const float plot_h0 = plot0.Max.y - plot0.Min.y;
+  const float drag_bottom = canvas.RectFull.GetCenter().y + plot_h0;
+  ctx->MouseDown(1);
+  ctx->Yield(1);
+  IM_CHECK_RETV(view.curve_pan_active, false);
+  for (float y = canvas.RectFull.GetCenter().y; y < drag_bottom; y += plot_h0 * 0.25f) {
+    ctx->MouseMoveToPos(ImVec2(canvas.RectFull.GetCenter().x, y));
+    ctx->Yield(1);
+  }
+  ctx->Yield(2);
+  IM_CHECK_RETV(std::abs(view.curve_axis.log_hi - fit_hi_log) < 1e-9, false);  // flush at the fit's top
+  IM_CHECK_RETV(std::abs(view.curve_axis.log_hi - view.curve_axis.log_lo - span_before) < 1e-9, false);
+
+  // ---- The measured leg: choose a real below-window product value as the pan target, drag UP
+  // by the distance the independent log math names, and verify the window covers it and its ink
+  // is drawn at the predicted pixel. The flushed window has unbounded room below — no clamp
+  // contaminates the arithmetic. ----
+  const gui::PointCurveAxisRange flushed = gui::PointCurveVisibleRange(fit, &view.curve_axis);
+  const auto arm_value = [](int arm, const gui::PointCurvePoint& p) -> double {
+    switch (arm) {
+      case 0:
+        return p.rho;
+      case 1:
+        return p.area;
+      case 2:
+        return p.transmission;
+      case 3:
+        return p.k_carea;
+      default:
+        return p.product;
+    }
+  };
+  const auto arm_kind = [](int arm, const gui::PointCurvePoint& p) -> gui::PointCurveValueKind {
+    switch (arm) {
+      case 0:
+        return p.rho_kind;
+      case 1:
+        return p.area_kind;
+      case 2:
+        return p.transmission_kind;
+      case 3:
+        return p.k_kind;
+      default:
+        return p.product_kind;
+    }
+  };
+  int target_arm = -1;
+  double target_value = 0.0;
+  for (int arm = 4; arm >= 0; --arm) {  // the product arm preferred, any honest arm acceptable
+    for (const gui::PointCurvePoint& point : model.points) {
+      if (arm_kind(arm, point) == gui::PointCurveValueKind::kPositive && arm_value(arm, point) < flushed.lo) {
+        target_arm = arm;
+        target_value = arm_value(arm, point);
+        break;
+      }
+    }
+    if (target_arm >= 0) {
+      break;
+    }
+  }
+  IM_CHECK_RETV(target_arm >= 0, false);
+  const double shift_log = std::log10(flushed.lo) - std::log10(target_value) + 0.15;  // +margin inside
+  const double shift_frac = shift_log / span_before;
+  const float drag_up = static_cast<float>(shift_frac * plot_h0);
+  const int cursor_before_pan = view.sample_index;
+  for (float y = canvas.RectFull.GetCenter().y + plot_h0; y > canvas.RectFull.GetCenter().y + plot_h0 - drag_up;
+       y -= plot_h0 * 0.2f) {
+    ctx->MouseMoveToPos(ImVec2(canvas.RectFull.GetCenter().x, y));
+    ctx->Yield(1);
+  }
+  // While the right button holds the pan, a left press must not write the cursor (§3.1's mutex).
+  // MouseDown/MouseUp or the button mask (MouseClick would replace it and drop the right button
+  // — the engine's own shape), which is exactly the overlap the gate must survive.
+  ctx->MouseDown(0);
+  ctx->Yield(2);
+  ctx->MouseUp(0);
+  ctx->Yield(2);
+  IM_CHECK_RETV(view.sample_index == cursor_before_pan, false);
+  IM_CHECK_RETV(view.curve_pan_active, false);  // ...and the pan keeps its latch through it
+  ctx->MouseUp(1);
+  ctx->Yield(2);
+  IM_CHECK_RETV(!view.curve_pan_active, false);
+  const double lo_after = view.curve_axis.log_lo;
+  const double hi_after = view.curve_axis.log_hi;
+  IM_CHECK_RETV(std::abs((hi_after - lo_after) - span_before) < 1e-9, false);  // span preserved
+  IM_CHECK_RETV(std::abs(hi_after - (fit_hi_log - shift_log)) < 0.2 * span_before,
+                false);  // the shift the drag named (± the footer's responsive plot height)
+  IM_CHECK_RETV(lo_after <= std::log10(target_value) && std::log10(target_value) <= hi_after, false);
+  // The entered value's ink: a vertex of the target arm's colour within 3px of the predicted
+  // pixel — predicted from the measured plot rect and the window the state carries (independent
+  // log math, the cursor case's oracle shape).
+  {
+    const ImRect plot1 = plot_rect();
+    const double log_lo = std::log10(view.curve_axis.log_lo <= fit_lo_log ? fit.lo : std::pow(10.0, lo_after));
+    const double log_hi = std::log10(view.curve_axis.log_hi >= fit_hi_log ? fit.hi : std::pow(10.0, hi_after));
+    const double predicted =
+        plot1.Min.y + (log_hi - std::log10(target_value)) / (log_hi - log_lo) * (plot1.Max.y - plot1.Min.y);
+    const ImU32 arm_color = gui::kPointCurveArmColors[target_arm];
+    bool ink_found = false;
+    for (const ImDrawVert& vertex : curve->DrawList->VtxBuffer) {
+      if (vertex.col == arm_color && plot1.Contains(vertex.pos) && std::abs(vertex.pos.y - predicted) <= 3.0f) {
+        ink_found = true;
+        break;
+      }
+    }
+    IM_CHECK_RETV(ink_found, false);
+    ctx->LogInfo("[pose curve pan] target %.4g (arm %d) predicted py %.1f — ink on screen", target_value, target_arm,
+                 (double)predicted);
+  }
+  IM_CHECK_RETV(view.sample_index == cursor_before_pan, false);
+  IM_CHECK_RETV(!view.playing, false);
+  IM_CHECK_RETV(gui::g_state.analysis.point.key == key_before, false);
+  IM_CHECK_RETV(curve->Scroll.y == 0.0f, false);
+  IM_CHECK_RETV(SaveWindowPng(ctx, "//Pose & trace", GuiTestTempPath("pose_curve_pan_target.png").string()), false);
+
+  // ---- The pan does not stop the playback: it runs on through a right-button drag. ----
+  view.playing = true;
+  ctx->MouseMoveToPos(canvas.RectFull.GetCenter());
+  ctx->Yield(2);
+  ctx->MouseDown(1);
+  ctx->Yield(1);
+  IM_CHECK_RETV(view.curve_pan_active, false);  // latched over the playback
+  ctx->MouseMoveToPos(ImVec2(canvas.RectFull.GetCenter().x, canvas.RectFull.GetCenter().y + 40.0f));
+  ctx->Yield(2);
+  ctx->MouseUp(1);
+  ctx->Yield(2);
+  IM_CHECK_RETV(view.playing, false);  // the pan never stopped it
+  view.playing = false;
+
+  // ---- Negative legs: a press begun outside the canvas never latches; a drag carried out of
+  // the canvas keeps panning (the gesture owns its drag), moves no host window, scrolls no
+  // region, and the release ends it. ----
+  const double log_lo_stable = view.curve_axis.log_lo;
+  ctx->MouseMoveToPos(ImVec2(canvas.RectFull.Min.x - 30.0f, canvas.RectFull.Min.y - 30.0f));
+  ctx->Yield(2);
+  ctx->MouseDown(1);
+  ctx->Yield(1);
+  IM_CHECK_RETV(!view.curve_pan_active, false);
+  ctx->MouseMoveToPos(canvas.RectFull.GetCenter());
+  ctx->Yield(2);
+  ctx->MouseUp(1);
+  ctx->Yield(1);
+  IM_CHECK_RETV(!view.curve_pan_active, false);
+  IM_CHECK_RETV(view.curve_axis.log_lo == log_lo_stable, false);
+
+  ImGuiWindow* host = ctx->GetWindowByRef("//Pose & trace");
+  IM_CHECK_RETV(host != nullptr, false);
+  const ImVec2 host_pos_before = host->Pos;
+  const float scroll_before = curve->Scroll.y;
+  ctx->MouseMoveToPos(canvas.RectFull.GetCenter());
+  ctx->Yield(2);
+  ctx->MouseDown(1);
+  ctx->Yield(1);
+  IM_CHECK_RETV(view.curve_pan_active, false);
+  ctx->MouseMoveToPos(ImVec2(canvas.RectFull.GetCenter().x, canvas.RectFull.Min.y - 80.0f));
+  ctx->Yield(2);
+  IM_CHECK_RETV(view.curve_pan_active, false);  // the gesture survives leaving the canvas
+  ctx->MouseUp(1);
+  ctx->Yield(2);
+  IM_CHECK_RETV(!view.curve_pan_active, false);
+  IM_CHECK_RETV(host->Pos.x == host_pos_before.x && host->Pos.y == host_pos_before.y, false);
+  IM_CHECK_RETV(curve->Scroll.y == scroll_before, false);
+
+  // ---- AC3's narrow window: zoom to a sub-decade span and pan it strictly between two decade
+  // exponents — no labelled major, and the window's own boundary values are the only numeric
+  // reference, drawn in the gutter at the plot's top and bottom frame, fully inside the canvas. ----
+  ctx->MouseMoveToPos(canvas.RectFull.GetCenter());
+  ctx->Yield(2);
+  for (int notch = 0; notch < 8; ++notch) {
+    ctx->MouseWheelY(3.0f);
+    ctx->Yield(1);
+  }
+  ctx->Yield(2);
+  const double deep_span = view.curve_axis.log_hi - view.curve_axis.log_lo;
+  IM_CHECK_RETV(deep_span < 0.9, false);
+  float pan_y = canvas.RectFull.GetCenter().y;
+  for (int step = 0; step < 20; ++step) {
+    const double lo = view.curve_axis.log_lo;
+    const double hi = view.curve_axis.log_hi;
+    if (std::ceil(lo) > hi) {
+      break;  // no integer exponent inside [lo, hi]
+    }
+    ctx->MouseMoveToPos(ImVec2(canvas.RectFull.GetCenter().x, pan_y));
+    ctx->Yield(1);
+    ctx->MouseDown(1);
+    ctx->MouseMoveToPos(ImVec2(canvas.RectFull.GetCenter().x, pan_y - 30.0f));  // drag up: window toward smaller
+    ctx->Yield(1);
+    ctx->MouseUp(1);
+    ctx->Yield(1);
+    pan_y -= 30.0f;
+  }
+  {
+    const double lo = view.curve_axis.log_lo;
+    const double hi = view.curve_axis.log_hi;
+    IM_CHECK_RETV(std::ceil(lo) > hi, false);  // strictly between two decades
+    ctx->LogInfo("[pose curve pan] no-major window [%.3f, %.3f]", lo, hi);
+  }
+  {
+    const ImRect plot2 = plot_rect();
+    IM_CHECK_RETV(plot2.Min.y < plot2.Max.y, false);
+    const ImRect gutter(canvas.RectFull.Min.x, canvas.RectFull.Min.y, plot2.Min.x - 3.0f, canvas.RectFull.Max.y);
+    const std::vector<ImRect> boundary = glyphs_in(gutter);
+    const auto band = [&](float py) {
+      return std::any_of(boundary.begin(), boundary.end(), [&](const ImRect& g) {
+        return g.Min.x >= canvas.RectFull.Min.x &&  // fully inside, not clipped by the canvas
+               std::abs((g.Min.y + g.Max.y) * 0.5f - py) <= line_h * 0.6f;
+      });
+    };
+    IM_CHECK_RETV(band(plot2.Min.y), false);  // the window's top boundary value
+    IM_CHECK_RETV(band(plot2.Max.y), false);  // the window's bottom boundary value
+    IM_CHECK_RETV(SaveWindowPng(ctx, "//Pose & trace", GuiTestTempPath("pose_curve_pan_boundary_labels.png").string()),
+                  false);
+  }
+
+  // ---- AC4: leave the fit by zoom and pan, then a REAL new adoption resets the window — and a
+  // right button held across the adoption does not resurrect the gesture (no new press, no pan). ----
+  ctx->MouseMoveToPos(canvas.RectFull.GetCenter());
+  ctx->Yield(2);
+  ctx->MouseWheelY(8.0f);
+  ctx->Yield(2);
+  IM_CHECK_RETV(view.curve_axis.log_lo > fit_lo_log + 1e-9, false);  // the window left the fit's floor
+  ctx->MouseDown(1);
+  ctx->MouseMoveToPos(ImVec2(canvas.RectFull.GetCenter().x, canvas.RectFull.GetCenter().y - 50.0f));
+  ctx->Yield(2);
+  ctx->MouseUp(1);
+  ctx->Yield(1);
+  IM_CHECK_RETV(view.curve_axis.log_hi < fit_hi_log - 1e-9, false);  // ...and its ceiling
+  ctx->MouseDown(1);                                                 // held across the adoption that follows
+  ctx->Yield(1);
+  SetSkyPointTarget(43.0, 0.0);
+  // The key change DROPS the adoption first (the pump's AC5 rule): wait through the drop, then
+  // for the new document — a same-frame check would mistake the old result for the new one.
+  IM_CHECK_RETV(
+      DriveUntil(
+          ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) != gui::PointQueryState::kCompleted; },
+          30),
+      false);
+  IM_CHECK_RETV(
+      DriveUntil(
+          ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCompleted; },
+          60),
+      false);
+  ctx->Yield(2);
+  gui::PointContributionCurve model2;
+  IM_CHECK_RETV(gui::BuildPointContributionCurve(*gui::g_state.analysis.point.adopted_result, 0, &model2), false);
+  const gui::PointCurveAxisRange fit2 = gui::PointCurveAxisFit(model2);
+  IM_CHECK_RETV(fit2.valid, false);
+  IM_CHECK_RETV(std::abs(view.curve_axis.log_lo - std::log10(fit2.lo)) < 1e-9, false);  // back to the fit
+  IM_CHECK_RETV(std::abs(view.curve_axis.log_hi - std::log10(fit2.hi)) < 1e-9, false);
+  IM_CHECK_RETV(!view.curve_pan_active, false);
+  ctx->Yield(3);  // more frames with the button still down — no resurrection without a press
+  IM_CHECK_RETV(std::abs(view.curve_axis.log_lo - std::log10(fit2.lo)) < 1e-9, false);
+  IM_CHECK_RETV(!view.curve_pan_active, false);
+  ctx->MouseUp(1);
+  ctx->Yield(1);
+  return true;
+}
+
 // ⑧ — the multi-window real mouse chain: Raypath view, the pose window and the Entry Edit modal
 // are open in the same frame, and a real mouse action in each writes its own state — the map
 // pick sets the sky point, the pose D5 drag writes its ratio, the modal's edit writes its field.
@@ -12095,6 +12476,14 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
         IM_CHECK_GT(backdrop_probe_vertices, base);
       }
     };
+  }
+
+  // 779.5 — the pan gesture's real-input legs and the two-row footer's ink (its own case: the
+  // failures stay locatable without walking the long cursor case again).
+  {
+    ImGuiTest* t =
+        IM_REGISTER_TEST(engine, "raypath_analysis", "pose_curve_pan_moves_the_window_and_keeps_the_x_labels");
+    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(PoseCurvePanMovesTheWindowAndKeepsTheXLabels(ctx)); };
   }
 
   // AC2's narrowest-window face: at 480x360 the floors hold and the info rows wrap, not clip

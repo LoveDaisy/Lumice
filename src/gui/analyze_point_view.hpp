@@ -215,6 +215,16 @@ int PointCurveValidPositionNearX(const PointContributionCurve& curve, double x_r
 
 inline constexpr ImU32 kPointCurveProductColor = IM_COL32(250, 250, 250, 255);
 inline constexpr ImU32 kPointCurvePlotBorderColor = IM_COL32(90, 94, 102, 120);
+// The five arms' series colours, in the curve's own arm order (rho, A/a^2, T, K, product — the
+// product the headline, brightest). One table: the renderer draws with it and the tests identify
+// the submitted ink with it — no second copy of the palette can drift.
+inline constexpr ImU32 kPointCurveArmColors[] = {
+  IM_COL32(96, 165, 250, 255),   // rho — blue
+  IM_COL32(251, 146, 60, 255),   // A/a^2 — orange
+  IM_COL32(74, 222, 128, 255),   // T — green
+  IM_COL32(232, 121, 249, 255),  // K — fuchsia
+  kPointCurveProductColor,
+};
 
 // The shared axis pools only kPositive values across all five arms. The nearest-rank P1
 // lower bound and the relative noise floor keep tiny tails from consuming the log axis.

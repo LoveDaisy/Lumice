@@ -2549,13 +2549,7 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
     // ---- The legend: one swatch + short symbol per arm, the units in the factor readouts' own
     // vocabulary; an arm with no positive value names the fact (J4's legend naming). SameLine is
     // a judgment (the 3D legend's rule): an entry wraps below when it no longer fits. ----
-    const ImU32 arm_colors[kCurveArms] = {
-      IM_COL32(96, 165, 250, 255),   // rho — blue
-      IM_COL32(251, 146, 60, 255),   // A/a^2 — orange
-      IM_COL32(74, 222, 128, 255),   // T — green
-      IM_COL32(232, 121, 249, 255),  // K — fuchsia
-      kPointCurveProductColor,       // product — the headline quantity, brightest
-    };
+    const ImU32* const arm_colors = kPointCurveArmColors;  // the one palette (the tests read it too)
     const char* arm_labels[kCurveArms] = { "rho rad^-3", "A/a^2", "T total", "K 1/(J+eps)", "rho*A/a^2*T*K" };
     const auto value_of = [&](int arm, size_t i) -> double { return curve.points[i].*kCurveArmFields[arm].value; };
     const auto kind_of = [&](int arm, size_t i) { return curve.points[i].*kCurveArmFields[arm].kind; };
