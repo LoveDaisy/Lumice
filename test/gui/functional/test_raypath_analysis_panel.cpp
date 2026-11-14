@@ -1997,20 +1997,29 @@ bool CheckMapGlyphsAcrossUiScale(ImGuiTestContext* ctx);
 // region takes a real click as the sky point while the panorama's ROI state stands untouched.
 // The assertions read the adopted result the picture is drawn from, so the screenshot a human
 // reads and the checks below cannot both be mock.
-// The engine's watchdog measures SIMULATED time (frame_count × the injected dt — the
-// lens-projection and cli-export guards' lesson), and this test legitimately spans more frames
-// than the default 60 simulated seconds: five tiers of real engine recomputes, each answered
-// over real frames. When the default kill fires mid-run it also poisons every later engine call
-// (IsError short-circuits ItemInfo), so each remaining wait spins to its own timeout as a
-// cascade — the widened budget must cover the WHOLE test, and be restored on every early path.
+// This test legitimately spans more real seconds than the default whole-test budget: five tiers
+// of real engine recomputes, each answered over real frames. When the default kill fires mid-run
+// it also poisons every later engine call (IsError short-circuits ItemInfo), so each remaining
+// wait spins to its own timeout as a cascade — the widened budget must cover the WHOLE test, and
+// be restored on every early path.
+//
+// The widened values are REAL-clock seconds under the fixed-dt clock contract (test_gui_main.cpp
+// neutralized the engine's simulated-time watchdog in this mode and the harness real-clock
+// watchdog reads these same fields live; in non-fixed-dt runs the engine's own real-time watchdog
+// reads them). Sizing: a stuck gate fails the test at its own budget (the gates are safety nets
+// whose DriveUntil timeouts feed IM_CHECK_RETV), so the kill's remaining target is gate-less
+// yield loops and engine wedges. Healthy spans of the guarded tests are tens of seconds;
+// slow-but-legal chains under pool-context load reach a few hundred seconds, so the kill sits at
+// 600s — finite, where the old 50000/100000 made the watchdog vanish outright. The warning runs
+// 30s ahead of the kill, mirroring the engine's default warning/kill spacing.
 struct ScopedWatchdogGuard {
   ImGuiTestEngineIO* engine_io;
   float saved_warn;
   float saved_kill;
   explicit ScopedWatchdogGuard(ImGuiTestEngineIO* io)
       : engine_io(io), saved_warn(io->ConfigWatchdogWarning), saved_kill(io->ConfigWatchdogKillTest) {
-    engine_io->ConfigWatchdogWarning = 50000.0f;
-    engine_io->ConfigWatchdogKillTest = 100000.0f;
+    engine_io->ConfigWatchdogWarning = 570.0f;
+    engine_io->ConfigWatchdogKillTest = 600.0f;
   }
   ~ScopedWatchdogGuard() {
     engine_io->ConfigWatchdogWarning = saved_warn;

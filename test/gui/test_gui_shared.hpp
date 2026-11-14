@@ -742,5 +742,8 @@ void RegisterThemeScanTests(ImGuiTestEngine* engine);
 void RegisterExportParityTests(ImGuiTestEngine* engine);
 void RegisterPreviewExportParityTests(ImGuiTestEngine* engine);
 void RegisterLmcRoundtripParityTests(ImGuiTestEngine* engine);
+// Takes the raw --filter value: the deliberately-red self-kill probe registers only when the
+// filter names it, so no pool run ever carries it (functional/test_fixed_dt_clock_contract.cpp).
+void RegisterFixedDtClockContractTests(ImGuiTestEngine* engine, const char* filter);
 
 #endif  // LUMICE_TEST_GUI_SHARED_HPP

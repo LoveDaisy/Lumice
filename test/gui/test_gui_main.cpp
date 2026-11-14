@@ -54,6 +54,9 @@
 // For ImGuiTestEngine::TestContext: the case-entry window-basis audit names the running test's
 // Category/Name, and that field lives in the engine struct, not the public context header.
 #include "imgui_te_internal.h"
+// For ImOsIsDebuggerPresent: the engine's own watchdog skips firing under a debugger, and the
+// real-clock watchdog below keeps the same bypass.
+#include "imgui_te_utils.h"
 #include "support/gui_server_lifetime.hpp"
 #include "support/scoped_result_frame.hpp"
 #include "test_gui_shared.hpp"
@@ -451,6 +454,71 @@ void InitSynthTexture() {
   }
 }
 
+// ========== Fixed-dt real-clock watchdog ==========
+
+// Under --fixed-dt the engine's own watchdog measures SIMULATED time: each frame it injects the
+// fixed dt and accumulates it into TestContext::RunningTime, then compares the warning/kill
+// thresholds against that sum (imgui_te_engine.cpp PreNewFrame — injection and accumulation are
+// atomic inside the NewFrame hook, so the harness cannot re-time the accumulation without
+// polluting every IO.DeltaTime consumer in ImGui's NewFrame body: g.Time, DownDuration, hover
+// timers, key repeat). At the full speed that the skipped frame-limit buys, 60 simulated seconds
+// pass in roughly 8 real ones, so the default kill fired mid-wait on tests whose legal waits are
+// bounded in REAL seconds — the deterministic verdict_anchor red (785.6 evidence): the survey
+// completes ~5.6s real, the kill landed ~6s real.
+//
+// This struct re-implements the protection on the wall clock for the fixed-dt mode only:
+//   - Same threshold fields: per-test guards keep writing ConfigWatchdogWarning/KillTest, and
+//     their values are honored live (read every tick), now meaning real seconds.
+//   - Same per-test reset: TestContext is non-null exactly while a test runs (RunTest sets it,
+//     RunTest's tail clears it) — the same window the engine's own accumulation uses, so queue
+//     gaps stay excluded and each test starts from zero.
+//   - Same warning/kill semantics: the warning logs once per test; the kill fires once and goes
+//     through ImGuiTestEngine_Check — the same exported function the engine's IM_CHECK(false)
+//     kill uses — so it marks Output.Status = Error, logs into the test log, bumps ErrorCounter,
+//     lets the suspended TestFunc unwind on its own, and the queue continues with the next case
+//     (engine->Abort stays untouched).
+//   - Same debugger bypass: ImOsIsDebuggerPresent(), as in the engine's UpdateWatchdog.
+// The engine side is disabled structurally for this mode: tests are queued with
+// ImGuiTestRunFlags_RunFromGui, whose only semantic footprint in the engine is the watchdog
+// bypass. That keeps the threshold fields meaningful for this struct (the engine's 30/60
+// defaults are the real-clock baseline here) while preventing the engine from re-consuming a
+// guard-written value as simulated seconds. Non-fixed-dt runs never tick this struct and keep
+// the engine's native (already real-time) watchdog.
+struct FixedDtWatchdog {
+  ImGuiTest* current_test = nullptr;
+  std::chrono::steady_clock::time_point test_started{};
+  bool warned = false;
+  bool killed = false;
+
+  void Tick(ImGuiTestEngine* engine, ImGuiTestEngineIO& io) {
+    ImGuiTest* running = engine->TestContext != nullptr ? engine->TestContext->Test : nullptr;
+    if (running != current_test) {
+      current_test = running;
+      test_started = std::chrono::steady_clock::now();
+      warned = false;
+      killed = false;
+    }
+    if (running == nullptr || ImOsIsDebuggerPresent()) {
+      return;
+    }
+    const double elapsed_s = std::chrono::duration<double>(std::chrono::steady_clock::now() - test_started).count();
+    if (!warned && elapsed_s >= io.ConfigWatchdogWarning) {
+      warned = true;
+      fprintf(stderr, "[Watchdog] Running time (real clock) for '%s' is >%.0f seconds, may be excessive.\n",
+              running->Name, static_cast<double>(io.ConfigWatchdogWarning));
+    }
+    if (!killed && elapsed_s >= io.ConfigWatchdogKillTest) {
+      killed = true;
+      char message[192];
+      snprintf(message, sizeof(message), "[Watchdog] Running time (real clock) for '%s' is >%.0f seconds, aborting.",
+               running->Name, static_cast<double>(io.ConfigWatchdogKillTest));
+      ImGuiTestEngine_Check("test_gui_main.cpp", "FixedDtWatchdog::Tick", __LINE__, ImGuiTestCheckFlags_None, false,
+                            message);
+    }
+  }
+};
+FixedDtWatchdog g_fixed_dt_watchdog;
+
 // ========== Main ==========
 
 int main(int argc, char** argv) {
@@ -775,7 +843,23 @@ int main(int argc, char** argv) {
   RegisterExportParityTests(engine);
   RegisterPreviewExportParityTests(engine);
   RegisterLmcRoundtripParityTests(engine);
-  ImGuiTestEngine_QueueTests(engine, ImGuiTestGroup_Tests, test_filter);
+  // The fixed-dt clock contract's own legs: two green regressions (always registered, run in the
+  // correctness pool) and a deliberately-red self-kill probe that only exists when the --filter
+  // names it, so no pool ever carries it. Definition in
+  // functional/test_fixed_dt_clock_contract.cpp.
+  RegisterFixedDtClockContractTests(engine, test_filter);
+  // In fixed-dt the engine's own watchdog must never fire: it consumes the INJECTED dt
+  // (simulated time — 60 "seconds" ≈ 8 real ones at full speed), so any threshold a per-test
+  // guard writes for the real-clock watchdog below would be re-consumed by the engine as sim
+  // seconds and re-create the mis-kill at a larger budget. Queueing with RunFromGui disables
+  // the engine's watchdog for every test — that flag's only semantic footprint in the engine
+  // is the watchdog bypass (imgui_te_engine.cpp UpdateWatchdog early return) — which leaves the
+  // threshold fields as a real-clock channel between the guards and the harness watchdog, with
+  // the engine's 30/60 defaults as the baseline. Non-fixed-dt runs keep the engine's native
+  // watchdog (its time base is already real) and queue without the flag.
+  const ImGuiTestRunFlags queue_run_flags =
+      g_enable_fixed_dt ? ImGuiTestRunFlags_RunFromGui : static_cast<ImGuiTestRunFlags>(0);
+  ImGuiTestEngine_QueueTests(engine, ImGuiTestGroup_Tests, test_filter, queue_run_flags);
 
   // Main loop — runs until all tests complete
   bool window_size_reply_pending = false;
@@ -1107,6 +1191,12 @@ int main(int argc, char** argv) {
       g_frame_observer.after_swap();
 
     ImGuiTestEngine_PostSwap(engine);
+
+    // Fixed-dt clock contract: the harness real-clock watchdog takes over the engine's
+    // (RunFromGui-bypassed) simulated-time protection for this mode. See FixedDtWatchdog above.
+    if (g_enable_fixed_dt) {
+      g_fixed_dt_watchdog.Tick(engine, test_io);
+    }
 
     // Fallback frame rate limit (same as main.cpp) — simulates VSync timing without needing a real display
     if (g_enable_frame_limit) {

@@ -49,6 +49,7 @@ add_executable(gui_test
     functional/test_raypath_analysis_panel.cpp
     functional/test_frozen_map_view.cpp
     functional/test_config_summary_window.cpp
+    functional/test_fixed_dt_clock_contract.cpp
     visual/test_preview_pixels.cpp
     visual/test_gui_capture_smoke.cpp
     visual/test_gui_lens_projection.cpp
