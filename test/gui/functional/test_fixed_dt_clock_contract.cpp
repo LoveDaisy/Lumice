@@ -4,8 +4,9 @@
 // deterministic 1/60 per frame (the engine injects ConfigFixedDeltaTime every frame). The
 // engine's built-in watchdog consumed that same injected dt, so its "60 seconds" were simulated
 // seconds — roughly 8 real ones at full speed — and it deterministically killed tests whose
-// legal waits are bounded in real seconds (verdict_anchor_hover_and_toggle_on_the_map, 785.6
-// evidence). The harness bypasses the engine-side protection in this mode (queueing with
+// legal waits are bounded in real seconds (the pre-fix verdict_anchor_hover_and_toggle_on_the_map
+// red; the harness re-cast landed in 8b7437a0d). The harness bypasses the engine-side protection
+// in this mode (queueing with
 // ImGuiTestRunFlags_RunFromGui) and re-casts it on the wall clock (FixedDtWatchdog in
 // test_gui_main.cpp); every leg of that contract has a case here. All legs are registered only
 // under --fixed-dt — the contract they pin does not exist in other modes — and all of them drive
@@ -24,8 +25,10 @@
 //      order), which consumed ~3 real seconds: with a 0.1s warning threshold raised at this
 //      test's own start, a healthy per-test reset produces a warning crossing ~0.1s in (asserted
 //      present in this test's log), while a leaked budget has its crossings already behind it
-//      and would never warn. Guard restore is pool-enforced rather than leg-pinned: this leg's
-//      own restore runs on every path, and a leaked threshold would red every later pool test.
+//      and would never warn. Guard restore itself has no dedicated detection leg: it is
+//      guaranteed by RAII on every path (ScopedWatchdogThreshold's destructor), and a leak
+//      would surface as warning-line noise in later pool tests while silently disarming their
+//      kill baseline — noise, not red.
 // Red probes (registered ONLY when the --filter equals the probe's full name — a deliberately
 // failing case must never ride a pool run or a substring-filtered enumeration; note the probes
 // are fixed-dt-only like every leg, so invoking the documented command without --fixed-dt
@@ -187,13 +190,17 @@ void WatchdogKillAppProbe(ImGuiTestContext* ctx) {
 void WatchdogDoubleCrossProbe(ImGuiTestContext* ctx) {
   // Deliberately red — the crossing matrix's same-tick cell: with both thresholds at 1s, the
   // first tick past 1s crosses warning AND kill-test together (two independent branches, one
-  // tick). External contract: the test log carries BOTH the "[Watchdog] ... may be excessive."
-  // line and the "[Watchdog] ... aborting." line, and the process exits non-zero.
+  // tick). Both halves assert in-probe: the warning line via the strstr below, the kill half
+  // via the Error status after it — without the strstr a degenerate warning branch would still
+  // red through the kill, and the same-tick cell would silently lose the warning half of its
+  // automatic verdict. External contract on top: the log carries BOTH the "[Watchdog] ... may
+  // be excessive." line and the "[Watchdog] ... aborting." line, and the process exits non-zero.
   ScopedWatchdogThreshold guard(ctx->EngineIO, /*warn_s=*/1.0f, /*kill_s=*/1.0f);
   const auto real_before = std::chrono::steady_clock::now();
   while (RealSecondsSince(real_before) < 2.0) {
     ctx->Yield();
   }
+  IM_CHECK(strstr(ctx->Test->Output.Log.Buffer.c_str(), "may be excessive") != nullptr);
   IM_CHECK_EQ(ctx->Test->Output.Status, ImGuiTestStatus_Error);
 }
 
