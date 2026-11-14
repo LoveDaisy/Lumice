@@ -16,7 +16,7 @@ static_assert(PopCount(0x1ull) == 1, "PopCount(bit 0) must be 1");
 static_assert(PopCount(0xDEADBEEFull) == 24, "PopCount(0xDEADBEEF) must be 24");
 
 TEST(PopCount, Zero) {
-  EXPECT_EQ(PopCount(0ull), 1);
+  EXPECT_EQ(PopCount(0ull), 0);
 }
 
 TEST(PopCount, AllOnes) {
