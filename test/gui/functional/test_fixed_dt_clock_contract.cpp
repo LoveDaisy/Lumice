@@ -38,6 +38,9 @@
 //      emergency exit(1)). Expect the "[Watchdog] Emergency process exit" line and the process
 //      ending with exit code 1 before the loop completes:
 //      gui_test --fixed-dt --filter fixed_dt_watchdog_killapp_probe --no-user-config
+//   6. fixed_dt_watchdog_double_cross_probe — the crossing matrix's same-tick cell (warning and
+//      kill-test crossed by one tick both emit their lines):
+//      gui_test --fixed-dt --filter fixed_dt_watchdog_double_cross_probe --no-user-config
 
 #include <cctype>
 #include <cfloat>
@@ -108,10 +111,11 @@ void RealClockWarningDoesNotFailTheTest(ImGuiTestContext* ctx) {
   // test takes effect mid-run — the exact mechanism per-test guards rely on.
   ScopedWatchdogThreshold guard(ctx->EngineIO, /*warn_s=*/1.0f, /*kill_s=*/FLT_MAX);
   const auto real_before = std::chrono::steady_clock::now();
-  // Real-time driven loop: the warning crossing (1s real) lands while simulated time stays
-  // ~3 sim-s — far under any kill window. The loop runs 3s deliberately: leg 3 behind this one
-  // detects budget leaks by inheriting this test's consumed wall time, so a longer predecessor
-  // lets leg 3 sit its own kill well clear of its healthy loop (see the margin note there).
+  // Real-time driven loop: the warning crossing (1s real) fires ~1s in and the test rides
+  // through it. The loop runs 3s deliberately so leg 3 behind this one can detect budget leaks
+  // by inheriting this test's consumed wall time. The safety here is the guard's kill_s=FLT_MAX:
+  // budgets are real-clock seconds, and the sim clock is not a safety quantity at all (at full
+  // speed it races tens of sim-seconds per real second — no watchdog comparison reads it).
   while (RealSecondsSince(real_before) < 3.0) {
     ctx->Yield();
   }
@@ -172,6 +176,25 @@ void WatchdogKillAppProbe(ImGuiTestContext* ctx) {
   while (RealSecondsSince(real_before) < 7.0) {
     ctx->Yield();
   }
+  // Bidirectional: if the kill-app branch ever regresses to never firing, the loop finishes with
+  // Running status and this assert reds on its own (the healthy path exits the process ~5s in
+  // and never reaches this line).
+  IM_CHECK_EQ(ctx->Test->Output.Status, ImGuiTestStatus_Error);
+}
+
+// ---- Leg 6 (red probe): one tick crossing warning and kill-test together ----
+
+void WatchdogDoubleCrossProbe(ImGuiTestContext* ctx) {
+  // Deliberately red — the crossing matrix's same-tick cell: with both thresholds at 1s, the
+  // first tick past 1s crosses warning AND kill-test together (two independent branches, one
+  // tick). External contract: the test log carries BOTH the "[Watchdog] ... may be excessive."
+  // line and the "[Watchdog] ... aborting." line, and the process exits non-zero.
+  ScopedWatchdogThreshold guard(ctx->EngineIO, /*warn_s=*/1.0f, /*kill_s=*/1.0f);
+  const auto real_before = std::chrono::steady_clock::now();
+  while (RealSecondsSince(real_before) < 2.0) {
+    ctx->Yield();
+  }
+  IM_CHECK_EQ(ctx->Test->Output.Status, ImGuiTestStatus_Error);
 }
 
 }  // namespace
@@ -200,5 +223,9 @@ void RegisterFixedDtClockContractTests(ImGuiTestEngine* engine, const char* filt
   if (FilterEqualsProbeName(filter, "fixed_dt_watchdog_killapp_probe")) {
     t = IM_REGISTER_TEST(engine, "harness_contract", "fixed_dt_watchdog_killapp_probe");
     t->TestFunc = WatchdogKillAppProbe;
+  }
+  if (FilterEqualsProbeName(filter, "fixed_dt_watchdog_double_cross_probe")) {
+    t = IM_REGISTER_TEST(engine, "harness_contract", "fixed_dt_watchdog_double_cross_probe");
+    t->TestFunc = WatchdogDoubleCrossProbe;
   }
 }

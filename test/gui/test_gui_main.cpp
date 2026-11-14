@@ -513,7 +513,17 @@ struct FixedDtWatchdog {
       test_started = std::chrono::steady_clock::now();
       prev_elapsed_s = 0.0;
     }
-    if (running == nullptr || ImOsIsDebuggerPresent()) {
+    if (running == nullptr) {
+      return;
+    }
+    if (ImOsIsDebuggerPresent()) {
+      // The bypass means the watchdog never fires while a debugger is attached; re-anchor the
+      // start here too, so wall time spent paused under the debugger does not count either.
+      // On detach after a long pause, a frozen prev against a large elapsed would otherwise
+      // fire a crossing for time the test never ran (the engine's per-frame accumulation is
+      // immune to the same shape because no frames run while the process is stopped).
+      test_started = std::chrono::steady_clock::now();
+      prev_elapsed_s = 0.0;
       return;
     }
     ImGuiTestContext* ctx = engine->TestContext;
@@ -536,7 +546,9 @@ struct FixedDtWatchdog {
     // clock, then exit(1) — the branch for a test that never returns. Default FLT_MAX disables it
     // in both modes (the engine's own default); a guard that configures it gets identical
     // real-clock semantics here and in non-fixed-dt runs, so the shared three-field channel stays
-    // symmetric across modes.
+    // symmetric across modes. Note exit(1) traverses atexit/static destruction — including the
+    // poller-join hazard the harness teardown documents — so a future KillApp consumer inherits
+    // that caveat (the default leaves the path unexercised).
     if (prev_elapsed_s < io.ConfigWatchdogKillApp + 5.0f && elapsed_s >= io.ConfigWatchdogKillApp + 5.0f) {
       ctx->LogError("[Watchdog] Emergency process exit as the test didn't return: '%s'.", running->Name);
       fprintf(stderr, "[Watchdog] Emergency process exit (real clock) as the test didn't return: '%s'.\n",
@@ -885,10 +897,10 @@ int main(int argc, char** argv) {
   RegisterExportParityTests(engine);
   RegisterPreviewExportParityTests(engine);
   RegisterLmcRoundtripParityTests(engine);
-  // The fixed-dt clock contract's own legs: two green regressions (always registered, run in the
-  // correctness pool) and a deliberately-red self-kill probe that only exists when the --filter
-  // names it, so no pool ever carries it. Definition in
-  // functional/test_fixed_dt_clock_contract.cpp.
+  // The fixed-dt clock contract's own legs: three green regressions (always registered, run in
+  // the correctness pool) and deliberately-red probes that exist only when the --filter equals a
+  // probe's full name, so no pool ever carries them. The contract TU's file header is the single
+  // authority on the leg inventory. Definition in functional/test_fixed_dt_clock_contract.cpp.
   RegisterFixedDtClockContractTests(engine, test_filter, g_enable_fixed_dt);
   // In fixed-dt the engine's own watchdog must never fire: it consumes the INJECTED dt
   // (simulated time — 60 "seconds" ≈ 8 real ones at full speed), so any threshold a per-test
