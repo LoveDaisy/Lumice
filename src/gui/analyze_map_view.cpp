@@ -16,7 +16,8 @@
 #include "gui/analyze_overview.hpp"
 #include "gui/analyze_point_view.hpp"    // RenderPointAnswerBlock — the sky-point answer host
 #include "gui/analyze_region_wheel.hpp"  // the wheel claim — one arbitration for both gesture regions
-#include "gui/analyze_workspace.hpp"     // PumpAnalyzeQueries — the pumps this window's Render-mode frames run
+#include "gui/analyze_ui_widgets.hpp"  // DisabledWrappedText / WarningTextWrapped / DrawLegendIconSlot / AnalyzeSplitter
+#include "gui/analyze_workspace.hpp"   // PumpAnalyzeQueries — the pumps this window's Render-mode frames run
 #include "gui/app.hpp"
 #include "gui/canvas_report_layout.hpp"
 #include "gui/gl_common.h"
@@ -24,7 +25,6 @@
 #include "gui/gui_logger.hpp"
 #include "gui/gui_state.hpp"
 #include "gui/preview_renderer.hpp"
-#include "gui/semantic_colors.hpp"  // WarningTextColor — the staleness hint's semantic colour
 #include "gui/theme.hpp"
 #include "gui/view_look_at.hpp"
 #include "imgui.h"
@@ -670,17 +670,6 @@ void DrawProfilePointMarker(ImDrawList* dl, const ProfileScreenPoint& pt) {
   const ImVec2 c(static_cast<float>(pt.x), static_cast<float>(pt.y));
   dl->AddCircle(c, UiPx(5.0f), IM_COL32(16, 17, 20, 200), 0, UiPx(1.4f));
   dl->AddCircleFilled(c, UiPx(4.0f), kProfileReadingColour);
-}
-
-// The legend icon slot (the object kinds' own pattern): the icon draws at the current cursor
-// inside a frame-height cell, then the entry's words continue on the same line. The cell is the
-// slot's whole layout claim — the icon's geometry reads the cursor itself, so all four anchor
-// icons and the kinds share one placement rule.
-template <typename DrawIcon>
-void DrawLegendIconSlot(DrawIcon&& draw_icon) {
-  draw_icon();
-  ImGui::Dummy(ImVec2(ImGui::GetFrameHeight(), 0.0f));
-  ImGui::SameLine(0.0f, 0.0f);
 }
 
 IsoDeltaWalk WalkIsoDeltaCircle(ImDrawList* dl, const MapCanvasProjection& view, const ImVec2& pic_min, float pic_px,
@@ -1612,42 +1601,32 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   const MapQueryState st = MapQueryStateFor(map);
   const bool superseded = MapSupersededFor(map);
   if (st == MapQueryState::kNoSelection) {
-    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-    ImGui::TextWrapped(
+    DisabledWrappedText(
         "Select a class in the share list; its reference map takes this region. The sky-point input in the "
         "info panel beside it works without a map.");
-    ImGui::PopStyleColor();
   } else if (st == MapQueryState::kCancelled) {
-    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-    ImGui::TextWrapped(
+    DisabledWrappedText(
         "Map cancelled. Frozen map remains; Retry repeats the full-sky request. Observation never retries.");
-    ImGui::PopStyleColor();
   } else if (st == MapQueryState::kRefused && !superseded) {
     ImGui::TextUnformatted("Map refused:");
-    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-    ImGui::TextWrapped("%s", map.adopted_error.c_str());
-    ImGui::PopStyleColor();
+    DisabledWrappedText("%s", map.adopted_error.c_str());
   } else if (st == MapQueryState::kWaiting && map.adopted_result == nullptr) {
     // The queue is the truth the wait names (plan risk 4): the selection's survey — whose
     // chromatic legs run ~15 s on a full-dimensional class — goes first on the one worker, and
     // this map rides behind it. Only a map asked in that window can honestly say so. The line
     // is the pure function's output and is reported to the render-feedback field: what the
     // test reads is what was drawn (AC4).
-    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
     const std::string wait_line = MapWaitLineFor(map, g_survey_executor.QueryOutstanding(QueryFace::kSurvey),
                                                  ImGui::GetTime(), g_survey_executor.InflightPollSnapshot());
     state.analysis.wait_feedback_texts.map_wait_line = wait_line;
-    ImGui::TextWrapped("%s", wait_line.c_str());
-    ImGui::PopStyleColor();
+    DisabledWrappedText("%s", wait_line.c_str());
   } else if (superseded) {
     // The supersession note carries the Retry intent's elapsed wait and the poll's stage
     // clause while the map
     // query itself is computing (751; face-matched, so a queued survey's stage never lands here).
-    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
     const std::string note = MapSupersedingNoteFor(map, ImGui::GetTime(), g_survey_executor.InflightPollSnapshot());
     state.analysis.wait_feedback_texts.map_superseding_note = note;
-    ImGui::TextWrapped("%s", note.c_str());
-    ImGui::PopStyleColor();
+    DisabledWrappedText("%s", note.c_str());
   }
 
   ImGui::EndChild();
@@ -1659,33 +1638,14 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   // re-derives the pixels each frame and clamps them at the floors, so restoring the window
   // size restores the split. Dragging right widens the map (the info region's share shrinks),
   // matching D1's direction convention.
-  {
-    const float strip_h = size.y;
-    ImGui::SameLine(0.0f, 0.0f);
-    ImGui::InvisibleButton("##RaypathViewSplitter", ImVec2(splitter_w, strip_h));
-    const bool strip_hovered = ImGui::IsItemHovered();
-    const bool strip_active = ImGui::IsItemActive();
-    const float mouse_dx = ImGui::GetIO().MouseDelta.x;
-    if (strip_active && mouse_dx != 0.0f && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
-      // Delta from the displayed boundary (the clamped split), never from the raw stored
-      // value: at a window whose layout is clamped away from the stored ratio the two differ,
-      // and a raw write spends the first stretch of the drag crawling through the clamp band.
-      const float shown_info_w = std::clamp(info_w, info_floor, std::max(info_floor, avail_w - splitter_w - map_floor));
-      const float new_info_w =
-          std::clamp(shown_info_w - mouse_dx, info_floor, std::max(info_floor, avail_w - splitter_w - map_floor));
-      state.analyze_raypath_view_info_ratio = new_info_w / std::max(1.0f, avail_w - splitter_w);
-    }
-    if (strip_hovered || strip_active) {
-      ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
-    }
-    const ImU32 strip_col = ImGui::GetColorU32(strip_active  ? ImGuiCol_SeparatorActive :
-                                               strip_hovered ? ImGuiCol_SeparatorHovered :
-                                                               ImGuiCol_Separator);
-    ImGui::GetWindowDrawList()->AddLine(
-        ImVec2(ImGui::GetItemRectMin().x + splitter_w * 0.5f, ImGui::GetItemRectMin().y),
-        ImVec2(ImGui::GetItemRectMin().x + splitter_w * 0.5f, ImGui::GetItemRectMax().y), strip_col, 1.0f);
-    ImGui::SameLine(0.0f, 0.0f);
-  }
+  ImGui::SameLine(0.0f, 0.0f);
+  // The drag writes from the displayed boundary (the layout's clamped info width), bounded
+  // where the layout's own clamp stops; the overflow pin is what the clamp's lo==hi band
+  // writes (analyze_ui_widgets.hpp's white-box note carries the dialect equivalence).
+  AnalyzeSplitter("##RaypathViewSplitter", SplitterDragAxis::kLeftRight, size.y, info_w,
+                  std::max(1.0f, avail_w - splitter_w), info_floor, avail_w - splitter_w - map_floor,
+                  info_floor / std::max(1.0f, avail_w - splitter_w), &state.analyze_raypath_view_info_ratio);
+  ImGui::SameLine(0.0f, 0.0f);
 
   // ---- The info region: the picture's companion facts (contract §6's right side) ----
   // The wavelength, the caliber block, the sky-point input and (Step 4)
@@ -2032,69 +1992,76 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
     // overflow channel.
     if (legend.anchor_sun) {
       ImGui::Bullet();
-      DrawLegendIconSlot([legend_dl = ImGui::GetWindowDrawList(), p = ImGui::GetCursorScreenPos()]() {
-        // The sun's own marker at icon scale: the gold fill and the fainter ring, the map's
-        // proportions (UiPx(4) fill, UiPx(6) ring) shrunk into the slot.
-        const float r = UiPx(4.0f);
-        const ImVec2 c(p.x + ImGui::GetFrameHeight() * 0.5f - UiPx(3.0f), p.y + ImGui::GetTextLineHeight() * 0.5f);
-        legend_dl->AddCircleFilled(c, r * 0.8f, IM_COL32(255, 231, 168, 255));
-        legend_dl->AddCircle(c, r, IM_COL32(255, 231, 168, 128), 0, 1.0f);
-      });
+      DrawLegendIconSlot(
+          [legend_dl = ImGui::GetWindowDrawList(), p = ImGui::GetCursorScreenPos()]() {
+            // The sun's own marker at icon scale: the gold fill and the fainter ring, the map's
+            // proportions (UiPx(4) fill, UiPx(6) ring) shrunk into the slot.
+            const float r = UiPx(4.0f);
+            const ImVec2 c(p.x + ImGui::GetFrameHeight() * 0.5f - UiPx(3.0f), p.y + ImGui::GetTextLineHeight() * 0.5f);
+            legend_dl->AddCircleFilled(c, r * 0.8f, IM_COL32(255, 231, 168, 255));
+            legend_dl->AddCircle(c, r, IM_COL32(255, 231, 168, 128), 0, 1.0f);
+          },
+          ImGui::GetFrameHeight(), 0.0f, 0.0f);
       ImGui::TextWrapped("sun marker");
     }
     if (legend.anchor_zenith) {
       ImGui::Bullet();
-      DrawLegendIconSlot([legend_dl = ImGui::GetWindowDrawList(), p = ImGui::GetCursorScreenPos()]() {
-        // The cross's own two lines, the map's colour and span.
-        const float a = UiPx(3.0f);
-        const ImVec2 c(p.x + ImGui::GetFrameHeight() * 0.5f - UiPx(3.0f), p.y + ImGui::GetTextLineHeight() * 0.5f);
-        legend_dl->AddLine(ImVec2(c.x - a, c.y), ImVec2(c.x + a, c.y), IM_COL32(200, 205, 215, 110), 1.0f);
-        legend_dl->AddLine(ImVec2(c.x, c.y - a), ImVec2(c.x, c.y + a), IM_COL32(200, 205, 215, 110), 1.0f);
-      });
+      DrawLegendIconSlot(
+          [legend_dl = ImGui::GetWindowDrawList(), p = ImGui::GetCursorScreenPos()]() {
+            // The cross's own two lines, the map's colour and span.
+            const float a = UiPx(3.0f);
+            const ImVec2 c(p.x + ImGui::GetFrameHeight() * 0.5f - UiPx(3.0f), p.y + ImGui::GetTextLineHeight() * 0.5f);
+            legend_dl->AddLine(ImVec2(c.x - a, c.y), ImVec2(c.x + a, c.y), IM_COL32(200, 205, 215, 110), 1.0f);
+            legend_dl->AddLine(ImVec2(c.x, c.y - a), ImVec2(c.x, c.y + a), IM_COL32(200, 205, 215, 110), 1.0f);
+          },
+          ImGui::GetFrameHeight(), 0.0f, 0.0f);
       ImGui::TextWrapped("zenith cross");
     }
     if (legend.anchor_horizon) {
       ImGui::Bullet();
-      DrawLegendIconSlot([legend_dl = ImGui::GetWindowDrawList(), p = ImGui::GetCursorScreenPos()]() {
-        // The horizon's own circle, in the horizon's hue. The map draws it at alpha 60 — a
-        // large reference circle reads there, an icon-size one does not; the legend icon takes
-        // the zenith's alpha (the hue is the correspondence, the alpha the icon's legibility).
-        const ImVec2 c(p.x + ImGui::GetFrameHeight() * 0.5f - UiPx(3.0f), p.y + ImGui::GetTextLineHeight() * 0.5f);
-        legend_dl->AddCircle(c, UiPx(4.0f), IM_COL32(200, 205, 215, 110), 0, 1.2f);
-      });
+      DrawLegendIconSlot(
+          [legend_dl = ImGui::GetWindowDrawList(), p = ImGui::GetCursorScreenPos()]() {
+            // The horizon's own circle, in the horizon's hue. The map draws it at alpha 60 — a
+            // large reference circle reads there, an icon-size one does not; the legend icon takes
+            // the zenith's alpha (the hue is the correspondence, the alpha the icon's legibility).
+            const ImVec2 c(p.x + ImGui::GetFrameHeight() * 0.5f - UiPx(3.0f), p.y + ImGui::GetTextLineHeight() * 0.5f);
+            legend_dl->AddCircle(c, UiPx(4.0f), IM_COL32(200, 205, 215, 110), 0, 1.2f);
+          },
+          ImGui::GetFrameHeight(), 0.0f, 0.0f);
       ImGui::TextWrapped("horizon circle");
     }
     for (const std::string& kind : legend.object_kinds) {
       const OverlayMarkerStyle style = OverlayMarkerStyleFor(kind, LUMICE_PATH_STATE_CERTIFIED);
       ImGui::Bullet();
       // The kind's own marker shape, drawn beside the words (the legend and the picture agree).
-      ImDrawList* legend_dl = ImGui::GetWindowDrawList();
-      const ImVec2 p = ImGui::GetCursorScreenPos();
-      const float my = p.y + ImGui::GetTextLineHeight() * 0.5f;
-      const float mx = p.x + ImGui::GetFrameHeight() * 0.5f - UiPx(3.0f);
-      const float r = UiPx(4.0f);
-      const ImVec2 pts[4] = { ImVec2(mx, my - r), ImVec2(mx + r, my), ImVec2(mx, my + r), ImVec2(mx - r, my) };
-      switch (style.shape) {
-        case OverlayMarkerShape::kCircle:
-          legend_dl->AddCircleFilled(ImVec2(mx, my), r * 0.8f, style.colour);
-          break;
-        case OverlayMarkerShape::kSquare:
-          legend_dl->AddRectFilled(ImVec2(mx - r * 0.75f, my - r * 0.75f), ImVec2(mx + r * 0.75f, my + r * 0.75f),
-                                   style.colour);
-          break;
-        case OverlayMarkerShape::kTriangle:
-          legend_dl->AddTriangleFilled(pts[0], pts[1], pts[2], style.colour);
-          break;
-        case OverlayMarkerShape::kTriangleDown:
-          legend_dl->AddTriangleFilled(pts[0], pts[3], pts[2], style.colour);
-          break;
-        case OverlayMarkerShape::kDiamond:
-        case OverlayMarkerShape::kFallbackDiamond:
-          legend_dl->AddConvexPolyFilled(pts, 4, style.colour);
-          break;
-      }
-      ImGui::Dummy(ImVec2(ImGui::GetFrameHeight(), 0.0f));
-      ImGui::SameLine(0.0f, 0.0f);
+      DrawLegendIconSlot(
+          [legend_dl = ImGui::GetWindowDrawList(), &style]() {
+            const ImVec2 p = ImGui::GetCursorScreenPos();
+            const float my = p.y + ImGui::GetTextLineHeight() * 0.5f;
+            const float mx = p.x + ImGui::GetFrameHeight() * 0.5f - UiPx(3.0f);
+            const float r = UiPx(4.0f);
+            const ImVec2 pts[4] = { ImVec2(mx, my - r), ImVec2(mx + r, my), ImVec2(mx, my + r), ImVec2(mx - r, my) };
+            switch (style.shape) {
+              case OverlayMarkerShape::kCircle:
+                legend_dl->AddCircleFilled(ImVec2(mx, my), r * 0.8f, style.colour);
+                break;
+              case OverlayMarkerShape::kSquare:
+                legend_dl->AddRectFilled(ImVec2(mx - r * 0.75f, my - r * 0.75f), ImVec2(mx + r * 0.75f, my + r * 0.75f),
+                                         style.colour);
+                break;
+              case OverlayMarkerShape::kTriangle:
+                legend_dl->AddTriangleFilled(pts[0], pts[1], pts[2], style.colour);
+                break;
+              case OverlayMarkerShape::kTriangleDown:
+                legend_dl->AddTriangleFilled(pts[0], pts[3], pts[2], style.colour);
+                break;
+              case OverlayMarkerShape::kDiamond:
+              case OverlayMarkerShape::kFallbackDiamond:
+                legend_dl->AddConvexPolyFilled(pts, 4, style.colour);
+                break;
+            }
+          },
+          ImGui::GetFrameHeight(), 0.0f, 0.0f);
       ImGui::TextWrapped("%s", kind.c_str());
     }
     if (legend.dispersion_red || legend.dispersion_blue) {
@@ -2112,27 +2079,29 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
     }
     if (legend.verdict_anchor) {
       ImGui::Bullet();
-      DrawLegendIconSlot([legend_dl = ImGui::GetWindowDrawList(), p = ImGui::GetCursorScreenPos(), &legend]() {
-        // The anchor's own circle in the palette entry that actually drew — dashed when the
-        // drawn form was (the walk's own dash phase, 4 samples on, 4 off, so the icon reads the
-        // same visual grammar the anchor drew).
-        const ImVec2 c(p.x + ImGui::GetFrameHeight() * 0.5f - UiPx(3.0f), p.y + ImGui::GetTextLineHeight() * 0.5f);
-        const float r = UiPx(4.0f);
-        if (legend.verdict_anchor_dashed) {
-          constexpr int kSamples = 24;
-          ImVec2 prev(0.0f, 0.0f);
-          for (int s = 0; s <= kSamples; ++s) {
-            const float a = 2.0f * static_cast<float>(kPiD) * s / kSamples;
-            const ImVec2 pt(c.x + r * std::cos(a), c.y + r * std::sin(a));
-            if (s > 0 && (s / 4) % 2 == 0) {
-              legend_dl->AddLine(prev, pt, legend.verdict_anchor_colour, UiPx(1.2f));
+      DrawLegendIconSlot(
+          [legend_dl = ImGui::GetWindowDrawList(), p = ImGui::GetCursorScreenPos(), &legend]() {
+            // The anchor's own circle in the palette entry that actually drew — dashed when the
+            // drawn form was (the walk's own dash phase, 4 samples on, 4 off, so the icon reads the
+            // same visual grammar the anchor drew).
+            const ImVec2 c(p.x + ImGui::GetFrameHeight() * 0.5f - UiPx(3.0f), p.y + ImGui::GetTextLineHeight() * 0.5f);
+            const float r = UiPx(4.0f);
+            if (legend.verdict_anchor_dashed) {
+              constexpr int kSamples = 24;
+              ImVec2 prev(0.0f, 0.0f);
+              for (int s = 0; s <= kSamples; ++s) {
+                const float a = 2.0f * static_cast<float>(kPiD) * s / kSamples;
+                const ImVec2 pt(c.x + r * std::cos(a), c.y + r * std::sin(a));
+                if (s > 0 && (s / 4) % 2 == 0) {
+                  legend_dl->AddLine(prev, pt, legend.verdict_anchor_colour, UiPx(1.2f));
+                }
+                prev = pt;
+              }
+            } else {
+              legend_dl->AddCircle(c, r, legend.verdict_anchor_colour, 0, UiPx(1.2f));
             }
-            prev = pt;
-          }
-        } else {
-          legend_dl->AddCircle(c, r, legend.verdict_anchor_colour, 0, UiPx(1.2f));
-        }
-      });
+          },
+          ImGui::GetFrameHeight(), 0.0f, 0.0f);
       ImGui::TextWrapped("verdict anchor");
     }
     if (legend.sky_point) {
@@ -2261,9 +2230,7 @@ void RenderAnalyzeRaypathViewWindow(GuiState& state) {
     // what was drawn (the band's field contract, one shape per face).
     const char* const stale_text = ICON_FA_TRIANGLE_EXCLAMATION
         " This map is from a configuration that has since changed \xe2\x80\x94 press Analyze to refresh.";
-    ImGui::PushStyleColor(ImGuiCol_Text, WarningTextColor());
-    ImGui::TextWrapped("%s", stale_text);
-    ImGui::PopStyleColor();
+    WarningTextWrapped("%s", stale_text);
     const ImVec2 rect_min = ImGui::GetItemRectMin();
     const ImVec2 rect_max = ImGui::GetItemRectMax();
     hint_feedback.map_stale_hint_rect_min_x = rect_min.x;
@@ -2274,9 +2241,7 @@ void RenderAnalyzeRaypathViewWindow(GuiState& state) {
   }
   if (state.analysis_freshness.cone_center_drifted) {
     const char* const drift_text = ConeCenterDriftWarningText();
-    ImGui::PushStyleColor(ImGuiCol_Text, WarningTextColor());
-    ImGui::TextWrapped("%s", drift_text);
-    ImGui::PopStyleColor();
+    WarningTextWrapped("%s", drift_text);
     const ImVec2 rect_min = ImGui::GetItemRectMin();
     const ImVec2 rect_max = ImGui::GetItemRectMax();
     hint_feedback.map_drift_hint_rect_min_x = rect_min.x;

@@ -19,6 +19,7 @@
 #include <vector>
 
 #include "IconsFontAwesome6.h"
+#include "gui/analyze_ui_widgets.hpp"  // WarningTextWrapped — the analyze family's warning line
 #include "gui/annotation_anchors.hpp"
 #include "gui/app.hpp"
 #include "gui/copyable_text.hpp"
@@ -1311,11 +1312,9 @@ void RenderListFreshnessBanner(const GuiState& state) {
   }
   // Wrapped, not clipped: the banner is the one place the stale fact is spelled, and at the right
   // column's narrow widths a single clipped line would lose exactly the part that says what to do.
-  ImGui::PushStyleColor(ImGuiCol_Text, WarningTextColor());
-  ImGui::TextWrapped(ICON_FA_TRIANGLE_EXCLAMATION
+  WarningTextWrapped(ICON_FA_TRIANGLE_EXCLAMATION
                      " This list is from a configuration that has since changed \xe2\x80\x94 press Analyze to "
                      "refresh it.");
-  ImGui::PopStyleColor();
 }
 
 void RenderRunControls(GuiState& state, LUMICE_Server* server, bool join_line) {
@@ -1438,9 +1437,7 @@ void RenderListStatus(const GuiState& state) {
     // one place the list's actual reduction is spelled, never a clipped tail.
     const std::string note = std::string(ICON_FA_TRIANGLE_EXCLAMATION " List shows ") +
                              SymmetryBitsLabel(state.analysis_result.entries_symmetry) + "; analyze again to apply.";
-    ImGui::PushStyleColor(ImGuiCol_Text, WarningTextColor());
-    ImGui::TextWrapped("%s", note.c_str());
-    ImGui::PopStyleColor();
+    WarningTextWrapped("%s", note.c_str());
   }
 }
 
@@ -2099,9 +2096,7 @@ void RenderAnalyzeDriftWarning(GuiState& state, float wrap_width) {
   // Pin the wrap width the height was measured at: TextWrapped keeps an already-set wrap
   // position, so this push — not the viewport's own width guessing — is what the draw wraps at.
   ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + wrap_width);
-  ImGui::PushStyleColor(ImGuiCol_Text, WarningTextColor());
-  ImGui::TextWrapped("%s", kConeCenterDriftWarningText);
-  ImGui::PopStyleColor();
+  WarningTextWrapped("%s", kConeCenterDriftWarningText);
   ImGui::PopTextWrapPos();
   // The submitted item's FULL rect: the layout footprint of every wrapped line, independent of
   // which vertices RenderText went on to emit (it stops at the clip bottom, so a line clipped
