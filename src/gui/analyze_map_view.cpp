@@ -520,7 +520,7 @@ struct MapCanvasProjection {
 constexpr int kOverlaySegments = 96;
 
 bool ProjectToRect(const MapCanvasProjection& view, const double pos[3], const ImVec2& pic_min, float, double* out_x,
-                   double* out_y) {
+                   double* out_y, bool clip_viewport = true) {
   if ((view.camera.visible == kVisibleUpper && pos[2] < 0.0) ||
       (view.camera.visible == kVisibleLower && pos[2] > 0.0)) {
     return false;
@@ -532,11 +532,40 @@ bool ProjectToRect(const MapCanvasProjection& view, const double pos[3], const I
     if (travel[0] * matrix[6] + travel[1] * matrix[7] + travel[2] * matrix[8] > 0.0f)
       return false;
   }
-  const auto screen = ProjectWorldDirToScreen(view.camera, travel, view.width, view.height);
+  const auto screen = ProjectWorldDirToScreen(view.camera, travel, view.width, view.height, clip_viewport);
   if (screen[0] == kOverlaySentinel)
     return false;
   *out_x = pic_min.x + (screen[0] / view.width + 0.5f) * view.width_pt;
   *out_y = pic_min.y + (0.5f - screen[1] / view.height) * view.height_pt;
+  return true;
+}
+
+// Clip the whole segment, not its endpoints' membership: dropping an outside endpoint also
+// drops the visible tail. Intersect with the draw command's effective clip before accounting ink.
+bool ClipCanvasSegment(const MapCanvasProjection& view, const ImVec2& origin, ImDrawList* dl, double& x0, double& y0,
+                       double& x1, double& y1) {
+  const ImVec2 c0 = dl->GetClipRectMin(), c1 = dl->GetClipRectMax();
+  double lo = 0, hi = 1;
+  const double dx = x1 - x0, dy = y1 - y0;
+  const auto cut = [&](double start, double delta, double lower, double upper) {
+    if (lower > upper)
+      return false;
+    if (delta == 0)
+      return start >= lower && start <= upper;
+    double t0 = (lower - start) / delta, t1 = (upper - start) / delta;
+    if (t0 > t1)
+      std::swap(t0, t1);
+    lo = std::max(lo, t0);
+    hi = std::min(hi, t1);
+    return lo <= hi;
+  };
+  if (!cut(x0, dx, std::max(origin.x, c0.x), std::min(origin.x + view.width_pt, c1.x)) ||
+      !cut(y0, dy, std::max(origin.y, c0.y), std::min(origin.y + view.height_pt, c1.y)))
+    return false;
+  x1 = x0 + hi * dx;
+  y1 = y0 + hi * dy;
+  x0 += lo * dx;
+  y0 += lo * dy;
   return true;
 }
 
@@ -692,11 +721,13 @@ IsoDeltaWalk WalkIsoDeltaCircle(ImDrawList* dl, const MapCanvasProjection& view,
     SkyPointAboutSun(sun_pos, u, v, delta_deg, phi, p);
     double x = 0.0;
     double y = 0.0;
-    if (!ProjectToRect(view, p, pic_min, pic_px, &x, &y)) {
-      walk.drawn = 0;  // the run broke; the next in-disk point starts a fresh polyline
+    if (!ProjectToRect(view, p, pic_min, pic_px, &x, &y, false)) {
+      walk.drawn = 0;  // the lens domain broke; off-canvas endpoints remain available for clipping
       continue;
     }
-    ++walk.samples_in_disk;
+    const bool in_canvas =
+        x >= pic_min.x && x <= pic_min.x + view.width_pt && y >= pic_min.y && y <= pic_min.y + view.height_pt;
+    walk.samples_in_disk += in_canvas;
     const double travel[3] = { -p[0], -p[1], -p[2] };  // the projection's own input (ProjectToRect negates)
     const bool same_disk =
         s == 0 || ProjectionContinuous(view.camera.lens_type, prev_travel_z, travel[2], prev_travel, travel);
@@ -705,9 +736,17 @@ IsoDeltaWalk WalkIsoDeltaCircle(ImDrawList* dl, const MapCanvasProjection& view,
       prev_travel[k] = travel[k];
     }
     if (walk.drawn > 0 && same_disk && (!dashed || (s / kDashCycleSegments) % 2 == 0)) {
-      dl->AddLine(ImVec2(static_cast<float>(last_x), static_cast<float>(last_y)),
-                  ImVec2(static_cast<float>(x), static_cast<float>(y)), colour, thickness);
-      ++walk.lines_submitted;
+      double x0 = last_x, y0 = last_y, x1 = x, y1 = y;
+      if (ClipCanvasSegment(view, pic_min, dl, x0, y0, x1, y1)) {
+        dl->AddLine(ImVec2(static_cast<float>(x0), static_cast<float>(y0)),
+                    ImVec2(static_cast<float>(x1), static_cast<float>(y1)), colour, thickness);
+        ++walk.lines_submitted;
+        if (!walk.have_top || std::min(y0, y1) < walk.top_y) {
+          walk.have_top = true;
+          walk.top_x = y0 < y1 ? x0 : x1;
+          walk.top_y = std::min(y0, y1);
+        }
+      }
     }
     if (!same_disk) {
       walk.drawn = 0;  // a projection break (disk flip or seam/pole jump) ends the run, the same
@@ -716,7 +755,7 @@ IsoDeltaWalk WalkIsoDeltaCircle(ImDrawList* dl, const MapCanvasProjection& view,
     last_x = x;
     last_y = y;
     ++walk.drawn;
-    if (!walk.have_top || y < walk.top_y) {
+    if (in_canvas && (!walk.have_top || y < walk.top_y)) {
       walk.have_top = true;
       walk.top_x = x;
       walk.top_y = y;
@@ -796,7 +835,9 @@ void DrawFrameAnchors(ImDrawList* dl, const MapCanvasProjection& view, const LUM
     double y1 = 0.0;
     double x2 = 0.0;
     double y2 = 0.0;
-    if (ProjectToRect(view, p1, pic_min, pic_px, &x1, &y1) && ProjectToRect(view, p2, pic_min, pic_px, &x2, &y2)) {
+    if (ProjectToRect(view, p1, pic_min, pic_px, &x1, &y1, false) &&
+        ProjectToRect(view, p2, pic_min, pic_px, &x2, &y2, false) &&
+        ClipCanvasSegment(view, pic_min, dl, x1, y1, x2, y2)) {
       dl->AddLine(ImVec2(static_cast<float>(x1), static_cast<float>(y1)),
                   ImVec2(static_cast<float>(x2), static_cast<float>(y2)), IM_COL32(200, 205, 215, 60), 1.0f);
       horizon_drawn = true;

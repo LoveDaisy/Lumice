@@ -547,6 +547,7 @@ TEST(PreviewProjectionChain, EngineForwardWholeSphereAndOffCanvasMirror) {
           if (!hit.count)
             continue;  // trace numerical floors and geometric singularities have named pins below
           const auto core = hit.hits[0];
+          const auto continuous = EngineContinuous(params, d);
           if (core.px < 0 || core.px >= 640 || core.py < 0 || core.py >= 320) {
             ++off_canvas;
             EXPECT_TRUE(IsSentinel(actual) || std::abs(actual[0]) >= 319.5f || std::abs(actual[1]) >= 159.5f);
@@ -557,6 +558,10 @@ TEST(PreviewProjectionChain, EngineForwardWholeSphereAndOffCanvasMirror) {
               detail::WorldDirToPixelForTesting(d[0], d[1], d[2], 640, 320, lens, fov, matrix, &px, &py, &valid);
               EXPECT_TRUE(valid) << lens;
               EXPECT_TRUE(std::isfinite(px) && std::isfinite(py));
+              EXPECT_LE(std::abs(px - continuous[0]) / std::max({ 1.0f, 160.0f, std::abs(continuous[0]) }), 2e-4f)
+                  << lens;
+              EXPECT_LE(std::abs(py + continuous[1]) / std::max({ 1.0f, 160.0f, std::abs(continuous[1]) }), 2e-4f)
+                  << lens;
             }
             continue;
           }
@@ -567,6 +572,8 @@ TEST(PreviewProjectionChain, EngineForwardWholeSphereAndOffCanvasMirror) {
             continue;
           const float image_x = actual[0] + 320;
           const float image_y = (LensIsFullSky(lens) ? actual[1] : -actual[1]) + 160;
+          EXPECT_NEAR(actual[0], continuous[0], 0.25f) << lens;
+          EXPECT_NEAR(LensIsFullSky(lens) ? actual[1] : -actual[1], continuous[1], 0.25f) << lens;
           // Exact same integer bin away from its float-sensitive boundary; otherwise stay in
           // the prescribed continuous sub-quarter-pixel band, not an arbitrary one-pixel delta.
           const auto check_bin = [&](float coordinate, int bin) {
