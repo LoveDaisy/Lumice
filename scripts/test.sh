@@ -408,7 +408,15 @@ import sys
 sys.path.insert(0, ".")
 try:
     from test.e2e.runner import find_lumice_binary
-
+except ImportError as e:
+    # Synthetic minimal trees (the policy-gate unit-test sandboxes) carry no
+    # test/e2e package at all; the preflight is a production-checkout
+    # affordance, so a missing authority module degrades to the legacy bare
+    # pytest layer instead of refusing. A real checkout always has the module
+    # — it is a tracked file — so this branch never fires there.
+    print(f"PREFLIGHT_UNAVAILABLE: {e}")
+    sys.exit(0)
+try:
     print(find_lumice_binary())
 except FileNotFoundError as e:
     print(f"BIN_NOT_FOUND: {e}")
@@ -421,6 +429,9 @@ PY
     printf '%s\n' "${probe}"
     record_layer fast-e2e FAIL 0 "binary discovery failed — full diagnosis in the [FAIL] block above"
     return 1
+  fi
+  if [[ ${probe} == PREFLIGHT_UNAVAILABLE* ]]; then
+    printf '%s\n' "${probe}"
   fi
   # Bare pytest is already the fast subset (pyproject addopts, verified above).
   # -n auto rather than a fixed worker count: the measured xdist ceiling for this
