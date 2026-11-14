@@ -484,7 +484,7 @@ void RenderPointDetailsBlock(GuiState& state, const SelectedClassIdentity& ident
 // four-state shell and its cancel actions stay in the main window's summary.
 void RenderPointAnswerBlock(GuiState& state);
 
-// The point session's one-line state word — the short status RenderPointStatus draws, and the
+// The point session's one-line state word — the Pose footer draws it, and the
 // main window's Selection header hint reuses (the mapping has one owner, two readers).
 // *partial, when non-null, is set iff the word is the partial completion's: the status row
 // paints that word in the warning color, and the completed read happens inside so the word and
