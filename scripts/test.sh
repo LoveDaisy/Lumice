@@ -396,18 +396,30 @@ layer_ctest() {
 layer_fast_e2e() {
   # Layer-level pre-attribution, one line and no test items: a missing binary
   # otherwise surfaces as dozens of individual skip/fail items whose shared
-  # root — no install-tree binary was produced — no per-test message can name.
-  # This check only attributes the layer; how a binary is located stays the
-  # runner's authority (test/e2e/runner.py find_lumice_binary).
-  if [[ -n ${LUMICE_BIN:-} ]]; then
-    if [[ ! -f ${LUMICE_BIN} || ! -x ${LUMICE_BIN} ]]; then
-      printf '\n========== [FAIL] fast-e2e: LUMICE_BIN=%s is not an executable — layer refused before pytest ==========\n' "${LUMICE_BIN}"
-      record_layer fast-e2e FAIL 0 "LUMICE_BIN=${LUMICE_BIN} is not an executable — point it at an existing binary (default location: build/cmake_install/static/Lumice)"
-      return 1
-    fi
-  elif [[ ! -f build/cmake_install/static/Lumice || ! -x build/cmake_install/static/Lumice ]]; then
-    printf '\n========== [FAIL] fast-e2e: build/cmake_install/static/Lumice missing — layer refused before pytest ==========\n'
-    record_layer fast-e2e FAIL 0 "install-tree binary missing — run ./scripts/build.sh -j release, or point LUMICE_BIN at an existing build"
+  # root — no binary was found — no per-test message can name. How a binary is
+  # discovered stays with the runner's single authority: this layer CALLS
+  # find_lumice_binary() and only converts its verdict into a layer FAIL, so
+  # future changes to the discovery rules cannot be pre-empted by a stale
+  # copy here.
+  local probe rc
+  probe=$(python3 - <<'PY'
+import sys
+
+sys.path.insert(0, ".")
+try:
+    from test.e2e.runner import find_lumice_binary
+
+    print(find_lumice_binary())
+except FileNotFoundError as e:
+    print(f"BIN_NOT_FOUND: {e}")
+    sys.exit(1)
+PY
+)
+  rc=$?
+  if [[ ${rc} -ne 0 ]]; then
+    printf '\n========== [FAIL] fast-e2e: no Lumice binary found — layer refused before pytest ==========\n'
+    printf '%s\n' "${probe}"
+    record_layer fast-e2e FAIL 0 "binary discovery failed — full diagnosis in the [FAIL] block above"
     return 1
   fi
   # Bare pytest is already the fast subset (pyproject addopts, verified above).
