@@ -37,7 +37,11 @@ def find_lumice_binary() -> Path:
         p = Path(env_bin)
         if p.is_file() and os.access(p, os.X_OK):
             return p.resolve()
-        raise FileNotFoundError(f"LUMICE_BIN={env_bin} is not a valid executable")
+        raise FileNotFoundError(
+            f"LUMICE_BIN={env_bin} is not a valid executable. "
+            "Check the path — the default install-tree location is "
+            "build/cmake_install/static/Lumice (produced by ./scripts/build.sh -j release)."
+        )
 
     root = get_project_root()
     # The static flavor: this runner drives the CLI as a subprocess, and the
@@ -49,8 +53,13 @@ def find_lumice_binary() -> Path:
         return candidate.resolve()
 
     raise FileNotFoundError(
-        f"Lumice binary not found at {candidate}. "
-        "Build it first: ./scripts/build.sh -j release"
+        f"Lumice binary not found at {candidate}. Candidate causes: "
+        "(1) this tree was never built with install — run: ./scripts/build.sh -j release; "
+        "(2) the last build.sh run failed during configure or compile, and install is "
+        "deliberately skipped then (a red TEST suite does not skip install, a red "
+        "BUILD does); "
+        "(3) a shared flavor build is present instead — its binary is at "
+        "build/Release/shared/bin/Lumice; export LUMICE_BIN to point at it."
     )
 
 
