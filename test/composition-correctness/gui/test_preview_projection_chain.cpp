@@ -57,6 +57,43 @@ RenderConfig LensAt(int lens_type, float fov_deg, float elevation_deg) {
   return rc;
 }
 
+// Continuous engine oracle assembled from engine pure forwards and engine layout helpers.
+// ProjectExitToPixel independently checks the corresponding integer-bin ownership below.
+std::array<float, 2> EngineContinuous(const lm_proj::ProjParams& p, const float d[3]) {
+  float x = 0, y = 0, z = 0;
+  lm_proj::ApplyRotTranspose(p.rot, -d[0], -d[1], -d[2], &x, &y, &z);
+  const int lens = p.proj_type;
+  const bool dual = LensIsFullSky(lens) && lens != kLensTypeRectangular;
+  if (dual) {
+    x = -d[0];
+    y = -d[1];
+    z = std::abs(d[2]);
+  }
+  lumice::projection::ProjXY xy{};
+  if (lens == kLensTypeLinear)
+    xy = lumice::projection::LinearForward(x, y, z);
+  else if (lens == kLensTypeFisheyeEqualArea || lens == kLensTypeDualFisheyeEqualArea)
+    xy = lumice::projection::FisheyeEqualAreaForward(x, y, z, 1);
+  else if (lens == kLensTypeFisheyeEquidist || lens == kLensTypeDualFisheyeEquidist)
+    xy = lumice::projection::FisheyeEquidistantForward(x, y, z, 1);
+  else if (lens == kLensTypeFisheyeStereographic || lens == kLensTypeDualFisheyeStereographic)
+    xy = lumice::projection::FisheyeStereographicForward(x, y, z, 1);
+  else if (lens == kLensTypeFisheyeOrthographic || lens == kLensTypeDualFisheyeOrthographic)
+    xy = lumice::projection::FisheyeOrthographicForward(x, y, z, 1);
+  else if (lens == kLensTypeRectangular) {
+    xy = lumice::projection::RectangularForward(z, -x, -y);
+    return { xy.x * p.scale, -xy.y * p.scale };
+  } else if (lens == kLensTypeGlobe) {
+    return { -x / (lm_proj::kGlobeCameraD + z) * p.scale, y / (lm_proj::kGlobeCameraD + z) * p.scale };
+  }
+  if (dual) {
+    float px = 0, py = 0;
+    lm_proj::DualFisheyeToPixelXY(xy.x, xy.y, d[2] <= 0, p.img_w, p.img_h, &px, &py);
+    return { px - p.img_w * 0.5f, py - p.img_h * 0.5f };
+  }
+  return { -xy.x * p.scale, xy.y * p.scale };
+}
+
 template <class T>
 size_t CapacityBytes(const std::vector<T>& values) {
   return values.capacity() * sizeof(T);
@@ -419,8 +456,8 @@ TEST(PreviewProjectionChain, EngineInverseRoundTripOverEveryLensDomain) {
   for (int lens = 0; lens < kLensTypeCount; ++lens) {
     int compared = 0, rejected = 0;
     for (const auto size : { std::array<int, 2>{ 96, 96 }, { 192, 96 }, { 97, 145 }, { 384, 192 } }) {
-      for (float fov : { 20.0f, 90.0f, LUMICE_MaxFov(lens) }) {
-        if (fov > LUMICE_MaxFov(lens))
+      for (float fov : { 20.0f, 90.0f, LUMICE_MaxFov(static_cast<LUMICE_LensType>(lens)) }) {
+        if (fov > LUMICE_MaxFov(static_cast<LUMICE_LensType>(lens)))
           continue;
         for (int pose = 0; pose < (LensIsFullSky(lens) ? 1 : 2); ++pose) {
           lumice::RenderConfig cfg;
@@ -474,7 +511,8 @@ TEST(PreviewProjectionChain, EngineInverseRoundTripOverEveryLensDomain) {
 TEST(PreviewProjectionChain, EngineForwardWholeSphereAndOffCanvasMirror) {
   for (int lens = 0; lens < kLensTypeCount; ++lens) {
     int on_canvas = 0, off_canvas = 0;
-    for (float fov : { 20.0f, std::min(120.0f, LUMICE_MaxFov(lens)), LUMICE_MaxFov(lens) }) {
+    for (float fov : { 20.0f, std::min(120.0f, LUMICE_MaxFov(static_cast<LUMICE_LensType>(lens))),
+                       LUMICE_MaxFov(static_cast<LUMICE_LensType>(lens)) }) {
       lumice::RenderConfig cfg;
       cfg.lens_.type_ = static_cast<lumice::LensParam::LensType>(lens);
       cfg.lens_.fov_ = fov;
@@ -495,6 +533,8 @@ TEST(PreviewProjectionChain, EngineForwardWholeSphereAndOffCanvasMirror) {
       float matrix[9];
       BuildViewMatrix(vp.elevation, vp.azimuth, vp.roll, matrix);
       for (int theta_deg = 5; theta_deg < 180; theta_deg += 5) {
+        if (lens == kLensTypeLinear && theta_deg == 90)
+          continue;  // exact perspective singularity: independent rotations round to either side
         const float theta = theta_deg * lumice::math::kDegreeToRad;
         for (int phi_deg = 3; phi_deg < 360; phi_deg += 5) {
           const float phi = phi_deg * lumice::math::kDegreeToRad;

@@ -33,7 +33,9 @@
 #include <string>
 #include <vector>
 
+#include "gui/forward_projection.hpp"
 #include "gui/gui_constants.hpp"
+#include "gui/overlay_labels.hpp"
 #include "gui/preview_renderer.hpp"
 
 namespace {
@@ -602,6 +604,85 @@ TEST(PreviewRenderer, FisheyeCoverageExtendsPastCalibrationCircleAndEquator) {
     EXPECT_FALSE(IsSentinel(p)) << sample[0];
     EXPECT_NEAR(p[0], 540.0f * sample[0] / (sample[1] * 0.5f), 0.01f);
     EXPECT_NEAR(p[1], 0.0f, 0.01f);
+  }
+}
+
+TEST(PreviewRenderer, ProjectionDomainAndCompatibilityBoundaries) {
+  namespace gui = lumice::gui;
+  constexpr float kPi = 3.14159265358979323846f;
+  const auto local = [&](int lens, float theta, float fov, gui::ForwardPolicy policy) {
+    const float d[3] = { std::sin(theta), 0.0f, -std::cos(theta) };
+    return gui::ProjectLocalDirection(d, 1920, 600, lens, fov, policy);
+  };
+  const auto screen = gui::ForwardPolicy::kScreen;
+  const auto mirror = gui::ForwardPolicy::kUnclippedMirror;
+  for (int lens :
+       { gui::kLensTypeFisheyeEqualArea, gui::kLensTypeFisheyeEquidist, gui::kLensTypeFisheyeStereographic }) {
+    EXPECT_TRUE(local(lens, 110 * kPi / 180, 180, screen).valid) << lens;
+    EXPECT_TRUE(local(lens, 110 * kPi / 180, 180, mirror).valid) << lens;
+  }
+  // The old orthographic gates are different contracts, not two radial equations.
+  EXPECT_TRUE(local(gui::kLensTypeFisheyeOrthographic, (45.0f + 0.001f) * kPi / 180, 90, screen).valid);
+  EXPECT_FALSE(local(gui::kLensTypeFisheyeOrthographic, (45.0f + 0.001f) * kPi / 180, 90, mirror).valid);
+  EXPECT_FALSE(local(gui::kLensTypeFisheyeOrthographic, 60 * kPi / 180, 90, screen).valid);
+  EXPECT_FALSE(local(gui::kLensTypeFisheyeOrthographic, 110 * kPi / 180, 180, screen).valid);
+  const float near_plane[] = { 1.0f, 0, -gui::kBehindCameraEps * 0.5f };
+  EXPECT_FALSE(gui::ProjectLocalDirection(near_plane, 800, 600, gui::kLensTypeLinear, 90, screen).valid);
+  EXPECT_TRUE(gui::ProjectLocalDirection(near_plane, 800, 600, gui::kLensTypeLinear, 90, mirror).valid);
+  const float pole[] = { 0, 0, -1 };
+  const auto rectangular = gui::ProjectLocalDirection(pole, 800, 400, gui::kLensTypeRectangular, 180, screen);
+  EXPECT_TRUE(rectangular.valid);
+  EXPECT_FLOAT_EQ(rectangular.px, 0);
+  EXPECT_NEAR(rectangular.py, -200, 1e-4f);
+  EXPECT_FALSE(gui::ProjectLocalDirection(pole, 800, 400, gui::kLensTypeRectangular, 180, mirror).valid);
+  const float fold[] = { 1, 0, 0 };
+  EXPECT_NEAR(gui::ProjectLocalDirection(fold, 800, 400, gui::kLensTypeDualFisheyeEquidist, 180, screen).px, 200,
+              1e-4f);
+  EXPECT_NEAR(gui::ProjectLocalDirection(fold, 800, 400, gui::kLensTypeDualFisheyeEquidist, 180, mirror).px, -200,
+              1e-4f);
+  const float antipode[] = { 0, 0, 1 };
+  EXPECT_FALSE(gui::ProjectLocalDirection(antipode, 800, 400, gui::kLensTypeFisheyeEquidist, 180, screen).valid);
+  EXPECT_TRUE(gui::ProjectLocalDirection(antipode, 800, 400, gui::kLensTypeFisheyeEquidist, 180, mirror).valid);
+  // Domain floor neighbourhoods are not represented by a coarse spherical grid.
+  const float min_cz = lumice::projection_domain::kFisheyeStereographicMinCz;
+  for (float cz : { std::nextafter(min_cz, -1.0f), min_cz, std::nextafter(min_cz, 1.0f) }) {
+    const float d[] = { std::sqrt(1 - cz * cz), 0, -cz };
+    EXPECT_EQ(gui::ProjectLocalDirection(d, 800, 600, gui::kLensTypeFisheyeStereographic, 180, screen).valid,
+              cz >= min_cz);
+  }
+  for (const auto lens_floor :
+       { std::pair<int, float>{ gui::kLensTypeFisheyeEqualArea, lumice::projection_domain::kFisheyeEqualAreaMinCz },
+         { gui::kLensTypeFisheyeEquidist, lumice::projection_domain::kFisheyeEquidistantMinCz } }) {
+    const float cz = std::nextafter(lens_floor.second, -1.0f);
+    const float d[] = { std::sqrt(1 - cz * cz), 0, -cz };
+    EXPECT_TRUE(gui::ProjectLocalDirection(d, 800, 600, lens_floor.first, 180, screen).valid);
+  }
+  // Pixel probes on either side of the TRUE inverse rim, not the FOV calibration radius.
+  float identity[] = { 1, 0, 0, 0, 1, 0, 0, 0, 1 };
+  int valid_count = 0, invalid_count = 0;
+  for (int lens : { gui::kLensTypeFisheyeEqualArea, gui::kLensTypeFisheyeEquidist }) {
+    const float true_rim = lens == gui::kLensTypeFisheyeEqualArea ? 300.0f / std::sin(kPi / 6) : 900.0f;
+    for (float offset : { -0.25f, 0.25f }) {
+      float x = 0, y = 0, z = 0;
+      bool valid = false;
+      gui::detail::PixelToWorldDirForTesting(true_rim + offset, 0, 1920, 600, lens, 120, identity, &x, &y, &z, &valid);
+      EXPECT_EQ(valid, offset < 0);
+      valid_count += valid;
+      invalid_count += !valid;
+    }
+  }
+  EXPECT_EQ(valid_count, 2);
+  EXPECT_EQ(invalid_count, 2);
+}
+
+TEST(PreviewRenderer, RectangularViewportHalfPixelMarginIsUnchanged) {
+  namespace gui = lumice::gui;
+  const auto view = MakeVp(gui::kLensTypeLinear, 90, 0, 0);
+  for (float edge : { 400.25f, 400.5f, 400.75f }) {
+    const float length = std::hypot(300.0f, edge);
+    const float direction[] = { -300.0f / length, -edge / length, 0.0f };
+    const auto pixel = ProjectWorldDirToScreen(view, direction, 800, 600);
+    EXPECT_EQ(IsSentinel(pixel), edge > 400.5f);
   }
 }
 

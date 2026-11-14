@@ -88,10 +88,9 @@ ProjXY FisheyeOrthographicForward(float dx, float dy, float dz, float r_scale) {
 // because the cull floors bound that error rather than letting it grow; kFisheyeEqualAreaMinCz is
 // the one chosen for this reason specifically. 1e-5 of a rim is under a thousandth of a pixel at
 // any resolution these lenses render at.
-constexpr float kRimSlack = 1.0f + 1e-5f;
-constexpr float kFisheyeEqualAreaMaxR2 = 2.0f * kRimSlack * kRimSlack;
-constexpr float kFisheyeEquidistantMaxR = 2.0f * kRimSlack;
-const float kFisheyeStereographicMaxR = std::tan(0.5f * std::acos(lm_proj::kFisheyeStereographicMinCz)) * kRimSlack;
+using projection_domain::kFisheyeEqualAreaMaxR2;
+using projection_domain::kFisheyeEquidistantMaxR;
+using projection_domain::kRimSlack;
 
 // Equal-area inverse: direct Cartesian formula (1 sqrt, no trig).
 Dir3 FisheyeEqualAreaInverse(float x, float y, float r_scale) {
@@ -126,7 +125,7 @@ Dir3 FisheyeEquidistantInverse(float x, float y, float r_scale) {
 // Stereographic inverse: theta = 2 * atan(r / r_scale).
 Dir3 FisheyeStereographicInverse(float x, float y, float r_scale) {
   float r = std::sqrt(x * x + y * y);
-  if (r > kFisheyeStereographicMaxR) {
+  if (r > projection_domain::FisheyeStereographicMaxR()) {
     return { 0, 0, 0, false };
   }
   if (r < 1e-10f) {

@@ -19,6 +19,17 @@ struct ForwardPixel {
 };
 constexpr float kBehindCameraEps = 1e-5f;
 
+// Shared radial law for both single and dual fish-eye layouts (dual calibrates at pi/2).
+inline float FisheyeRadius(float theta, float half_fov, int type) {
+  if (type == 0)
+    return std::sin(theta * 0.5f) / std::sin(half_fov * 0.5f);
+  if (type == 1)
+    return theta / half_fov;
+  if (type == 2)
+    return std::tan(theta * 0.5f) / std::tan(half_fov * 0.5f);
+  return std::sin(theta) / std::sin(half_fov);
+}
+
 // Unit direction already in camera space (or world space for fixed full-sky lenses).
 // No rectangular viewport rejection: a caller drawing segments must let its draw clip handle
 // their intersections with the viewport, even when an endpoint lies beyond the rectangle.
@@ -45,21 +56,15 @@ inline ForwardPixel ProjectLocalDirection(const float d[3], float width, float h
     // Preserve the retired mirror's axis convention, including its non-unique antipode.
     if (!screen && rho < 1e-8f)
       return { 0, 0, true };
-    float r = 0;
-    if (lens == kLensTypeFisheyeEqualArea) {
-      r = std::sin(theta * 0.5f) / std::sin(hf * 0.5f);
-    } else if (lens == kLensTypeFisheyeEquidist) {
-      r = theta / hf;
-    } else if (lens == kLensTypeFisheyeStereographic) {
-      if (-d[2] < projection_domain::kFisheyeStereographicMinCz)
-        return {};
-      r = std::tan(theta * 0.5f) / std::tan(hf * 0.5f);
-    } else {
+    const int type = lens == kLensTypeFisheyeOrthographic ? 3 : lens - kLensTypeFisheyeEqualArea;
+    if (lens == kLensTypeFisheyeStereographic && -d[2] < projection_domain::kFisheyeStereographicMinCz)
+      return {};
+    const float r = FisheyeRadius(theta, hf, type);
+    if (lens == kLensTypeFisheyeOrthographic) {
       // Orthographic is not injective beyond the equator. The mirror additionally keeps its
       // historical FOV gate; the screen entry keeps its hemisphere epsilon and half-pixel rim.
       if (screen ? d[2] > kBehindCameraEps : theta > hf)
         return {};
-      r = std::sin(theta) / std::sin(hf);
       if (screen && r > 1.0f + 0.5f / radius)
         return {};
     }
@@ -84,15 +89,8 @@ inline ForwardPixel ProjectLocalDirection(const float d[3], float width, float h
     const bool left = screen ? d[2] < 0.0f : d[2] <= 0.0f;
     const float theta = std::acos(std::clamp(std::abs(d[2]), 0.0f, 1.0f));
     const float phi = screen && std::sin(theta) <= 1e-6f ? 0.0f : std::atan2(-d[0], left ? d[1] : -d[1]);
-    float r = 0;
-    if (lens == kLensTypeDualFisheyeEqualArea)
-      r = std::sin(theta * 0.5f) / std::sin(kPi * 0.25f);
-    else if (lens == kLensTypeDualFisheyeEquidist)
-      r = theta / (kPi * 0.5f);
-    else if (lens == kLensTypeDualFisheyeStereographic)
-      r = std::tan(theta * 0.5f);
-    else
-      r = std::sin(theta);
+    const int type = lens == kLensTypeDualFisheyeOrthographic ? 3 : lens - kLensTypeDualFisheyeEqualArea;
+    const float r = FisheyeRadius(theta, kPi * 0.5f, type);
     if (!screen && r > 1.0f)
       return {};
     result = { (left ? -dual_radius : dual_radius) + r * dual_radius * std::cos(phi), r * dual_radius * std::sin(phi),
