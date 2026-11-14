@@ -8952,6 +8952,172 @@ bool PoseViewNarrowestWindowKeepsTheFixedStackOperable(ImGuiTestContext* ctx) {
 // floor constants are tuned from). The screenshots are the readability record (the issue's
 // shared-log-axis hypothesis): five curves, the legend, the zero row and the cursor at both
 // geometries.
+// C16 narrow-column variant: real default C query -> nonuniform curve -> mouse selection ->
+// globe marker and rendered crystal/representative ray. No fabricated point document or GUI hook.
+bool RefinedPayloadSampleFollowsCurveGlobeAndTrace(ImGuiTestContext* ctx) {
+  ScopedServerGuard guard;
+  constexpr const char* kColumn = R"({
+    "crystal":[{"id":1,"type":"prism","shape":{"height":1},"axis":{
+      "zenith":{"type":"gauss","mean":90,"std":0.25},
+      "azimuth":{"type":"uniform","mean":0,"std":360},
+      "roll":{"type":"gauss","mean":0,"std":5}}}],
+    "filter":[],"scene":{"light_source":{"type":"sun","altitude":20,"spectrum":"D65"},
+      "ray_num":100000,"max_hits":7,"scattering":[{"prob":0,"entries":[{"crystal":1,"proportion":1}]}]},
+    "render":[{"id":1,"lens":{"type":"linear","fov":60},"resolution":[64,64],"view":{"elevation":42}}]
+  })";
+  IM_CHECK_RETV(BringUpScene(ctx, kColumn, false, false), false);
+  OpenWindow(ctx);
+  IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
+  IM_CHECK_RETV(SelectRowByDisplay(ctx, "3-5") != std::nullopt, false);
+  gui::g_state.analysis.map_wavelength_nm = 550.0;
+  SetSkyPointTarget(40.0, 30.0);
+  gui::g_state.analyze_pose_view_open = true;
+  PinPoseViewOnScreen(ctx);
+  IM_CHECK_RETV(
+      DriveUntil(
+          ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCompleted; },
+          60),
+      false);
+  ctx->Yield(3);
+  const auto point = gui::g_state.analysis.point.adopted_result;
+  gui::PointContributionCurve curve;
+  IM_CHECK_RETV(gui::BuildPointContributionCurve(*point, 0, &curve), false);
+  LUMICE_PathPointComponent component{};
+  component.struct_size = sizeof(component);
+  IM_CHECK_RETV(LUMICE_PathPointGetComponent(point.get(), 0, &component) == LUMICE_PATH_READ_OK, false);
+  IM_CHECK_RETV(component.point_count > component.forward_pose_count, false);
+  std::vector<double> anchors;
+  std::vector<int> added;
+  double x = 0.0;
+  double min_step = DBL_MAX;
+  double max_step = 0.0;
+  bool samples_match = curve.points.size() == component.point_count;
+  IM_CHECK_RETV(samples_match, false);
+  for (size_t i = 0; i < component.point_count; ++i) {
+    LUMICE_PathPointSample sample{};
+    sample.struct_size = sizeof(sample);
+    if (LUMICE_PathPointGetSample(point.get(), 0, i, &sample) != LUMICE_PATH_READ_OK) {
+      samples_match = false;
+      continue;
+    }
+    samples_match = samples_match && std::abs(curve.points[i].x_rad - x) < 1e-12;
+    if (sample.valid && std::isnan(sample.residual_norm)) {
+      added.push_back(static_cast<int>(i));
+    } else {
+      anchors.push_back(x);
+    }
+    if (i < component.arclength_count) {
+      const double step = component.arclength_increments[i];
+      x += step;
+      min_step = std::min(min_step, step);
+      max_step = std::max(max_step, step);
+    }
+  }
+  IM_CHECK_RETV(samples_match, false);
+  IM_CHECK_RETV(!added.empty() && max_step > 2 * min_step, false);
+  // Select the added point furthest from any original anchor: mouse-pixel quantization cannot
+  // accidentally turn this into a test that selects only a continuation pose.
+  int desired = -1;
+  double separation = -1.0;
+  for (int stored : added) {
+    double closest = DBL_MAX;
+    for (double anchor : anchors) {
+      closest = std::min(closest, std::abs(curve.points[stored].x_rad - anchor));
+    }
+    if (closest > separation) {
+      separation = closest;
+      desired = stored;
+    }
+  }
+  ImGuiWindow* window = PoseRegionWindow("##AnalyzePoseCurve");
+  IM_CHECK_RETV(window != nullptr, false);
+  const auto canvas = ctx->ItemInfo("**/##pose_curve_canvas");
+  float left = FLT_MAX;
+  float right = -FLT_MAX;
+  for (const auto& vertex : window->DrawList->VtxBuffer) {
+    if (canvas.RectFull.Contains(vertex.pos) && vertex.col == gui::kPointCurvePlotBorderColor) {
+      left = std::min(left, vertex.pos.x);
+      right = std::max(right, vertex.pos.x);
+    }
+  }
+  IM_CHECK_RETV(left < right, false);
+  const float click_x = left + static_cast<float>(curve.points[desired].x_rad / x) * (right - left);
+  ctx->MouseMoveToPos(ImVec2(click_x, canvas.RectFull.GetCenter().y));
+  ctx->MouseClick(0);
+  ctx->Yield(3);
+  auto& view = gui::g_state.analysis.point_view;
+  const int stored = gui::PointCurveStoredAt(curve, view.sample_index);
+  IM_CHECK_RETV(stored >= 0, false);
+  IM_CHECK_RETV(stored == gui::PointValidSampleIndexAt(*point, 0, view.sample_index), false);
+  LUMICE_PathPointSample sample{};
+  sample.struct_size = sizeof(sample);
+  IM_CHECK_RETV(LUMICE_PathPointGetSample(point.get(), 0, stored, &sample) == LUMICE_PATH_READ_OK, false);
+  IM_CHECK_RETV(sample.valid && std::isnan(sample.residual_norm), false);
+  IM_CHECK_RETV(curve.points[stored].rho == sample.rho && curve.points[stored].product == sample.factor_product, false);
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [stored] {
+                      const auto& trace = gui::g_state.analysis.trace;
+                      return trace.key.sample == stored &&
+                             gui::RayTraceDisplayStateFor(trace, { trace.key.point_id, 0, stored }) ==
+                                 gui::RayTraceDisplayState::kDrawn;
+                    },
+                    30),
+                false);
+  ctx->Yield(3);
+  const auto& frame = gui::LastRay3DFrameInfo();
+  IM_CHECK_RETV(frame.valid, false);
+  bool pose_matches = true;
+  for (int k = 0; k < 9; ++k) {
+    pose_matches = pose_matches && std::abs(frame.pose[k] - sample.pose[k]) < 1e-12;
+  }
+  IM_CHECK_RETV(pose_matches, false);
+  gui::SunGlobeProjector projector;
+  IM_CHECK_RETV(gui::MakeSunGlobeProjector(*point, 0, &projector), false);
+  double gx = 0.0;
+  double gy = 0.0;
+  gui::SunGlobeProject(projector, sample.sun_in_crystal, &gx, &gy);
+  const auto globe_canvas = ctx->ItemInfo("**/##globe_canvas");
+  const float side = globe_canvas.RectFull.GetWidth();
+  const float radius = side * 0.5f - gui::UiPx(4.0f);
+  const ImVec2 centre = globe_canvas.RectFull.GetCenter();
+  const ImVec2 expected(centre.x + static_cast<float>(gx - 0.5) * 2 * radius,
+                        centre.y + static_cast<float>(gy - 0.5) * 2 * radius);
+  ImGuiWindow* globe = PoseRegionWindow("##AnalyzeSunGlobe");
+  IM_CHECK_RETV(globe != nullptr, false);
+  ImVec2 marker_min(FLT_MAX, FLT_MAX);
+  ImVec2 marker_max(-FLT_MAX, -FLT_MAX);
+  int marker_vertices = 0;
+  for (const auto& vertex : globe->DrawList->VtxBuffer) {
+    if (vertex.col == IM_COL32(255, 255, 255, 210) && globe_canvas.RectFull.Contains(vertex.pos)) {
+      marker_min.x = std::min(marker_min.x, vertex.pos.x);
+      marker_min.y = std::min(marker_min.y, vertex.pos.y);
+      marker_max.x = std::max(marker_max.x, vertex.pos.x);
+      marker_max.y = std::max(marker_max.y, vertex.pos.y);
+      ++marker_vertices;
+    }
+  }
+  IM_CHECK_RETV(marker_vertices > 4, false);
+  IM_CHECK_RETV(std::abs((marker_min.x + marker_max.x) * 0.5f - expected.x) < 0.6f &&
+                    std::abs((marker_min.y + marker_max.y) * 0.5f - expected.y) < 0.6f,
+                false);
+  IM_CHECK_RETV(SaveWindowPng(ctx, "//Pose & trace", GuiTestTempPath("refined_payload_sample.png").string()), false);
+  // Playback's cursor domain includes this added row; advance from its predecessor and prove reachability.
+  view.sample_index = (view.sample_index + static_cast<int>(curve.valid_positions.size()) - 1) %
+                      static_cast<int>(curve.valid_positions.size());
+  view.playing = true;
+  view.last_play_step_s = 0.0;
+  IM_CHECK_RETV(gui::AdvancePointPlayback(&view, static_cast<int>(curve.valid_positions.size()),
+                                          gui::kPointPlaybackStepSeconds + 0.01),
+                false);
+  IM_CHECK_RETV(gui::PointCurveStoredAt(curve, view.sample_index) == stored, false);
+  view.playing = false;
+  ctx->LogInfo(
+      "[refined payload] %d added rows; selected stored %d, nonuniform x/globe/rendered pose/trace/playback checked",
+      static_cast<int>(added.size()), stored);
+  return true;
+}
+
 bool PoseCurveRegionDrawsAndMovesTheSharedCursor(ImGuiTestContext* ctx) {
   ScopedServerGuard guard;
   IM_CHECK_RETV(BringUpHaloScene(ctx, /*infinite=*/false), false);
@@ -13142,6 +13308,10 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
   {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "pose_view_operates_at_a_moved_window_origin");
     t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(PoseViewOperatesAtAMovedWindowOrigin(ctx)); };
+  }
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "refined_payload_sample_follows_curve_globe_and_trace");
+    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(RefinedPayloadSampleFollowsCurveGlobeAndTrace(ctx)); };
   }
   {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "pose_curve_region_draws_and_moves_the_shared_cursor");

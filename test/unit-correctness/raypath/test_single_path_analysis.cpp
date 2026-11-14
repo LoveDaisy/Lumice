@@ -9,7 +9,10 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cmath>
+#include <cstring>
+#include <numeric>
 #include <random>
 #include <utility>
 #include <vector>
@@ -1018,6 +1021,255 @@ TEST(SinglePathFingerprint, Sha256MatchesTheKnownAnswers) {
       Sha256Hex("abcdefghbcdefghicdefghijdefghijkefghijklfghijklmghijklmnhijklmnoijklmnopjklmnopqklmnopqrlmnopqrsmnop"
                 "qrstnopqrstu"),
       "cf5b16a778af8380036ce59e7b0492370b249b11e8f07a51afac45037afee9d1");
+}
+
+ConfigManager NarrowColumnScene() {
+  ConfigManager scene = Scene(Prism(1.0f));
+  auto& axis = scene.crystals_.at(1).axis_;
+  axis.latitude_dist = Gauss(0.0f, 0.25f);  // internal latitude, external zenith = 90 degrees
+  axis.azimuth_dist = kFullTurn;
+  axis.roll_dist = Gauss(0.0f, 5.0f);
+  return scene;
+}
+
+std::vector<double> ComponentX(const FiberComponent& component) {
+  std::vector<double> x{ 0.0 };
+  for (double step : component.arclength_increments) {
+    x.push_back(x.back() + step);
+  }
+  return x;
+}
+
+// C16's narrow orientation variant. The oracle samples a fixed uniform grid on the OFF edges;
+// neither its nodes nor its half-height window use the adaptive criterion.
+TEST(SinglePathPayload, NarrowPositivePeakGainsLocalResolutionAndAccuracy) {
+  const ConfigManager scene = NarrowColumnScene();
+  SinglePathRequest request = Request({ 3, 5 }, 40.0, 30.0);
+  request.payload_evaluation_limit = 0;
+  PointResult off;
+  ASSERT_TRUE(AnalyzePathPointValue(scene, request, false, &off).Ok());
+  ASSERT_EQ(off.Data().Discovered().components.size(), 1u);
+  PointPayloadRefinementStats stats;
+  request.payload_evaluation_limit = kPointPayloadEvaluationLimit;
+  request.payload_stats = &stats;
+  PointResult on;
+  ASSERT_TRUE(AnalyzePathPointValue(scene, request, false, &on).Ok());
+  ASSERT_EQ(on.Data().Discovered().components.size(), 1u);
+  const auto& before = off.Data().Discovered().components[0];
+  const auto& after = on.Data().Discovered().components[0];
+  const auto x_off = ComponentX(before);
+  const auto x_on = ComponentX(after);
+  const auto& axis = scene.crystals_.at(1).axis_;
+  const auto latitude = MakeLatitudeDensity(axis.latitude_dist);
+  std::vector<double> reference_x;
+  std::vector<double> reference_rho;
+  for (size_t e = 0; e + 1 < before.points.size(); ++e) {
+    double relative[9];
+    double tangent[3];
+    analytic::so3::MatTMul(before.points[e].pose, before.points[e + 1].pose, relative);
+    analytic::so3::Log(relative, tangent);
+    for (int k = 0; k < 256; ++k) {
+      const double t = k / 256.0;
+      const double scaled[3] = { tangent[0] * t, tangent[1] * t, tangent[2] * t };
+      double step[9];
+      double pose[9];
+      analytic::so3::Exp(scaled, step);
+      analytic::so3::MatMul(before.points[e].pose, step, pose);
+      const auto angles = PoseToAngles(pose);
+      reference_x.push_back(x_off[e] + t * before.arclength_increments[e]);
+      reference_rho.push_back(DeclaredPoseDensity(latitude, axis, angles.azimuth_deg * kDeg,
+                                                  (90.0 - angles.zenith_deg) * kDeg, angles.roll_deg * kDeg));
+    }
+  }
+  const size_t peak_index = std::max_element(reference_rho.begin(), reference_rho.end()) - reference_rho.begin();
+  const double peak = reference_rho[peak_index];
+  ASSERT_GT(peak, 0.0);
+  size_t first = peak_index;
+  size_t last = peak_index;
+  while (first > 0 && reference_rho[first - 1] >= peak / 2) {
+    --first;
+  }
+  while (last + 1 < reference_rho.size() && reference_rho[last + 1] >= peak / 2) {
+    ++last;
+  }
+  ASSERT_GT(first, 0u);
+  ASSERT_LT(last + 1, reference_rho.size());
+  auto crossing = [&](size_t i) {
+    return reference_x[i] + (peak / 2 - reference_rho[i]) * (reference_x[i + 1] - reference_x[i]) /
+                                (reference_rho[i + 1] - reference_rho[i]);
+  };
+  const double lo = crossing(first - 1);
+  const double hi = crossing(last);
+  ASSERT_GT(hi, lo);
+  EXPECT_GE(last - first + 1, 17u);
+  auto local_count = [&](const std::vector<double>& x) {
+    return std::count_if(x.begin(), x.end(), [&](double at) { return at >= lo && at <= hi; });
+  };
+  EXPECT_LE(local_count(x_off), 3);
+  EXPECT_GE(local_count(x_on), 9);
+  double previous = lo;
+  double max_gap = 0.0;
+  for (double at : x_on) {
+    if (at >= lo && at <= hi) {
+      max_gap = std::max(max_gap, at - previous);
+      previous = at;
+    }
+  }
+  max_gap = std::max(max_gap, hi - previous);
+  EXPECT_LE(max_gap, (hi - lo) / 8);
+  auto error = [&](const FiberComponent& c, const std::vector<double>& x) {
+    double worst = 0.0;
+    for (size_t k = first; k <= last; ++k) {
+      const double at = reference_x[k];
+      const size_t i = std::upper_bound(x.begin(), x.end(), at) - x.begin() - 1;
+      const double t = (at - x[i]) / (x[i + 1] - x[i]);
+      const double value = c.points[i].rho * (1 - t) + c.points[i + 1].rho * t;
+      worst = std::max(worst, std::fabs(value - reference_rho[k]) / peak);
+    }
+    return worst;
+  };
+  const double error_off = error(before, x_off);
+  const double error_on = error(after, x_on);
+  EXPECT_GT(error_off, 0.05);
+  EXPECT_LE(error_on, 0.05);
+  EXPECT_LE(error_on, error_off / 2);
+  EXPECT_GT(stats.inserted_points, 0);
+  EXPECT_LE(stats.rho_probes + stats.detail_evaluations, kPointPayloadEvaluationLimit);
+}
+
+// Each corpus row guards a different contract: closed anchors; reversed arc/seed ordering;
+// singular-measure legal zero; and valid zero area. No assumption that storage count is trace count.
+TEST(SinglePathPayload, OriginalAnchorsDistancesAndIntegralSurviveAcrossCorpusCases) {
+  struct Case {
+    ConfigManager scene;
+    SinglePathRequest request;
+  };
+  ConfigManager random = Scene(Prism(1.0f));
+  random.crystals_.at(1).axis_ = Axis({ DistributionType::kUniform, 90.0f, 180.0f }, kFullTurn, kFullTurn);
+  ConfigManager plate = Scene(Prism(1.0f));
+  plate.crystals_.at(1).axis_ = Axis(Fixed(0.0f), kFullTurn, Fixed(0.0f));
+  ConfigManager thin_plate = plate;
+  thin_plate.crystals_.at(1).param_ = Prism(0.8f);
+  const Case cases[] = { { NarrowColumnScene(), Request({ 3, 5 }, 40.0, 30.0) },
+                         { random, Request({ 3, 5, 6, 7 }, 20.0, 120.0) },
+                         { plate, Request({ 1, 4, 5, 2 }, 20.0, 120.0) },
+                         { thin_plate, Request({ 3, 6, 4, 8 }, 20.0, 120.0) } };
+  int inserted = 0;
+  for (const auto& test : cases) {
+    auto request = test.request;
+    request.payload_evaluation_limit = 0;
+    PointResult off;
+    if (!AnalyzePathPointValue(test.scene, request, false, &off).Ok()) {
+      ADD_FAILURE() << "off query failed";
+      continue;
+    }
+    request.payload_evaluation_limit = kPointPayloadEvaluationLimit;
+    PointResult on;
+    if (!AnalyzePathPointValue(test.scene, request, false, &on).Ok()) {
+      ADD_FAILURE() << "on query failed";
+      continue;
+    }
+    const auto& a = off.Data().Discovered().components;
+    const auto& b = on.Data().Discovered().components;
+    if (a.empty() || a.size() != b.size()) {
+      ADD_FAILURE() << "nonempty component discovery must match";
+      continue;
+    }
+    for (size_t c = 0; c < a.size(); ++c) {
+      const auto& before = a[c];
+      const auto& after = b[c];
+      if (after.points.size() != after.arclength_increments.size() + 1 || before.points.empty()) {
+        ADD_FAILURE() << "malformed component arrays";
+        continue;
+      }
+      const auto x_off = ComponentX(before);
+      const auto x_on = ComponentX(after);
+      EXPECT_EQ(before.forward.pose_count, after.forward.pose_count);
+      EXPECT_EQ(before.backward.pose_count, after.backward.pose_count);
+      EXPECT_EQ(before.kind, after.kind);
+      EXPECT_EQ(std::memcmp(before.points.front().pose, after.points.front().pose, sizeof(before.seed)), 0);
+      EXPECT_EQ(std::memcmp(before.points.back().pose, after.points.back().pose, sizeof(before.seed)), 0);
+      EXPECT_NEAR(x_on.back(), x_off.back(), 1e-12 * std::max(1.0, x_off.back()));
+      EXPECT_NEAR(x_on[after.seed_index], x_off[before.seed_index], 1e-12);
+      size_t anchor = 0;
+      for (size_t i = 0; i < after.points.size(); ++i) {
+        const auto& p = after.points[i];
+        if (anchor < before.points.size() && std::memcmp(p.pose, before.points[anchor].pose, sizeof(p.pose)) == 0) {
+          const auto& original = before.points[anchor];
+          EXPECT_DOUBLE_EQ(p.residual_norm, original.residual_norm);
+          EXPECT_DOUBLE_EQ(p.rho, original.rho);
+          EXPECT_DOUBLE_EQ(p.jacobian, original.jacobian);
+          EXPECT_EQ(p.jacobian_available, original.jacobian_available);
+          EXPECT_DOUBLE_EQ(p.factor_product, original.factor_product);
+          EXPECT_NEAR(x_on[i], x_off[anchor], 1e-12 * std::max(1.0, x_off[anchor]));
+          ++anchor;
+        } else {
+          ++inserted;
+          EXPECT_TRUE(std::isnan(p.residual_norm));
+          EXPECT_TRUE(p.valid);
+          EXPECT_TRUE(std::isfinite(p.rho));
+          if (anchor == 0 || anchor >= before.points.size()) {
+            ADD_FAILURE() << "inserted point outside original edges";
+            continue;
+          }
+          const double distance = analytic::so3::Distance(before.points[anchor - 1].pose, p.pose) +
+                                  analytic::so3::Distance(p.pose, before.points[anchor].pose);
+          EXPECT_NEAR(distance, before.arclength_increments[anchor - 1], 1e-12);
+        }
+        if (i > 0) {
+          EXPECT_NEAR(analytic::so3::Distance(after.points[i - 1].pose, p.pose), after.arclength_increments[i - 1],
+                      1e-12);
+        }
+      }
+      EXPECT_EQ(anchor, before.points.size());
+      double integral = 0.0;
+      int available = 0;
+      for (size_t i = 0; i < after.points.size(); ++i) {
+        if (std::isfinite(after.points[i].factor_product)) {
+          ++available;
+          if (i < after.arclength_increments.size()) {
+            integral += after.points[i].factor_product * after.arclength_increments[i];
+          }
+        }
+      }
+      EXPECT_DOUBLE_EQ(integral, after.factors.fiber_integral);
+      EXPECT_EQ(available, after.factors.available_points);
+      EXPECT_EQ(after.points.size(), static_cast<size_t>(after.factors.total_points));
+    }
+  }
+  EXPECT_GT(inserted, 0);
+}
+
+TEST(SinglePathPayload, BudgetIsQueryWideAndCancelledQueriesStartNoRefinement) {
+  ConfigManager scene = Scene(Prism(1.0f));
+  scene.crystals_.at(1).axis_ = Axis({ DistributionType::kUniform, 90.0f, 180.0f }, kFullTurn, kFullTurn);
+  auto request = Request({ 3, 5, 6, 7 }, 20.0, 120.0);  // C03, two components sharing ONE quota
+  PointPayloadRefinementStats stats;
+  request.payload_stats = &stats;
+  for (int limit : { 0, 1, 7, 110, kPointPayloadEvaluationLimit, kPointPayloadEvaluationLimit * 2 }) {
+    request.payload_evaluation_limit = limit;
+    PointResult result;
+    if (!AnalyzePathPointValue(scene, request, false, &result).Ok()) {
+      ADD_FAILURE() << "bounded query failed";
+      continue;
+    }
+    EXPECT_EQ(result.Data().Discovered().components.size(), 2u);
+    EXPECT_FALSE(result.Data().meta.interrupted);  // refinement quota is not a discovery interruption
+    const int used = stats.rho_probes + stats.detail_evaluations;
+    EXPECT_LE(used, std::min(limit, kPointPayloadEvaluationLimit));
+    if (limit <= 7) {
+      EXPECT_EQ(used, limit);
+    }
+    for (const auto& component : result.Data().Discovered().components) {
+      EXPECT_EQ(component.points.size(), component.arclength_increments.size() + 1);
+    }
+  }
+  volatile int interrupted = 1;
+  request.interrupted = &interrupted;
+  PointResult cancelled;
+  ASSERT_TRUE(AnalyzePathPointValue(scene, request, false, &cancelled).Ok());
+  EXPECT_TRUE(cancelled.Data().meta.interrupted);
+  EXPECT_EQ(stats.rho_probes + stats.detail_evaluations, 0);
 }
 
 }  // namespace
