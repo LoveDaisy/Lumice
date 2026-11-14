@@ -417,13 +417,13 @@ GUI 的网格由 overlay 状态 + FOV 派生，核心文档的逐行角度表在
 列表描述的是**编辑后**的场景、文档却回到了 commit 快照，且 Revert 清了 `dirty`，
 `AnalysisPictureNotice` 随之沉默。两条路径同一根因：**列表所描述的场景从未被记录，也就无从比较**。
 
-现在的形状（三处，各一个职责）：
+现在的形状（三处，各一个职责；2026-11-14 失效统一后，判定收敛为单一派生状态、展示面从一扩到五）：
 
 | 职责 | 位置 | 说明 |
 |---|---|---|
-| 记录「分析所描述的场景」 | `GuiState::AnalysisSceneIdentity`（`src/gui/gui_state.hpp`）+ `AnalysisResultView::analyzed_scene` | `DoAnalyze` 在清空 view 之后紧接 `From(g_state)` 捕获——与 `BuildCommitSceneOrWarn` 读的是同一份 state，中间没有写操作 |
-| 判定新鲜度 | `ComputeAnalysisListFreshness(has_result, scene_still_matches)`（`src/gui/sim_state_rules.hpp`） | `{kNone, kFresh, kStale}`；只吃两个 bool，遵循该文件「谓词不吃 GuiState」的约定，2×2 可枚举 |
-| 展示 | `RenderListFreshnessBanner`（`src/gui/analysis_panel.cpp`） | 搜索之后的固定状态视口，`WarningTextColor` + 三角叹号（与主窗口 Modified 芯片同视觉语言）；**只在 kStale 画正文（视口常驻），且不清列表**——「选一行→Exclude→重跑」是面板主路径，清空会切断它 |
+| 记录「分析所描述的场景」 | `GuiState::AnalysisSceneIdentity`（`src/gui/gui_state.hpp`）+ `AnalysisResultView::analyzed_scene`；锥心侧 = `RaypathAnalysisSession::analyzed_cone_center_dir`（`DoAnalyze` 请求时刻的副本） | `DoAnalyze` 在清空 view 之后紧接 `From(g_state)` 捕获——与 `BuildCommitSceneOrWarn` 读的是同一份 state，中间没有写操作 |
+| 判定（统一派生，每帧单点） | `ComputeAnalysisFreshness`（`src/gui/sim_state_rules.hpp`，纯输入→纯输出，可枚举）经 `AnalysisFreshnessFor`（`src/gui/analysis_panel.cpp`，唯一的 GuiState→标量映射）每帧恰好派生一次，写入 `GuiState::analysis_freshness` | 派生点 = `RenderWorkspacePanels` 入口（`PumpAnalyzeQueries` 旁）——每个 GUI 帧的必经点，先于全部消费面（Render 模式与两窗全关的帧也在内）。三事实位 `cone_center_drifted` / `list` / `picture_notice` 各自复用既有谓词（`ConeCenterDirDrifted` 纯核 / `ComputeAnalysisListFreshness` / `AnalysisPictureNotice`），语义不变；字段入 `kDerivedFieldsExcludeList`（不进 snapshot/diff）；派生只写派生字段（I-display-inert：不碰 `sim_state` / `run_intent` / 业务态） |
+| 展示（五个固定面） | 列表横幅 `RenderListFreshnessBanner`（`analysis_panel.cpp`）、主视图旧图注 `RenderAnalyzeStatus`（同文件）、主窗漂移带 `RenderAnalyzeDriftWarning`（同文件，779.1）、Raypath view 提示条（`analyze_map_view.cpp` 窗内容区顶部：列表过期 + Point 模式漂移各一行）、Pose & trace 提示条（`analyze_point_view.cpp` 同位置：列表过期一行） | 五面只读 `analysis_freshness`，不再各自内联判定；主窗三面行为与统一前逐字节一致（既有测试阵钉住）；两窗提示条 notice-only（无按钮、无动作、不重发——分析触发显式，contract §8），warning 色族与主窗 Modified 芯片同档；每条提示的反馈字段（`map_stale_hint` / `map_drift_hint` / `point_stale_hint` + 各自完整 rect 四浮点）按窗划分、能画它的 site 拥有清空 |
 
 三条设计决定，每条都有一个反面选项被否决：
 
@@ -449,7 +449,7 @@ GUI 的网格由 overlay 状态 + FOV 派生，核心文档的逐行角度表在
 档位语言沿用 §2。「面板→主窗口」问的是面板内编辑能否正确抵达主文档 / 仿真；「主窗口→面板」问的是主窗口
 动作（New / Open / Run / Revert / 结构编辑）之后面板派生态是否仍与文档一致。
 
-**Analysis 面板**（`RaypathAnalysisSession` 21 字段 + `AnalysisResultView` 8 字段 + `analysis_run_in_progress`；2026-10-30 起 +`survey`（后台 survey 查询会话）并 −`window_open`（浮窗随 742.3 迁移退役，下表该行仅存档））：
+**Analysis 面板**（`RaypathAnalysisSession` 21 字段 + `AnalysisResultView` 8 字段 + `analysis_run_in_progress` + `analysis_freshness`（2026-11-14 失效统一）；2026-10-30 起 +`survey`（后台 survey 查询会话）并 −`window_open`（浮窗随 742.3 迁移退役，下表该行仅存档））：
 
 | 字段 | 档位 | 面板→主窗口 | 主窗口→面板 |
 |---|---|---|---|
@@ -464,6 +464,7 @@ GUI 的网格由 overlay 状态 + FOV 派生，核心文档的逐行角度表在
 | `analysis_result.payload` / `entries_symmetry` / `display_energy` / `display_order` / `display_cumulative_pct` / `display_total` / `display_ring_count` | DERIVED（poller 喂入 + display-time 重投影） | 唯一反向写路径「Exclude this raypath」只写 `state.filters`，由 `gui_state_reconcile.cpp` 每帧 diff 接到 `MarkStructHardDirty`，隔一帧生效——一致 | 文档切换清空；**Run / Revert 有意保留**，由 §10.1 谓词标 stale |
 | `analysis_result.analyzed_scene` | DERIVED（§10.1 新增） | 不写主文档 | 随 `analysis_result` 整体清空 / 保留；`DoAnalyze` 每次重写 |
 | `analysis_run_in_progress` | DERIVED（每帧从 `started` + poller 观测派生） | 不写主文档 | 文档切换清；其余由 reconcile 每帧重算 |
+| `analysis_freshness`（2026-11-14 失效统一，§10.1） | DERIVED（`kDerivedFieldsExcludeList` 登记；每帧 `RenderWorkspacePanels` 入口恰好派生一次，`ComputeAnalysisFreshness` 经 `AnalysisFreshnessFor`） | 不写主文档（派生只写该字段，I-display-inert） | 派生字段不缓存语义：文档切换 / Run / Revert 后下一帧重算即是当前真值，无需任何重同步路径；五个消费面（§10.1 展示行）只读 |
 
 **Colors 面板**（`ColorClassConfig` = `ColorClassStructState` + `ColorClassDisplayState`；`ColorClassRefConfig` 7 字段；
 `raypath_color_mode`；面板自身无 TU-local 编辑缓冲）：

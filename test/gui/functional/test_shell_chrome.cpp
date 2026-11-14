@@ -29,7 +29,6 @@
 #include <string>
 
 #include "IconsFontAwesome6.h"
-#include "gui/analyze_map_view.hpp"  // kMapFullSkyRadiusDeg — the Full-sky reset's expected value
 #include "gui/edit_modals.hpp"
 #include "gui/file_io.hpp"  // DeserializeFromJson — the panorama case loads a scene like the GUI does
 #include "gui/gui_constants.hpp"
@@ -2153,21 +2152,14 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
       AssertRectContained(ctx, "##Rays(M)_slider", ctx->GetWindowByRef("//##AnalyzeLeftPanel"));
       ctx->SetRef("");
 
-      // The map region, through its window (opened for this leg): the view buttons contained
-      // and Full sky's real click; the sky row answers. The old band-scroll arithmetic (the
-      // cell's tail slices under the 2x band) had the cell as a band resident — the window
-      // shows its whole region.
+      // The map region, through its window (opened for this leg): the sky row answers through
+      // the window's own geometry. The old band-scroll arithmetic (the cell's tail slices
+      // under the 2x band) had the cell as a band resident — the window shows its whole
+      // region.
       gui::g_state.analyze_raypath_view_open = true;
       ctx->Yield(2);
-      ImGuiWindow* map = AnalyzeRegionWindow("##AnalyzeRaypathInfo");  // the view buttons live in the info region (D3)
+      ImGuiWindow* map = AnalyzeRegionWindow("##AnalyzeRaypathInfo");  // the info region's window (D3)
       IM_CHECK(map != nullptr);
-      AssertRectContained(ctx, "**/Fit##map", map);
-      AssertRectContained(ctx, "**/Full sky##map", map);
-      gui::g_state.renderer.lens_type = gui::kLensTypeLinear;
-      gui::g_state.renderer.fov = 12.0f;
-      ctx->ItemClick("**/Full sky##map");
-      ctx->Yield(2);
-      IM_CHECK_EQ(gui::g_state.renderer.lens_type, gui::kLensTypeRectangular);
       ctx->SetRef("");
       ctx->ItemInputValue("**/alt°##sky", 15.0f);
       ctx->ItemClick("**/Set sky point###sky_set");
@@ -2271,35 +2263,27 @@ void RegisterShellChromeTests(ImGuiTestEngine* engine) {
     };
   }
 
-  // The λ reference branch and the view buttons, in the region's window: the window opens by
-  // the flag for this leg (no selection needed — the header row renders in every state), and
-  // the reference click and Full sky run at the window's own geometry. (The old side-by-side
-  // cell-floor construction squeezed the band cell to its 370 width; that cell left the band
-  // with the window, and the narrow-geometry stress is the window-side legs' to pin.)
+  // The λ reference branch, in the region's window: the window opens by the flag for this leg
+  // (no selection needed — the header row renders in every state), and the reference click runs
+  // at the window's own geometry. (The old side-by-side cell-floor construction squeezed the
+  // band cell to its 370 width; that cell left the band with the window, and the narrow-geometry
+  // stress is the window-side legs' to pin.)
   {
-    ImGuiTest* t = IM_REGISTER_TEST(engine, "shell_chrome", "workspace_map_lambda_branch_and_view_buttons");
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "shell_chrome", "workspace_map_lambda_branch");
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
       ctx->ItemClick(kWorkspaceToAnalyzeBtn);
       ctx->Yield(3);
       gui::g_state.analyze_raypath_view_open = true;
       ctx->Yield(2);
-      ImGuiWindow* map =
-          AnalyzeRegionWindow("##AnalyzeRaypathInfo");  // the λ row and view buttons live in the info region (D3)
+      ImGuiWindow* map = AnalyzeRegionWindow("##AnalyzeRaypathInfo");  // the wl row lives in the info region (D3)
       IM_CHECK(map != nullptr);
       gui::g_state.analysis.map_wavelength_nm = 550.0;
       ctx->Yield(2);
       AssertRectContained(ctx, "**/reference##map_lambda", map);
-      AssertRectContained(ctx, "**/Fit##map", map);
-      AssertRectContained(ctx, "**/Full sky##map", map);
       ctx->ItemClick("**/reference##map_lambda");
       ctx->Yield(2);
       IM_CHECK_EQ(gui::g_state.analysis.map_wavelength_nm, 0.0);
-      gui::g_state.renderer.lens_type = gui::kLensTypeLinear;
-      gui::g_state.renderer.fov = 12.0f;
-      ctx->ItemClick("**/Full sky##map");
-      ctx->Yield(2);
-      IM_CHECK_EQ(gui::g_state.renderer.lens_type, gui::kLensTypeRectangular);
       gui::g_state.analyze_raypath_view_open = false;
       ctx->Yield(2);
     };

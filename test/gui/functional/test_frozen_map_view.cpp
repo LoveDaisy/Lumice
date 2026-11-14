@@ -521,10 +521,13 @@ bool SharedInputWitness(ImGuiTestContext* ctx) {
   } else
     return false;
   IM_CHECK_RETV(gui::g_state.renderer.fov == fov_before_report, false);
-  // A fixed all-sky lens has no camera zoom freedom in either host.
-  ctx->ItemClick("**/Full sky##map");
+  // A fixed all-sky lens has no camera zoom freedom in either host. The lens arrives as a
+  // direct product-state write (the shared presets are retired).
+  gui::g_state.renderer.lens_type = gui::kLensTypeRectangular;
+  gui::g_state.renderer.visible = gui::kVisibleFull;
+  gui::g_state.renderer.front = false;
   ctx->Yield(3);
-  IM_CHECK_RETV(gui::g_state.renderer.lens_type == gui::kLensTypeRectangular && views_match(), false);
+  IM_CHECK_RETV(views_match(), false);
   const float fixed_fov = gui::g_state.renderer.fov;
   ctx->MouseMoveToPos(map_center);
   ctx->Yield(2);

@@ -5,7 +5,8 @@
 #include <cstdio>
 #include <string>
 
-#include "gui/analyze_map_view.hpp"  // SurveyRowHoverReadout / SurveyProfileHover — the rows' hover identity
+#include "gui/analyze_map_view.hpp"    // SurveyRowHoverReadout / SurveyProfileHover — the rows' hover identity
+#include "gui/analyze_ui_widgets.hpp"  // DisabledWrappedText — the wrapped disabled-colour pair  // SurveyRowHoverReadout / SurveyProfileHover — the rows' hover identity
 #include "gui/gui_constants.hpp"
 #include "gui/theme.hpp"
 #include "imgui.h"
@@ -314,7 +315,7 @@ void BuildConclusions(const LUMICE_PathSurvey& result, SurveyOverviewModel* mode
     }
     case SurveyArm::kRefused: {
       lines.push_back("Support refused (" + model->evidence_mode +
-                      "): the class's delta-axis support is unknown. This names a geometry the axis machine could "
+                      "): the class's deviation-axis support is unknown. This names a geometry the axis machine could "
                       "not partition — it is not a statement that the class carries no light.");
       if (model->witness.available && model->witness.value_available) {
         lines.push_back(
@@ -576,20 +577,6 @@ bool HoverableRow(const char* id, bool highlight_armed) {
   return hovered;
 }
 
-// The region's text wraps, never clips: ImGui's Text/TextDisabled/BulletText size a single line
-// and clip at the region's right edge — exactly where a sentence gets interesting at the right
-// column's 260 pt floor (the screenshot that caught this reads "...certified by the closed-form
-// minimu"). DisabledWrapped is the color pair by hand (no DisabledTextWrapped in ImGui); a
-// wrapping bullet is the Bullet()+TextWrapped pair.
-void DisabledWrapped(const char* fmt, ...) {
-  ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-  va_list args;
-  va_start(args, fmt);
-  ImGui::TextWrappedV(fmt, args);
-  va_end(args);
-  ImGui::PopStyleColor();
-}
-
 // The default layer (the disposition ladder's L1/L2): the answers, their limits and their
 // premises — everything that must stay readable with the fold groups closed (the coverage law:
 // an L1 fact is never demoted into a fold for space). Shared verbatim by the complete answer
@@ -644,7 +631,8 @@ void RenderSurveyDefaultLayer(const SurveyOverviewModel& model, SurveyRowHoverRe
   // The chromatic block that ran neither half states so in the engine's own words — an
   // unevaluated leg is a fact on show, never a silent absence (R7).
   if (!model.dispersion.available && !model.diagnose.available && !model.chromatic_note.empty()) {
-    DisabledWrapped("Chromatic layer (%s): %s", SurveyStateName(model.chromatic_state), model.chromatic_note.c_str());
+    DisabledWrappedText("Chromatic layer (%s): %s", SurveyStateName(model.chromatic_state),
+                        model.chromatic_note.c_str());
   }
   // The colour verdict's main conclusion, default (the Dispersion/Diagnose row: 边位置、可见性/
   // 色彩主结论默认；coverage 不完整默认). Its notes and evidence basis stay in the evidence
@@ -667,7 +655,7 @@ void RenderSurveyDefaultLayer(const SurveyOverviewModel& model, SurveyRowHoverRe
       }
     }
     if (!model.diagnose.coverage_complete) {
-      DisabledWrapped("Coverage incomplete — the verdict names what it read, not the whole class.");
+      DisabledWrappedText("Coverage incomplete — the verdict names what it read, not the whole class.");
     }
   }
   // The tint reading for the arms whose conclusions don't already carry it (the identity arm's
@@ -685,7 +673,7 @@ void RenderSurveyDefaultLayer(const SurveyOverviewModel& model, SurveyRowHoverRe
       HoverableRow("###tint_ratio_row", true);
     }
   } else if (model.tint.available && !model.tint.reading_available) {
-    DisabledWrapped("Weight tint: no reading (%s).", SurveyStateName(model.tint.state));
+    DisabledWrappedText("Weight tint: no reading (%s).", SurveyStateName(model.tint.state));
   }
   // The probe's refused mode is a limit — default at EVERY arm (§16.1's state honesty: a
   // refusal must not be readable only through a fold, and the full-dimensional arm's object
@@ -693,7 +681,7 @@ void RenderSurveyDefaultLayer(const SurveyOverviewModel& model, SurveyRowHoverRe
   // conclusions already carry the edge/peak facts, and repeating them here is the echo the
   // ledger deletes.
   if (model.probe.available && model.probe.state == LUMICE_PATH_STATE_REFUSED) {
-    DisabledWrapped("Probe refused (%s) — no readings claimed.", model.probe.mode.c_str());
+    DisabledWrappedText("Probe refused (%s) — no readings claimed.", model.probe.mode.c_str());
   } else if (model.probe.available && model.arm != SurveyArm::kFullDimensional) {
     // The three reading rows: the profile device's trigger set (§16.1.3's extension). Each row
     // carries its hover surface and highlight; the standing is EXCLUSIVE — one pointer, one row
@@ -730,7 +718,7 @@ void RenderSurveyDefaultLayer(const SurveyOverviewModel& model, SurveyRowHoverRe
   // The family ladder's level-0 refusal is a limit — default (the TIR/Family/Objects row:
   // 拒答/未评估限制默认).
   if (model.family.available && !model.family.refusal_mode.empty()) {
-    DisabledWrapped("Freezing ladder refused at level 0 (%s).", model.family.refusal_mode.c_str());
+    DisabledWrappedText("Freezing ladder refused at level 0 (%s).", model.family.refusal_mode.c_str());
   }
   // The TIR share: the document-level reading and its refusal state, default; the interface
   // count is a Physics detail. Zero-shares read as the finite values they are.
@@ -740,9 +728,11 @@ void RenderSurveyDefaultLayer(const SurveyOverviewModel& model, SurveyRowHoverRe
       ImGui::TextWrapped("All-TIR share %.3f (red) / %.3f (blue).", model.tir.share_all_tir_red,
                          model.tir.share_all_tir_blue);
     } else if (model.tir.mode.empty()) {
-      DisabledWrapped("Internal-reflection share %s — no value and no named mode.", SurveyStateName(model.tir.state));
+      DisabledWrappedText("Internal-reflection share %s — no value and no named mode.",
+                          SurveyStateName(model.tir.state));
     } else {
-      DisabledWrapped("Internal-reflection share %s (%s).", SurveyStateName(model.tir.state), model.tir.mode.c_str());
+      DisabledWrappedText("Internal-reflection share %s (%s).", SurveyStateName(model.tir.state),
+                          model.tir.mode.c_str());
     }
   }
   // The highlight channel's merge: the background channel (0) renders under the content channel
@@ -761,7 +751,7 @@ void RenderSurveyClassEvidence(const SurveyOverviewModel& model) {
     ImGui::TextDisabled("Chromatic dispersion");
     const SurveyDispersionView& d = model.dispersion;
     if (!d.min_row_available) {
-      DisabledWrapped("No minimum-deviation fold in this class — the followed onsets are the positional facts.");
+      DisabledWrappedText("No minimum-deviation fold in this class — the followed onsets are the positional facts.");
     } else {
       ImGui::TextWrapped("%s inner edge %s — %s %s", d.red_label.c_str(), FormatDeg(d.value_red_deg).c_str(),
                          d.blue_label.c_str(), FormatDeg(d.value_blue_deg).c_str());
@@ -781,19 +771,20 @@ void RenderSurveyClassEvidence(const SurveyOverviewModel& model) {
       }
     }
     if (!d.evidence_basis.empty()) {
-      DisabledWrapped("Basis: %s", d.evidence_basis.c_str());
+      DisabledWrappedText("Basis: %s", d.evidence_basis.c_str());
     }
     if (d.certificate_available) {
-      DisabledWrapped("Edge certificate: %s with A = %.3f°.", d.certificate_formula.c_str(), d.certificate_apex_deg);
+      DisabledWrappedText("Edge certificate: %s with A = %.3f°.", d.certificate_formula.c_str(),
+                          d.certificate_apex_deg);
     }
   }
   if (model.diagnose.available) {
     ImGui::TextDisabled("Weight colour reading");
     for (const std::string& note : model.diagnose.notes) {
-      DisabledWrapped("%s", note.c_str());
+      DisabledWrappedText("%s", note.c_str());
     }
     if (!model.diagnose.evidence_basis.empty()) {
-      DisabledWrapped("Basis: %s", model.diagnose.evidence_basis.c_str());
+      DisabledWrappedText("Basis: %s", model.diagnose.evidence_basis.c_str());
     }
   }
   // The reference profile's curve — the class's brightness along the solar radial line. The
@@ -853,22 +844,22 @@ void RenderSurveyClassEvidence(const SurveyOverviewModel& model) {
         // The gap rule stays with the curve; the wavelength's n restatement (the engine's
         // dispersion table at this pair, the same value the default scope line already
         // carries) is a diagnostics-group item, not evidence.
-        DisabledWrapped("Deviation from %s to %s — empty bins are gaps, not zeros.", FormatDeg(d0).c_str(),
-                        FormatDeg(d1).c_str());
+        DisabledWrappedText("Deviation from %s to %s — empty bins are gaps, not zeros.", FormatDeg(d0).c_str(),
+                            FormatDeg(d1).c_str());
       }
     }
   }
   if (model.tint.available && !model.tint.caliber.empty()) {
     ImGui::TextDisabled("Weight tint");
-    DisabledWrapped("Caliber: %s", model.tint.caliber.c_str());
+    DisabledWrappedText("Caliber: %s", model.tint.caliber.c_str());
   }
   if (model.witness.available) {
     ImGui::TextDisabled("Independent witness");
     if (model.witness.value_available) {
       ImGui::TextWrapped("Max kept weight %.4g.", model.witness.weight);
-      DisabledWrapped("Read on the declared source's own lattice — independent of the refused delta axis.");
+      DisabledWrappedText("Read on the declared source's own lattice — independent of the refused deviation axis.");
     } else {
-      DisabledWrapped("No readable witness value.");
+      DisabledWrappedText("No readable witness value.");
     }
   }
   if (model.tir.available && model.tir.value_available) {
@@ -898,13 +889,13 @@ void RenderSurveyClassEvidence(const SurveyOverviewModel& model) {
       ImGui::Bullet();
       ImGui::TextWrapped("%s", label.c_str());
       if (!row.reason.empty()) {
-        DisabledWrapped("%s", row.reason.c_str());
+        DisabledWrappedText("%s", row.reason.c_str());
       }
     }
     // The cap's truncation note stays AT the truncated list (the ladder's L2: the +N hint
     // lives where the cut happened).
     if (model.objects.size() > shown) {
-      DisabledWrapped("+ %zu more object(s) — beyond this view.", model.objects.size() - shown);
+      DisabledWrappedText("+ %zu more object(s) — beyond this view.", model.objects.size() - shown);
     }
   }
 }
@@ -921,8 +912,8 @@ void RenderSurveyClassDiagnostics(const SurveyOverviewModel& model) {
                      model.member_count, model.object_count, model.budget_ms,
                      model.early_stopped ? ", early-stopped" : "");
   if (model.dispersion.certificate_available) {
-    DisabledWrapped("Edge certificate cross-check %.1e° against tolerance %.1e°.",
-                    model.dispersion.certificate_cross_check_deg, model.dispersion.certificate_tolerance_deg);
+    DisabledWrappedText("Edge certificate cross-check %.1e° against tolerance %.1e°.",
+                        model.dispersion.certificate_cross_check_deg, model.dispersion.certificate_tolerance_deg);
   }
   if (model.probe.available) {
     ImGui::TextWrapped("Probe: %lld kept lattice events.", static_cast<long long>(model.probe.kept_count));
@@ -941,11 +932,11 @@ void RenderSurveyClassDiagnostics(const SurveyOverviewModel& model) {
   }
   if (model.dispersion.available && model.dispersion.min_row_available) {
     const SurveyDispersionView& d = model.dispersion;
-    DisabledWrapped("Refractive indices n(%s) = %.4f, n(%s) = %.4f — the engine's dispersion table at this pair.",
-                    d.red_label.c_str(), d.n_red, d.blue_label.c_str(), d.n_blue);
+    DisabledWrappedText("Refractive indices n(%s) = %.4f, n(%s) = %.4f — the engine's dispersion table at this pair.",
+                        d.red_label.c_str(), d.n_red, d.blue_label.c_str(), d.n_blue);
   }
   if (model.probe.available && model.probe.state != LUMICE_PATH_STATE_REFUSED && !model.probe.sample_value.empty()) {
-    DisabledWrapped("n = %.4f at this wavelength.", model.probe.refractive_index);
+    DisabledWrappedText("n = %.4f at this wavelength.", model.probe.refractive_index);
   }
   if (model.family.available) {
     ImGui::TextDisabled("Freezing ladder");
@@ -955,14 +946,14 @@ void RenderSurveyClassDiagnostics(const SurveyOverviewModel& model) {
         for (const std::string& dim : level.frozen_dims) {
           frozen += dim + "; ";
         }
-        DisabledWrapped("%s", frozen.c_str());
+        DisabledWrappedText("%s", frozen.c_str());
       }
       if (!level.free_dims.empty()) {
         std::string free_dims = "L" + std::to_string(level.level) + " free: ";
         for (const std::string& dim : level.free_dims) {
           free_dims += dim + "; ";
         }
-        DisabledWrapped("%s", free_dims.c_str());
+        DisabledWrappedText("%s", free_dims.c_str());
       }
     }
   }
@@ -997,7 +988,7 @@ void RenderSurveySummary(const SurveyOverviewModel& model) {
   RenderSurveyDefaultLayer(model);
   // §16.2: once physical entries are omitted, the pointer must say where the complete answer
   // lives — never a silent trim read as the whole report.
-  DisabledWrapped("The complete answer is in the %s.", kRaypathViewWindowTitle);
+  DisabledWrappedText("The complete answer is in the %s.", kRaypathViewWindowTitle);
 }
 
 }  // namespace lumice::gui

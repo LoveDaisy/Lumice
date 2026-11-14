@@ -256,7 +256,7 @@ TEST(AnalyzePointView, FactorLinesSpellUnavailableNotZero) {
   }
   EXPECT_NE(joined.find("unavailable"), std::string::npos);
   EXPECT_NE(joined.find("conditional on this path"), std::string::npos);
-  EXPECT_EQ(joined.find("rho*A/a^2*T*K = "), std::string::npos);  // no product number without J
+  EXPECT_EQ(joined.find("axis density × A/a^2 × T × K = "), std::string::npos);  // no product number without J
   EXPECT_NE(joined.find("interface 1/2 transmittance = 0.977"), std::string::npos);
   EXPECT_EQ(joined.find("(degenerate)"), std::string::npos);  // not degenerate: the marker stays off
 
@@ -283,7 +283,7 @@ TEST(AnalyzePointView, FactorLinesSpellUnavailableNotZero) {
     joined2 += "\n";
   }
   EXPECT_NE(joined2.find("K = 1/(J+eps) = 2"), std::string::npos);
-  EXPECT_NE(joined2.find("rho*A/a^2*T*K = 0.0083"), std::string::npos);
+  EXPECT_NE(joined2.find("axis density × A/a^2 × T × K = 0.0083"), std::string::npos);
 }
 
 TEST(AnalyzePointView, CaliberLinesEchoTheInfoVerbatim) {
@@ -312,7 +312,7 @@ TEST(AnalyzePointView, CaliberLinesEchoTheInfoVerbatim) {
     joined += l;
     joined += "\n";
   }
-  EXPECT_NE(joined.find("alt 22.500 deg, az -30.000 deg (deviation 22.510 deg)"), std::string::npos);
+  EXPECT_NE(joined.find("alt 22.500°, az -30.000° (deviation 22.510°)"), std::string::npos);
   EXPECT_NE(joined.find("member faces 3-5, crystal 4, prism"), std::string::npos);
   EXPECT_NE(joined.find("wavelength 550.00 nm (explicit)"), std::string::npos);
   EXPECT_NE(joined.find("sample_count 1000000, budget 2000 ms, execution: completed"), std::string::npos);

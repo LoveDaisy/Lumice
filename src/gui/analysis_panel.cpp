@@ -19,6 +19,7 @@
 #include <vector>
 
 #include "IconsFontAwesome6.h"
+#include "gui/analyze_ui_widgets.hpp"  // WarningTextWrapped — the analyze family's warning line
 #include "gui/annotation_anchors.hpp"
 #include "gui/app.hpp"
 #include "gui/copyable_text.hpp"
@@ -70,10 +71,6 @@ constexpr int kRingScaleProbePx = 8;
 constexpr float kRoiRingThicknessPt = 2.0f;
 constexpr int kRoiRingSegments = 96;
 constexpr float kRoiMarkerDotRadiusPt = 3.0f;
-// Two unit directions with a dot product at or above this are "the same centre" for the moved-
-// since-the-result hint: 1e-6 in the dot is ~0.08 degrees, an order of magnitude past the float
-// noise of one LUMICE_UnprojectPixel round trip and far under anything a drag produces.
-constexpr float kConeCenterSameDirDot = 1.0f - 1e-6f;
 
 // The result list's search box. TU-local rather than a GuiState::RaypathAnalysisSession field,
 // although its lifetime is that struct's: gui_state.hpp carries no ImGui type, and
@@ -503,15 +500,22 @@ bool EnsureDefaultConeCenter(GuiState& state, const LUMICE_AnnotationView& view,
 }
 
 bool ConeCenterDriftedFromResult(const GuiState& state) {
-  const auto& a = state.analysis;
+  return AnalysisFreshnessFor(state).cone_center_drifted;
+}
+
+AnalysisFreshness AnalysisFreshnessFor(const GuiState& state) {
+  // The ONE GuiState → scalars mapping the staleness facts have: the per-frame derivation
+  // (RenderWorkspacePanels' entry) and the drift predicate above both read it, so the faces and
+  // the legacy predicate cannot disagree about what "stale" means (a56). The aggregate's pure
+  // core (sim_state_rules.hpp) owns every fact's semantics; this adapter owns only the mapping.
   const auto& payload = state.analysis_result.payload;
-  if (!payload || payload->roi_mode != LUMICE_RAYPATH_ROI_CONE || !a.cone_center_valid) {
-    return false;
-  }
-  const float dot = a.cone_center_dir[0] * a.analyzed_cone_center_dir[0] +
-                    a.cone_center_dir[1] * a.analyzed_cone_center_dir[1] +
-                    a.cone_center_dir[2] * a.analyzed_cone_center_dir[2];
-  return dot < kConeCenterSameDirDot;
+  const bool has_result = payload != nullptr;
+  const bool scene_still_matches =
+      has_result && state.analysis_result.analyzed_scene && state.analysis_result.analyzed_scene->Matches(state);
+  return ComputeAnalysisFreshness(has_result, has_result && payload->roi_mode == LUMICE_RAYPATH_ROI_CONE,
+                                  state.analysis.cone_center_valid, state.analysis.cone_center_dir,
+                                  state.analysis.analyzed_cone_center_dir, scene_still_matches, state.run_intent,
+                                  state.sim_state);
 }
 
 std::optional<float> ConeRingRadiusCanvasPx(const LUMICE_AnnotationView& view, int px, int py, float radius_deg) {
@@ -1301,19 +1305,16 @@ void RenderRequestParamsControls(GuiState& state, float width) {
 // banner appears on the edit itself and not only after the Run or Revert that commits it, and
 // goes away again if the edit is undone by hand.
 void RenderListFreshnessBanner(const GuiState& state) {
-  const bool has_result = state.analysis_result.payload != nullptr;
-  const bool scene_still_matches =
-      has_result && state.analysis_result.analyzed_scene && state.analysis_result.analyzed_scene->Matches(state);
-  if (ComputeAnalysisListFreshness(has_result, scene_still_matches) != AnalysisListFreshness::kStale) {
+  // The freshness verdict is the frame's derived state: the banner
+  // reads what RenderWorkspacePanels' entry computed this frame, like the other four faces.
+  if (state.analysis_freshness.list != AnalysisListFreshness::kStale) {
     return;
   }
   // Wrapped, not clipped: the banner is the one place the stale fact is spelled, and at the right
   // column's narrow widths a single clipped line would lose exactly the part that says what to do.
-  ImGui::PushStyleColor(ImGuiCol_Text, WarningTextColor());
-  ImGui::TextWrapped(ICON_FA_TRIANGLE_EXCLAMATION
+  WarningTextWrapped(ICON_FA_TRIANGLE_EXCLAMATION
                      " This list is from a configuration that has since changed \xe2\x80\x94 press Analyze to "
                      "refresh it.");
-  ImGui::PopStyleColor();
 }
 
 void RenderRunControls(GuiState& state, LUMICE_Server* server, bool join_line) {
@@ -1364,23 +1365,26 @@ void RenderRunControls(GuiState& state, LUMICE_Server* server, bool join_line) {
 void RenderRadiusSlider(GuiState& state, float width) {
   const auto& payload = state.analysis_result.payload;
   const bool cone_result = payload && payload->roi_mode == LUMICE_RAYPATH_ROI_CONE && payload->cone_ring_count > 0;
-  if (state.analysis.roi_mode != LUMICE_RAYPATH_ROI_CONE && !cone_result) {
-    return;
-  }
   // The slider's range is the result's cone when there is one, the request's otherwise (they are
   // the same numbers unless the constants changed between the run and now).
   const float cone_deg = cone_result ? payload->cone_radius_rad * kRad2Deg : kAnalysisConeMaxRadiusDeg;
   const int rings = cone_result ? payload->cone_ring_count : kAnalysisConeRingCount;
   const float min_deg = cone_deg / static_cast<float>(std::max(rings, 1));
-  // Never disabled: the radius is display-time state whether or not a result exists yet. Before
-  // one, it sizes the ring on the panorama (DrawPanoramaRoiRing's ring reads it every frame) so
-  // the user sees the region the list will be summed over; after one, it re-sums the rings on
-  // hand. Either way the request is the full cone and nothing here starts a run.
+  // Enabled by the REQUEST mode alone — the greyed-radius form analyze-interaction-contract.md
+  // §15 records: in Whole sky the slider is greyed out, never hidden and never draggable,
+  // whatever result is on hand. A cone result keeps its list and payload; re-summing it from
+  // Whole sky was an interaction face, and the mode-level ruling closed that face, not the
+  // result semantics (DrawPanoramaRoiRing's mode gate already keeps the ring Whole-sky-free).
+  // In Point mode it is enabled whether or not a result exists: before one, it sizes the ring
+  // on the panorama (the ring reads it every frame) so the user sees the region the list will
+  // be summed over; after one, it re-sums the rings on hand. Either way the request is the
+  // full cone and nothing here starts a run.
   //
   // Track and visible label share the template's complete footprint, independent of payload.
+  ImGui::BeginDisabled(state.analysis.roi_mode != LUMICE_RAYPATH_ROI_CONE);
   const float label_w = ImGui::CalcTextSize("Radius").x;
   ImGui::SetNextItemWidth(std::max(UiPx(40.0f), width - label_w - ImGui::GetStyle().ItemInnerSpacing.x));
-  if (ImGui::SliderFloat("Radius###Radius_narrow", &state.analysis.cone_radius_deg, min_deg, cone_deg, "%.1f deg")) {
+  if (ImGui::SliderFloat("Radius###Radius_narrow", &state.analysis.cone_radius_deg, min_deg, cone_deg, "%.1f°")) {
     RecomputeAnalysisDisplayOrder(state);
   }
   if (ImGui::IsItemHovered()) {
@@ -1389,6 +1393,7 @@ void RenderRadiusSlider(GuiState& state, float width) {
                           "How far from the picked point will count, shown as the ring on the preview.\n"
                           "The analysis always traces the whole cone; this picks the part the list sums.");
   }
+  ImGui::EndDisabled();
 }
 
 // The P/B/D checkboxes — the filter editor's own widget — and the read they drive: a change
@@ -1432,9 +1437,7 @@ void RenderListStatus(const GuiState& state) {
     // one place the list's actual reduction is spelled, never a clipped tail.
     const std::string note = std::string(ICON_FA_TRIANGLE_EXCLAMATION " List shows ") +
                              SymmetryBitsLabel(state.analysis_result.entries_symmetry) + "; analyze again to apply.";
-    ImGui::PushStyleColor(ImGuiCol_Text, WarningTextColor());
-    ImGui::TextWrapped("%s", note.c_str());
-    ImGui::PopStyleColor();
+    WarningTextWrapped("%s", note.c_str());
   }
 }
 
@@ -1952,23 +1955,35 @@ void RenderPanoramaRoiControls(GuiState& state, bool join_point) {
 }
 
 namespace {
+// The operation bar's width demands, in the bar order the owner ruled (2026-11-13): Whole sky |
+// Point | Radius | Analyze/Stop | Infinite rays | Rays(M). Each cumulative field is the demand
+// THROUGH its segment — the same quantity the join judgments consume — so the chain composes
+// into the two templates: row 1 of the two-row form runs through Infinite rays, row 2 is the
+// Rays(M) segment alone, and the one-row form is the whole chain. The Rays(M) segment carries
+// both of its widths: the reservation its slider+input+label pair lays out within (the pair's
+// label column is reserved, not consumed) and its actual consumption, which is what row demands
+// count — the gui_test calibration legs measure that same advance.
 struct OperationWidths {
-  float modes;
-  float with_run;
-  float first;
-  float budget;
-  float radius;
-  float single;
+  float modes;        // demand through Point — the radio pair's joint line
+  float radius_slot;  // the Radius control alone: track + inner spacing + label advance
+  float radius;       // demand through Radius (it rides Point's line)
+  float run;          // demand through Analyze/Stop
+  float first;        // demand through Infinite rays — row 1 of the two-row template
+  float rays_slot;    // the Rays(M) pair's layout reservation (passed to the pair)
+  float rays_row;     // the Rays(M) segment's own consumption — row 2 of the two-row template
+  float single;       // demand through Rays(M) — the one-row demand
 };
 OperationWidths MeasureOperationWidths() {
   const float gap = ImGui::GetStyle().ItemSpacing.x;
   OperationWidths w;
   w.modes = InlineLabelledControlWidth("Whole sky") + InlineLabelledControlWidth("Point") + gap;
-  w.with_run = w.modes + InlineButtonWidth(ICON_FA_PLAY " Analyze") + gap;
-  w.first = w.with_run + InlineLabelledControlWidth("Infinite rays") + gap;
-  w.budget = UiPx(40.0f + kInputWidth + kLabelColWidth) + gap + LabelColumnGapX();
-  w.radius = UiPx(80.0f) + ImGui::GetStyle().ItemInnerSpacing.x + ImGui::CalcTextSize("Radius").x;
-  w.single = w.first + w.budget + w.radius + gap * 2.0f;
+  w.radius_slot = UiPx(80.0f) + ImGui::GetStyle().ItemInnerSpacing.x + ImGui::CalcTextSize("Radius").x;
+  w.radius = w.modes + gap + w.radius_slot;
+  w.run = w.radius + gap + InlineButtonWidth(ICON_FA_PLAY " Analyze");
+  w.first = w.run + gap + InlineLabelledControlWidth("Infinite rays");
+  w.rays_slot = UiPx(kAnalysisRayBudgetTrackPt + kInputWidth + kLabelColWidth) + gap + LabelColumnGapX();
+  w.rays_row = w.rays_slot - UiPx(kLabelColWidth) + ImGui::CalcTextSize("Rays(M)").x;
+  w.single = w.first + gap + w.rays_row;
   return w;
 }
 }  // namespace
@@ -1980,7 +1995,8 @@ float AnalyzeOperationBarHeight(float width) {
 
 bool AnalyzeOperationBarNeedsScroll(float width) {
   const OperationWidths w = MeasureOperationWidths();
-  return width < std::max(w.first, w.budget + w.radius + ImGui::GetStyle().ItemSpacing.x);
+  // The two-row template's demand: its widest row. The one-row collapse above is the other face.
+  return width < std::max(w.first, w.rays_row);
 }
 
 void RenderAnalyzeOperationBar(GuiState& state, LUMICE_Server* server) {
@@ -1988,7 +2004,14 @@ void RenderAnalyzeOperationBar(GuiState& state, LUMICE_Server* server) {
   const OperationWidths w = MeasureOperationWidths();
   const bool single = width >= w.single;
   RenderPanoramaRoiControls(state, width >= w.modes);
-  RenderRunControls(state, server, width >= w.with_run);
+  // Radius rides Point's line — the owner's order puts it directly after the region radios —
+  // and owns its slot in both modes: Whole sky greys it (RenderRadiusSlider), it is never
+  // absent, so it never lends height back to the picture either.
+  if (width >= w.radius) {
+    ImGui::SameLine();
+  }
+  RenderRadiusSlider(state, std::min(w.radius_slot, width));
+  RenderRunControls(state, server, width >= w.run);
   if (width >= w.first) {
     ImGui::SameLine();
   }
@@ -1996,22 +2019,11 @@ void RenderAnalyzeOperationBar(GuiState& state, LUMICE_Server* server) {
   if (ImGui::IsItemHovered()) {
     ImGui::SetTooltip("Trace until stopped.");
   }
+  // Rays(M) closes the bar; the two-row template keeps it alone on row 2.
   if (single) {
     ImGui::SameLine();
   }
-  const ImVec2 budget_origin = ImGui::GetCursorScreenPos();
-  RenderRequestParamsControls(state, std::min(w.budget, width));
-  if (width >= w.budget + w.radius + ImGui::GetStyle().ItemSpacing.x) {
-    ImGui::SameLine();
-    ImGui::SetCursorScreenPos(ImVec2(budget_origin.x + w.budget + ImGui::GetStyle().ItemSpacing.x, budget_origin.y));
-  }
-  // The absent Point control owns its slot too; it never lends height back to the picture.
-  if (state.analysis.roi_mode == LUMICE_RAYPATH_ROI_CONE ||
-      (state.analysis_result.payload && state.analysis_result.payload->roi_mode == LUMICE_RAYPATH_ROI_CONE)) {
-    RenderRadiusSlider(state, std::min(w.radius, width));
-  } else {
-    ImGui::Dummy(ImVec2(std::min(w.radius, width), ImGui::GetFrameHeight()));
-  }
+  RenderRequestParamsControls(state, std::min(w.rays_slot, width));
 }
 
 void RenderAnalyzeStatus(GuiState& state, LUMICE_Server* server) {
@@ -2038,7 +2050,7 @@ void RenderAnalyzeStatus(GuiState& state, LUMICE_Server* server) {
     float az = 0.0f;
     DirToAltAz(state.analysis.cone_center_dir, &alt, &az);
     if (state.analysis.cone_center_valid) {
-      ImGui::TextWrapped("Centre: altitude %.1f deg, azimuth %.1f deg", alt, az);
+      ImGui::TextWrapped("Centre: altitude %.1f°, azimuth %.1f°", alt, az);
     } else {
       ImGui::TextWrapped("No centre yet.");
     }
@@ -2047,7 +2059,7 @@ void RenderAnalyzeStatus(GuiState& state, LUMICE_Server* server) {
   // band RenderScenePanorama draws above this child — inside a two-line viewport it sat past
   // the fold, which the owner measured as no failure sign at all. The band is the warning's
   // only face; the predicate and the clearing re-analysis are unchanged.
-  if (const char* notice = AnalysisPictureNotice(state.run_intent, state.sim_state)) {
+  if (const char* notice = state.analysis_freshness.picture_notice) {
     ImGui::TextWrapped("%s", notice);
   }
 }
@@ -2056,13 +2068,18 @@ void RenderAnalyzeStatus(GuiState& state, LUMICE_Server* server) {
 
 namespace {
 
-// The drift warning's one text (a56): the band draws it and the render-feedback field carries
-// the same string — what the gui_test layer reads is what was drawn. The render site is the
-// field's only writer.
+// The drift warning's one text (a56): the band draws it and the Raypath view's drift row draws
+// the same string — the wording has one definition, exported through
+// ConeCenterDriftWarningText() for the second window. The render-feedback fields stay
+// per-window: a field's single-writer contract follows the render site, not the wording.
 constexpr const char* kConeCenterDriftWarningText =
     ICON_FA_TRIANGLE_EXCLAMATION " Centre has moved — press Analyze to update the list.";
 
 }  // namespace
+
+const char* ConeCenterDriftWarningText() {
+  return kConeCenterDriftWarningText;
+}
 
 float AnalyzeDriftWarningHeight(float wrap_width) {
   const char* const text = kConeCenterDriftWarningText;
@@ -2079,9 +2096,7 @@ void RenderAnalyzeDriftWarning(GuiState& state, float wrap_width) {
   // Pin the wrap width the height was measured at: TextWrapped keeps an already-set wrap
   // position, so this push — not the viewport's own width guessing — is what the draw wraps at.
   ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + wrap_width);
-  ImGui::PushStyleColor(ImGuiCol_Text, WarningTextColor());
-  ImGui::TextWrapped("%s", kConeCenterDriftWarningText);
-  ImGui::PopStyleColor();
+  WarningTextWrapped("%s", kConeCenterDriftWarningText);
   ImGui::PopTextWrapPos();
   // The submitted item's FULL rect: the layout footprint of every wrapped line, independent of
   // which vertices RenderText went on to emit (it stops at the clip bottom, so a line clipped

@@ -174,23 +174,52 @@ inline const char* AnalysisPictureNotice(RunIntent intent, GuiState::SimState st
   return nullptr;
 }
 
-// Whether the analysis list on show still describes the document on the panels. kNone: there is
-// no list (no payload adopted — before the first Analyze, or while one is in flight after
-// DoAnalyze cleared the previous view). Otherwise fresh iff the document still matches the scene
-// the result was captured from, stale iff it does not — whichever way it got there: an edit, a
-// Run that committed one, a Revert that restored the previous commit. One comparison, evaluated
-// each frame, is what makes those three the same case instead of three call sites.
-//
-// The caller computes both inputs — `has_result` = analysis_result.payload != nullptr,
-// `scene_still_matches` = analysis_result.analyzed_scene && analyzed_scene->Matches(state) — so
-// this stays a function of two bools a test can enumerate, like everything else in this file.
-enum class AnalysisListFreshness { kNone, kFresh, kStale };
+// The list freshness enum lives in gui_state.hpp beside the AnalysisFreshness struct it is a
+// member of (the field holds it by value, and the reverse include would cycle).
 
+// Whether the analysis list on show still describes the document on the panels. The enum's three
+// values are documented at the definition; the comparison's callers compute both inputs —
+// `has_result` = analysis_result.payload != nullptr, `scene_still_matches` =
+// analysis_result.analyzed_scene && analyzed_scene->Matches(state) — so this stays a function of
+// two bools a test can enumerate, like everything else in this file.
 inline AnalysisListFreshness ComputeAnalysisListFreshness(bool has_result, bool scene_still_matches) {
   if (!has_result) {
     return AnalysisListFreshness::kNone;
   }
   return scene_still_matches ? AnalysisListFreshness::kFresh : AnalysisListFreshness::kStale;
+}
+
+// Two unit directions with a dot product at or above this are "the same centre" for the moved-
+// since-the-result fact: 1e-6 in the dot is ~0.08 degrees, an order of magnitude past the float
+// noise of one LUMICE_UnprojectPixel round trip and far under anything a drag produces.
+constexpr float kConeCenterSameDirDot = 1.0f - 1e-6f;
+
+// The drift comparison's pure core: the dot-product test the GuiState adapter
+// (ConeCenterDriftedFromResult, analysis_panel.cpp) and the aggregate below share. The roi /
+// validity guards stay at the adapters — here the two directions are taken at face value.
+inline bool ConeCenterDirDrifted(const float live_center[3], const float analyzed_center[3]) {
+  const float dot =
+      live_center[0] * analyzed_center[0] + live_center[1] * analyzed_center[1] + live_center[2] * analyzed_center[2];
+  return dot < kConeCenterSameDirDot;
+}
+
+// The analysis staleness facts, derived as one value: the three
+// facts the fixed faces state about the result on show — the cone centre's drift, the list's
+// freshness, the picture notice — computed together so no face re-derives its own. The GuiState
+// →scalar mapping is AnalysisFreshnessFor's (analysis_panel.cpp), the ONE adapter the per-frame
+// derivation and ConeCenterDriftedFromResult's legacy tests share; this function is the pure
+// core a unit test can enumerate. Each fact reuses the predicate that has always owned it —
+// ConeCenterDirDrifted above, ComputeAnalysisListFreshness and AnalysisPictureNotice.
+inline AnalysisFreshness ComputeAnalysisFreshness(bool has_result, bool result_is_cone_roi, bool cone_center_valid,
+                                                  const float* live_center, const float* analyzed_center,
+                                                  bool scene_still_matches, RunIntent intent,
+                                                  GuiState::SimState state) {
+  AnalysisFreshness facts;
+  facts.cone_center_drifted =
+      has_result && result_is_cone_roi && cone_center_valid && ConeCenterDirDrifted(live_center, analyzed_center);
+  facts.list = ComputeAnalysisListFreshness(has_result, scene_still_matches);
+  facts.picture_notice = AnalysisPictureNotice(intent, state);
+  return facts;
 }
 
 }  // namespace lumice::gui

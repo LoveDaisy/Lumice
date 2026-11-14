@@ -187,11 +187,13 @@ constexpr const char* kPoseViewWindowTitle = "Pose & trace";
 // re-spell themselves apart (a56). The four answer hosts no longer share the generic
 // "Physics details" / "Calculation details" pair (four same-named pairs confused them with
 // each other); each host names its non-diagnostic evidence group and its dev-diagnostics
-// group instead. The evidence groups render in every state; the diagnostics groups render
-// only while LUMICE_ANALYZE_DEBUG_DETAILS is set (env::AnalyzeDebugDetails) — the env gate
-// sits BEFORE the CollapsingHeader call, so a closed env submits neither header nor body,
-// and the storage's old expansion state survives behind the absent header for env-on to
-// restore within the same session. No flag carries `DefaultOpen`: a group is closed by
+// group instead. The evidence groups render in every state; of the diagnostics groups, the
+// Class/Point/Map diagnostics groups render only while LUMICE_ANALYZE_DEBUG_DETAILS is set
+// (env::AnalyzeDebugDetails) — the env gate sits BEFORE the CollapsingHeader call, so a closed
+// env submits neither header nor body, and the storage's old expansion state survives behind
+// the absent header for env-on to restore within the same session. The pose host's diagnostics
+// group renders in every state too: its deviation-grid toggle is a user-facing control, not a
+// dev diagnostic, so no env rides it. No flag carries `DefaultOpen`: a group is closed by
 // default, its expansion state lives in the host window's ImGui storage (session-sticky,
 // reset by restart — io.IniFilename is null, so nothing persists across processes), and each
 // window's storage is its own, so the windows' groups count independently without any
@@ -366,6 +368,16 @@ static_assert(kAnalysisConeRingCount >= 1 && kAnalysisConeRingCount <= LUMICE_MA
               "the cone ring count must be a request the C API accepts (it rejects, not truncates)");
 static_assert(kAnalysisConeDefaultRadiusDeg > 0.0f && kAnalysisConeDefaultRadiusDeg <= kAnalysisConeMaxRadiusDeg,
               "the default radius must lie inside the cone the request asks for");
+
+// The Analyze operation bar's Rays(M) slider track, in logical points: the width the bar's slot
+// budget reserves for the track proper (SliderWithInput lays the pair out inside it, the label
+// column on top of it). gui_test's operation-boundary case asserts the rendered track at this
+// value +-5 pt and the two-row template at the widths this demand produces, so a change here is
+// a re-calibration, not a tweak. It must stay far above the pair's 40 pt usable-track floor: at
+// ordinary bar widths the floor must never arm — it only catches widths the bar genuinely
+// cannot hold.
+constexpr float kAnalysisRayBudgetTrackPt = 120.0f;
+static_assert(kAnalysisRayBudgetTrackPt >= 100.0f, "the track stays well above the 40 pt usable-track floor");
 // The cone-centre marker's grab radius on the preview, in logical points around the projected
 // centre: inside it the cursor is a hand and a press drags the marker instead of orbiting the
 // camera. A feel value, not a ruling — there is no proxy to measure it by, so it is one number in

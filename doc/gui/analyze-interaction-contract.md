@@ -134,7 +134,7 @@ coordinates」，归属事实）；各查询面自己的等待/取消/拒答态�
 | 分类 | 内容 | Analyze 内形态 | 默认展开 | 可达入口 |
 |---|---|---|---|---|
 | **场景编辑**（sim-tier 文档） | Sun（高度角/直径/光谱）；晶体与滤镜（层/条目）；Rays/Max hits/GPU（渲染运行预算） | Sun 组就地展开可编辑；晶体/滤镜 = **入口行**（身份＋编辑入口），参数控件只在 Entry Edit；Simulation（渲染运行预算）= **默认折叠的就地编辑组**（同控件函数、同 id 语义；已落地） | Sun 展开；晶体列表展开；Simulation 折叠（打开即就地编辑，编辑仍走显式 Run 合同：kModified、无自动重跑） | Sun 滑条就地；晶体行点击开 Entry Edit（现路径：`analyze_workspace.cpp:104`→`panels.cpp:2095`→`panels.cpp:2077`，模态形态不变）；Simulation 折叠组就地 |
-| **运行设置**（分析请求参数） | 区域选择、锥心、分析半径、分析 Rays 预算、Analyze/Stop | 主视图下缘操作条（已落地：区域两选＋半径＋预算＋Analyze/Stop，宽单行/窄双行；锥心与运行读数进固定状态视口，列表对称/搜索先于新鲜度报告） | 操作条常驻（同档两 ROI 同高，见 §15） | 主视图下缘 |
+| **运行设置**（分析请求参数） | 区域选择、锥心、分析半径、分析 Rays 预算、Analyze/Stop | 主视图下缘操作条（已落地：区域两选＋半径＋Analyze/Stop＋Infinite rays＋预算 Rays(M)，宽单行/窄双行；Whole sky 下半径灰掉仍占槽，见 §15；锥心与运行读数进固定状态视口，列表对称/搜索先于新鲜度报告） | 操作条常驻（同档两 ROI 同高，见 §15） | 主视图下缘 |
 | **观察/辅助线**（display-tier） | 镜头类型/FOV/视角/曝光/背景；辅助线组（网格/地平线/太阳路径/标注圆） | 左栏观察组；与 Render 共用同一显示状态源（§5.4），不新造第二套 | 镜头＋辅助线常用组展开；其余组折叠；折叠态会话内保留 | 左栏 |
 
 **晶体入口与参数控件的区别表达**（验收约束）：左栏晶体行是**入口与身份**（一行一条目，点击开
@@ -262,7 +262,7 @@ Render 与 Analyze 共享**同一份**取景/曝光/辅助线显示状态（disp
 
 > **现役共享相机/冻结源合同**：[共享相机与冻结结果显示](raypath-view-camera.md) §6–8为唯一规则。
 > 两图同源镜头与输入，纯观察重投影单一全天空 reference；固定槽忙时 Cancel，取消/错误后 Retry，idle 禁用 Retry。
-> 原角宽/完成前缀/λ/n可辨。2026-11-08 owner 决定移除 refine 整链（设计史与理由见相机合同§7），不再捕获取景。Fit/Full sky是会影响主图的共享预设；首图auto-Fit及隐式第二次查询已退役。
+> 原角宽/完成前缀/λ/n可辨。2026-11-08 owner 决定移除 refine 整链（设计史与理由见相机合同§7），不再捕获取景。Fit/Full sky 共享预设已退役（2026-11-13，见相机合同§6.3）；首图auto-Fit及隐式第二次查询已退役。
 > 正确性/资源持有证据与未签成本边界见该文§10，不把设计离屏数据当最终双窗呈现证书。
 > 本节仍拥有稳定操作/状态/报告区域与Pose双入口，新增质量动作不进入共享顶栏、不推挤画布。
 
@@ -271,7 +271,7 @@ Render 与 Analyze 共享**同一份**取景/曝光/辅助线显示状态（disp
 > （信息区比例存会话 `GuiState::analyze_raypath_view_info_ratio`，两下限 200/160 钳制，§4.2 的
 > 实现片校准值）；窗级最小尺寸 480×360（§11 R3）由 `SetNextWindowSizeConstraints` 逐帧钳制落实，
 > 用户可达的最小窗即验收过的最窄布局域；右区（`##AnalyzeRaypathInfo`）= 类身份行（列表同词
-> `SelectedClassRowLabelFor`，无选择空态）、λ 控制、Fit/Full sky、caliber 块、天空点输入、图例
+> `SelectedClassRowLabelFor`，无选择空态）、λ 控制、caliber 块、天空点输入、图例
 > （原生滚轮滚动；全部条目 Bullet+TextWrapped 换行——限定语在最窄信息区可读）；左区 = raster +
 > 手势 + 四态状态行（画布侧）；cursor 读数按既有裁决留在画布。Overlay 三件套落地：标记按引擎
 > kind 词汇形状/配色（certified/finite 实心、其余描边）、单位置单 tooltip（按观测键分组、同键
@@ -282,7 +282,7 @@ Render 与 Analyze 共享**同一份**取景/曝光/辅助线显示状态（disp
 | 打开目标 | **光路列表类行点击** = 选中该类并确保窗口打开（已打开则同步内容）。同型先例：晶体卡片点击开 Entry Edit（用户举例的「自然的内容点击」）。关闭后再次点击类行重新打开 |
 | 常开同步 | 打开期间跟随当前选中类：切类 → 窗内容同步（地图面按既有机制丢弃旧类会话、新意图重发，`analyze_survey.hpp:157-163`）；不要求关闭再打开 |
 | 未选中类时 | 窗可开着但显示诚实空态（无选择态文案沿用） |
-| 内容 | 左区 = 类天空分布参考图（raster + 叠加对象 + 手势：同源相机滚轮/裸图转轨/Alt或Option设天空点/拖marker）；右区 = 图面读数与操作：λ 控制、Fit/Full sky、天空点输入、Pose & trace 就地入口及 3D 用途/前置说明，后接身份/caliber/图例的滚动报告（cursor 读数留在画布——画布反馈归画布的既有裁决） |
+| 内容 | 左区 = 类天空分布参考图（raster + 叠加对象 + 手势：同源相机滚轮/裸图转轨/Alt或Option设天空点/拖marker）；右区 = 图面读数与操作：λ 控制、天空点输入、Pose & trace 就地入口及 3D 用途/前置说明，后接身份/caliber/图例的滚动报告（cursor 读数留在画布——画布反馈归画布的既有裁决） |
 | Overlay 整理 | 图例先行（标记含义可理解）；悬停按对象组织（每对象一条，重叠对象聚合为一组说明）；同位置同含义聚合展示、不同来源保留可检索信息——具体标记形状、聚合与选中交互是 §14 自由度 |
 | 与主窗分工 | 右区只放图面伴读信息；survey 报告/类概览只在主窗右下（§2.2 不重复堆放） |
 | 关闭重开 | 关窗不关文档、不取消在途查询（§8）；重开显示当前采纳结果或如实等待态 |
@@ -343,10 +343,10 @@ Render 与 Analyze 共享**同一份**取景/曝光/辅助线显示状态（disp
 | 工作区切换（Render↔Analyze） | 在途查询继续跑（不取消不清理），状态栏查询段持续显示；主图按压在离开时取消（未释放仍吞压）、pick 链沿原规则解除；取景连续（§5.4）。**755.5 修订**：帧泵上提至 `RenderWorkspacePanels` 入口——每个 GUI 帧（两工作区、两分析窗全关的帧在内）统一 drain 四邮箱、过采纳门、维持 level-trigger，在飞查询的完成与采纳不依赖任何窗口是否绘制；窗内 λ/天空点输入即时生效的语义不变（窗是渲染面，不再是泵的宿主） | 泵共享入口 `PumpAnalyzeQueries`（`analyze_workspace.cpp`，`RenderWorkspacePanels` 入口调用）；pick 清理（`app_panels.cpp`）；状态栏段（`app_panels.cpp`） |
 | New | 保留当前 Render/Analyze **mode**；新文档其余状态仍按原规则重置（含 analysis 列表、选择、天空点、查询意图与绑定释放）。两窗随新 GuiState 关闭，分隔比例回到默认；再次类行点击重开显示诚实空态；窗几何保留 | `DoNew` → `ReplaceDocumentState` 只迁移 mode（`app.cpp`）；4 文档切换 reason 清空 analysis（`gui-state-governance.md` §10.2）；`ReleaseScene`（`analyze_survey.hpp`） |
 | Open | 成功 JSON/blank LMC/baked LMC 同样保留 mode，其他重置仍按原原因；blank 清旧图，baked 显示文件图。未保存提示 Cancel、空路径与加载失败不改模式或旧文档身份；不新增跨启动记忆 | `DoOpen` → `ReplaceDocumentState` → per-reason reset owner；解析器不迁移会话 |
-| Revert | 分析列表**保留**＋新鲜度横幅如实（stale 指令：press Analyze）；analysis 会话保留（请求参数不属于文档）；查询绑定不变 | kRevert 跳过 analysis 清空（`gui-state-governance.md` §10.1/10.2）；横幅 `analysis_panel.cpp:1363-1373` |
+| Revert | 分析列表**保留**＋失效提示面如实（五面同规则，见「编辑场景后」行：stale 指令：press Analyze）；analysis 会话保留（请求参数不属于文档）；查询绑定不变 | kRevert 跳过 analysis 清空（`gui-state-governance.md` §10.1/10.2）；失效统一派生（§10.1） |
 | 取消（survey/map/point） | 面级取消按钮：意图失效＋latch（同选择不重发）；完成态显示「cancelled」行；迟到结果按 id 丢弃 | survey 取消（`analyze_workspace.cpp:327-335`）；point 取消（`analyze_point_view.cpp:1470-1478`）；`cancelled_for_key`（`analyze_survey.hpp:117-118,247-249`） |
 | 取消（意图撤回） | Esc 取消主图动作（吞压至释放）/pick 链；map质量槽有Cancel/Retry，ray面仍无取消按钮（撤销=latch随reset）；Esc 不取消在途查询（后台语义，取消走按钮） | 主图 press owner 清理（`RenderWorkspacePanels`）；map/ray latch 语义（`analyze_survey.hpp:195-198,369-372`） |
-| 编辑场景后 | 三个位置各自如实：列表横幅（stale 不清列表）、主视图旧图注（分析图是编辑前配置）、状态栏 Modified＋顶栏 ⚠/Revert；分析触发显式（无自动重跑） | 新鲜度谓词（`gui-state-governance.md` §10.1）；`AnalysisPictureNotice`（`analyze_workspace.cpp:295-299`）；ReconcileSimState |
+| 编辑场景后 | 五个位置各自如实（2026-11-14 失效统一，单一派生状态）：列表横幅（stale 不清列表）、主视图旧图注（分析图是编辑前配置）、主窗漂移带（锥心 vs 分析中心，779.1）、Raypath view 提示条（列表过期＋Point 模式锥心漂移各一行）、Pose & trace 提示条（列表过期一行）；状态栏 Modified＋顶栏 ⚠/Revert 不变；分析触发显式（无自动重跑）——五个提示面全部 notice-only，无按钮、无动作、不重发 | 统一派生状态 `GuiState::analysis_freshness`（`gui-state-governance.md` §10.1：每帧单点派生，五面只读）；`AnalysisPictureNotice`（`sim_state_rules.hpp`）；ReconcileSimState |
 
 窗口开合状态的归属声明：两窗的开/合是 **T-session 显示态**（`left_panel_collapsed` 同族——不是文档
 状态、不参与 snapshot/diff、文档切换按 per-reason 规则处置）。这是退役浮窗 `window_open` 字段的
@@ -429,7 +429,7 @@ caliber）就近在对应窗口；未知/拒答/partial 不以空白或零冒充
 | R3 | Raypath view 窗（默认 900×560；最窄 480×360） | 图区方形（raster 边 = 可用高，代码下限 64）；右区：λ 滑条 ≈140＋按钮行；cursor 读数 443（折行）；天空点输入行 ≈280（90＋90＋87＋间距）；caliber 行集（TextWrapped）；等待行 333 | 900×560：图 ≈520 见方＋右区 260 全部容纳 ✓ | 480×360：图 ≈140 见方（高度份额 0.52 规则沿用，`analyze_map_view.cpp:1198`；建议下限 160 在此窗高内压到 ≈140，≥代码下限 64）＋右区 220：输入行折行、读数折行 | **容纳**（条件：右区输入行/读数允许折行；图面允许压到建议下限以下的代码下限之上） |
 | R4 | 姿态窗（默认 960×720；最窄 640×680，均钳视口；756 随 D5 两区全形上调）左区 3D＋右列（D5 默认 0.45，下限 221/330）。右列上区·globe 逐项高度账（行高 = Frame 21 / 折行文本行 19，ItemSpacing.y 3） | 左 3D：标题＋帧单选＋canvas（可缩至真实切片让位固定行，压缩让步下限）＋图例＋transmittance（折行）。右列上区行集（内容宽：默认 304 / 最窄 204）：标题＋「Deviation grid」（≤304 并排 / >204 标题独占行、开关折叠）；说明 2–3 行；partial 注（条件行）2–3 行；分量 combo 21；canvas（代码下限 60）；滑条/播放 21＋样本读数 2 行（**756 移除权重条与其说明行：固定栈 137→123，globe 下限 235→221**） | 默认右列 ≈320：固定行合计 ≈215 → canvas ≈95 ≥ 60 ✓ 容纳（worst case 贴边） | 最窄右列 220（内容宽 204）：**固定交互栈 = 标题 21＋combo 21＋canvas 60＋滑条/播放 21 = 123**；D5 端点共存（640×680，denom ≈633 ≥ 221＋330）：**globe 实测 284（≥221 ✓）、曲线实测 348（≥330 ✓）**，说明折叠行＋partial 注＋样本读数进上区滚动区（滚动可达，不删除） | **容纳（有条件，逐项账闭合）**：最窄窗依赖两段结构；交互控件全程可达，partial 状态滚动可达不删除；680 高为 D5 两区全形的存在证明（低于它走 ③ 比例回退，曲线区 canvas 让步至真实切片、再退区内滚动） |
 | R5 | 姿态窗右列下区·Contribution Curve（756） | 固定栈：标题＋积分回显（折行，最窄 2–3 行）＋口径常驻行 1–2 行＋图例（五臂，同排装不下折行）＋canvas（全形预算 ≈84：plot ≈46＋标注条；对数刻度按绘图区高度自适应 label 步长，动态范围跨数百 decade 时只标注均匀稀疏的指数）＋读数最坏 3 行；滚动区：partial 注＋测度注册注（条件行）＋因素读数 Bullet 行集 | 高 ≈370（实测 960×720 右列）：canvas ≈181（实测）✓ | 高 348（实测 640×680，≥下限 330）：canvas ≈129 ✓；固定栈＋canvas 全可见，SM=0（实测），因素读数进滚动区 | **容纳（有条件）**：canvas 让步链 = 全形 → 真实切片（≥40）→ 区内滚动（无 canvas）；`pose_curve_region_draws_and_moves_the_shared_cursor` 的探针行携带实测几何 |
-| R6 | 主视图（默认 ≈920×912−操作条；最窄 ≈464×~500） | 画面本身无最小语义；操作条：区域两选 ≈130＋Analyze ≈70＋预算滑条 ≈180＋半径滑条 ≈220（现 220px 宽 `analysis_panel.cpp:1471`）→ 单行 ≈620 | 默认单行容纳 ✓ | 有效宽 464（§4.2 钳制）：单行放不下 → **折行裁决**（区域+Analyze 一行，滑条一行），操作条完整可达；锥心中心读数 302px 移入操作条第二行或 tooltip | **容纳**（条件：操作条允许折行） |
+| R6 | 主视图（默认 ≈920×912−操作条；最窄 ≈464×~500） | 画面本身无最小语义；操作条新序（区域两选＋Radius＋Analyze/Stop＋Infinite rays｜Rays(M)）实测账 @1x（校准腿 `MeasureOperationWidths` 单源）：row1 = 465、单行需求 = 713、Rays(M) 轨道 = 120（`kAnalysisRayBudgetTrackPt`） | 默认单行容纳 ✓（默认窗主视图 ≈900 > 713） | 有效宽 464（§4.2 钳制）：row1 实测 465 > 464 → Infinite rays 折行成三行，既有 `##AnalyzeOpBarScroll` 降级托管、滚轮可达（窄档腿实测证据）；不以压缩 Rays(M) 槽作 row1 溢出修复 | **容纳**（条件：操作带降级滚可达） |
 | R7 | 右列下区·诊断（D1/D2 默认 ≈380×502） | 类概览模型行集（TextWrapped）；身份行 261；等待行（基础句＋阶段从句＋耗时后缀 ≈350 折行）；点摘要（分量行 ≈200/行）＋点文档答案与完整性证据：caliber 行集、rank-0 质量数值行集、无分量 reach 判定＋discovery 完备性注、分量端点/积分/覆盖行（全部折行，§10 特殊完成态行的 owner 区）；未运行引导块 ≈4 行 ≈100 | 380×502 ✓（行集长时区内滚动） | 有效宽 260×~315：全部折行容纳；行集极端长时区内滚动；引导块 4 行 ≈100 < 315 ✓ | **容纳**；未运行态引导块完整可见（§9.1 一等设计的预算证据） |
 
 ### 11.2 核对结论
@@ -472,7 +472,7 @@ Analyze 按钮、In frame/Point 单选共用该门控，`analysis_panel.cpp:1383
 | ② 半球试错 | panorama 固定 dual equal-area 180°，定位仅靠 Upper/Lower 切换 | `analyze_workspace.cpp:133-137,210-216` |
 | ② 半径 | Radius 滑条（显示期重求和，不起跑） | `analysis_panel.cpp:1456-1486` |
 | ②′ In frame 区域语义 | 画幅 = 点击时刻预览画幅（无预览时文档分辨率） | `app.cpp:1816-1824` |
-| ③ 地图呈现与手势 | 类行选中后地图自动呈现于下行左半；同源相机滚轮/裸图转轨/Alt或Option设天空点/拖marker；Fit/Full sky；λ 滑条 | `analyze_map_view.cpp:1076-1078,1121-1147,1243-1316` |
+| ③ 地图呈现与手势 | 类行选中后地图自动呈现于下行左半；同源相机滚轮/裸图转轨/Alt或Option设天空点/拖marker；λ 滑条 | `analyze_map_view.cpp:1076-1078,1121-1147,1243-1316` |
 | ④ 天空点输入 | 地图点选/拖 marker；alt-az 输入 Set sky point | `analyze_map_view.cpp:1257-1313,1381-1419` |
 | ④ 姿态呈现与交互 | globe＋Raypath 3D＋因素读数聚于 Pose & trace 窗（755.5 起，§16.4）；窗入口=主窗 Selection 头部与 Raypath view 就位的两只命名按钮（§16.3 as-built），Point detail 正文链接退役；分量/样本/播放/帧/orbit | `analyze_workspace.cpp`（RenderAnalyzeEntryActions）；`analyze_map_view.cpp`（就地按钮）；`analyze_point_view.cpp`（窗体与三面） |
 | ⑤ 场景编辑 | 左栏 Sun/Simulation 组就地；晶体行点击开 Entry Edit | `panels.cpp:2162-2258`；`analyze_workspace.cpp:80-112`；`panels.cpp:2077-2095` |
@@ -571,10 +571,13 @@ Windows/Linux 真机输入已测。最终执行结果存于测试报告；这些
   拒答/取消不移动画布承载矩形与主要操作锚点。可变内容只能在自己的报告中换行/内滚；不读上帧
   消息高度决定本帧画布。零高不传给 BeginChild（它意味着填满剩余区，而非没有区域）。
 - **主图**：无纹理仍提交完整 picture child，Run 指引在其中；状态视口与操作带位于图下，操作贴底。
-  宽档单行，窄档两行：第一行 Whole sky/Point、Analyze/Stop、Infinite rays，第二行 Rays(M)/Radius。
-  阈值是完整 Point 控制足迹（字形、frame、输入框、标签、间距）的和，由实际主列宽和主题倍率判断。
-  Whole sky 不画无关半径值，但保留同档槽高。小到两行完整足迹也不能容纳时，操作带内部滚动，
-  不产生水平滚动、不把预算或执行动作永久裁掉。锥心漂移告警（分析完成后挪动锥心）是主图与
+  宽档单行，窄档两行：第一行 Whole sky/Point、Radius、Analyze/Stop、Infinite rays，第二行 Rays(M)；
+  Radius 紧随区域两选，Whole sky 下灰掉——禁用可见、仍占同档槽位（灰掉的是交互面，不是缺席：
+  请求模式是 enabled 的唯一权威，Point 模式无论有无结果都可驱），两 ROI 同档同高不变。
+  定档阈值是完整控制足迹（字形、frame、输入框、标签、间距）按该顺序的和，行需求消费控件的实帧
+  步进（单源 `MeasureOperationWidths`；gui_test 校准腿以实测足迹 ±1pt 钉定档边界、±5pt 钉 Rays(M)
+  轨道宽）。小到两行完整足迹也不能容纳时，操作带内部滚动，不产生水平滚动、不把预算或执行动作
+  永久裁掉；最窄窗的实测边界账见 §11.1 R6。锥心漂移告警（分析完成后挪动锥心）是主图与
   状态视口之间的独立固定带（779.1）：高度按活字体与实际宽度实测换行，出现／消失只改变主图
   高度，不在状态视口的滚动流内，也不改分隔比例；其存在期间旧结果与动作照常。中心、rings、
   结果计数、截断、运行与旧图提示在固定高度状态视口；同时成立的事实分别保留，全文能内滚读取。
@@ -582,11 +585,16 @@ Windows/Linux 真机输入已测。最终执行结果存于测试报告；这些
   表格吸收中间份额，空结果保留该份额，Exclude/CSV 贴底。极端倍率只按几何把固定头移入可恢复内滚，
   不由 stale 文案决定是否滚动。
 - **地图**：左侧 Overlays、方形 canvas、状态报告依次分配；waiting/retrying 不在 canvas 前加行。
-  右侧先 λ/reference、Fit/Full sky、alt/az、Set/Clear、Pose & trace 入口与常驻 3D 用途/类＋天空点说明；
+  窗内容区顶部的失效提示条（列表过期 + Point 模式锥心漂移各一行，统一派生状态的两个事实位，
+  notice-only）位于 D3 分割之上：出现／消失只降低区域总高，不改存储的分割比例——主图漂移带
+  同一几何合同。
+  右侧先 λ/reference、alt/az、Set/Clear、Pose & trace 入口与常驻 3D 用途/类＋天空点说明；
   后接身份/caliber/图例报告。入口的标签分行只按可见列宽决定；查询状态与报告滚动不改变其槽位。
   reference 与 Clear 不适用时保留禁用槽。cursor 仍是画布内非流式读数；地图在同身份 Retry 时保旧图，身份门不变。
 - **Pose**：globe 的分量槽（单分量禁用、无分量诚实占位）、canvas、样本/播放槽常驻；无样本时禁用，
   不以 0 假装有样本。3D 的帧选择与 canvas 常驻，描述/partial/拒答/图例/transmittance 进报告。
+  窗内容区顶部的失效提示条（列表过期一行，notice-only）先于 D4 分割绘制：绝对布局整体下移、
+  不重写摆放，出现／消失只降低六元素布局的高度预算。
   曲线的可变身份/积分/图例与读数也在报告；图仍保留五臂、对数轴、精确零行、不可用断线与同一游标语义。
   旧点/样本不匹配时只保留结构，绝不绘制失配旧内容。
 - **可见区而非请求尺寸**：浮窗的名义下限可能高于实际 viewport。分隔应划分实际可见 client 区，
@@ -613,6 +621,10 @@ Windows/Linux 真机输入已测。最终执行结果存于测试报告；这些
 > 上手批量复核。
 
 统一三种处置，不以字段数量等权分配常驻空间：
+
+窗口级的例外面：Raypath view 内容区顶部的失效提示条（列表过期 / Point 模式锥心漂移各一行，
+统一派生状态 `gui-state-governance.md` §10.1，notice-only）不属于下列三种处置的任何一层——
+它是窗口状态面，与主窗漂移带同族；条下才是本节的分层内容。
 
 - **默认层保留**：当前对象、光学结论、必要量纲、结论适用范围、下一步操作。固定操作栈之外的
   默认答案仍可在自己的报告内滚动；"默认"不是无限堆成固定头。已交付的默认层 = 采纳文档的
@@ -648,8 +660,8 @@ Windows/Linux 真机输入已测。最终执行结果存于测试报告；这些
 
 #### 16.1.1 Raypath view 右栏逐项处置账（as-built 落位）
 
-右栏固定槽序（已交付）：**身份 → 短状态/Cancel或Retry（同一行）→ λ/reference → Fit/Full sky
-＋"· shared view" → 天空点输入/Set/Clear/target → Pose & trace → 可滚动答案区**。答案区内先
+右栏固定槽序（已交付）：**身份 → 短状态/Cancel或Retry（同一行）→ λ/reference → 天空点输入/Set/Clear/target
+→ Pose & trace → 可滚动答案区**。答案区内先
 类结论、再已设天空点答案，随后地图口径、短图例与各自折叠详情。图侧与右侧状态投影同一结果，
 不复制执行日志；partial/error/旧图限制同时成立不互相覆盖。小窗按完整操作足迹换行/几何退化，
 不靠隐藏按钮省空间（最窄 480×360 实测 `ScrollMax == 0`，由
@@ -660,7 +672,7 @@ Windows/Linux 真机输入已测。最终执行结果存于测试报告；这些
 | 类身份 | **默认**，右栏第一行 | `SelectedClassRowLabelFor` 词源不变；报告内旧副本删除 |
 | Cancel/Retry＋状态 | **默认**，同一行 | 按钮＋SameLine 状态文本；行高=按钮高恒定（§15 稳定空间）；idle 画按钮本身（禁用槽），常驻句删除、解释进 tooltip |
 | λ / reference | **默认**；λ 行同控件回显为唯一 owner | slider 回显＋tooltip 名来源规则；"尚未回显"句默认保留在报告；caliber 各行不再含 λ |
-| Fit / Full sky | **默认**；同组标一次 "· shared view" | 标记 fits 可容则同行、不容则换行（几何，不隐藏）；两 tooltip 各自解释影响两图且不重算 |
+| Fit / Full sky | **退役**（2026-11-13 owner 裁定：两面共享同一已同步相机、手势同时在两图生效，一键适配/回全天无独占工作） | 两按钮与同组 shared-view 注记拆除；取景归两图本身的 wheel/拖拽；退役记录与镜头切换入口见 [raypath-view-camera.md](raypath-view-camera.md) §6.3 |
 | alt/az、Set/Clear | **默认**输入组，当前目标紧邻 | target 行紧邻（意图与已采纳答案的区分保留：输入组 target = 意图，答案区 target = 采纳文档）；picked/typed 来源词进 target 行 tooltip；报告内回显删除 |
 | Pose & trace 与用途长文 | **默认**按钮；无类/无点短下一步 | 用途文进 tooltip（字节 pin `PoseButtonTooltip()`）；短下一步一行（"Select a class first." / "Set a sky point above."） |
 | reference cell δ/az 角宽、网格尺寸、sample_count、kept events、member 计数 | **Map diagnostics**（env 门控，`##map_caliber`） | `MapCaliberDiagnosticsLines`：geometry basis 原串（自证据组迁入）＋cell+view+lattice 一行、members+kept 一行；数值完整保留 |
@@ -917,6 +929,9 @@ segmented 双格**（`SameLine(0,0)` flush）：segmented 读作互斥模式切�
 > 区）；字段 `analyze_pose_view_{right,globe,left_row,curve_canvas}_ratio`（全会话显示态，
 > `gui_state_tiers.hpp` 四行 kSession）；常量 `gui_constants.hpp` 的 `kPoseView*` 族。
 
+窗口状态面：内容区顶部的失效提示条（列表过期一行，统一派生状态 `gui-state-governance.md`
+§10.1，notice-only）先于 D4 分割绘制——绝对布局整体下移、不重写摆放；条下才是本节描述的结构。
+
 **结构**（已运行、已测试）：
 
 ```text
@@ -990,9 +1005,10 @@ labelled decade major 的窄窗以窗口上下边界值补位（置于绘图框�
 可容纳者），左栏宽度计入边界值标签。
 因素区（`RenderPoseFactorsRegion`）承载：`PointFactorLines` 的默认层读数（永远绑
 `view.sample_index`，hover 不改它所指样本）＋measure note（默认可见）＋`Interface transmission`
-折叠组（逐接口透射率——T 的光学前提，判据梯 L3 证据行）＋env 门控的 `Pose diagnostics` 折叠组
-（deviation grid 开关自 globe 常驻栈迁入，no-grid 注记随 toggle；env 关时整组不提交，globe 本体
-与其余姿态功能不随门控）。§16.1 判据梯逐行机械套用：
+折叠组（逐接口透射率——T 的光学前提，判据梯 L3 证据行）＋`Pose diagnostics` 折叠组
+（deviation grid 开关自 globe 常驻栈迁入，no-grid 注记随 toggle；整组不设 env 门——开关是
+用户面控制项而非实现级条目——任何环境都提交，globe 本体与其余姿态功能不随门控）。
+§16.1 判据梯逐行机械套用：
 接口透射率行=P3 证据行；因素结论=L1/L2 默认层。积分/测度不可用等限制在相关读数旁默认可读。
 右上保 globe/分量/姿态游标/播放。
 

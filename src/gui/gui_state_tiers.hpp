@@ -271,6 +271,12 @@ inline constexpr const char* kDerivedFieldsExcludeList[] = {
     // analysis.started + the lifecycle observation, both written by SyncFromPoller.
     "analysis_result",
     "analysis_run_in_progress",
+    // The analysis staleness facts (AnalysisFreshness), derived once per frame at
+    // RenderWorkspacePanels' entry — ComputeAnalysisFreshness over AnalysisFreshnessFor's
+    // mapping — and read by the five fixed faces (the drift band, the list banner, the status
+    // viewport's picture notice, the two floating windows' staleness hints). A per-frame
+    // re-derivation owns no state between frames, so it never enters snapshot/diff.
+    "analysis_freshness",
     // The server's session kind as the poller last observed it (Continue's gate), written by
     // SyncFromPoller.
     "server_session_is_analysis",

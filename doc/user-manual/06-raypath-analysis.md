@@ -162,10 +162,10 @@ canvas keeps its own aspect ratio and physical pixel size: a wider canvas sees m
 than stretching a second camera. Fixed all-sky lenses cannot orbit/zoom; globe keeps its
 outside-in grab, zero effective roll and independent far-side hint.
 
-**Fit** means *Fit sampled map*: it fits the frozen full-sky reference, not a certificate of the
-class's complete support. Zero/no-band or unfittable sources disable Fit. **Full sky** selects
-the shared rectangular, full-visible, zero-pose preset. Both affect the main picture, unlock
-Look At while keeping its target, and perform no map calculation. Arrival never auto-Fits or
+The shared **Fit / Full sky** preset buttons were retired (2026-11-13 owner call: the two
+pictures share one synced camera and both respond to the mouse, so the one-shot fit / full-sky
+presets had no work left). Frame the pictures themselves — wheel out to the full sky, drag to
+re-aim; lens selection lives in the main View group. Arrival never auto-Fits or
 launches a second calculation.
 
 **One full-sky calculation, frozen display.** First selection produces one **Reference**.

@@ -324,6 +324,15 @@ struct WaitFeedbackTexts {
   std::string status_bar_query_segment;   // app_panels.cpp, the status bar's active segment
   std::string entry_hint_line;            // analyze_workspace.cpp, the Selection header's hint slot
   std::string cone_center_drift_warning;  // analysis_panel.cpp, the drift band's fixed text
+  // The staleness hints' fixed bars (the two floating windows, the unified derivation's new
+  // faces): one field per LINE, not per window — the Raypath view can show two facts at once
+  // (the list's staleness and, Point mode, the centre's drift), and each line's evidence stands
+  // alone. map_stale_hint / point_stale_hint carry the stale text, map_drift_hint the drift row
+  // (the wording is the band's own, shared through ConeCenterDriftWarningText(); the fields are
+  // per-window — a field's single-writer contract follows the render site, not the wording).
+  std::string map_stale_hint;    // analyze_map_view.cpp, the Raypath view's stale line
+  std::string map_drift_hint;    // analyze_map_view.cpp, the Raypath view's drift row
+  std::string point_stale_hint;  // analyze_point_view.cpp, the Pose & trace's stale line
   // The band's FULL item rect as submitted (GetItemRectMin/Max right after the draw), four
   // plain floats — this header keeps imgui off its include chain (the unit-test TUs compile it
   // without imgui's paths): min x, min y, max x, max y. The layout footprint every wrapped
@@ -335,6 +344,20 @@ struct WaitFeedbackTexts {
   float cone_center_drift_warning_rect_min_y = 0.0f;
   float cone_center_drift_warning_rect_max_x = 0.0f;
   float cone_center_drift_warning_rect_max_y = 0.0f;
+  // The hint bars' full item rects, the band's shape one block per line (same four floats, same
+  // completeness role: the ink answers for what was drawn, the rect for what the text occupies).
+  float map_stale_hint_rect_min_x = 0.0f;
+  float map_stale_hint_rect_min_y = 0.0f;
+  float map_stale_hint_rect_max_x = 0.0f;
+  float map_stale_hint_rect_max_y = 0.0f;
+  float map_drift_hint_rect_min_x = 0.0f;
+  float map_drift_hint_rect_min_y = 0.0f;
+  float map_drift_hint_rect_max_x = 0.0f;
+  float map_drift_hint_rect_max_y = 0.0f;
+  float point_stale_hint_rect_min_x = 0.0f;
+  float point_stale_hint_rect_min_y = 0.0f;
+  float point_stale_hint_rect_max_x = 0.0f;
+  float point_stale_hint_rect_max_y = 0.0f;
 };
 
 // ---- The ray face's session (742.6) ----------------------------------------------------------------

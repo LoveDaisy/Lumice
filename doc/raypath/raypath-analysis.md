@@ -454,7 +454,8 @@ Analyze 后出现与主窗口同级大小的界面，不是嵌在预览旁的一
 上 / 下半球切换，不提供整球。
 
 **光路视图的地图式交互**（D3，owner 提议 + 原型验证）：拖动 = 平移，滚轮 = 缩放（视图半径从
-全天到约 1.5°）；「Fit」与「Full sky」按钮。选中光路时自动 Fit：框住这条光路；若它由多个分离
+全天到约 1.5°）；「Fit」与「Full sky」按钮（原型期设计；两按钮已于 2026-11-13 退役，取景归各图
+自身的 wheel/拖拽，退役记录见相机合同 §6.3）。选中光路时自动 Fit：框住这条光路；若它由多个分离
 光斑组成（例如左右幻日），框住观察点所在的那一个。点击放观察点，并吸附到该光路的可达区域
 （点在光路够不到的地方时移到最近的可达点）——这是「只能在可行区域的采样点之间拖动」的轻量
 实现，无需额外点阵 UI。缩放后的像按视图分辨率重新求值，不是把低分辨率天空图放大：一期对这一条
@@ -721,8 +722,8 @@ new、identity、scene_edit、cancel_survey、cancel_point、document_open，池
 上下文=切工作区，covered by 既有 switch 腿 + 本片 rekey 腿的面归属规则），应用级关闭在
 gui_test 证据形态之外。「切工作区跨新面」与「会话内 Save/Open」的 covered-by：前者=采纳门键
 含 generation + 工作区切换为纯视图不写状态（742.3 as-built 成文）+ rekey 腿的面归属规则，
-后者=quick 池 file_ops 既有回归 + 本片 open 腿的 deserialize 机制（Save 的原生对话框与
-Full sky/Fit 真实点击同属 hands-on 交接项）。组合级测量（本机 M1 Max、`385fbd2c1`、
+后者=quick 池 file_ops 既有回归 + 本片 open 腿的 deserialize 机制（Save 的原生对话框同属
+hands-on 交接项）。组合级测量（本机 M1 Max、`385fbd2c1`、
 kFullyRandomJson、550 参考 λ、16 ms vsync 帧折算）：选类→概览含色散 ~2.3 s、图细化 ~0.5 s、
 拾取+点查询 ~0.45 s、轨迹 ~0.05 s、全会话 ~4 s（C03 类 ~4.7 s、C15 ~1.1 s）；A→B 全落定
 ~7.4 s；Cancel survey 撤回在 δ 相数秒回报。诚实边界（同批钉住）：`kDiscovered` 允许零分量

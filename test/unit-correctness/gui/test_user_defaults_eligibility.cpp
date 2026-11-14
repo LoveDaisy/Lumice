@@ -95,7 +95,10 @@ namespace {
 // `analyze_pose_view_curve_canvas_ratio` (D7 — the curve region's canvas | companion share;
 // 0.0f sentinel = never dragged). Layout choices of this session, ineligible like
 // analyze_raypath_view_info_ratio. None is serialized, so no row can reach the panel.
-constexpr std::size_t kExpectedGovernedFieldCount = 97;
+// 98 with `analysis_freshness` (the analysis staleness facts' unified derivation),
+// kDerivedFieldsExcludeList: a per-frame re-derivation owns no state between frames — nothing
+// to pre-set, so ineligible as every derived row is.
+constexpr std::size_t kExpectedGovernedFieldCount = 98;
 
 std::vector<std::string> AllGovernedFieldNames() {
   std::vector<std::string> names;

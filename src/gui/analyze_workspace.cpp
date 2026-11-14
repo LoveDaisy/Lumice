@@ -15,6 +15,7 @@
 #include "gui/analyze_overview.hpp"
 #include "gui/analyze_point_view.hpp"
 #include "gui/analyze_region_wheel.hpp"
+#include "gui/analyze_ui_widgets.hpp"  // DisabledWrappedText / WarningTextWrapped / AnalyzeSplitter
 #include "gui/analyze_workspace.hpp"
 #include "gui/app.hpp"
 #include "gui/destructive_style.hpp"
@@ -50,23 +51,11 @@ void RenderAnalysisIdleDiagnostics(GuiState& state) {
   // The region's text wraps, never clips: ImGui's BulletText/Text/TextDisabled size a single
   // line and clip at the region's right edge — exactly where a sentence gets interesting at the
   // right column's 260 pt floor (analyze_overview.cpp's conclusions learned this first). The
-  // bullet+wrapped pair is BulletText's wrapping shape; DisabledWrapped here is the color pair
-  // by hand (ImGui has no DisabledTextWrapped).
-  const auto disabled_wrapped = [](const char* fmt, auto... args) {
-    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-    ImGui::TextWrapped(fmt, args...);
-    ImGui::PopStyleColor();
-  };
-  const auto disabled_bullet_wrapped = [](const char* fmt, auto... args) {
-    ImGui::Bullet();
-    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-    ImGui::TextWrapped(fmt, args...);
-    ImGui::PopStyleColor();
-  };
+  // disabled colour pairs live in analyze_ui_widgets.hpp; the bullet is Bullet()+TextWrapped.
   // ---- The entry guidance: where an analysis starts from, as the state actually is. ----
   if (state.analysis_result.payload == nullptr) {
     // The list's own empty-state line (RenderResultList's, one source for the same fact).
-    disabled_wrapped("No result yet. Choose a region and press Analyze.");
+    DisabledWrappedText("No result yet. Choose a region and press Analyze.");
   }
   // The same branch logic as the panorama's empty state: without a picture of the document the
   // first step is the top bar's Run; with one, the main view's operation bar is the
@@ -108,108 +97,34 @@ void RenderAnalysisIdleDiagnostics(GuiState& state) {
   // its presence is what a case pins (the bullets themselves are plain text). ----
   ImGui::BeginChild("##AnalyzeIdleSummary", ImVec2(0.0f, 0.0f), ImGuiChildFlags_AutoResizeY);
   ImGui::Separator();
-  disabled_bullet_wrapped("Region: %s", RoiModeLabel(a.roi_mode));
+  ImGui::Bullet();
+  DisabledWrappedText("Region: %s", RoiModeLabel(a.roi_mode));
   if (a.roi_mode == LUMICE_RAYPATH_ROI_CONE) {
     if (a.cone_center_valid) {
       float alt = 0.0f;
       float az = 0.0f;
       DirToAltAz(a.cone_center_dir, &alt, &az);
-      disabled_bullet_wrapped("Cone centre: altitude %.1f deg, azimuth %.1f deg", alt, az);
+      ImGui::Bullet();
+      DisabledWrappedText("Cone centre: altitude %.1f°, azimuth %.1f°", alt, az);
     } else {
-      disabled_bullet_wrapped("Cone centre: not set");
+      ImGui::Bullet();
+      DisabledWrappedText("Cone centre: not set");
     }
   }
   if (a.infinite) {
-    disabled_bullet_wrapped("Analysis budget: infinite rays");
+    ImGui::Bullet();
+    DisabledWrappedText("Analysis budget: infinite rays");
   } else {
-    disabled_bullet_wrapped("Analysis budget: %.1fM rays", a.ray_num_millions);
+    ImGui::Bullet();
+    DisabledWrappedText("Analysis budget: %.1fM rays", a.ray_num_millions);
   }
   if (state.sim_state == GuiState::SimState::kModified) {
-    ImGui::PushStyleColor(ImGuiCol_Text, WarningTextColor());
-    ImGui::TextWrapped("Document: modified — the picture predates the edit.");
-    ImGui::PopStyleColor();
+    WarningTextWrapped("Document: modified — the picture predates the edit.");
   } else {
-    disabled_bullet_wrapped("Document: up to date");
+    ImGui::Bullet();
+    DisabledWrappedText("Document: up to date");
   }
   ImGui::EndChild();
-}
-
-// D1 (main view | right column), the row splitter's vertical counterpart — the same recipe
-// (invisible button + hover/active line + the one affordance line + delta-only write), with the
-// resize-EW cursor. Dragging the hand right narrows the right column: the ratio (the right
-// column's share) decreases by the travel. The pixel-floor clamp (gui_constants.hpp) pins the
-// write at the floors of this window width — the layout re-derives the pixels every frame, the
-// stored ratio stays the split's identity. `area_w` is a size, not a position: sizes survive the
-// viewport-origin translation the splitter must not read (see MiddleRowsSplitter).
-void RightColumnSplitter(const char* id, float height, float* ratio, float area_w) {
-  const float width = UiPx(kAnalyzeSplitterSize);
-  ImGui::InvisibleButton(id, ImVec2(width, height));
-  const bool hovered = ImGui::IsItemHovered();
-  const bool active = ImGui::IsItemActive();
-  const float mouse_dx = ImGui::GetIO().MouseDelta.x;
-  if (active && mouse_dx != 0.0f && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
-    // Delta from the displayed boundary (see MiddleRowsSplitter): at a window whose layout is
-    // clamped away from the stored ratio, a raw write makes the first stretch of the drag dead
-    // while the strip stands still. The clamp bounds only exist in the normal tier — when the
-    // two floors cannot both fit, lower > upper and std::clamp's precondition is violated
-    // (libc++ hardening aborts) — so the tiers branch BEFORE any clamp: the compressed tier
-    // writes its fixed split directly, the normal tier computes raw inside its ordered bounds.
-    const float right_floor = UiPx(kAnalyzeRightColMinWidth);
-    const float main_floor = UiPx(kAnalyzeMainViewMinWidth);
-    if (area_w >= right_floor + main_floor + width) {
-      const float lo = right_floor / area_w;
-      const float hi = (area_w - width - main_floor) / area_w;
-      *ratio = std::clamp(std::clamp(*ratio, lo, hi) - mouse_dx / area_w, lo, hi);
-    } else {
-      // Both floors cannot fit: the contract's ③ split is the only reachable one, so the ratio
-      // pins to it while the window is this narrow.
-      *ratio = right_floor / (right_floor + main_floor);
-    }
-  }
-  if (hovered || active) {
-    ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
-  }
-  const ImU32 line_col = ImGui::GetColorU32(active  ? ImGuiCol_SeparatorActive :
-                                            hovered ? ImGuiCol_SeparatorHovered :
-                                                      ImGuiCol_Separator);
-  ImGui::GetWindowDrawList()->AddLine(ImVec2(ImGui::GetItemRectMin().x + width * 0.5f, ImGui::GetItemRectMin().y),
-                                      ImVec2(ImGui::GetItemRectMin().x + width * 0.5f, ImGui::GetItemRectMax().y),
-                                      line_col, 1.0f);
-}
-
-// D2 (share list | diagnostics within the right column), the row splitter's shape with the same
-// delta-only write and the pixel-floor clamp: the list keeps its fixed head plus the table's
-// header row, one data row and the button row; the diagnostics region keeps its title and a
-// visible first line of its scrolling region.
-void RightRowsSplitter(const char* id, float width, float* ratio, float area_h) {
-  const float height = UiPx(kAnalyzeSplitterSize);
-  ImGui::InvisibleButton(id, ImVec2(width, height));
-  const bool hovered = ImGui::IsItemHovered();
-  const bool active = ImGui::IsItemActive();
-  const float mouse_dy = ImGui::GetIO().MouseDelta.y;
-  if (active && mouse_dy != 0.0f && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
-    // Delta from the displayed boundary (see MiddleRowsSplitter); tiers branch before any
-    // clamp — the compressed tier's bounds are inverted and std::clamp's precondition would
-    // be violated (see RightColumnSplitter).
-    const float list_floor = UiPx(kAnalyzeShareListMinHeight);
-    const float details_floor = UiPx(kAnalyzeDetailsMinHeight);
-    if (area_h >= list_floor + details_floor + height) {
-      const float lo = list_floor / area_h;
-      const float hi = (area_h - height - details_floor) / area_h;
-      *ratio = std::clamp(std::clamp(*ratio, lo, hi) + mouse_dy / area_h, lo, hi);
-    } else {
-      *ratio = list_floor / (list_floor + details_floor);
-    }
-  }
-  if (hovered || active) {
-    ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
-  }
-  const ImU32 line_col = ImGui::GetColorU32(active  ? ImGuiCol_SeparatorActive :
-                                            hovered ? ImGuiCol_SeparatorHovered :
-                                                      ImGuiCol_Separator);
-  ImGui::GetWindowDrawList()->AddLine(ImVec2(ImGui::GetItemRectMin().x, ImGui::GetItemRectMin().y + height * 0.5f),
-                                      ImVec2(ImGui::GetItemRectMax().x, ImGui::GetItemRectMin().y + height * 0.5f),
-                                      line_col, 1.0f);
 }
 
 // The left column's compact crystal list: one row per entry across the scattering layers. Two
@@ -498,7 +413,7 @@ void RenderScenePanorama(GLFWwindow* window) {
   // content width: the cursor at the draw site below is the same line start this avail.x is
   // taken from). Appearing and disappearing changes the picture's height only — no divider
   // ratio moves and no business state is written.
-  const bool centre_drifted = ConeCenterDriftedFromResult(g_state);
+  const bool centre_drifted = g_state.analysis_freshness.cone_center_drifted;
   const float warn_h = centre_drifted ? AnalyzeDriftWarningHeight(avail.x) : 0.0f;
   const float picture_h = std::max(1.0f, avail.y - bar_h - status_h - warn_h - gap * 3.0f);
   RenderAnalyzeMainPicture(window, picture_h);
@@ -818,6 +733,24 @@ void RenderAnalyzeWorkspace(GLFWwindow* window, float window_width, float window
     feedback.cone_center_drift_warning_rect_min_y = 0.0f;
     feedback.cone_center_drift_warning_rect_max_x = 0.0f;
     feedback.cone_center_drift_warning_rect_max_y = 0.0f;
+    // The staleness hints: the Raypath view window is their site on BOTH workspaces (its own
+    // seam clears them on the Render frames this entry does not run); the Pose & trace's stale
+    // line likewise — listed here so an Analyze frame with either window closed ends clean too.
+    feedback.map_stale_hint.clear();
+    feedback.map_drift_hint.clear();
+    feedback.map_stale_hint_rect_min_x = 0.0f;
+    feedback.map_stale_hint_rect_min_y = 0.0f;
+    feedback.map_stale_hint_rect_max_x = 0.0f;
+    feedback.map_stale_hint_rect_max_y = 0.0f;
+    feedback.map_drift_hint_rect_min_x = 0.0f;
+    feedback.map_drift_hint_rect_min_y = 0.0f;
+    feedback.map_drift_hint_rect_max_x = 0.0f;
+    feedback.map_drift_hint_rect_max_y = 0.0f;
+    feedback.point_stale_hint.clear();
+    feedback.point_stale_hint_rect_min_x = 0.0f;
+    feedback.point_stale_hint_rect_min_y = 0.0f;
+    feedback.point_stale_hint_rect_max_x = 0.0f;
+    feedback.point_stale_hint_rect_max_y = 0.0f;
   }
 
   // The viewport publications are cleared once at the dispatch point (RenderWorkspacePanels);
@@ -887,10 +820,8 @@ void RenderAnalyzeWorkspace(GLFWwindow* window, float window_width, float window
   {
     if (g_state.pick_link_source.has_value()) {
       const auto& src = *g_state.pick_link_source;
-      ImGui::PushStyleColor(ImGuiCol_Text, WarningTextColor());
-      ImGui::TextWrapped("Pick mode: click an entry to share crystal/filter from Layer %d / Entry %d (Esc to cancel)",
+      WarningTextWrapped("Pick mode: click an entry to share crystal/filter from Layer %d / Entry %d (Esc to cancel)",
                          DisplayLayerNumber(src.layer_idx), DisplayEntryNumber(src.entry_idx));
-      ImGui::PopStyleColor();
       ImGui::Separator();
     }
     RenderCrystalList(g_state);
@@ -944,8 +875,13 @@ void RenderAnalyzeWorkspace(GLFWwindow* window, float window_width, float window
                ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
                    ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse |
                    ImGuiWindowFlags_NoBringToFrontOnFocus);
-  RightColumnSplitter("##AnalyzeColumnSplitter", ImGui::GetContentRegionAvail().y,
-                      &g_state.workspace.right_column_ratio, avail_w);
+  // The drag writes from the DISPLAYED boundary the skeleton block derived (right_w — the
+  // layout's own clamped derivation), bounded where the layout's clamp stops; the overflow pin
+  // is the ③ split, written bit-for-bit as the skeleton pins it (analyze_ui_widgets.hpp's
+  // white-box note carries the dialect equivalence).
+  AnalyzeSplitter("##AnalyzeColumnSplitter", SplitterDragAxis::kLeftRight, ImGui::GetContentRegionAvail().y, right_w,
+                  avail_w, right_floor, avail_w - strip - main_floor, right_floor / (right_floor + main_floor),
+                  &g_state.workspace.right_column_ratio);
   ImGui::End();
   ImGui::PopStyleVar(2);
 
@@ -969,8 +905,10 @@ void RenderAnalyzeWorkspace(GLFWwindow* window, float window_width, float window
                    ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse |
                    ImGuiWindowFlags_NoBringToFrontOnFocus);
   // (Grab spans the strip's real inner width — the same floored-size reason as the row divider.)
-  RightRowsSplitter("##AnalyzeRightRowsSplitter", ImGui::GetContentRegionAvail().x, &g_state.workspace.right_list_ratio,
-                    panel_height);
+  // The same displayed-boundary write (list_h) and the ③ pin, the D1 dialect on the rows axis.
+  AnalyzeSplitter("##AnalyzeRightRowsSplitter", SplitterDragAxis::kUpDown, ImGui::GetContentRegionAvail().x, list_h,
+                  panel_height, list_floor, panel_height - strip - details_floor,
+                  list_floor / (list_floor + details_floor), &g_state.workspace.right_list_ratio);
   ImGui::End();
   ImGui::PopStyleVar(2);
 
@@ -1060,6 +998,15 @@ void RenderWorkspacePanels(GLFWwindow* window, float window_width, float window_
     map_owner = Owner::kCancelled;
   }
   PumpAnalyzeQueries(g_state, g_survey_executor, ImGui::GetTime(), /*prepare_map_sources=*/true);
+
+  // The analysis staleness facts, derived ONCE per frame here — the one point every GUI frame
+  // passes through, after the pump has settled this frame's adoptions and ahead of all five
+  // consumers (the main view's drift band, the list banner, the status viewport's picture
+  // notice, and the Raypath view / Pose & trace windows' staleness hints, rendered later in the
+  // same frame by the two workspaces and main.cpp's floating-window calls). The derivation is
+  // display-inert: it writes the derived field and nothing else (AnalysisFreshnessFor is a pure
+  // mapping; nothing here touches sim_state, run_intent or any session field).
+  g_state.analysis_freshness = AnalysisFreshnessFor(g_state);
 
   // The frame's viewport publications, cleared once at the ONE dispatch point. Both halves of
   // each publication are level-triggered (PreviewViewport in app.hpp), so the frame that does
