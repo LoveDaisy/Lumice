@@ -28,6 +28,7 @@
 #include <string>
 #include <vector>
 
+#include "gui/analyze_row_hover.hpp"
 #include "imgui.h"
 #include "include/lumice_raypath.h"
 
@@ -264,9 +265,6 @@ inline bool FoldOpen(const char* label, const char* suffix_id) {
 // row is under the pointer this frame, false otherwise (the caller writes it to the session
 // every frame). Null (the default) submits the same rows as plain text, no extra items, zero
 // interaction state — the main window's summary path passes nothing and renders byte-identically.
-struct SurveyRowHoverReadout;  // gui/analyze_map_view.hpp — the rows' hover identity (the
-                               // interactive host's out-param; by pointer, so this header stays
-                               // off that include chain and the summary-only hosts see nothing)
 void RenderSurveyOverviewModel(const SurveyOverviewModel& model, SurveyRowHoverReadout* row_readout = nullptr);
 
 // The main window's summary projection (contract §16.2): the SAME model read through the SAME
