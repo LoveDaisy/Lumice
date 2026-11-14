@@ -13,9 +13,9 @@
 // fixed dual-fisheye all-sky image in the preview shader / overlay labels).
 // That is a SEPARATE concern living behind the C-API boundary — src/gui/ may
 // not #include core/ headers (check_policies.py gate) and GLSL cannot include
-// C++ — so its lens math is deliberately duplicated. The ONLY value shared
-// across that boundary is globe kGlobeCameraD (see the "must match" anchor
-// below); the wider GUI lens-math duplication is tracked separately in backlog.
+// C++ — so its lens equations remain independent. Pure numerical domain facts cross that
+// boundary through util/projection_domain.h; GUI CPU forwards share gui/forward_projection.hpp.
+// Engine-vs-GUI parity tests guard the language/API boundary rather than comparing two GUI shells.
 //
 // Surface contract: scalar value semantics only. Caller owns
 // pixel-layout and visibility-rejection concerns.

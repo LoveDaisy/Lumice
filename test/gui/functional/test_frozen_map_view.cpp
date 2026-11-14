@@ -813,6 +813,33 @@ bool OverlayCoverageWitness(ImGuiTestContext* ctx) {
   const auto rect = canvas.RectFull;
   const auto timing = gui::LastMapObservationTiming();
   const auto view = gui::LastFrozenMapView();
+  // Read the actual texture referenced by this window's image command on the GL thread.
+  // This is the displayed base map, not a made-up fill or a second query/render fixture.
+  std::vector<unsigned char> base_pixels;
+  g_frame_observer.before_swap = [&] {
+    for (ImGuiWindow* region : ImGui::GetCurrentContext()->Windows) {
+      if (!region->Active || region->RootWindow != window)
+        continue;
+      const auto* dl = region->DrawList;
+      for (const auto& cmd : dl->CmdBuffer) {
+        if (cmd.UserCallback || cmd.ElemCount != 6 || cmd.TextureId == ImGui::GetIO().Fonts->TexID)
+          continue;
+        const auto& vertex = dl->VtxBuffer[cmd.VtxOffset + dl->IdxBuffer[cmd.IdxOffset]];
+        if (std::abs(vertex.pos.x - rect.Min.x) < 0.1f && std::abs(vertex.pos.y - rect.Min.y) < 0.1f)
+          base_pixels =
+              lumice::test::ReadTexturePixels(static_cast<unsigned int>(cmd.TextureId), timing.width, timing.height);
+      }
+    }
+  };
+  g_fullframe_capture.Reset();
+  g_fullframe_capture.requested.store(true);
+  ctx->Yield(2);
+  g_frame_observer = {};
+  IM_CHECK_RETV(!base_pixels.empty() && g_fullframe_capture.done.load(), false);
+  IM_CHECK_RETV(lumice::test::SavePng(GuiTestTempPath("tilted_equidistant_overlay.png").string().c_str(),
+                                      g_fullframe_capture.pixels.data(), g_fullframe_capture.width,
+                                      g_fullframe_capture.height, 4),
+                false);
   const double radius = std::min(timing.width, timing.height) * 0.5;
   const double sx = rect.GetWidth() / timing.width, sy = rect.GetHeight() / timing.height;
   const double a = view.azimuth * kDeg, e = view.elevation * kDeg;
@@ -926,7 +953,11 @@ bool OverlayCoverageWitness(ImGuiTestContext* ctx) {
               const auto read_data = [&]() -> bool {
                 IM_CHECK_RETV(direction.has_value(), false);
                 const auto index = OracleIndex(source, *direction);
-                data += index && source.pixels.status[*index] == LUMICE_PATH_MAP_PIXEL_OK;
+                const int col = std::clamp(static_cast<int>(px + timing.width * 0.5), 0, timing.width - 1);
+                const int row = std::clamp(static_cast<int>(timing.height * 0.5 - py), 0, timing.height - 1);
+                const size_t offset = (static_cast<size_t>(row) * timing.width + col) * 4;
+                data += index && source.pixels.status[*index] == LUMICE_PATH_MAP_PIXEL_OK &&
+                        (base_pixels[offset] || base_pixels[offset + 1] || base_pixels[offset + 2]);
                 return true;
               };
               if (!read_data())
