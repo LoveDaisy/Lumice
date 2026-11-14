@@ -4314,6 +4314,62 @@ bool TraceLabelsFollowTheToggle(ImGuiTestContext* ctx) {
   return true;
 }
 
+// The splitter strips' drag-hint glyph leg (the mechanism-consolidation red-green pin): every
+// strip carries ink beyond its tri-state centre line, on both sides along the drag axis. The
+// probe reads the pose window's own draw list for Separator-coloured vertices inside the strip
+// item's rect — the centre line alone (the pre-glyph form) spans ~1 pt plus its anti-aliasing
+// fringe, while the glyph's triangle tips reach 3 pt either way, so a 4.5 pt extent across the
+// drag axis separates the two forms at every UI scale. The EW probe restricts to the strip's
+// vertical centre band (the glyph's own y reach): the abutting row splitters' line endpoints
+// land on the strip's x boundary at their own y and would otherwise inflate the extent. Both
+// axes pinned: the EW split (the D4 column strip) and one NS split (the D6 globe|factors strip)
+// — the glyph's two axis adaptations of one shared draw.
+bool SplitterStripsCarryTheDragHintGlyph(ImGuiTestContext* ctx) {
+  const ImGuiWindow* pose = ctx->GetWindowByRef("//Pose & trace");
+  IM_CHECK_RETV(pose != nullptr && pose->Active, false);
+  const ImU32 separator_col = ImGui::GetColorU32(ImGuiCol_Separator);
+  const auto strip_ink_extent = [&](const ImRect& strip, bool along_x, float centre_band) {
+    float lo = 0.0f;
+    float hi = 0.0f;
+    bool any = false;
+    const ImVec2 centre((strip.Min.x + strip.Max.x) * 0.5f, (strip.Min.y + strip.Max.y) * 0.5f);
+    for (const ImDrawVert& vertex : pose->DrawList->VtxBuffer) {
+      if (vertex.col != separator_col) {
+        continue;
+      }
+      const ImVec2 p = vertex.pos;
+      if (p.x < strip.Min.x - 1.0f || p.x > strip.Max.x + 1.0f || p.y < strip.Min.y - 1.0f ||
+          p.y > strip.Max.y + 1.0f) {
+        continue;
+      }
+      if (centre_band > 0.0f && std::abs(p.y - centre.y) > centre_band) {
+        continue;  // outside the glyph's own y reach — the abutting row splitters' endpoints
+      }
+      const float along = along_x ? p.x : p.y;
+      if (!any) {
+        lo = hi = along;
+        any = true;
+      } else {
+        lo = std::min(lo, along);
+        hi = std::max(hi, along);
+      }
+    }
+    return any ? hi - lo : -1.0f;
+  };
+  ctx->SetRef("//Pose & trace");
+  const ImGuiTestItemInfo ew = ctx->ItemInfo("**/##PoseViewSplitter", ImGuiTestOpFlags_NoError);
+  IM_CHECK_RETV(ew.ID != 0, false);
+  const float ew_extent = strip_ink_extent(ew.RectFull, /*along_x=*/true, gui::UiPx(2.5f));
+  IM_CHECK_RETV(ew_extent >= gui::UiPx(4.5f), false);
+  const ImGuiTestItemInfo ns = ctx->ItemInfo("**/##PoseViewRowsSplitter", ImGuiTestOpFlags_NoError);
+  IM_CHECK_RETV(ns.ID != 0, false);
+  const float ns_extent = strip_ink_extent(ns.RectFull, /*along_x=*/false, 0.0f);
+  IM_CHECK_RETV(ns_extent >= gui::UiPx(4.5f), false);
+  ctx->LogInfo("[splitter glyph] EW strip ink extent %.1f pt, NS strip %.1f pt (line alone would be < 3.5)", ew_extent,
+               ns_extent);
+  return true;
+}
+
 // AC4's primitive leg: each contact's marker shape follows the REAL facing — the request's own
 // face number resolved in the mesh's per-face table (the test's own scan), the normal rotated
 // by the frame switch, dotted against contact->eye with the REAL camera (ComputeDist over the
@@ -5010,6 +5066,7 @@ bool InternalReflectionTraceFromTheRealConsumer(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(TraceFramingIsMeshAnchoredAcrossStates(ctx, /*crystal_view=*/true), false);
   IM_CHECK_RETV(TraceWidthsFollowCumulativeEnergy(ctx), false);
   IM_CHECK_RETV(TraceLabelsFollowTheToggle(ctx), false);
+  IM_CHECK_RETV(SplitterStripsCarryTheDragHintGlyph(ctx), false);
   IM_CHECK_RETV(TraceContactShapesFollowTheRealFacing(ctx), false);
   IM_CHECK_RETV(TraceSunArrowFollowsTheCrystalSun(ctx), false);
   IM_CHECK_RETV(TraceOverlayClipsAtTheNearPlane(ctx), false);
