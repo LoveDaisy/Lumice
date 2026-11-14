@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdio>
 
+#include "gui/forward_projection.hpp"
 #include "gui/gui_constants.hpp"
 #include "gui/preview_renderer.hpp"
 #include "util/label_viewport_clamp.hpp"
@@ -258,128 +259,11 @@ FwdResult WorldDirToPixel(float wx, float wy, float wz, float res_x, float res_y
     dz = view_matrix[6] * wx + view_matrix[7] * wy + view_matrix[8] * wz;
   }
 
-  float half_fov = fov * 0.5f * kDeg2Rad;
-  float short_edge = std::min(res_x, res_y);
-
-  if (lens_type == kLensTypeLinear) {
-    if (dz >= 0)
-      return { 0, 0, false };  // behind camera (shader convention: camera looks -z)
-    float focal = short_edge * 0.5f / std::tan(half_fov);
-    return { dx / (-dz) * focal, dy / (-dz) * focal, true };
-  } else if ((lens_type >= kLensTypeFisheyeEqualArea && lens_type <= kLensTypeFisheyeStereographic) ||
-             lens_type == kLensTypeFisheyeOrthographic) {  // Single fisheye family (incl. orthographic)
-    float img_radius = short_edge * 0.5f;
-    float theta = std::acos(std::clamp(-dz, -1.0f, 1.0f));  // angle from -z axis
-    float rho = std::sqrt(dx * dx + dy * dy);
-    if (rho < 1e-8f)
-      return { 0, 0, true };  // on optical axis
-
-    float r_norm;
-    if (lens_type == kLensTypeFisheyeEqualArea) {
-      r_norm = std::sin(theta * 0.5f) / std::sin(half_fov * 0.5f);
-    } else if (lens_type == kLensTypeFisheyeEquidist) {
-      r_norm = theta / half_fov;
-    } else if (lens_type == kLensTypeFisheyeStereographic) {
-      r_norm = std::tan(theta * 0.5f) / std::tan(half_fov * 0.5f);
-    } else {  // kLensTypeFisheyeOrthographic — shader: r_norm = sin(θ) / sin(fov/2)
-      // Domain guard: directions past the orthographic disc edge (θ > half_fov)
-      // project to r_norm > 1 in the inverse path; reject them here so the
-      // sun-circle interior-label placement doesn't draw off-disc.
-      if (theta > half_fov)
-        return { 0, 0, false };
-      r_norm = std::sin(theta) / std::sin(half_fov);
-    }
-    float scale = r_norm * img_radius / rho;
-    return { dx * scale, dy * scale, true };
-  } else if (lens_type == kLensTypeGlobe) {
-    // (dx,dy,dz) is the unit-length world dir transformed to eye-space. The world
-    // point on the sphere surface in this direction is P_eye = (dx,dy,dz). With
-    // the camera at O = (0,0,D), the front hemisphere visible to the camera is
-    // P_eye.z > 1/D. See plan §3 design point 4 for the derivation. After this
-    // visibility filter, denom = D - dz lies in [D - 1, D - 1/D] = [3.0, 3.75]
-    // for D=4.0, so it never approaches zero.
-    if (dz <= 1.0f / kGlobeCameraD) {
-      return { 0, 0, false };
-    }
-    float focal = short_edge * 0.5f / std::tan(half_fov);
-    float denom = kGlobeCameraD - dz;
-    return { dx / denom * focal, dy / denom * focal, true };
-  }
-  if (lens_type == kLensTypeRectangular) {
-    // Inverse of RectangularInv: lat = asin(-wz), lon = atan2(-wy, -wx).
-    // short_res / scale match RectangularInv (l.114-115) byte-for-byte so
-    // round-trip (pixel→world→pixel) is exact within float error.
-    float short_res = std::min(res_x * 0.5f, res_y);
-    float scale = short_res / kPi;
-    float clamped_neg_z = std::clamp(-dz, -1.0f, 1.0f);
-    float lat = std::asin(clamped_neg_z);
-    // |lat| ≈ π/2 (pole singularity): lon is undefined; reject.
-    if (std::abs(lat) >= kPi * 0.5f - 1e-6f) {
-      return { 0, 0, false };
-    }
-    float lon = std::atan2(-dy, -dx);
-    // CPI family: flip py so this forward stays the mutual inverse of PixelToWorldDir
-    // (which now flips py) and matches the shader's flipped display. Raw forward py is
-    // -lat*scale; flipped → +lat*scale.
-    return { lon * scale, lat * scale, true };
-  }
-  if ((lens_type >= kLensTypeDualFisheyeEqualArea && lens_type <= kLensTypeDualFisheyeStereographic) ||
-      lens_type == kLensTypeDualFisheyeOrthographic) {
-    // Inverse of DualFisheyeInv: wz≤0 → left disc (upper hemisphere),
-    // wz>0 → right disc (lower hemisphere). Phi formulas derived from the
-    // inv branch's (x, y, z) tuple — see comment block below each branch.
-    float short_res = std::min(res_x * 0.5f, res_y);
-    float circle_radius = short_res * 0.5f;
-    int type = (lens_type == kLensTypeDualFisheyeOrthographic) ? 3 : (lens_type - kLensTypeDualFisheyeEqualArea);
-
-    float half_pi = kPi * 0.5f;
-    bool in_left = (dz <= 0.0f);
-    float theta;
-    float phi;
-    if (in_left) {
-      // Inv left: world = {-st*sin(phi), st*cos(phi), -ct} ⇒
-      //   sin(phi) = -wx/sin(theta), cos(phi) = wy/sin(theta).
-      theta = std::acos(std::clamp(-dz, -1.0f, 1.0f));
-      phi = std::atan2(-dx, dy);
-    } else {
-      // Inv right: world = {-st*sin(phi), -st*cos(phi), ct} ⇒
-      //   sin(phi) = -wx/sin(theta), cos(phi) = -wy/sin(theta).
-      theta = std::acos(std::clamp(dz, -1.0f, 1.0f));
-      phi = std::atan2(-dx, -dy);
-    }
-
-    float use_r;
-    if (type == 0) {  // equal area: use_r = sin(theta/2) / sin(π/4)
-      use_r = std::sin(theta * 0.5f) / std::sin(half_pi * 0.5f);
-    } else if (type == 1) {  // equidistant: use_r = theta / (π/2)
-      use_r = theta / half_pi;
-    } else if (type == 2) {            // stereographic: use_r = tan(theta/2) / tan(π/4)
-      use_r = std::tan(theta * 0.5f);  // tan(π/4) = 1
-    } else {                           // orthographic (type==3): use_r = sin(theta)
-      use_r = std::sin(theta);
-    }
-
-    // Domain guard: use_r > 1 means point lies past the disc edge in the
-    // normalised disc space; the inverse's `r > 1.0` check rejects such
-    // pixels, so the forward must do the same.
-    if (use_r > 1.0f) {
-      return { 0, 0, false };
-    }
-
-    // Special case: theta ≈ 0 means on the optical axis (disc center). phi
-    // is degenerate but use_r ≈ 0 collapses lx/ly to 0, so the result is
-    // just the disc center pixel.
-    float lx = use_r * circle_radius * std::cos(phi);
-    float ly = use_r * circle_radius * std::sin(phi);
-    // CPI family: flip py (−ly) to match PixelToWorldDir's py flip + the shader.
-    if (in_left) {
-      return { lx - circle_radius, -ly, true };
-    } else {
-      return { lx + circle_radius, -ly, true };
-    }
-  }
-  // Unknown / unsupported lens types: return invalid.
-  return { 0, 0, false };
+  const float local[3] = { dx, dy, dz };
+  auto point = ProjectLocalDirection(local, res_x, res_y, lens_type, fov, ForwardPolicy::kUnclippedMirror);
+  if (LensIsFullSky(lens_type))
+    point.py = -point.py;  // inverse-mirror convention, not a second projection equation
+  return { point.px, point.py, point.valid };
 }
 
 ImU32 ColorToImU32(const float c[3], int alpha) {

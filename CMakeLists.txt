@@ -661,6 +661,7 @@ if(APPLE)
   set(LUMICE_METAL_SHARED_HDRS
       "${PROJ_SRC_DIR}/core/shared/lm_shims.h"
       "${PROJ_SRC_DIR}/core/shared/projection_shared.h"
+      "${PROJ_SRC_DIR}/util/projection_domain.h"
       "${PROJ_SRC_DIR}/core/shared/optics_shared.h"
       "${PROJ_SRC_DIR}/core/shared/traversal_shared.h"
       "${PROJ_SRC_DIR}/core/shared/pcg_shared.h"
