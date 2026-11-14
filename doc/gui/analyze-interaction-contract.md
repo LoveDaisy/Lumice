@@ -397,7 +397,7 @@ Render 与 Analyze 共享**同一份**取景/曝光/辅助线显示状态（disp
 | 态 | 主工作区 | Raypath view 窗 | 姿态/轨迹窗 |
 |---|---|---|---|
 | 未选择 | 列表空态行（锚 `analysis_panel.cpp:1529-1531`）；诊断区引导块（§9.1，→R7） | 无选择文案（锚 `analyze_map_view.cpp:1152-1157`，→R3） | 前置不足文案（锚 `analyze_point_view.cpp:784-796`，→R4） |
-| 等待 | 列表选中行活动点＋状态栏查询段（锚 `analysis_panel.cpp:1628-1641`、`app_panels.cpp:2960-2975`）；诊断区 survey 等待行（锚 `analyze_workspace.cpp:314-337`，→R7） | 图区等待行（队列即真相文案，锚 `analyze_map_view.cpp:1167-1179`，→R3） | globe/3D 等待行（锚 `analyze_point_view.cpp:797-819,1101-1117`，→R4） |
+| 等待 | 列表选中行活动点＋主状态栏查询段；诊断区 survey 等待行 | 浮窗全宽单行 map 底栏（队列、阶段与 elapsed 原文；长文 hover 全文，§15） | 浮窗全宽单行 point 底栏（globe/3D 等处不再重复播报；主窗点摘要仍独立） |
 | 有结果 | 列表行（份额/累计/±，锚 `analysis_panel.cpp:1565-1662`，→R2）；诊断区类概览＋点摘要（锚 `analyze_workspace.cpp:352-370`，→R7） | raster＋锚点＋读数（锚 `analyze_map_view.cpp:1205-1240`，→R3） | fiber＋3D 路径＋因素（锚 `analyze_point_view.cpp:900-1069,1184-1437`，→R4/R5） |
 | 特殊完成态（rank-0 / 无分量 / 无有效样本） | 诊断区承载**完整答案**：rank-0 质量数值行集（锚 `analyze_point_view.cpp:1518-1531`）；无分量 reach 判定＋discovery 完备性注（锚 `analyze_point_view.cpp:1536-1560`）；无有效样本行（锚 `analyze_point_view.cpp:1605-1607`）——不以空白或零冒充（→R7） | 无此态独立呈现（光路层无点结果依赖）；窗内容照常 | 诚实空态＋指针到诊断区：rank-0「no fiber to project — the details carry the mass numbers」（锚 `analyze_point_view.cpp:828-834,1124-1132`）；无分量「No fiber here…」＋reach 文案（锚 `analyze_point_view.cpp:848-865,1536-1551`）；无有效样本行（锚 `analyze_point_view.cpp:891-894,1144-1147`）（→R4） |
 | partial | 诊断区 partial 横幅（锚 `analyze_point_view.cpp:1508-1513`，→R7） | 图区沿用文档态注（→R3） | 「Partial document …」注（锚 `analyze_point_view.cpp:839-843,1136-1140`，→R4） |
@@ -584,7 +584,11 @@ Windows/Linux 真机输入已测。最终执行结果存于测试报告；这些
 - **列表**：对称/搜索是稳定头；stale 和实际对称口径在其后独立状态视口，不插到搜索前。
   表格吸收中间份额，空结果保留该份额，Exclude/CSV 贴底。极端倍率只按几何把固定头移入可恢复内滚，
   不由 stale 文案决定是否滚动。
-- **地图**：左侧 Overlays、方形 canvas、状态报告依次分配；waiting/retrying 不在 canvas 前加行。
+- **地图**：左侧 Overlays 与填满剩余可见图区的 canvas 依次分配；旧 64pt 状态报告配额已退出。
+  map 查询状态位于浮窗全宽固定底栏，不在 canvas 前加行、不随右侧报告滚动。
+  无选择时底栏只显示 `No selection`，完整引导在空画布内居中、按画布宽度换行；健康只显示 `Ready`。
+  `Waiting` / `Superseded` / `Partial` / `Cancelled` / `Refused` 保留等待、冻结旧图和部分覆盖的限定；
+  partial 与 supersession、取消或失败重算可同时成立，不用健康词掩盖其中之一。
   窗内容区顶部的失效提示条（列表过期 + Point 模式锥心漂移各一行，统一派生状态的两个事实位，
   notice-only）位于 D3 分割之上：出现／消失只降低区域总高，不改存储的分割比例——主图漂移带
   同一几何合同。
@@ -597,6 +601,14 @@ Windows/Linux 真机输入已测。最终执行结果存于测试报告；这些
   不重写摆放，出现／消失只降低六元素布局的高度预算。
   曲线的可变身份/积分/图例与读数也在报告；图仍保留五臂、对数轴、精确零行、不可用断线与同一游标语义。
   旧点/样本不匹配时只保留结构，绝不绘制失配旧内容。
+- **浮窗共享底栏（2026-11-15）**：Raypath view 与 Pose & trace 使用同一单行 fit/裁剪/tooltip
+  机制及 `kStatusBarHeight`（28pt）尺度，各只描述自己的 map / point 查询；主窗状态栏不变。
+  正文在首帧布局前先扣除固定底栏及间距，Pose 的绝对布局也只消费扣除后的可见 client；底栏常驻，
+  查询切换不改变画布、分隔与主要控件矩形。长错误和等待行明确省略，hover 可读原文（含原始换行），
+  不截断时不另播全文；健康态只显示状态词，不复制成员数、λ 或物理读数。
+  Pose 的 `No target` / `Waiting` / `Cancelled` / `Refused` / `Ready` / `Partial` 在底栏单点显示，
+  四区旧短状态及重复等待/拒答退出；无分量、无合法轨迹、测度不可用与具体结果的 partial 限定仍就近保留。
+  现有外框默认/最小尺寸、Retry/取消行为及分隔手动优先不变。
 - **可见区而非请求尺寸**：浮窗的名义下限可能高于实际 viewport。分隔应划分实际可见 client 区，
   而非一段自身 ScrollMax=0、祖先却已裁掉的不可恢复后缀；这不扩大外窗，也不放宽 canvas 四边包含。
 - **真实复用边界**：`canvas_report_layout.hpp` 仅拥有几何分配与可见 client 区；map、globe、3D、曲线
@@ -930,7 +942,8 @@ segmented 双格**（`SameLine(0,0)` flush）：segmented 读作互斥模式切�
 > `gui_state_tiers.hpp` 四行 kSession）；常量 `gui_constants.hpp` 的 `kPoseView*` 族。
 
 窗口状态面：内容区顶部的失效提示条（列表过期一行，统一派生状态 `gui-state-governance.md`
-§10.1，notice-only）先于 D4 分割绘制——绝对布局整体下移、不重写摆放；条下才是本节描述的结构。
+§10.1，notice-only）先于 D4 分割绘制——绝对布局整体下移、不重写摆放；底部另有全宽常驻单行
+point 查询状态栏（§15），下列四区结构只分配扣除该底栏后的可见正文。
 
 **结构**（已运行、已测试）：
 
@@ -1014,11 +1027,12 @@ labelled decade major 的窄窗以窗口上下边界值补位（置于绘图框�
 
 #### 16.4.1 最小尺寸梯与 resize 策略（as-built 2026-11-10，含三档真机校准）
 
-默认 960×720 与最小 640×680 维持现状宣称（`SetNextWindowSizeConstraints` 每 Begin 重钳，
-`kPoseViewMinWidth/Height`）。下表先保留原算术模板作为推导记录，**实测结论随后**——「最窄
-已验证容纳」由 gui_test 真实帧签发（`pose_view_splits_are_manual_independent_and_floored`
-的 both-floors 腿 + `pose_view_narrowest_boundaries_hold_both_ends` 的逐边界链，1x 与 1.5x
-各一），不是本表算术。
+默认 960×720 与最小 640×680 保持不变（`SetNextWindowSizeConstraints` 每 Begin 重钳，
+`kPoseViewMinWidth/Height`）。**2026-11-15 修订**：当前正文另扣固定底栏 28pt 及一个 item spacing，
+最窄 1x 的 D5 因此进入既有 ③ 比例退化，而非下表历史基线的 3pt 拖程；不提高窗下限。
+下表与 2026-11-10 实测为加入底栏前的校准记录，不能继续用于当前高度预算。
+现役判据仍是 gui_test 的真实可见矩形、包含、退化、滚动恢复与实际操作（1x/1.5x/2x），
+而不是该历史表的像素推导。
 
 | 推导量 | 默认窗示例 | 最窄窗示例 | 备注 |
 |---|---|---|---|

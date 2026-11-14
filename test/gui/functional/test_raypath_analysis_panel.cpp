@@ -35,6 +35,7 @@
 #include "gui/analyze_map_view.hpp"
 #include "gui/analyze_overview.hpp"
 #include "gui/analyze_point_view.hpp"
+#include "gui/analyze_ui_widgets.hpp"
 #include "gui/analyze_workspace.hpp"
 #include "gui/angular_dist_picker.hpp"
 #include "gui/crystal_renderer.hpp"  // ComputeDist / ComputeNearPlane — the frame tests' camera
@@ -16247,10 +16248,83 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
   // One analysis carried through the scale tiers (150% / 2x clamped / the narrow 1280 tier):
   // the result-state key operations per tier. Real-timing pool: the analysis plus the point
   // query run once, the tier switches are rebuilds.
+  // Both real-window integrations are exercised below. This component witness supplies the
+  // widest legitimate stage/queue clauses without making an executor race its own frame pump.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "floating_status_long_wait_is_single_line");
+    static std::string full;
+    static std::string drawn;
+    static float width = 480.0f;
+    t->GuiFunc = [](ImGuiTestContext*) {
+      if (full.empty()) {
+        return;
+      }
+      ImGui::SetNextWindowPos(ImVec2(20.0f, 60.0f), ImGuiCond_Always);
+      ImGui::SetNextWindowSize(ImVec2(gui::UiPx(width), gui::UiPx(140.0f)), ImGuiCond_Always);
+      ImGui::Begin("Long wait footer", nullptr, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+      const auto layout = gui::ReserveAnalyzeStatusBar();
+      ImGui::Dummy(layout.body_size);
+      ImGui::LogToBuffer();
+      ImGui::GetCurrentContext()->LogWindow = nullptr;
+      ImGui::GetCurrentContext()->ItemUnclipByLog = false;
+      gui::RenderAnalyzeStatusBar(layout, full);
+      drawn = ImGui::GetCurrentContext()->LogBuffer.c_str();
+      ImGui::LogFinish();
+      ImGui::End();
+    };
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      struct Lease {
+        ~Lease() { full.clear(); }
+      } lease;
+      const auto exercise = [&](bool point_face) -> bool {
+        width = point_face ? 640.0f : 480.0f;
+        full.clear();
+        const LUMICE_PathPollStage stages[] = {
+          LUMICE_PATH_POLL_STAGE_SURVEY_ASSEMBLY, LUMICE_PATH_POLL_STAGE_STRUCTURE_SUPPORT,
+          LUMICE_PATH_POLL_STAGE_CHROMATIC_LEG,   LUMICE_PATH_POLL_STAGE_ESS_SAMPLING,
+          LUMICE_PATH_POLL_STAGE_TIR_SHARE,       LUMICE_PATH_POLL_STAGE_WITNESS,
+          LUMICE_PATH_POLL_STAGE_ENUMERATION,     LUMICE_PATH_POLL_STAGE_PROBE_LAMBDAS,
+          LUMICE_PATH_POLL_STAGE_POINT_LEGS,      LUMICE_PATH_POLL_STAGE_MAP_MEMBERS,
+          LUMICE_PATH_POLL_STAGE_FIBER_DISCOVERY, LUMICE_PATH_POLL_STAGE_BOUNDARY_WALK,
+          LUMICE_PATH_POLL_STAGE_LATTICE_SCAN
+        };
+        for (auto stage : stages) {
+          gui::InflightPoll poll;
+          poll.in_flight = true;
+          poll.face = point_face ? gui::QueryFace::kPoint : gui::QueryFace::kMap;
+          poll.stage = stage;
+          const std::string candidate = "Waiting — " + (point_face ? gui::PointWaitLineFor({}, 1234.5, poll) :
+                                                                     gui::MapWaitLineFor({}, true, 1234.5, poll));
+          if (ImGui::CalcTextSize(candidate.c_str()).x > ImGui::CalcTextSize(full.c_str()).x) {
+            full = candidate;
+          }
+        }
+        ctx->MouseMoveToPos(ImVec2(2.0f, 2.0f));
+        ctx->Yield(3);
+        const size_t begin = drawn.find("Waiting — ");
+        IM_CHECK_RETV(begin != std::string::npos, false);
+        const std::string fitted = drawn.substr(begin, drawn.find('\n', begin) - begin);
+        IM_CHECK_RETV(fitted.size() >= 3 && fitted.compare(fitted.size() - 3, 3, "…") == 0, false);
+        IM_CHECK_RETV(full.compare(0, fitted.size() - 3, fitted, 0, fitted.size() - 3) == 0, false);
+        ImGuiWindow* bar = RegionWindowUnder("Long wait footer", "##QueryStatusBar");
+        IM_CHECK_RETV(bar != nullptr && bar->ContentSize.y <= bar->InnerClipRect.GetHeight() + 0.5f, false);
+        IM_CHECK_RETV(bar->ContentSize.x <= bar->WorkRect.GetWidth() + 0.5f, false);
+        ctx->MouseMoveToPos(bar->Rect().GetCenter());
+        ctx->Yield(3);
+        IM_CHECK_RETV(drawn.find(full) != std::string::npos, false);
+        ctx->LogInfo("[long wait footer] %s %.0fpt: %s", point_face ? "point" : "map", width, full.c_str());
+        return true;
+      };
+      IM_CHECK(exercise(false));
+      IM_CHECK(exercise(true));
+    };
+  }
   {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "layout_slots_ignore_transient_states");
     static gui::GuiState probe;
     static bool draw_probe = false;
+    static bool map_at_minimum = true;
     static std::string map_text;
     static std::string pose_text;
     t->GuiFunc = [](ImGuiTestContext*) {
@@ -16258,21 +16332,29 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
         return;
       }
       ImGui::SetNextWindowPos(ImVec2(8.0f, 60.0f), ImGuiCond_Always);
-      ImGui::SetNextWindowSize(ImVec2(gui::UiPx(480.0f), gui::UiPx(360.0f)), ImGuiCond_Always);
-      ImGui::Begin("Layout map probe", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove);
+      if (ImGuiWindow* map = ImGui::FindWindowByName("Raypath view")) {
+        ImGui::SetWindowSize(
+            map, ImVec2(gui::UiPx(map_at_minimum ? 480.0f : 900.0f), gui::UiPx(map_at_minimum ? 360.0f : 560.0f)),
+            ImGuiCond_Always);
+      }
       ImGui::LogToBuffer();
-      gui::RenderAnalyzeMapRegion(probe, ImGui::GetContentRegionAvail());
+      ImGui::GetCurrentContext()->LogWindow = nullptr;
+      ImGui::GetCurrentContext()->ItemUnclipByLog = false;
+      gui::RenderAnalyzeRaypathViewWindow(probe);
       map_text = ImGui::GetCurrentContext()->LogBuffer.c_str();
       ImGui::LogFinish();
-      ImGui::End();
       ImGui::LogToBuffer();
+      ImGui::GetCurrentContext()->LogWindow = nullptr;
+      ImGui::GetCurrentContext()->ItemUnclipByLog = false;
       gui::RenderAnalyzePoseViewWindow(probe);
       pose_text = ImGui::GetCurrentContext()->LogBuffer.c_str();
       ImGui::LogFinish();
     };
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
+      map_at_minimum = true;
       probe = gui::GuiState{};
+      probe.analyze_raypath_view_open = true;
       draw_probe = true;
       struct DrawLease {
         ~DrawLease() { draw_probe = false; }
@@ -16289,19 +16371,48 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       // gone — its explanation lives in the Cancel/Retry button's tooltip).
       IM_CHECK(map_text.find("(no class selected)") != std::string::npos);
       IM_CHECK(map_text.find("Observe") == std::string::npos);
-      ctx->SetRef("//Layout map probe");
+      ctx->SetRef("//Raypath view");
       IM_CHECK(!probe.analyze_pose_view_open);
       ctx->ItemClick("**/Pose & trace###pose_open");
       ctx->Yield(2);
       IM_CHECK(probe.analyze_pose_view_open);
       IM_CHECK(!pose_text.empty());
       IM_CHECK(pose_text.find("Pick a sky point") != std::string::npos);
-      ctx->WindowFocus("//Layout map probe");
+      ctx->WindowFocus("//Raypath view");
       ctx->MouseMoveToPos(ImVec2(2.0f, 2.0f));
       ctx->Yield(2);
-      IM_CHECK(SaveWindowPng(ctx, "//Layout map probe", GuiTestTempPath("pose_entry_empty.png").string()));
+      IM_CHECK(SaveWindowPng(ctx, "//Raypath view", GuiTestTempPath("pose_entry_empty.png").string()));
       ctx->SetRef("");
       PinPoseViewOnScreen(ctx);
+      ImGuiWindow* pose_host = ctx->GetWindowByRef("//Pose & trace");
+      IM_CHECK(pose_host != nullptr);
+      ImGui::SetWindowSize(pose_host, ImVec2(gui::UiPx(640.0f), gui::UiPx(680.0f)), ImGuiCond_Always);
+      ctx->Yield(2);
+      // The actual hosts, not a stand-in region: the footer is outside every scrolling report.
+      const auto check_footer = [&](const char* host, const std::string& text, const char* word) -> bool {
+        ImGuiWindow* bar = RegionWindowUnder(host, "##QueryStatusBar");
+        IM_CHECK_RETV(bar != nullptr && bar->ParentWindow != nullptr, false);
+        IM_CHECK_RETV(text.find(word) != std::string::npos, false);
+        IM_CHECK_RETV(bar->Size.y <= gui::UiPx(gui::kStatusBarHeight) + 0.5f, false);
+        IM_CHECK_RETV(bar->ContentSize.y <= bar->InnerClipRect.GetHeight() + 0.5f, false);
+        IM_CHECK_RETV(bar->ContentSize.x <= bar->WorkRect.GetWidth() + 0.5f, false);
+        IM_CHECK_RETV(bar->ScrollMax.y == 0.0f, false);
+        IM_CHECK_RETV(bar->Rect().Min.y >= bar->ParentWindow->InnerClipRect.Min.y, false);
+        IM_CHECK_RETV(bar->Rect().Max.y <= bar->ParentWindow->InnerClipRect.Max.y + 0.5f, false);
+        const char* region = std::strcmp(host, "Raypath view") == 0 ? "##AnalyzeRaypathView" : "##AnalyzePoseCurve";
+        ImGuiWindow* body = RegionWindowUnder(host, region);
+        IM_CHECK_RETV(body != nullptr && body->Rect().Max.y < bar->Rect().Min.y, false);
+        return true;
+      };
+      IM_CHECK(check_footer("Raypath view", map_text, "No selection"));
+      IM_CHECK(check_footer("Pose & trace", pose_text, "No target"));
+      ctx->SetRef("//Raypath view");
+      const ImGuiTestItemInfo canvas = ctx->ItemInfo("**/##map_canvas");
+      const ImGuiWindow* map_region = MapRegionWindow();
+      IM_CHECK(map_region != nullptr);
+      // Independent rendered boundary oracle: a reintroduced 64pt reservation must fail this.
+      IM_CHECK_FLOAT_NEAR(canvas.RectFull.Max.y, map_region->WorkRect.Max.y, 1.0f);
+      ctx->SetRef("");
       // The separate fake state exercises layout branches only. Actual query adoption and
       // physical interaction remain the real-consumer cases' responsibility.
       const char* refs[] = { "**/##map_canvas",
@@ -16316,7 +16427,12 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
                              "**/##globe_sample",
                              "**/Play##globe_play",
                              "**/##r3d_canvas",
-                             "**/##pose_curve_canvas" };
+                             "**/##pose_curve_canvas",
+                             "**/##RaypathViewSplitter",
+                             "**/##PoseViewSplitter",
+                             "**/##PoseViewLeftRowSplitter",
+                             "**/##PoseViewRowsSplitter",
+                             "**/##PoseCurveSplitter" };
       const auto read_anchor = [ctx](const char* ref) {
         if (std::strcmp(ref, "**/##globe_component") == 0) {
           ImGuiWindow* globe = PoseRegionWindow("##AnalyzeSunGlobe");
@@ -16346,6 +16462,18 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       for (ImGuiID id : anchor_ids) {
         ctx->ItemInfo(id);
       }
+      const char* pose_regions[] = { "##AnalyzeRaypath3D", "##AnalyzeSunGlobe", "##AnalyzePoseCurve",
+                                     "##AnalyzePoseFactors", "##QueryStatusBar" };
+      std::vector<ImRect> region_rects;
+      for (const char* name : pose_regions) {
+        ImGuiWindow* region = PoseRegionWindow(name);
+        if (region == nullptr) {
+          IM_ERRORF("Missing pose region: %s", name);
+          return;
+        }
+        region_rects.push_back(region->Rect());
+      }
+      const ImRect map_bar_rect = RegionWindowUnder("Raypath view", "##QueryStatusBar")->Rect();
       int expected_frame = -1;
       const auto compare = [&]() -> bool {
         for (size_t i = 0; i < anchors.size(); ++i) {
@@ -16363,8 +16491,29 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
             return false;
           }
         }
+        for (size_t i = 0; i < region_rects.size(); ++i) {
+          ImGuiWindow* region = PoseRegionWindow(pose_regions[i]);
+          if (region == nullptr) {
+            IM_ERRORF("Missing pose region: %s", pose_regions[i]);
+            return false;
+          }
+          const ImRect now = region->Rect();
+          if (std::abs(now.Min.x - region_rects[i].Min.x) > 0.5f ||
+              std::abs(now.Min.y - region_rects[i].Min.y) > 0.5f ||
+              std::abs(now.Max.x - region_rects[i].Max.x) > 0.5f ||
+              std::abs(now.Max.y - region_rects[i].Max.y) > 0.5f) {
+            IM_ERRORF("Transient state moved region %s", pose_regions[i]);
+            return false;
+          }
+        }
+        ImGuiWindow* map_bar = RegionWindowUnder("Raypath view", "##QueryStatusBar");
+        IM_CHECK_RETV(map_bar != nullptr, false);
+        IM_CHECK_RETV(std::abs(map_bar->Rect().Min.y - map_bar_rect.Min.y) <= 0.5f &&
+                          std::abs(map_bar->Rect().Max.y - map_bar_rect.Max.y) <= 0.5f,
+                      false);
         return true;
       };
+      const std::string long_error = "unsupported target — λ / refusal\n" + std::string(1000, 'X');
       for (int state = 0; state < 3; ++state) {
         expected_frame = ctx->ItemInfo(anchor_ids[0]).TimestampMain + 1;
         probe.analysis.sky_point.valid = true;
@@ -16372,8 +16521,8 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
         probe.analysis.point.intent_valid = true;
         probe.analysis.map.cancelled_for_key = state == 1;
         probe.analysis.point.cancelled_for_key = state == 1;
-        probe.analysis.map.adopted_error = state == 2 ? std::string(1000, 'X') : "";
-        probe.analysis.point.adopted_error = state == 2 ? std::string(1000, 'X') : "";
+        probe.analysis.map.adopted_error = state == 2 ? long_error : "";
+        probe.analysis.point.adopted_error = state == 2 ? long_error : "";
         ctx->Yield(1);
         if (!compare()) {
           return;
@@ -16383,25 +16532,88 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
         if (!compare()) {
           return;
         }
+        const char* word = state == 0 ? "Waiting" : state == 1 ? "Cancelled" : "Refused";
+        if (!check_footer("Raypath view", map_text, word) || !check_footer("Pose & trace", pose_text, word)) {
+          return;
+        }
+        if (state == 0) {
+          if (probe.analysis.wait_feedback_texts.map_wait_line !=
+                  gui::MapWaitLineFor(probe.analysis.map,
+                                      gui::g_survey_executor.QueryOutstanding(gui::QueryFace::kSurvey),
+                                      ImGui::GetTime(), gui::g_survey_executor.InflightPollSnapshot()) ||
+              probe.analysis.wait_feedback_texts.point_wait_line_fiber !=
+                  gui::PointWaitLineFor(probe.analysis.point, ImGui::GetTime(),
+                                        gui::g_survey_executor.InflightPollSnapshot())) {
+            IM_ERRORF("%s", "Footer feedback differs from the original wait clauses");
+            return;
+          }
+        }
         ctx->LogInfo("[layout state] waiting/cancelled/refused arm %d: first and intermediate frames stable", state);
       }
       expected_frame = -1;
-      IM_CHECK(SaveWindowPng(ctx, "//Pose & trace", GuiTestTempPath("layout_pose_refused.png").string()));
-      ctx->WindowFocus("//Layout map probe");
+      const auto check_hover_full_text = [&](const char* host, const std::string& full,
+                                             const std::string& log) -> bool {
+        ctx->WindowFocus((std::string("//") + host).c_str());
+        ctx->MouseMoveToPos(ImVec2(2.0f, 2.0f));
+        ctx->Yield(2);
+        const size_t start = log.rfind(full.substr(0, full.find(" —")));
+        IM_CHECK_RETV(start != std::string::npos, false);
+        const std::string fitted = log.substr(start, log.find('\n', start) - start);
+        ctx->LogInfo("[footer prefix] %s: %s", host, fitted.c_str());
+        if (fitted == full) {
+          // A short wait can fit even at the minimum width. It needs neither ellipsis nor
+          // a duplicate tooltip; the full original clause is already on the visible line.
+          IM_CHECK_RETV(log.find(full, start + full.size()) == std::string::npos, false);
+          return true;
+        }
+        IM_CHECK_RETV(fitted.size() >= 3 && fitted.compare(fitted.size() - 3, 3, "…") == 0, false);
+        std::string flat = full;
+        std::replace(flat.begin(), flat.end(), '\n', ' ');
+        IM_CHECK_RETV(flat.compare(0, fitted.size() - 3, fitted, 0, fitted.size() - 3) == 0, false);
+        for (const char* p = fitted.c_str(); *p;) {
+          unsigned int c = 0;
+          const int n = ImTextCharFromUtf8(&c, p, nullptr);
+          if (n <= 0 || c == IM_UNICODE_CODEPOINT_INVALID) {
+            IM_ERRORF("Invalid UTF-8 footer for %s", host);
+            return false;
+          }
+          p += n;
+        }
+        ImGuiWindow* bar = RegionWindowUnder(host, "##QueryStatusBar");
+        IM_CHECK_RETV(bar != nullptr, false);
+        ctx->MouseMoveToPos(bar->Rect().GetCenter());
+        ctx->Yield(3);
+        IM_CHECK_RETV(log.find(full) != std::string::npos, false);
+        bool visible_tooltip = false;
+        for (ImGuiWindow* window : ImGui::GetCurrentContext()->Windows) {
+          if (window->Active && !window->Hidden && (window->Flags & ImGuiWindowFlags_Tooltip) &&
+              window->DrawList->VtxBuffer.Size > 0) {
+            visible_tooltip = true;
+          }
+        }
+        IM_CHECK_RETV(visible_tooltip, false);
+        return true;
+      };
+      IM_CHECK(check_hover_full_text("Raypath view", "Refused — " + long_error, map_text));
+      IM_CHECK(check_hover_full_text("Pose & trace", "Refused — " + long_error, pose_text));
+      ctx->MouseMoveToPos(ImVec2(2.0f, 2.0f));
       ctx->Yield(2);
-      IM_CHECK(SaveWindowPng(ctx, "//Layout map probe", GuiTestTempPath("layout_map_refused_fixture.png").string()));
+      IM_CHECK(SaveWindowPng(ctx, "//Pose & trace", GuiTestTempPath("layout_pose_refused.png").string()));
+      ctx->WindowFocus("//Raypath view");
+      ctx->Yield(2);
+      IM_CHECK(SaveWindowPng(ctx, "//Raypath view", GuiTestTempPath("layout_map_refused_fixture.png").string()));
       IM_CHECK(gui::MapQueryStateFor(probe.analysis.map) == gui::MapQueryState::kRefused);
       IM_CHECK(gui::PointQueryStateFor(probe.analysis.point) == gui::PointQueryState::kRefused);
-      IM_CHECK(!pose_text.empty() && pose_text.find("Point refused") != std::string::npos);
+      IM_CHECK(!pose_text.empty() && pose_text.find("Refused —") != std::string::npos);
       ctx->WindowClose("//Pose & trace");
       ctx->Yield(2);
       IM_CHECK(!probe.analyze_pose_view_open);
-      ctx->SetRef("//Layout map probe");
-      ctx->WindowFocus("//Layout map probe");
+      ctx->SetRef("//Raypath view");
+      ctx->WindowFocus("//Raypath view");
       ctx->ItemClick("**/Pose & trace###pose_open");
       ctx->Yield(2);
       IM_CHECK(probe.analyze_pose_view_open);
-      IM_CHECK(!pose_text.empty() && pose_text.find("Point refused") != std::string::npos);
+      IM_CHECK(!pose_text.empty() && pose_text.find("Refused —") != std::string::npos);
       ctx->SetRef("");
       // A real engine-produced partial document, not a fabricated Info field. The published
       // interrupted-request contract returns what it has with the stopped execution named.
@@ -16454,19 +16666,107 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       ctx->WindowClose("//Pose & trace");
       ctx->Yield(2);
       IM_CHECK(!probe.analyze_pose_view_open);
-      ctx->SetRef("//Layout map probe");
-      ctx->WindowFocus("//Layout map probe");
+      ctx->SetRef("//Raypath view");
+      ctx->WindowFocus("//Raypath view");
       ctx->ItemClick("**/Pose & trace###pose_open");
       ctx->Yield(2);
       IM_CHECK(probe.analyze_pose_view_open);
       IM_CHECK(!pose_text.empty() && pose_text.find("No fiber") != std::string::npos);
       ctx->SetRef("");
       IM_CHECK(SaveWindowPng(ctx, "//Pose & trace", GuiTestTempPath("layout_pose_partial.png").string()));
+      // Map documents come from the same public API as the executor, with explicit stop
+      // control rather than a timing race. Both partial and completed states cross real frames.
+      LUMICE_PathMapRequest map_request{};
+      map_request.struct_size = sizeof(map_request);
+      map_request.crystal_id = request.crystal_id;
+      map_request.faces = faces;
+      map_request.face_count = 2;
+      map_request.layer_face_counts = &count;
+      map_request.layer_count = 1;
+      map_request.full_sky = 1;
+      map_request.view_rows = 4;
+      map_request.view_cols = 8;
+      map_request.sample_count = 64;
+      map_request.interrupted = &interrupted;
+      LUMICE_PathMap* raw_map = nullptr;
+      IM_CHECK_EQ(LUMICE_AnalyzePathMap(scene.get(), &map_request, &raw_map, error, sizeof(error)), LUMICE_OK);
+      const gui::MapHandle partial_map(raw_map, gui::MapDeleter{});
+      LUMICE_PathMapInfo map_info{};
+      map_info.struct_size = sizeof(map_info);
+      IM_CHECK_EQ(LUMICE_PathMapGetInfo(partial_map.get(), &map_info), LUMICE_PATH_READ_OK);
+      IM_CHECK(map_info.truncated || map_info.members_evaluated < map_info.member_count);
+      probe.analysis.map.adopted_result = partial_map;
+      probe.analysis.map.intent_start_s = ImGui::GetTime() + 1000.0;
+      probe.analysis.map.adopted_error.clear();
+      probe.analysis.map.adopted_id = probe.analysis.map.intent_id;
+      ctx->Yield(2);
+      expected_frame = -1;
+      IM_CHECK(compare());
+      IM_CHECK(check_footer("Raypath view", map_text, "Partial map:"));
+      IM_CHECK(check_footer("Pose & trace", pose_text, "Partial"));
+      probe.analysis.map.intent_id = gui::g_survey_executor.NextId(7852);
+      ctx->Yield(2);
+      IM_CHECK(compare());
+      IM_CHECK(map_text.find("Partial map:") != std::string::npos);
+      IM_CHECK(!probe.analysis.wait_feedback_texts.map_superseding_note.empty());
+      IM_CHECK(check_hover_full_text("Raypath view",
+                                     "Partial map: " + std::to_string(map_info.members_evaluated) + "/" +
+                                         std::to_string(map_info.member_count) + " completed members — Superseded — " +
+                                         probe.analysis.wait_feedback_texts.map_superseding_note,
+                                     map_text));
+      interrupted = 0;
+      raw_map = nullptr;
+      IM_CHECK_EQ(LUMICE_AnalyzePathMap(scene.get(), &map_request, &raw_map, error, sizeof(error)), LUMICE_OK);
+      probe.analysis.map.adopted_result = gui::MapHandle(raw_map, gui::MapDeleter{});
+      probe.analysis.map.adopted_id = probe.analysis.map.intent_id;
+      IM_CHECK_EQ(LUMICE_PathMapGetInfo(probe.analysis.map.adopted_result.get(), &map_info), LUMICE_PATH_READ_OK);
+      IM_CHECK(!map_info.truncated && map_info.members_evaluated == map_info.member_count);
+      const int identity_faces[] = { 1, 2 };
+      request.faces = identity_faces;
+      request.target_azimuth_deg = 0.0;
+      request.sample_count = 64;
+      LUMICE_SinglePathResult* raw_ready = nullptr;
+      IM_CHECK_EQ(LUMICE_AnalyzeSinglePath(scene.get(), &request, &raw_ready, error, sizeof(error)), LUMICE_OK);
+      probe.analysis.point.adopted_result = gui::PointHandle(raw_ready, gui::PointDeleter{});
+      ctx->MouseMoveToPos(ImVec2(2.0f, 2.0f));
+      ctx->Yield(2);
+      IM_CHECK(compare());
+      IM_CHECK(check_footer("Raypath view", map_text, "Ready"));
+      IM_CHECK(check_footer("Pose & trace", pose_text, "Ready"));
+      IM_CHECK(probe.analysis.wait_feedback_texts.map_superseding_note.empty());
+      IM_CHECK(probe.analysis.wait_feedback_texts.point_wait_line_fiber.empty());
+      probe.analysis.map.intent_id = gui::g_survey_executor.NextId(7852);
+      // Freeze only the presentation clock's sample at zero using its documented clamp. Real
+      // executor elapsed/stage/queue progression remains covered by the cancel/wait cases.
+      probe.analysis.map.intent_start_s = ImGui::GetTime() + 1000.0;
+      ctx->Yield(2);
+      IM_CHECK(check_footer("Raypath view", map_text, "Superseded"));
+      IM_CHECK(compare());
+      probe.analysis.map.cancelled_for_key = true;
+      ctx->Yield(2);
+      IM_CHECK(check_footer("Raypath view", map_text, "Cancelled"));
+      IM_CHECK(compare());
+      probe.analysis.map.cancelled_for_key = false;
+      probe.analysis.map.answered_id = probe.analysis.map.intent_id;
+      probe.analysis.map.adopted_error = long_error;
+      ctx->Yield(2);
+      IM_CHECK(check_footer("Raypath view", map_text, "Refused"));
+      IM_CHECK(compare());
+      probe.analysis.map.adopted_result.reset();
       probe.analysis.point.adopted_result.reset();
+      probe.analysis.map.adopted_error.clear();
+      probe.analysis.point.adopted_error.clear();
+      probe.analysis.point.intent_start_s = ImGui::GetTime() + 1000.0;
+      ctx->Yield(2);
+      IM_CHECK(compare());
+      IM_CHECK(check_hover_full_text("Raypath view", "Waiting — " + probe.analysis.wait_feedback_texts.map_wait_line,
+                                     map_text));
+      IM_CHECK(check_hover_full_text(
+          "Pose & trace", "Waiting — " + probe.analysis.wait_feedback_texts.point_wait_line_fiber, pose_text));
       expected_frame = -1;
       // Put the map above the pose for an actual typing/click chain while the status changes.
-      ctx->SetRef("//Layout map probe");
-      ctx->WindowFocus("//Layout map probe");
+      ctx->SetRef("//Raypath view");
+      ctx->WindowFocus("//Raypath view");
       ctx->ItemInputValue("**/alt°##sky", 30.0f);
       probe.analysis.map.adopted_error.clear();
       probe.analysis.point.adopted_error.clear();
@@ -16479,6 +16779,51 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       IM_CHECK(!probe.analysis.sky_point.from_map_pick);
       ctx->SetRef("");
       IM_CHECK(compare());
+      probe.analysis.map.intent_valid = false;
+      probe.analysis.point.intent_valid = false;
+      ctx->MouseMoveToPos(ImVec2(2.0f, 2.0f));
+      ctx->Yield(2);
+      ctx->WindowFocus("//Raypath view");
+      IM_CHECK(SaveWindowPng(ctx, "//Raypath view", GuiTestTempPath("status_map_minimum.png").string()));
+      ctx->WindowFocus("//Pose & trace");
+      IM_CHECK(SaveWindowPng(ctx, "//Pose & trace", GuiTestTempPath("status_pose_minimum.png").string()));
+      map_at_minimum = false;
+      ImGui::SetWindowSize(pose_host, ImVec2(gui::UiPx(960.0f), gui::UiPx(720.0f)), ImGuiCond_Always);
+      ctx->Yield(2);
+      ctx->WindowFocus("//Raypath view");
+      IM_CHECK(SaveWindowPng(ctx, "//Raypath view", GuiTestTempPath("status_map_default.png").string()));
+      ctx->WindowFocus("//Pose & trace");
+      IM_CHECK(SaveWindowPng(ctx, "//Pose & trace", GuiTestTempPath("status_pose_default.png").string()));
+      struct ScaleRestore {
+        ~ScaleRestore() { gui::SetUiScaleMultiplierImmediate(gui::kFactoryUiScaleMultiplier); }
+      } scale_restore;
+      map_at_minimum = true;
+      const auto check_scale = [&](float scale) -> bool {
+        gui::SetUiScaleMultiplierImmediate(scale);
+        IM_CHECK_RETV(
+            DriveUntil(ctx, [scale] { return !gui::g_ui_scale_dirty && gui::CurrentUiScale() == scale; }, 5), false);
+        ImGui::SetWindowSize(pose_host,
+                             ImVec2(std::min(gui::UiPx(640.0f), ImGui::GetMainViewport()->Size.x),
+                                    std::min(gui::UiPx(680.0f), ImGui::GetMainViewport()->Size.y)),
+                             ImGuiCond_Always);
+        ctx->Yield(3);
+        IM_CHECK_RETV(check_footer("Raypath view", map_text, "No selection"), false);
+        IM_CHECK_RETV(check_footer("Pose & trace", pose_text, "No target"), false);
+        // Freshness is an independent header, not query status; it may consume height but
+        // must leave the fixed footer reachable at each supported scale.
+        probe.analysis_freshness.list = gui::AnalysisListFreshness::kStale;
+        ctx->Yield(2);
+        IM_CHECK_RETV(!probe.analysis.wait_feedback_texts.map_stale_hint.empty(), false);
+        IM_CHECK_RETV(!probe.analysis.wait_feedback_texts.point_stale_hint.empty(), false);
+        IM_CHECK_RETV(check_footer("Raypath view", map_text, "No selection"), false);
+        IM_CHECK_RETV(check_footer("Pose & trace", pose_text, "No target"), false);
+        probe.analysis_freshness.list = gui::AnalysisListFreshness::kFresh;
+        ctx->LogInfo("[footer scale] %.1fx: minimum, visible body/footer separation and freshness coexistence", scale);
+        return true;
+      };
+      IM_CHECK(check_scale(1.0f));
+      IM_CHECK(check_scale(1.5f));
+      IM_CHECK(check_scale(2.0f));
     };
   }
   {

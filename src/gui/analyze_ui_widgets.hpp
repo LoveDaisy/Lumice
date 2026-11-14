@@ -4,7 +4,7 @@
 // The Analyze workspace's shared widget primitives — the ONE implementation each of the small
 // repeated UI mechanisms the analyze windows run (a56: one semantic, one authoritative copy).
 //
-// The family has five members, all consumed only by the analyze windows:
+// The shared mechanisms are consumed only by the analyze windows:
 //   1. DisabledWrappedText — the disabled-colour wrapped text pair (ImGui has no
 //      DisabledTextWrapped; the overview's and the point view's hand copies were this body
 //      verbatim).
@@ -17,6 +17,8 @@
 //      write from the DISPLAYED boundary, the two-tier floor clamp, the Resize cursor, the
 //      tri-state centre line, and the drag-hint glyph. Every split's stored ratio, floors and
 //      direction convention travel as parameters (see the function's comment for the dialects).
+//   5. AnalyzeTextFitToWidth + ReserveAnalyzeStatusBar / RenderAnalyzeStatusBar — bounded
+//      text and fixed visible-client footer allocation, shared by the two floating windows.
 //
 // Everything here is header-only and gui-side: imgui, gui constants and the theme outlet — no
 // core/ or config/ include, so the gui-api-boundary rule is untouched. New consumers include
@@ -76,7 +78,7 @@ inline std::string AnalyzeTextFitToWidth(const std::string& text, float max_w) {
   if (ImGui::CalcTextSize(ellipsis.c_str()).x > max_w) {
     return "";
   }
-  std::string fitted = ellipsis;
+  std::string fitted;
   for (size_t i = 0; i < text.size();) {
     ++i;
     while (i < text.size() && (static_cast<unsigned char>(text[i]) & 0xC0) == 0x80) {
