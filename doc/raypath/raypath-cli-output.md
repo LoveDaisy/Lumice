@@ -850,7 +850,7 @@ positive and negative controls live in
 
 ```bash
 Lumice raypath survey -f <config> --crystal <id> --path <faces> \
-  [--literal] [--lambda 550] [--budget 15s] [--mc-ess draws] [-o out.json]
+  [--literal] [--lambda 550] [--budget 30s] [--mc-ess draws] [-o out.json]
 ```
 
 The survey is the census face of the diagnostic pipeline (v4.54): **one single-layer raypath
@@ -909,7 +909,7 @@ through the same engine error); `--literal` narrows the scope to the literal seq
 target mode's `--wavelength` (the scene's single discrete wavelength, else 550; the choice is
 recorded in `scope.wavelength_source`) — it is named `--lambda` because it is a routing
 reference, not a spectral integral; `--budget <N>[s]` (integer seconds, the `s` optional,
-default 15, max 120) rides the document's budget block; `--mc-ess <draws>` (positive integer,
+default 30, max 120) rides the document's budget block; `--mc-ess <draws>` (positive integer,
 max 200000) requests the opt-in MC region ESS leg (§9.8). Exit status and stderr progress follow
 the target mode's contract (`[raypath survey]` start/done lines; Ctrl-C ends the process and
 writes nothing; `-o` is atomic, and the analysis runs after the output directory is checked).
