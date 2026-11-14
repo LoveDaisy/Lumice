@@ -164,17 +164,20 @@ inline void AnalyzeSplitter(const char* id, SplitterDragAxis axis, float length_
   }
   // The drag-hint glyph: a filled triangle pair pointing along the drag axis, bases on the
   // centre line — the one affordance the strips carry. Geometry lives here so re-tuning it is
-  // a one-site edit.
+  // a one-site edit. Winding: AddTriangleFilled goes through AddConvexPolyFilled, whose
+  // anti-aliased path presumes the SCREEN-CLOCKWISE order (the per-edge normal (dy,-dx) must
+  // point outward — a counter-clockwise triangle lands its opaque inner vertices outside the
+  // polygon and draws a lopsided fill), so all four triangles below are wound clockwise.
   const float tip = UiPx(3.0f);
   const float half_h = UiPx(2.4f);
   if (axis == SplitterDragAxis::kLeftRight) {
     dl->AddTriangleFilled(ImVec2(centre.x - tip, centre.y), ImVec2(centre.x, centre.y - half_h),
                           ImVec2(centre.x, centre.y + half_h), col);
-    dl->AddTriangleFilled(ImVec2(centre.x + tip, centre.y), ImVec2(centre.x, centre.y - half_h),
-                          ImVec2(centre.x, centre.y + half_h), col);
+    dl->AddTriangleFilled(ImVec2(centre.x + tip, centre.y), ImVec2(centre.x, centre.y + half_h),
+                          ImVec2(centre.x, centre.y - half_h), col);
   } else {
-    dl->AddTriangleFilled(ImVec2(centre.x, centre.y - tip), ImVec2(centre.x - half_h, centre.y),
-                          ImVec2(centre.x + half_h, centre.y), col);
+    dl->AddTriangleFilled(ImVec2(centre.x, centre.y - tip), ImVec2(centre.x + half_h, centre.y),
+                          ImVec2(centre.x - half_h, centre.y), col);
     dl->AddTriangleFilled(ImVec2(centre.x, centre.y + tip), ImVec2(centre.x - half_h, centre.y),
                           ImVec2(centre.x + half_h, centre.y), col);
   }
