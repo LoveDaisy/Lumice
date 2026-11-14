@@ -184,7 +184,7 @@ LUMICE_API void LUMICE_PathFeatureReportDestroy(LUMICE_PathFeatureReport* result
 
 // The budget_ms a 0 budget_ms request resolves to, as a shell-facing constant (the engine's own
 // default, mirrored here for the same validate-early purpose).
-#define LUMICE_PATH_SURVEY_DEFAULT_BUDGET_MS 15000
+#define LUMICE_PATH_SURVEY_DEFAULT_BUDGET_MS 30000
 
 typedef struct LUMICE_PathSurveyRequest {
   size_t struct_size;
@@ -199,7 +199,7 @@ typedef struct LUMICE_PathSurveyRequest {
   // <= 0 or NaN: unset — the scene's wavelength if its spectrum is exactly one discrete
   // wavelength, else 550 nm. Otherwise must lie in [350, 900].
   double wavelength_nm;
-  // 0 selects the 15000 ms default; at most LUMICE_PATH_SURVEY_MAX_BUDGET_MS. Recorded in the
+  // 0 selects LUMICE_PATH_SURVEY_DEFAULT_BUDGET_MS; at most LUMICE_PATH_SURVEY_MAX_BUDGET_MS. Recorded in the
   // document's budget block; not enforced by the v1 routing leg.
   int budget_ms;
   // 0 = the physical P|B|D class (the default); 1 = the literal requested sequence — the report

@@ -381,7 +381,7 @@ as-built：CLI 五命令面已全落地（§7.4），GUI 工作区接线进行�
 ```
 Lumice analyze  -f cfg ...                                  # L0 既有，不动
 Lumice raypath survey -f cfg --crystal 1 --path 3-5 \
-    [--literal] [--lambda 550] [--budget 15s] [--mc-ess draws]   # L1 → schema4
+    [--literal] [--lambda 550] [--budget 30s] [--mc-ess draws]   # L1 → schema4
 Lumice raypath point  -f cfg --crystal 1 --path 3-5 --target 20,25 [--warm s.json]
 Lumice raypath probe  -f cfg --crystal 1 --path 3-5 \
     --along radial|edge-normal|arc|tangential --at ... [--warm s.json]
@@ -405,7 +405,7 @@ survey 落盘对象索引 + band-sum 地图 + 种子；point/probe 经 `--warm s
 L2 类，`--literal` 收窄到字面成员，词汇与 `analyze --symmetry` 对齐）× **问题参数**
 （`--target` / `--along` / `--lambda` / `--budget`）。
 
-继承 `analyze` 的 CLI 纪律：预算上限（默认 15s、显式上限）、进度走 stderr、Ctrl-C 早退写
+继承 `analyze` 的 CLI 纪律：预算上限（survey 默认 30s、point/probe/report 默认 15s、显式上限）、进度走 stderr、Ctrl-C 早退写
 部分结果、输出文件原子重写。
 
 ### 7.4 as-built 与 GUI 预演映射

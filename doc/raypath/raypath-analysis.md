@@ -740,7 +740,9 @@ halo 场景（zenith 均布 mean 90）主类路由为快速拒答臂——其 kW
 diff、单测 pre-change 金样字节一致。实测：CLI C17 enforcement（budget 5 s）墙钟 5.0–5.4 s
 （期限 + ≤0.4 s 余量）；TIR 相本体前后等速（0.73 s，同树受控对照）。两条 C17 腿保持
 real-timing 池：负载敏感本性不变，期限收敛后墙钟 ≈ 15 s + 余量（60 s 断言上界 4× 余量），
-claim 仍是引擎文档断言。GUI 边界审计复核随片完成：五个 analyze TU 零 JSON 拼装、概览模型单源双消费、
+claim 仍是引擎文档断言。（2026-11-15 修订：survey 默认预算 15000→30000；本段写于旧默认时代，
+15 s 期限与「60 s 上界 4× 余量」等数字按当时默认记录，60 s 断言上界对新默认为 2× 余量。）
+GUI 边界审计复核随片完成：五个 analyze TU 零 JSON 拼装、概览模型单源双消费、
 具名空态是唯一占位形态（`check_policies.py` 全绿）。用户操作与首版能力边界的耐久表述在
 `doc/user-manual/06-raypath-analysis{,_zh}.md` §6–§8 与「首版已知限制」节。
 
