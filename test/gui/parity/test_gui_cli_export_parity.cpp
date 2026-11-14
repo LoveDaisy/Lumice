@@ -1252,12 +1252,10 @@ std::vector<unsigned char> AnnotationMembership(const unsigned char* rgb, int w,
 // Same shape and same reason as the guard in test/gui/visual/test_gui_lens_projection.cpp: every
 // IM_CHECK* below can return early, and only a destructor tears down a running server and restores
 // a widened watchdog on that path.
-// Deliberately NOT the shared ScopedWatchdogThreshold primitive (test_gui_shared.hpp): that one
-// saves and overwrites at construction and restores at scope end, while this guard saves the
-// baseline at construction, the run below overwrites mid-test, and the restore must ride this
-// destructor — ahead of the server teardown, and covering the export/capture tail after the
-// wait. Restoring at a wait-site scope end instead would shrink the raised budget before the
-// tail; composing would need a deferred-write variant of the primitive for one suite pair.
+// Deliberately NOT the shared ScopedWatchdogThreshold primitive (test_gui_shared.hpp): the full
+// lifecycle rationale — baseline save at construction, mid-test overwrite, restore riding this
+// destructor ahead of the server teardown — is written once at the lens-projection suite's
+// ScopedServerAndWatchdogGuard, which this guard mirrors line for line.
 struct ScopedServerAndWatchdogGuard {
   ImGuiTestEngineIO* engine_io;
   float saved_watchdog_warn;
