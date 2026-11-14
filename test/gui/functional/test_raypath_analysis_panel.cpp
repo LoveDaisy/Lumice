@@ -4333,8 +4333,12 @@ bool SplitterStripsCarryTheDragHintGlyph(ImGuiTestContext* ctx) {
     float hi = 0.0f;
     bool any = false;
     const ImVec2 centre((strip.Min.x + strip.Max.x) * 0.5f, (strip.Min.y + strip.Max.y) * 0.5f);
+    // RGB match, alpha ignored: the glyph's visual footprint includes its anti-aliased fringe,
+    // whose alpha differs from the opaque line's — and whose placement flips with the fill
+    // winding, which this presence probe must not be sensitive to (the winding has its own
+    // per-side fill-area assertion below).
     for (const ImDrawVert& vertex : pose->DrawList->VtxBuffer) {
-      if (vertex.col != separator_col) {
+      if ((vertex.col & 0x00FFFFFFu) != (separator_col & 0x00FFFFFFu)) {
         continue;
       }
       const ImVec2 p = vertex.pos;
@@ -4392,6 +4396,18 @@ bool SplitterStripsCarryTheDragHintGlyph(ImGuiTestContext* ctx) {
         continue;  // the anti-aliased fringe carries modified colours — opaque ink only
       }
       if (!inside(pa, strip) || !inside(pb, strip) || !inside(pc, strip)) {
+        continue;
+      }
+      // The strip's own line geometry (its opaque anti-aliased envelope halves run the strip's
+      // full length and would swamp one side's sum) stays out: count only triangles inside the
+      // glyph's own reach across the run axis.
+      const float reach = gui::UiPx(3.5f);
+      const auto within_reach = [centre, reach](const ImVec2& p, bool along_x) {
+        const float run = along_x ? p.y : p.x;
+        const float run_centre = along_x ? centre.y : centre.x;
+        return std::abs(run - run_centre) <= reach;
+      };
+      if (!within_reach(pa, along_x) || !within_reach(pb, along_x) || !within_reach(pc, along_x)) {
         continue;
       }
       const float centroid_x = (pa.x + pb.x + pc.x) / 3.0f;
