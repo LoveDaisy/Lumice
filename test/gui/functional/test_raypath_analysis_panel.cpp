@@ -1029,9 +1029,8 @@ struct PanoramaWarningInk {
   int vertices = 0;
 };
 
-PanoramaWarningInk CollectPanoramaWarningInk(ImU32 colour) {
+PanoramaWarningInk CollectHostSubtreeWarningInk(ImGuiWindow* host, ImU32 colour) {
   PanoramaWarningInk ink;
-  ImGuiWindow* host = AnalyzePanoramaHostWindow();
   if (host == nullptr) {
     return ink;
   }
@@ -1064,6 +1063,25 @@ PanoramaWarningInk CollectPanoramaWarningInk(ImU32 colour) {
     }
   }
   return ink;
+}
+
+PanoramaWarningInk CollectPanoramaWarningInk(ImU32 colour) {
+  return CollectHostSubtreeWarningInk(AnalyzePanoramaHostWindow(), colour);
+}
+
+// The same probe, generalized to a floating window by exact name: the staleness hints' hosts
+// are the Raypath view and Pose & trace windows, whose subtrees read the way the panorama
+// host's does. Exact match on the root window's own name — its children spell
+// "Raypath view/<child>_<id>", a form a strstr would also hit and a root lookup must not.
+PanoramaWarningInk CollectWindowWarningInk(const char* host_name, ImU32 colour) {
+  ImGuiWindow* host = nullptr;
+  for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
+    if (w != nullptr && w->WasActive && std::strcmp(w->Name, host_name) == 0) {
+      host = w;
+      break;
+    }
+  }
+  return CollectHostSubtreeWarningInk(host, colour);
 }
 
 // The exact packed colour the warning text's vertices carry, read the way the renderer reads it:
@@ -11829,6 +11847,133 @@ bool WindowsStandThroughInFlightAndDocumentScopes(ImGuiTestContext* ctx) {
   return true;
 }
 
+// The staleness hints' edit-stale leg (analysis_stale_hint_child_windows): the red state is
+// warning-coloured ink absent from both floating windows — see the registration below.
+bool AnalysisStaleHintEditStaleLeg(ImGuiTestContext* ctx) {
+  ScopedWatchdogGuard watchdog(ctx->EngineIO);
+  ScopedServerGuard guard;
+
+  // ---- Leg 1 — the edit-stale fact, both windows standing. ----
+  ResetTestState();
+  gui::g_server = LUMICE_CreateServer();
+  IM_CHECK_RETV(gui::g_server != nullptr, false);
+  LUMICE_SetLogLevel(gui::g_server, static_cast<LUMICE_LogLevel>(g_core_log_level));
+  IM_CHECK_RETV(gui::DeserializeFromJson(kFullyRandomJson, gui::g_state), false);
+  gui::g_state.renderer.sim_resolution_index = 0;
+  gui::g_state.sim.infinite = false;
+  gui::g_state.sim.ray_num_millions = 0.1f;
+  ctx->Yield(2);
+  // The one-picture gate, the five-op chain's shape: a real Run first.
+  IM_CHECK_RETV(!IsDisabled(ctx->ItemInfo("##TopBar/" ICON_FA_PLAY " Run")), false);
+  ctx->ItemClick("##TopBar/" ICON_FA_PLAY " Run");
+  IM_CHECK_RETV(DriveUntil(ctx, [] { return gui::g_state.sim_state == SimState::kDone; }, 60), false);
+  ctx->ItemClick("##TopBar/Analyze");
+  ctx->Yield(3);
+  IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
+  // Both windows standing: the row click opens the Raypath view, the Selection header's
+  // button the pose window; both pinned so the hint's clip is the window's own.
+  IM_CHECK_RETV(SelectRowByDisplay(ctx, TopChainDisplay().c_str()) != std::nullopt, false);
+  IM_CHECK_RETV(gui::g_state.analyze_raypath_view_open && EntryWindowActive("Raypath view"), false);
+  PinRaypathViewOnScreen(ctx);
+  IM_CHECK_RETV(!gui::g_state.analyze_pose_view_open, false);
+  ctx->ItemClick("**/Pose & trace###main_pose_open");
+  ctx->Yield(3);
+  IM_CHECK_RETV(gui::g_state.analyze_pose_view_open && EntryWindowActive("Pose & trace"), false);
+  PinPoseViewOnScreen(ctx);
+  ctx->Yield(3);
+
+  const ImU32 warn_colour = WarningTextVertexColour();
+  // The probe's discriminating power, stated the way the drift band's case states its own:
+  // while the analysis is fresh the two windows draw NO warning-coloured ink. If anything
+  // else in either subtree ever does, this leg turns red at the control and the probe needs
+  // a second discriminator — a deliberate tripwire, not a pass.
+  IM_CHECK_RETV(!CollectWindowWarningInk("Raypath view", warn_colour).found, false);
+  IM_CHECK_RETV(!CollectWindowWarningInk("Pose & trace", warn_colour).found, false);
+
+  // AC3's baseline: the session's intents and the payload are captured before the edit —
+  // the hint must state the staleness, never re-run the analysis or re-issue a query.
+  const auto* payload_before = gui::g_state.analysis_result.payload.get();
+  const auto survey_intent_before = gui::g_state.analysis.survey.intent_id;
+  const auto map_intent_before = gui::g_state.analysis.map.intent_id;
+  // The edit: the sun's altitude, the same input the five-op chain's op ⑤ makes — a scene
+  // edit the identity reads as stale.
+  const float alt_before = gui::g_state.sun.altitude;
+  ctx->SetRef("//##AnalyzeLeftPanel");
+  ctx->ItemInputValue("##Altitude_input", alt_before - 5.0f);
+  ctx->SetRef("");
+  ctx->Yield(3);
+  IM_CHECK_RETV(fabsf(gui::g_state.sun.altitude - (alt_before - 5.0f)) < 0.05f, false);
+  IM_CHECK_RETV(gui::g_state.sim_state == SimState::kModified, false);
+  // The staleness fact is the frame's derived state (the unification's Step 1): the windows'
+  // hints consume it, and the field's verdict here is the case's own bridge between the fact
+  // and the ink below.
+  IM_CHECK_RETV(gui::g_state.analysis_freshness.list == gui::AnalysisListFreshness::kStale, false);
+
+  // The red state: both windows show the hint.
+  const PanoramaWarningInk map_hint = CollectWindowWarningInk("Raypath view", warn_colour);
+  IM_CHECK_RETV(map_hint.found, false);
+  IM_CHECK_RETV(!map_hint.clipped, false);
+  const PanoramaWarningInk pose_hint = CollectWindowWarningInk("Pose & trace", warn_colour);
+  IM_CHECK_RETV(pose_hint.found, false);
+  IM_CHECK_RETV(!pose_hint.clipped, false);
+  // AC3's face: stating changed nothing.
+  IM_CHECK_RETV(!gui::g_state.analysis_run_in_progress, false);
+  IM_CHECK_RETV(gui::g_state.analysis_result.payload.get() == payload_before, false);
+  IM_CHECK_RETV(gui::g_state.analysis.survey.intent_id == survey_intent_before, false);
+  IM_CHECK_RETV(gui::g_state.analysis.map.intent_id == map_intent_before, false);
+  return true;
+}
+
+// The staleness hints' cone-drift leg: the drift fact's first window-level witness, the same
+// ink judge.
+bool AnalysisStaleHintConeDriftLeg(ImGuiTestContext* ctx) {
+  ScopedWatchdogGuard watchdog(ctx->EngineIO);
+  ScopedServerGuard guard;
+
+  // ---- Leg 2 — the cone-drift fact, the Raypath view as its first window-level witness. ----
+  ResetTestState();
+  gui::g_server = LUMICE_CreateServer();
+  IM_CHECK_RETV(gui::g_server != nullptr, false);
+  LUMICE_SetLogLevel(gui::g_server, static_cast<LUMICE_LogLevel>(g_core_log_level));
+  IM_CHECK_RETV(gui::DeserializeFromJson(kFullyRandomJson, gui::g_state), false);
+  gui::g_state.renderer.sim_resolution_index = 0;
+  gui::g_state.sim.infinite = false;
+  gui::g_state.sim.ray_num_millions = 0.1f;
+  ctx->Yield(2);
+  IM_CHECK_RETV(!IsDisabled(ctx->ItemInfo("##TopBar/" ICON_FA_PLAY " Run")), false);
+  ctx->ItemClick("##TopBar/" ICON_FA_PLAY " Run");
+  IM_CHECK_RETV(DriveUntil(ctx, [] { return gui::g_state.sim_state == SimState::kDone; }, 60), false);
+  ctx->ItemClick("##TopBar/Analyze");
+  ctx->Yield(3);
+  IM_CHECK_RETV(RunPointAnalysisToCompletion(ctx), false);
+  IM_CHECK_RETV(gui::g_state.analysis_result.payload->roi_mode == LUMICE_RAYPATH_ROI_CONE, false);
+  IM_CHECK_RETV(SelectRowByDisplay(ctx, TopChainDisplay().c_str()) != std::nullopt, false);
+  IM_CHECK_RETV(gui::g_state.analyze_raypath_view_open && EntryWindowActive("Raypath view"), false);
+  PinRaypathViewOnScreen(ctx);
+  ctx->Yield(3);
+
+  const ImU32 warn_colour = WarningTextVertexColour();
+  // Control: undrifted, the window draws no warning ink — and the predicate agrees, so the
+  // ink probe and the fact cannot disagree about which state is which.
+  IM_CHECK_RETV(!gui::ConeCenterDriftedFromResult(gui::g_state), false);
+  IM_CHECK_RETV(!CollectWindowWarningInk("Raypath view", warn_colour).found, false);
+
+  // The centre moves off the analysed direction: the state write is the display face of the
+  // pure predicate (the real drag gesture's coverage is marker_drag_moves_the_centre_not_the_view
+  // and the main band's own case), and needs no mouse — the floating window cannot shadow it.
+  const float moved[3] = { -gui::g_state.analysis.cone_center_dir[1], gui::g_state.analysis.cone_center_dir[0],
+                           gui::g_state.analysis.cone_center_dir[2] };
+  std::copy(moved, moved + 3, gui::g_state.analysis.cone_center_dir);
+  ctx->Yield(3);
+  IM_CHECK_RETV(gui::ConeCenterDriftedFromResult(gui::g_state), false);
+  IM_CHECK_RETV(gui::g_state.analysis_freshness.cone_center_drifted, false);
+  const PanoramaWarningInk drift_hint = CollectWindowWarningInk("Raypath view", warn_colour);
+  IM_CHECK_RETV(drift_hint.found, false);
+  IM_CHECK_RETV(!drift_hint.clipped, false);
+  IM_CHECK_RETV(!gui::g_state.analysis_run_in_progress, false);
+  return true;
+}
+
 void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
   // Direct positioning is one mouse-down action, not a new mode or a drag. Keep the press
   // through modifier changes, crossing the marker, leaving the picture and cancellation.
@@ -14416,6 +14561,29 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       IM_CHECK(set_scale(2.0f));
       IM_CHECK(set_basis(1024, 640));
       IM_CHECK(run_leg("1024x640 2x"));
+    };
+  }
+
+  // The staleness hints' two child windows — the unified derivation's AC2/AC5 red state in
+  // two legs, each constructing its own fact:
+  //  1. the edit-stale leg — a completed analysis, an edit that moves the document away from the
+  //     analysed scene, BOTH floating windows standing: the Raypath view and the Pose & trace
+  //     window display the very list/map/answers the edit made stale, and nothing in either
+  //     window says so (the freshness facts' only faces were the main window's three);
+  //  2. the cone-drift leg — a completed Point analysis, the centre moved off the analysed one,
+  //     the Raypath view open: its drift row is the drift fact's first window-level witness (the
+  //     main band's cases and the aggregate's enumeration cannot see a missing hint).
+  // The judge at this stage is the drawn ink itself — the warning colour's vertices inside the
+  // window's own subtree, none of it outside its clip — never the predicate or a field: the red
+  // state this case first records is warning-coloured glyphs absent from the two windows
+  // entirely. The feedback fields and their full rects join the judge when the render sites
+  // land (the rect is the completeness face: a hint whose first line fits while its continuation
+  // is clipped away leaves ink and passes an ink-only probe — the roi-drift lesson).
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "analysis_stale_hint_child_windows");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      IM_CHECK(AnalysisStaleHintEditStaleLeg(ctx));
+      IM_CHECK(AnalysisStaleHintConeDriftLeg(ctx));
     };
   }
 
