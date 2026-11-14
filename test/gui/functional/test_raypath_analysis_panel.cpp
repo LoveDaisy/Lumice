@@ -2003,28 +2003,20 @@ bool CheckMapGlyphsAcrossUiScale(ImGuiTestContext* ctx);
 // wait spins to its own timeout as a cascade — the widened budget must cover the WHOLE test, and
 // be restored on every early path.
 //
-// The widened values are REAL-clock seconds under the fixed-dt clock contract (test_gui_main.cpp
-// neutralized the engine's simulated-time watchdog in this mode and the harness real-clock
-// watchdog reads these same fields live; in non-fixed-dt runs the engine's own real-time watchdog
-// reads them). Sizing: a stuck gate fails the test at its own budget (the gates are safety nets
-// whose DriveUntil timeouts feed IM_CHECK_RETV), so the kill's remaining target is gate-less
-// yield loops and engine wedges. Healthy spans of the guarded tests are tens of seconds;
-// slow-but-legal chains under pool-context load reach a few hundred seconds, so the kill sits at
-// 600s — finite, where the old 50000/100000 made the watchdog vanish outright. The warning runs
-// 30s ahead of the kill, mirroring the engine's default warning/kill spacing.
+// The widened values are REAL-clock seconds under the fixed-dt clock contract (the harness
+// real-clock watchdog in test_gui_main.cpp reads these same fields live, with the engine's
+// simulated-time watchdog bypassed in this mode; in non-fixed-dt runs the engine's own real-time
+// watchdog reads them). Sizing: a stuck gate fails the test at its own budget (the gates are
+// safety nets whose DriveUntil timeouts feed IM_CHECK_RETV), so the kill's remaining target is
+// gate-less yield loops and engine wedges. Healthy spans of the guarded tests are tens of
+// seconds; slow-but-legal chains under pool-context load reach a few hundred seconds, so the
+// kill sits at 600s — finite, where the old 50000/100000 made the watchdog vanish outright. The
+// warning runs 30s ahead of the kill, mirroring the engine's default warning/kill spacing.
 struct ScopedWatchdogGuard {
-  ImGuiTestEngineIO* engine_io;
-  float saved_warn;
-  float saved_kill;
-  explicit ScopedWatchdogGuard(ImGuiTestEngineIO* io)
-      : engine_io(io), saved_warn(io->ConfigWatchdogWarning), saved_kill(io->ConfigWatchdogKillTest) {
-    engine_io->ConfigWatchdogWarning = 570.0f;
-    engine_io->ConfigWatchdogKillTest = 600.0f;
-  }
-  ~ScopedWatchdogGuard() {
-    engine_io->ConfigWatchdogWarning = saved_warn;
-    engine_io->ConfigWatchdogKillTest = saved_kill;
-  }
+  // The shared save-overwrite-restore primitive (test_gui_shared.hpp) carrying this suite's
+  // whole-test budget.
+  ScopedWatchdogThreshold watchdog;
+  explicit ScopedWatchdogGuard(ImGuiTestEngineIO* io) : watchdog(io, 570.0f, 600.0f) {}
 };
 
 // The marker ink probe's shared face (the AC1 red-green pin): the helper drives the two legs,
