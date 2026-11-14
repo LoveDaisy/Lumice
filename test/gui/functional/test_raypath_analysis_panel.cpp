@@ -7532,6 +7532,68 @@ bool RaypathViewOpenIsDisplayState(ImGuiTestContext* ctx) {
   return true;
 }
 
+// M0 forensics (task tint-map-scheduling-race): when the split case's dispersion gate times
+// out, dump the four wait conditions' actual state and the adopted documents' own stop
+// outcomes — evidence the run would otherwise leave behind only as a bare timeout line.
+// Read-only and on the timeout path only: the green path never calls it, so the instrument
+// cannot perturb the timing it measures. Everything reads through the same typed C API getters
+// the overview model consumes.
+void DumpSplitDispersionTimeoutState(ImGuiTestContext* ctx) {
+  const auto outcome_name = [](int execution) {
+    switch (execution) {
+      case LUMICE_PATH_OUTCOME_COMPLETED:
+        return "completed";
+      case LUMICE_PATH_OUTCOME_CANCELLED:
+        return "cancelled";
+      case LUMICE_PATH_OUTCOME_DEADLINE_EXCEEDED:
+        return "deadline_exceeded";
+      default:
+        return "unknown";
+    }
+  };
+  const auto& survey = gui::g_state.analysis.survey;
+  const auto& map = gui::g_state.analysis.map;
+  ctx->LogInfo("[m0] survey: intent_valid=%d cancelled=%d adopted=%d err=\"%s\"", survey.intent_valid ? 1 : 0,
+               survey.cancelled_for_key ? 1 : 0, survey.adopted_result ? 1 : 0, survey.adopted_error.c_str());
+  ctx->LogInfo("[m0] map: intent_valid=%d cancelled=%d adopted=%d err=\"%s\"", map.intent_valid ? 1 : 0,
+               map.cancelled_for_key ? 1 : 0, map.adopted_result ? 1 : 0, map.adopted_error.c_str());
+  if (survey.adopted_result) {
+    LUMICE_PathSurveyInfo info{};
+    info.struct_size = sizeof(info);
+    if (LUMICE_PathSurveyGetInfo(survey.adopted_result.get(), &info) == LUMICE_PATH_READ_OK) {
+      ctx->LogInfo(
+          "[m0] survey doc: execution=%s budget_ms=%d evidence_state=%d family=%d tint=%d tir=%d ess=%d "
+          "objects=%zu unevaluated=%zu",
+          outcome_name(info.execution), info.budget_ms, info.evidence_state, info.family_available, info.tint_available,
+          info.tir_available, info.ess_available, info.object_count, info.unevaluated_count);
+    }
+    LUMICE_PathChromatic chromatic{};
+    chromatic.struct_size = sizeof(chromatic);
+    if (LUMICE_PathSurveyGetChromatic(survey.adopted_result.get(), &chromatic) == LUMICE_PATH_READ_OK) {
+      ctx->LogInfo(
+          "[m0] survey chromatic: state=%s mode=\"%s\" reason=\"%s\" dispersion_available=%d "
+          "diagnose_available=%d",
+          gui::SurveyStateName(chromatic.state), chromatic.mode.data, chromatic.reason.data,
+          chromatic.dispersion_available, chromatic.diagnose_available);
+    }
+    const auto model = gui::BuildSurveyOverviewModel(*survey.adopted_result);
+    ctx->LogInfo(
+        "[m0] overview model: dispersion.available=%d min_row_available=%d chromatic_state=%d "
+        "evidence_mode=\"%s\" tint.available=%d tint.state=%d tint.reading=%d arm=%d",
+        model.dispersion.available ? 1 : 0, model.dispersion.min_row_available ? 1 : 0, model.chromatic_state,
+        model.evidence_mode.c_str(), model.tint.available ? 1 : 0, model.tint.state,
+        model.tint.reading_available ? 1 : 0, static_cast<int>(model.arm));
+  }
+  if (map.adopted_result) {
+    LUMICE_PathMapInfo info{};
+    info.struct_size = sizeof(info);
+    if (LUMICE_PathMapGetInfo(map.adopted_result.get(), &info) == LUMICE_PATH_READ_OK) {
+      ctx->LogInfo("[m0] map doc: execution=%s budget_ms=%d truncated=%d members=%d/%d", outcome_name(info.execution),
+                   info.budget_ms, info.truncated, info.members_evaluated, info.member_count);
+    }
+  }
+}
+
 // AC2's D3 face (contract §4.2, §9.3): the window's own reference-map | info split is manual
 // and floored — the drag writes the ratio (both regions' widths follow it), the floors clamp
 // it (the info region at its 200 pt floor, the map at its 160 pt floor), a selection change
@@ -7613,16 +7675,19 @@ bool RaypathViewSplitIsManualAndFloored(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(map3->Size.x >= gui::UiPx(gui::kRaypathViewMapMinSize) - 1.5f, false);
   // A real C01 dispersion payload is required; a refused but non-null survey cannot
   // witness the legend's drawn arcs, and report height is not a proxy for their presence.
-  IM_CHECK_RETV(DriveUntil(
-                    ctx,
-                    [] {
-                      if (!gui::g_state.analysis.survey.adopted_result || !gui::g_state.analysis.map.adopted_result)
-                        return false;
-                      const auto model = gui::BuildSurveyOverviewModel(*gui::g_state.analysis.survey.adopted_result);
-                      return model.dispersion.available && model.dispersion.min_row_available;
-                    },
-                    60),
-                false);
+  const bool dispersion_ready = DriveUntil(
+      ctx,
+      [] {
+        if (!gui::g_state.analysis.survey.adopted_result || !gui::g_state.analysis.map.adopted_result)
+          return false;
+        const auto model = gui::BuildSurveyOverviewModel(*gui::g_state.analysis.survey.adopted_result);
+        return model.dispersion.available && model.dispersion.min_row_available;
+      },
+      60);
+  if (!dispersion_ready) {
+    DumpSplitDispersionTimeoutState(ctx);
+  }
+  IM_CHECK_RETV(dispersion_ready, false);
   // The legend's honesty qualifier is READABLE at the 200 pt floor: the entries are the
   // Bullet()+TextWrapped pair, so the info region's content never exceeds its width —
   // ScrollMax.x == 0 is the region-wide form of that (a single-line BulletText here reads as
