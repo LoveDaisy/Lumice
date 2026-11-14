@@ -244,63 +244,6 @@ Shared fixtures stay under `test/e2e/` (`base.py`, `runner.py`,
   pool would otherwise do to itself. A group's `tmp_prefix` is a **filename**
   prefix only; the directory is not part of that contract.
 
-## Full-suite real-dt SIGILL (exit 132) — evidence status and first actions
-
-A full-suite `gui_test` run with no arguments (real frame timing — the shape
-the registered `LumiceGUITest` ctest entry drives) crashes intermittently with
-SIGILL (exit 132; the shell reports "Illegal instruction: 4"). Measured
-2026-11-14: four crashes across two machine states — three during overnight
-concurrent-drive sessions, one on a lightly loaded afternoon — against three
-clean full runs, and never in any `--fixed-dt` pool run. The crash position is
-stable across all four samples: immediately **after** `shell_chrome`'s
-`workspace_panorama_publishes_after_a_render` prints its `Success.` line and
-**before** `log_panel`'s first case (`the_panel_needs_both_the_open_flag_and_a_sink`)
-prints its start marker — i.e. in the engine's inter-test gap, not inside
-either case. `workspace_panorama_publishes_after_a_render` itself passes
-routinely in the fixed-dt correctness pool, so what the evidence implicates is
-the real-dt timing at that boundary, not the case's assertions.
-
-Attribution is **open**: product UB, test-harness lifetime, and
-machine/GPU-state families are all unexcluded and none is currently favored:
-
-- Crash reports are not a channel: `~/Library/Logs/DiagnosticReports/`
-  produced no gui_test report (ReportCrash broken on the reference machine),
-  so a debugger or sanitizer is the only stack source.
-- One lldb attach landed three cases ahead of the boundary (trigger on
-  `workspace_d2_floors_keep_stack_ends_operable`'s start marker, 1 s poll —
-  the marker-to-crash gap after the panorama case is only ~2-4 s, so
-  attaching at the boundary case itself always loses the race) and the crash
-  did not reproduce under the debugger. A suppressed crash is not evidence
-  against the crash; that sample is blind, not negative.
-- A boundary subset run (every group through the boundary case, ~320 of the
-  suite's tests) crossed the same gap once without crashing — consistent both
-  with "needs full-suite accumulated state" and with the ~33% per-crossing
-  pass rate the full suite itself shows; one sample cannot separate these.
-
-**First actions when the signature reappears** (do not "rerun until green" —
-that spends the signal instead of recording it):
-
-1. Record the exit code and the tail of the run log. The signature is exit
-   132 with the last case marker = `workspace_panorama_publishes_after_a_render`
-   and no `log_panel` marker after it. A different boundary weakens the
-   stable-position datum above; record it as a new sample, not a repeat.
-2. Reproduce deliberately and uninstrumented: bare binary, no flags, from
-   `build/cmake_build/static/test/gui` (ctest's working directory for the
-   registered entry), full suite — the boundary arrives in ~19 min under low
-   load. Record per-round load state; the correlation measured so far is
-   non-monotonic (crashed at load ~4, passed at load ~16).
-3. Capture a stack — the missing evidence layer. Two routes, in order of
-   promise: (a) launch the entire run under
-   `lldb -b -o run -o "bt all" -o "disassemble -p" -- <gui_test>` (uniform
-   perturbation from t=0, unlike a mid-run attach); (b) build an ASan/UBSan
-   variant in a separate tree and drive the boundary subset under it — a
-   memory-error report upgrades the victim-position layer to a
-   polluter/victim pair, which is what an attribution ruling requires.
-   Attach-based capture is the fallback, not the primary.
-4. Whatever captures, map the faulting instruction back to source on the
-   same binary that crashed (offline disassembly; a captured stack is a
-   victim snapshot, not an attribution) before proposing any code change.
-
 ## GUI Test Reference Regeneration (reference groups)
 
 The driver is `scripts/regen_gui_test_refs.py`; the group registry is its
