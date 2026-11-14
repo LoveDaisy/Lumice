@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794668865090,
+  "lastUpdate": 1794668867742,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9608,50 +9608,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "edebcf3766408a5da0e9750157314d7325aaa469",
-          "message": "Merge pull request #483 from LoveDaisy/feat/look-at-target-lock\n\nfeat(gui): add Look At target locking with manual takeover",
-          "timestamp": "2026-10-11T21:06:44+08:00",
-          "tree_id": "fb7774db9dcb6b30ed6ab81c83175faa1687100b",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/edebcf3766408a5da0e9750157314d7325aaa469"
-        },
-        "date": 1791725232639,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 89.9,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 99.9,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 98.4,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 94,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "87a9d3bd2b85c0f0373e5ecf32c77bd163a39cb6",
           "message": "Merge pull request #484 from LoveDaisy/chore/release-4.7.3\n\nchore(release): cut 4.7.3",
           "timestamp": "2026-10-12T13:03:05+08:00",
@@ -13986,6 +13942,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 94,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "f75491cc7628a703b19dbad2f0587bb74d0fd60a",
+          "message": "Merge pull request #588 from LoveDaisy/feat/fiber-payload-refinement\n\nfeat(raypath): fiber payload assembly-layer adaptive refinement",
+          "timestamp": "2026-11-14T22:59:32+08:00",
+          "tree_id": "bdd20fcebfe0d0ac85c26ed74c2d564f18c0c496",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/f75491cc7628a703b19dbad2f0587bb74d0fd60a"
+        },
+        "date": 1794668866936,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 106.7,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 99.9,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 98,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 94.4,
             "unit": "%"
           }
         ]
