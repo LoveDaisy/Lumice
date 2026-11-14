@@ -394,6 +394,22 @@ layer_ctest() {
 }
 
 layer_fast_e2e() {
+  # Layer-level pre-attribution, one line and no test items: a missing binary
+  # otherwise surfaces as dozens of individual skip/fail items whose shared
+  # root — no install-tree binary was produced — no per-test message can name.
+  # This check only attributes the layer; how a binary is located stays the
+  # runner's authority (test/e2e/runner.py find_lumice_binary).
+  if [[ -n ${LUMICE_BIN:-} ]]; then
+    if [[ ! -f ${LUMICE_BIN} || ! -x ${LUMICE_BIN} ]]; then
+      printf '\n========== [FAIL] fast-e2e: LUMICE_BIN=%s is not an executable — layer refused before pytest ==========\n' "${LUMICE_BIN}"
+      record_layer fast-e2e FAIL 0 "LUMICE_BIN=${LUMICE_BIN} is not an executable — point it at an existing binary (default location: build/cmake_install/static/Lumice)"
+      return 1
+    fi
+  elif [[ ! -f build/cmake_install/static/Lumice || ! -x build/cmake_install/static/Lumice ]]; then
+    printf '\n========== [FAIL] fast-e2e: build/cmake_install/static/Lumice missing — layer refused before pytest ==========\n'
+    record_layer fast-e2e FAIL 0 "install-tree binary missing — run ./scripts/build.sh -j release, or point LUMICE_BIN at an existing build"
+    return 1
+  fi
   # Bare pytest is already the fast subset (pyproject addopts, verified above).
   # -n auto rather than a fixed worker count: the measured xdist ceiling for this
   # suite is ~1.75x and is reached well below full core count, so pinning a
