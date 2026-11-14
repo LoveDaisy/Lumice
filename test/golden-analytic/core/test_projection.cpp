@@ -517,6 +517,14 @@ TEST(Projection, SingleFisheyeCullAndInverseDomainAgree) {
   for (LensParam::LensType t : kSingleFisheyeTypes) {
     p.proj_type = static_cast<int>(t);
     const float floor_cz = CullFloorCz(t);
+    // Float-neighbour pins complement the angular sweep: no regular theta step can hit all
+    // three distinct numeric floors, and a moved floor must update every consumer together.
+    for (float cz : { std::nextafter(floor_cz, -1.0f), floor_cz, std::nextafter(floor_cz, 1.0f) }) {
+      const float cx = std::sqrt(1.0f - cz * cz);
+      const auto boundary = lm_proj::ProjectExitToPixel(p, -cx, 0.0f, -cz);
+      const bool admitted = t == LensParam::kFisheyeOrthographic ? cz > floor_cz : cz >= floor_cz;
+      EXPECT_EQ(boundary.count, admitted ? 1 : 0) << static_cast<int>(t) << " cz=" << cz;
+    }
     const float rim = RimRadius(t);
     size_t rendered = 0;
     size_t culled = 0;
