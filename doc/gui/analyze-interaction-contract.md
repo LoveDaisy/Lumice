@@ -343,10 +343,10 @@ Render 与 Analyze 共享**同一份**取景/曝光/辅助线显示状态（disp
 | 工作区切换（Render↔Analyze） | 在途查询继续跑（不取消不清理），状态栏查询段持续显示；主图按压在离开时取消（未释放仍吞压）、pick 链沿原规则解除；取景连续（§5.4）。**755.5 修订**：帧泵上提至 `RenderWorkspacePanels` 入口——每个 GUI 帧（两工作区、两分析窗全关的帧在内）统一 drain 四邮箱、过采纳门、维持 level-trigger，在飞查询的完成与采纳不依赖任何窗口是否绘制；窗内 λ/天空点输入即时生效的语义不变（窗是渲染面，不再是泵的宿主） | 泵共享入口 `PumpAnalyzeQueries`（`analyze_workspace.cpp`，`RenderWorkspacePanels` 入口调用）；pick 清理（`app_panels.cpp`）；状态栏段（`app_panels.cpp`） |
 | New | 保留当前 Render/Analyze **mode**；新文档其余状态仍按原规则重置（含 analysis 列表、选择、天空点、查询意图与绑定释放）。两窗随新 GuiState 关闭，分隔比例回到默认；再次类行点击重开显示诚实空态；窗几何保留 | `DoNew` → `ReplaceDocumentState` 只迁移 mode（`app.cpp`）；4 文档切换 reason 清空 analysis（`gui-state-governance.md` §10.2）；`ReleaseScene`（`analyze_survey.hpp`） |
 | Open | 成功 JSON/blank LMC/baked LMC 同样保留 mode，其他重置仍按原原因；blank 清旧图，baked 显示文件图。未保存提示 Cancel、空路径与加载失败不改模式或旧文档身份；不新增跨启动记忆 | `DoOpen` → `ReplaceDocumentState` → per-reason reset owner；解析器不迁移会话 |
-| Revert | 分析列表**保留**＋新鲜度横幅如实（stale 指令：press Analyze）；analysis 会话保留（请求参数不属于文档）；查询绑定不变 | kRevert 跳过 analysis 清空（`gui-state-governance.md` §10.1/10.2）；横幅 `analysis_panel.cpp:1363-1373` |
+| Revert | 分析列表**保留**＋失效提示面如实（五面同规则，见「编辑场景后」行：stale 指令：press Analyze）；analysis 会话保留（请求参数不属于文档）；查询绑定不变 | kRevert 跳过 analysis 清空（`gui-state-governance.md` §10.1/10.2）；失效统一派生（§10.1） |
 | 取消（survey/map/point） | 面级取消按钮：意图失效＋latch（同选择不重发）；完成态显示「cancelled」行；迟到结果按 id 丢弃 | survey 取消（`analyze_workspace.cpp:327-335`）；point 取消（`analyze_point_view.cpp:1470-1478`）；`cancelled_for_key`（`analyze_survey.hpp:117-118,247-249`） |
 | 取消（意图撤回） | Esc 取消主图动作（吞压至释放）/pick 链；map质量槽有Cancel/Retry，ray面仍无取消按钮（撤销=latch随reset）；Esc 不取消在途查询（后台语义，取消走按钮） | 主图 press owner 清理（`RenderWorkspacePanels`）；map/ray latch 语义（`analyze_survey.hpp:195-198,369-372`） |
-| 编辑场景后 | 三个位置各自如实：列表横幅（stale 不清列表）、主视图旧图注（分析图是编辑前配置）、状态栏 Modified＋顶栏 ⚠/Revert；分析触发显式（无自动重跑） | 新鲜度谓词（`gui-state-governance.md` §10.1）；`AnalysisPictureNotice`（`analyze_workspace.cpp:295-299`）；ReconcileSimState |
+| 编辑场景后 | 五个位置各自如实（2026-11-14 失效统一，单一派生状态）：列表横幅（stale 不清列表）、主视图旧图注（分析图是编辑前配置）、主窗漂移带（锥心 vs 分析中心，779.1）、Raypath view 提示条（列表过期＋Point 模式锥心漂移各一行）、Pose & trace 提示条（列表过期一行）；状态栏 Modified＋顶栏 ⚠/Revert 不变；分析触发显式（无自动重跑）——五个提示面全部 notice-only，无按钮、无动作、不重发 | 统一派生状态 `GuiState::analysis_freshness`（`gui-state-governance.md` §10.1：每帧单点派生，五面只读）；`AnalysisPictureNotice`（`sim_state_rules.hpp`）；ReconcileSimState |
 
 窗口开合状态的归属声明：两窗的开/合是 **T-session 显示态**（`left_panel_collapsed` 同族——不是文档
 状态、不参与 snapshot/diff、文档切换按 per-reason 规则处置）。这是退役浮窗 `window_open` 字段的
@@ -585,11 +585,16 @@ Windows/Linux 真机输入已测。最终执行结果存于测试报告；这些
   表格吸收中间份额，空结果保留该份额，Exclude/CSV 贴底。极端倍率只按几何把固定头移入可恢复内滚，
   不由 stale 文案决定是否滚动。
 - **地图**：左侧 Overlays、方形 canvas、状态报告依次分配；waiting/retrying 不在 canvas 前加行。
+  窗内容区顶部的失效提示条（列表过期 + Point 模式锥心漂移各一行，统一派生状态的两个事实位，
+  notice-only）位于 D3 分割之上：出现／消失只降低区域总高，不改存储的分割比例——主图漂移带
+  同一几何合同。
   右侧先 λ/reference、alt/az、Set/Clear、Pose & trace 入口与常驻 3D 用途/类＋天空点说明；
   后接身份/caliber/图例报告。入口的标签分行只按可见列宽决定；查询状态与报告滚动不改变其槽位。
   reference 与 Clear 不适用时保留禁用槽。cursor 仍是画布内非流式读数；地图在同身份 Retry 时保旧图，身份门不变。
 - **Pose**：globe 的分量槽（单分量禁用、无分量诚实占位）、canvas、样本/播放槽常驻；无样本时禁用，
   不以 0 假装有样本。3D 的帧选择与 canvas 常驻，描述/partial/拒答/图例/transmittance 进报告。
+  窗内容区顶部的失效提示条（列表过期一行，notice-only）先于 D4 分割绘制：绝对布局整体下移、
+  不重写摆放，出现／消失只降低六元素布局的高度预算。
   曲线的可变身份/积分/图例与读数也在报告；图仍保留五臂、对数轴、精确零行、不可用断线与同一游标语义。
   旧点/样本不匹配时只保留结构，绝不绘制失配旧内容。
 - **可见区而非请求尺寸**：浮窗的名义下限可能高于实际 viewport。分隔应划分实际可见 client 区，
@@ -616,6 +621,10 @@ Windows/Linux 真机输入已测。最终执行结果存于测试报告；这些
 > 上手批量复核。
 
 统一三种处置，不以字段数量等权分配常驻空间：
+
+窗口级的例外面：Raypath view 内容区顶部的失效提示条（列表过期 / Point 模式锥心漂移各一行，
+统一派生状态 `gui-state-governance.md` §10.1，notice-only）不属于下列三种处置的任何一层——
+它是窗口状态面，与主窗漂移带同族；条下才是本节的分层内容。
 
 - **默认层保留**：当前对象、光学结论、必要量纲、结论适用范围、下一步操作。固定操作栈之外的
   默认答案仍可在自己的报告内滚动；"默认"不是无限堆成固定头。已交付的默认层 = 采纳文档的
@@ -919,6 +928,9 @@ segmented 双格**（`SameLine(0,0)` flush）：segmented 读作互斥模式切�
 > 与绝对光标摆放）、`RenderPoseCurveRegion`（D7 与伴读定额）、`RenderPoseFactorsRegion`（因素
 > 区）；字段 `analyze_pose_view_{right,globe,left_row,curve_canvas}_ratio`（全会话显示态，
 > `gui_state_tiers.hpp` 四行 kSession）；常量 `gui_constants.hpp` 的 `kPoseView*` 族。
+
+窗口状态面：内容区顶部的失效提示条（列表过期一行，统一派生状态 `gui-state-governance.md`
+§10.1，notice-only）先于 D4 分割绘制——绝对布局整体下移、不重写摆放；条下才是本节描述的结构。
 
 **结构**（已运行、已测试）：
 
