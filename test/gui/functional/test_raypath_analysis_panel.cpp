@@ -11972,6 +11972,53 @@ bool AnalysisStaleHintEditStaleLeg(ImGuiTestContext* ctx) {
     IM_CHECK_RETV(pose_hint.bbox.Min.y >= pose_rect.Min.y - 1.0f && pose_hint.bbox.Max.y <= pose_rect.Max.y + 1.0f,
                   false);
   }
+  // The narrowest face's wrapping boundary (the plan's own monitoring promise for the resize
+  // risk): at the windows' contract minimum the hints wrap, and the same three faces must hold
+  // at the narrowest size the user can reach — the rect (not the vertex count) is what the
+  // completeness claim rides on. The regions' floors compress under the bars per the
+  // floors-and-fallback rule; what is asserted here is the hints' own visibility, not the
+  // layout's. The default sizes go back afterwards, so the legs below see the standard geometry.
+  {
+    ImGuiWindow* map_win = ctx->GetWindowByRef("//Raypath view");
+    ImGuiWindow* pose_win = ctx->GetWindowByRef("//Pose & trace");
+    IM_CHECK_RETV(map_win != nullptr && pose_win != nullptr, false);
+    const ImVec2 vp = ImGui::GetMainViewport()->Size;
+    ImGui::SetWindowSize(map_win,
+                         ImVec2(std::min(gui::UiPx(gui::kRaypathViewMinWidth), vp.x),
+                                std::min(gui::UiPx(gui::kRaypathViewMinHeight), vp.y)),
+                         ImGuiCond_Always);
+    ImGui::SetWindowSize(
+        pose_win,
+        ImVec2(std::min(gui::UiPx(gui::kPoseViewMinWidth), vp.x), std::min(gui::UiPx(gui::kPoseViewMinHeight), vp.y)),
+        ImGuiCond_Always);
+    ctx->Yield(3);
+    const PanoramaWarningInk narrow_map = CollectWindowWarningInk("Raypath view", warn_colour);
+    const PanoramaWarningInk narrow_pose = CollectWindowWarningInk("Pose & trace", warn_colour);
+    const auto& feedback = gui::g_state.analysis.wait_feedback_texts;
+    const ImRect narrow_map_rect(ImVec2(feedback.map_stale_hint_rect_min_x, feedback.map_stale_hint_rect_min_y),
+                                 ImVec2(feedback.map_stale_hint_rect_max_x, feedback.map_stale_hint_rect_max_y));
+    IM_CHECK_RETV(feedback.map_stale_hint.find("configuration that has since changed") != std::string::npos, false);
+    IM_CHECK_RETV(narrow_map.found && !narrow_map.clipped, false);
+    IM_CHECK_RETV(narrow_map_rect.GetHeight() >= ImGui::GetTextLineHeight(), false);
+    IM_CHECK_RETV(map_win->InnerClipRect.Contains(narrow_map_rect), false);
+    IM_CHECK_RETV(
+        narrow_map.bbox.Min.y >= narrow_map_rect.Min.y - 1.0f && narrow_map.bbox.Max.y <= narrow_map_rect.Max.y + 1.0f,
+        false);
+    const ImRect narrow_pose_rect(ImVec2(feedback.point_stale_hint_rect_min_x, feedback.point_stale_hint_rect_min_y),
+                                  ImVec2(feedback.point_stale_hint_rect_max_x, feedback.point_stale_hint_rect_max_y));
+    IM_CHECK_RETV(feedback.point_stale_hint.find("previous configuration") != std::string::npos, false);
+    IM_CHECK_RETV(narrow_pose.found && !narrow_pose.clipped, false);
+    IM_CHECK_RETV(narrow_pose_rect.GetHeight() >= ImGui::GetTextLineHeight(), false);
+    IM_CHECK_RETV(pose_win->InnerClipRect.Contains(narrow_pose_rect), false);
+    IM_CHECK_RETV(narrow_pose.bbox.Min.y >= narrow_pose_rect.Min.y - 1.0f &&
+                      narrow_pose.bbox.Max.y <= narrow_pose_rect.Max.y + 1.0f,
+                  false);
+    // Back to the contract defaults: the pin restores the pose window's size, the map window its
+    // own want_size (the pin there is position-only).
+    PinPoseViewOnScreen(ctx);
+    ImGui::SetWindowSize(map_win, ImVec2(gui::UiPx(900.0f), gui::UiPx(560.0f)), ImGuiCond_Always);
+    ctx->Yield(2);
+  }
   // The derivation is display-inert, asserted the governance rule's way (I-display-inert): ten
   // consecutive frames in the stale state with both windows standing change no business state —
   // the payload, every session's intent (survey, map, point — no re-issue, no re-send), the run
@@ -12091,6 +12138,50 @@ bool AnalysisStaleHintConeDriftLeg(ImGuiTestContext* ctx) {
                       std::string::npos,
                   false);
   }
+  // The two facts coexist (assumption 2's window-level witness): an edit while drifted puts the
+  // list's staleness beside the drift row — two independent lines, each with its own field and
+  // rect, neither replacing the other. The narrowest width joins the construction: two wrapped
+  // lines are the wrap-heaviest state the bar can reach, and both must stay complete inside the
+  // window's clip at the contract minimum.
+  const float alt_at_drift = gui::g_state.sun.altitude;
+  ctx->SetRef("//##AnalyzeLeftPanel");
+  ctx->ItemInputValue("##Altitude_input", alt_at_drift - 5.0f);
+  ctx->SetRef("");
+  ctx->Yield(3);
+  IM_CHECK_RETV(gui::g_state.analysis_freshness.list == gui::AnalysisListFreshness::kStale &&
+                    gui::g_state.analysis_freshness.cone_center_drifted,
+                false);
+  ImGuiWindow* dual_map_win = ctx->GetWindowByRef("//Raypath view");
+  IM_CHECK_RETV(dual_map_win != nullptr, false);
+  {
+    const ImVec2 vp = ImGui::GetMainViewport()->Size;
+    ImGui::SetWindowSize(dual_map_win,
+                         ImVec2(std::min(gui::UiPx(gui::kRaypathViewMinWidth), vp.x),
+                                std::min(gui::UiPx(gui::kRaypathViewMinHeight), vp.y)),
+                         ImGuiCond_Always);
+    ctx->Yield(3);
+  }
+  const PanoramaWarningInk dual_ink = CollectWindowWarningInk("Raypath view", warn_colour);
+  IM_CHECK_RETV(dual_ink.found && !dual_ink.clipped, false);
+  {
+    const auto& feedback = gui::g_state.analysis.wait_feedback_texts;
+    IM_CHECK_RETV(feedback.map_stale_hint.find("configuration that has since changed") != std::string::npos, false);
+    IM_CHECK_RETV(feedback.map_drift_hint.find("Centre has moved") != std::string::npos, false);
+    const ImRect stale_rect(ImVec2(feedback.map_stale_hint_rect_min_x, feedback.map_stale_hint_rect_min_y),
+                            ImVec2(feedback.map_stale_hint_rect_max_x, feedback.map_stale_hint_rect_max_y));
+    const ImRect drift_rect(ImVec2(feedback.map_drift_hint_rect_min_x, feedback.map_drift_hint_rect_min_y),
+                            ImVec2(feedback.map_drift_hint_rect_max_x, feedback.map_drift_hint_rect_max_y));
+    IM_CHECK_RETV(
+        stale_rect.GetHeight() >= ImGui::GetTextLineHeight() && drift_rect.GetHeight() >= ImGui::GetTextLineHeight(),
+        false);
+    IM_CHECK_RETV(dual_map_win->InnerClipRect.Contains(stale_rect) && dual_map_win->InnerClipRect.Contains(drift_rect),
+                  false);
+    // Two independent lines: their layout footprints do not overlap (either order — the contract
+    // is "each fact its own line", not the code's draw order).
+    IM_CHECK_RETV(stale_rect.Max.y <= drift_rect.Min.y + 1.0f || drift_rect.Max.y <= stale_rect.Min.y + 1.0f, false);
+  }
+  ImGui::SetWindowSize(dual_map_win, ImVec2(gui::UiPx(900.0f), gui::UiPx(560.0f)), ImGuiCond_Always);
+  ctx->Yield(2);
   IM_CHECK_RETV(!gui::g_state.analysis_run_in_progress, false);
   return true;
 }
