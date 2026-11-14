@@ -1101,16 +1101,6 @@ std::optional<LUMICE_PathPointInfo> ReadPointInfo(const LUMICE_SinglePathResult&
   return info;
 }
 
-// One text line in every state. Detailed reasons remain in the report; the short state is
-// still visible when that report is scrolled to a long legend or the last factor.
-void RenderPointStatus(const PointQuerySession& point) {
-  bool partial = false;
-  const char* label = PointStatusLabelFor(point, &partial);
-  ImGui::PushStyleColor(ImGuiCol_Text, partial ? WarningTextColor() : ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-  ImGui::TextUnformatted(label);
-  ImGui::PopStyleColor();
-}
-
 // The sample the display currently points at: (component, stored index, the sample itself, the
 // component's valid count). nullopt outside the discovered arm with a usable selection.
 struct CurrentSample {
@@ -1412,7 +1402,6 @@ void RenderAnalyzeSunGlobeRegion(GuiState& state, const ImVec2& size) {
   }
   const float play_w =
       std::max(ImGui::CalcTextSize("Stop").x, ImGui::CalcTextSize("Play").x) + ImGui::GetStyle().FramePadding.x * 2.0f;
-  RenderPointStatus(point);
   const ImVec2 available = ImGui::GetContentRegionAvail();
   const bool shared_line = available.x - play_w - ImGui::GetStyle().ItemSpacing.x >= UiPx(80.0f);
   const float controls_h = ImGui::GetFrameHeightWithSpacing() * (shared_line ? 1.0f : 2.0f);
@@ -1462,23 +1451,7 @@ void RenderAnalyzeSunGlobeRegion(GuiState& state, const ImVec2& size) {
       render_state_area([&] {
         ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
         ImGui::TextWrapped("Crystal-frame sun directions — a pose projection, not the full SO(3).");
-        switch (st) {
-          case PointQueryState::kWaiting: {
-            const std::string wait_line =
-                PointWaitLineFor(point, ImGui::GetTime(), g_survey_executor.InflightPollSnapshot());
-            state.analysis.wait_feedback_texts.point_wait_line_fiber = wait_line;
-            ImGui::TextWrapped("%s", wait_line.c_str());
-            break;
-          }
-          case PointQueryState::kCancelled:
-            ImGui::TextWrapped(
-                "Point cancelled for this selection. Moving the sky point — or re-picking the class — "
-                "asks anew.");
-            break;
-          default:
-            ImGui::TextWrapped("Point refused: %s", point.adopted_error.c_str());
-            break;
-        }
+        // Query progress and refusal reasons have one owner: the window's fixed footer.
         ImGui::PopStyleColor();
       });
       return;
@@ -1702,7 +1675,6 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
   }
   ImGui::RadioButton("Crystal##r3d", &frame, 1);
   view.crystal_frame = frame == 1;
-  RenderPointStatus(point);
   const ImVec2 remaining = ImGui::GetContentRegionAvail();
   const float graph_h =
       CanvasHeightBeforeReport(remaining.y, 0.0f, UiPx(kPoseView3dReportQuota), ImGui::GetStyle().ItemSpacing.y);
@@ -1741,19 +1713,7 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
       return;
     }
     if (st == PointQueryState::kWaiting || st == PointQueryState::kCancelled || st == PointQueryState::kRefused) {
-      ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-      switch (st) {
-        case PointQueryState::kWaiting:
-          ImGui::TextWrapped("The point is computing — the path follows it.");
-          break;
-        case PointQueryState::kCancelled:
-          ImGui::TextWrapped("Point cancelled — no path on show.");
-          break;
-        default:
-          ImGui::TextWrapped("Point refused — no path on show.");
-          break;
-      }
-      ImGui::PopStyleColor();
+      DisabledWrappedText("No path on show.");
       return;
     }
     const std::optional<LUMICE_PathPointInfo> info = ReadPointInfo(*point.adopted_result);
@@ -2335,7 +2295,6 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
   PointViewState& view = state.analysis.point_view;
   ImGui::SeparatorText("Contribution curve");
 
-  RenderPointStatus(point);
   // ---- D7 — the curve region's canvas | companion split (§16.4): the canvas's share of the
   // span below the fixed head. The sentinel share (never dragged) grants the companion its
   // fixed 8-line quota and the canvas eats the whole delta — the resize strategy's
@@ -2391,17 +2350,8 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
       DisabledWrappedText("The contribution curve takes this region once a point result is in.");
       return;
     }
-    if (st == PointQueryState::kWaiting) {
-      DisabledWrappedText("The point is computing — the curve follows it.");
-      return;
-    }
-    if (st == PointQueryState::kCancelled) {
-      DisabledWrappedText("Point cancelled — the curve waits for a new query.");
-      return;
-    }
-    if (st == PointQueryState::kRefused) {
-      DisabledWrappedText("Point refused — the curve waits for a supported target.");
-      return;
+    if (st != PointQueryState::kCompleted) {
+      return;  // Query lifecycle text lives only in the window footer.
     }
     const std::optional<LUMICE_PathPointInfo> info = ReadPointInfo(*point.adopted_result);
     if (!info.has_value()) {
@@ -2957,7 +2907,6 @@ void RenderPoseFactorsRegion(GuiState& state, const ImVec2& size) {
   PointQuerySession& point = state.analysis.point;
   PointViewState& view = state.analysis.point_view;
   ImGui::TextUnformatted("Current pose factors");
-  RenderPointStatus(point);
   ImGui::BeginChild("##PoseFactorsScroll", RemainingReportSize());
   const auto render_content = [&] {
     const PointQueryState st = PointQueryStateFor(point);
@@ -2965,17 +2914,8 @@ void RenderPoseFactorsRegion(GuiState& state, const ImVec2& size) {
       DisabledWrappedText("The current pose's factors take this region once a point result is in.");
       return;
     }
-    if (st == PointQueryState::kWaiting) {
-      DisabledWrappedText("The point is computing — the pose factors follow it.");
-      return;
-    }
-    if (st == PointQueryState::kCancelled) {
-      DisabledWrappedText("Point cancelled — the pose factors wait for a new query.");
-      return;
-    }
-    if (st == PointQueryState::kRefused) {
-      DisabledWrappedText("Point refused — the pose factors wait for a supported target.");
-      return;
+    if (st != PointQueryState::kCompleted) {
+      return;  // Query lifecycle text lives only in the window footer.
     }
     const std::optional<LUMICE_PathPointInfo> info = ReadPointInfo(*point.adopted_result);
     if (!info.has_value()) {
@@ -3094,14 +3034,14 @@ void RenderAnalyzePoseViewWindow(GuiState& state) {
   }
   // The pumps run at RenderWorkspacePanels' entry (every GUI frame — windows open or not); this
   // window keeps only its own wait-feedback hygiene: on the Render-workspace frames it hosts
-  // the fiber region (the sole writer of point_wait_line_fiber) and the staleness hint (the
+  // the footer (the sole writer of point_wait_line_fiber) and the staleness hint (the
   // sole writer of point_stale_hint), so a field's content is exactly what the user saw THIS
   // frame — the site that can draw it owns the clear. The details field's writer is the main
   // window's diagnostics block (an Analyze-frame-only face); on the Render frames where the
   // pose window is its own host the details field simply stays at its last Analyze-frame value
   // — stale-honest, the same rule every window-closed field follows — and this window does not
-  // touch it. On an Analyze frame the workspace entry has already pumped and cleared; the globe
-  // region below is then that frame's only fiber-field writer.
+  // touch it. On an Analyze frame the workspace entry has already pumped and cleared; the footer
+  // below is then that frame's only fiber-field writer.
   if (state.workspace.mode != GuiState::WorkspaceMode::kAnalyze) {
     WaitFeedbackTexts& feedback = state.analysis.wait_feedback_texts;
     feedback.point_wait_line_fiber.clear();
@@ -3170,7 +3110,8 @@ void RenderAnalyzePoseViewWindow(GuiState& state) {
   // elastic members of the resize strategy (each hosts canvases over fixed controls), so the
   // resize delta distributes by the stored ratio — the recipe's own semantics, no new path. ----
   const float splitter_w = UiPx(kAnalyzeSplitterSize);
-  const ImVec2 avail = VisibleContentSize();
+  const AnalyzeStatusBarLayout status_layout = ReserveAnalyzeStatusBar();
+  const ImVec2 avail = status_layout.body_size;
   const float avail_w = std::max(0.0f, avail.x);
   const float right_floor = UiPx(kPoseViewRightFloor);
   const float left_floor = UiPx(kPoseViewLeftFloor);
@@ -3243,6 +3184,26 @@ void RenderAnalyzePoseViewWindow(GuiState& state) {
                   denom_h - factors_floor, globe_floor / std::max(1.0f, denom_h), &state.analyze_pose_view_globe_ratio);
   ImGui::SetCursorScreenPos(ImVec2(col_x, body_min.y + globe_h + v_spacing + strip_h + v_spacing));
   RenderPoseFactorsRegion(state, ImVec2(right_w, factors_h));
+  const PointQuerySession& point = state.analysis.point;
+  bool partial = false;
+  std::string status = PointStatusLabelFor(point, &partial);
+  switch (PointQueryStateFor(point)) {
+    case PointQueryState::kWaiting: {
+      const std::string wait_line = PointWaitLineFor(point, ImGui::GetTime(), g_survey_executor.InflightPollSnapshot());
+      status += " — " + wait_line;
+      state.analysis.wait_feedback_texts.point_wait_line_fiber = wait_line;
+      break;
+    }
+    case PointQueryState::kCancelled:
+      status += " — moving the sky point or re-picking the class asks anew.";
+      break;
+    case PointQueryState::kRefused:
+      status += " — " + point.adopted_error;
+      break;
+    default:
+      break;
+  }
+  RenderAnalyzeStatusBar(status_layout, status, partial || PointQueryStateFor(point) == PointQueryState::kRefused);
   ImGui::End();
 }
 
