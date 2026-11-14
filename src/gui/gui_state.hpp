@@ -1392,6 +1392,33 @@ inline constexpr const char* kAngularDistSectionOpenKey = "overlay_angular_dist_
 // alias when the current key is absent; nothing writes it, so a re-saved document migrates.
 inline constexpr const char* kLegacyAngularDistSectionOpenKey = "overlay_view_dist_section_open";
 
+// The analysis staleness facts, one derived state: the three things
+// the fixed faces say about "the analysis result on show no longer describes the document" —
+// the cone centre's drift from the analysed one, the list's freshness against the live scene, and
+// the picture notice. The pure aggregate (ComputeAnalysisFreshness, sim_state_rules.hpp) derives
+// it ONCE per frame into GuiState::analysis_freshness at RenderWorkspacePanels' entry — the one
+// point every GUI frame passes through, ahead of all five consumers (the main view's drift band,
+// the list banner, the status viewport's picture notice, and the Raypath view / Pose & trace
+// windows' staleness hints); the faces read the field instead of re-deriving (the sim_state I2
+// shape). The struct lives here rather than beside the aggregate because the field holds it by
+// value, and sim_state_rules.hpp already includes this header — the reverse edge would cycle.
+//
+// The list freshness enum rides with the struct for the same reason (the aggregate returns it);
+// its values mean: kNone — no result on show (before the first Analyze, or while one is in
+// flight after DoAnalyze cleared the previous view); kFresh — the document still matches the
+// scene the result was captured from; kStale — it does not, whichever way it got there (an edit,
+// a Run that committed one, a Revert that restored the previous commit).
+enum class AnalysisListFreshness { kNone, kFresh, kStale };
+
+struct AnalysisFreshness {
+  // The live cone centre has moved off the direction the held CONE result was computed with.
+  bool cone_center_drifted = false;
+  // The list on show's freshness against the live document.
+  AnalysisListFreshness list = AnalysisListFreshness::kNone;
+  // The picture notice text (the on-screen render vs the document), or nullptr when silent.
+  const char* picture_notice = nullptr;
+};
+
 struct GuiState {
   // ID-pool model (restored from pre-card-redesign): EntryCard holds indices
   // into these pools. Editing a pool slot is observed by every entry sharing
@@ -2142,6 +2169,13 @@ struct GuiState {
     int display_ring_count = 0;  // rings summed in CONE mode (what the slider resolved to)
   };
   AnalysisResultView analysis_result;
+  // The analysis staleness facts, derived ONCE per frame: written at
+  // RenderWorkspacePanels' entry — AnalysisFreshnessFor maps GuiState to the aggregate's scalars,
+  // ComputeAnalysisFreshness (sim_state_rules.hpp) computes the struct — ahead of every consumer,
+  // so all five faces read the same frame's verdict. Display-inert by contract: the derivation
+  // writes this field and nothing else. Registered in kDerivedFieldsExcludeList: a per-frame
+  // re-derivation owns no state between frames, so it never enters snapshot/diff.
+  AnalysisFreshness analysis_freshness;
   // DERIVED each frame from analysis.started and the poller's lifecycle observation
   // (DeriveAnalysisInProgress, analysis_panel.hpp). Gates the top bar's Run / New / Open the
   // same way IsBusy does, and the panel's own Analyze button.

@@ -70,10 +70,6 @@ constexpr int kRingScaleProbePx = 8;
 constexpr float kRoiRingThicknessPt = 2.0f;
 constexpr int kRoiRingSegments = 96;
 constexpr float kRoiMarkerDotRadiusPt = 3.0f;
-// Two unit directions with a dot product at or above this are "the same centre" for the moved-
-// since-the-result hint: 1e-6 in the dot is ~0.08 degrees, an order of magnitude past the float
-// noise of one LUMICE_UnprojectPixel round trip and far under anything a drag produces.
-constexpr float kConeCenterSameDirDot = 1.0f - 1e-6f;
 
 // The result list's search box. TU-local rather than a GuiState::RaypathAnalysisSession field,
 // although its lifetime is that struct's: gui_state.hpp carries no ImGui type, and
@@ -503,15 +499,22 @@ bool EnsureDefaultConeCenter(GuiState& state, const LUMICE_AnnotationView& view,
 }
 
 bool ConeCenterDriftedFromResult(const GuiState& state) {
-  const auto& a = state.analysis;
+  return AnalysisFreshnessFor(state).cone_center_drifted;
+}
+
+AnalysisFreshness AnalysisFreshnessFor(const GuiState& state) {
+  // The ONE GuiState → scalars mapping the staleness facts have: the per-frame derivation
+  // (RenderWorkspacePanels' entry) and the drift predicate above both read it, so the faces and
+  // the legacy predicate cannot disagree about what "stale" means (a56). The aggregate's pure
+  // core (sim_state_rules.hpp) owns every fact's semantics; this adapter owns only the mapping.
   const auto& payload = state.analysis_result.payload;
-  if (!payload || payload->roi_mode != LUMICE_RAYPATH_ROI_CONE || !a.cone_center_valid) {
-    return false;
-  }
-  const float dot = a.cone_center_dir[0] * a.analyzed_cone_center_dir[0] +
-                    a.cone_center_dir[1] * a.analyzed_cone_center_dir[1] +
-                    a.cone_center_dir[2] * a.analyzed_cone_center_dir[2];
-  return dot < kConeCenterSameDirDot;
+  const bool has_result = payload != nullptr;
+  const bool scene_still_matches =
+      has_result && state.analysis_result.analyzed_scene && state.analysis_result.analyzed_scene->Matches(state);
+  return ComputeAnalysisFreshness(has_result, has_result && payload->roi_mode == LUMICE_RAYPATH_ROI_CONE,
+                                  state.analysis.cone_center_valid, state.analysis.cone_center_dir,
+                                  state.analysis.analyzed_cone_center_dir, scene_still_matches, state.run_intent,
+                                  state.sim_state);
 }
 
 std::optional<float> ConeRingRadiusCanvasPx(const LUMICE_AnnotationView& view, int px, int py, float radius_deg) {
@@ -1301,10 +1304,9 @@ void RenderRequestParamsControls(GuiState& state, float width) {
 // banner appears on the edit itself and not only after the Run or Revert that commits it, and
 // goes away again if the edit is undone by hand.
 void RenderListFreshnessBanner(const GuiState& state) {
-  const bool has_result = state.analysis_result.payload != nullptr;
-  const bool scene_still_matches =
-      has_result && state.analysis_result.analyzed_scene && state.analysis_result.analyzed_scene->Matches(state);
-  if (ComputeAnalysisListFreshness(has_result, scene_still_matches) != AnalysisListFreshness::kStale) {
+  // The freshness verdict is the frame's derived state: the banner
+  // reads what RenderWorkspacePanels' entry computed this frame, like the other four faces.
+  if (state.analysis_freshness.list != AnalysisListFreshness::kStale) {
     return;
   }
   // Wrapped, not clipped: the banner is the one place the stale fact is spelled, and at the right
@@ -2060,7 +2062,7 @@ void RenderAnalyzeStatus(GuiState& state, LUMICE_Server* server) {
   // band RenderScenePanorama draws above this child — inside a two-line viewport it sat past
   // the fold, which the owner measured as no failure sign at all. The band is the warning's
   // only face; the predicate and the clearing re-analysis are unchanged.
-  if (const char* notice = AnalysisPictureNotice(state.run_intent, state.sim_state)) {
+  if (const char* notice = state.analysis_freshness.picture_notice) {
     ImGui::TextWrapped("%s", notice);
   }
 }
@@ -2069,13 +2071,18 @@ void RenderAnalyzeStatus(GuiState& state, LUMICE_Server* server) {
 
 namespace {
 
-// The drift warning's one text (a56): the band draws it and the render-feedback field carries
-// the same string — what the gui_test layer reads is what was drawn. The render site is the
-// field's only writer.
+// The drift warning's one text (a56): the band draws it and the Raypath view's drift row draws
+// the same string — the wording has one definition, exported through
+// ConeCenterDriftWarningText() for the second window. The render-feedback fields stay
+// per-window: a field's single-writer contract follows the render site, not the wording.
 constexpr const char* kConeCenterDriftWarningText =
     ICON_FA_TRIANGLE_EXCLAMATION " Centre has moved — press Analyze to update the list.";
 
 }  // namespace
+
+const char* ConeCenterDriftWarningText() {
+  return kConeCenterDriftWarningText;
+}
 
 float AnalyzeDriftWarningHeight(float wrap_width) {
   const char* const text = kConeCenterDriftWarningText;

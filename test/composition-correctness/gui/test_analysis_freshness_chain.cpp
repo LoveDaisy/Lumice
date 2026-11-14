@@ -135,7 +135,6 @@ AnalysisListFreshness ListFreshness(const GuiState& state) {
       has_result && state.analysis_result.analyzed_scene && state.analysis_result.analyzed_scene->Matches(state);
   return ComputeAnalysisListFreshness(has_result, scene_still_matches);
 }
-
 // An edit to the scene proper — a crystal dimension — made by assignment, the way an edit modal's
 // commit lands it, with the dirty flag the modal would set.
 void EditCrystalHeight(float height) {
@@ -166,6 +165,16 @@ TEST(AnalysisFreshnessChain, AnalyzeWhileDirtyThenRevertMarksTheListStale) {
   EXPECT_EQ(ListFreshness(g_state), AnalysisListFreshness::kNone) << "a list before the result arrived";
   ASSERT_TRUE(AdoptAnalysisPayloadIfNew(g_state, OneChainResult()));
   EXPECT_EQ(ListFreshness(g_state), AnalysisListFreshness::kFresh) << "the list is of the scene on the panels";
+  // The derived state rides the same chain: AnalysisFreshnessFor is
+  // the mapping the GUI frame derives from, so the facts the five faces read must carry the
+  // same verdicts the predicate does — fresh here, and nothing drifted or noted (the payload is
+  // whole-sky, so the cone half is out of play by construction).
+  {
+    const AnalysisFreshness facts = AnalysisFreshnessFor(g_state);
+    EXPECT_EQ(facts.list, AnalysisListFreshness::kFresh);
+    EXPECT_FALSE(facts.cone_center_drifted);
+    EXPECT_EQ(facts.picture_notice, nullptr);
+  }
 
   DoRevert();
   ASSERT_FLOAT_EQ(g_state.crystals[0].height.center, 1.0f) << "Revert did not restore the committed crystal";
@@ -173,6 +182,8 @@ TEST(AnalysisFreshnessChain, AnalyzeWhileDirtyThenRevertMarksTheListStale) {
   ASSERT_NE(g_state.analysis_result.payload, nullptr) << "Revert cleared the list; the exclude path needs it kept";
   EXPECT_EQ(ListFreshness(g_state), AnalysisListFreshness::kStale)
       << "the list is of the edited scene, the document is the committed one, and nothing said so";
+  EXPECT_EQ(AnalysisFreshnessFor(g_state).list, AnalysisListFreshness::kStale)
+      << "the derived state carries the same verdict the banner's predicate does";
 }
 
 // Analyze on a clean document, edit, Run. The Run commits the edit and — by design — keeps the
@@ -193,6 +204,8 @@ TEST(AnalysisFreshnessChain, AnalyzeThenEditThenRunMarksTheListStale) {
   ASSERT_NE(g_state.analysis_result.payload, nullptr) << "Run cleared the list; it is meant to keep it";
   EXPECT_EQ(ListFreshness(g_state), AnalysisListFreshness::kStale)
       << "the list is of the previous commit, the document is the new one, and nothing said so";
+  EXPECT_EQ(AnalysisFreshnessFor(g_state).list, AnalysisListFreshness::kStale)
+      << "the derived state carries the same verdict the banner's predicate does";
 }
 
 // The identity is the scene, not the document: a colour-class edit classifies raypaths that were
@@ -220,6 +233,8 @@ TEST(AnalysisFreshnessChain, AColourClassEditLeavesTheListFresh) {
   g_state.raypath_color.push_back(cls);
   g_state.dirty = true;
   EXPECT_EQ(ListFreshness(g_state), AnalysisListFreshness::kFresh) << "a colour edit does not change the raypaths";
+  EXPECT_EQ(AnalysisFreshnessFor(g_state).list, AnalysisListFreshness::kFresh)
+      << "and the derived state reads the identity the same way";
   g_state.raypath_color.clear();
 }
 

@@ -222,6 +222,81 @@ TEST(SimStateRules, AnalysisListFreshnessIsTheSceneComparisonOnlyWhenThereIsALis
   EXPECT_EQ(ComputeAnalysisListFreshness(true, false), AnalysisListFreshness::kStale);
 }
 
+// The staleness aggregate over its whole domain: three facts, one
+// value. Each fact is its own predicate's output — the drift core, the list comparison, the
+// picture notice — and must not move with the other facts' inputs: the per-axis sweep below
+// fails on any row where a fact reads an input that is not its own (a drift verdict that
+// consults the scene comparison, a freshness that consults the centre). The named rows at the
+// end are the composed shapes the five fixed faces consume.
+TEST(SimStateRules, AnalysisFreshnessDerivesThreeFactsEachFromItsOwnInputs) {
+  // Two unit directions 90 degrees apart — one inside the same-centre band, one far past it.
+  const float same[3] = { 0.6f, 0.8f, 0.0f };
+  const float rotated[3] = { -0.8f, 0.6f, 0.0f };
+  for (bool has_result : { false, true }) {
+    for (bool cone_roi : { false, true }) {
+      for (bool center_valid : { false, true }) {
+        for (bool moved : { false, true }) {
+          for (bool scene_matches : { false, true }) {
+            const float* analyzed = moved ? rotated : same;
+            const AnalysisFreshness f =
+                ComputeAnalysisFreshness(has_result, cone_roi, center_valid, same, analyzed, scene_matches,
+                                         RunIntent::kRunCompleted, GuiState::SimState::kDone);
+            EXPECT_EQ(f.cone_center_drifted, has_result && cone_roi && center_valid && moved)
+                << "has_result=" << has_result << " cone_roi=" << cone_roi << " valid=" << center_valid
+                << " moved=" << moved << " scene_matches=" << scene_matches;
+            EXPECT_EQ(f.list, ComputeAnalysisListFreshness(has_result, scene_matches))
+                << "has_result=" << has_result << " scene_matches=" << scene_matches;
+          }
+        }
+      }
+    }
+  }
+  // The picture notice is the third fact: over the sweep's most alerting row, it tracks only
+  // its own two inputs (intent, sim_state), byte-identical to the predicate it reuses.
+  for (RunIntent intent : kAllRunIntents) {
+    for (GuiState::SimState s : kAllSimStates) {
+      const AnalysisFreshness f = ComputeAnalysisFreshness(true, true, true, same, rotated, false, intent, s);
+      const char* direct = AnalysisPictureNotice(intent, s);
+      if ((f.picture_notice == nullptr) != (direct == nullptr)) {
+        ADD_FAILURE() << "notice presence mismatch: intent=" << static_cast<int>(intent)
+                      << " SimState=" << static_cast<int>(s);
+        continue;
+      }
+      if (direct != nullptr) {
+        EXPECT_STREQ(f.picture_notice, direct)
+            << "intent=" << static_cast<int>(intent) << " SimState=" << static_cast<int>(s);
+      }
+    }
+  }
+  // The composed rows the faces read: fresh and undrifted says nothing anywhere; the edited
+  // document flips the list to kStale and the picture notice on, without inventing a drift; a
+  // moved centre flips the drift alone; no result is kNone with a silent notice under the same
+  // intent/state.
+  const AnalysisFreshness all_quiet =
+      ComputeAnalysisFreshness(true, true, true, same, same, true, RunIntent::kRunCompleted, GuiState::SimState::kDone);
+  EXPECT_FALSE(all_quiet.cone_center_drifted);
+  EXPECT_EQ(all_quiet.list, AnalysisListFreshness::kFresh);
+  EXPECT_EQ(all_quiet.picture_notice, nullptr);
+
+  const AnalysisFreshness edited = ComputeAnalysisFreshness(true, true, true, same, same, false,
+                                                            RunIntent::kRunCompleted, GuiState::SimState::kModified);
+  EXPECT_FALSE(edited.cone_center_drifted);
+  EXPECT_EQ(edited.list, AnalysisListFreshness::kStale);
+  EXPECT_NE(std::string(edited.picture_notice).find("previous configuration"), std::string::npos);
+
+  const AnalysisFreshness moved_centre = ComputeAnalysisFreshness(true, true, true, same, rotated, true,
+                                                                  RunIntent::kRunCompleted, GuiState::SimState::kDone);
+  EXPECT_TRUE(moved_centre.cone_center_drifted);
+  EXPECT_EQ(moved_centre.list, AnalysisListFreshness::kFresh);
+  EXPECT_EQ(moved_centre.picture_notice, nullptr);
+
+  const AnalysisFreshness no_result = ComputeAnalysisFreshness(false, false, false, same, same, false,
+                                                               RunIntent::kRunCompleted, GuiState::SimState::kDone);
+  EXPECT_FALSE(no_result.cone_center_drifted);
+  EXPECT_EQ(no_result.list, AnalysisListFreshness::kNone);
+  EXPECT_EQ(no_result.picture_notice, nullptr);
+}
+
 // ---- Zero-contribution layer notice (panels.cpp scattering-layer header) ----
 
 // The notice under a scattering layer's header says the layer produces no rays. Three different

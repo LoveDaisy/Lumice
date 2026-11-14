@@ -247,8 +247,18 @@ bool EnsureDefaultConeCenter(GuiState& state, const LUMICE_AnnotationView& view,
 // with (analysis.analyzed_cone_center_dir) by more than float noise — the dot product of the two
 // unit vectors under 1 - 1e-6. Not bitwise, because the drag path re-derives the direction
 // through LUMICE_UnprojectPixel while the request copied the field, and any move the eye can
-// see is far past that band. False whenever there is no CONE result to compare against.
+// see is far past that band. False whenever there is no CONE result to compare against. The
+// drift fact's GuiState adapter: the one line of the mapping the aggregate's pure core
+// (ComputeAnalysisFreshness) does not carry itself.
 bool ConeCenterDriftedFromResult(const GuiState& state);
+
+// The staleness facts' ONE GuiState → scalars adapter: maps the
+// held payload, the scene identity's verdict and the session's centre fields onto
+// ComputeAnalysisFreshness's pure inputs, and returns the struct the per-frame derivation
+// stores into GuiState::analysis_freshness. The per-frame derivation (RenderWorkspacePanels'
+// entry) and the legacy drift predicate above are its only callers — both read the same
+// mapping, so the two cannot disagree about what "stale" means.
+AnalysisFreshness AnalysisFreshnessFor(const GuiState& state);
 
 // The on-screen radius, in canvas pixels, of a `radius_deg` cone around the pixel (px, py) under
 // `view` — the LOCAL scale, measured by unprojecting a neighbouring pixel and reading the angle
@@ -489,6 +499,13 @@ void RenderAnalyzeStatus(GuiState& state, LUMICE_Server* server);
 // it. `wrap_width` is the region's content width the caller took `avail.x` from.
 float AnalyzeDriftWarningHeight(float wrap_width);
 void RenderAnalyzeDriftWarning(GuiState& state, float wrap_width);
+
+// The drift warning's one text (a56): the band draws it and the Raypath view's drift row draws
+// the same string — the wording has one definition. The render-feedback fields stay per-window
+// (the text may be shared, the fields not: a field's single-writer contract follows the render
+// site, not the wording). A function, not an exported constant: the text opens with a font
+// icon macro, and no GUI header includes the icon header.
+const char* ConeCenterDriftWarningText();
 
 // The operation bar's Whole sky / Point radios with direct-gesture guidance.
 void RenderPanoramaRoiControls(GuiState& state, bool join_point);

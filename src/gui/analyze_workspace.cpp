@@ -498,7 +498,7 @@ void RenderScenePanorama(GLFWwindow* window) {
   // content width: the cursor at the draw site below is the same line start this avail.x is
   // taken from). Appearing and disappearing changes the picture's height only — no divider
   // ratio moves and no business state is written.
-  const bool centre_drifted = ConeCenterDriftedFromResult(g_state);
+  const bool centre_drifted = g_state.analysis_freshness.cone_center_drifted;
   const float warn_h = centre_drifted ? AnalyzeDriftWarningHeight(avail.x) : 0.0f;
   const float picture_h = std::max(1.0f, avail.y - bar_h - status_h - warn_h - gap * 3.0f);
   RenderAnalyzeMainPicture(window, picture_h);
@@ -1060,6 +1060,15 @@ void RenderWorkspacePanels(GLFWwindow* window, float window_width, float window_
     map_owner = Owner::kCancelled;
   }
   PumpAnalyzeQueries(g_state, g_survey_executor, ImGui::GetTime(), /*prepare_map_sources=*/true);
+
+  // The analysis staleness facts, derived ONCE per frame here — the one point every GUI frame
+  // passes through, after the pump has settled this frame's adoptions and ahead of all five
+  // consumers (the main view's drift band, the list banner, the status viewport's picture
+  // notice, and the Raypath view / Pose & trace windows' staleness hints, rendered later in the
+  // same frame by the two workspaces and main.cpp's floating-window calls). The derivation is
+  // display-inert: it writes the derived field and nothing else (AnalysisFreshnessFor is a pure
+  // mapping; nothing here touches sim_state, run_intent or any session field).
+  g_state.analysis_freshness = AnalysisFreshnessFor(g_state);
 
   // The frame's viewport publications, cleared once at the ONE dispatch point. Both halves of
   // each publication are level-triggered (PreviewViewport in app.hpp), so the frame that does
