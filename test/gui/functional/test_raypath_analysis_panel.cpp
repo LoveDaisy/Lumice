@@ -4365,6 +4365,63 @@ bool SplitterStripsCarryTheDragHintGlyph(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(ns.ID != 0, false);
   const float ns_extent = strip_ink_extent(ns.RectFull, /*along_x=*/false, 0.0f);
   IM_CHECK_RETV(ns_extent >= gui::UiPx(4.5f), false);
+  // The two sides of each strip must be mirror-symmetric in OPAQUE fill, not merely in vertex
+  // span: AddTriangleFilled goes through AddConvexPolyFilled, whose anti-aliased path presumes
+  // the screen-clockwise winding (the per-edge normal (dy,-dx) must point outward) — a
+  // counter-clockwise triangle lands its opaque inner vertices OUTSIDE the polygon and draws a
+  // lopsided fill. The red state recorded before the winding fix: one side's opaque area
+  // collapsed to a fraction of its mirror's. Read off the draw list's own index triples —
+  // opaque Separator-coloured triangles fully inside the strip, summed per side of the centre
+  // line, the thin centre-line quad excluded by its centroid's distance.
+  const auto strip_fill_sides = [&](const ImRect& strip, bool along_x) {
+    float side_a = 0.0f;
+    float side_b = 0.0f;
+    const ImVec2 centre((strip.Min.x + strip.Max.x) * 0.5f, (strip.Min.y + strip.Max.y) * 0.5f);
+    const ImDrawVert* vtx = pose->DrawList->VtxBuffer.Data;
+    const ImDrawIdx* idx = pose->DrawList->IdxBuffer.Data;
+    const int idx_count = pose->DrawList->IdxBuffer.Size;
+    const auto inside = [](const ImVec2& p, const ImRect& r) {
+      return p.x >= r.Min.x - 1.0f && p.x <= r.Max.x + 1.0f && p.y >= r.Min.y - 1.0f && p.y <= r.Max.y + 1.0f;
+    };
+    for (int i = 0; i + 2 < idx_count; i += 3) {
+      const ImVec2 pa = vtx[idx[i + 0]].pos;
+      const ImVec2 pb = vtx[idx[i + 1]].pos;
+      const ImVec2 pc = vtx[idx[i + 2]].pos;
+      if (vtx[idx[i + 0]].col != separator_col || vtx[idx[i + 1]].col != separator_col ||
+          vtx[idx[i + 2]].col != separator_col) {
+        continue;  // the anti-aliased fringe carries modified colours — opaque ink only
+      }
+      if (!inside(pa, strip) || !inside(pb, strip) || !inside(pc, strip)) {
+        continue;
+      }
+      const float centroid_x = (pa.x + pb.x + pc.x) / 3.0f;
+      const float centroid_y = (pa.y + pb.y + pc.y) / 3.0f;
+      const float area = 0.5f * std::abs((pb.x - pa.x) * (pc.y - pa.y) - (pc.x - pa.x) * (pb.y - pa.y));
+      if (along_x) {
+        if (std::abs(centroid_x - centre.x) < 0.6f) {
+          continue;  // the centre line's own quad
+        }
+        (centroid_x < centre.x ? side_a : side_b) += area;
+      } else {
+        if (std::abs(centroid_y - centre.y) < 0.6f) {
+          continue;
+        }
+        (centroid_y < centre.y ? side_a : side_b) += area;
+      }
+    }
+    return ImVec2(side_a, side_b);
+  };
+  const auto assert_sides_symmetric = [&](const char* what, const ImVec2& areas) {
+    const float hi = std::max(areas.x, areas.y);
+    const float lo = std::min(areas.x, areas.y);
+    IM_CHECK_RETV(lo > 0.0f && hi > 0.0f, false);
+    IM_CHECK_RETV(lo >= 0.5f * hi, false);
+    ctx->LogInfo("[splitter glyph] %s opaque fill per side %.2f / %.2f (mirror-symmetric within 2x)", what, areas.x,
+                 areas.y);
+    return true;
+  };
+  IM_CHECK_RETV(assert_sides_symmetric("EW", strip_fill_sides(ew.RectFull, /*along_x=*/true)), false);
+  IM_CHECK_RETV(assert_sides_symmetric("NS", strip_fill_sides(ns.RectFull, /*along_x=*/false)), false);
   ctx->LogInfo("[splitter glyph] EW strip ink extent %.1f pt, NS strip %.1f pt (line alone would be < 3.5)", ew_extent,
                ns_extent);
   return true;
