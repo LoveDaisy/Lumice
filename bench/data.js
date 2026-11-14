@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794633785998,
+  "lastUpdate": 1794633790800,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -4812,54 +4812,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "b8396281f9127160a6677a9d802dd3b90c6d91d5",
-          "message": "Merge pull request #482 from LoveDaisy/chore/ci-raypath-test-cost-governance\n\nci: reduce repeated raypath test work and govern cumulative duration",
-          "timestamp": "2026-10-11T06:49:40+08:00",
-          "tree_id": "13f1062264c8f6979884be10399307145b272e07",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/b8396281f9127160a6677a9d802dd3b90c6d91d5"
-        },
-        "date": 1791672785940,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 848542.3,
-            "unit": "rays/sec",
-            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 1012020.9,
-            "unit": "rays/sec",
-            "extra": "CPU: Neoverse-N2\\nCores: 4"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 839553.5,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 9V74 80-Core Processor\\nCores: 4"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 579537.4,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "edebcf3766408a5da0e9750157314d7325aaa469",
           "message": "Merge pull request #483 from LoveDaisy/feat/look-at-target-lock\n\nfeat(gui): add Look At target locking with manual takeover",
           "timestamp": "2026-10-11T21:06:44+08:00",
@@ -9588,6 +9540,54 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 574863.9,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "6eeddf2babad4420037abe23b6cfb294c48fda62",
+          "message": "Merge pull request #586 from LoveDaisy/feat/analyze-gui-feedback-1113\n\nAnalyze GUI fourth hands-on feedback wave: five fixes (display consistency, operation bar, camera presets, staleness unification, mechanism consolidation)",
+          "timestamp": "2026-11-14T13:17:34+08:00",
+          "tree_id": "9ed1355ded1c691c40e9d780f80509724780b42b",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/6eeddf2babad4420037abe23b6cfb294c48fda62"
+        },
+        "date": 1794633790315,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 846685.8,
+            "unit": "rays/sec",
+            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 1010250.7,
+            "unit": "rays/sec",
+            "extra": "CPU: Neoverse-N2\\nCores: 4"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 1044780.7,
+            "unit": "rays/sec",
+            "extra": "CPU: Intel(R) Xeon(R) 6975P-C\\nCores: 4"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 577891,
             "unit": "rays/sec",
             "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
           }
