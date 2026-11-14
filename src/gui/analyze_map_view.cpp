@@ -1461,8 +1461,7 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   const float canvas_avail_w = ImGui::GetContentRegionAvail().x;
   const float canvas_avail_h = ImGui::GetContentRegionAvail().y;
   const float pic_px = std::max(1.0f, canvas_avail_w);
-  const float pic_h =
-      std::max(1.0f, CanvasHeightBeforeReport(canvas_avail_h, 0.0f, UiPx(64.0f), ImGui::GetStyle().ItemSpacing.y));
+  const float pic_h = std::max(1.0f, canvas_avail_h);
   const ImVec2 pic_min = ImGui::GetCursorScreenPos();
   ImGui::InvisibleButton("##map_canvas", ImVec2(pic_px, pic_h));
   const bool canvas_hovered = ImGui::IsItemHovered();
@@ -1497,6 +1496,19 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
                  ImVec2(pic_min.x + pic_px, pic_min.y + pic_h), ImVec2(0, 1), ImVec2(1, 0));
   }
   dl->AddRect(pic_min, ImVec2(pic_min.x + pic_px, pic_min.y + pic_h), ImGui::GetColorU32(ImGuiCol_Separator));
+  if (MapQueryStateFor(map) == MapQueryState::kNoSelection) {
+    const char* guidance =
+        "Select a class in the share list; its reference map takes this region. The sky-point input in the "
+        "info panel beside it works without a map.";
+    const float wrap_w = std::max(1.0f, pic_px - UiPx(24.0f));
+    const ImVec2 text_size = ImGui::CalcTextSize(guidance, nullptr, false, wrap_w);
+    const ImVec2 text_min(pic_min.x + (pic_px - text_size.x) * 0.5f,
+                          pic_min.y + std::max(0.0f, (pic_h - text_size.y) * 0.5f));
+    dl->PushClipRect(pic_min, ImVec2(pic_min.x + pic_px, pic_min.y + pic_h), true);
+    dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), text_min, ImGui::GetColorU32(ImGuiCol_TextDisabled), guidance,
+                nullptr, wrap_w);
+    dl->PopClipRect();
+  }
   if (display.display_sampled) {
     dl->AddText(pic_min, ImGui::GetColorU32(ImGuiCol_Text), "Display sampled; raw cells unchanged");
   }
@@ -1632,44 +1644,6 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
     }
   }
 
-  ImGui::BeginChild("##MapState", RemainingReportSize());
-  // The state line (the four visible states + the two supersession notes). It reads the
-  // picture's own query state, so it stays with the picture; the controls it names — the
-  // wavelength, the sky-point input — live in the info region beside it.
-  if (display.partial)
-    ImGui::TextWrapped("Partial map: %d/%d completed members", display.members_evaluated, display.member_count);
-  const MapQueryState st = MapQueryStateFor(map);
-  const bool superseded = MapSupersededFor(map);
-  if (st == MapQueryState::kNoSelection) {
-    DisabledWrappedText(
-        "Select a class in the share list; its reference map takes this region. The sky-point input in the "
-        "info panel beside it works without a map.");
-  } else if (st == MapQueryState::kCancelled) {
-    DisabledWrappedText(
-        "Map cancelled. Frozen map remains; Retry repeats the full-sky request. Observation never retries.");
-  } else if (st == MapQueryState::kRefused && !superseded) {
-    ImGui::TextUnformatted("Map refused:");
-    DisabledWrappedText("%s", map.adopted_error.c_str());
-  } else if (st == MapQueryState::kWaiting && map.adopted_result == nullptr) {
-    // The queue is the truth the wait names (plan risk 4): the selection's survey — whose
-    // chromatic legs run ~15 s on a full-dimensional class — goes first on the one worker, and
-    // this map rides behind it. Only a map asked in that window can honestly say so. The line
-    // is the pure function's output and is reported to the render-feedback field: what the
-    // test reads is what was drawn (AC4).
-    const std::string wait_line = MapWaitLineFor(map, g_survey_executor.QueryOutstanding(QueryFace::kSurvey),
-                                                 ImGui::GetTime(), g_survey_executor.InflightPollSnapshot());
-    state.analysis.wait_feedback_texts.map_wait_line = wait_line;
-    DisabledWrappedText("%s", wait_line.c_str());
-  } else if (superseded) {
-    // The supersession note carries the Retry intent's elapsed wait and the poll's stage
-    // clause while the map
-    // query itself is computing (751; face-matched, so a queued survey's stage never lands here).
-    const std::string note = MapSupersedingNoteFor(map, ImGui::GetTime(), g_survey_executor.InflightPollSnapshot());
-    state.analysis.wait_feedback_texts.map_superseding_note = note;
-    DisabledWrappedText("%s", note.c_str());
-  }
-
-  ImGui::EndChild();
   ImGui::EndChild();  // ##AnalyzeRaypathView — the map region
 
   // ---- D3: the draggable strip between the two regions (contract §4.2) ----
@@ -2290,11 +2264,52 @@ void RenderAnalyzeRaypathViewWindow(GuiState& state) {
     hint_feedback.map_drift_hint_rect_max_y = rect_max.y;
     hint_feedback.map_drift_hint = drift_text;
   }
-  // The body IS the map region (the whole capability moved out of the depth band in one piece:
-  // the raster and its gestures, the overlays, the state line, the caliber block, the sky-point
-  // tail). The region's own child keeps its name — the tests' addressing anchors to it. Its
-  // honest no-selection state (below, in the region) is the window's empty state.
-  RenderAnalyzeMapRegion(state, VisibleContentSize());
+  // Reserve the common footer before the body submits any child. Its state cannot change geometry.
+  const AnalyzeStatusBarLayout status_layout = ReserveAnalyzeStatusBar();
+  RenderAnalyzeMapRegion(state, status_layout.body_size);
+  const MapQuerySession& map = state.analysis.map;
+  const MapQueryState query_state = MapQueryStateFor(map);
+  std::string status;
+  bool warning = false;
+  switch (query_state) {
+    case MapQueryState::kNoSelection:
+      status = "No selection";
+      break;
+    case MapQueryState::kCancelled:
+      status = "Cancelled — frozen map remains; Retry repeats the full-sky request. Observation never retries.";
+      break;
+    case MapQueryState::kRefused:
+      status = "Refused — " + map.adopted_error;
+      warning = true;
+      break;
+    case MapQueryState::kWaiting: {
+      const std::string wait_line = MapWaitLineFor(map, g_survey_executor.QueryOutstanding(QueryFace::kSurvey),
+                                                   ImGui::GetTime(), g_survey_executor.InflightPollSnapshot());
+      status = "Waiting — " + wait_line;
+      state.analysis.wait_feedback_texts.map_wait_line = wait_line;
+      break;
+    }
+    case MapQueryState::kCompleted:
+      status = "Ready";
+      break;
+  }
+  if (MapSupersededFor(map)) {
+    const std::string note = MapSupersedingNoteFor(map, ImGui::GetTime(), g_survey_executor.InflightPollSnapshot());
+    status = "Superseded — " + note;
+    state.analysis.wait_feedback_texts.map_superseding_note = note;
+  }
+  // Partial coverage and supersession/cancellation are independent facts. Read the same source
+  // Info as the frozen display, not a second completion latch or the right column's point query.
+  LUMICE_PathMapInfo info{};
+  info.struct_size = sizeof(info);
+  if (map.adopted_result && LUMICE_PathMapGetInfo(map.adopted_result.get(), &info) == LUMICE_PATH_READ_OK &&
+      (info.truncated || info.members_evaluated < info.member_count)) {
+    const std::string partial = "Partial map: " + std::to_string(info.members_evaluated) + "/" +
+                                std::to_string(info.member_count) + " completed members";
+    status = query_state == MapQueryState::kCompleted && !MapSupersededFor(map) ? partial : partial + " — " + status;
+    warning = true;
+  }
+  RenderAnalyzeStatusBar(status_layout, status, warning);
   ImGui::End();
 }
 

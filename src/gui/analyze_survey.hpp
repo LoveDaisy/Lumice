@@ -308,7 +308,9 @@ std::string PointWaitLineFor(const PointQuerySession& point, double now_s, const
 // channel): ImGui text items have no ID, so the test engine cannot address a wait line —
 // instead each render site stores the string it drew THIS FRAME into its field here, and the
 // Analyze workspace clears all of them at frame entry, so a field's content equals the text the
-// user saw that frame (never a second truth the tests fabricated). The status bar's segment
+// user saw that frame (never a second truth the tests fabricated). In a bounded floating footer,
+// the field carries the complete original clause: either visible or accessible verbatim in its
+// truncation tooltip. The footer owns the write, not the former scrolling report. The status bar's segment
 // lives beside them: it is drawn by the always-rendered status bar, so its field is fresh in
 // every frame of either workspace. Session tier with the rest of RaypathAnalysisSession: the
 // per-reason resets clear it with the sessions the texts describe. Fields stale only while the
@@ -316,9 +318,9 @@ std::string PointWaitLineFor(const PointQuerySession& point, double now_s, const
 // window.
 struct WaitFeedbackTexts {
   std::string survey_wait_line;           // analyze_workspace.cpp, the overview's kWaiting line
-  std::string map_wait_line;              // analyze_map_view.cpp, the kWaiting branch's one text
-  std::string map_superseding_note;       // analyze_map_view.cpp, the Retry supersession note
-  std::string point_wait_line_fiber;      // analyze_point_view.cpp, the fiber region's kWaiting
+  std::string map_wait_line;              // analyze_map_view.cpp, the footer's kWaiting clause
+  std::string map_superseding_note;       // analyze_map_view.cpp, the footer's Retry supersession clause
+  std::string point_wait_line_fiber;      // analyze_point_view.cpp, the Pose footer's kWaiting clause
   std::string point_wait_line_details;    // analyze_point_view.cpp, the details' kWaiting
   std::string share_list_busy_dots;       // analysis_panel.cpp, the selected row's activity dots
   std::string status_bar_query_segment;   // app_panels.cpp, the status bar's active segment

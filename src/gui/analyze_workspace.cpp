@@ -606,31 +606,7 @@ std::string AnalyzeEntryHintFor(const GuiState& state) {
 // omits) when even the ellipsis does not fit. Single line by construction: no wrap, no growth.
 // (External linkage by declaration in the hpp: the byte/form pins for this rule read it.)
 std::string AnalyzeEntryHintFitToWidth(const std::string& hint, float max_w) {
-  if (ImGui::CalcTextSize(hint.c_str()).x <= max_w) {
-    return hint;
-  }
-  const std::string ellipsis = "…";
-  const float ellipsis_w = ImGui::CalcTextSize(ellipsis.c_str()).x;
-  if (ellipsis_w > max_w) {
-    return "";
-  }
-  // One pass over character boundaries (continuation bytes never start a cut). Bounded by the
-  // hint's own length — one call per frame for one line of text. Each candidate INCLUDES its
-  // last character, so `fitted` only ever advances through strings that measured to fit: the
-  // returned line is the longest prefix that fits, never a prefix that was already rejected.
-  std::string fitted;
-  for (size_t i = 0; i < hint.size();) {
-    ++i;
-    while (i < hint.size() && (static_cast<unsigned char>(hint[i]) & 0xC0) == 0x80) {
-      ++i;
-    }
-    const std::string candidate = hint.substr(0, i) + ellipsis;
-    if (ImGui::CalcTextSize(candidate.c_str()).x > max_w) {
-      break;
-    }
-    fitted = candidate;
-  }
-  return fitted;
+  return AnalyzeTextFitToWidth(hint, max_w);
 }
 
 namespace {

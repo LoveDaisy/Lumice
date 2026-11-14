@@ -25,7 +25,9 @@
 
 #include <algorithm>
 #include <cstdarg>
+#include <string>
 
+#include "gui/canvas_report_layout.hpp"
 #include "gui/gui_constants.hpp"    // kAnalyzeSplitterSize — the strips' shared thickness
 #include "gui/semantic_colors.hpp"  // WarningTextColor — the warning line's colour source
 #include "gui/theme.hpp"            // UiPx — the logical-px outlet every geometry reads through
@@ -60,6 +62,75 @@ inline void WarningTextWrapped(const char* fmt, ...) {
   ImGui::TextWrappedV(fmt, args);
   va_end(args);
   ImGui::PopStyleColor();
+}
+
+// ---- Bounded text and floating-window status --------------------------------------------------------
+
+// Longest UTF-8-safe prefix that fits with an ellipsis; no width means no ink.
+// Callers that accept multiline input flatten it before fitting, retaining the original for hover.
+inline std::string AnalyzeTextFitToWidth(const std::string& text, float max_w) {
+  if (ImGui::CalcTextSize(text.c_str()).x <= max_w) {
+    return text;
+  }
+  const std::string ellipsis = "…";
+  if (ImGui::CalcTextSize(ellipsis.c_str()).x > max_w) {
+    return "";
+  }
+  std::string fitted = ellipsis;
+  for (size_t i = 0; i < text.size();) {
+    ++i;
+    while (i < text.size() && (static_cast<unsigned char>(text[i]) & 0xC0) == 0x80) {
+      ++i;
+    }
+    const std::string candidate = text.substr(0, i) + ellipsis;
+    if (ImGui::CalcTextSize(candidate.c_str()).x > max_w) {
+      break;
+    }
+    fitted = candidate;
+  }
+  return fitted;
+}
+
+// Reserve before laying out any body children, including the Pose window's absolute layout.
+// Only visible geometry enters this budget; no query text or previous-frame height participates.
+struct AnalyzeStatusBarLayout {
+  ImVec2 body_size;
+  ImVec2 bar_min;
+  ImVec2 bar_size;
+};
+
+inline AnalyzeStatusBarLayout ReserveAnalyzeStatusBar() {
+  const ImVec2 avail = VisibleContentSize();
+  const ImVec2 origin = ImGui::GetCursorScreenPos();
+  const float height = std::min(avail.y, UiPx(kStatusBarHeight));
+  const float body_h = std::max(1.0f, avail.y - height - ImGui::GetStyle().ItemSpacing.y);
+  return { ImVec2(avail.x, body_h), ImVec2(origin.x, origin.y + avail.y - height), ImVec2(avail.x, height) };
+}
+
+inline void RenderAnalyzeStatusBar(const AnalyzeStatusBarLayout& layout, const std::string& full_text,
+                                   bool warning = false) {
+  ImGui::SetCursorScreenPos(layout.bar_min);
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(UiPx(8.0f), 0.0f));
+  ImGui::BeginChild("##QueryStatusBar", layout.bar_size, ImGuiChildFlags_AlwaysUseWindowPadding,
+                    ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+  ImGui::GetWindowDrawList()->AddLine(layout.bar_min, ImVec2(layout.bar_min.x + layout.bar_size.x, layout.bar_min.y),
+                                      ImGui::GetColorU32(ImGuiCol_Separator));
+  std::string single_line = full_text;
+  std::replace(single_line.begin(), single_line.end(), '\n', ' ');
+  std::replace(single_line.begin(), single_line.end(), '\r', ' ');
+  const std::string fitted = AnalyzeTextFitToWidth(single_line, ImGui::GetContentRegionAvail().x);
+  ImGui::SetCursorPosY(std::max(0.0f, (layout.bar_size.y - ImGui::GetTextLineHeight()) * 0.5f));
+  ImGui::PushStyleColor(ImGuiCol_Text, warning ? WarningTextColor() : ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+  ImGui::TextUnformatted(fitted.c_str());
+  ImGui::PopStyleColor();
+  if (fitted != full_text && ImGui::IsWindowHovered() && ImGui::BeginTooltip()) {
+    ImGui::PushTextWrapPos(ImGui::GetFontSize() * 32.0f);
+    ImGui::TextUnformatted(full_text.c_str());
+    ImGui::PopTextWrapPos();
+    ImGui::EndTooltip();
+  }
+  ImGui::EndChild();
+  ImGui::PopStyleVar();
 }
 
 // ---- Legend swatches -------------------------------------------------------------------------------
