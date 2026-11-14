@@ -19,10 +19,14 @@ build() {
         -DCMAKE_INSTALL_PREFIX="${INSTALL_DIR}"
   cmake --build "${BUILD_DIR}" -j $MAKE_J_N
   ret=$?
-  if [[ $ret == 0 && $BUILD_TEST == ON ]]; then
+  # Past this point failures are captured, not fatal. With set -e, a red test
+  # command would otherwise kill the script right there — and that death is
+  # exactly what skipped the install step below: the install tree feeds the
+  # e2e layers, so a red suite must not silently starve them of fresh
+  # binaries. The red still governs the exit code: build() returns $ret.
+  if [[ $BUILD_TEST == ON ]]; then
     echo "Testing..."
-    ctest -L "unit-correctness|composition-correctness|parity|golden-analytic" --output-on-failure
-    ret=$?
+    ctest -L "unit-correctness|composition-correctness|parity|golden-analytic" --output-on-failure || ret=$?
   fi
   if [[ $ret == 0 && $BUILD_TEST == ON && $BUILD_GUI == ON ]]; then
     if [[ -n "${LUMICE_SKIP_GUI_TESTS:-}" || -n "${CI:-}" ]]; then
@@ -94,24 +98,25 @@ build() {
         # contract in the diff where a reviewer sees it, and it survives someone changing that
         # default. Keep it AFTER --filter — check_policies.py's gui-test-suite-args-sync reads the
         # filter value with a regex anchored on `--fixed-dt --filter "..."`.
-        "$GUI_TEST_BIN" --fixed-dt --filter "-perf_test,-revert_repushes_server_display_state,-zorder_priority_persists_across_rerun,-gpu_color_class_overflow,-run_after_analysis_renders_gpu,-survey_overview_shows_dispersion_and_profile,-map_region_shows_the_class_map_and_takes_the_pick,-point_inspector_shows_the_point_fiber_and_the_path,-analyze_full_chain_one_session,-internal_reflection_trace_from_the_real_consumer,-refused_class_names_the_refusal_and_keeps_the_witness,-refused_class_blockades_nothing,-narrow_column_clipped_rows_keep_their_entities,-analyze_result_carries_across_scale_tiers,-profile_rows_highlight_and_draw_on_the_map" --no-user-config
-        ret=$?
+        "$GUI_TEST_BIN" --fixed-dt --filter "-perf_test,-revert_repushes_server_display_state,-zorder_priority_persists_across_rerun,-gpu_color_class_overflow,-run_after_analysis_renders_gpu,-survey_overview_shows_dispersion_and_profile,-map_region_shows_the_class_map_and_takes_the_pick,-point_inspector_shows_the_point_fiber_and_the_path,-analyze_full_chain_one_session,-internal_reflection_trace_from_the_real_consumer,-refused_class_names_the_refusal_and_keeps_the_witness,-refused_class_blockades_nothing,-narrow_column_clipped_rows_keep_their_entities,-analyze_result_carries_across_scale_tiers,-profile_rows_highlight_and_draw_on_the_map" --no-user-config || ret=$?
         if [[ $ret == 0 ]]; then
           echo "Running GUI real-timing tests (perf + wall-clock-dependent, isolated)..."
-          "$GUI_TEST_BIN" --filter "perf_test,revert_repushes_server_display_state,zorder_priority_persists_across_rerun,gpu_color_class_overflow,run_after_analysis_renders_gpu,survey_overview_shows_dispersion_and_profile,verdict_anchor_hover_and_toggle_on_the_map,map_region_shows_the_class_map_and_takes_the_pick,point_inspector_shows_the_point_fiber_and_the_path,analyze_full_chain_one_session,internal_reflection_trace_from_the_real_consumer,refused_class_names_the_refusal_and_keeps_the_witness,refused_class_blockades_nothing,narrow_column_clipped_rows_keep_their_entities,analyze_result_carries_across_scale_tiers,profile_rows_highlight_and_draw_on_the_map" --no-user-config
-          ret=$?
+          "$GUI_TEST_BIN" --filter "perf_test,revert_repushes_server_display_state,zorder_priority_persists_across_rerun,gpu_color_class_overflow,run_after_analysis_renders_gpu,survey_overview_shows_dispersion_and_profile,verdict_anchor_hover_and_toggle_on_the_map,map_region_shows_the_class_map_and_takes_the_pick,point_inspector_shows_the_point_fiber_and_the_path,analyze_full_chain_one_session,internal_reflection_trace_from_the_real_consumer,refused_class_names_the_refusal_and_keeps_the_witness,refused_class_blockades_nothing,narrow_column_clipped_rows_keep_their_entities,analyze_result_carries_across_scale_tiers,profile_rows_highlight_and_draw_on_the_map" --no-user-config || ret=$?
         fi
       else
         echo "Warning: $GUI_TEST_BIN not found, skipping GUI tests"
       fi
     fi
   fi
-  if [[ $ret == 0 && $INSTALL_FLAG == ON ]]; then
+  if [[ $INSTALL_FLAG == ON ]]; then
+    if [[ $ret != 0 ]]; then
+      echo "Tests failed (ret=${ret}) — installing anyway so the e2e layers see fresh binaries; build.sh will exit non-zero."
+    fi
     echo "Installing..."
-    cmake --build "${BUILD_DIR}" --target install
-    ret=$?
+    cmake --build "${BUILD_DIR}" --target install || ret=$?
   fi
   popd > /dev/null
+  return $ret
 }
 
 
