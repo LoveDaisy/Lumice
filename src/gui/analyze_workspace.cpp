@@ -818,6 +818,24 @@ void RenderAnalyzeWorkspace(GLFWwindow* window, float window_width, float window
     feedback.cone_center_drift_warning_rect_min_y = 0.0f;
     feedback.cone_center_drift_warning_rect_max_x = 0.0f;
     feedback.cone_center_drift_warning_rect_max_y = 0.0f;
+    // The staleness hints: the Raypath view window is their site on BOTH workspaces (its own
+    // seam clears them on the Render frames this entry does not run); the Pose & trace's stale
+    // line likewise — listed here so an Analyze frame with either window closed ends clean too.
+    feedback.map_stale_hint.clear();
+    feedback.map_drift_hint.clear();
+    feedback.map_stale_hint_rect_min_x = 0.0f;
+    feedback.map_stale_hint_rect_min_y = 0.0f;
+    feedback.map_stale_hint_rect_max_x = 0.0f;
+    feedback.map_stale_hint_rect_max_y = 0.0f;
+    feedback.map_drift_hint_rect_min_x = 0.0f;
+    feedback.map_drift_hint_rect_min_y = 0.0f;
+    feedback.map_drift_hint_rect_max_x = 0.0f;
+    feedback.map_drift_hint_rect_max_y = 0.0f;
+    feedback.point_stale_hint.clear();
+    feedback.point_stale_hint_rect_min_x = 0.0f;
+    feedback.point_stale_hint_rect_min_y = 0.0f;
+    feedback.point_stale_hint_rect_max_x = 0.0f;
+    feedback.point_stale_hint_rect_max_y = 0.0f;
   }
 
   // The viewport publications are cleared once at the dispatch point (RenderWorkspacePanels);

@@ -12,6 +12,7 @@
 #include <tuple>
 #include <utility>
 
+#include "IconsFontAwesome6.h"           // the staleness hint's leading glyph, the banner's family
 #include "app.hpp"                       // g_survey_executor — the cancel button reaches the one executor
 #include "gui/analysis_panel.hpp"        // RowLabelTextTooltip — the component rows' hover identity
 #include "gui/analyze_overview.hpp"      // FoldOpen — the answer host's fold group headers
@@ -3180,16 +3181,22 @@ void RenderAnalyzePoseViewWindow(GuiState& state) {
   }
   // The pumps run at RenderWorkspacePanels' entry (every GUI frame — windows open or not); this
   // window keeps only its own wait-feedback hygiene: on the Render-workspace frames it hosts
-  // the fiber region (the sole writer of point_wait_line_fiber), so a field's content is
-  // exactly what the user saw THIS frame — the site that can draw it owns the clear. The
-  // details field's writer is the main window's diagnostics block (an Analyze-frame-only face);
-  // on the Render frames where the pose window is its own host the details field simply stays
-  // at its last Analyze-frame value — stale-honest, the same rule every window-closed field
-  // follows — and this window does not touch it. On an Analyze frame the workspace entry has
-  // already pumped and cleared; the globe region below is then that frame's only fiber-field
-  // writer.
+  // the fiber region (the sole writer of point_wait_line_fiber) and the staleness hint (the
+  // sole writer of point_stale_hint), so a field's content is exactly what the user saw THIS
+  // frame — the site that can draw it owns the clear. The details field's writer is the main
+  // window's diagnostics block (an Analyze-frame-only face); on the Render frames where the
+  // pose window is its own host the details field simply stays at its last Analyze-frame value
+  // — stale-honest, the same rule every window-closed field follows — and this window does not
+  // touch it. On an Analyze frame the workspace entry has already pumped and cleared; the globe
+  // region below is then that frame's only fiber-field writer.
   if (state.workspace.mode != GuiState::WorkspaceMode::kAnalyze) {
-    state.analysis.wait_feedback_texts.point_wait_line_fiber.clear();
+    WaitFeedbackTexts& feedback = state.analysis.wait_feedback_texts;
+    feedback.point_wait_line_fiber.clear();
+    feedback.point_stale_hint.clear();
+    feedback.point_stale_hint_rect_min_x = 0.0f;
+    feedback.point_stale_hint_rect_min_y = 0.0f;
+    feedback.point_stale_hint_rect_max_x = 0.0f;
+    feedback.point_stale_hint_rect_max_y = 0.0f;
   }
   // The Raypath view window's size recipe (755.4, verbatim): FirstUseEver at the contract's
   // suggested default, re-applied on a UI-scale change (WindowResizeCondForScale, theme.hpp);
@@ -3215,6 +3222,33 @@ void RenderAnalyzePoseViewWindow(GuiState& state) {
                         ImGuiWindowFlags_NoScrollWithMouse)) {
     ImGui::End();
     return;
+  }
+  // The staleness hint's fixed bar: the point answers describe the analysis payload, so the
+  // list's staleness against the live document states itself here — notice-only (no button, no
+  // action: the refresh is the user's explicit Analyze, the contract's no-auto-rerun rule). The
+  // bar is drawn FIRST and only lowers the body: the VisibleContentSize() the D4 split reads
+  // below is taken after it, so the six-element layout's height budget shrinks by the bar's real
+  // footprint — the absolute cursor layout shifts down as one piece (body_min sits below the
+  // bar), no placement is rewritten. The point-level facts are none of the bar's business: the
+  // pump re-keys a changed point intent, and the centre's drift does not change any payload the
+  // window shows. The field reports the string this site drew and its FULL item rect (the
+  // completeness face beside the ink), per-window like every render-feedback field.
+  WaitFeedbackTexts& hint_feedback = state.analysis.wait_feedback_texts;
+  if (state.analysis_freshness.list == AnalysisListFreshness::kStale) {
+    // The field carries the string the draw drew, icon included — what the test layer reads is
+    // what was drawn (the band's field contract, one shape per face).
+    const char* const stale_text = ICON_FA_TRIANGLE_EXCLAMATION
+        " Answers are from the analysis of a previous configuration \xe2\x80\x94 press Analyze to refresh.";
+    ImGui::PushStyleColor(ImGuiCol_Text, WarningTextColor());
+    ImGui::TextWrapped("%s", stale_text);
+    ImGui::PopStyleColor();
+    const ImVec2 rect_min = ImGui::GetItemRectMin();
+    const ImVec2 rect_max = ImGui::GetItemRectMax();
+    hint_feedback.point_stale_hint_rect_min_x = rect_min.x;
+    hint_feedback.point_stale_hint_rect_min_y = rect_min.y;
+    hint_feedback.point_stale_hint_rect_max_x = rect_max.x;
+    hint_feedback.point_stale_hint_rect_max_y = rect_max.y;
+    hint_feedback.point_stale_hint = stale_text;
   }
   // ---- D4 — the 3D | right-column split (contract §16.4), the Raypath view's D3 recipe: the
   // stored ratio is the split's identity (manual priority, §9.3 — no query result or selection

@@ -11890,11 +11890,36 @@ bool AnalysisStaleHintEditStaleLeg(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(!CollectWindowWarningInk("Raypath view", warn_colour).found, false);
   IM_CHECK_RETV(!CollectWindowWarningInk("Pose & trace", warn_colour).found, false);
 
+  // A real point session, so the multi-frame block below witnesses the fact the plan names:
+  // the stale edit must not re-issue a point query either. The map's pick sets the sky point
+  // (the five-op chain's op ④ gesture — the window's map takes its own adoption first), and the
+  // point query runs to its completed state.
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      const gui::MapQuerySession& m = gui::g_state.analysis.map;
+                      return m.adopted_result != nullptr && (m.adopted_id == m.intent_id);
+                    },
+                    60),
+                false);
+  ctx->KeyDown(ImGuiMod_Alt);
+  ctx->ItemClick("**/##map_canvas");
+  ctx->KeyUp(ImGuiMod_Alt);
+  ctx->Yield(2);
+  IM_CHECK_RETV(gui::g_state.analysis.sky_point.valid, false);
+  IM_CHECK_RETV(
+      DriveUntil(
+          ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCompleted; },
+          60),
+      false);
+
   // AC3's baseline: the session's intents and the payload are captured before the edit —
   // the hint must state the staleness, never re-run the analysis or re-issue a query.
   const auto* payload_before = gui::g_state.analysis_result.payload.get();
   const auto survey_intent_before = gui::g_state.analysis.survey.intent_id;
   const auto map_intent_before = gui::g_state.analysis.map.intent_id;
+  const auto point_intent_before = gui::g_state.analysis.point.intent_id;
+  const bool point_intent_valid_before = gui::g_state.analysis.point.intent_valid;
   // The edit: the sun's altitude, the same input the five-op chain's op ⑤ makes — a scene
   // edit the identity reads as stale.
   const float alt_before = gui::g_state.sun.altitude;
@@ -11921,6 +11946,82 @@ bool AnalysisStaleHintEditStaleLeg(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(gui::g_state.analysis_result.payload.get() == payload_before, false);
   IM_CHECK_RETV(gui::g_state.analysis.survey.intent_id == survey_intent_before, false);
   IM_CHECK_RETV(gui::g_state.analysis.map.intent_id == map_intent_before, false);
+  // The conjunction's other two faces, now that the render sites are in: the string the site
+  // reports is the string that was drawn, and the full item rect is the completeness face — a
+  // real wrapped line's footprint, inside the window's clip, containing the ink. The three
+  // evidence faces are independent (ink = emitted vertices, rect = layout footprint, field =
+  // the site's report); the conjunction is what the first-line-only clipping failure cannot
+  // satisfy.
+  {
+    const auto& feedback = gui::g_state.analysis.wait_feedback_texts;
+    ImGuiWindow* map_win = ctx->GetWindowByRef("//Raypath view");
+    IM_CHECK_RETV(map_win != nullptr, false);
+    IM_CHECK_RETV(feedback.map_stale_hint.find("configuration that has since changed") != std::string::npos, false);
+    const ImRect map_rect(ImVec2(feedback.map_stale_hint_rect_min_x, feedback.map_stale_hint_rect_min_y),
+                          ImVec2(feedback.map_stale_hint_rect_max_x, feedback.map_stale_hint_rect_max_y));
+    IM_CHECK_RETV(map_rect.GetHeight() >= ImGui::GetTextLineHeight(), false);
+    IM_CHECK_RETV(map_win->InnerClipRect.Contains(map_rect), false);
+    IM_CHECK_RETV(map_hint.bbox.Min.y >= map_rect.Min.y - 1.0f && map_hint.bbox.Max.y <= map_rect.Max.y + 1.0f, false);
+    ImGuiWindow* pose_win = ctx->GetWindowByRef("//Pose & trace");
+    IM_CHECK_RETV(pose_win != nullptr, false);
+    IM_CHECK_RETV(feedback.point_stale_hint.find("previous configuration") != std::string::npos, false);
+    const ImRect pose_rect(ImVec2(feedback.point_stale_hint_rect_min_x, feedback.point_stale_hint_rect_min_y),
+                           ImVec2(feedback.point_stale_hint_rect_max_x, feedback.point_stale_hint_rect_max_y));
+    IM_CHECK_RETV(pose_rect.GetHeight() >= ImGui::GetTextLineHeight(), false);
+    IM_CHECK_RETV(pose_win->InnerClipRect.Contains(pose_rect), false);
+    IM_CHECK_RETV(pose_hint.bbox.Min.y >= pose_rect.Min.y - 1.0f && pose_hint.bbox.Max.y <= pose_rect.Max.y + 1.0f,
+                  false);
+  }
+  // The derivation is display-inert, asserted the governance rule's way (I-display-inert): ten
+  // consecutive frames in the stale state with both windows standing change no business state —
+  // the payload, every session's intent (survey, map, point — no re-issue, no re-send), the run
+  // flags, the document, the derived verdict itself. What the frames DO is re-derive the same
+  // staleness facts and redraw the same hints.
+  {
+    const auto* payload_at_stale = gui::g_state.analysis_result.payload.get();
+    const unsigned long long uploads_at_stale = gui::g_state.texture_upload_count;
+    const float alt_at_stale = gui::g_state.sun.altitude;
+    ctx->Yield(10);
+    IM_CHECK_RETV(gui::g_state.analysis_run_in_progress == false, false);
+    IM_CHECK_RETV(gui::g_state.analysis.started == true, false);
+    IM_CHECK_RETV(gui::g_state.analysis_result.payload.get() == payload_at_stale, false);
+    IM_CHECK_RETV(gui::g_state.analysis_result.payload.get() == payload_before, false);
+    IM_CHECK_RETV(gui::g_state.texture_upload_count == uploads_at_stale, false);
+    IM_CHECK_RETV(fabsf(gui::g_state.sun.altitude - alt_at_stale) < 1e-4f, false);
+    IM_CHECK_RETV(gui::g_state.sim_state == SimState::kModified, false);
+    IM_CHECK_RETV(gui::g_state.dirty == true, false);
+    IM_CHECK_RETV(gui::g_state.analysis.survey.intent_id == survey_intent_before, false);
+    IM_CHECK_RETV(gui::g_state.analysis.map.intent_id == map_intent_before, false);
+    IM_CHECK_RETV(gui::g_state.analysis.point.intent_id == point_intent_before, false);
+    IM_CHECK_RETV(gui::g_state.analysis.point.intent_valid == point_intent_valid_before, false);
+    IM_CHECK_RETV(gui::g_state.analysis_freshness.list == gui::AnalysisListFreshness::kStale, false);
+    IM_CHECK_RETV(gui::g_state.analysis_freshness.picture_notice != nullptr, false);
+    IM_CHECK_RETV(!CollectWindowWarningInk("Raypath view", warn_colour).found == false, false);
+    IM_CHECK_RETV(!CollectWindowWarningInk("Pose & trace", warn_colour).found == false, false);
+  }
+  // The site owns the clear, and the hint's exit is the freshness refresh itself: Analyze on the
+  // edited scene — the list describes the document again and every hint face is gone this frame
+  // (fields, rects, ink). The refresh was the button's — AC3 rides along.
+  ctx->SetRef(PanoramaRegionRef());
+  IM_CHECK_RETV(!IsDisabled(ctx->ItemInfo(kAnalyzeButton)), false);
+  ctx->ItemClick(kAnalyzeButton);
+  ctx->SetRef("");
+  IM_CHECK_RETV(gui::g_state.analysis.started, false);
+  IM_CHECK_RETV(
+      DriveUntil(
+          ctx, [] { return !gui::g_state.analysis_run_in_progress && gui::g_state.analysis_result.payload != nullptr; },
+          60),
+      false);
+  IM_CHECK_RETV(gui::g_state.analysis_freshness.list == gui::AnalysisListFreshness::kFresh, false);
+  {
+    const auto& feedback = gui::g_state.analysis.wait_feedback_texts;
+    IM_CHECK_RETV(feedback.map_stale_hint.empty(), false);
+    IM_CHECK_RETV(feedback.point_stale_hint.empty(), false);
+    IM_CHECK_RETV(feedback.map_stale_hint_rect_min_x == 0.0f && feedback.map_stale_hint_rect_max_y == 0.0f, false);
+    IM_CHECK_RETV(feedback.point_stale_hint_rect_min_x == 0.0f && feedback.point_stale_hint_rect_max_y == 0.0f, false);
+  }
+  IM_CHECK_RETV(!CollectWindowWarningInk("Raypath view", warn_colour).found, false);
+  IM_CHECK_RETV(!CollectWindowWarningInk("Pose & trace", warn_colour).found, false);
   return true;
 }
 
@@ -11970,6 +12071,26 @@ bool AnalysisStaleHintConeDriftLeg(ImGuiTestContext* ctx) {
   const PanoramaWarningInk drift_hint = CollectWindowWarningInk("Raypath view", warn_colour);
   IM_CHECK_RETV(drift_hint.found, false);
   IM_CHECK_RETV(!drift_hint.clipped, false);
+  // The drift row's conjunction: the site's field and rect beside the ink, the stale line's
+  // three-face shape again.
+  {
+    const auto& feedback = gui::g_state.analysis.wait_feedback_texts;
+    IM_CHECK_RETV(feedback.map_drift_hint.find("Centre has moved") != std::string::npos, false);
+    ImGuiWindow* map_win = ctx->GetWindowByRef("//Raypath view");
+    IM_CHECK_RETV(map_win != nullptr, false);
+    const ImRect drift_rect(ImVec2(feedback.map_drift_hint_rect_min_x, feedback.map_drift_hint_rect_min_y),
+                            ImVec2(feedback.map_drift_hint_rect_max_x, feedback.map_drift_hint_rect_max_y));
+    IM_CHECK_RETV(drift_rect.GetHeight() >= ImGui::GetTextLineHeight(), false);
+    IM_CHECK_RETV(map_win->InnerClipRect.Contains(drift_rect), false);
+    IM_CHECK_RETV(drift_hint.bbox.Min.y >= drift_rect.Min.y - 1.0f && drift_hint.bbox.Max.y <= drift_rect.Max.y + 1.0f,
+                  false);
+    // The map row did not borrow the main band's field: the workspace is the Analyze one, the
+    // panorama's band is live (its own field holds its draw), and the map's field is separate —
+    // two writers, two fields, both non-empty is the separation's observable shape.
+    IM_CHECK_RETV(gui::g_state.analysis.wait_feedback_texts.cone_center_drift_warning.find("Centre has moved") !=
+                      std::string::npos,
+                  false);
+  }
   IM_CHECK_RETV(!gui::g_state.analysis_run_in_progress, false);
   return true;
 }

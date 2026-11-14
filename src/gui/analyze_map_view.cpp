@@ -10,6 +10,7 @@
 #include <string>
 #include <vector>
 
+#include "IconsFontAwesome6.h"     // the staleness hint's leading glyph, the banner's family
 #include "gui/analysis_panel.hpp"  // SelectedClassIdentityFor / SurveySelectionKeyFor — the one identity chain
 #include "gui/analyze_map_renderer.hpp"
 #include "gui/analyze_overview.hpp"
@@ -23,6 +24,7 @@
 #include "gui/gui_logger.hpp"
 #include "gui/gui_state.hpp"
 #include "gui/preview_renderer.hpp"
+#include "gui/semantic_colors.hpp"  // WarningTextColor — the staleness hint's semantic colour
 #include "gui/theme.hpp"
 #include "gui/view_look_at.hpp"
 #include "imgui.h"
@@ -2185,14 +2187,24 @@ void RenderAnalyzeRaypathViewWindow(GuiState& state) {
   }
   // The pumps run at RenderWorkspacePanels' entry since 755.5 (every GUI frame, windows open or
   // not); this window keeps only its own wait-feedback hygiene: on the Render-workspace frames
-  // it is the map fields' only render site, so a field's content is exactly what the user saw
-  // THIS frame — the site that can draw it owns the clear. On an Analyze frame the workspace
-  // entry already pumped and cleared; this window's map region is then that frame's only
-  // map-field writer.
+  // it is the map fields' — and the staleness hints' — only render site, so a field's content is
+  // exactly what the user saw THIS frame — the site that can draw it owns the clear. On an
+  // Analyze frame the workspace entry already pumped and cleared; this window's map region is
+  // then that frame's only map-field writer.
   if (state.workspace.mode != GuiState::WorkspaceMode::kAnalyze) {
     WaitFeedbackTexts& feedback = state.analysis.wait_feedback_texts;
     feedback.map_wait_line.clear();
     feedback.map_superseding_note.clear();
+    feedback.map_stale_hint.clear();
+    feedback.map_drift_hint.clear();
+    feedback.map_stale_hint_rect_min_x = 0.0f;
+    feedback.map_stale_hint_rect_min_y = 0.0f;
+    feedback.map_stale_hint_rect_max_x = 0.0f;
+    feedback.map_stale_hint_rect_max_y = 0.0f;
+    feedback.map_drift_hint_rect_min_x = 0.0f;
+    feedback.map_drift_hint_rect_min_y = 0.0f;
+    feedback.map_drift_hint_rect_max_x = 0.0f;
+    feedback.map_drift_hint_rect_max_y = 0.0f;
   }
   // The Colors window's size recipe (the four-tier table's free-form row): FirstUseEver at the
   // contract's suggested default, re-applied on a UI-scale change (WindowResizeCondForScale,
@@ -2231,6 +2243,47 @@ void RenderAnalyzeRaypathViewWindow(GuiState& state) {
     if (state.workspace.map_press_owner != GuiState::AnalyzeWorkspaceSession::PanoramaPressOwner::kNone)
       state.workspace.map_press_owner = GuiState::AnalyzeWorkspaceSession::PanoramaPressOwner::kCancelled;
     return;
+  }
+  // The staleness hints' fixed bar: the map describes the analysis payload, so both facts that
+  // stale it state themselves here — the list's freshness against the live document, and (Point
+  // mode) the cone centre's drift from the analysed one — each fact its own line, appearing and
+  // disappearing independently, notice-only (no button, no action: the refresh is the user's
+  // explicit Analyze, the contract's no-auto-rerun rule). The bar sits above the region and only
+  // lowers it: VisibleContentSize() below is taken after these lines, so the D3 split's span
+  // shrinks by the bar's real footprint and no stored ratio moves — the same "appearing changes
+  // the content's height only" geometry contract the main view's band follows. Each line
+  // reports the string it drew and its FULL item rect (the completeness face beside the ink the
+  // vertices carry) into this site's own fields — per-window, never the main band's: a field's
+  // single-writer contract follows the render site, not the wording.
+  WaitFeedbackTexts& hint_feedback = state.analysis.wait_feedback_texts;
+  if (state.analysis_freshness.list == AnalysisListFreshness::kStale) {
+    // The field carries the string the draw drew, icon included — what the test layer reads is
+    // what was drawn (the band's field contract, one shape per face).
+    const char* const stale_text = ICON_FA_TRIANGLE_EXCLAMATION
+        " This map is from a configuration that has since changed \xe2\x80\x94 press Analyze to refresh.";
+    ImGui::PushStyleColor(ImGuiCol_Text, WarningTextColor());
+    ImGui::TextWrapped("%s", stale_text);
+    ImGui::PopStyleColor();
+    const ImVec2 rect_min = ImGui::GetItemRectMin();
+    const ImVec2 rect_max = ImGui::GetItemRectMax();
+    hint_feedback.map_stale_hint_rect_min_x = rect_min.x;
+    hint_feedback.map_stale_hint_rect_min_y = rect_min.y;
+    hint_feedback.map_stale_hint_rect_max_x = rect_max.x;
+    hint_feedback.map_stale_hint_rect_max_y = rect_max.y;
+    hint_feedback.map_stale_hint = stale_text;
+  }
+  if (state.analysis_freshness.cone_center_drifted) {
+    const char* const drift_text = ConeCenterDriftWarningText();
+    ImGui::PushStyleColor(ImGuiCol_Text, WarningTextColor());
+    ImGui::TextWrapped("%s", drift_text);
+    ImGui::PopStyleColor();
+    const ImVec2 rect_min = ImGui::GetItemRectMin();
+    const ImVec2 rect_max = ImGui::GetItemRectMax();
+    hint_feedback.map_drift_hint_rect_min_x = rect_min.x;
+    hint_feedback.map_drift_hint_rect_min_y = rect_min.y;
+    hint_feedback.map_drift_hint_rect_max_x = rect_max.x;
+    hint_feedback.map_drift_hint_rect_max_y = rect_max.y;
+    hint_feedback.map_drift_hint = drift_text;
   }
   // The body IS the map region (the whole capability moved out of the depth band in one piece:
   // the raster and its gestures, the overlays, the state line, the caliber block, the sky-point
