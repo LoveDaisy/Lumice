@@ -21,10 +21,11 @@
 //      warning actually lands in the test's log (the same channel the engine's own warning uses).
 //      The live threshold read is what makes per-test guards work.
 //   3. fixed_dt_whole_test_budget_resets_for_the_next_test — runs after leg 2 (registration
-//      order), which consumed ~1.4 real seconds: with a 1s whole-test kill raised at this test's
-//      own start, a leaked (non-reset) budget would kill it instantly; surviving proves the
-//      per-test reset. Guard restore is pool-enforced rather than leg-pinned: this leg's own
-//      restore runs on every path, and a leaked threshold would red every later pool test.
+//      order), which consumed ~3 real seconds: with a 0.1s warning threshold raised at this
+//      test's own start, a healthy per-test reset produces a warning crossing ~0.1s in (asserted
+//      present in this test's log), while a leaked budget has its crossings already behind it
+//      and would never warn. Guard restore is pool-enforced rather than leg-pinned: this leg's
+//      own restore runs on every path, and a leaked threshold would red every later pool test.
 // Red probes (registered ONLY when the --filter equals the probe's full name — a deliberately
 // failing case must never ride a pool run or a substring-filtered enumeration; note the probes
 // are fixed-dt-only like every leg, so invoking the documented command without --fixed-dt
@@ -125,19 +126,21 @@ void RealClockWarningDoesNotFailTheTest(ImGuiTestContext* ctx) {
 
 void WholeTestBudgetResetsForTheNextTest(ImGuiTestContext* ctx) {
   // This leg runs right after leg 2 in registration order, and leg 2 consumed ~3 real seconds.
-  // With a 2s whole-test kill raised here, a budget that leaked across the test boundary would
-  // put the inherited elapsed time past 2s and kill this test at its first tick; surviving the
-  // 0.5s loop proves the per-test reset (TestContext lifetime is the reset window). The kill is
-  // never reached on the healthy path, with 4x wall-clock headroom over the 0.5s loop — this is
-  // the one pool-riding leg whose kill is a wall-clock judgment, so the margin stays clear of
-  // the load-mediated single-frame stall family that the wall-clock-bound learnings record (a
-  // lone >=2s stall inside a 0.5s window is a machine the pool's other legs would fail first).
-  ScopedWatchdogThreshold guard(ctx->EngineIO, /*warn_s=*/FLT_MAX, /*kill_s=*/2.0f);
+  // The watchdog compares crossings (previous tick's elapsed < threshold, current elapsed at or
+  // past it), so a budget that leaked across the test boundary would have its crossings already
+  // behind it and would never fire again — the reset therefore cannot be detected with a kill.
+  // It is detected through a warning crossing instead: with a 0.1s warning threshold raised at
+  // this test's own start, a healthy per-test reset puts the elapsed back to zero and the
+  // warning fires ~0.1s in (logged into this test's own log, engine-parity channel); a leaked
+  // budget inherits ~3s of elapsed, the 0.1s crossing was missed, the warning never appears and
+  // the presence check below reds. The loop stays well under the untouched 60s kill window.
+  ScopedWatchdogThreshold guard(ctx->EngineIO, /*warn_s=*/0.1f, /*kill_s=*/FLT_MAX);
   const auto real_before = std::chrono::steady_clock::now();
   while (RealSecondsSince(real_before) < 0.5) {
     ctx->Yield();
   }
   IM_CHECK_EQ(ctx->Test->Output.Status, ImGuiTestStatus_Running);
+  IM_CHECK(strstr(ctx->Test->Output.Log.Buffer.c_str(), "[Watchdog]") != nullptr);
 }
 
 // ---- Leg 4 (red probe): the real-clock kill-test marks the test Error and exits non-zero ----

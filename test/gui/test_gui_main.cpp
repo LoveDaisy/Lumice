@@ -485,24 +485,33 @@ void InitSynthTexture() {
 // guard-written value as simulated seconds. Non-fixed-dt runs never tick this struct and keep
 // the engine's native (already real-time) watchdog.
 //
-// One documented mode difference in how thresholds respond to a MID-RUN change: this struct
-// re-reads the fields every tick (a threshold lowered below the already-elapsed time fires
-// immediately), while the engine compares crossings (t0 < thr && t1 >= thr — a mid-run lower is
-// silently missed). No current consumer lowers mid-run; this pin exists so the asymmetry is
-// written down rather than discovered.
+// Threshold changes mid-run use the engine's own crossing compare (t0 < thr && t1 >= thr, on
+// the real clock): a crossing fires exactly once, at the first tick whose previous elapsed sits
+// below the threshold and whose current elapsed sits at or past it. This is deliberately the
+// same semantics as the engine's UpdateWatchdog — including what it does NOT do. A naive live
+// re-read (elapsed >= thr against the CURRENT field every tick) re-judges the full elapsed time
+// whenever a per-test guard's RAII restore puts the baseline back at TestFunc return, while the
+// engine is still inside RunTest's tail yields with the test context still set — a slow-but-
+// passing test (guard raised mid-run, total past the baseline kill) would be corrupted into
+// Error by its own tail, and any failed test gets spurious warning/kill lines after its own
+// first error. The crossing compare is immune to that shape (the crossing already happened,
+// under the raised value, or never happened), and it keeps mid-run raises honored: the
+// lens/parity guards raise at their wait site, and the crossing fires when the elapsed reaches
+// the raised value. One documented consequence, written down rather than discovered: a threshold
+// set BELOW the already-elapsed time never fires here (the crossing was missed) — the same
+// behavior as the engine, and the reason the reset-detection leg pins the per-test window via a
+// warning crossing's presence rather than a kill.
 struct FixedDtWatchdog {
   ImGuiTest* current_test = nullptr;
   std::chrono::steady_clock::time_point test_started{};
-  bool warned = false;
-  bool killed = false;
+  double prev_elapsed_s = 0.0;
 
   void Tick(ImGuiTestEngine* engine, ImGuiTestEngineIO& io) {
     ImGuiTest* running = engine->TestContext != nullptr ? engine->TestContext->Test : nullptr;
     if (running != current_test) {
       current_test = running;
       test_started = std::chrono::steady_clock::now();
-      warned = false;
-      killed = false;
+      prev_elapsed_s = 0.0;
     }
     if (running == nullptr || ImOsIsDebuggerPresent()) {
       return;
@@ -512,13 +521,11 @@ struct FixedDtWatchdog {
     // Warning and kill-test messages go through the test's own log (engine parity: the engine's
     // UpdateWatchdog logs from outside the coroutine the same way), so the JUnit/test-log capture
     // surface sees them; ConfigLogToTTY echoes them to stderr.
-    if (!warned && elapsed_s >= io.ConfigWatchdogWarning) {
-      warned = true;
+    if (prev_elapsed_s < io.ConfigWatchdogWarning && elapsed_s >= io.ConfigWatchdogWarning) {
       ctx->LogWarning("[Watchdog] Running time (real clock) for '%s' is >%.0f seconds, may be excessive.",
                       running->Name, static_cast<double>(io.ConfigWatchdogWarning));
     }
-    if (!killed && elapsed_s >= io.ConfigWatchdogKillTest) {
-      killed = true;
+    if (prev_elapsed_s < io.ConfigWatchdogKillTest && elapsed_s >= io.ConfigWatchdogKillTest) {
       char message[192];
       snprintf(message, sizeof(message), "[Watchdog] Running time (real clock) for '%s' is >%.0f seconds, aborting.",
                running->Name, static_cast<double>(io.ConfigWatchdogKillTest));
@@ -530,12 +537,13 @@ struct FixedDtWatchdog {
     // in both modes (the engine's own default); a guard that configures it gets identical
     // real-clock semantics here and in non-fixed-dt runs, so the shared three-field channel stays
     // symmetric across modes.
-    if (elapsed_s >= io.ConfigWatchdogKillApp + 5.0f) {
+    if (prev_elapsed_s < io.ConfigWatchdogKillApp + 5.0f && elapsed_s >= io.ConfigWatchdogKillApp + 5.0f) {
       ctx->LogError("[Watchdog] Emergency process exit as the test didn't return: '%s'.", running->Name);
       fprintf(stderr, "[Watchdog] Emergency process exit (real clock) as the test didn't return: '%s'.\n",
               running->Name);
       exit(1);
     }
+    prev_elapsed_s = elapsed_s;
   }
 };
 FixedDtWatchdog g_fixed_dt_watchdog;
