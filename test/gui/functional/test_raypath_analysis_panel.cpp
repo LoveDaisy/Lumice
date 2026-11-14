@@ -5297,17 +5297,38 @@ bool NewDocumentClearsEveryAnalyzeFace(ImGuiTestContext* ctx) {
 // auto-scroll only reaches far enough when the resting slot is already partially clipped).
 // The expansion state is normalized by the group's own click semantics — click, and click
 // again only if the storage still says closed — so the end state is open whatever the engine's
-// item queries surfaced along the way.
+// item queries surfaced along the way. For legs whose job is to OBSERVE a persisted expansion
+// state rather than establish one, use ParkExpandedClassDiagnostics instead: it clicks nothing.
 bool OpenAndParkClassDiagnostics(ImGuiTestContext* ctx) {
   ImGuiWindow* report_win = MapReportWindow();
   IM_CHECK_RETV(report_win != nullptr, false);
   const ImGuiID diag_id = report_win->GetID("Class diagnostics##sv_answer");
   ctx->ItemClick("**/Class diagnostics##sv_answer");
   ctx->Yield(2);
-  if (!report_win->DC.StateStorage->GetBool(diag_id, false)) {
+  if (!report_win->StateStorage.GetBool(diag_id, false)) {
     ctx->ItemClick("**/Class diagnostics##sv_answer");
     ctx->Yield(2);
   }
+  const ImGuiTestItemInfo diag_item = ctx->ItemInfo("**/Class diagnostics##sv_answer", ImGuiTestOpFlags_NoError);
+  IM_CHECK_RETV(diag_item.ID != 0, false);
+  const float header_top_in_view = diag_item.RectFull.Min.y - report_win->InnerClipRect.Min.y;
+  if (header_top_in_view > 0.0f) {
+    ImGui::SetScrollY(report_win, report_win->Scroll.y + header_top_in_view);
+    ctx->Yield(2);
+  }
+  return true;
+}
+
+// The state-observing counterpart: the group's expansion is asserted to have SURVIVED the
+// window close/reopen in the window storage (the session-sticky contract) BEFORE any click or
+// state write — re-establishing it here would erase the leg's discriminating power (a product
+// that lost the sticky state would be silently repaired instead of failing the read). Only the
+// scroll parks the already-expanded header into the capture's visible slice.
+bool ParkExpandedClassDiagnostics(ImGuiTestContext* ctx) {
+  ImGuiWindow* report_win = MapReportWindow();
+  IM_CHECK_RETV(report_win != nullptr, false);
+  const ImGuiID diag_id = report_win->GetID("Class diagnostics##sv_answer");
+  IM_CHECK_RETV(report_win->StateStorage.GetBool(diag_id, false), false);
   const ImGuiTestItemInfo diag_item = ctx->ItemInfo("**/Class diagnostics##sv_answer", ImGuiTestOpFlags_NoError);
   IM_CHECK_RETV(diag_item.ID != 0, false);
   const float header_top_in_view = diag_item.RectFull.Min.y - report_win->InnerClipRect.Min.y;
@@ -5473,8 +5494,9 @@ bool IdentityClassShowsTheMassArmAndTheMapAnswers(ImGuiTestContext* ctx) {
     ctx->ItemClick("**/Raypath view###main_raypath_open");
     ctx->Yield(2);
     // The reopened child's viewport resets to its top while the group stays expanded from the
-    // window storage — re-park the header so its body is inside the visible slice again.
-    IM_CHECK_RETV(OpenAndParkClassDiagnostics(ctx), false);
+    // window storage — re-park the header so its body is inside the visible slice again. The
+    // park observes; the sticky assertion inside it must not repair what it is there to check.
+    IM_CHECK_RETV(ParkExpandedClassDiagnostics(ctx), false);
     {
       const std::string reopened_text = CaptureMapFrameText(ctx);
       IM_CHECK_RETV(reopened_text.find("member(s)") != std::string::npos, false);
