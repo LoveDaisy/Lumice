@@ -253,6 +253,21 @@ inline bool FoldOpen(const char* label, const char* suffix_id) {
   return ImGui::CollapsingHeader(id.c_str());
 }
 
+// Which reference-profile reading row the pointer stood on (the class answer's three profile
+// rows): the session identity the map's profile device consumes, one frame behind the row write
+// (the same lag the verdict anchor's hover owns). The ratio row keeps its feedback local — it
+// names no spatial payload, so it never enters this identity.
+enum class SurveyProfileHover { kNone, kEdge, kPeak, kSeparation };
+
+// The interactive class-answer host's per-row hover read (§16.1's A2 pilot family): the renderer
+// writes every row's standing each frame it draws them, the canvas consumes the session copy the
+// NEXT frame. `verdict` is the two linked diagnose rows' OR (the verdict anchor's read);
+// `profile` is the three profile reading rows' exclusive standing (the profile device's read).
+struct SurveyRowHoverReadout {
+  bool verdict = false;
+  SurveyProfileHover profile = SurveyProfileHover::kNone;
+};
+
 // The ImGui half: the model as the complete answer draws it — the default layer (the answers
 // and their limits), then the evidence fold and the env-gated diagnostics fold (contract
 // §16.1, both closed by default). Assumes the region's four-state shell already dispatched
@@ -264,9 +279,6 @@ inline bool FoldOpen(const char* label, const char* suffix_id) {
 // row is under the pointer this frame, false otherwise (the caller writes it to the session
 // every frame). Null (the default) submits the same rows as plain text, no extra items, zero
 // interaction state — the main window's summary path passes nothing and renders byte-identically.
-struct SurveyRowHoverReadout;  // gui/analyze_map_view.hpp — the rows' hover identity (the
-                               // interactive host's out-param; by pointer, so this header stays
-                               // off that include chain and the summary-only hosts see nothing)
 void RenderSurveyOverviewModel(const SurveyOverviewModel& model, SurveyRowHoverReadout* row_readout = nullptr);
 
 // The main window's summary projection (contract §16.2): the SAME model read through the SAME

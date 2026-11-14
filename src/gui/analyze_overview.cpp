@@ -5,8 +5,7 @@
 #include <cstdio>
 #include <string>
 
-#include "gui/analyze_map_view.hpp"    // SurveyRowHoverReadout / SurveyProfileHover — the rows' hover identity
-#include "gui/analyze_ui_widgets.hpp"  // DisabledWrappedText — the wrapped disabled-colour pair  // SurveyRowHoverReadout / SurveyProfileHover — the rows' hover identity
+#include "gui/analyze_ui_widgets.hpp"  // DisabledWrappedText — the wrapped disabled-colour pair
 #include "gui/gui_constants.hpp"
 #include "gui/theme.hpp"
 #include "imgui.h"

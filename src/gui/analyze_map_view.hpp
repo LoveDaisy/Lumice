@@ -10,6 +10,7 @@
 #include <string>
 #include <vector>
 
+#include "gui/analyze_overview.hpp"
 #include "gui/analyze_survey.hpp"
 #include "include/lumice_raypath.h"
 
@@ -51,21 +52,6 @@ inline constexpr unsigned int kReadoutBackingInk = (170u << 24) | (20u << 16) | 
 inline constexpr unsigned int kProfileReadingColour = (255u << 24) | (182u << 16) | (114u << 8) | 244u;
 
 // ---- Session-facing types -------------------------------------------------------------------------
-
-// Which reference-profile reading row the pointer stood on (the class answer's three profile
-// rows): the session identity the map's profile device consumes, one frame behind the row write
-// (the same lag the verdict anchor's hover owns). The ratio row keeps its feedback local — it
-// names no spatial payload, so it never enters this identity.
-enum class SurveyProfileHover { kNone, kEdge, kPeak, kSeparation };
-
-// The interactive class-answer host's per-row hover read (§16.1's A2 pilot family): the renderer
-// writes every row's standing each frame it draws them, the canvas consumes the session copy the
-// NEXT frame. `verdict` is the two linked diagnose rows' OR (the verdict anchor's read);
-// `profile` is the three profile reading rows' exclusive standing (the profile device's read).
-struct SurveyRowHoverReadout {
-  bool verdict = false;
-  SurveyProfileHover profile = SurveyProfileHover::kNone;
-};
 
 // The user's sky-point intent (AC3): WHERE in the sky they are asking about, independent of any
 // class, ROI or share-list state. `dir` is the light-travel direction of the point (the engine's
@@ -254,8 +240,6 @@ struct MapObservationTiming {
 MapObservationTiming LastMapObservationTiming();
 
 // ---- The reference profile's hover device (contract §16.1.3's extension) ----------------------------
-
-struct SurveyProbeView;  // gui/analyze_overview.hpp — the probe's readings, by reference
 
 // The profile device's caller-side geometry: the same mirror discipline as VerdictAnchorInput's
 // projection quintet (a new MapCanvasProjection field must be added to BOTH sides or the rebuilt

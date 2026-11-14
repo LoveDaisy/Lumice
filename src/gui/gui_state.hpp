@@ -17,6 +17,7 @@
 
 #include "gui/analysis_result.hpp"
 #include "gui/analyze_map_view.hpp"
+#include "gui/analyze_overview.hpp"
 #include "gui/analyze_survey.hpp"
 #include "gui/gui_constants.hpp"
 #include "gui/view_look_at_types.hpp"
