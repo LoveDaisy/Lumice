@@ -5,24 +5,35 @@
 // engine's built-in watchdog consumed that same injected dt, so its "60 seconds" were simulated
 // seconds — roughly 8 real ones at full speed — and it deterministically killed tests whose
 // legal waits are bounded in real seconds (verdict_anchor_hover_and_toggle_on_the_map, 785.6
-// evidence). The harness now neutralizes the engine-side protection in this mode and re-casts it
-// on the wall clock (FixedDtWatchdog in test_gui_main.cpp); these cases pin the three legs of
-// that contract:
+// evidence). The harness bypasses the engine-side protection in this mode (queueing with
+// ImGuiTestRunFlags_RunFromGui) and re-casts it on the wall clock (FixedDtWatchdog in
+// test_gui_main.cpp); every leg of that contract has a case here. All legs are registered only
+// under --fixed-dt — the contract they pin does not exist in other modes — and all of them drive
+// the harness through ctx->Yield() on the real engine, so no helper is tested unwired.
 //
+// Green legs (ride the correctness pool):
 //   1. fixed_dt_ui_clock_survives_past_the_simulated_watchdog_window — a test crossing the old
 //      kill window in simulated time (3700 frames = 61.7 sim-s > the 60 sim-s default) completes,
 //      while the UI frame clock it depends on is unchanged (dt == 1/60, ImGui time advances
 //      exactly frames/60). Under the pre-fix watchdog this shape is a deterministic red.
 //   2. fixed_dt_real_clock_warning_does_not_fail_a_test — with the real-clock warning threshold
-//      pulled inside the test's own scope, a real-time crossing neither fails nor aborts: the
-//      warning is a log line, and the live threshold read is what makes per-test guards work.
-//   3. fixed_dt_watchdog_selfkill_probe — the kill leg, registered ONLY when the --filter names
-//      it (a deliberately-failing case must never ride a pool run). Expect the harness watchdog's
+//      pulled inside the test's own scope, a real-time crossing neither fails nor aborts, and the
+//      warning actually lands in the test's log (the same channel the engine's own warning uses).
+//      The live threshold read is what makes per-test guards work.
+//   3. fixed_dt_whole_test_budget_resets_for_the_next_test — runs after leg 2 (registration
+//      order), which consumed ~1.4 real seconds: with a 1s whole-test kill raised at this test's
+//      own start, a leaked (non-reset) budget would kill it instantly; surviving proves the
+//      per-test reset. Guard restore is pool-enforced rather than leg-pinned: this leg's own
+//      restore runs on every path, and a leaked threshold would red every later pool test.
+// Red probes (registered ONLY when the --filter equals the probe's full name — a deliberately
+// failing case must never ride a pool run or a substring-filtered enumeration):
+//   4. fixed_dt_watchdog_selfkill_probe — the kill-test leg. Expect the harness watchdog's
 //      "[Watchdog] ... aborting." line, Output.Status = Error and a non-zero exit:
 //      gui_test --fixed-dt --filter fixed_dt_watchdog_selfkill_probe --no-user-config
-//
-// All three drive the harness through ctx->Yield() on the real engine — no helper is tested
-// unwired.
+//   5. fixed_dt_watchdog_killapp_probe — the kill-app leg (engine parity: threshold+5s then
+//      emergency exit(1)). Expect the "[Watchdog] Emergency process exit" line and the process
+//      ending with exit code 1 before the loop completes:
+//      gui_test --fixed-dt --filter fixed_dt_watchdog_killapp_probe --no-user-config
 
 #include <cctype>
 #include <cfloat>
@@ -38,27 +49,25 @@
 
 namespace {
 
-// Self-scoped threshold override with restore on every path, shaped like the per-test guards in
-// the analysis-panel/lens/parity suites (their semantics: values are real-clock seconds, honored
-// live by FixedDtWatchdog, restored to whatever baseline the harness set).
-struct ScopedWatchdogThreshold {
-  ImGuiTestEngineIO* io;
-  float saved_warn;
-  float saved_kill;
-
-  ScopedWatchdogThreshold(ImGuiTestEngineIO* engine_io, float warn_s, float kill_s)
-      : io(engine_io), saved_warn(engine_io->ConfigWatchdogWarning), saved_kill(engine_io->ConfigWatchdogKillTest) {
-    io->ConfigWatchdogWarning = warn_s;
-    io->ConfigWatchdogKillTest = kill_s;
-  }
-  ~ScopedWatchdogThreshold() {
-    io->ConfigWatchdogWarning = saved_warn;
-    io->ConfigWatchdogKillTest = saved_kill;
-  }
-};
-
 double RealSecondsSince(const std::chrono::steady_clock::time_point& since) {
   return std::chrono::duration<double>(std::chrono::steady_clock::now() - since).count();
+}
+
+bool FilterEqualsProbeName(const char* filter, const char* probe_name) {
+  if (filter == nullptr) {
+    return false;
+  }
+  // Exact full-name equality, case-insensitive (the engine's own matching is case-insensitive).
+  // Deliberately NOT a substring test: a probe is a standalone tool named in full, and a wide
+  // gate would pull a deliberately-failing case into ordinary filtered runs (e.g. --filter
+  // fixed_dt enumerating the green legs).
+  const auto lower = [](std::string s) {
+    for (char& c : s) {
+      c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    }
+    return s;
+  };
+  return lower(filter) == lower(probe_name);
 }
 
 // ---- Leg 1: simulated time past the old kill window, UI frame clock unchanged ----
@@ -80,12 +89,12 @@ void UiClockSurvivesPastSimulatedWatchdogWindow(ImGuiTestContext* ctx) {
   const double sim_elapsed = ImGui::GetTime() - sim_time_before;
   const double sim_expected = static_cast<double>(kFramesPastDefaultKill) / 60.0;
   IM_CHECK(sim_elapsed > sim_expected - 0.05 && sim_elapsed < sim_expected + 0.05);
-  // Wall clock must stay far below the kill budget on any machine the pool is usable on at all:
-  // this is the decoupling the fix exists for (the old watchdog crossed here in ~6 real seconds).
-  const double real_elapsed = RealSecondsSince(real_before);
-  IM_CHECK_LT(real_elapsed, 60.0);
+  // The sim/real decoupling itself is machine-speed dependent by nature, so the wall-clock side
+  // is evidence, not a pinned assertion: a wall-clock bound in a pool-riding case would be a
+  // load-sensitive false-red vector (the wall-clock-flake family). The sim-time asserts above
+  // carry the deterministic contract; the ratio below documents the decoupling.
   ctx->LogInfo("fixed-dt clock: %d frames = %.2f sim-s in %.2f real-s", kFramesPastDefaultKill, sim_elapsed,
-               real_elapsed);
+               RealSecondsSince(real_before));
 }
 
 // ---- Leg 2: a real-clock warning crossing does not fail or abort the test ----
@@ -96,14 +105,34 @@ void RealClockWarningDoesNotFailTheTest(ImGuiTestContext* ctx) {
   ScopedWatchdogThreshold guard(ctx->EngineIO, /*warn_s=*/1.0f, /*kill_s=*/FLT_MAX);
   const auto real_before = std::chrono::steady_clock::now();
   // Real-time driven loop: the warning crossing (1s real) lands while simulated time stays
-  // ~1.2 sim-s — far under any kill window. The test must ride through the crossing and finish.
+  // ~1.4 sim-s — far under any kill window. The test must ride through the crossing and finish.
   while (RealSecondsSince(real_before) < 1.4) {
+    ctx->Yield();
+  }
+  IM_CHECK_EQ(ctx->Test->Output.Status, ImGuiTestStatus_Running);
+  // Bidirectional: the warning must actually have fired into the test's log (the same channel
+  // the engine's own warning uses). If the warning branch regresses to never firing, this reds
+  // — the leg no longer passes vacuously.
+  IM_CHECK(strstr(ctx->Test->Output.Log.Buffer.c_str(), "[Watchdog]") != nullptr);
+}
+
+// ---- Leg 3: the whole-test budget resets between consecutive tests ----
+
+void WholeTestBudgetResetsForTheNextTest(ImGuiTestContext* ctx) {
+  // This leg runs right after leg 2 in registration order, and leg 2 consumed ~1.4 real seconds.
+  // With a 1s whole-test kill raised here, a budget that leaked across the test boundary would
+  // put the inherited elapsed time past 1s and kill this test at its first tick; surviving the
+  // 0.5s loop proves the per-test reset (TestContext lifetime is the reset window). The kill is
+  // never reached on the healthy path (0.5s < 1s), and the guard restores on every path.
+  ScopedWatchdogThreshold guard(ctx->EngineIO, /*warn_s=*/FLT_MAX, /*kill_s=*/1.0f);
+  const auto real_before = std::chrono::steady_clock::now();
+  while (RealSecondsSince(real_before) < 0.5) {
     ctx->Yield();
   }
   IM_CHECK_EQ(ctx->Test->Output.Status, ImGuiTestStatus_Running);
 }
 
-// ---- Leg 3 (red probe): the real-clock kill marks the test Error and exits non-zero ----
+// ---- Leg 4 (red probe): the real-clock kill-test marks the test Error and exits non-zero ----
 
 void WatchdogSelfKillProbe(ImGuiTestContext* ctx) {
   // Deliberately red — see the file header. The kill crosses while the loop yields; per engine
@@ -119,34 +148,46 @@ void WatchdogSelfKillProbe(ImGuiTestContext* ctx) {
   IM_CHECK_EQ(ctx->Test->Output.Status, ImGuiTestStatus_Error);
 }
 
-bool FilterNamesProbe(const char* filter, const char* probe_name) {
-  if (filter == nullptr) {
-    return false;
+// ---- Leg 5 (red probe): the kill-app emergency exit ends the process ----
+
+void WatchdogKillAppProbe(ImGuiTestContext* ctx) {
+  // Deliberately fatal — see the file header. Kill-app carries the engine's +5s arming delay and
+  // ends the process with exit(1) (engine parity), so this probe's contract is purely external:
+  // the "[Watchdog] Emergency process exit" line and a non-zero process exit while the loop is
+  // still running. The loop below would need 7s; the exit lands at ~5s. No guard around the
+  // threshold write: the process never reaches a restore point.
+  ctx->EngineIO->ConfigWatchdogKillApp = 0.0f;
+  const auto real_before = std::chrono::steady_clock::now();
+  while (RealSecondsSince(real_before) < 7.0) {
+    ctx->Yield();
   }
-  // Case-insensitive substring, matching the engine's filter semantics (name OR category).
-  const std::string haystack = filter;
-  const std::string needle = probe_name;
-  const auto lower = [](std::string s) {
-    for (char& c : s) {
-      c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-    }
-    return s;
-  };
-  return lower(haystack).find(lower(needle)) != std::string::npos;
 }
 
 }  // namespace
 
-void RegisterFixedDtClockContractTests(ImGuiTestEngine* engine, const char* filter) {
+void RegisterFixedDtClockContractTests(ImGuiTestEngine* engine, const char* filter, bool fixed_dt_mode) {
+  if (!fixed_dt_mode) {
+    // The legs pin the fixed-dt clock contract; their assertions (dt == 1/60, sim-time windows,
+    // harness watchdog legs) do not exist in other modes, and a non-fixed-dt full run would red
+    // them as strangers rather than as regressions.
+    return;
+  }
   ImGuiTest* t =
       IM_REGISTER_TEST(engine, "harness_contract", "fixed_dt_ui_clock_survives_past_the_simulated_watchdog_window");
   t->TestFunc = UiClockSurvivesPastSimulatedWatchdogWindow;
   t = IM_REGISTER_TEST(engine, "harness_contract", "fixed_dt_real_clock_warning_does_not_fail_a_test");
   t->TestFunc = RealClockWarningDoesNotFailTheTest;
-  // The kill probe exists only under an explicit filter naming it: a deliberately-failing case
-  // must never ride a pool run (plan §6.2 — expected-red probes are standalone, outer-captured).
-  if (FilterNamesProbe(filter, "fixed_dt_watchdog_selfkill_probe")) {
+  t = IM_REGISTER_TEST(engine, "harness_contract", "fixed_dt_whole_test_budget_resets_for_the_next_test");
+  t->TestFunc = WholeTestBudgetResetsForTheNextTest;
+  // The probes exist only under a filter naming them in full: a deliberately-failing case must
+  // never ride a pool run or a substring-filtered enumeration (expected-red probes are
+  // standalone, outer-captured).
+  if (FilterEqualsProbeName(filter, "fixed_dt_watchdog_selfkill_probe")) {
     t = IM_REGISTER_TEST(engine, "harness_contract", "fixed_dt_watchdog_selfkill_probe");
     t->TestFunc = WatchdogSelfKillProbe;
+  }
+  if (FilterEqualsProbeName(filter, "fixed_dt_watchdog_killapp_probe")) {
+    t = IM_REGISTER_TEST(engine, "harness_contract", "fixed_dt_watchdog_killapp_probe");
+    t->TestFunc = WatchdogKillAppProbe;
   }
 }

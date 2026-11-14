@@ -416,6 +416,12 @@ static constexpr int kSceneCount = sizeof(kScenes) / sizeof(kScenes[0]);
 // newly reachable rather than theoretical. Ordinary `return` still unwinds the C++ stack,
 // so a scope guard here is sufficient; disarm it via server_owned once the normal path has torn
 // the server down itself, to avoid a double Stop/Destroy.
+// Deliberately NOT the shared ScopedWatchdogThreshold primitive (test_gui_shared.hpp): that one
+// saves and overwrites at construction and restores at scope end, while this guard saves the
+// baseline at construction, the wait below overwrites mid-test, and the restore must ride this
+// destructor — ahead of the server teardown, and covering the export/capture tail after the
+// wait. Restoring at a wait-site scope end instead would shrink the raised budget before the
+// tail; composing would need a deferred-write variant of the primitive for one suite pair.
 struct ScopedServerAndWatchdogGuard {
   ImGuiTestEngineIO* engine_io;
   float saved_watchdog_warn;

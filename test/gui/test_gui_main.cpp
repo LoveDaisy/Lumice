@@ -480,10 +480,16 @@ void InitSynthTexture() {
 //   - Same debugger bypass: ImOsIsDebuggerPresent(), as in the engine's UpdateWatchdog.
 // The engine side is disabled structurally for this mode: tests are queued with
 // ImGuiTestRunFlags_RunFromGui, whose only semantic footprint in the engine is the watchdog
-// bypass. That keeps the threshold fields meaningful for this struct (the engine's 30/60
+// bypass. That keeps the threshold fields meaningful for this struct (the engine's 30/60/FLT_MAX
 // defaults are the real-clock baseline here) while preventing the engine from re-consuming a
 // guard-written value as simulated seconds. Non-fixed-dt runs never tick this struct and keep
 // the engine's native (already real-time) watchdog.
+//
+// One documented mode difference in how thresholds respond to a MID-RUN change: this struct
+// re-reads the fields every tick (a threshold lowered below the already-elapsed time fires
+// immediately), while the engine compares crossings (t0 < thr && t1 >= thr — a mid-run lower is
+// silently missed). No current consumer lowers mid-run; this pin exists so the asymmetry is
+// written down rather than discovered.
 struct FixedDtWatchdog {
   ImGuiTest* current_test = nullptr;
   std::chrono::steady_clock::time_point test_started{};
@@ -501,11 +507,15 @@ struct FixedDtWatchdog {
     if (running == nullptr || ImOsIsDebuggerPresent()) {
       return;
     }
+    ImGuiTestContext* ctx = engine->TestContext;
     const double elapsed_s = std::chrono::duration<double>(std::chrono::steady_clock::now() - test_started).count();
+    // Warning and kill-test messages go through the test's own log (engine parity: the engine's
+    // UpdateWatchdog logs from outside the coroutine the same way), so the JUnit/test-log capture
+    // surface sees them; ConfigLogToTTY echoes them to stderr.
     if (!warned && elapsed_s >= io.ConfigWatchdogWarning) {
       warned = true;
-      fprintf(stderr, "[Watchdog] Running time (real clock) for '%s' is >%.0f seconds, may be excessive.\n",
-              running->Name, static_cast<double>(io.ConfigWatchdogWarning));
+      ctx->LogWarning("[Watchdog] Running time (real clock) for '%s' is >%.0f seconds, may be excessive.",
+                      running->Name, static_cast<double>(io.ConfigWatchdogWarning));
     }
     if (!killed && elapsed_s >= io.ConfigWatchdogKillTest) {
       killed = true;
@@ -515,9 +525,33 @@ struct FixedDtWatchdog {
       ImGuiTestEngine_Check("test_gui_main.cpp", "FixedDtWatchdog::Tick", __LINE__, ImGuiTestCheckFlags_None, false,
                             message);
     }
+    // Emergency exit, engine parity (imgui_te_engine.cpp:783-787): threshold+5s against the same
+    // clock, then exit(1) — the branch for a test that never returns. Default FLT_MAX disables it
+    // in both modes (the engine's own default); a guard that configures it gets identical
+    // real-clock semantics here and in non-fixed-dt runs, so the shared three-field channel stays
+    // symmetric across modes.
+    if (elapsed_s >= io.ConfigWatchdogKillApp + 5.0f) {
+      ctx->LogError("[Watchdog] Emergency process exit as the test didn't return: '%s'.", running->Name);
+      fprintf(stderr, "[Watchdog] Emergency process exit (real clock) as the test didn't return: '%s'.\n",
+              running->Name);
+      exit(1);
+    }
   }
 };
 FixedDtWatchdog g_fixed_dt_watchdog;
+
+// ScopedWatchdogThreshold — declared in test_gui_shared.hpp as the single save-overwrite-restore
+// authority for the whole-test watchdog thresholds; defined here like IsDisabled above (a header
+// every suite includes is the wrong place for the definition).
+ScopedWatchdogThreshold::ScopedWatchdogThreshold(ImGuiTestEngineIO* engine_io, float warn_s, float kill_s)
+    : io(engine_io), saved_warn(engine_io->ConfigWatchdogWarning), saved_kill(engine_io->ConfigWatchdogKillTest) {
+  io->ConfigWatchdogWarning = warn_s;
+  io->ConfigWatchdogKillTest = kill_s;
+}
+ScopedWatchdogThreshold::~ScopedWatchdogThreshold() {
+  io->ConfigWatchdogWarning = saved_warn;
+  io->ConfigWatchdogKillTest = saved_kill;
+}
 
 // ========== Main ==========
 
@@ -847,7 +881,7 @@ int main(int argc, char** argv) {
   // correctness pool) and a deliberately-red self-kill probe that only exists when the --filter
   // names it, so no pool ever carries it. Definition in
   // functional/test_fixed_dt_clock_contract.cpp.
-  RegisterFixedDtClockContractTests(engine, test_filter);
+  RegisterFixedDtClockContractTests(engine, test_filter, g_enable_fixed_dt);
   // In fixed-dt the engine's own watchdog must never fire: it consumes the INJECTED dt
   // (simulated time — 60 "seconds" ≈ 8 real ones at full speed), so any threshold a per-test
   // guard writes for the real-clock watchdog below would be re-consumed by the engine as sim
