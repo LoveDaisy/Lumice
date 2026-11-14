@@ -394,6 +394,34 @@ layer_ctest() {
 }
 
 layer_fast_e2e() {
+  # Layer-level pre-attribution, one line and no test items: a missing binary
+  # otherwise surfaces as dozens of individual skip/fail items whose shared
+  # root — no binary was found — no per-test message can name. How a binary is
+  # discovered stays with the runner's single authority: this layer CALLS
+  # find_lumice_binary() and only converts its verdict into a layer FAIL, so
+  # future changes to the discovery rules cannot be pre-empted by a stale
+  # copy here.
+  local probe rc
+  probe=$(python3 - <<'PY'
+import sys
+
+sys.path.insert(0, ".")
+try:
+    from test.e2e.runner import find_lumice_binary
+
+    print(find_lumice_binary())
+except FileNotFoundError as e:
+    print(f"BIN_NOT_FOUND: {e}")
+    sys.exit(1)
+PY
+)
+  rc=$?
+  if [[ ${rc} -ne 0 ]]; then
+    printf '\n========== [FAIL] fast-e2e: no Lumice binary found — layer refused before pytest ==========\n'
+    printf '%s\n' "${probe}"
+    record_layer fast-e2e FAIL 0 "binary discovery failed — full diagnosis in the [FAIL] block above"
+    return 1
+  fi
   # Bare pytest is already the fast subset (pyproject addopts, verified above).
   # -n auto rather than a fixed worker count: the measured xdist ceiling for this
   # suite is ~1.75x and is reached well below full core count, so pinning a
