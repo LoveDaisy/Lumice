@@ -590,22 +590,19 @@ TEST(PreviewRenderer, EveryProjectionPutsItsAnchorDirectionsWhereItsGeometryDema
   }
 }
 
-// A fisheye narrower than 180 degrees in a non-square viewport leaves black bars: pixels that
-// are inside the rectangle but outside the imaging circle. A direction that lands there is not
-// visible, and the projection has to say so rather than return a pixel in the bar.
-//
-// At elevation = azimuth = roll = 0 the view matrix maps world w to view (-w.y, -w.z, w.x), so
-// a direction 60 degrees off the optical axis is w = (-1/2, -sqrt(3)/2, 0). At fov=90 its
-// r_norm is (pi/3)/(pi/4) = 4/3, outside the circle; at fov=180 it is (pi/3)/(pi/2) = 2/3,
-// comfortably inside. Same direction, same viewport: only the imaging circle moved.
-TEST(PreviewRenderer, ADirectionOutsideTheImagingCircleIsNotGivenAPixelInTheBlackBars) {
-  const float dir_60deg[3] = { -0.5f, -0.86602540378f, 0.0f };
-
-  auto narrow = MakeVp(lumice::gui::kLensTypeFisheyeEquidist, 90.0f, 0.0f, 0.0f);
-  EXPECT_TRUE(IsSentinel(ProjectWorldDirToScreen(narrow, dir_60deg, 1920, 1080)));
-
-  auto wide = MakeVp(lumice::gui::kLensTypeFisheyeEquidist, 180.0f, 0.0f, 0.0f);
-  EXPECT_FALSE(IsSentinel(ProjectWorldDirToScreen(wide, dir_60deg, 1920, 1080)));
+// FOV calibrates a radius, not the domain: a wide rectangle can show valid sky outside it.
+// These independent angular anchors distinguish the old circle gate from the hemisphere gate.
+TEST(PreviewRenderer, FisheyeCoverageExtendsPastCalibrationCircleAndEquator) {
+  constexpr float kPi = 3.14159265358979323846f;
+  for (const auto& sample : { std::array<float, 2>{ 60.0f, 90.0f }, { 110.0f, 180.0f } }) {
+    const float theta = sample[0] * kPi / 180.0f;
+    const float direction[3] = { -std::cos(theta), -std::sin(theta), 0.0f };
+    const auto vp = MakeVp(lumice::gui::kLensTypeFisheyeEquidist, sample[1], 0.0f, 0.0f);
+    const auto p = ProjectWorldDirToScreen(vp, direction, 1920, 1080);
+    EXPECT_FALSE(IsSentinel(p)) << sample[0];
+    EXPECT_NEAR(p[0], 540.0f * sample[0] / (sample[1] * 0.5f), 0.01f);
+    EXPECT_NEAR(p[1], 0.0f, 0.01f);
+  }
 }
 
 // ---------------------------------------------------------------------------------------
