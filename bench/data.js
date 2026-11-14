@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794633790800,
+  "lastUpdate": 1794633792871,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9608,50 +9608,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "b8396281f9127160a6677a9d802dd3b90c6d91d5",
-          "message": "Merge pull request #482 from LoveDaisy/chore/ci-raypath-test-cost-governance\n\nci: reduce repeated raypath test work and govern cumulative duration",
-          "timestamp": "2026-10-11T06:49:40+08:00",
-          "tree_id": "13f1062264c8f6979884be10399307145b272e07",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/b8396281f9127160a6677a9d802dd3b90c6d91d5"
-        },
-        "date": 1791672788251,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 95.1,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 100,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 98.5,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 92.3,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "edebcf3766408a5da0e9750157314d7325aaa469",
           "message": "Merge pull request #483 from LoveDaisy/feat/look-at-target-lock\n\nfeat(gui): add Look At target locking with manual takeover",
           "timestamp": "2026-10-11T21:06:44+08:00",
@@ -13986,6 +13942,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 92.9,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "6eeddf2babad4420037abe23b6cfb294c48fda62",
+          "message": "Merge pull request #586 from LoveDaisy/feat/analyze-gui-feedback-1113\n\nAnalyze GUI fourth hands-on feedback wave: five fixes (display consistency, operation bar, camera presets, staleness unification, mechanism consolidation)",
+          "timestamp": "2026-11-14T13:17:34+08:00",
+          "tree_id": "9ed1355ded1c691c40e9d780f80509724780b42b",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/6eeddf2babad4420037abe23b6cfb294c48fda62"
+        },
+        "date": 1794633792284,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 89.1,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 99.9,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 98.7,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 93.2,
             "unit": "%"
           }
         ]
