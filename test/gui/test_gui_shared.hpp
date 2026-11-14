@@ -435,8 +435,11 @@ bool IsDisabled(const ImGuiTestItemInfo& info);
 // fields — one set of values, one semantic, both modes. Suites raise the whole-test budget over
 // their legal wait chain by constructing this with the widened values; the harness baseline is
 // whatever the run started with (the engine's 30/60 defaults, or a value an enclosing scope
-// raised). Suites whose guard must ALSO tear down a server compose this member rather than
-// re-hand-rolling the save/restore.
+// raised). Which guard shape fits is a write-point decision, not a "has a server" one: a guard
+// that writes at construction (whole-case budget) composes this member — the panel guard's
+// shape; a guard whose write lands mid-wait and whose restore must precede its server teardown
+// to cover the export/capture tail keeps a local deferred-write variant instead (the lens guard
+// carries that lifecycle argument; parity points back at it).
 struct ScopedWatchdogThreshold {
   ImGuiTestEngineIO* io;
   float saved_warn;

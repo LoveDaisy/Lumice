@@ -463,8 +463,8 @@ void InitSynthTexture() {
 // polluting every IO.DeltaTime consumer in ImGui's NewFrame body: g.Time, DownDuration, hover
 // timers, key repeat). At the full speed that the skipped frame-limit buys, 60 simulated seconds
 // pass in roughly 8 real ones, so the default kill fired mid-wait on tests whose legal waits are
-// bounded in REAL seconds — the deterministic verdict_anchor red (785.6 evidence): the survey
-// completes ~5.6s real, the kill landed ~6s real.
+// bounded in REAL seconds — the deterministic verdict_anchor red this watchdog exists to fix
+// (re-cast introduced in 8b7437a0d): the survey completes ~5.6s real, the kill landed ~6s real.
 //
 // This struct re-implements the protection on the wall clock for the fixed-dt mode only:
 //   - Same threshold fields: per-test guards keep writing ConfigWatchdogWarning/KillTest, and
@@ -539,6 +539,9 @@ struct FixedDtWatchdog {
       char message[192];
       snprintf(message, sizeof(message), "[Watchdog] Running time (real clock) for '%s' is >%.0f seconds, aborting.",
                running->Name, static_cast<double>(io.ConfigWatchdogKillTest));
+      // v1.91.8's ImGuiTestEngine_Check takes expr as plain data — the engine logs it through
+      // its own LogError format as a %s argument (imgui_te_engine.cpp:2385) — so a '%' inside a
+      // test name cannot be misparsed as a conversion; there is no format-string surface here.
       ImGuiTestEngine_Check("test_gui_main.cpp", "FixedDtWatchdog::Tick", __LINE__, ImGuiTestCheckFlags_None, false,
                             message);
     }
