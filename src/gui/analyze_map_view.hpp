@@ -10,7 +10,7 @@
 #include <string>
 #include <vector>
 
-#include "gui/analyze_overview.hpp"
+#include "gui/analyze_row_hover.hpp"
 #include "gui/analyze_survey.hpp"
 #include "include/lumice_raypath.h"
 
@@ -240,6 +240,8 @@ struct MapObservationTiming {
 MapObservationTiming LastMapObservationTiming();
 
 // ---- The reference profile's hover device (contract §16.1.3's extension) ----------------------------
+
+struct SurveyProbeView;  // gui/analyze_overview.hpp — the probe's readings, by reference
 
 // The profile device's caller-side geometry: the same mirror discipline as VerdictAnchorInput's
 // projection quintet (a new MapCanvasProjection field must be added to BOTH sides or the rebuilt

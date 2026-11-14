@@ -28,6 +28,7 @@
 #include <string>
 #include <vector>
 
+#include "gui/analyze_row_hover.hpp"
 #include "imgui.h"
 #include "include/lumice_raypath.h"
 
@@ -252,21 +253,6 @@ inline bool FoldOpen(const char* label, const char* suffix_id) {
   const std::string id = std::string(label) + "##" + suffix_id;
   return ImGui::CollapsingHeader(id.c_str());
 }
-
-// Which reference-profile reading row the pointer stood on (the class answer's three profile
-// rows): the session identity the map's profile device consumes, one frame behind the row write
-// (the same lag the verdict anchor's hover owns). The ratio row keeps its feedback local — it
-// names no spatial payload, so it never enters this identity.
-enum class SurveyProfileHover { kNone, kEdge, kPeak, kSeparation };
-
-// The interactive class-answer host's per-row hover read (§16.1's A2 pilot family): the renderer
-// writes every row's standing each frame it draws them, the canvas consumes the session copy the
-// NEXT frame. `verdict` is the two linked diagnose rows' OR (the verdict anchor's read);
-// `profile` is the three profile reading rows' exclusive standing (the profile device's read).
-struct SurveyRowHoverReadout {
-  bool verdict = false;
-  SurveyProfileHover profile = SurveyProfileHover::kNone;
-};
 
 // The ImGui half: the model as the complete answer draws it — the default layer (the answers
 // and their limits), then the evidence fold and the env-gated diagnostics fold (contract
