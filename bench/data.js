@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794648028766,
+  "lastUpdate": 1794648030511,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9614,50 +9614,6 @@ window.BENCHMARK_DATA = {
           "tree_id": "fb7774db9dcb6b30ed6ab81c83175faa1687100b",
           "url": "https://github.com/LoveDaisy/Lumice/commit/edebcf3766408a5da0e9750157314d7325aaa469"
         },
-        "date": 1791724202846,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 102.7,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 99.8,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 98.7,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 92.5,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "edebcf3766408a5da0e9750157314d7325aaa469",
-          "message": "Merge pull request #483 from LoveDaisy/feat/look-at-target-lock\n\nfeat(gui): add Look At target locking with manual takeover",
-          "timestamp": "2026-10-11T21:06:44+08:00",
-          "tree_id": "fb7774db9dcb6b30ed6ab81c83175faa1687100b",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/edebcf3766408a5da0e9750157314d7325aaa469"
-        },
         "date": 1791725232639,
         "tool": "customBiggerIsBetter",
         "benches": [
@@ -13986,6 +13942,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 93.2,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "3272248ebc43f184cbd0dcf977b98d987207c48b",
+          "message": "Merge pull request #587 from LoveDaisy/feat/hover-readout-type-ownership\n\nrefactor(gui): return row hover types to their semantic owner (imgui-free header)",
+          "timestamp": "2026-11-14T17:16:28+08:00",
+          "tree_id": "a08d19bd6f3dace2676ed9b6204fbb778c85d09c",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/3272248ebc43f184cbd0dcf977b98d987207c48b"
+        },
+        "date": 1794648030126,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 91.4,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 99.8,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 97.7,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 94,
             "unit": "%"
           }
         ]
