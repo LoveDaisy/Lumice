@@ -7906,13 +7906,11 @@ bool PoseViewSplitsAreManualIndependentAndFloored(ImGuiTestContext* ctx) {
   const float ratio_d6 = gui::g_state.analyze_pose_view_globe_ratio;
   const float ratio_d5_entry = gui::g_state.analyze_pose_view_left_row_ratio;
   const float ratio_d7_entry = gui::g_state.analyze_pose_view_curve_canvas_ratio;
-  // The D6 drag legs need a known starting geometry: the window's live size depends on which
-  // earlier case last sized it (the workspace scroll-pins case runs the pose window at a
-  // 640-tall basis; the minimum-height clamp then re-raises it to 680). Pin the contract
-  // default the way the FirstUseEver path would apply it.
+  // Drag displacement is measured away from the floor clamp. The fixed footer consumes
+  // part of the default height; use an explicit taller witness without changing app defaults.
   {
     const ImVec2 vp0 = ImGui::GetMainViewport()->Size;
-    ImGui::SetWindowSize(win, ImVec2(std::min(gui::UiPx(960.0f), vp0.x), std::min(gui::UiPx(720.0f), vp0.y)),
+    ImGui::SetWindowSize(win, ImVec2(std::min(gui::UiPx(960.0f), vp0.x), std::min(gui::UiPx(780.0f), vp0.y)),
                          ImGuiCond_Always);
     ctx->Yield(3);
   }
@@ -8014,7 +8012,7 @@ bool PoseViewSplitsAreManualIndependentAndFloored(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(fabsf(scroll_quota1->Size.y - scroll_quota_h0) < 2.0f, false);         // the quota did not grow
   {
     const ImVec2 vp0 = ImGui::GetMainViewport()->Size;
-    ImGui::SetWindowSize(win, ImVec2(std::min(gui::UiPx(960.0f), vp0.x), std::min(gui::UiPx(720.0f), vp0.y)),
+    ImGui::SetWindowSize(win, ImVec2(std::min(gui::UiPx(960.0f), vp0.x), std::min(gui::UiPx(780.0f), vp0.y)),
                          ImGuiCond_Always);
     ctx->Yield(3);
   }
@@ -8511,7 +8509,8 @@ bool PoseViewResizeStrategyDistributesByRatioAndQuota(ImGuiTestContext* ctx) {
     ImGui::SetWindowSize(win, ImVec2(std::min(gui::UiPx(w), vp.x), std::min(gui::UiPx(h), vp.y)), ImGuiCond_Always);
     ctx->Yield(3);
   };
-  pin_size(960.0f, 720.0f);
+  // Isolate ratio distribution from the floor clamp; minimum-size fallback is tested separately.
+  pin_size(960.0f, 780.0f);
   const auto canvas_h = [&](const char* id) -> float {
     const ImGuiTestItemInfo c = ctx->ItemInfo(id, ImGuiTestOpFlags_NoError);
     IM_CHECK_RETV(c.ID != 0, false);
@@ -8553,7 +8552,7 @@ bool PoseViewResizeStrategyDistributesByRatioAndQuota(ImGuiTestContext* ctx) {
 
   // Scenario 2 — SHRINK, the reverse symmetry: the same delta comes back out of the canvases,
   // the quotas still hold.
-  pin_size(960.0f, 720.0f);
+  pin_size(960.0f, 780.0f);
   const float c3d_2 = canvas_h("**/##r3d_canvas");
   const float cc_2 = canvas_h("**/##pose_curve_canvas");
   IM_CHECK_RETV(fabsf(c3d_2 - c3d_0) < 2.0f && fabsf(cc_2 - cc_0) < 2.0f, false);
@@ -8589,7 +8588,7 @@ bool PoseViewResizeStrategyDistributesByRatioAndQuota(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(PoseDragStrip(ctx, "**/##PoseCurveSplitter", 0.0f, 40.0f), false);
   const float d7_dragged = gui::g_state.analyze_pose_view_curve_canvas_ratio;
   IM_CHECK_RETV(d7_dragged > d7_saved + 0.03f, false);
-  pin_size(960.0f, 720.0f);
+  pin_size(960.0f, 780.0f);
   const float cc_5 = canvas_h("**/##pose_curve_canvas");
   ImGuiWindow* comp_5 = PoseRegionScrollChild("##AnalyzePoseCurve", "##PoseCurveScroll");
   IM_CHECK_RETV(comp_5 != nullptr, false);
@@ -8604,7 +8603,7 @@ bool PoseViewResizeStrategyDistributesByRatioAndQuota(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(fabsf(share_5 - d7_dragged) < 0.03f, false);  // the dragged share governs the settled split
   IM_CHECK_RETV(comp_5->Size.y < quota_5 - 20.0f, false);     // the companion gave up its quota to the drag
 
-  // The four splits leave with the RAII guard; the window basis is this case's own state.
+  // The four splits leave with the RAII guard; restore the default-sized witness too.
   pin_size(960.0f, 720.0f);
   gui::g_state.analyze_pose_view_open = false;
   ctx->Yield(2);
@@ -10328,6 +10327,12 @@ bool RaypathViewNarrowestWindowKeepsControlsReachable(ImGuiTestContext* ctx) {
     IM_CHECK_RETV(region->ScrollMax.y == 0.0f && region->Scroll.y == 0.0f, false);
     ImGuiWindow* report = MapReportWindow();
     IM_CHECK_RETV(report != nullptr && report->Pos.y >= entry.RectFull.Max.y, false);
+    ctx->LogInfo("[pose entry budget] scale %.1f region %.0fx%.0f report clip %.1f, line %.1f; entry bottom %.1f",
+                 gui::CurrentUiScale(), region->Size.x, region->Size.y, report->InnerClipRect.GetHeight(),
+                 ImGui::GetTextLineHeight(), entry.RectFull.Max.y);
+    if (report->InnerClipRect.GetHeight() < ImGui::GetTextLineHeight()) {
+      SaveWindowPng(ctx, "//Raypath view", GuiTestTempPath("status_report_budget_failure.png").string());
+    }
     IM_CHECK_RETV(report->InnerClipRect.GetHeight() >= ImGui::GetTextLineHeight(), false);
     ctx->WindowFocus("//Raypath view");
     if (report->ScrollMax.y > 0.0f) {

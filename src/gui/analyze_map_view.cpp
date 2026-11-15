@@ -1734,10 +1734,13 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
     lambda_scratch = static_cast<float>(state.analysis.map_wavelength_nm);
   }
   const float reference_w = ImGui::CalcTextSize("reference").x + ImGui::GetStyle().FramePadding.x * 2.0f;
-  float lambda_track = UiPx(140.0f);
-  lambda_track = std::min(lambda_track, ImGui::GetContentRegionAvail().x - ImGui::CalcTextSize("wl").x -
-                                            ImGui::GetStyle().ItemInnerSpacing.x);
-  lambda_track = std::max(lambda_track, UiPx(60.0f));
+  const float lambda_label_w = ImGui::CalcTextSize("wl").x + ImGui::GetStyle().ItemInnerSpacing.x;
+  const float lambda_row_w = ImGui::GetContentRegionAvail().x;
+  const float joined_track_w = lambda_row_w - lambda_label_w - reference_w - ImGui::GetStyle().ItemSpacing.x;
+  // Yield the elastic track before wrapping the fixed reference action. At the compressed
+  // viewport this recovers a full row for the report without hiding any control or its label.
+  const float track_budget = joined_track_w >= UiPx(60.0f) ? joined_track_w : lambda_row_w - lambda_label_w;
+  const float lambda_track = std::max(UiPx(60.0f), std::min(UiPx(140.0f), track_budget));
   ImGui::SetNextItemWidth(lambda_track);
   if (ImGui::SliderFloat("wl##map", &lambda_scratch, 350.0f, 900.0f, "%.0f nm", ImGuiSliderFlags_AlwaysClamp)) {
     state.analysis.map_wavelength_nm = static_cast<double>(lambda_scratch);
@@ -1750,6 +1753,9 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
         state.analysis.map_wavelength_nm > 0.0 ?
             "The wavelength this map answers at — an explicit value; editing it asks a new computation." :
             "The wavelength this map answers at — the engine's reference; editing the slider asks an explicit one.");
+  }
+  if (fits_on_line(reference_w)) {
+    ImGui::SameLine();
   }
   ImGui::BeginDisabled(state.analysis.map_wavelength_nm <= 0.0);
   if (ImGui::SmallButton("reference##map_lambda")) {
