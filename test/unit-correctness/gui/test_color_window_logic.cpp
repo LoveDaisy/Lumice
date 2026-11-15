@@ -168,7 +168,8 @@ TEST_F(ColorWindow, ARefRejectsAnyTextThatIsMoreThanASingleAtom) {
 
 // Refs have no crystal kind at edit time: accept the union of legal face sets, while keeping
 // the single-atom and syntax gates. Endpoint cases distinguish both pyramid-only face bands
-// from the prism faces, without duplicating the shared parser's grammar suite.
+// from the prism faces, without duplicating the shared parser's grammar suite. Adjacent EE fields
+// (entry:13 & exit:25) merge into one factor; a raypath token AND an EE field remain two factors.
 TEST_F(ColorWindow, ARefAcceptsPyramidFacesWithoutRelaxingItsSingleAtomGate) {
   const char* const kValid[] = { "13-25",
                                  "13",
