@@ -110,8 +110,8 @@ the owner's to create, on the merge commit.
 2. **Bootstrap the chore**: `/chore-bootstrap release-X.Y.Z`, then work it in a linked worktree
    on its own branch (`AGENTS.md`, "Where a change lives, and from where it is made").
 3. **Enumerate, then decide per PR**: run the three commands under "Sourcing" in `CHANGELOG.md`
-   (merge commits, first-parent non-merges, and the API-version diff — with `main` in
-   place of the tag that does not exist yet). For every PR in the output, record in the chore's
+   (merge commits, first-parent non-merges, and the API-version diff — with the branch the
+   release is being cut from in place of the tag that does not exist yet). For every PR in the output, record in the chore's
    progress notes a **per-PR disposition**: entry written (and under which heading — the
    artifact section plus its `Added` / `Changed` / `Fixed` prefix, or `Breaking Changes`; the
    grouping rule is in `CHANGELOG.md`), or no entry plus one sentence of why. The table is
@@ -142,8 +142,33 @@ the owner's to create, on the merge commit.
    the release — and uses `extract-notes` for the release page body.
 
 There is one shape of release, not two: every version is cut together with its backfilled
-section, so a "cut only" commit on `main` with the notes written some other time does not
-occur.
+section — on `main` in the default flow, on the `release/X.Y.Z` branch in a release-branch
+cut (below) — so a "cut only" commit with the notes written some other time does not occur.
+
+### Releasing from a release branch
+
+The default is what the numbered steps above describe: the tag is cut from `main`. The one
+exception is a **release branch** — used when, and only when, the fixes that must ship
+cannot ride along with a `main` release (typically because a large feature is mid-flight
+there and must not gate them). This subsection is the single authority for that policy.
+
+1. **Branch, then land fixes there**: cut a one-off `release/X.Y.Z` branch from the previous
+   release's point — the previous tag, or a chosen commit past it toward `main`'s tip. Fixes
+   land on the branch: their task worktrees branch off `release/X.Y.Z`, and their PRs target
+   it, not `main`.
+2. **Cut as usual, against the branch**: the release chore runs the numbered steps above with
+   one substitution — its PR targets `release/X.Y.Z`, and the owner's tag goes on that PR's
+   merge commit. The changelog enumeration baseline is the release branch
+   (`v<prev_tag>..release/X.Y.Z`), not `main`: PRs below the branch point are outside the
+   window even if `main` has since merged them, and PRs on the branch are inside it even if
+   `main` has not.
+3. **The branch retires by construction**: after the tag, forward-merge `release/X.Y.Z` back
+   into `main` via a PR — the version's `CHANGELOG.md` section and the fixes return to the
+   main line — then delete `release/X.Y.Z`. Nothing else lingers: the fixes' and the release
+   chore's own branches die with their PR merges, as any PR branch does.
+
+While a release branch is active, `main` receives no release and the branch receives merges
+only; it is an escape hatch for one version, not a parallel track.
 
 The release produces platform-specific packages:
 - **Linux x64**: `.tar.gz` with one CLI and one GUI executable (`Lumice`, `LumiceGUI`) plus two
