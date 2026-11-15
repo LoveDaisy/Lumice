@@ -7986,7 +7986,7 @@ bool PoseViewSplitsAreManualIndependentAndFloored(ImGuiTestContext* ctx) {
 
   // The companion's fixed quota (the UNDRAGGED D7 state, the resize strategy's elastic|quota
   // pair): stretching the window grows the CANVAS — the companion child's height stays at its
-  // 8-line budget, never content-driven (§15: geometry first). Runs before the D7 drag below,
+  // three-line budget, never content-driven (§15: geometry first). Runs before the D7 drag below,
   // while the sentinel still holds.
   const ImGuiTestItemInfo canvas_quota0 = ctx->ItemInfo("**/##pose_curve_canvas", ImGuiTestOpFlags_NoError);
   IM_CHECK_RETV(canvas_quota0.ID != 0, false);
@@ -7995,7 +7995,8 @@ bool PoseViewSplitsAreManualIndependentAndFloored(ImGuiTestContext* ctx) {
   const float canvas_quota_h0 = canvas_quota0.RectFull.GetHeight();
   const float scroll_quota_h0 = scroll_quota0->Size.y;
   ctx->LogInfo("[D7 quota] canvas %.0f, companion %.0f (quota %.0f)", static_cast<double>(canvas_quota_h0),
-               static_cast<double>(scroll_quota_h0), static_cast<double>(8.0f * ImGui::GetTextLineHeightWithSpacing()));
+               static_cast<double>(scroll_quota_h0),
+               static_cast<double>(float(gui::kPoseViewCurveCompanionLines) * ImGui::GetTextLineHeightWithSpacing()));
   {
     const ImVec2 vp1 = ImGui::GetMainViewport()->Size;
     ImGui::SetWindowSize(win, ImVec2(std::min(gui::UiPx(1100.0f), vp1.x), std::min(gui::UiPx(860.0f), vp1.y)),
@@ -8594,7 +8595,7 @@ bool PoseViewResizeStrategyDistributesByRatioAndQuota(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(comp_5 != nullptr, false);
   const float denom_7 = cc_5 + comp_5->Size.y;  // the split's span: canvas + companion (the strip and spacings cancel)
   const float share_5 = cc_5 / denom_7;
-  const float quota_5 = 8.0f * ImGui::GetTextLineHeightWithSpacing();
+  const float quota_5 = float(gui::kPoseViewCurveCompanionLines) * ImGui::GetTextLineHeightWithSpacing();
   ctx->LogInfo(
       "[resize d7 dragged] settled: canvas %.0f, companion %.0f, denom %.0f, share %.3f vs stored %.3f "
       "(quota %.0f)",
@@ -9016,7 +9017,7 @@ bool PoseViewNarrowestWindowKeepsTheFixedStackOperable(ImGuiTestContext* ctx) {
 // clicked sample), the hover-only readout discipline, and the fixed stack + canvas at the
 // narrowest face (the D5 floors' promise, with the geometry logged — the live-layout probe the
 // floor constants are tuned from). The screenshots are the readability record (the issue's
-// shared-log-axis hypothesis): five curves, the legend, the zero row and the cursor at both
+// shared-log-axis hypothesis): five curves, the legend and the cursor at both
 // geometries.
 // C16 narrow-column variant: real default C query -> nonuniform curve -> mouse selection ->
 // globe marker and rendered crystal/representative ray. No fabricated point document or GUI hook.
@@ -9243,7 +9244,7 @@ bool PoseCurveRegionDrawsAndMovesTheSharedCursor(ImGuiTestContext* ctx) {
   // ---- §16.4's content-owner faces at the default geometry (Step 6): the factors region
   // hosts the current pose's readouts — both fold headers present and contained (default-
   // closed; the toggle's flip legs live in the narrowest case), the companion holds its fixed
-  // 8-line quota against the content's arrival (the ladder line became the full companion
+  // three-line quota against the content's arrival (the ladder line became the full companion
   // content and the geometry did not move — §15), and the measure registration's gap state is
   // logged for the hands-on record (the note rides the default layer by construction; this
   // scene may not carry a gap to exercise it). ----
@@ -9277,7 +9278,7 @@ bool PoseCurveRegionDrawsAndMovesTheSharedCursor(ImGuiTestContext* ctx) {
                  reg_ok ? "read" : "absent", reg_ok ? static_cast<int>(reg.registered_gap) : -1);
     ImGuiWindow* comp = PoseRegionScrollChild("##AnalyzePoseCurve", "##PoseCurveScroll");
     IM_CHECK_RETV(comp != nullptr, false);
-    const float quota = 8.0f * ImGui::GetTextLineHeightWithSpacing();
+    const float quota = float(gui::kPoseViewCurveCompanionLines) * ImGui::GetTextLineHeightWithSpacing();
     ctx->LogInfo("[pose factors] companion %.0f vs quota %.0f", static_cast<double>(comp->Size.y),
                  static_cast<double>(quota));
     IM_CHECK_RETV(fabsf(comp->Size.y - quota) < 2.0f, false);
@@ -9371,8 +9372,7 @@ bool PoseCurveRegionDrawsAndMovesTheSharedCursor(ImGuiTestContext* ctx) {
     IM_CHECK_RETV(departed.find("Left click or drag to select a pose.") == std::string::npos, false);
   }
 
-  // Wheel zoom owns only the Y window: neither the cursor nor the query changes. Let the
-  // existing region claim stand before sending input, as for the map/orbit gestures.
+  // The two range modes are view-only; wheel never changes them or the shared cursor.
   const gui::PointIntentKey key_before = gui::g_state.analysis.point.key;
   ctx->MouseMoveToPos(canvas.RectFull.GetCenter());
   ctx->Yield(3);
@@ -9488,7 +9488,7 @@ bool PoseCurveRegionDrawsAndMovesTheSharedCursor(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(gui::g_state.analysis.point_view.sample_index == cursor_after_click, false);
   ctx->LogInfo("[pose curve] click on the current position stopped playback, index held at %d", cursor_after_click);
 
-  // Dragging after zoom follows the same X mapping, while wheel-out restores fit without
+  // Dragging in Full follows the same X mapping, while the Fit switch restores fit without
   // moving the sample that the drag selected.
   ctx->MouseDown(0);
   ctx->MouseMoveToPos(ImVec2(canvas.RectFull.Min.x + canvas.RectFull.GetWidth() * 0.4f, canvas.RectFull.GetCenter().y));
@@ -9564,6 +9564,145 @@ bool PoseCurveRegionDrawsAndMovesTheSharedCursor(ImGuiTestContext* ctx) {
   ImGui::SetWindowSize(win, ImVec2(std::min(gui::UiPx(960.0f), vp.x), std::min(gui::UiPx(720.0f), vp.y)),
                        ImGuiCond_Always);
   ctx->Yield(2);
+  gui::g_state.analyze_pose_view_open = false;
+  ctx->Yield(2);
+  return true;
+}
+
+bool PoseCurveReportQuotasTrackContent(ImGuiTestContext* ctx) {
+  ScopedServerGuard guard;
+  ScopedPoseSessionSplits splits;
+  IM_CHECK_RETV(BringUpHaloScene(ctx, false), false);
+  OpenWindow(ctx);
+  IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
+  IM_CHECK_RETV(SelectRowByDisplay(ctx, TopChainDisplay().c_str()) != std::nullopt, false);
+  SetSkyPointTarget(42.0, 0.0);
+  gui::g_state.analyze_pose_view_open = true;
+  PinPoseViewOnScreen(ctx);
+  IM_CHECK_RETV(DriveUntil(ctx, [] { return CurrentTraceIsDrawn(); }, 60), false);
+  {
+    ScopedUiScaleAndBasisLease geometry(ctx);
+    const auto tier = [&](float scale) -> bool {
+      gui::SetUiScaleMultiplierImmediate(scale);
+      IM_CHECK_RETV(
+          DriveUntil(ctx, [scale] { return !gui::g_ui_scale_dirty && gui::CurrentUiScale() == scale; }, 5), false);
+      g_window_size_test.apply_aspect = false;
+      g_window_size_test.width = int(gui::kInitWindowWidth * scale);
+      g_window_size_test.height = int(gui::kInitWindowHeight * scale);
+      g_window_size_test.done.store(false);
+      g_window_size_test.requested.store(true);
+      IM_CHECK_RETV(DriveUntil(ctx, [] { return g_window_size_test.done.load(); }, 5), false);
+      PinPoseViewOnScreen(ctx);
+      const auto geometry_leg = [&](bool narrow) -> bool {
+        auto* host = ctx->GetWindowByRef("//Pose & trace");
+        IM_CHECK_RETV(host != nullptr, false);
+        ImGui::SetWindowPos(host, ImVec2(8, 40), ImGuiCond_Always);
+        ImGui::SetWindowSize(host, ImVec2(gui::UiPx(narrow ? 640 : 960), gui::UiPx(narrow ? 680 : 720)),
+                             ImGuiCond_Always);
+        gui::g_state.analyze_pose_view_curve_canvas_ratio = gui::kPoseViewCurveCanvasRatioUndragged;
+        ctx->Yield(4);
+        auto* report = PoseRegionScrollChild("##AnalyzeRaypath3D", "##Ray3DReport");
+        auto* companion = PoseRegionScrollChild("##AnalyzePoseCurve", "##PoseCurveScroll");
+        IM_CHECK_RETV(report && companion, false);
+        ImGui::SetScrollY(report, 0);
+        ImGui::SetScrollY(companion, 0);
+        ctx->MouseMoveToPos(ImVec2(2, 2));
+        ctx->Yield(3);
+        ctx->LogInfo(
+            "[curve quota] %.1fx %s host %.0fx%.0f: report %.1f content %.1f SM %.1f | companion %.1f content %.1f SM "
+            "%.1f",
+            scale, narrow ? "minimum" : "default", host->Size.x, host->Size.y, report->Size.y, report->ContentSize.y,
+            report->ScrollMax.y, companion->Size.y, companion->ContentSize.y, companion->ScrollMax.y);
+        const auto contains_ink = [&](ImGuiWindow* owner, const ImRect& rect) {
+          const auto* dl = owner->DrawList;
+          const ImU32 normal = ImGui::GetColorU32(ImGuiCol_Text);
+          const ImU32 muted = ImGui::GetColorU32(ImGuiCol_TextDisabled);
+          for (const auto& cmd : dl->CmdBuffer) {
+            const ImRect clip(cmd.ClipRect.x, cmd.ClipRect.y, cmd.ClipRect.z, cmd.ClipRect.w);
+            if (!clip.Overlaps(rect))
+              continue;
+            for (unsigned int i = 0; i + 2 < cmd.ElemCount; i += 3) {
+              const auto& a = dl->VtxBuffer[cmd.VtxOffset + dl->IdxBuffer[cmd.IdxOffset + i]];
+              if (a.col != normal && a.col != muted)
+                continue;
+              const auto& b = dl->VtxBuffer[cmd.VtxOffset + dl->IdxBuffer[cmd.IdxOffset + i + 1]];
+              const auto& c = dl->VtxBuffer[cmd.VtxOffset + dl->IdxBuffer[cmd.IdxOffset + i + 2]];
+              ImRect ink(a.pos, a.pos);
+              ink.Add(b.pos);
+              ink.Add(c.pos);
+              ink.ClipWith(clip);
+              if (ink.Overlaps(rect))
+                return true;
+            }
+          }
+          return false;
+        };
+        const auto full_item = [&](const char* id, ImGuiWindow* owner) -> bool {
+          const auto item = ctx->ItemInfo(id, ImGuiTestOpFlags_NoError);
+          IM_CHECK_RETV(item.ID != 0, false);
+          const ImRect rect = item.RectFull;
+          ctx->LogInfo("[quota item] %s y=%.1f..%.1f clip=%.1f..%.1f", id, rect.Min.y, rect.Max.y,
+                       owner->InnerClipRect.Min.y, owner->InnerClipRect.Max.y);
+          IM_CHECK_RETV(
+              rect.Min.x >= owner->InnerClipRect.Min.x - .5f && rect.Max.x <= owner->InnerClipRect.Max.x + .5f &&
+                  rect.Min.y >= owner->InnerClipRect.Min.y - .5f && rect.Max.y <= owner->InnerClipRect.Max.y + .5f,
+              false);
+          IM_CHECK_RETV(contains_ink(owner, rect), false);
+          return true;
+        };
+        // Full default rectangles, not the bbox of only those glyphs clipping happened to emit.
+        if (!narrow) {
+          IM_CHECK_RETV(full_item("**/##r3d_description", report), false);
+          IM_CHECK_RETV(full_item("**/Show Fresnel ratios##r3d_fresnel", report), false);
+          IM_CHECK_RETV(full_item("**/entry", report), false);
+          IM_CHECK_RETV(full_item("**/internal", report), false);
+          IM_CHECK_RETV(full_item("**/exit", report), false);
+          IM_CHECK_RETV(full_item("**/##r3d_semantics", report), false);
+          IM_CHECK_RETV(report->ScrollMax.y == 0, false);
+          IM_CHECK_RETV(full_item("**/##curve_identity", companion), false);
+          IM_CHECK_RETV(full_item("**/##curve_caliber", companion), false);
+          IM_CHECK_RETV(full_item("**/##curve_legend_0", companion), false);
+          IM_CHECK_RETV(full_item("**/##curve_legend_1", companion), false);
+          IM_CHECK_RETV(full_item("**/##curve_legend_2", companion), false);
+          IM_CHECK_RETV(full_item("**/##curve_legend_3", companion), false);
+          IM_CHECK_RETV(full_item("**/##curve_legend_4", companion), false);
+          IM_CHECK_RETV(companion->ScrollMax.y == 0, false);
+          IM_CHECK_RETV(companion->Size.y - companion->ContentSize.y <= ImGui::GetTextLineHeightWithSpacing(), false);
+        }
+        const std::string text = CaptureWindowFrameText(ctx, "Pose & trace");
+        IM_CHECK_RETV(CheckMapTextGlyphs(ctx, "curve quota tier", text), false);
+        // Narrow wrap is allowed to scroll, but the same native wheel must actually reach the tail.
+        const auto wheel_tail = [&](ImGuiWindow* window) -> bool {
+          if (window->ScrollMax.y <= .5f)
+            return true;
+          ctx->MouseMoveToPos(window->InnerClipRect.GetCenter());
+          ctx->Yield(3);
+          for (int step = 0; step < 15 && window->Scroll.y < window->ScrollMax.y - .5f; ++step) {
+            ctx->MouseWheelY(-5);
+            ctx->Yield(2);
+          }
+          IM_CHECK_RETV(window->Scroll.y >= window->ScrollMax.y - .5f, false);
+          return true;
+        };
+        IM_CHECK_RETV(wheel_tail(report), false);
+        IM_CHECK_RETV(wheel_tail(companion), false);
+        char capture[80];
+        std::snprintf(capture, sizeof(capture), "curve_quota_%.1fx_%s.png", scale, narrow ? "minimum" : "default");
+        IM_CHECK_RETV(SaveWindowPng(ctx, "//Pose & trace", GuiTestTempPath(capture).string()), false);
+        return true;
+      };
+      IM_CHECK_RETV(geometry_leg(false), false);
+      IM_CHECK_RETV(geometry_leg(true), false);
+      return true;
+    };
+    IM_CHECK_RETV(tier(1), false);
+    IM_CHECK_RETV(tier(1.5f), false);
+    IM_CHECK_RETV(tier(2), false);
+  }
+  IM_CHECK_RETV(
+      ImGui::GetIO().DisplaySize.x == gui::kInitWindowWidth && ImGui::GetIO().DisplaySize.y == gui::kInitWindowHeight,
+      false);
+  IM_CHECK_RETV(gui::CurrentUiScale() == gui::kFactoryUiScaleMultiplier, false);
   gui::g_state.analyze_pose_view_open = false;
   ctx->Yield(2);
   return true;
@@ -13071,13 +13210,18 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
     t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(PoseCurveModesHaveSessionLifetime(ctx)); };
   }
 
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "pose_curve_report_quotas_track_content");
+    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(PoseCurveReportQuotasTrackContent(ctx)); };
+  }
+
   // A controlled curve drives the same control and drawing face used by the real point window.
   {
     ImGuiTest* t =
         IM_REGISTER_TEST(engine, "raypath_analysis", "curve_log_segments_meet_the_frame_and_modes_change_ink");
     static gui::PointContributionCurve model;
     static gui::PointCurveRangeMode mode = gui::PointCurveRangeMode::kFit;
-    static bool draw = false, auto_range = false;
+    static bool draw = false, auto_range = false, scroll_test = false;
     static ImRect plot;
     t->GuiFunc = [](ImGuiTestContext*) {
       if (!draw)
@@ -13094,12 +13238,15 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       const gui::PointCurveAxisRange range =
           auto_range ? gui::PointCurveAxisFit(model, mode) : gui::PointCurveAxisRange{ true, .1, 10 };
       gui::DrawPointCurveArms(dl, model, range, plot.Min, plot.Max);
+      if (scroll_test)
+        ImGui::Dummy(ImVec2(1, 600));
       ImGui::End();
     };
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
       mode = gui::PointCurveRangeMode::kFit;
       auto_range = false;
+      scroll_test = false;
       model = {};
       model.points.resize(7);
       for (int i = 0; i < 7; ++i)
@@ -13167,6 +13314,16 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       ctx->ItemClick("**/Fit##curve_range");
       ctx->Yield(2);
       IM_CHECK(!has_arm(4));
+      scroll_test = true;
+      ctx->Yield(3);
+      IM_CHECK(w->ScrollMax.y > 0);
+      ctx->MouseMoveToPos(plot.GetCenter());
+      ctx->Yield(3);
+      const float scroll_before = w->Scroll.y;
+      ctx->MouseWheelY(-1);
+      ctx->Yield(3);
+      IM_CHECK(w->Scroll.y > scroll_before);
+      IM_CHECK(mode == gui::PointCurveRangeMode::kFit);
     };
   }
 

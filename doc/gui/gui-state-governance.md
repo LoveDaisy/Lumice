@@ -34,6 +34,10 @@ Run/Stopping、Full Spectrum/Colored、信号告警与 Modified 的转换只更�
 Render/Analyze 的纯文字双格是 T-session 工作区选择：当前格实填选中、点击 no-op，另一格仍只切换工作区，
 不把它降格为「窗口是否打开」的徽章。表达与组距合同见 `gui-visual-language.md` §4.8。
 
+**Contribution curve 的 Fit/Full** 是独立 T-session 显示属性（`PointViewState::curve_range_mode`）：
+新点采纳/文档重置回 Fit、关开窗口保留、分量切换按当前档重算范围。切档不写共享样本游标、播放或
+查询身份；hover 线/点/tooltip 每帧由鼠标和当前曲线派生，不储存第二 selection，不进快照/配置/默认值。
+
 **Look At 跟随（as-built）**：`GuiState::look_at` 只保存所选具名目标与跟随意图，是 T-session，不是相机姿态的第二份副本。具名方向、约束与状态转换由 `view_look_at` 单一 owner 解析；`RenderPreviewPanel` 在装配本帧 view 输入之前调用 `UpdateLockedLookAt`，且不受 View 折叠、是否已有纹理或 Run 状态影响。被接受的 `Elevation` / `Azimuth` 编辑与 preview camera drag 先解除 Lock，再保留本次输入；`Roll` / `FOV` / zoom 不解除。切到不同 lens 或进入 full-sky 禁用态会解除而不暂停旧锁；`Reset` 解除 Lock 但保留目标。`ResetFrontendState` 对 New / 成功 Open / Revert 都恢复 `Sun + unlocked`，失败或取消的 Open 不调用它，因而不清现有意图。该块不进 `.lmc`、用户默认值或 `ConfigSnapshot`，也不产生 dirty、epoch、display push 或额外 re-sim；太阳高度本身原有的 sim effect 不变。
 
 > **Raypath view 的共享相机机制**：唯一合同见 [raypath-view-camera.md](raypath-view-camera.md) §6–8，验证边界见§10。

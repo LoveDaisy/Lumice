@@ -153,7 +153,7 @@ std::vector<std::string> PointMassLines(const LUMICE_PathPointMass& mass);
 
 // One arm's honest state at one point: a finite positive value (drawn on the log axis), an
 // exact zero the engine itself produced (a plate's declared-measure rho, a legal zero-area
-// endpoint — marked on the dedicated zero row, never mapped onto log), or unavailable (the
+// endpoint — named in the legend/tooltip, never mapped onto log), or unavailable (the
 // gate flag clear, or the value is not drawable: non-finite, negative) — a gap, never a zero.
 enum class PointCurveValueKind { kUnavailable, kExactZero, kPositive };
 

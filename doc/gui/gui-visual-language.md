@@ -92,7 +92,7 @@ PR #271 之前，产品与 `gui_test` 各自初始化 ImGui 默认字体与 `Sty
 
 **正文字符覆盖**：构建期嵌入 ImGui 自带的 `Roboto-Medium.ttf`，图标沿用 FontAwesome Solid 合并，
 不增加正文 fallback 来源。`theme.cpp::AddBodyFont` 唯一持有持久化 glyph-range 声明：默认 Latin/Latin-1、
-General Punctuation，加实际内置地图文案需要的 `δ`（U+03B4，偏折角）与 `λ`（U+03BB，波长），
+General Punctuation，加实际内置地图文案需要的 `δ`（U+03B4，偏折角）与 `λ`（U+03BB，波长），以及曲线图例的 `ρ`（U+03C1，轴密度）；
 不加载整个 Greek block。启动和 `RebuildForUiScale` 均复用此声明；字体 cmap 含字不等于 atlas 已加载，
 应以活字体的 `FindGlyphNoFallback` 及真实窗口渲染复核。Roboto 不含 U+2192，链标签继续使用既有
 FA 箭头；这不是任意用户名称、路径或日志的全 Unicode 保证。
@@ -167,6 +167,8 @@ ScrollbarRounding 3  WindowRounding 4  PopupRounding 4
   执行组取 Run/Stop/Stopping.../Continue 四个标签的最大宽度，文件组取当前档三个标签的最大宽度，workspace 两格取
   Render/Analyze 的最大宽度（`ToolbarGroupButtonWidth()`，一处实现三处调用）。两格 flush 相接（`SameLine(0, 0)`）读作
   一个控件、总宽恒定——「切换不推移邻钮」按构造成立（`workspace_switch_swaps_layout_and_stays_clean` 逐字节钉住）。
+  曲线的 **Fit | Full** 沿同一纯文字双格惯例：等宽、flush、当前格实填，固定标题行中切档不推动画布；
+  两处复用 `PushCurrentSegmentStyle()`，不另造配色。
   功能组与 Settings **不**拉齐：它们各开一个不同的窗口，拉齐只制造与内容无关的留白。
 - **稳定槽与真实 fit**：显示通道始终保留最长 `Full Spectrum` 复选框＋pip 的槽位；没有颜色类时不绘制控件，
   短 `Colored` 标签、告警出现/消失及信号刷新只换槽内内容，不改变模式、Settings 或右状态角的位置，也不改变标签档位。

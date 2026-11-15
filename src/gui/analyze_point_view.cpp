@@ -71,6 +71,16 @@ const char* ExecutionText(int execution) {
 
 constexpr int kMaxRenderComponents = 64;
 
+// Register a passive text item's COMPLETE layout bounds without a second layout or hit target.
+// Text has no ID; the test engine otherwise sees only emitted glyphs (and misses clipped tails).
+void RegisterPointTextItem(const char* label) {
+  ImGuiContext& g = *ImGui::GetCurrentContext();
+  const ImGuiLastItemData saved = g.LastItemData;
+  ImGui::ItemAdd(saved.Rect, ImGui::GetID(label), nullptr, ImGuiItemFlags_NoNav);
+  IMGUI_TEST_ENGINE_ITEM_INFO(g.LastItemData.ID, label, g.LastItemData.StatusFlags);
+  g.LastItemData = saved;
+}
+
 struct CurveArm {
   double PointCurvePoint::*value;
   PointCurveValueKind PointCurvePoint::*kind;
@@ -1698,6 +1708,7 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
         "One pose's real path in the crystal: drag orbits, wheel zooms. Same physical state, two "
         "views.");
     ImGui::PopStyleColor();
+    RegisterPointTextItem("##r3d_description");
     // The per-segment Fresnel ratio numbers: a session display preference (default off; kept
     // across sample/component switches, point adoptions and window reopen — the same survival
     // set as the other toggles; reset only by the whole-state new-document paths). This report
@@ -2229,6 +2240,7 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
       DrawLegendIconSlot([&] { DrawSwatchSquare(SegmentColor(kind, 1.0f), swatch); }, swatch,
                          ImGui::GetTextLineHeight());
       ImGui::TextDisabled("%s", labels[kind]);
+      RegisterPointTextItem(labels[kind]);
     }
     // The display semantics' legend (2026-11-12 feedback #8/#9): the width mapping's honesty
     // note (visual sqrt scaling, no absorption — the ratio numbers, when shown, carry the
@@ -2238,6 +2250,7 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
         "ratio numbers, when shown, carry the exact values. Contacts: solid = facing the camera, "
         "hollow = back-facing or facing unknown. A segment past an unusable interface factor "
         "draws neutral (n/a).");
+    RegisterPointTextItem("##r3d_semantics");
     if (current->sample.interface_count >= 2) {
       char transmittance[96];
       std::snprintf(transmittance, sizeof(transmittance), "face transmittance: entry %.3f, exit %.3f",
@@ -2270,25 +2283,13 @@ namespace {
 // unless the constant is unambiguously namespace-scope.
 constexpr int kCurveArms = static_cast<int>(std::size(kCurveArmFields));
 
-// The curve canvas's smallest honest plot, in layout units: below this the two-row footer plus
-// the top pad leave no real drawing area, and the canvas switches to its recoverable note form
-// instead of drawing an inverted rect or clipped labels posing as present (§3.2's degradation —
-// the plot comes back when the space does, no floor change, no swallowed content).
+// Below the smallest honest plot the canvas keeps a recoverable note and click-to-select.
 constexpr float kPoseViewCurveMinPlot = 12.0f;
 
-// The contribution-curve region (contract §7's 右列下, 756): the five named factors and their
-// product along the SELECTED COMPONENT's real SO(3) arclength — one shared log axis, the
-// engine's own numbers (no recomputation, no per-arm normalization), each arm honest in the
-// audit §3 three-state sense. Fixed stack: the title (identity + span + integral echo), the
-// caliber line (angle-Lebesgue, rad — the J7 constant, never inferred), the legend, the canvas
-// (five polylines broken at unavailable points, the zero row for exact zeros, the seed mark,
-// the cursor), the readout line (the current sample; the hovered sample overrides while it
-// lasts). Below: the region's own scroll — the partial note, the measure registration's note
-// verbatim when its gap flag stands (J7), and the current sample's full factor readouts (the
-// factors region's face, retained in-window). Every pre-result state is the honest ladder the
-// factors region held — a line naming where the answer lives, never a painted zero. Click or
-// drag on the canvas moves the SAME selection the slider, globe and 3D trace follow
-// (view.sample_index) and stops the playback; the sky-point intent is untouched by construction.
+// Curve-local display: shared log axis, real arclength, three-state availability, seed and the
+// shared selected-pose cursor. The fixed header owns Fit/Full. The companion owns identity,
+// integral/completeness, caliber, symbolic legend and partial limitation; hover lives only in
+// the canvas/tooltip, while the factors region owns current-pose explanations.
 void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
   ImGui::BeginChild("##AnalyzePoseCurve", size, ImGuiChildFlags_Borders);
   PointQuerySession& point = state.analysis.point;
@@ -2301,7 +2302,7 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
 
   // ---- D7 — the curve region's canvas | companion split (§16.4): the canvas's share of the
   // span below the fixed head. The sentinel share (never dragged) grants the companion its
-  // fixed 8-line quota and the canvas eats the whole delta — the resize strategy's
+  // fixed line quota and the canvas eats the whole delta — the resize strategy's
   // elastic|quota pair, the quota a budget of LINES (live-measured height), never content
   // height (§15: lines beyond it scroll, none is swallowed). A drag writes the dragged share,
   // and from then on the stored share governs — user intent overrides the strategy — clamped
@@ -2423,10 +2424,12 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
                     static_cast<int>(n), span_rad, seed_x, echo);
     }
     DisabledWrappedText("%s", title);
+    RegisterPointTextItem("##curve_identity");
     // J7's constant: the caliber is DECLARED, never inferred — on plate-family scenes the axis
     // density (the `rho` field, and the product and the integral with it) reads identically zero
     // in this convention, while the other arms stay informative per their own flags (audit §4).
     DisabledWrappedText("angle-Lebesgue · arclength axis in rad");
+    RegisterPointTextItem("##curve_caliber");
 
     // ---- The legend: one swatch + short symbol per arm, the units in the factor readouts' own
     // vocabulary; an arm with no positive value names the fact (J4's legend naming). SameLine is
@@ -2469,6 +2472,9 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
         }
         DrawLegendIconSlot([&] { DrawSwatchSquare(arm_colors[arm], swatch); }, swatch, swatch);
         ImGui::TextUnformatted(label.c_str());
+        char probe[32];
+        std::snprintf(probe, sizeof(probe), "##curve_legend_%d", arm);
+        RegisterPointTextItem(probe);
       }
     }
 
@@ -2540,7 +2546,7 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
           widest_lab = std::max(widest_lab, ImGui::CalcTextSize(lab).x);
         }
         if (!have_labelled_major) {
-          // A panned narrow window can sit strictly between decade majors — no labelled tick, no
+          // A narrow data window can sit strictly between decade majors — no labelled tick, no
           // numeric reference. The window's own boundary values become the axis's labels (§3.2),
           // and the left gutter must host them exactly like the decade labels they stand in for.
           for (const double boundary : { v_min, v_max }) {
@@ -2553,7 +2559,7 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
       const float pad_l = std::max(UiPx(34.0f), widest_lab + UiPx(10.0f));  // decade labels live left of the plot
       const float pad_r = UiPx(10.0f);
       const float pad_t = UiPx(10.0f);  // the seed mark rides above the plot
-      // The footer leaves the zero row intact and wraps the summary inside the same canvas.
+      // Only the X labels remain below the plot; the seed and rad unit sit above.
       const ImVec2 plot_min(canvas_min.x + pad_l, canvas_min.y + pad_t);
       const ImVec2 plot_max(canvas_max.x - pad_r, canvas_max.y - pad_b);
       const float plot_w = std::max(1.0f, plot_max.x - plot_min.x);
@@ -2658,9 +2664,8 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
         dl->AddText(ImVec2(canvas_min.x + (avail.x - ts.x) * 0.5f, canvas_min.y + (canvas_h - ts.y) * 0.5f),
                     ImGui::GetColorU32(ImGuiCol_TextDisabled), note);
       } else {
-        // The too-short canvas: the footer's two rows left no real plot. The named note is the
-        // recoverable degradation — no inverted rect, no cropped labels, input off (the pan latch
-        // cleared above); growing the splitter or the window back restores the full form.
+        // No inverted plot or cropped labels: growing the splitter/window restores the plot.
+        // Selection remains available through the width-defined X mapping below.
         const char* note = "the canvas is too short for the curve plot — grow it back with the splitter or the window";
         const ImVec2 ts = ImGui::CalcTextSize(note, nullptr, false, summary_wrap);
         dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(),
@@ -2675,8 +2680,6 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
       // inverted dimension) and the selection is the one global state the globe, the 3D trace
       // and the factors follow — the D7 floor's contract is that the canvas answers a click at
       // its 40pt real-slice floor, where the plot ink cannot exist but the selection still can.
-      // The Y gestures stay dead there: a pan or a zoom with no visible plot writes state
-      // nothing shows (the pan latch is cleared by the degrade above).
       if (x_hi > 0.0) {
         if (plot_fits && have_range && canvas_hovered && ImGui::GetIO().MousePos.x >= plot_min.x &&
             ImGui::GetIO().MousePos.x <= plot_max.x && ImGui::GetIO().MousePos.y >= plot_min.y &&
@@ -2695,9 +2698,6 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
           }
           view.playing = false;
         };
-        // While the right button holds a pan, left events never reach the cursor write path —
-        // and a left press that began during the pan stays swallowed until it is released, so
-        // the two gestures are mutually exclusive for the whole life of the drag (§3.1).
         if ((canvas_hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) ||
             (canvas_active && ImGui::IsMouseDragging(ImGuiMouseButton_Left))) {
           write_cursor_from_mouse();
@@ -2727,9 +2727,7 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
       }
       return;
     }
-    // The degraded form: no canvas — the readout and the lines render direct in the region, the
-    // region's own scrollbar carries them (the content budget's answer at a cell too short for
-    // the two-segment form; the factors live in their region now, §16.4).
+    // No canvas: the companion's identity, caliber, legend and limitation remain scrollable.
     if (info->execution != LUMICE_PATH_OUTCOME_COMPLETED) {
       WarningTextWrapped("Partial document (%s) — the curve on show is what arrived.", ExecutionText(info->execution));
     }
@@ -2743,7 +2741,7 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
 // factor readouts bound to view.sample_index — the ONE selection the slider, the globe, the 3D
 // trace and the curve canvas all write — plus the measure registration's note (a limitation
 // reads beside the numbers it limits, §16.4's default-readable rule) and the two §16.1 fold
-// groups. The curve canvas's hover readout is a temporary override of the CURVE's own line
+// groups. The curve canvas's hover tooltip is temporary display only
 // only; nothing here follows the hover — CurrentSampleOf reads view.sample_index, which hover
 // never writes.
 void RenderPoseFactorsRegion(GuiState& state, const ImVec2& size) {
