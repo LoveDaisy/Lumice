@@ -436,7 +436,9 @@ struct ClassRowWash {
     if (ImGui::IsWindowHovered() && ImGui::IsMouseHoveringRect(wash_min, wash_max)) {
       ImDrawList* draw_list = ImGui::GetWindowDrawList();
       draw_list->ChannelsSetCurrent(0);
-      draw_list->AddRectFilled(wash_min, wash_max, ImGui::GetColorU32(ImGuiCol_Header));
+      // Full Header tint blends almost exactly to FrameBg in the Ice palette. Keep the row
+      // hint below the controls' fill brightness instead, without changing other Header consumers.
+      draw_list->AddRectFilled(wash_min, wash_max, ImGui::GetColorU32(ImGuiCol_Header, 0.5f));
       draw_list->ChannelsSetCurrent(1);
     }
   }
