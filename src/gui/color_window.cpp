@@ -227,8 +227,10 @@ GuiValidationResult ValidateSingleAtomText(const std::string& text) {
   if (trimmed.empty()) {
     return GuiValidationResult{ LUMICE_RAYPATH_VALID, {} };
   }
-  // With no crystal kind in hand, use the union of legal faces, as documented by
-  // the color-ref import validation in file_io.cpp. Physical filters still validate their actual kind.
+  // A ref names a pool id, and placements of different kinds may share a class; this editor
+  // therefore uses the union of legal faces, not a bound crystal's kind. Follow the no-kind
+  // baseline documented by ParseFilterFromGuiJson in file_io.cpp. Physical filters still
+  // validate their actual kind separately.
   auto base = ValidateSummandText(trimmed, LUMICE_CRYSTAL_PYRAMID);
   if (base.state != LUMICE_RAYPATH_VALID) {
     return base;
