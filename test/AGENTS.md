@@ -301,6 +301,57 @@ that spends the signal instead of recording it):
    same binary that crashed (offline disassembly; a captured stack is a
    victim snapshot, not an attribution) before proposing any code change.
 
+### 2026-11-16 ASan/UBSan variant campaign — blind, attribution unchanged
+
+First-actions route 3(b) was executed on 2026-11-16 (overnight; every round
+gated pre-flight on 1-min load < 8 and no concurrent drive runners — mid-round
+exclusivity was not mechanically verified, so the rounds are gated-start
+samples, not verified full-exclusivity samples): a clang ASan+UBSan variant
+of `gui_test` built in a separate build tree via configure-time flags
+(`-fsanitize=address,undefined -fno-omit-frame-pointer -gline-tables-only` on
+every TU, closure-verified via `compile_commands.json`; IPO/LTO disabled after
+LTO left the final binary without line tables — dSYM extraction yielded a
+single CU and offline `atos` mapping degraded to symbol+offset), driven with
+`ASAN_OPTIONS=detect_leaks=0:handle_sigill=1:handle_abort=1:handle_sigfpe=1:detect_stack_use_after_return=1`
+and `UBSAN_OPTIONS=print_stacktrace=1`. Four rounds ran:
+
+- Three boundary-subset rounds (the 25-token filter shape, 342 cases,
+  14m14s / 14m27s / 14m24s at load 3.56 / 6.75 / 7.71) and one full-suite
+  bare round (640 cases, 50m23s at load 4.18) — the full round completed the
+  entire suite through its last case (`lmc_roundtrip_parity`).
+- **The signature did not reproduce: zero ILL reports, zero ASan reports,
+  exit 1 (test failures only, never a crash) in all four rounds.** The
+  boundary gap was crossed cleanly in every round — the original 4-crash
+  position did not so much as produce a sanitizer diagnostic in its
+  neighborhood. These 4 instrumented crossings join the 3 un-instrumented
+  clean runs as non-reproductions, counted per batch (un-instrumented history:
+  4 crashes / 3 clean full runs; this campaign, ASan+UBSan with IPO off:
+  0 hits in 3 subset rounds + 1 full round) — the batches do not share one
+  experimental condition, so no merged crash rate is implied. The perturbation
+  caveat stands: sanitizer perturbation itself is a candidate variable for a
+  timing-sensitive crash, so this is a blind sample, not a negative result —
+  the attribution statement above (three families unexcluded, none favored)
+  is unchanged.
+- Independent observations, recorded but not linked to the SIGILL: each
+  round printed 10 recoverable UBSan diagnostics at two product sites far
+  from the boundary — `projection_shared.h:368/370` (float→int conversion
+  overflow, magnitudes randomization-dependent) and `crystal_preview.cpp`
+  65/66/78/79 (signed integer overflow on float bit patterns). Test
+  failures also shifted against the 2026-11-14 baseline (5/342 subset, 17/640
+  full — all assertion failures in `export_parity` and analyze/raypath
+  groups; sanitizer slowdown on budget-tight cases and suite drift since the
+  earlier measurement are the unranked candidates). Neither observation
+  reproduces the SIGILL signature and neither is treated as its cause. Both
+  UB families are nevertheless confirmed product UB by mechanism, independent
+  of that attribution: `CrystalParamHash` reads float bit patterns into
+  `int` via `memcpy` and multiplies them by small salts, which overflows
+  signed `int` whenever the bit pattern's magnitude exceeds `INT_MAX / salt`
+  (deterministic given the offending parameter values), and the single-lens
+  bump path `static_cast<int>`s projected coordinates that can exceed the
+  `int` range for far-off-sensor rays. Repair handoff for both families is
+  recommended to the owner as separate confirmed defects — recorded here as
+  evidence, deliberately not fixed in this change.
+
 ## GUI Test Reference Regeneration (reference groups)
 
 The driver is `scripts/regen_gui_test_refs.py`; the group registry is its
