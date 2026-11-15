@@ -300,7 +300,19 @@ TEST(AnalyzePointView, SunGridRangeAndSequentialColor) {
   EXPECT_EQ(SunGridCellColorRgba(tiny.min_rad, 1, tiny), 0xeb87375cu);
   EXPECT_EQ(SunGridCellColorRgba(tiny.max_rad, 1, tiny), 0xebfab8dbu);
   EXPECT_EQ(SunGridRangeText(tiny).find("constant"), std::string::npos);
-  EXPECT_NE(SunGridRangeText(tiny).find(" – "), std::string::npos);
+  EXPECT_TRUE(SunGridRangeText(tiny).find(" – ") != std::string::npos ||
+              SunGridRangeText(tiny).find("deg + [0, ") != std::string::npos);
+  EXPECT_NE(SunGridRangeText({ true, .1, .1000000001 }).find(" – "), std::string::npos);
+  // Here the double degree conversion itself rounds both endpoints to the same number.
+  const auto collision = SunGridRange{ true, .013, std::nextafter(.013, 1.0) };
+  const auto offsets = SunGridRangeText(collision);
+  EXPECT_NE(offsets.find("deg + [0, "), std::string::npos);
+  EXPECT_EQ(offsets.find("[0, 0]"), std::string::npos);
+  EXPECT_EQ(offsets.find("constant"), std::string::npos);
+  grid.lat_count = 0;
+  EXPECT_FALSE(SunGridDisplayRange(grid).available);
+  grid.lat_count = -1;
+  EXPECT_FALSE(SunGridDisplayRange(grid).available);
 }
 
 TEST(AnalyzePointView, FactorLinesSpellUnavailableNotZero) {

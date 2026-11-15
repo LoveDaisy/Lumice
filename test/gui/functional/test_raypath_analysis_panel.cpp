@@ -11113,6 +11113,198 @@ bool CheckMapGlyphsAcrossUiScale(ImGuiTestContext* ctx) {
 
 }  // namespace
 
+bool SunGridRealReaderLayoutAndSelection(ImGuiTestContext* ctx) {
+  ScopedServerGuard guard;
+  ScopedPoseSessionSplits splits;
+  // The existing C03 corpus anchor has two real components; C01's halo has only one.
+  IM_CHECK_RETV(BringUpScene(ctx, kFullyRandomJson, false, false), false);
+  OpenWindow(ctx);
+  IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
+  IM_CHECK_RETV(SelectRowByDisplay(ctx, "3-5-6-7") != std::nullopt, false);
+  SetSkyPointTarget(38, 180);
+  gui::g_state.analyze_pose_view_open = true;
+  PinPoseViewOnScreen(ctx);
+  IM_CHECK_RETV(DriveUntil(ctx, [] { return CurrentTraceIsDrawn(); }, 60), false);
+  gui::g_state.analyze_raypath_view_open = false;
+  ctx->SetRef("//Pose & trace");
+  ctx->ItemClick("**/Pose diagnostics##pose_factors");
+  ctx->Yield(3);
+  IM_CHECK_RETV(gui::g_state.analysis.point_view.show_deviation_grid, false);
+  const auto document = gui::g_state.analysis.point.adopted_result;
+  const auto intent = gui::g_state.analysis.point.intent_id;
+  const auto dirty = gui::g_state.dirty;
+  // Independent reader scan: do not use SunGridDisplayRange as the expected answer.
+  LUMICE_PathSunGrid grid{};
+  grid.struct_size = sizeof(grid);
+  IM_CHECK_RETV(LUMICE_PathPointGetSunGrid(document.get(), &grid) == LUMICE_PATH_READ_OK, false);
+  double min_rad = 4, max_rad = -1;
+  for (size_t i = 0; i < std::min(grid.cell_count, size_t(grid.lat_count) * grid.lon_count); ++i) {
+    const double v = grid.deviation_rad[i];
+    if (grid.valid[i] && std::isfinite(v) && v >= 0 && v <= 3.15) {
+      min_rad = std::min(min_rad, v);
+      max_rad = std::max(max_rad, v);
+    }
+  }
+  IM_CHECK_RETV(max_rad > min_rad, false);
+  char lo[64], hi[64];
+  std::snprintf(lo, sizeof(lo), "%.6g", min_rad * 180 / 3.14159265358979323846);
+  std::snprintf(hi, sizeof(hi), "%.6g", max_rad * 180 / 3.14159265358979323846);
+  const auto check = [&]() -> bool {
+    const std::string text = CaptureFrameText(ctx);
+    IM_CHECK_RETV(text.find(std::string(lo) + " – " + hi + " deg") != std::string::npos, false);
+    auto* w = PoseRegionWindow("##AnalyzeSunGlobe");
+    IM_CHECK_RETV(w != nullptr, false);
+    const auto item_visible = [&](const char* id) -> bool {
+      const auto item = ctx->ItemInfo(w->GetID(id), ImGuiTestOpFlags_NoError);
+      IM_CHECK_RETV(item.ID != 0, false);
+      const ImRect r = item.RectFull;
+      IM_CHECK_RETV(r.Min.x >= w->InnerClipRect.Min.x - .5f && r.Max.x <= w->InnerClipRect.Max.x + .5f &&
+                        r.Min.y >= w->InnerClipRect.Min.y - .5f && r.Max.y <= w->InnerClipRect.Max.y + .5f,
+                    false);
+      bool ink = false;
+      for (const auto& cmd : w->DrawList->CmdBuffer) {
+        const ImRect clip(cmd.ClipRect.x, cmd.ClipRect.y, cmd.ClipRect.z, cmd.ClipRect.w);
+        if (!clip.Overlaps(r))
+          continue;
+        for (unsigned i = 0; i < cmd.ElemCount; ++i) {
+          const auto& v = w->DrawList->VtxBuffer[cmd.VtxOffset + w->DrawList->IdxBuffer[cmd.IdxOffset + i]];
+          if ((v.col & IM_COL32_A_MASK) && r.Contains(v.pos) && clip.Contains(v.pos))
+            ink = true;
+        }
+      }
+      IM_CHECK_RETV(ink, false);
+      return true;
+    };
+    IM_CHECK_RETV(item_visible("##sun_grid_title") && item_visible("##sun_grid_band") &&
+                      item_visible("##sun_grid_range") && item_visible("##globe_sample"),
+                  false);
+    const auto canvas = ctx->ItemInfo(w->GetID("##globe_canvas"), ImGuiTestOpFlags_NoError);
+    IM_CHECK_RETV(canvas.ID != 0, false);
+    bool terrain_colors = true;
+    for (const auto color : { IM_COL32(92, 55, 135, 235), IM_COL32(219, 184, 250, 235) }) {
+      terrain_colors &=
+          std::any_of(w->DrawList->VtxBuffer.begin(), w->DrawList->VtxBuffer.end(),
+                      [&](const ImDrawVert& v) { return v.col == color && canvas.RectFull.Contains(v.pos); });
+    }
+    IM_CHECK_RETV(terrain_colors, false);
+    IM_CHECK_RETV(gui::g_state.analysis.point.adopted_result == document &&
+                      gui::g_state.analysis.point.intent_id == intent && gui::g_state.dirty == dirty,
+                  false);
+    return true;
+  };
+  IM_CHECK_RETV(check(), false);
+  const int sample_before = gui::g_state.analysis.point_view.sample_index;
+  const auto slider = ctx->ItemInfo("**/##globe_sample").RectFull;
+  ctx->MouseMoveToPos(ImVec2(slider.Max.x - 12, slider.GetCenter().y));
+  ctx->MouseClick(ImGuiMouseButton_Left);
+  ctx->Yield(3);
+  IM_CHECK_RETV(gui::g_state.analysis.point_view.sample_index != sample_before, false);
+  IM_CHECK_RETV(check(), false);  // same immutable grid, so equal extrema are intentional
+  std::vector<gui::PointComponentRow> components;
+  gui::PointComponentRows(*document, &components);
+  IM_CHECK_RETV(components.size() > 1, false);
+  ctx->ItemClick(PoseRegionWindow("##AnalyzeSunGlobe")->GetID("##globe_component"));
+  ctx->KeyPress(ImGuiKey_DownArrow);
+  ctx->KeyPress(ImGuiKey_Enter);
+  ctx->Yield(3);
+  IM_CHECK_RETV(gui::g_state.analysis.point_view.component_index == 1, false);
+  IM_CHECK_RETV(check(), false);
+  const float default_globe_ratio = gui::g_state.analyze_pose_view_globe_ratio;
+  {
+    ScopedUiScaleAndBasisLease geometry(ctx);
+    const auto tier = [&](float scale) -> bool {
+      gui::g_state.analyze_pose_view_globe_ratio = default_globe_ratio;
+      gui::SetUiScaleMultiplierImmediate(scale);
+      IM_CHECK_RETV(
+          DriveUntil(ctx, [scale] { return !gui::g_ui_scale_dirty && gui::CurrentUiScale() == scale; }, 5), false);
+      g_window_size_test.apply_aspect = false;
+      g_window_size_test.width = int(gui::kInitWindowWidth * scale);
+      g_window_size_test.height = int(gui::kInitWindowHeight * scale);
+      g_window_size_test.done.store(false);
+      g_window_size_test.requested.store(true);
+      IM_CHECK_RETV(DriveUntil(ctx, [] { return g_window_size_test.done.load(); }, 5), false);
+      const auto geometry_leg = [&](bool narrow) -> bool {
+        auto* host = ctx->GetWindowByRef("//Pose & trace");
+        ImGui::SetWindowPos(host, ImVec2(8, 40), ImGuiCond_Always);
+        ImGui::SetWindowSize(host, ImVec2(gui::UiPx(narrow ? 640 : 960), gui::UiPx(narrow ? 680 : 720)),
+                             ImGuiCond_Always);
+        ctx->Yield(4);
+        IM_CHECK_RETV(check(), false);
+        auto* globe = PoseRegionWindow("##AnalyzeSunGlobe");
+        ctx->LogInfo("[sun grid layout] %.1fx %s globe %.0fx%.0f legend/frame range %s..%s deg scroll %.0f", scale,
+                     narrow ? "minimum" : "default", globe->Size.x, globe->Size.y, lo, hi, globe->ScrollMax.y);
+        ctx->ItemClick("**/Play##globe_play");
+        IM_CHECK_RETV(gui::g_state.analysis.point_view.playing, false);
+        ctx->ItemClick("**/Stop##globe_play");
+        IM_CHECK_RETV(!gui::g_state.analysis.point_view.playing, false);
+        IM_CHECK_RETV(SaveWindowPng(ctx, "//Pose & trace",
+                                    GuiTestTempPath("sun_globe_" + std::to_string(scale) +
+                                                    (narrow ? "_minimum.png" : "_default.png"))
+                                        .string()),
+                      false);
+        return true;
+      };
+      IM_CHECK_RETV(geometry_leg(false) && geometry_leg(true), false);
+      IM_CHECK_RETV(PoseDragStrip(ctx, "**/##PoseViewRowsSplitter", 0, -1800), false);
+      auto* globe = PoseRegionWindow("##AnalyzeSunGlobe");
+      IM_CHECK_RETV(globe != nullptr && globe->ScrollMax.y >= 0, false);
+      IM_CHECK_RETV(PoseDragStrip(ctx, "**/##PoseViewRowsSplitter", 0, 1800), false);
+      IM_CHECK_RETV(check(), false);
+      return true;
+    };
+    IM_CHECK_RETV(tier(1), false);
+    IM_CHECK_RETV(tier(1.5), false);
+    IM_CHECK_RETV(tier(2), false);
+  }
+  ctx->ItemClick("**/Deviation grid###pose_factors_dev_grid");
+  ctx->Yield(3);
+  IM_CHECK_RETV(!gui::g_state.analysis.point_view.show_deviation_grid, false);
+  IM_CHECK_RETV(!ctx->ItemExists("**/##sun_grid_band") && !ctx->ItemExists("**/##sun_grid_range"), false);
+  ctx->ItemClick("**/Deviation grid###pose_factors_dev_grid");
+  ctx->Yield(3);
+  IM_CHECK_RETV(check(), false);
+  gui::g_state.analyze_pose_view_open = false;
+  ctx->Yield(3);
+  gui::g_state.analyze_pose_view_open = true;
+  ctx->Yield(3);
+  IM_CHECK_RETV(check(), false);
+  // A second engine-produced document explicitly requests no grid; never mutate a handle.
+  const auto scene = gui::BuildScene(gui::g_state, gui::SceneIntent::kSimCommit);
+  IM_CHECK_RETV(scene != nullptr, false);
+  const int faces[] = { 3, 5, 6, 7 };
+  const int face_count = 4;
+  LUMICE_SinglePathRequest request{};
+  request.struct_size = sizeof(request);
+  request.crystal_id = gui::ComputeCrystalPoolToCoreIdMap(gui::g_state).begin()->second;
+  request.faces = faces;
+  request.face_count = 4;
+  request.layer_face_counts = &face_count;
+  request.layer_count = 1;
+  request.target_altitude_deg = 38;
+  request.target_azimuth_deg = 180;
+  request.sample_count = 2000;
+  request.sun_grid_lat_count = 0;
+  LUMICE_SinglePathResult* raw = nullptr;
+  char error[256] = {};
+  IM_CHECK_RETV(LUMICE_AnalyzeSinglePath(scene.get(), &request, &raw, error, sizeof(error)) == LUMICE_OK, false);
+  gui::g_state.analysis.point.adopted_result = gui::PointHandle(raw, gui::PointDeleter{});
+  gui::g_state.analysis.point_view.component_index = 0;
+  gui::g_state.analysis.point_view.sample_index = 0;
+  IM_CHECK_RETV(gui::PointValidSampleCount(*gui::g_state.analysis.point.adopted_result, 0) > 0, false);
+  ctx->Yield(3);
+  auto* factors = PoseRegionScrollChild("##AnalyzePoseFactors", "##PoseFactorsScroll");
+  IM_CHECK_RETV(factors != nullptr, false);
+  ImGui::SetScrollY(factors, factors->ScrollMax.y);
+  ctx->Yield(3);
+  IM_CHECK_RETV(!ctx->ItemExists("**/##sun_grid_band") && !ctx->ItemExists("**/##sun_grid_range"), false);
+  const std::string no_grid_text = CaptureFrameText(ctx);
+  IM_CHECK_RETV(no_grid_text.find("no sun grid in this document") != std::string::npos, false);
+  gui::g_state.analysis.point.adopted_result.reset();
+  ctx->Yield(3);
+  IM_CHECK_RETV(!ctx->ItemExists("**/##sun_grid_band") && !ctx->ItemExists("**/##sun_grid_range"), false);
+  return true;
+}
+
 // The Selection header's double entry (contract §16.3): both named buttons live in the fixed
 // head — visible and clickable in BOTH branches (no selection yet, then a class selected) — and
 // clicking one opens its window with zero writes outside the open flag: the selection, the
@@ -13478,6 +13670,124 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
   {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "pose_curve_report_quotas_track_content");
     t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(PoseCurveReportQuotasTrackContent(ctx)); };
+  }
+
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "sun_grid_real_reader_layout_and_selection");
+    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(SunGridRealReaderLayoutAndSelection(ctx)); };
+  }
+
+  // Controlled inputs use the production backdrop and legend, never an imitation renderer.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "sun_grid_narrow_bands_update_ink_and_legend");
+    static bool draw = false;
+    static double delta[8];
+    static uint8_t valid[8];
+    static ImVec2 centre;
+    static int cell_vertices;
+    static ImU32 cell_colors[3];
+    static std::string frame_text;
+    t->GuiFunc = [](ImGuiTestContext*) {
+      if (!draw)
+        return;
+      ImGui::SetNextWindowPos(ImVec2(40, 60), ImGuiCond_Always);
+      ImGui::SetNextWindowSize(ImVec2(600, 430), ImGuiCond_Always);
+      ImGui::Begin("Sun grid fixture", nullptr, ImGuiWindowFlags_NoSavedSettings);
+      LUMICE_PathSunGrid grid{};
+      grid.lat_count = 1;
+      grid.lon_count = 8;
+      grid.cell_count = 8;
+      grid.deviation_rad = delta;
+      grid.valid = valid;
+      const auto range = gui::SunGridDisplayRange(grid);
+      const ImVec2 origin = ImGui::GetCursorScreenPos();
+      centre = ImVec2(origin.x + 160, origin.y + 160);
+      ImGui::InvisibleButton("##terrain", ImVec2(320, 320));
+      auto* dl = ImGui::GetWindowDrawList();
+      dl->AddRectFilled(origin, ImVec2(origin.x + 320, origin.y + 320), IM_COL32(16, 18, 22, 255));
+      const int before = dl->VtxBuffer.Size;
+      gui::DrawSunGridBackdrop(dl, grid, {}, range, centre, 150);
+      cell_vertices = dl->VtxBuffer.Size - before;
+      for (int i = 0; i < 3; ++i)
+        cell_colors[i] = cell_vertices >= (i + 1) * 4 ? dl->VtxBuffer[before + i * 4].col : 0;
+      ImGui::LogToBuffer();
+      gui::RenderSunGridLegend(range);
+      frame_text = ImGui::GetCurrentContext()->LogBuffer.c_str();
+      ImGui::LogFinish();
+      ImGui::End();
+    };
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      for (int i = 0; i < 8; ++i) {
+        valid[i] = i != 3 && i != 7;
+        delta[i] = i < 3 ? .1 + .05 * i : std::nan("");
+      }
+      delta[3] = 0;
+      delta[5] = INFINITY;
+      delta[6] = -INFINITY;
+      draw = true;
+      struct Lease {
+        ~Lease() { draw = false; }
+      } lease;
+      ctx->Yield(3);
+      ctx->SetRef("//Sun grid fixture");
+      const auto check_band = [&](const char* expected, const char* screenshot) -> bool {
+        const int frame = ImGui::GetFrameCount();
+        ctx->Yield(2);
+        const std::string text = frame_text;
+        IM_CHECK_RETV(ImGui::GetFrameCount() > frame, false);
+        IM_CHECK_RETV(text.find("Deviation δ (deg) · auto range") != std::string::npos, false);
+        IM_CHECK_RETV(text.find(expected) != std::string::npos, false);
+        IM_CHECK_RETV(cell_vertices == 12, false);  // only three valid cell quads
+        unsigned char pixels[2][3];
+        const auto sample_pixel = [&](int n) {
+          const double lon = (-157.5 + 90 * n) * 3.14159265358979323846 / 180;
+          const double u[3] = { std::cos(lon), std::sin(lon), 0 };
+          double x, y;
+          gui::SunGlobeProject({}, u, &x, &y);
+          return ReadScreenPixel(ctx, ImVec2(centre.x + float((x - .5) * 300), centre.y + float((y - .5) * 300)),
+                                 pixels[n]);
+        };
+        IM_CHECK_RETV(sample_pixel(0) && sample_pixel(1), false);
+        double distance2 = 0;
+        for (int k = 0; k < 3; ++k)
+          distance2 += std::pow((int(pixels[0][k]) - int(pixels[1][k])) / 255.0, 2);
+        ctx->LogInfo("[sun grid] frame %d %s RGB distance %.6f, quads %d", frame, expected, std::sqrt(distance2),
+                     cell_vertices / 4);
+        IM_CHECK_RETV(std::sqrt(distance2) >= .20, false);
+        IM_CHECK_RETV(cell_colors[0] == IM_COL32(92, 55, 135, 235), false);
+        IM_CHECK_RETV(cell_colors[2] == IM_COL32(219, 184, 250, 235), false);
+        const auto band = ctx->ItemInfo("**/##sun_grid_band");
+        auto* w = ctx->GetWindowByRef("//Sun grid fixture");
+        bool band_colors = true;
+        for (const ImU32 color : { IM_COL32(92, 55, 135, 235), IM_COL32(219, 184, 250, 235) }) {
+          band_colors &=
+              std::any_of(w->DrawList->VtxBuffer.begin(), w->DrawList->VtxBuffer.end(),
+                          [&](const ImDrawVert& v) { return v.col == color && band.RectFull.Contains(v.pos); });
+        }
+        IM_CHECK_RETV(band_colors, false);
+        IM_CHECK_RETV(SaveWindowPng(ctx, "//Sun grid fixture", GuiTestTempPath(screenshot).string()), false);
+        return true;
+      };
+      IM_CHECK(check_band("5.72958 – 11.4592 deg", "sun_grid_A.png"));
+      const int a_frame = ImGui::GetFrameCount();
+      delta[0] = .4;
+      delta[1] = .41;
+      delta[2] = .42;
+      ctx->Yield(3);
+      IM_CHECK(ImGui::GetFrameCount() > a_frame);
+      IM_CHECK(check_band("22.9183 – 24.0642 deg", "sun_grid_B.png"));
+      delta[0] = delta[1] = delta[2] = 0;
+      ctx->Yield(3);
+      IM_CHECK(frame_text.find("0 deg (constant)") != std::string::npos);
+      IM_CHECK(cell_colors[0] == IM_COL32(155, 119, 192, 235) && cell_colors[0] == cell_colors[2]);
+      for (auto& v : valid)
+        v = 0;
+      ctx->Yield(3);
+      IM_CHECK(frame_text.find("No valid deviation data") != std::string::npos);
+      IM_CHECK(cell_vertices == 0);
+      IM_CHECK(!ctx->ItemExists("**/##sun_grid_band"));
+    };
   }
 
   // A controlled curve drives the same control and drawing face used by the real point window.

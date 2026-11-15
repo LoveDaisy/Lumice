@@ -837,6 +837,13 @@ std::string SunGridRangeText(const SunGridRange& range) {
       break;
     }
   }
+  if (range.min_rad != range.max_rad && std::strcmp(lo, hi) == 0) {
+    // Adjacent doubles can collide in the degree conversion itself, not just in formatting.
+    // Keep a nonzero interval honest with an origin + offsets, rather than inventing extrema.
+    char span[64];
+    std::snprintf(span, sizeof(span), "%.17g", (range.max_rad - range.min_rad) * kRadToDeg);
+    return std::string(lo) + " deg + [0, " + span + "] deg";
+  }
   return range.min_rad == range.max_rad ? std::string(lo) + " deg (constant)" : std::string(lo) + " – " + hi + " deg";
 }
 
@@ -1617,8 +1624,8 @@ void RenderAnalyzeSunGlobeRegion(GuiState& state, const ImVec2& size) {
 
   // ---- The fixed interaction stack (R4): the controls a hand must reach are submitted outside
   // any scrolling region at every cell the window's minimum admits — the title here (the
-  // deviation-grid toggle retired to the factors region's env-gated diagnostics group, §16.4);
-  // the combo, the canvas, the weight bar and the slider/play row in the discovered arm below. ----
+  // deviation-grid toggle lives in the factors region's user-facing diagnostics group, §16.4);
+  // the combo, canvas, colour legend and slider/play row in the discovered arm below. ----
   ImGui::TextUnformatted("Sun direction globe");
 
   const auto info = point.adopted_result ? ReadPointInfo(*point.adopted_result) : std::nullopt;
@@ -1856,7 +1863,7 @@ void RenderAnalyzeSunGlobeRegion(GuiState& state, const ImVec2& size) {
     }
     // ---- The state area (R4's scroll set): the description, the partial note, the weight note
     // and the sample readout — all reachable by scrolling, none deleted. The grid-absence note
-    // moved with the toggle to the factors region's env-gated diagnostics group (§16.4); the
+    // moved with the toggle to the factors region's diagnostics group (§16.4); the
     // readout's old fits_on_line join is gone with the form: the state area is where these
     // lines live at every width. ----
     const std::optional<CurrentSample> current = CurrentSampleOf(*point.adopted_result, view, valid_indices);
