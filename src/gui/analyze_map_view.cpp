@@ -2309,7 +2309,7 @@ void RenderAnalyzeRaypathViewWindow(GuiState& state) {
   LUMICE_PathMapInfo info{};
   info.struct_size = sizeof(info);
   if (map.adopted_result && LUMICE_PathMapGetInfo(map.adopted_result.get(), &info) == LUMICE_PATH_READ_OK &&
-      (info.truncated || info.members_evaluated < info.member_count)) {
+      MapInfoIsPartial(info)) {
     const std::string partial = "Partial map: " + std::to_string(info.members_evaluated) + "/" +
                                 std::to_string(info.member_count) + " completed members";
     status = query_state == MapQueryState::kCompleted && !MapSupersededFor(map) ? partial : partial + " — " + status;

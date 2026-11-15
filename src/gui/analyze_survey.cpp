@@ -73,6 +73,10 @@ bool MapSupersededFor(const MapQuerySession& map) {
          map.adopted_id != map.intent_id && map.answered_id != map.intent_id;
 }
 
+bool MapInfoIsPartial(const LUMICE_PathMapInfo& info) {
+  return info.truncated || info.members_evaluated < info.member_count;
+}
+
 PointQueryState PointQueryStateFor(const PointQuerySession& point) {
   if (!point.intent_valid) {
     return PointQueryState::kNoIntent;
