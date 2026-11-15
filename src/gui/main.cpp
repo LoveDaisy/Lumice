@@ -498,12 +498,10 @@ int main(int argc, char** argv) {
     // (field_editor_registry.hpp): it opens here, between ImGui UI submissions — the same shape
     // PerformScreenshotExport's dialog already uses for the screenshot popup.
     if (gui::TakeBackgroundFileDialogRequest()) {
-      const std::string bg_path_before = gui::g_state.bg_path;
-      gui::DoLoadBackground(window);
-      // A changed path means the load landed: claim the adoption so the row is checked and the
-      // next Save writes it. A cancel or a failed load leaves the path (and everything else)
-      // alone — nothing was chosen, so nothing is adopted.
-      if (gui::g_state.bg_path != bg_path_before) {
+      // The result, not a path diff: re-selecting the SAME file also lands a load (re-upload,
+      // side effects reset), and that choice is as much "this value should be the default" as a
+      // new path is.
+      if (gui::DoLoadBackground(window)) {
         gui::NotifyDefaultsBackgroundAdopted();
       }
     }

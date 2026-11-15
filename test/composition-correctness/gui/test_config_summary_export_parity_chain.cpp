@@ -576,7 +576,7 @@ std::vector<RuleEntry> BuildRules(const GuiState& state, const ConfigSummary& pa
   add(R"(^render\[0\]\.front$)", [&](const std::smatch&, const json& v) {
     ExpectGatedText(state, page, "renderer.front", "Render", "Front", v.get<bool>() ? "true" : "false");
   });
-  // Globe only: the far side's fade range, behind the registry's WhenGlobe gate.
+  // Globe only: the far side's fade range, behind the registry's GlobeBackFadeNote note.
   add(R"(^render\[0\]\.globe_back_fade$)", [&](const std::smatch&, const json& v) {
     ExpectGatedNumber(state, page, "renderer.globe_back_fade", "Render", "Back fade", v);
   });
@@ -1036,7 +1036,7 @@ void SeedRichDocument() {
 }
 
 // The default document under a full-sky lens: fov, the pose angles, visible and front all stop
-// applying on the panel (NotUnderFullSky / NotUnderFullSkyOrGlobe), while the export keeps
+// applying on the panel (the full-sky disabled gates / FrontClipAppliesNote), while the export keeps
 // writing each of them.
 void SeedFullSkyDocument() {
   DoNew();

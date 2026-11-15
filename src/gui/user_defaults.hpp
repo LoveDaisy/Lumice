@@ -388,6 +388,12 @@ void ApplyUserDefaultsOverlay(GuiState& state, const nlohmann::json& doc);
 // and the panel walks the axes by casting this enum.
 enum class AxisSlot { kZenith = 0, kAzimuth = 1, kRoll = 2 };
 
+// The axis count the slot arrays ride on — the same "table size follows the enum" discipline the
+// preset slots keep with kAxisPresetSlotCount, at the axis grain.
+inline constexpr std::size_t kAxisSlotCount = 3;
+static_assert(kAxisSlotCount == static_cast<std::size_t>(AxisSlot::kRoll) + 1,
+              "kAxisSlotCount must track AxisSlot's enumerators");
+
 // One axis' stored override, as presence-per-face optionals. The type's payload is the AxisDistType
 // itself; the numeric faces carry their floats raw — verbatim, however far outside the classifier's
 // usual range (the sticky-label reasoning above).
@@ -400,7 +406,7 @@ struct AxisDistOverride {
 // All three axes of one preset, as the parse and the wholesale adopt spell it. Indexed by
 // static_cast<int>(AxisSlot).
 struct AxisPresetOverride {
-  AxisDistOverride axes[3];
+  AxisDistOverride axes[kAxisSlotCount];
 };
 
 // The user's stored override for ONE face, if any. nullopt means "use the factory value". Prefer
@@ -474,11 +480,21 @@ void EraseAxisPresetOverridesFromDoc(nlohmann::json& doc, AxisPreset preset);
 // site (defaults_panel.cpp's CommitCopy, "ORDER IS PART OF THE CONTRACT").
 void AdoptAxisPresetFacesInMemory(AxisPreset preset, const AxisPresetOverride& override);
 
+// The factory distribution of one preset's axis — the value every absent face falls back to, and
+// the one spelling of the slot->field selection (entry.zenith/azimuth/roll spelled out per call
+// site is exactly the index-mistake family this header keeps closed).
+AxisDist FactoryAxisDist(const AxisPresetEntry& entry, AxisSlot slot);
+
 // One axis' EFFECTIVE distribution: the factory row, with each face's stored value substituted
 // where one is present. Single source for that resolution — the axis modal's chip switch and Reset
 // button and the library panel all call it, so "what Column gives you" cannot differ between the
 // place you press it and the place you configure it.
 AxisDist EffectiveAxisPresetDist(const AxisPresetEntry& entry, AxisSlot slot);
+
+// The whole override document -> one preset's slot, as the adopter spells it: every face the
+// document holds, absence included (nullopt = factory). One spelling of the nine-face read loop —
+// the panel's Save adopts through this, and so does any test staging "cache := document".
+AxisPresetOverride ReadAxisPresetOverridesFromDoc(const nlohmann::json& doc, AxisPreset preset);
 
 // The zenith spelling of the same question — axis 0. Kept as a named form because the call sites
 // and tests that only ever meant the zenith read better saying so.
