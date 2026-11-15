@@ -315,7 +315,7 @@ Render 与 Analyze 共享**同一份**取景/曝光/辅助线显示状态（disp
 | 打开目标 | **Raypath view 天空点操作旁的 Pose & trace 按钮**（用途说明：3D 光路/姿态），以及**主窗 Selection 头部的两只命名按钮**（`Raypath view` / `Pose & trace`，§16.3 双入口 as-built），都确保同一个窗口打开。这些入口在增长报告外常驻，无类/无点/计算中/拒答/无样本均可点击，已开则聚焦置顶同一窗。**不因设置天空点自动弹出**（用户显式要求）；类行点击同样不打开它 |
 | 绘图前置与导航 | 光路选中＋天空点已设＋点面有适用结果是**绘图前置，不是开窗条件**。未选类/未设点时入口旁说明下一步；窗内沿用诚实空态、等待/拒答/无样本说明，不以可绘制性阻断导航 |
 | 内容 | 左区 = 3D 主区：当前姿态晶体内代表路径＋晶体线框、orbit 拖拽/滚轮缩放、World/Crystal 帧切换（现 `analyze_point_view.cpp:1073-1437` 的能力整体迁入）；右列上 = Sun direction globe：fiber 投影、偏差网格、分量选择、样本滑条/播放（现 `analyze_point_view.cpp:771-1069` 迁入；756 移除权重条——其数量成为曲线区乘积臂）；右列下 = Contribution Curve 区（756 落地，见下表该行；当前样本具名因素读数归其滚动区）。**特殊完成态的归属**（迁移时的答案完整性合同）：rank-0 点质量与无分量/无有效样本的判定与完备性注不迁入本窗——它们是点文档的答案与证据，owner 是主窗诊断区（§2.2）；本窗对它们只画诚实空态（现文案沿用：rank-0「A rank-0 point mass has no fiber to project」，`analyze_point_view.cpp:828-834,1124-1132`；无分量「No fiber here…」＋reach 判定，`analyze_point_view.cpp:848-865`），窗口本身仍可打开并可关 |
-| Contribution Curve | **756 as-built**：D5 下区 = `##AnalyzePoseCurve`（`RenderPoseCurveRegion`）。固定栈＝单行区域标题＋画布（共享对数纵轴五 polyline，不可用点断开不桥接；精确零画轴下 0 行；seed 三角标记；accent 游标线）；滚动报告＝分量 kind/点数/环长或 seed 弧长/积分回显＋incomplete 命名、口径（angle-Lebesgue · arclength rad）、五臂图例（无正值臂命名「0 throughout/unavailable」）、读数行（当前样本；悬停样本临时覆盖）、partial 注＋测度注册注（`registered_gap != 0` 时逐字引引擎 note）＋当前样本因素读数（原 `##AnalyzePoseFactors` 面）。画布点击/拖拽写 `view.sample_index`＋停播放（与滑条同一写纪律）；engine 侧零改动（audit 判定） |
+| Contribution Curve | **历史 756 基线（当前合同见 §16.4）**：D5 下区 = `##AnalyzePoseCurve`（`RenderPoseCurveRegion`）。固定栈＝单行区域标题＋画布（共享对数纵轴五 polyline，不可用点断开不桥接；精确零画轴下 0 行；seed 三角标记；accent 游标线）；滚动报告＝分量 kind/点数/环长或 seed 弧长/积分回显＋incomplete 命名、口径（angle-Lebesgue · arclength rad）、五臂图例（无正值臂命名「0 throughout/unavailable」）、读数行（当前样本；悬停样本临时覆盖）、partial 注＋测度注册注（`registered_gap != 0` 时逐字引引擎 note）＋当前样本因素读数（原 `##AnalyzePoseFactors` 面）。画布点击/拖拽写 `view.sample_index`＋停播放（与滑条同一写纪律）；engine 侧零改动（audit 判定） |
 | 同步语义 | 打开期间跟随当前选择链：切类/切天空点 → 点面新意图、窗内 globe/3D 同步（点面丢弃旧结果，`analyze_survey.hpp:249-257`）；**fiber 内移动姿态**（滑条/播放）只改当前姿态样本、不改天空点（现 `PointViewState` 合同，`analyze_survey.hpp:381-401` 转正）——游标、globe marker、3D、因素读数四者共用同一当前样本 |
 | 关闭重开 | 同 §6；重开显示当前采纳文档或如实等待/取消/拒答态 |
 | 档位预归属 | 自由档（同 §6 判据） |
@@ -996,30 +996,30 @@ centre/归一化半径仅由 mesh 推导，光路显示延长点不参与（同�
 朝向相机实心、背向空心；面号 -1/未匹配/法向缺失兜底空心并注明 facing unknown。图例保留
 entry/internal/exit 色义并补上述三句语义。参考图审计：无注册参考捕获 Pose 画布
 （GROUPS 无 analyze 组、references/ 无 pose 文件），本片无重拍对象。
-曲线在左下，保五臂、真实弧长/闭环、共享 log 轴、精确零行、不可用断线、seed、正值分位数拟合、
-窗外点计数/实际最值及滚轮 Y 缩放；点击/拖拽仍写同一游标并停播放。曲线伴读（D7 之下）保留
-图例（含 0-throughout/unavailable 命名）、量纲行（angle-Lebesgue · rad）、积分回显（标题行）、
-当前/hover 读数行、partial note；**measure registration note 与当前姿态因素行迁至右下因素区**。
+**曲线当前合同（2026-11-15）**：左下曲线保五臂、真实弧长/闭环、共享 log 轴、不可用/精确零断线、
+顶部 seed 与共享 accent 选中游标。五臂图例统一为 **ρ / A/a² / T / K / ρ·A/a²·T·K**；没有正值的
+臂仍命名 `(0 throughout)` 或 `(unavailable)`，右栏逐项文字解释不变。曲线伴读仅承载分量身份、
+弧长/积分回显及 incomplete、口径（angle-Lebesgue · rad）、图例和 partial 限定；当前姿态因素归右下。
 
-**曲线手势三分与 footer 两行（779.5，as-built 2026-11-13）**：曲线画布上的三种输入各自独立写域，
-互不抢夺——**左键点/拖**写共享样本游标并停播放（原语义不变）；**滚轮**做 Y log 缩放（原仲裁与
-锚光标不变）；**右键纵拖**平移 Y log 窗口（新增，`PointCurvePanRange`，2026-11-12 反馈 #10）：
-按住须从画布内起按（画布外起按不接管），墨迹随手移动——向下拖窗口移向更大正值、向上反之；
-同一绘图区高度占比的拖动对应同一 log 跨度占比（与 DPI、数据量无关）；平移只改窗口位置、跨度
-不变，到拟合域边界整体钳制不压缩；全域窗口/单值退化域/无效拟合为 no-op。手势互斥：一次已开始
-的拖动不被另一键夺走——左键拖进行中右键按下不启动 pan；**右键持有期间左键事件不进入游标写
-路径**（点击不写游标、不停播放）。pan 的副作用仅限窗口本身：不写游标、不停播放、不改点/轨迹
-查询身份、不 dirty；播放自然推进样本不算 pan 写入。生命周期：新采纳重置窗口（775.3 语义）并
-清除 pan 锁存（`PointViewState::curve_pan_active`），持键跨采纳不复活手势，须画布内重新按下；
-窗口关闭或画布退化（D7 无画布形态）同样清除。右键拖出画布手势继续（拖的所有权在起按点），
-不转为宿主窗口移动或区域滚动，松开立即结束。画布 hover 出现不占版面的提示墨迹
-（"L select · wheel zoom · R pan Y"，位于 rad 单位左侧；窄面放不下时不出现）。pan 与 wheel
-同帧并存时滚轮仍只消费一次，pan 使用滚轮后有效窗口。footer 由单条带改两行：**X 三刻度与
-`rad` 单位无条件在场**（不再因 outside 计数非空而被省略或挤压），摘要（真实点数与实际最值）
-在 X 标签行之下独立一行、按真实文本宽高换行，零值行保持独立位于两者之上；footer 高度同时计
-入 X 行与摘要行，绘图区随之响应式收缩（不扩大窗最小尺寸、不吞文案）。Y 刻度对平移后不含
-labelled decade major 的窄窗以窗口上下边界值补位（置于绘图框上/下缘左栏，装不下两个时保留
-可容纳者），左栏宽度计入边界值标签。
+固定标题行上的 **Fit | Full** 使用与 Render | Analyze 同款两格，当前格实填、点击 no-op。
+有限正值并集的 `hi=max`、`lo=max(min,hi×ratio)`，Fit ratio=`1e-5`、Full=`1e-8`；窄于上限的
+数据域保原 min/max，不按 decade 取整。单值保一个 decade 的显示退化，刻度/格线只在显示域内。
+默认 Fit；新点采纳/文档重置回 Fit，分量切换沿当前档重算，浮窗关闭重开保档。档位是纯客户端会话
+显示态：不持久、不 dirty、不进配置快照/查询键、不发查询、不停播放。
+
+**输入与临时读数**：左键点/拖继续写同一 `view.sample_index` 并停播放，globe/3D/factors 跟随；
+hover 不写 selection。鼠标在有效 plot 内时，对齐最近有效样本，画主题派生的弱化竖线及该样本
+各臂的窗内正值圆点；数值/0/n/a 与弧长进入 tooltip。离开/退化/更换数据后临时墨迹当帧撤回。
+D7 最小画布即使退化为 note，仍可通过宽度映射点击选中并恢复放大。
+曲线不再有 wheel owner、Y wheel zoom、右键 pan 或其锁存，也没有画内手势提示；wheel 交回
+ImGui 原生滚动（有可滚宿主则滚动，否则 no-op），不伤地图/3D/主画面的共享 wheel 仲裁。
+
+**显示裁剪**：窗外正值不再断 run；相邻正值在弧长–log(value) 直线段上的真实穿越点接到上/下边框。
+两端窗外但跨越全窗的段仍画可见部分，同侧窗外段不画；孤立正点仅在窗内画 marker，精确零和不可用
+仍断 run。真实 plot clip 限制曲线和 hover 圆点；不钳窗外点伪造边缘标记。旧 outside 计数摘要、
+底部零行及伴读 current/hover 读数行已退役，X 三刻度、rad 和顶部 seed 保留。
+
+历史 2026-11-13 的 wheel/pan、P1 与两行 footer 设计已被上述 owner 裁决替换，不是现役合同。
 因素区（`RenderPoseFactorsRegion`）承载：`PointFactorLines` 的默认层读数（永远绑
 `view.sample_index`，hover 不改它所指样本）＋measure note（默认可见）＋`Interface transmission`
 折叠组（逐接口透射率——T 的光学前提，判据梯 L3 证据行）＋`Pose diagnostics` 折叠组
@@ -1059,7 +1059,7 @@ labelled decade major 的窄窗以窗口上下边界值补位（置于绘图框�
 - 三档断言读行为（包含/可达/写入），不复算像素——§16.4.1 原校准义务的落法。
 
 **resize 尺寸响应策略（as-built，owner 2026-11-09 裁决落地）**：每对分隔成员二分——**弹性**（画布、
-可滚报告）/ **定额**（固定预算：3D 报告视口 `kPoseView3dReportQuota` 48pt、曲线伴读 8 行
+可滚报告）/ **定额**（固定预算：3D 报告视口 `kPoseView3dReportQuota` 144pt、曲线伴读 3 行
 定额=行数固定×活行高、控件条）。**拉伸**：delta 由弹性成员按现行 ratio 分摊（D4/D6 两侧均
 弹性=既有 recipe 原语义；D5 delta 归两画布——3D 报告与曲线伴读守定额；D7 未拖时 delta 全给
 画布）；**收缩反向对称**：弹性先缩到 floor，不够才压定额从 floor 再退（D7 伴读可压穿 32 至
@@ -1068,11 +1068,24 @@ labelled decade major 的窄窗以窗口上下边界值补位（置于绘图框�
 ratio 走，实测 0.694）。gui_test 红绿证据：`pose_view_resize_strategy_distributes_by_ratio_
 and_quota`（拉伸/收缩/拖后再 resize/D7 拖后四场景，份额断言 ±0.03–0.05）。
 
-**完整最宽行与几何退化**（as-built 落法）：长状态/极值换行不截行——伴读 8 行是定额预算不是
+**完整最宽行与几何退化**（as-built 落法）：长标题/限定换行不截行——伴读 3 行是定额预算不是
 截行上限，超出内容内滚、不吞数值；D7 未拖时画布吃余量到 40pt 下限，再退无画布形态（读数与
 partial note 由区内滚动承载，可恢复）；每个分隔端点另一侧整行可见、内容可滚至末尾、操作可达
 （退化链用例的真实滚轮腿持有）。UI 倍率不可线性外推（learnings 既有证据）——三档各自真跑，
 是本节签发的唯一依据。
+
+**当前内容足迹校准（2026-11-15，真实 GUI 帧）**：默认/最窄窗口保持 960×720 / 640×680
+设计尺寸；三倍率分别实跑。默认完整 item 矩形（说明、checkbox、entry/internal/exit、语义说明、
+曲线身份/口径/五标签）与裁剪后文字墨迹合取；不是只量已发射顶点。默认 3D 全报告和 curve 三行均
+无需内滚，最窄 3D 长说明可真实滚到末尾，D7 手调仍覆盖定额。
+
+| UI 倍率 | 3D 默认视口 / 完整内容 | curve 视口 / 内容 | 最窄 3D 内容 / scroll max |
+|---|---|---|---|
+| 1x | 144 / 141 px | 54 / 51 px | 186 / 42 px |
+| 1.5x | 216 / 212 px | 81 / 77 px | 281 / 65 px |
+| 2x | 288 / 282 px | 108 / 102 px | 372 / 84 px |
+
+上述数字是本机活字体/样式的记录，布局仍消费 `UiPx` 与活行高；不把默认全可见外推为任意窄列都无需滚动。
 
 ### 16.5 七态与空间不变量的提案核对
 
@@ -1121,5 +1134,5 @@ owner需裁决的产品取舍是：混合归属是否成立、主窗命名双入
 - 默认/最窄窗与1x/1.5x/2x下，逐条拖动采纳的边界至两端、resize再恢复，验证只写本边界意图；
   结果状态变化不移动同几何下的canvas/主要操作槽。每个图的实际矩形须包含于祖先可见clip，
   每个有滚动的报告须实际滚达末尾。记录发生几何退化的分支，不把跳过算通过。
-- 对新布局保住GL晶体/交点、曲线正值轴与截外诚实行、同一姿态游标/播放、冻结地图与共享相机的既有行为；
+- 对新布局保住GL晶体/交点、曲线正值轴与真实边界裁剪、同一姿态游标/播放、冻结地图与共享相机的既有行为；
   不用新截图覆盖旧bug来冒充机制证据。真实GUI校准与人的观感裁决均不能由本节算术或文档评审代替。

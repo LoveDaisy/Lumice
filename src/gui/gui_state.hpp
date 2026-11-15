@@ -2058,7 +2058,7 @@ struct GuiState {
   float analyze_pose_view_left_row_ratio = 0.45f;
   // D7 — the Pose & trace window's curve region's canvas | companion split (contract §16.4):
   // the canvas's share of the curve region's split span. The sentinel 0.0f means "never
-  // dragged": the companion then holds its fixed 8-line quota and the canvas eats the whole
+  // dragged": the companion then holds its fixed line quota and the canvas eats the whole
   // delta (the resize strategy's elastic|quota pair — the quota is a fixed budget, never
   // content height, §15). A drag writes the dragged share (> 0 by construction — the canvas's
   // real-slice floor keeps a written share positive), and from then on the stored share
