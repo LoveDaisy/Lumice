@@ -33,8 +33,13 @@
 //   1. every entry's `enabled` IS the BeginDisabled(...) expression at the field's main-UI call
 //      site — that call site reads this one — so the set of (field, configuration) pairs this table
 //      will WRITE is the same set the main UI will write. A field that does not apply is greyed
-//      here exactly when it is greyed there. The defaults-panel unlock task split the population in
-//      two, and the split is by WRITER, not by mood: a field whose value the frame loop or a lens
+//      here exactly when it is greyed there — with ONE declared exception, the background family
+//      (bg_show, bg_alpha, bg_offset_x/y, bg_scale): their main-UI controls keep the Display
+//      panel's own view rule (greyed with no image), while the registry carries them as stored
+//      settings (enabled everywhere, the sentence as a note) — "act on the live composite" and
+//      "store a default" are two different questions, and both sites saying so in their own
+//      comments is the contract, not a bug to unify. The defaults-panel unlock task split the rest
+//      of the population in two, and that split is by WRITER, not by mood: a field whose value the frame loop or a lens
 //      switch rewrites (view angles under a full-sky lens, fov) stays disabled, because an edit it
 //      erases within one frame is the "saved, then silently reset" wrong state; a field the frame
 //      loop never touches (background/paper tones, overlay colours under print, the background

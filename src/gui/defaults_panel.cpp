@@ -154,7 +154,7 @@ std::string g_status_message;
 // Whole-value replacement like every other piece of panel session state here: one array assigned
 // on open, one element assigned per write.
 struct PresetWarnings {
-  std::string slots[static_cast<std::size_t>(AxisPreset::kCustom) + 1][3];
+  std::string slots[static_cast<std::size_t>(AxisPreset::kCustom) + 1][kAxisSlotCount];
 };
 PresetWarnings g_preset_warnings;
 
@@ -163,8 +163,8 @@ PresetWarnings g_preset_warnings;
 // (IsItemDeactivatedAfterEdit), which is also when a refusal becomes a fair thing to report.
 // Indexed [preset slot][AxisSlot], one mean and one std per axis, mirroring the table's columns.
 struct PresetDistBuffers {
-  float mean[static_cast<std::size_t>(AxisPreset::kCustom) + 1][3] = {};
-  float std[static_cast<std::size_t>(AxisPreset::kCustom) + 1][3] = {};
+  float mean[static_cast<std::size_t>(AxisPreset::kCustom) + 1][kAxisSlotCount] = {};
+  float std[static_cast<std::size_t>(AxisPreset::kCustom) + 1][kAxisSlotCount] = {};
 };
 PresetDistBuffers g_preset_dist_buffers;
 
@@ -336,18 +336,9 @@ std::optional<AxisDistType> CopyPresetType(const AxisPresetEntry& entry, AxisSlo
 // classifier would keep, and the sticky-label task made that an ordinary state — the crystal
 // carrying it shows the out-of-domain badge, so showing the raw number here is showing the truth.
 AxisDist EffectiveCopyPresetDist(const AxisPresetEntry& entry, AxisSlot slot) {
-  AxisDist dist = entry.zenith;
-  switch (slot) {
-    case AxisSlot::kZenith:
-      dist = entry.zenith;
-      break;
-    case AxisSlot::kAzimuth:
-      dist = entry.azimuth;
-      break;
-    case AxisSlot::kRoll:
-      dist = entry.roll;
-      break;
-  }
+  // The slot->field selection is FactoryAxisDist's, not a second switch here — the same
+  // index-mistake family its comment closes.
+  AxisDist dist = FactoryAxisDist(entry, slot);
   if (const auto stored = CopyPresetStd(entry, slot)) {
     dist.std = *stored;
   }
@@ -405,14 +396,7 @@ bool CommitCopy(const GuiState& state) {
   // every cell (and marked the title "(mine)") while the process-wide cache kept answering with
   // the factory value, even after the user pressed Save on an untouched form.
   for (const auto& entry : kAxisPresets) {
-    AxisPresetOverride faces{};
-    for (int axis_index = 0; axis_index < 3; ++axis_index) {
-      const auto slot = static_cast<AxisSlot>(axis_index);
-      faces.axes[axis_index].std = ReadAxisPresetStdFromDoc(next, entry.id, slot);
-      faces.axes[axis_index].mean = ReadAxisPresetMeanFromDoc(next, entry.id, slot);
-      faces.axes[axis_index].type = ReadAxisPresetTypeFromDoc(next, entry.id, slot);
-    }
-    AdoptAxisPresetFacesInMemory(entry.id, faces);
+    AdoptAxisPresetFacesInMemory(entry.id, ReadAxisPresetOverridesFromDoc(next, entry.id));
   }
   // The wedge shortcuts follow the same disk-first rule, as a whole-list adoption rather than a
   // per-entry diff — the same shape the axis loop above now uses.
@@ -856,7 +840,7 @@ std::string PresetDistDisplayFormat(float value) {
 void RefreshPresetDistBuffers() {
   g_preset_dist_buffers = PresetDistBuffers{};
   for (const auto& entry : kAxisPresets) {
-    for (int axis_index = 0; axis_index < 3; ++axis_index) {
+    for (int axis_index = 0; axis_index < kAxisSlotCount; ++axis_index) {
       const auto slot = static_cast<AxisSlot>(axis_index);
       const AxisDist dist = EffectiveCopyPresetDist(entry, slot);
       g_preset_dist_buffers.mean[static_cast<std::size_t>(entry.id)][axis_index] = dist.mean;
@@ -961,7 +945,11 @@ void RenderEditableAxisRow(const AxisPresetEntry& entry, AxisSlot slot) {
   ImGui::SetNextItemWidth(-FLT_MIN);
   const std::string mean_id =
       std::string("###preset_mean_") + entry.override_json_name + "_" + std::to_string(axis_index);
-  ImGui::InputFloat(mean_id.c_str(), &g_preset_dist_buffers.mean[preset_slot][axis_index], 0.0f, 0.0f, "%.1f");
+  // The mean rides the same round-trip precision rule as the spread: both are stored floats a
+  // hand-edited file can hold at full precision, and showing fewer digits than the value needs
+  // would make a touch of the box commit the DISPLAYED value over the stored one.
+  ImGui::InputFloat(mean_id.c_str(), &g_preset_dist_buffers.mean[preset_slot][axis_index], 0.0f, 0.0f,
+                    PresetDistDisplayFormat(g_preset_dist_buffers.mean[preset_slot][axis_index]).c_str());
   if (ImGui::IsItemDeactivatedAfterEdit()) {
     CommitPresetFloatFace(entry, slot, /*is_mean=*/true, g_preset_dist_buffers.mean[preset_slot][axis_index]);
     RefreshPresetDistBuffers();
@@ -1002,7 +990,7 @@ void RenderPresetEntry(const AxisPresetEntry& entry) {
   // button has something to restore. The reads are the same ones every cell on the rows reads, so
   // "(mine)", the cells and what Save adopts cannot disagree about what the copy holds.
   bool has_override = false;
-  for (int axis_index = 0; axis_index < 3 && !has_override; ++axis_index) {
+  for (int axis_index = 0; axis_index < kAxisSlotCount && !has_override; ++axis_index) {
     const auto axis = static_cast<AxisSlot>(axis_index);
     has_override = CopyPresetStd(entry, axis).has_value() || CopyPresetMean(entry, axis).has_value() ||
                    CopyPresetType(entry, axis).has_value();

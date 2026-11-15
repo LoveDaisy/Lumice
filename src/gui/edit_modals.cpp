@@ -3522,8 +3522,14 @@ bool RenderSpectrumEditorBody(GuiState& state, SpectrumCommitMode mode) {
 
   if (mode == SpectrumCommitMode::kOnDeactivation) {
     // No OK/Cancel here: the edits already landed in the document as they ended, so Cancel would
-    // be a lie, and the panel's Save is the only write to disk. This line is the whole action row.
+    // be a lie, and the panel's Save is the only write to disk. This line is the whole action
+    // row — plus the refusal sentence, because an empty buffer is the one edit this shape
+    // silently drops (the modal says it under its OK; the popup needs it where the OK would be).
     ImGui::TextWrapped("Edits apply as you leave each box. Press Save in the panel to keep them.");
+    if (g_spectrum_edit_buf.empty()) {
+      ImGui::TextColored(WarningTextColor(),
+                         "At least one wavelength row is needed — nothing was applied while the list is empty.");
+    }
     return committed;
   }
 

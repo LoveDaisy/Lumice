@@ -1180,14 +1180,14 @@ void DoNew() {
   GUI_LOG_INFO("[GUI] DoNew");
 }
 
-void DoLoadBackground(GLFWwindow* window) {
+bool DoLoadBackground(GLFWwindow* window) {
   auto path = ShowOpenImageDialog();
   if (path.empty()) {
-    return;
+    return false;
   }
 
   if (!LoadAndUploadBgImage(g_state, path)) {
-    return;
+    return false;
   }
 
   g_state.bg_path = path;
@@ -1203,6 +1203,7 @@ void DoLoadBackground(GLFWwindow* window) {
   g_state.bg_scale = 1.0f;
   g_state.aspect_preset = AspectPreset::kMatchBg;
   ApplyAspectRatio(window, AspectPreset::kMatchBg, false, g_preview.GetBgAspect());
+  return true;
 }
 
 void DoClearBackground() {

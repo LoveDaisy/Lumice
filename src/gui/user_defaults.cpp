@@ -384,8 +384,6 @@ bool ReadAxisPresetTypeFace(const nlohmann::json& node, const char* key, AxisDis
   return true;
 }
 
-// Defined beside the doc-read family below; the parse's type-refusal notice needs it first.
-AxisDist FactoryAxisDist(const AxisPresetEntry& entry, AxisSlot slot);
 
 // Parse the preset-library half of an override document: root["presets"]["axis"]["<preset>"], up
 // to three face keys per axis. Pure function — it neither reads nor writes g_axis_overrides; the
@@ -452,7 +450,7 @@ AxisPresetOverrides ParseAxisPresetOverrides(const nlohmann::json& root) {
     };
 
     AxisPresetOverride slot{};
-    for (int axis_index = 0; axis_index < 3; ++axis_index) {
+    for (int axis_index = 0; axis_index < kAxisSlotCount; ++axis_index) {
       const AxisSlot axis = static_cast<AxisSlot>(axis_index);
       const std::string prefix = AxisSlotJsonPrefix(axis);
 
@@ -1130,6 +1128,17 @@ AxisDist EffectiveAxisPresetDist(const AxisPresetEntry& entry, AxisSlot slot) {
     dist.type = *stored.type;
   }
   return dist;
+}
+
+AxisPresetOverride ReadAxisPresetOverridesFromDoc(const nlohmann::json& doc, AxisPreset preset) {
+  AxisPresetOverride faces{};
+  for (int axis_index = 0; axis_index < kAxisSlotCount; ++axis_index) {
+    const auto slot = static_cast<AxisSlot>(axis_index);
+    faces.axes[axis_index].std = ReadAxisPresetStdFromDoc(doc, preset, slot);
+    faces.axes[axis_index].mean = ReadAxisPresetMeanFromDoc(doc, preset, slot);
+    faces.axes[axis_index].type = ReadAxisPresetTypeFromDoc(doc, preset, slot);
+  }
+  return faces;
 }
 
 std::optional<float> GetUserAxisPresetStdOverride(AxisPreset preset, AxisSlot slot) {

@@ -164,13 +164,15 @@ bool RestoreOnePresetOnDisk(const std::filesystem::path& dir, gui::AxisPreset pr
   if (!gui::WriteUserDefaultsFile(dir, doc)) {
     return false;
   }
-  // Wholesale slot adopt, rebuilt FROM the document (every face the node still holds) — the same
-  // shape the panel's CommitCopy uses, so this helper cannot drift from the live memory-follows-
-  // disk path it is staging.
-  gui::AxisPresetOverride faces{};
-  faces.axes[0].std = gui::ReadAxisPresetStdFromDoc(doc, preset, gui::AxisSlot::kZenith);
-  faces.axes[0].mean = gui::ReadAxisPresetMeanFromDoc(doc, preset, gui::AxisSlot::kZenith);
-  faces.axes[0].type = gui::ReadAxisPresetTypeFromDoc(doc, preset, gui::AxisSlot::kZenith);
+  // Wholesale slot adopt, rebuilt FROM the document — the store's own whole-slot reader, which
+  // is the same shape the panel's CommitCopy uses, so this helper cannot drift from the live
+  // memory-follows-disk path it is staging. The azimuth/roll faces are cleared after: this
+  // helper's staged documents hold only zenith faces by construction, and a cache slot pointing
+  // at faces no staged file ever held would leak a neighbouring case's state into the claim.
+  gui::AxisPresetOverride faces = gui::ReadAxisPresetOverridesFromDoc(doc, preset);
+  for (int axis = 1; axis < gui::kAxisSlotCount; ++axis) {
+    faces.axes[axis] = gui::AxisDistOverride{};
+  }
   gui::AdoptAxisPresetFacesInMemory(preset, faces);
   return true;
 }
@@ -1144,7 +1146,7 @@ TEST_F(UserDefaults, preset_override_round_trips_across_a_reload_and_reverting_o
   seed["bg_alpha"] = 0.42f;
   EXPECT_TRUE(gui::WriteUserDefaultsFile(dir, seed));
 
-  // Two independent read-modify-write cycles through WriteAxisPresetZenithStdToDoc, the owner
+  // Two independent read-modify-write cycles through WriteAxisPresetStdToDoc, the owner
   // of the document shape the panel's Save also goes through.
   EXPECT_TRUE(SeedPresetOverrideOnDisk(dir, gui::AxisPreset::kColumn, 0.3f));
   EXPECT_TRUE(SeedPresetOverrideOnDisk(dir, gui::AxisPreset::kPlate, 0.5f));

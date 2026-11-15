@@ -887,7 +887,7 @@ TEST_F(DefaultsDiff, row_tint_predicate_over_four_states) {
 // The Visibility group's enablement rule, as a rule rather than as a grid of examples.
 //
 // `renderer.visible` (the Upper/Full/Lower radio group) and `renderer.front` (the Front checkbox)
-// are gated in the field-editor registry by NotUnderFullSky and NotUnderFullSkyOrGlobe. Before task
+// are gated in the field-editor registry by NotUnderFullSky (the angles) and FrontClipAppliesNote (front). Before task
 // 431.1 the main UI did not read either: app_panels.cpp spelled the same two conditions out again
 // as a hand-paired `BeginDisabled` nest, and the only thing pinning the pair was nine near-identical
 // gui_test cases, one per (lens, expectation) cell somebody thought to write down.
