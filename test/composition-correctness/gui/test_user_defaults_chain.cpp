@@ -165,8 +165,8 @@ TEST_F(UserDefaultsChain, SavingAValueEqualToFactoryIsStillASavedOverride) {
 //
 // If the panel prints 0.50 for a stored 0.4999, the row reports a difference the user cannot
 // resolve: adopting writes what is displayed, the loader reads what is stored, and the row comes
-// back every single time. RoundTripPrecisionForAxisPresetStd exists so display and storage pick
-// precision the same way, and FormatAxisPresetStd is the one renderer that uses it.
+// back every single time. RoundTripPrecisionForAxisPresetFloat exists so display and storage pick
+// precision the same way, and FormatAxisPresetFloat is the one renderer that uses it.
 TEST_F(UserDefaultsChain, StdDisplayIsExactlyEnoughToReadBackTheSameFloatAndNoLonger) {
   const float kValues[] = {
     0.3f,  // the common case: must stay short
@@ -178,7 +178,7 @@ TEST_F(UserDefaultsChain, StdDisplayIsExactlyEnoughToReadBackTheSameFloatAndNoLo
     std::nextafter(0.0f, 1.0f),
   };
   for (float v : kValues) {
-    const std::string shown = FormatAxisPresetStd(v);
+    const std::string shown = FormatAxisPresetFloat(v);
     EXPECT_EQ(std::strtof(shown.c_str(), nullptr), v)
         << "displayed as '" << shown
         << "', which does not read back as the same float — a row rendered this way can never be "
@@ -187,8 +187,8 @@ TEST_F(UserDefaultsChain, StdDisplayIsExactlyEnoughToReadBackTheSameFloatAndNoLo
 
   // The other half of the precision rule. Escalating unconditionally would render every tuned value
   // as a run of trailing digits that reads like precision it does not carry.
-  EXPECT_EQ(FormatAxisPresetStd(0.3f), "0.3");
-  EXPECT_EQ(FormatAxisPresetStd(1.0f), "1");
+  EXPECT_EQ(FormatAxisPresetFloat(0.3f), "0.3");
+  EXPECT_EQ(FormatAxisPresetFloat(1.0f), "1");
 }
 
 // ---------------------------------------------------------------------------------------------

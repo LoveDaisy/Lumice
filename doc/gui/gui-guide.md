@@ -100,10 +100,13 @@ From left to right, the Top Bar exposes:
   `user_defaults.json`), and a value tried but not saved stays in force until the program exits —
   the `(this window: N%)` note beside the control shows what the window is actually using.
 
-  Every listed setting is editable in place: a field the current configuration does not consume
-  (a ground colour under the other tone, the background transform with no image, `Rays(M)` under
-  Infinite rays, `Roll` under Globe) stays editable and shows a hover note saying the value is
-  kept for when it applies again. The `Presets` section tunes every face — type, mean, spread —
+  Nearly every listed setting is editable in place: a field the current configuration does not
+  consume (a ground colour under the other tone, the background transform with no image, `Rays(M)`
+  under Infinite rays, `Roll` under Globe) stays editable and shows a hover note saying the value
+  is kept for when it applies again. Two kinds of row stay read-only on purpose and say why on
+  hover: `renderer.ray_color` (the GUI build always uses the material's own spectral colour; the
+  value is set from the CLI or a config JSON), and the four view angles under a full-sky lens
+  (whose frame loop zeroes them before any save could keep them). The `Presets` section tunes every face — type, mean, spread —
   of every axis of every storable preset (Column / Plate / Parry / Lowitz and Random; old files
   without a retuned Random resolve to its built-in definition), and each saved wedge preset's
   Miller indices are editable in place (the angle follows).

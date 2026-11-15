@@ -71,6 +71,13 @@ void RenderDefaultsPanel(GuiState& state);
 // scenario's checkbox set / search text / filter cannot reach the next in a single-process suite.
 void ResetDefaultsPanelTestState();
 
+// The bg_path cell's deferred commit (field_editor_registry.hpp): the file dialog runs outside
+// the panel's frame, so the load cannot return true the way an in-cell edit does. The frame loop
+// calls this once the dialog has actually changed the document — it checks the row (an edit is a
+// statement that this value should be the default) and marks the row set for a rebuild, which is
+// what makes the next Save write the chosen path instead of reporting success over a no-op.
+void NotifyDefaultsBackgroundAdopted();
+
 }  // namespace lumice::gui
 
 #endif  // LUMICE_GUI_DEFAULTS_PANEL_HPP

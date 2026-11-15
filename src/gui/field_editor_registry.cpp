@@ -615,24 +615,32 @@ bool g_background_file_dialog_request = false;
 // is itself a modal and a second modal would stack two input grabs on one field; anchored, so it
 // stacks INSIDE the defaults panel's popup hierarchy and receives input normally (the mechanism
 // every combo in this table already uses).
+//
+// The popup host both spectrum rows share: seed the scratch, open a plain popup anchored at the
+// cell, run the shared body, report whether OK committed. ONE spelling of the host — "one editor,
+// no side door" is about the editor, and this helper keeps it from growing a second host either.
+bool HostSpectrumEditorPopup(GuiState& state, const char* id_base, const char* button_label) {
+  bool committed = false;
+  const std::string open_id = std::string(button_label) + std::string("###") + id_base;
+  if (ImGui::Button(open_id.c_str())) {
+    SeedSpectrumEditor(state);
+    ImGui::OpenPopup(HiddenLabel(id_base).c_str());
+  }
+  if (ImGui::BeginPopup(HiddenLabel(id_base).c_str())) {
+    committed = RenderSpectrumEditorBody(state, SpectrumCommitMode::kOnDeactivation);
+    ImGui::EndPopup();
+  }
+  return committed;
+}
+
 // The custom-spectrum row's editor: the same seeded scratch, body and transactional OK as the
-// spectrum row's (see SpectrumField above for why the popup is plain, not modal).
+// spectrum row's — one editor, no side door, and no host spelled twice either.
 FieldEditorEntry CustomSpectrumField() {
   FieldEditorEntry entry;
   entry.kind = FieldEditorKind::kListEditor;
   entry.Constraint = [](const GuiState&) { return FieldEditorConstraint{}; };
   entry.Render = [](GuiState& state, const char* id_base) {
-    bool committed = false;
-    const std::string edit_id = std::string(ICON_FA_PEN) + " Edit spectrum..." + std::string("###") + id_base;
-    if (ImGui::Button(edit_id.c_str())) {
-      SeedSpectrumEditor(state);
-      ImGui::OpenPopup(HiddenLabel(id_base).c_str());
-    }
-    if (ImGui::BeginPopup(HiddenLabel(id_base).c_str())) {
-      committed = RenderSpectrumEditorBody(state);
-      ImGui::EndPopup();
-    }
-    return committed;
+    return HostSpectrumEditorPopup(state, id_base, "Edit spectrum...");
   };
   return entry;
 }
@@ -645,16 +653,7 @@ FieldEditorEntry SpectrumField() {
     if (state.sun.spectrum_index != kCustomSpectrumIndex) {
       return preset_render(state, id_base);
     }
-    bool committed = false;
-    if (ImGui::Button((std::string("Custom spectrum...") + std::string("###") + id_base).c_str())) {
-      SeedSpectrumEditor(state);
-      ImGui::OpenPopup(HiddenLabel(id_base).c_str());
-    }
-    if (ImGui::BeginPopup(HiddenLabel(id_base).c_str())) {
-      committed = RenderSpectrumEditorBody(state);
-      ImGui::EndPopup();
-    }
-    return committed;
+    return HostSpectrumEditorPopup(state, id_base, "Custom spectrum...");
   };
   return entry;
 }

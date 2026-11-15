@@ -188,6 +188,11 @@ PresetDistBuffers g_preset_dist_buffers;
 // frame and settles immediately.
 float g_presets_content_height = 0.0f;
 
+// One-frame hand-off for commits that land outside the panel's editor Render (the bg_path file
+// dialog): the frame loop's adoption claim sets this, and the settings table's next pass picks it
+// up as its own rows-are-stale — the same coalescing RefreshRows already gets from in-cell edits.
+bool g_rows_dirty_from_outside = false;
+
 bool IsRowChecked(const std::string& key_path) {
   return g_checked_keys.find(key_path) != g_checked_keys.end();
 }
@@ -738,8 +743,10 @@ void RenderSettingsTable(GuiState& state, float table_height) {
 
   // Deferred to after EndTable, never called inside the loop: RefreshRows REPLACES g_rows, and the
   // loop below holds a reference into it. Deferring also coalesces a burst of edits in one frame
-  // into a single rebuild.
-  bool rows_are_stale = false;
+  // into a single rebuild. Seeded from the outside-commit flag so a bg_path load that landed
+  // between frames counts as this pass's edit.
+  bool rows_are_stale = g_rows_dirty_from_outside;
+  g_rows_dirty_from_outside = false;
 
   for (const auto& row : g_rows) {
     if (!RowIsVisible(row)) {
@@ -830,16 +837,16 @@ void RenderSettingsTable(GuiState& state, float table_height) {
 
 // Display format for a §1 std cell showing `value`, e.g. "%.7g".
 //
-// Built per-value from RoundTripPrecisionForAxisPresetStd rather than a fixed digit count: the
+// Built per-value from RoundTripPrecisionForAxisPresetFloat rather than a fixed digit count: the
 // domains are OPEN, so clamping Column's std lands on nextafter(10, 0) = 9.99999905 (needs 7
 // digits) while clamping Lowitz's lands on nextafter(15, +inf) = 15.000001 (needs 8) — a fixed
 // "%.7g" renders the first correctly but rounds the second to "15", directly under a line that
-// says the value must stay GREATER than 15. Sharing the precision rule with FormatAxisPresetStd
+// says the value must stay GREATER than 15. Sharing the precision rule with FormatAxisPresetFloat
 // (used for the adjacent status/warning text) is what keeps the input box and the prose that
 // explains it from ever disagreeing about what the stored value is.
-std::string PresetStdDisplayFormat(float value) {
+std::string PresetDistDisplayFormat(float value) {
   char format[8];
-  std::snprintf(format, sizeof(format), "%%.%dg", RoundTripPrecisionForAxisPresetStd(value));
+  std::snprintf(format, sizeof(format), "%%.%dg", RoundTripPrecisionForAxisPresetFloat(value));
   return format;
 }
 
@@ -903,8 +910,8 @@ void CommitPresetFloatFace(const AxisPresetEntry& entry, AxisSlot slot, bool is_
     WriteAxisPresetStdToDoc(g_copy_doc, entry.id, slot, value);
   }
   g_preset_warnings.slots[preset_slot][axis_index].clear();
-  g_status_message = std::string("Press Save to store ") + FormatAxisPresetStd(value) + " as the " + entry.label + " " +
-                     AxisSlotWord(slot) + (is_mean ? " mean." : " std.");
+  g_status_message = std::string("Press Save to store ") + FormatAxisPresetFloat(value) + " as the " + entry.label +
+                     " " + AxisSlotWord(slot) + (is_mean ? " mean." : " std.");
 }
 
 // One EDITABLE axis row: Type / Mean / Std as live typed controls. Every face of every storable
@@ -965,7 +972,7 @@ void RenderEditableAxisRow(const AxisPresetEntry& entry, AxisSlot slot) {
   const std::string std_id =
       std::string("###preset_std_") + entry.override_json_name + "_" + std::to_string(axis_index);
   ImGui::InputFloat(std_id.c_str(), &g_preset_dist_buffers.std[preset_slot][axis_index], 0.0f, 0.0f,
-                    PresetStdDisplayFormat(g_preset_dist_buffers.std[preset_slot][axis_index]).c_str());
+                    PresetDistDisplayFormat(g_preset_dist_buffers.std[preset_slot][axis_index]).c_str());
   if (ImGui::IsItemDeactivatedAfterEdit()) {
     CommitPresetFloatFace(entry, slot, /*is_mean=*/false, g_preset_dist_buffers.std[preset_slot][axis_index]);
     RefreshPresetDistBuffers();
@@ -1090,8 +1097,11 @@ std::vector<WedgeMillerTriple> CopyWedgePresets() {
 // single-scratch shape the angle-list editor uses — because two simultaneous editors of one list
 // would have to agree about which row's commit lands first, and there is no question here that
 // needs two answers at once. Index is -1 when nothing is being edited; a deletion under the editor
-// resets it (the indices shift, so a stale index would edit the wrong row).
+// resets it (the indices shift, so a stale index would edit the wrong row). The POPUP ID is kept
+// separately, captured at open: the close-on-invalid path has to address the popup AFTER the index
+// is gone, and rebuilding the id from a stale index would close (or open) somebody else's.
 int g_wedge_edit_row = -1;
+std::string g_wedge_edit_popup_id;
 WedgeMillerTriple g_wedge_edit_scratch{};
 
 // The editor popup for g_wedge_edit_row, drawn by the library loop (which owns `saved`, the list
@@ -1099,12 +1109,17 @@ WedgeMillerTriple g_wedge_edit_scratch{};
 // row and the dropdown's Apply button use; the duplicate rule matches the Add button's — a triple
 // that is a built-in or another saved entry (the row under edit excepted) is refused, not saved.
 void RenderWedgeEditPopup(std::vector<WedgeMillerTriple>& saved) {
-  if (g_wedge_edit_row < 0 || g_wedge_edit_row >= static_cast<int>(saved.size())) {
-    g_wedge_edit_row = -1;  // a delete under the editor shifted or emptied the list
+  // Begin FIRST, validate second: a delete under the editor resets the index, and an early return
+  // before BeginPopup would leave the open popup unsubmitted this frame — still on ImGui's open
+  // stack but not drawn, so the next click gets eaten closing it. Begun-then-closed, the "row
+  // gone" and "popup gone" happen in the same frame.
+  if (!ImGui::BeginPopup(g_wedge_edit_popup_id.c_str())) {
     return;
   }
-  const std::string popup_id = "###wedge_preset_edit_popup_" + std::to_string(g_wedge_edit_row);
-  if (!ImGui::BeginPopup(popup_id.c_str())) {
+  if (g_wedge_edit_row < 0 || g_wedge_edit_row >= static_cast<int>(saved.size())) {
+    g_wedge_edit_row = -1;  // a delete under the editor shifted or emptied the list
+    ImGui::CloseCurrentPopup();
+    ImGui::EndPopup();
     return;
   }
 
@@ -1176,7 +1191,8 @@ bool RenderWedgePresetRow(size_t index, const WedgeMillerTriple& triple) {
   if (ImGui::Button(edit_id.c_str())) {
     g_wedge_edit_row = static_cast<int>(index);
     g_wedge_edit_scratch = triple;
-    ImGui::OpenPopup(("###wedge_preset_edit_popup_" + std::to_string(index)).c_str());
+    g_wedge_edit_popup_id = "###wedge_preset_edit_popup_" + std::to_string(index);
+    ImGui::OpenPopup(g_wedge_edit_popup_id.c_str());
   }
   ImGui::SameLine();
 
@@ -1583,6 +1599,13 @@ void RenderDefaultsPanel(GuiState& state) {
   ImGui::EndPopup();
 }
 
+void NotifyDefaultsBackgroundAdopted() {
+  // The cell's statement is about bg_path (the loader's side effects on bg_show/alpha/transform
+  // are loader behavior, not this cell's claim — those rows stay as the user left them).
+  g_checked_keys.insert("bg_path");
+  g_rows_dirty_from_outside = true;
+}
+
 void ResetDefaultsPanelTestState() {
   g_rows.clear();
   g_snapshot_doc = nlohmann::json::object();
@@ -1597,7 +1620,9 @@ void ResetDefaultsPanelTestState() {
   g_preset_warnings = PresetWarnings{};
   g_preset_dist_buffers = PresetDistBuffers{};
   g_wedge_edit_row = -1;
+  g_wedge_edit_popup_id.clear();
   g_wedge_edit_scratch = WedgeMillerTriple{};
+  g_rows_dirty_from_outside = false;
   // Reset HERE and not in OpenDefaultsPanel: it is a measurement of ImGui's own TreeNode fold
   // state, which ImGui keeps across closes of this panel, so the measurement should outlive a close
   // exactly as the thing it measures does. Test isolation is the one place that state is torn down.

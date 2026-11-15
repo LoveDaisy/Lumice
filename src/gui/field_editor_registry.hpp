@@ -199,7 +199,11 @@ std::vector<std::string> RegisteredFieldEditorKeyPaths();
 // (the established pattern — PerformScreenshotExport in app_panels.cpp): the editor sets this
 // request, and the frame loop consumes it right after RenderDefaultsPanel returns, where a native
 // sheet is as safe as it is behind the Display panel's own Load Bg button. True exactly once per
-// request; call sites that check it own the dialog call itself.
+// request; call sites that check it own the dialog call itself — and, when the load actually
+// changed the document, the adoption claim: NotifyDefaultsBackgroundAdopted (defaults_panel.hpp)
+// is what checks the row, because a load that lands OUTSIDE the panel's editor Render cannot
+// return true the way every in-cell edit does, and skipping the claim is the "Save reported
+// success but the file holds nothing" wrong state.
 bool TakeBackgroundFileDialogRequest();
 
 }  // namespace lumice::gui

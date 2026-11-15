@@ -3438,22 +3438,42 @@ void RenderSpectrumModal(GuiState& state) {
   ImGui::EndPopup();
 }
 
-bool RenderSpectrumEditorBody(GuiState& state) {
+bool RenderSpectrumEditorBody(GuiState& state, SpectrumCommitMode mode) {
   // No in-modal "import preset": this editor does discrete wavelength editing only. Preset spectra
   // (D65 etc.) are chosen from the Sun-panel Spectrum combo, not here — that avoids a misleading
   // in-modal preset picker that couldn't reproduce a real illuminant SPD anyway (GUI can't include
   // core SPD headers per the API boundary). A fresh custom spectrum still opens seeded with a uniform
   // grid (BuildPresetSeed) as an editable starting point.
 
+  // The one transactional write, shared by both callers that need to land the buffer now: the
+  // modal's OK, and the cell popup's per-edit deactivation. Sanitize first, then write the state —
+  // index rides along only from the modal (the popup is only ever REACHED while index is already
+  // custom, so it has nothing to change).
+  auto commit_buffer = [&]() {
+    for (auto& e : g_spectrum_edit_buf) {
+      e.wavelength = ClampSpectrumWavelengthNm(e.wavelength);
+      e.weight = ClampSpectrumWeight(e.weight);
+    }
+    if (g_spectrum_edit_buf.empty()) {
+      return false;
+    }
+    state.sun.custom_spectrum = g_spectrum_edit_buf;
+    state.sun.spectrum_index = kCustomSpectrumIndex;
+    return true;
+  };
+
   // Editable rows.
+  bool committed = false;
   int remove_idx = -1;
   for (int i = 0; i < static_cast<int>(g_spectrum_edit_buf.size()); i++) {
     ImGui::PushID(i);
     ImGui::SetNextItemWidth(UiPx(80.0f));
     ImGui::InputFloat("wl(nm)##wl", &g_spectrum_edit_buf[i].wavelength, 0.0f, 0.0f, "%.1f");
+    const bool wl_ended = ImGui::IsItemDeactivatedAfterEdit();
     ImGui::SameLine();
     ImGui::SetNextItemWidth(UiPx(80.0f));
     ImGui::InputFloat("weight##wt", &g_spectrum_edit_buf[i].weight, 0.0f, 0.0f, "%.3f");
+    const bool weight_ended = ImGui::IsItemDeactivatedAfterEdit();
     ImGui::SameLine();
     PushDestructiveStyle();
     const bool remove_clicked = ImGui::SmallButton(ICON_FA_XMARK "##rm");
@@ -3462,9 +3482,17 @@ bool RenderSpectrumEditorBody(GuiState& state) {
       remove_idx = i;
     }
     ImGui::PopID();
+    // The cell popup's commit shape: each ended edit lands the whole (sanitized) buffer — the
+    // panel's Save stays the one write to disk, same as every other cell in that panel.
+    if (mode == SpectrumCommitMode::kOnDeactivation && (wl_ended || weight_ended)) {
+      committed = commit_buffer() || committed;
+    }
   }
   if (remove_idx >= 0) {
     g_spectrum_edit_buf.erase(g_spectrum_edit_buf.begin() + remove_idx);
+    if (mode == SpectrumCommitMode::kOnDeactivation) {
+      committed = commit_buffer() || committed;
+    }
   }
 
   // Add row.
@@ -3477,6 +3505,9 @@ bool RenderSpectrumEditorBody(GuiState& state) {
       next_wl = ClampSpectrumWavelengthNm(g_spectrum_edit_buf.back().wavelength + 40.0f);
     }
     g_spectrum_edit_buf.push_back({ next_wl, 1.0f });
+    if (mode == SpectrumCommitMode::kOnDeactivation) {
+      committed = commit_buffer() || committed;
+    }
   }
   ImGui::EndDisabled();
   ImGui::SameLine();
@@ -3489,28 +3520,26 @@ bool RenderSpectrumEditorBody(GuiState& state) {
 
   ImGui::Separator();
 
+  if (mode == SpectrumCommitMode::kOnDeactivation) {
+    // No OK/Cancel here: the edits already landed in the document as they ended, so Cancel would
+    // be a lie, and the panel's Save is the only write to disk. This line is the whole action row.
+    ImGui::TextWrapped("Edits apply as you leave each box. Press Save in the panel to keep them.");
+    return committed;
+  }
+
   // Action row: OK / Cancel (dialog-terminating) on the left; Reset (a non-terminating edit action)
   // right-aligned on the same row so it reads as a distinct class and resists being mis-clicked as a
   // third confirm button.
-  bool committed = false;
   const bool ok_disabled = SpectrumCommitBlocked(g_spectrum_edit_buf.size());
   ImGui::BeginDisabled(ok_disabled);
   if (ImGui::Button(ICON_FA_CHECK " OK##spec_ok", ImVec2(UiPx(80.0f), 0.0f))) {
-    // Sanitize obviously-invalid manual input before it reaches the sim: clamp wavelength to the
-    // visible band and weight to non-negative.
-    for (auto& e : g_spectrum_edit_buf) {
-      e.wavelength = ClampSpectrumWavelengthNm(e.wavelength);
-      e.weight = ClampSpectrumWeight(e.weight);
-    }
     // Single transactional commit of the custom-spectrum state: this is the ONLY site that sets
     // spectrum_index to kCustomSpectrumIndex, keeping the invariant (index==custom ⟹ buf non-empty)
     // — OK is gated on a non-empty buffer (ok_disabled) above.
-    state.sun.custom_spectrum = g_spectrum_edit_buf;
-    state.sun.spectrum_index = kCustomSpectrumIndex;
-    // No manual MarkDirty: both fields belong to `sun`, which participates in the
-    // reconciler auto-diff (kFieldTierTable → kStructSoft).
-    committed = true;
-    ImGui::CloseCurrentPopup();
+    if (commit_buffer()) {
+      committed = true;
+      ImGui::CloseCurrentPopup();
+    }
   }
   ImGui::EndDisabled();
   if (ok_disabled && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {

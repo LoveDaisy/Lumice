@@ -2566,8 +2566,8 @@ void RegisterDefaultsPanelTests(ImGuiTestEngine* engine) {
     // The remaining shape of the old clamp-era defect: a value that needs eight significant digits
     // — nextafter(15, +inf) = 15.000001, as an older build's clamp target or a hand edit would
     // store — must not render as "15" through a fixed short format, because "15" parses to exactly
-    // the excluded bound. The precision is computed per value (RoundTripPrecisionForAxisPresetStd,
-    // via the box's PresetStdDisplayFormat), and the case pins the on-screen half of that rule.
+    // the excluded bound. The precision is computed per value (RoundTripPrecisionForAxisPresetFloat,
+    // via the box's PresetDistDisplayFormat), and the case pins the on-screen half of that rule.
     //
     // Seeded straight into the file, the way an old build's stored value arrives. Read by
     // activating the box, the only way its text is observable at all (see ActivatedInputText).
@@ -2667,6 +2667,77 @@ void RegisterDefaultsPanelTests(ImGuiTestEngine* engine) {
       IM_CHECK_EQ(saved["presets"]["axis"]["random"]["azimuth_mean"].get<float>(), 30.0f);
       IM_CHECK(!saved["presets"]["axis"]["random"].contains("zenith_mean"));
       IM_CHECK(!saved["presets"]["axis"]["random"].contains("azimuth_std"));
+    };
+  }
+
+  {
+    // The bg_path cell's deferred commit, panel half: the file dialog itself is an OS sheet no
+    // test can drive, so the claim under test is the ADOPTION contract — an outside-frame load
+    // that changed the document checks the row and the next Save writes the path. This is the
+    // mechanism that closes the "Save reported success but the file holds nothing" family for the
+    // one cell whose edit lands outside the panel's editor Render.
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "defaults_panel", "a_background_load_adopted_by_the_panel_saves_the_path");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ScopedPanel panel(ctx, "panel_bg_adopt");
+      panel.OpenOn(gui::DefaultsPanelSection::kSettings);
+      FilterTo(ctx, "bg_path");
+      ctx->Yield(2);
+
+      // The checkbox EXISTS whether or not it is ticked; "nothing adopted yet" is the unchecked
+      // half of that.
+      IM_CHECK(!ctx->ItemIsChecked("**/###adopt_bg_path"));
+
+      // The frame loop's claim, driven directly (the dialog is the untestable half): the state's
+      // path is what the loader leaves behind, exactly as it would after a real pick.
+      gui::g_state.bg_path = "/tmp/lumice-test-bg.png";
+      gui::NotifyDefaultsBackgroundAdopted();
+      ctx->Yield(3);
+
+      // The row is checked, the Current value cell re-read the new path, and Save writes it.
+      IM_CHECK(ctx->ItemIsChecked("**/###adopt_bg_path"));
+      SaveDefaultsPanel(ctx);
+      const json saved = ReadOverlayFile(panel.dir());
+      IM_CHECK(saved.contains("bg_path"));
+      IM_CHECK_STR_EQ(saved["bg_path"].get<std::string>().c_str(), "/tmp/lumice-test-bg.png");
+    };
+  }
+
+  {
+    // The spectrum row's popup, closed loop: "Custom spectrum..." opens the shared editor over
+    // the defaults modal (a plain popup, not a stacked modal), the OK commits transactionally and
+    // the row joins the set Save writes, and the saved file round-trips the array. This is the
+    // third of the three cell-hosted editors — the angle list and the wedge rows have theirs.
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "defaults_panel", "a_spectrum_cell_edits_and_saves_the_custom_spectrum");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ScopedPanel panel(ctx, "panel_spectrum_cell");
+      // Seed the custom state after the scoped reset, before the panel opens: the spectrum row
+      // shows the Custom entry point only while a custom spectrum is in use (the preset combo
+      // otherwise), and the panel snapshots the state at open.
+      gui::g_state.sun.spectrum_index = gui::kCustomSpectrumIndex;
+      gui::g_state.sun.custom_spectrum = { { 400.0f, 1.0f }, { 550.0f, 1.0f }, { 700.0f, 1.0f } };
+      panel.OpenOn(gui::DefaultsPanelSection::kSettings);
+      FilterTo(ctx, "sun.spectrum");
+      ctx->Yield(2);
+
+      ctx->ItemClick("**/###value_sun.spectrum");  // "Custom spectrum..." — the custom-state entry
+      ctx->Yield(2);
+      // The editor body's first wavelength box, under its own row id (the body is the Sun panel's
+      // shared one; rows are per-index PushID'd). The popup commits ON DEACTIVATION — the same
+      // contract as every numeric cell of this panel and the wedge editor, for the same reason:
+      // a plain popup's buttons are what a driven click cannot reliably reach.
+      ctx->ItemInputValue("**/wl(nm)##wl", 410.0f);
+      ctx->Yield(3);
+
+      IM_CHECK_EQ(static_cast<int>(gui::g_state.sun.spectrum_index), static_cast<int>(gui::kCustomSpectrumIndex));
+      IM_CHECK_EQ(gui::g_state.sun.custom_spectrum.size(), (size_t)3);
+      IM_CHECK_EQ(gui::g_state.sun.custom_spectrum[0].wavelength, 410.0f);
+      SaveDefaultsPanel(ctx);
+      const json saved = ReadOverlayFile(panel.dir());
+      IM_CHECK(saved.contains("sun"));
+      IM_CHECK(saved["sun"].contains("custom_spectrum"));
+      IM_CHECK_EQ(saved["sun"]["custom_spectrum"].size(), (size_t)3);  // the seeded three rows
+      IM_CHECK_EQ(saved["sun"]["spectrum"].get<std::string>(), "custom");
+      IM_CHECK_EQ(saved["sun"]["custom_spectrum"][0]["wavelength"].get<float>(), 410.0f);
     };
   }
 
