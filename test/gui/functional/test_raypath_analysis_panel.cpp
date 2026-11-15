@@ -16234,9 +16234,11 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
         IM_CHECK_RETV(bar->ScrollMax.y == 0.0f, false);
         IM_CHECK_RETV(bar->Rect().Min.y >= bar->ParentWindow->InnerClipRect.Min.y, false);
         IM_CHECK_RETV(bar->Rect().Max.y <= bar->ParentWindow->InnerClipRect.Max.y + 0.5f, false);
-        const char* region = std::strcmp(host, "Raypath view") == 0 ? "##AnalyzeRaypathView" : "##AnalyzePoseCurve";
-        ImGuiWindow* body = RegionWindowUnder(host, region);
-        IM_CHECK_RETV(body != nullptr && body->Rect().Max.y < bar->Rect().Min.y, false);
+        const bool map_host = std::strcmp(host, "Raypath view") == 0;
+        ImGuiWindow* left_bottom = RegionWindowUnder(host, map_host ? "##AnalyzeRaypathView" : "##AnalyzePoseCurve");
+        ImGuiWindow* right_bottom = RegionWindowUnder(host, map_host ? "##AnalyzeRaypathInfo" : "##AnalyzePoseFactors");
+        IM_CHECK_RETV(left_bottom != nullptr && right_bottom != nullptr, false);
+        IM_CHECK_RETV(std::max(left_bottom->Rect().Max.y, right_bottom->Rect().Max.y) < bar->Rect().Min.y, false);
         return true;
       };
       IM_CHECK(check_footer("Raypath view", map_text, "No selection"));
