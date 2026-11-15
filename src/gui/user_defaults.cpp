@@ -27,20 +27,11 @@ int g_downgrade_count = 0;
 std::vector<std::string> g_downgrade_notices;
 
 // Loaded preset-library overrides, indexed by AxisPreset. Only the presets whose kAxisPresets row
-// has an adjustable face can ever be populated.
-//
-// Two faces, each with its own presence flag, and each with its own Read/Write/Erase/Adopt/Get
-// family below. That is a deliberate parallel design, not an abstraction left on the table: the
-// two are different kinds of quantity (std is continuous and an out-of-domain value is CLAMPED to
-// the nearest legal one; type is a discrete set and an out-of-set value has no nearest neighbour,
-// so it is REFUSED and the factory type stands), and folding them into one interface would either
-// give type a clamp it cannot have or take std's away. A third face would get a third family.
-struct AxisPresetOverride {
-  bool has_zenith_std = false;
-  float zenith_std = 0.0f;
-  bool has_zenith_type = false;
-  AxisDistType zenith_type = AxisDistType::kGauss;
-};
+// carries an override key can ever be populated. The element type — one preset's three axes, each
+// axis' three faces present-or-absent — is user_defaults.hpp's AxisPresetOverride; the store's
+// only write shape is a wholesale slot replacement (never a per-face patch against the old
+// value), because a partial update to this exact global has cost this scrum three code-review
+// rounds before.
 constexpr std::size_t kAxisPresetSlotCount = 6;  // AxisPreset has 6 enumerators
 static_assert(kAxisPresetSlotCount == static_cast<std::size_t>(AxisPreset::kCustom) + 1,
               "kAxisPresetSlotCount must track AxisPreset's enumerator count (kCustom is its "
@@ -350,13 +341,64 @@ void ApplyUserDefaultsOverlay(GuiState& state, const nlohmann::json& doc) {
   state = std::move(overlaid);
 }
 
-// Parse the preset-library half of an override document: root["presets"]["axis"]["<preset>"]
-// ["zenith_std"]. Pure function — it neither reads nor writes g_axis_overrides; the caller
-// (MakeNewDocumentState()) decides how the result replaces the global, unconditionally on every
-// call. A user may retune a built-in preset, but only within the domain ClassifyAxisPreset still
-// recognizes as that preset — otherwise the preset library would be able to define a "Column"
-// the classifier calls Custom. Values outside the domain are therefore clamped, and each clamp
-// is recorded in TakeUserDefaultsDowngradeNotices(): a silent clamp is a silent data loss.
+// JSON key names for one axis of one stored preset. Spelled once so the reader, the writer and
+// the tests cannot disagree about the document shape; the face suffix joins the axis prefix into
+// the stored key ("<axis>_mean" etc.). The zenith spellings are the pre-existing wire format —
+// files saved before azimuth/roll joined keep reading without migration.
+constexpr const char* kAxisSlotJsonPrefixes[] = { "zenith", "azimuth", "roll" };
+
+const char* AxisSlotJsonPrefix(AxisSlot slot) {
+  const auto index = static_cast<int>(slot);
+  if (index < 0 || index > 2) {
+    return "zenith";  // unreachable through the enum; keeps the array read total
+  }
+  return kAxisSlotJsonPrefixes[index];
+}
+
+// One face of one stored preset axis. Returns false when the key is absent or malformed — the
+// caller decides whether a malformed face is a silent absence (the panel's raw reads) or a
+// counted downgrade (the load path).
+bool ReadAxisPresetFloatFace(const nlohmann::json& node, const char* key, float& out) {
+  const auto it = node.find(key);
+  if (it == node.end() || !it->is_number()) {
+    return false;
+  }
+  const float value = it->get<float>();
+  if (!std::isfinite(value)) {
+    return false;
+  }
+  out = value;
+  return true;
+}
+
+bool ReadAxisPresetTypeFace(const nlohmann::json& node, const char* key, AxisDistType& out) {
+  const auto it = node.find(key);
+  if (it == node.end() || !it->is_string()) {
+    return false;
+  }
+  const auto parsed = AxisDistTypeFromJsonName(it->get<std::string>());
+  if (!parsed) {
+    return false;
+  }
+  out = *parsed;
+  return true;
+}
+
+// Defined beside the doc-read family below; the parse's type-refusal notice needs it first.
+AxisDist FactoryAxisDist(const AxisPresetEntry& entry, AxisSlot slot);
+
+// Parse the preset-library half of an override document: root["presets"]["axis"]["<preset>"], up
+// to three face keys per axis. Pure function — it neither reads nor writes g_axis_overrides; the
+// caller (MakeNewDocumentState()) decides how the result replaces the global, unconditionally on
+// every call.
+//
+// The three faces of one axis are parsed independently: a bad zenith_mean must not take a good
+// zenith_std down with it, and so across all nine keys. Each face lands in the slot only once its
+// own checks have passed. Numeric faces are stored verbatim, however far outside what the
+// classifier would keep — since the axis label went sticky, an out-of-range retune is an ordinary
+// state (the crystal carrying it shows the out-of-domain badge) — so the only refusals left are
+// the sanity ones: a non-number, a non-finite value, an unknown type spelling. Each refusal is
+// one downgrade notice; a silent drop is a silent data loss.
 AxisPresetOverrides ParseAxisPresetOverrides(const nlohmann::json& root) {
   AxisPresetOverrides result{};
 
@@ -373,7 +415,7 @@ AxisPresetOverrides ParseAxisPresetOverrides(const nlohmann::json& root) {
   }
 
   for (const auto& entry : kAxisPresets) {
-    if (!entry.has_adjustable_zenith_std) {
+    if (entry.override_json_name == nullptr) {
       continue;  // no key on disk for this preset — see AxisPresetEntry's field comments
     }
     if (!axis.contains(entry.override_json_name)) {
@@ -383,52 +425,68 @@ AxisPresetOverrides ParseAxisPresetOverrides(const nlohmann::json& root) {
     if (!node.is_object()) {
       continue;
     }
-    // The two faces are parsed independently: a bad zenith_type must not take a good zenith_std
-    // down with it, or vice versa. Each lands in `slot` only once its own checks have passed, and
-    // the slot is assigned as one whole value at the end.
+
     AxisPresetOverride slot{};
+    for (int axis_index = 0; axis_index < 3; ++axis_index) {
+      const AxisSlot axis = static_cast<AxisSlot>(axis_index);
+      const std::string prefix = AxisSlotJsonPrefix(axis);
 
-    if (node.contains("zenith_std")) {
-      const nlohmann::json& value_node = node["zenith_std"];
-      if (!value_node.is_number()) {
-        ++g_downgrade_count;
-        GUI_LOG_WARNING("[GUI] User defaults: presets.axis.{}.zenith_std is not a number; ignoring it",
-                        entry.override_json_name);
-      } else if (float value = value_node.get<float>(); !std::isfinite(value)) {
-        ++g_downgrade_count;
-        GUI_LOG_WARNING("[GUI] User defaults: presets.axis.{}.zenith_std is not finite; ignoring it",
-                        entry.override_json_name);
-      } else {
-        // Stored verbatim, however far outside what the classifier would keep. Since the axis label
-        // went sticky, an out-of-range retune is an ordinary state — the crystal carrying it shows
-        // the out-of-domain badge — not a value the store has to bend back into a recognizer's
-        // domain. Only the sanity checks above still refuse.
-        slot.has_zenith_std = true;
-        slot.zenith_std = value;
+      const std::string mean_key = prefix + "_mean";
+      const auto mean_it = node.find(mean_key);
+      if (mean_it != node.end()) {
+        float value = 0.0f;
+        if (!mean_it->is_number()) {
+          ++g_downgrade_count;
+          GUI_LOG_WARNING("[GUI] User defaults: presets.axis.{}.{} is not a number; ignoring it",
+                          entry.override_json_name, mean_key);
+        } else if (!std::isfinite(value = mean_it->get<float>())) {
+          ++g_downgrade_count;
+          GUI_LOG_WARNING("[GUI] User defaults: presets.axis.{}.{} is not finite; ignoring it",
+                          entry.override_json_name, mean_key);
+        } else {
+          slot.axes[axis_index].mean = value;
+        }
       }
-    }
 
-    if (node.contains("zenith_type")) {
-      const nlohmann::json& type_node = node["zenith_type"];
-      if (!type_node.is_string()) {
-        ++g_downgrade_count;
-        GUI_LOG_WARNING("[GUI] User defaults: presets.axis.{}.zenith_type is not a string; ignoring it",
-                        entry.override_json_name);
-      } else {
+      const std::string std_key = prefix + "_std";
+      const auto std_it = node.find(std_key);
+      if (std_it != node.end()) {
+        float value = 0.0f;
+        if (!std_it->is_number()) {
+          ++g_downgrade_count;
+          GUI_LOG_WARNING("[GUI] User defaults: presets.axis.{}.{} is not a number; ignoring it",
+                          entry.override_json_name, std_key);
+        } else if (!std::isfinite(value = std_it->get<float>())) {
+          ++g_downgrade_count;
+          GUI_LOG_WARNING("[GUI] User defaults: presets.axis.{}.{} is not finite; ignoring it",
+                          entry.override_json_name, std_key);
+        } else {
+          slot.axes[axis_index].std = value;
+        }
+      }
+
+      const std::string type_key = prefix + "_type";
+      const auto type_it = node.find(type_key);
+      if (type_it != node.end()) {
         // Two outcomes: a spelling the shared table knows is stored verbatim — in or out of what
-        // the classifier would keep this preset under, same sticky reasoning as the std face
+        // the classifier would keep this preset under, same sticky reasoning as the numeric faces
         // above — and a spelling it does not know has no distribution to name, so it is refused
         // whole (the built-in type stands) and reported.
-        const std::string spelled = type_node.get<std::string>();
-        const auto parsed = AxisDistTypeFromJsonName(spelled);
-        if (parsed) {
-          slot.has_zenith_type = true;
-          slot.zenith_type = *parsed;
+        if (!type_it->is_string()) {
+          ++g_downgrade_count;
+          GUI_LOG_WARNING("[GUI] User defaults: presets.axis.{}.{} is not a string; ignoring it",
+                          entry.override_json_name, type_key);
         } else {
-          NoteUserDefaultsDowngrade(std::string("Preset '") + entry.label + "' (presets.axis." +
-                                    entry.override_json_name + "): a zenith type of '" + spelled +
-                                    "' is not a known distribution type, so it was ignored and the built-in " +
-                                    AxisDistTypeLabel(entry.zenith.type) + " stays in effect.");
+          const auto parsed = AxisDistTypeFromJsonName(type_it->get<std::string>());
+          if (parsed) {
+            slot.axes[axis_index].type = *parsed;
+          } else {
+            NoteUserDefaultsDowngrade(std::string("Preset '") + entry.label + "' (presets.axis." +
+                                      entry.override_json_name + "): a " + type_key + " of '" +
+                                      type_it->get<std::string>() +
+                                      "' is not a known distribution type, so it was ignored and the built-in " +
+                                      AxisDistTypeLabel(FactoryAxisDist(entry, axis).type) + " stays in effect.");
+          }
         }
       }
     }
@@ -576,93 +634,122 @@ std::string DescribeAxisPresetDomain(AxisPreset preset) {
   return out;
 }
 
-std::optional<float> ReadAxisPresetZenithStdFromDoc(const nlohmann::json& doc, AxisPreset preset) {
+// The preset node of one override face, found defensively: the document is user-editable, and
+// operator[] on a non-object throws a type_error that would take the caller down over a
+// hand-edit. nullptr means "no storable preset" or "the document does not hold that node" — the
+// callers answer both as "nothing stored" / "nothing to do".
+const nlohmann::json* FindAxisPresetNode(const nlohmann::json& doc, AxisPreset preset) {
   const AxisPresetEntry& entry = AxisPresetEntryFor(preset);
-  if (!entry.has_adjustable_zenith_std || entry.override_json_name == nullptr || !doc.is_object()) {
-    return std::nullopt;
+  if (entry.override_json_name == nullptr || !doc.is_object()) {
+    return nullptr;
   }
-  // find() rather than the operator[] chain: the document is user-editable, and operator[] on a
-  // non-object throws a type_error that would take the caller down over a hand-edit.
   const auto presets = doc.find("presets");
   if (presets == doc.end() || !presets->is_object()) {
-    return std::nullopt;
+    return nullptr;
   }
   const auto axis = presets->find("axis");
   if (axis == presets->end() || !axis->is_object()) {
-    return std::nullopt;
+    return nullptr;
   }
   const auto node = axis->find(entry.override_json_name);
   if (node == axis->end() || !node->is_object()) {
-    return std::nullopt;
+    return nullptr;
   }
-  const auto value = node->find("zenith_std");
-  if (value == node->end() || !value->is_number()) {
-    return std::nullopt;
-  }
-  const float stored = value->get<float>();
-  if (!std::isfinite(stored)) {
-    return std::nullopt;
-  }
-  return stored;
+  return &(*axis)[entry.override_json_name];
 }
 
-void WriteAxisPresetZenithStdToDoc(nlohmann::json& doc, AxisPreset preset, float stored_value) {
-  const AxisPresetEntry& entry = AxisPresetEntryFor(preset);
-  if (!entry.has_adjustable_zenith_std || entry.override_json_name == nullptr) {
-    return;
+// The factory distribution of one preset's axis — the value every absent face falls back to.
+// Named because the load-time type-refusal notice and the effective resolution both need it, and
+// because entry.zenith/azimuth/roll spelled out per call site is exactly the index-mistake family
+// this file keeps closed.
+AxisDist FactoryAxisDist(const AxisPresetEntry& entry, AxisSlot slot) {
+  switch (slot) {
+    case AxisSlot::kZenith:
+      return entry.zenith;
+    case AxisSlot::kAzimuth:
+      return entry.azimuth;
+    case AxisSlot::kRoll:
+      return entry.roll;
   }
+  return entry.zenith;  // unreachable; silences -Wreturn-type
+}
+
+std::optional<float> ReadAxisPresetStdFromDoc(const nlohmann::json& doc, AxisPreset preset, AxisSlot slot) {
+  const nlohmann::json* node = FindAxisPresetNode(doc, preset);
+  if (node == nullptr) {
+    return std::nullopt;
+  }
+  float value = 0.0f;
+  if (!ReadAxisPresetFloatFace(*node, (std::string(AxisSlotJsonPrefix(slot)) + "_std").c_str(), value)) {
+    return std::nullopt;
+  }
+  return value;
+}
+
+std::optional<float> ReadAxisPresetMeanFromDoc(const nlohmann::json& doc, AxisPreset preset, AxisSlot slot) {
+  const nlohmann::json* node = FindAxisPresetNode(doc, preset);
+  if (node == nullptr) {
+    return std::nullopt;
+  }
+  float value = 0.0f;
+  if (!ReadAxisPresetFloatFace(*node, (std::string(AxisSlotJsonPrefix(slot)) + "_mean").c_str(), value)) {
+    return std::nullopt;
+  }
+  return value;
+}
+
+std::optional<AxisDistType> ReadAxisPresetTypeFromDoc(const nlohmann::json& doc, AxisPreset preset, AxisSlot slot) {
+  const nlohmann::json* node = FindAxisPresetNode(doc, preset);
+  if (node == nullptr) {
+    return std::nullopt;
+  }
+  AxisDistType value = AxisDistType::kGauss;
+  if (!ReadAxisPresetTypeFace(*node, (std::string(AxisSlotJsonPrefix(slot)) + "_type").c_str(), value)) {
+    return std::nullopt;
+  }
+  return value;
+}
+
+namespace {
+
+// The write-side node accessor: same lookup as FindAxisPresetNode, but the callers start from a
+// document this process controls (the panel's working copy), so operator[] normalization is fine
+// on the write path — the same stance WriteAxisPresetZenithStdToDoc already took.
+nlohmann::json& WriteAxisPresetNode(nlohmann::json& doc, AxisPreset preset) {
   if (!doc.is_object()) {
     doc = nlohmann::json::object();
   }
+  return doc["presets"]["axis"][AxisPresetEntryFor(preset).override_json_name];
+}
+
+}  // namespace
+
+void WriteAxisPresetStdToDoc(nlohmann::json& doc, AxisPreset preset, AxisSlot slot, float stored_value) {
+  if (AxisPresetEntryFor(preset).override_json_name == nullptr) {
+    return;
+  }
   // Surgical: ONE key is touched. The GuiState half of the document and every other preset survive
   // by construction rather than by each caller remembering to preserve them.
-  doc["presets"]["axis"][entry.override_json_name]["zenith_std"] = stored_value;
+  WriteAxisPresetNode(doc, preset)[std::string(AxisSlotJsonPrefix(slot)) + "_std"] = stored_value;
 }
 
-std::optional<AxisDistType> ReadAxisPresetZenithTypeFromDoc(const nlohmann::json& doc, AxisPreset preset) {
-  const AxisPresetEntry& entry = AxisPresetEntryFor(preset);
-  if (!entry.has_adjustable_zenith_std || entry.override_json_name == nullptr || !doc.is_object()) {
-    return std::nullopt;
+void WriteAxisPresetMeanToDoc(nlohmann::json& doc, AxisPreset preset, AxisSlot slot, float stored_value) {
+  if (AxisPresetEntryFor(preset).override_json_name == nullptr) {
+    return;
   }
-  // find() throughout, for the same reason as ReadAxisPresetZenithStdFromDoc: the document is
-  // user-editable and operator[] on a non-object throws.
-  const auto presets = doc.find("presets");
-  if (presets == doc.end() || !presets->is_object()) {
-    return std::nullopt;
-  }
-  const auto axis = presets->find("axis");
-  if (axis == presets->end() || !axis->is_object()) {
-    return std::nullopt;
-  }
-  const auto node = axis->find(entry.override_json_name);
-  if (node == axis->end() || !node->is_object()) {
-    return std::nullopt;
-  }
-  const auto value = node->find("zenith_type");
-  if (value == node->end() || !value->is_string()) {
-    return std::nullopt;
-  }
-  // RAW in the same sense as the std reader: any recognised spelling is returned, in or out of
-  // what the classifier would keep this preset under (the sticky-label reasoning the std face
-  // states). A spelling the shared table does not know has no AxisDistType to return and reads as
-  // absent.
-  return AxisDistTypeFromJsonName(value->get<std::string>());
+  WriteAxisPresetNode(doc, preset)[std::string(AxisSlotJsonPrefix(slot)) + "_mean"] = stored_value;
 }
 
-void WriteAxisPresetZenithTypeToDoc(nlohmann::json& doc, AxisPreset preset, AxisDistType stored_type) {
-  const AxisPresetEntry& entry = AxisPresetEntryFor(preset);
-  if (!entry.has_adjustable_zenith_std || entry.override_json_name == nullptr) {
+void WriteAxisPresetTypeToDoc(nlohmann::json& doc, AxisPreset preset, AxisSlot slot, AxisDistType stored_type) {
+  if (AxisPresetEntryFor(preset).override_json_name == nullptr) {
     return;
   }
   if (static_cast<int>(stored_type) < 0 || stored_type >= AxisDistType::kCount) {
     return;  // kCount has no spelling, so there is no document value it could name
   }
-  if (!doc.is_object()) {
-    doc = nlohmann::json::object();
-  }
-  // Surgical, like the std writer: ONE key, spelled with the table the .lmc writer spells its
-  // axis types with (AxisDistTypeJsonName), so the two documents cannot disagree on a name.
-  doc["presets"]["axis"][entry.override_json_name]["zenith_type"] = AxisDistTypeJsonName(stored_type);
+  // ONE key, spelled with the table the .lmc writer spells its axis types with
+  // (AxisDistTypeJsonName), so the two documents cannot disagree on a name.
+  WriteAxisPresetNode(doc, preset)[std::string(AxisSlotJsonPrefix(slot)) + "_type"] = AxisDistTypeJsonName(stored_type);
 }
 
 std::vector<WedgeMillerTriple> ReadWedgePresetsFromDoc(const nlohmann::json& doc) {
@@ -768,21 +855,22 @@ void ResetUserWedgePresets() {
 // pruned when its last key goes, then `axis`, then `presets`, so the two faces never leave each
 // other a skeleton and never take each other's value away.
 namespace {
-void EraseAxisPresetZenithKeyFromDoc(nlohmann::json& doc, AxisPreset preset, const char* key) {
+
+// One face-key eraser, shared by all three faces. Erases ONLY its own key, and the node is pruned
+// when its last key goes, then `axis`, then `presets`, so no face ever leaves another a skeleton
+// and none takes another's value away.
+void EraseAxisPresetKeyFromDoc(nlohmann::json& doc, AxisPreset preset, const std::string& key) {
   const AxisPresetEntry& entry = AxisPresetEntryFor(preset);
-  if (!entry.has_adjustable_zenith_std || entry.override_json_name == nullptr) {
+  if (entry.override_json_name == nullptr) {
     return;
   }
-  // Same normalization as WriteAxisPresetZenithStdToDoc: a malformed top-level document (hand-edited,
-  // truncated, or a bare null/array) must become a valid empty object rather than being written back
-  // to disk unchanged by the caller.
-  //
-  // Reachability, stated rather than implied: no production caller gets here. Every one of them
-  // passes the panel's working copy, which is either a document read from the override file or a
-  // fresh object, so it is an object by construction. The branch is reached only by the unit test
-  // that hands it a json::array() on purpose. It is kept because the normalization is the same
-  // shape the axis-preset writer already owes its callers, not because a real path was observed
-  // producing a non-object root.
+  // Same normalization as the writers: a malformed top-level document (hand-edited, truncated, or
+  // a bare null/array) must become a valid empty object rather than being written back to disk
+  // unchanged by the caller. Reachability, stated rather than implied: no production caller gets
+  // here — every one of them passes the panel's working copy, which is an object by construction.
+  // The branch is reached only by the unit test that hands it a json::array() on purpose. It is
+  // kept because the normalization is the same shape the writers already owe their callers, not
+  // because a real path was observed producing a non-object root.
   if (!doc.is_object()) {
     doc = nlohmann::json::object();
   }
@@ -811,14 +899,43 @@ void EraseAxisPresetZenithKeyFromDoc(nlohmann::json& doc, AxisPreset preset, con
     doc.erase("presets");
   }
 }
+
 }  // namespace
 
-void EraseAxisPresetZenithStdFromDoc(nlohmann::json& doc, AxisPreset preset) {
-  EraseAxisPresetZenithKeyFromDoc(doc, preset, "zenith_std");
+void EraseAxisPresetStdFromDoc(nlohmann::json& doc, AxisPreset preset, AxisSlot slot) {
+  EraseAxisPresetKeyFromDoc(doc, preset, std::string(AxisSlotJsonPrefix(slot)) + "_std");
 }
 
-void EraseAxisPresetZenithTypeFromDoc(nlohmann::json& doc, AxisPreset preset) {
-  EraseAxisPresetZenithKeyFromDoc(doc, preset, "zenith_type");
+void EraseAxisPresetMeanFromDoc(nlohmann::json& doc, AxisPreset preset, AxisSlot slot) {
+  EraseAxisPresetKeyFromDoc(doc, preset, std::string(AxisSlotJsonPrefix(slot)) + "_mean");
+}
+
+void EraseAxisPresetTypeFromDoc(nlohmann::json& doc, AxisPreset preset, AxisSlot slot) {
+  EraseAxisPresetKeyFromDoc(doc, preset, std::string(AxisSlotJsonPrefix(slot)) + "_type");
+}
+
+void EraseAxisPresetOverridesFromDoc(nlohmann::json& doc, AxisPreset preset) {
+  const AxisPresetEntry& entry = AxisPresetEntryFor(preset);
+  if (entry.override_json_name == nullptr) {
+    return;
+  }
+  if (!doc.is_object()) {
+    doc = nlohmann::json::object();
+  }
+  const auto presets_it = doc.find("presets");
+  if (presets_it == doc.end() || !presets_it->is_object()) {
+    return;
+  }
+  const auto axis_it = presets_it->find("axis");
+  if (axis_it != presets_it->end() && axis_it->is_object()) {
+    axis_it->erase(entry.override_json_name);
+    if (axis_it->empty()) {
+      presets_it->erase("axis");
+    }
+  }
+  if (presets_it->empty()) {
+    doc.erase("presets");
+  }
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -998,59 +1115,57 @@ void ResetIneligibleScalarsThenApplyAppOverride(GuiState& state, const nlohmann:
   }
 }
 
-void AdoptAxisPresetZenithStdOverrideInMemory(AxisPreset preset, std::optional<float> stored_value) {
+void AdoptAxisPresetFacesInMemory(AxisPreset preset, const AxisPresetOverride& override) {
   const auto slot = static_cast<std::size_t>(preset);
   if (slot >= kAxisPresetSlotCount) {
     return;
   }
   // Whole-struct assignment, never "clear the fields then refill them". This scrum has already
-  // spent three code-review rounds on partial updates to this exact global. The next value is
-  // built complete beside the slot — the other face carried over unchanged — and assigned once.
-  AxisPresetOverride next = g_axis_overrides.slots[slot];
-  next.has_zenith_std = stored_value.has_value();
-  next.zenith_std = stored_value.value_or(0.0f);
-  g_axis_overrides.slots[slot] = next;
+  // spent three code-review rounds on partial updates to this exact global.
+  g_axis_overrides.slots[slot] = override;
 }
 
-void AdoptAxisPresetZenithTypeOverrideInMemory(AxisPreset preset, std::optional<AxisDistType> stored_type) {
-  const auto slot = static_cast<std::size_t>(preset);
-  if (slot >= kAxisPresetSlotCount) {
-    return;
-  }
-  // Mirrors AdoptAxisPresetZenithStdOverrideInMemory: complete next value, one assignment.
-  AxisPresetOverride next = g_axis_overrides.slots[slot];
-  next.has_zenith_type = stored_type.has_value();
-  next.zenith_type = stored_type.value_or(AxisDistType::kGauss);
-  g_axis_overrides.slots[slot] = next;
-}
-
-AxisDist EffectiveAxisPresetZenith(const AxisPresetEntry& entry) {
-  AxisDist zenith = entry.zenith;
-  if (const auto stored = GetUserAxisPresetZenithStdOverride(entry.id)) {
-    zenith.std = *stored;
-  }
+AxisDist EffectiveAxisPresetDist(const AxisPresetEntry& entry, AxisSlot slot) {
+  AxisDist dist = FactoryAxisDist(entry, slot);
+  const AxisDistOverride& stored =
+      g_axis_overrides.slots[static_cast<std::size_t>(entry.id)].axes[static_cast<int>(slot)];
   // Trusted as stored: the cache is only ever filled by ParseAxisPresetOverrides, which refuses
-  // an out-of-set type before it gets here, and by the panel's commit, which validates first.
-  if (const auto stored = GetUserAxisPresetZenithTypeOverride(entry.id)) {
-    zenith.type = *stored;
+  // a non-finite value and an out-of-set type before it gets here, and by the panel's commit,
+  // which validates first.
+  if (stored.mean.has_value()) {
+    dist.mean = *stored.mean;
   }
-  return zenith;
+  if (stored.std.has_value()) {
+    dist.std = *stored.std;
+  }
+  if (stored.type.has_value()) {
+    dist.type = *stored.type;
+  }
+  return dist;
 }
 
-std::optional<AxisDistType> GetUserAxisPresetZenithTypeOverride(AxisPreset preset) {
-  const auto slot = static_cast<std::size_t>(preset);
-  if (slot >= kAxisPresetSlotCount || !g_axis_overrides.slots[slot].has_zenith_type) {
+std::optional<float> GetUserAxisPresetStdOverride(AxisPreset preset, AxisSlot slot) {
+  const auto preset_slot = static_cast<std::size_t>(preset);
+  if (preset_slot >= kAxisPresetSlotCount) {
     return std::nullopt;
   }
-  return g_axis_overrides.slots[slot].zenith_type;
+  return g_axis_overrides.slots[preset_slot].axes[static_cast<int>(slot)].std;
 }
 
-std::optional<float> GetUserAxisPresetZenithStdOverride(AxisPreset preset) {
-  const auto slot = static_cast<std::size_t>(preset);
-  if (slot >= kAxisPresetSlotCount || !g_axis_overrides.slots[slot].has_zenith_std) {
+std::optional<float> GetUserAxisPresetMeanOverride(AxisPreset preset, AxisSlot slot) {
+  const auto preset_slot = static_cast<std::size_t>(preset);
+  if (preset_slot >= kAxisPresetSlotCount) {
     return std::nullopt;
   }
-  return g_axis_overrides.slots[slot].zenith_std;
+  return g_axis_overrides.slots[preset_slot].axes[static_cast<int>(slot)].mean;
+}
+
+std::optional<AxisDistType> GetUserAxisPresetTypeOverride(AxisPreset preset, AxisSlot slot) {
+  const auto preset_slot = static_cast<std::size_t>(preset);
+  if (preset_slot >= kAxisPresetSlotCount) {
+    return std::nullopt;
+  }
+  return g_axis_overrides.slots[preset_slot].axes[static_cast<int>(slot)].type;
 }
 
 void ResetUserAxisPresetOverrides() {

@@ -1684,7 +1684,9 @@ static void RenderAxisModal(GuiState& state) {
           const AxisTriple leaving = { g_axis_buf[0], g_axis_buf[1], g_axis_buf[2] };
           std::optional<AxisTriple> definition;
           if (entry.id != AxisPreset::kCustom) {
-            definition = AxisTriple{ EffectiveAxisPresetZenith(entry), entry.azimuth, entry.roll };
+            definition = AxisTriple{ EffectiveAxisPresetDist(entry, AxisSlot::kZenith),
+                                     EffectiveAxisPresetDist(entry, AxisSlot::kAzimuth),
+                                     EffectiveAxisPresetDist(entry, AxisSlot::kRoll) };
           }
           AxisPresetMemorySlots& slots = g_axis_preset_memory[crystal_id];
           const AxisChipSwitch press = SwitchAxisChip(slots, active, leaving, entry.id, definition);
@@ -1730,8 +1732,8 @@ static void RenderAxisModal(GuiState& state) {
   RenderAxisDist("Roll", g_axis_buf[2], 0.0f, 360.0f, g_pull_adopted.axis[2]);
 
   // -- Reset All (Axis tab) --
-  // Reloads the CURRENT label's definition into the three rows above, the zenith through
-  // EffectiveAxisPresetZenith (the user's retuned value from the preset library when one is
+  // Reloads the CURRENT label's definition into the three rows above, every axis through
+  // EffectiveAxisPresetDist (the user's retuned values from the preset library where one is
   // stored). It is "pull this label's parameters back", nothing more: the label is not touched
   // (the chips are its only writer), the memory is not cleared (a slot is rewritten by the next
   // leave anyway), and neither is the preview pose (the modal preview is pixel-identical across
@@ -1752,14 +1754,14 @@ static void RenderAxisModal(GuiState& state) {
   }
   if (ImGui::Button("Reset All##axis_reset", ImVec2(UiPx(120.0f), 0.0f))) {
     const auto& entry = AxisPresetEntryFor(active);
-    g_axis_buf[0] = EffectiveAxisPresetZenith(entry);
-    g_axis_buf[1] = entry.azimuth;
-    g_axis_buf[2] = entry.roll;
+    g_axis_buf[0] = EffectiveAxisPresetDist(entry, AxisSlot::kZenith);
+    g_axis_buf[1] = EffectiveAxisPresetDist(entry, AxisSlot::kAzimuth);
+    g_axis_buf[2] = EffectiveAxisPresetDist(entry, AxisSlot::kRoll);
   }
   // AllowWhenDisabled so the Custom case can still say why its button is inert.
   if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip | ImGuiHoveredFlags_AllowWhenDisabled)) {
     ImGui::SetTooltip("%s", custom_label ? "Custom has no definition to reset to." :
-                                           "Resets this label's parameters to its definition (zenith as retuned in the "
+                                           "Resets this label's parameters to its definition (as retuned in the "
                                            "preset library). The label, the memory and the view are unchanged.");
   }
   if (custom_label) {
