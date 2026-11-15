@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794774686263,
+  "lastUpdate": 1794774688775,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9620,50 +9620,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "b45848cea4b9c09ffeec37e4f3f442ae13cd62e6",
-          "message": "Merge pull request #489 from LoveDaisy/fix/look-at-row-grid-polish\n\nFix: revert right panel to 300px and end the Look At row on the Lock square",
-          "timestamp": "2026-10-13T07:07:41+08:00",
-          "tree_id": "5b2702f367d17c7dd47f5ddeb66a544d1cd3c8e1",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/b45848cea4b9c09ffeec37e4f3f442ae13cd62e6"
-        },
-        "date": 1791846643819,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 79.6,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 100.2,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 97.8,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 95.2,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "5b267889368334c2aed943d7bae310becb382cba",
           "message": "Merge pull request #491 from LoveDaisy/chore/release-4.7.3-recut\n\nchore(release): recut 4.7.3",
           "timestamp": "2026-10-13T07:28:24+08:00",
@@ -14003,6 +13959,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 95.5,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "46f487f792dd5402b43549dd36dba9e3d1805a08",
+          "message": "Merge pull request #595 from LoveDaisy/feat/gate-gui-real-timing-leg\n\nfeat(gate): add gui-real-timing leg to the local throughput gate",
+          "timestamp": "2026-11-16T04:27:19+08:00",
+          "tree_id": "c7cef6104878196142c2a0ae33a82a596024d99c",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/46f487f792dd5402b43549dd36dba9e3d1805a08"
+        },
+        "date": 1794774687960,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 84.2,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 100,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 95.3,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 93.6,
             "unit": "%"
           }
         ]
