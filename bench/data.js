@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794746567918,
+  "lastUpdate": 1794746569653,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9608,50 +9608,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "e1ac9076ac5ba61fb78e51027bd35f89f6be05d7",
-          "message": "Merge pull request #486 from LoveDaisy/fix/sun-diameter-zero-min\n\nfix(gui): allow sun diameter 0 (point source) in the GUI domain",
-          "timestamp": "2026-10-12T20:22:38+08:00",
-          "tree_id": "306c8309b25fc330b0d3e620e8b4ba4b488264b3",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/e1ac9076ac5ba61fb78e51027bd35f89f6be05d7"
-        },
-        "date": 1791807954044,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 86.6,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 99.8,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 102.4,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 94.8,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "cdb4c383c1637dc4de908ea64859de306a7ec22c",
           "message": "Merge pull request #487 from LoveDaisy/fix/look-at-row-alignment\n\nfix(gui): align the View Look At row to the panel's control grid",
           "timestamp": "2026-10-12T22:17:52+08:00",
@@ -13986,6 +13942,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 91.9,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "0be2a1d34f5f22b099bd62e5cff395eee4233514",
+          "message": "Merge pull request #591 from LoveDaisy/feat/gui-feedback-1114\n\nfeat(gui-feedback-1114): overlay projection convergence, status bar, curve region rework, 3D reset, globe colormap",
+          "timestamp": "2026-11-15T20:37:40+08:00",
+          "tree_id": "ee20e2bcb9393d8730a0ad997abb40f1350ecc02",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/0be2a1d34f5f22b099bd62e5cff395eee4233514"
+        },
+        "date": 1794746569321,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 106.3,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 100,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 98.5,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 92.9,
             "unit": "%"
           }
         ]
