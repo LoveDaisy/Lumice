@@ -507,7 +507,7 @@ int main(int argc, char** argv) {
     // window's map face writes the wait-feedback texts the status bar's query segment reads.
     gui::RenderAnalyzeRaypathViewWindow(gui::g_state);
     // The Pose & trace floating window (contract §7), the same mirroring rule one line below
-    // its sibling: its globe region writes the fiber wait-feedback field on the Render frames
+    // its sibling: its footer writes the fiber wait-feedback field on the Render frames
     // it is the sole render site for. A no-op while analyze_pose_view_open is false.
     gui::RenderAnalyzePoseViewWindow(gui::g_state);
     gui::RenderStatusBar(layout_width, layout_height);

@@ -396,13 +396,13 @@ Render 与 Analyze 共享**同一份**取景/曝光/辅助线显示状态（disp
 
 | 态 | 主工作区 | Raypath view 窗 | 姿态/轨迹窗 |
 |---|---|---|---|
-| 未选择 | 列表空态行（锚 `analysis_panel.cpp:1529-1531`）；诊断区引导块（§9.1，→R7） | 无选择文案（锚 `analyze_map_view.cpp:1152-1157`，→R3） | 前置不足文案（锚 `analyze_point_view.cpp:784-796`，→R4） |
+| 未选择 | 列表空态行（锚 `analysis_panel.cpp:1529-1531`）；诊断区引导块（§9.1，→R7） | 底栏 `No selection`，完整引导居中在空画布内（§15） | 底栏 `No target`，各区保留前置不足的领域引导（§15） |
 | 等待 | 列表选中行活动点＋主状态栏查询段；诊断区 survey 等待行 | 浮窗全宽单行 map 底栏（队列、阶段与 elapsed 原文；长文 hover 全文，§15） | 浮窗全宽单行 point 底栏（globe/3D 等处不再重复播报；主窗点摘要仍独立） |
 | 有结果 | 列表行（份额/累计/±，锚 `analysis_panel.cpp:1565-1662`，→R2）；诊断区类概览＋点摘要（锚 `analyze_workspace.cpp:352-370`，→R7） | raster＋锚点＋读数（锚 `analyze_map_view.cpp:1205-1240`，→R3） | fiber＋3D 路径＋因素（锚 `analyze_point_view.cpp:900-1069,1184-1437`，→R4/R5） |
 | 特殊完成态（rank-0 / 无分量 / 无有效样本） | 诊断区承载**完整答案**：rank-0 质量数值行集（锚 `analyze_point_view.cpp:1518-1531`）；无分量 reach 判定＋discovery 完备性注（锚 `analyze_point_view.cpp:1536-1560`）；无有效样本行（锚 `analyze_point_view.cpp:1605-1607`）——不以空白或零冒充（→R7） | 无此态独立呈现（光路层无点结果依赖）；窗内容照常 | 诚实空态＋指针到诊断区：rank-0「no fiber to project — the details carry the mass numbers」（锚 `analyze_point_view.cpp:828-834,1124-1132`）；无分量「No fiber here…」＋reach 文案（锚 `analyze_point_view.cpp:848-865,1536-1551`）；无有效样本行（锚 `analyze_point_view.cpp:891-894,1144-1147`）（→R4） |
 | partial | 诊断区 partial 横幅（锚 `analyze_point_view.cpp:1508-1513`，→R7） | 图区沿用文档态注（→R3） | 「Partial document …」注（锚 `analyze_point_view.cpp:839-843,1136-1140`，→R4） |
-| 拒答 | 诊断区具名拒答（multi_layer 等，锚 `analyze_workspace.cpp:346-351`；点面拒答 `analyze_point_view.cpp:1489-1500`，→R7） | 拒答行（锚 `analyze_map_view.cpp:1162-1166`，→R3） | globe/3D 拒答行＋拒绝原因（锚 `analyze_point_view.cpp:812-815,1169-1183`，→R4） |
-| 取消 | 诊断区 cancelled 行（锚 `analyze_workspace.cpp:339-345`；point `analyze_point_view.cpp:1481-1488`，→R7） | cancelled 行（锚 `analyze_map_view.cpp:1158-1161`，→R3） | globe/3D cancelled 行（锚 `analyze_point_view.cpp:807-811,1107-1109`，→R4） |
+| 拒答 | 诊断区具名拒答（multi_layer 等，锚 `analyze_workspace.cpp:346-351`；点面拒答 `analyze_point_view.cpp:1489-1500`，→R7） | map 底栏 `Refused`＋原因；长文省略、hover 全文，失败重算仍保旧图限定（§15） | point 底栏 `Refused`＋原因；长文 hover 全文，globe/3D 不再重复播报（§15） |
+| 取消 | 诊断区 cancelled 行（锚 `analyze_workspace.cpp:339-345`；point `analyze_point_view.cpp:1481-1488`，→R7） | map 底栏 `Cancelled`，保留冻结图与显式 Retry 提示（§15） | point 底栏 `Cancelled`，保留重新设点/选类提示；各区不重复 cancelled 行（§15） |
 | 多窗口 | 主窗各区照常（→R1/R2/R7） | 窗随选中同步（§6）；可与其他窗并存，单屏允许遮挡（§7，→R3） | 同左（§7，→R4/R5） |
 
 「结论先行」层级规则（用户候选定稿方向）：诊断区先给结论（状态/概要/摘要），证据展开（因素读数、
@@ -410,8 +410,9 @@ caliber）就近在对应窗口；未知/拒答/partial 不以空白或零冒充
 
 ## 11. 内容预算核对
 
-> R4/R5/R7 是旧空间的预算与后续 as-built 量测，不因本轮方案倒改；新几何账见 §16.3 与
-> §16.4.1（已渲染校准：1x/1.5x/2x 真机实测，见 §16.4.1 as-built 记录）。
+> R3/R4/R5/R7 是旧空间的预算与后续 as-built 量测，不倒改旧测量。R3 的方形图/等待行高度
+> 账亦为加入共享底栏前的历史记录，不是当前 canvas 或正文预算；现役底栏和真实帧验收见 §15。
+> 其余新几何账见 §16.3 与 §16.4.1（后者已注明底栏加入前后的预算边界）。
 
 **量测来源声明**：窗口常量锚定（`gui_constants.hpp:27-30` 窗口 1600×980 默认 / 1024×640 最小；
 `:49-55` 顶栏 40/状态栏 28/左栏 300/右列 400）＋ Roboto Medium 15px（1x 设计基准，
@@ -608,7 +609,8 @@ Windows/Linux 真机输入已测。最终执行结果存于测试报告；这些
   不截断时不另播全文；健康态只显示状态词，不复制成员数、λ 或物理读数。
   Pose 的 `No target` / `Waiting` / `Cancelled` / `Refused` / `Ready` / `Partial` 在底栏单点显示，
   四区旧短状态及重复等待/拒答退出；无分量、无合法轨迹、测度不可用与具体结果的 partial 限定仍就近保留。
-  现有外框默认/最小尺寸、Retry/取消行为及分隔手动优先不变。
+  现有外框默认/最小尺寸、Retry/取消行为及分隔手动优先不变。§16.1.1 的 Cancel/Retry 同排
+  状态描述按钮当前动作档位，底栏描述查询生命周期；两者不合并成新的状态机。
 - **可见区而非请求尺寸**：浮窗的名义下限可能高于实际 viewport。分隔应划分实际可见 client 区，
   而非一段自身 ScrollMax=0、祖先却已裁掉的不可恢复后缀；这不扩大外窗，也不放宽 canvas 四边包含。
 - **真实复用边界**：`canvas_report_layout.hpp` 仅拥有几何分配与可见 client 区；map、globe、3D、曲线

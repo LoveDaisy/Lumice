@@ -2178,8 +2178,8 @@ void RenderAnalyzeRaypathViewWindow(GuiState& state) {
   // not); this window keeps only its own wait-feedback hygiene: on the Render-workspace frames
   // it is the map fields' — and the staleness hints' — only render site, so a field's content is
   // exactly what the user saw THIS frame — the site that can draw it owns the clear. On an
-  // Analyze frame the workspace entry already pumped and cleared; this window's map region is
-  // then that frame's only map-field writer.
+  // Analyze frame the workspace entry already pumped and cleared; the footer below is
+  // then that frame's only map-wait-field writer.
   if (state.workspace.mode != GuiState::WorkspaceMode::kAnalyze) {
     WaitFeedbackTexts& feedback = state.analysis.wait_feedback_texts;
     feedback.map_wait_line.clear();
