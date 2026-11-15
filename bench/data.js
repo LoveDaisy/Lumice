@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794768026830,
+  "lastUpdate": 1794768029092,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9620,50 +9620,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "962a92222a309a30e539b51a23aaafe5da021605",
-          "message": "Merge pull request #488 from LoveDaisy/fix/ci-seed-audit-false-positive\n\nfix(ci): fix ccache seed audit false positive (one write per miss)",
-          "timestamp": "2026-10-13T00:11:07+08:00",
-          "tree_id": "b8ad04d108363e75b26db167440a99bf58627e1e",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/962a92222a309a30e539b51a23aaafe5da021605"
-        },
-        "date": 1791821674878,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 79.4,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 99.7,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 98.7,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 93.6,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "b45848cea4b9c09ffeec37e4f3f442ae13cd62e6",
           "message": "Merge pull request #489 from LoveDaisy/fix/look-at-row-grid-polish\n\nFix: revert right panel to 300px and end the Look At row on the Lock square",
           "timestamp": "2026-10-13T07:07:41+08:00",
@@ -14003,6 +13959,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 93.9,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "a51a333e8551b7b442d82eafe5b20ffc655ac8b4",
+          "message": "Merge pull request #593 from LoveDaisy/feat/sigill-ubsan-boundary-probe\n\ndocs(test): SIGILL sanitizer campaign evidence — blind samples, exit D maintained",
+          "timestamp": "2026-11-16T02:36:27+08:00",
+          "tree_id": "91940051fe9ac76f7b9fc26b9defb37cb0df3ad5",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/a51a333e8551b7b442d82eafe5b20ffc655ac8b4"
+        },
+        "date": 1794768028462,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 89.1,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 100.1,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 98,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 95.5,
             "unit": "%"
           }
         ]
