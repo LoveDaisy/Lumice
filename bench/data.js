@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794779929214,
+  "lastUpdate": 1794779931438,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9620,50 +9620,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "5b267889368334c2aed943d7bae310becb382cba",
-          "message": "Merge pull request #491 from LoveDaisy/chore/release-4.7.3-recut\n\nchore(release): recut 4.7.3",
-          "timestamp": "2026-10-13T07:28:24+08:00",
-          "tree_id": "b91244d1d5185b200796d088072f6fd80ca186d1",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/5b267889368334c2aed943d7bae310becb382cba"
-        },
-        "date": 1791847905236,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 97.4,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 99.9,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 99,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 92.9,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "7ce6259807c4d988af8af1a1bee70b276ca2173e",
           "message": "Merge pull request #492 from LoveDaisy/chore/raypath-docs-current-state\n\ndocs(raypath): align analysis docs with the current product state",
           "timestamp": "2026-10-14T18:27:14+08:00",
@@ -14003,6 +13959,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 93.6,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "5ecd6e9eb61b3eb52edd1c4c9527849b0a6316b9",
+          "message": "Merge pull request #596 from LoveDaisy/feat/crystal-param-hash-signed-overflow\n\nfix(gui): move CrystalParamHash to uint32_t domain",
+          "timestamp": "2026-11-16T05:53:54+08:00",
+          "tree_id": "9e62e445f596c20f1ab5d717985d2d86536ae86e",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/5ecd6e9eb61b3eb52edd1c4c9527849b0a6316b9"
+        },
+        "date": 1794779930822,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 81.1,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 99.8,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 98.9,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 95.6,
             "unit": "%"
           }
         ]
