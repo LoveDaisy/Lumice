@@ -3743,6 +3743,199 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
     };
   }
   // ===================================================================================
+  // The wedge dropdown under a detached-capable editor: visibility, selectability and the
+  // TopMost mechanism pin.
+  //
+  // User-reported defect (2026-11-15): with the Entry Edit window dragged partly outside the
+  // main window, the pyramid Upper/Lower A dropdown opens invisible and unselectable.
+  // White-box chain (vendored ImGui v1.91.8-docking): a popup whose rect is not contained in
+  // its host viewport gets its own OS viewport created late in Begin (imgui.cpp:7794-7806)
+  // without TopMost, while the Immediate-mode Entry Edit window itself is TopMost — on macOS
+  // that is NSWindow layer 0 vs layer 3, so the popup lands behind its own parent. The native
+  // combo paths already arm the WindowClass (SetNextComboPopupTopMost); the ArrowButton →
+  // OpenPopup → BeginPopup path in SliderWithPresetEdit was the uncovered one.
+  //
+  // What the hidden harness can and cannot prove. It runs without ViewportsEnable (a runtime
+  // flip is structurally unsafe), so no scene here ever splits a real OS window, and the
+  // containment leg below is green before the fix by construction: the single viewport is the
+  // whole framebuffer and ImGui clamps popups into it. The red/green anchor is the WindowClass
+  // assertion placed last in each scene: the mechanism the OS-level defect needs, armed or
+  // not. Actual z-order behavior rests on the source chain above plus the real-GUI
+  // verification recorded in the task progress — not on this file.
+  //
+  // Scene matrix: {normal, flush right, flush bottom} × {Upper A, Lower A}. Edge scenes place
+  // the editor flush against the framebuffer edge — the geometry where the popup would
+  // overflow if ImGui did not clamp it — while every clicked widget stays inside the
+  // framebuffer (the task plan forbids building evidence on a precondition that has silently
+  // scrolled or moved offscreen).
+  // ===================================================================================
+  {
+    struct WedgePopupScene {
+      const char* name;    // full registered test name — IM_REGISTER_TEST stores the pointer, so
+                           // this must be a literal, not a buffer assembled at loop time
+      const char* row_id;  // the SliderWithPresetEdit label, e.g. "Upper A##modal_cr"
+      bool upper;
+      int spot;  // 0 normal, 1 flush right, 2 flush bottom
+    };
+    static const WedgePopupScene kWedgePopupScenes[] = {
+      { "wedge_preset_popup_normal_upper", "Upper A##modal_cr", true, 0 },
+      { "wedge_preset_popup_normal_lower", "Lower A##modal_cr", false, 0 },
+      { "wedge_preset_popup_right_edge_upper", "Upper A##modal_cr", true, 1 },
+      { "wedge_preset_popup_right_edge_lower", "Lower A##modal_cr", false, 1 },
+      { "wedge_preset_popup_bottom_edge_upper", "Upper A##modal_cr", true, 2 },
+      { "wedge_preset_popup_bottom_edge_lower", "Lower A##modal_cr", false, 2 },
+    };
+    for (int i = 0; i < IM_ARRAYSIZE(kWedgePopupScenes); ++i) {
+      ImGuiTest* t = IM_REGISTER_TEST(engine, "edit_modal", kWedgePopupScenes[i].name);
+      t->ArgVariant = i;
+      t->TestFunc = [](ImGuiTestContext* ctx) {
+        const WedgePopupScene& scene = kWedgePopupScenes[ctx->Test->ArgVariant];
+        ResetTestState();
+        const ScopedPopups popup_guard(ctx);
+        gui::g_state.modal_immediate_mode = true;
+        ctx->Yield(2);
+
+        OpenCardEditor(ctx, 0, kCrystalTabRef);
+        ctx->Yield(4);
+        ImGuiWindow* editor = ctx->GetWindowByRef("Edit Entry");
+        IM_CHECK(editor != nullptr);
+        ImVec2 editor_pos(760.0f,
+                          40.0f);  // known-safe normal spot; see test_gui_modal_layout for the sticky-Pos family
+        if (scene.spot == 1) {
+          editor_pos.x = ImGui::GetIO().DisplaySize.x - editor->Size.x;
+        } else if (scene.spot == 2) {
+          editor_pos.y = ImGui::GetIO().DisplaySize.y - editor->Size.y;
+        }
+        ctx->WindowMove("Edit Entry", editor_pos);
+        ctx->Yield(2);
+
+        // The wedge rows exist on a Pyramid only; on a Prism there is no dropdown to open.
+        ctx->ItemClick("**/Pyramid##modal");
+        ctx->Yield(3);
+
+        char arrow_ref[72];
+        std::snprintf(arrow_ref, sizeof(arrow_ref), "**/##%s_arrow", scene.row_id);
+        const float before = scene.upper ? EntryCrystal().upper_alpha : EntryCrystal().lower_alpha;
+
+        // A preset distinct from the current value, so the round-trip below cannot pass by
+        // matching what is already there.
+        const std::vector<gui::WedgePreset> presets = gui::GetWedgePresets();
+        int pick = -1;
+        for (int p = 0; p < static_cast<int>(presets.size()); ++p) {
+          if (std::fabs(presets[p].value - before) > 0.5f) {
+            pick = p;
+            break;
+          }
+        }
+        IM_CHECK(pick >= 0);
+
+        ctx->ItemClick(arrow_ref);
+        ctx->Yield(2);
+
+        // White-box handle into the popup: the custom Miller box is rendered inside the same
+        // BeginPopup block, so its ItemInfo().Window is the popup window itself.
+        const ImGuiTestItemInfo popup_item = ctx->ItemInfo("**/##custom_wedge_h");
+        IM_CHECK(popup_item.ID != 0);
+        IM_CHECK(popup_item.Window != nullptr);
+        const ImRect popup_rect = popup_item.Window->Rect();
+
+        // Containment (harness leg): the popup's whole rect sits inside the main viewport —
+        // the framebuffer is what "the main window's visible area" maps to here.
+        const ImGuiViewport* vp = ImGui::GetMainViewport();
+        const ImRect vp_rect(vp->Pos, ImVec2(vp->Pos.x + vp->Size.x, vp->Pos.y + vp->Size.y));
+        IM_CHECK(vp_rect.Contains(popup_rect));
+
+        if (scene.spot == 0) {
+          // AC2, normal position only: pin the native anchor. OpenPopupEx records
+          // OpenPopupPos = NavCalcPreferredRefPos (imgui.cpp:12175), which in mouse mode is the
+          // click point — the arrow's center, +1px in x (imgui.cpp:13561-13562) — so the popup's
+          // top-left lands on the arrow's center. Pin that (not a guessed corner offset), plus
+          // the not-above-the-arrow direction guard. Edge scenes legitimately clamp; this anchor
+          // is exactly what must not change there-to-here.
+          const ImGuiTestItemInfo arrow = ctx->ItemInfo(arrow_ref);
+          IM_CHECK(arrow.ID != 0);
+          const ImVec2 click_pt((arrow.RectFull.Min.x + arrow.RectFull.Max.x) * 0.5f,
+                                (arrow.RectFull.Min.y + arrow.RectFull.Max.y) * 0.5f);
+          IM_CHECK(popup_rect.Min.y >= arrow.RectFull.Min.y - 1.0f);
+          IM_CHECK(std::fabs(popup_rect.Min.x - (click_pt.x + 1.0f)) <= 8.0f);
+          IM_CHECK(std::fabs(popup_rect.Min.y - click_pt.y) <= 8.0f);
+        }
+
+        // The fix's mechanism pin, and the red/green anchor of this family. When ImGui
+        // late-creates this popup's own OS viewport (imgui.cpp:7794-7806), the viewport's
+        // flags are recomputed in WindowSyncOwnedViewport, which ORs in
+        // WindowClass.ViewportFlagsOverrideSet (imgui.cpp:16352-16353). Without the class
+        // armed on this BeginPopup path, the popup's OS window is born without TopMost and
+        // lands behind the TopMost detached editor. This asserts the arming; it does not
+        // assert OS z-order (the harness never splits viewports — see the family note).
+        IM_CHECK_EQ(popup_item.Window->WindowClass.ViewportFlagsOverrideSet & ImGuiViewportFlags_TopMost,
+                    ImGuiViewportFlags_TopMost);
+
+        // Selection round-trip: clicking a preset writes the row it belongs to (Immediate
+        // mode commits directly; the Staged counterpart has its own case below). A Selectable
+        // closes its popup by itself, so this is also the close behavior.
+        char preset_ref[72];
+        std::snprintf(preset_ref, sizeof(preset_ref), "**/%s", presets[pick].label);
+        ctx->ItemClick(preset_ref);
+        ctx->Yield(3);
+        const float after = scene.upper ? EntryCrystal().upper_alpha : EntryCrystal().lower_alpha;
+        IM_CHECK_EQ(after, presets[pick].value);
+
+        ctx->ItemClick(kClose);
+        ctx->Yield(2);
+        gui::g_state.modal_immediate_mode = false;
+      };
+    }
+  }
+
+  // The same preset dropdown driven through the Staged commit path: clicking a preset must
+  // land in the staging buffer only — the entry still reads its old value until OK — and OK
+  // must commit exactly the picked angle. (The WindowClass pin rides along: the popup is the
+  // same BeginPopup call site in both commit modes.)
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "edit_modal", "wedge_preset_popup_staged_commits_on_ok");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      const ScopedPopups popup_guard(ctx);
+      gui::g_state.modal_immediate_mode = false;
+      ctx->Yield(2);
+
+      OpenCardEditor(ctx, 0, kCrystalTabRef);
+      ctx->Yield(4);
+      ctx->ItemClick("**/Pyramid##modal");
+      ctx->Yield(3);
+
+      const float before = EntryCrystal().upper_alpha;
+      const std::vector<gui::WedgePreset> presets = gui::GetWedgePresets();
+      int pick = -1;
+      for (int p = 0; p < static_cast<int>(presets.size()); ++p) {
+        if (std::fabs(presets[p].value - before) > 0.5f) {
+          pick = p;
+          break;
+        }
+      }
+      IM_CHECK(pick >= 0);
+
+      ctx->ItemClick("**/##Upper A##modal_cr_arrow");
+      ctx->Yield(2);
+      const ImGuiTestItemInfo popup_item = ctx->ItemInfo("**/##custom_wedge_h");
+      IM_CHECK(popup_item.ID != 0 && popup_item.Window != nullptr);
+      IM_CHECK_EQ(popup_item.Window->WindowClass.ViewportFlagsOverrideSet & ImGuiViewportFlags_TopMost,
+                  ImGuiViewportFlags_TopMost);
+
+      char preset_ref[72];
+      std::snprintf(preset_ref, sizeof(preset_ref), "**/%s", presets[pick].label);
+      ctx->ItemClick(preset_ref);
+      ctx->Yield(3);
+      IM_CHECK_EQ(EntryCrystal().upper_alpha, before);  // staged: buffered, not committed
+
+      ctx->ItemClick(kOk);
+      ctx->Yield(3);
+      IM_CHECK_EQ(EntryCrystal().upper_alpha, presets[pick].value);
+    };
+  }
+
+  // ===================================================================================
   // The pull: the pool changes under an open modal (see the helpers' note above).
   // ===================================================================================
 

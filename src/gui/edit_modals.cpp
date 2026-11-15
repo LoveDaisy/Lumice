@@ -574,6 +574,18 @@ bool SliderWithPresetEdit(const char* label, float* value, float min_val, float 
   if (ImGui::ArrowButton(arrow_id, ImGuiDir_Down)) {
     ImGui::OpenPopup(popup_id);
   }
+  // Same detached-modal contract as the native combos (see SetNextComboPopupTopMost): whenever
+  // this popup does not fit its host window's viewport, Begin late-creates its own OS viewport
+  // (imgui.cpp:7794-7806 of v1.91.8-docking) — which happens when the editor is dragged
+  // partly outside the main window (it stops being merged into the main viewport at the same
+  // containment test, imgui.cpp:15709) and this dropdown opens near an edge. Without the
+  // WindowClass that new viewport carries no TopMost, so the popup's OS window lands at
+  // NSNormalWindowLevel behind the detached editor's own TopMost window (RenderEditModals
+  // arms it for Immediate mode) and the dropdown becomes invisible and unselectable.
+  // Queued here, between OpenPopup and BeginPopup: both of BeginPopup's early-out paths clear
+  // NextWindowData, so the class is consumed or dropped within this statement pair and cannot
+  // leak into an unrelated window on frames where the popup stays closed.
+  SetNextComboPopupTopMost();
   if (ImGui::BeginPopup(popup_id)) {
     for (int i = 0; i < preset_count; i++) {
       bool selected = std::abs(*value - presets[i].value) < 0.05f;
