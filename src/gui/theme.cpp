@@ -333,6 +333,14 @@ constexpr float kUncheckedBoxBorderAlpha = 0.13f;
 
 }  // namespace
 
+void PushCurrentSegmentStyle() {
+  const ImVec4 accent = AccentColor();
+  ImGui::PushStyleColor(ImGuiCol_Button, accent);
+  ImGui::PushStyleColor(ImGuiCol_ButtonHovered, accent);
+  ImGui::PushStyleColor(ImGuiCol_ButtonActive, accent);
+  ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_WindowBg));
+}
+
 ImVec4 AccentColor(float alpha) {
   const ImVec4 accent = ImGui::GetStyleColorVec4(ImGuiCol_CheckMark);
   return ImVec4(accent.x, accent.y, accent.z, accent.w * alpha);

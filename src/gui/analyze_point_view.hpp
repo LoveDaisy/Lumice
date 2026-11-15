@@ -226,42 +226,14 @@ inline constexpr ImU32 kPointCurveArmColors[] = {
   kPointCurveProductColor,
 };
 
-// The shared axis pools only kPositive values across all five arms. The nearest-rank P1
-// lower bound and the relative noise floor keep tiny tails from consuming the log axis.
-inline constexpr double kCurveAxisLowerQuantile = 0.01;
-inline constexpr double kCurveAxisNoiseRatio = 1e-15;
-// A band within one decade has no extreme tail to trim; preserve its original endpoints.
-inline constexpr double kCurveAxisNarrowRatio = 10.0;
+// Both modes share the finite positive union, preserve exact endpoints, and differ only in floor.
 struct PointCurveAxisRange {
   bool valid = false;
   double lo = 0.0;
   double hi = 0.0;
 };
-PointCurveAxisRange PointCurveAxisFit(const PointContributionCurve& curve);
-inline constexpr double kCurveAxisZoomFactor = 1.12;
-// Reconcile the view window with the current fit, then zoom around anchor (0 = bottom, 1 = top).
-// The window never extends beyond the fit; spans stop at 0.25 decade or the full fit span.
-PointCurveAxisRange PointCurveVisibleRange(const PointCurveAxisRange& fit, PointCurveZoom* zoom, double wheel = 0.0,
-                                           double anchor = 0.5);
-// Pan the log window toward larger values for a drag DOWN (dy_norm > 0 — the ink follows the hand)
-// and toward smaller values for a drag up. `dy_norm` is the vertical drag as a fraction of the
-// plot height, so the same visual fraction of the plot always moves the same fraction of the
-// window's own log span, whatever the DPI or the data. Both endpoints shift by the same amount
-// and PointCurveVisibleRange's reconcile stays the ONE clamp: the window slides as a whole and
-// stops flush at the fit's edges, never compressed. A full-span window, a degenerate single-value
-// domain or an invalid fit has nothing to reveal and answers unchanged.
-PointCurveAxisRange PointCurvePanRange(const PointCurveAxisRange& fit, PointCurveZoom* zoom, double dy_norm);
-
-// Counts stored points, not (arm, point) pairs: multiple hidden arms at one point count once.
-// The extrema cover only hidden positive values; zeros and unavailable cells never count.
-struct PointCurveOutsideCount {
-  int points = 0;
-  double min = 0.0;
-  double max = 0.0;
-  bool above = false;
-};
-PointCurveOutsideCount PointCurveCountOutside(const PointContributionCurve& curve, double lo, double hi);
-std::string PointCurveOutsideLabel(const PointCurveOutsideCount& outside);
+PointCurveAxisRange PointCurveAxisFit(const PointContributionCurve& curve,
+                                      PointCurveRangeMode mode = PointCurveRangeMode::kFit);
 
 // One log-axis tick: a decade boundary (major) or its 2x/5x sub-multiple (minor).
 struct PointCurveLogTick {
