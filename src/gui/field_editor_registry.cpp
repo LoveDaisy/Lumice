@@ -186,10 +186,17 @@ FieldEditorEntry IntField(SlotFn<int> access, int min_value, int max_value,
   entry.kind = FieldEditorKind::kIntSlider;
   entry.Constraint = [min_value, max_value, applicable](const GuiState& state) {
     const Applicability a = applicable(state);
-    return FieldEditorConstraint{
-      a.enabled, a.disabled_reason,    true,  static_cast<double>(min_value), static_cast<double>(max_value),
-      nullptr,   SliderScale::kLinear, a.note
-    };
+    // Named assignment, not a positional aggregate: the aggregate cannot skip fmt/scale to reach
+    // the trailing note, and a literal nullptr would override the "%.1f" default the int fields
+    // rely on (FieldEditorChain asserts a numeric field's format is non-null).
+    FieldEditorConstraint c;
+    c.enabled = a.enabled;
+    c.disabled_reason = a.disabled_reason;
+    c.has_numeric_domain = true;
+    c.min_value = static_cast<double>(min_value);
+    c.max_value = static_cast<double>(max_value);
+    c.inactive_note = a.note;
+    return c;
   };
   entry.Render = [access, min_value, max_value](GuiState& state, const char* id_base) {
     int* slot = access(state);
@@ -224,9 +231,12 @@ FieldEditorEntry BoolField(SlotFn<bool> access, ApplicabilityFn applicable = Alw
   entry.kind = FieldEditorKind::kCheckbox;
   entry.Constraint = [applicable](const GuiState& state) {
     const Applicability a = applicable(state);
-    return FieldEditorConstraint{
-      a.enabled, a.disabled_reason, false, 0.0, 0.0, nullptr, SliderScale::kLinear, a.note
-    };
+    FieldEditorConstraint c;
+    c.enabled = a.enabled;
+    c.disabled_reason = a.disabled_reason;
+    c.has_numeric_domain = false;
+    c.inactive_note = a.note;
+    return c;
   };
   entry.Render = [access, effective](GuiState& state, const char* id_base) {
     bool* slot = access(state);
@@ -269,9 +279,12 @@ FieldEditorEntry ColorField(SlotFn<float> access, ApplicabilityFn applicable = A
   entry.kind = FieldEditorKind::kColor;
   entry.Constraint = [applicable](const GuiState& state) {
     const Applicability a = applicable(state);
-    return FieldEditorConstraint{
-      a.enabled, a.disabled_reason, false, 0.0, 0.0, nullptr, SliderScale::kLinear, a.note
-    };
+    FieldEditorConstraint c;
+    c.enabled = a.enabled;
+    c.disabled_reason = a.disabled_reason;
+    c.has_numeric_domain = false;
+    c.inactive_note = a.note;
+    return c;
   };
   entry.Render = [access](GuiState& state, const char* id_base) {
     float* slot = access(state);
@@ -326,9 +339,12 @@ FieldEditorEntry ComboField(SlotFn<int> access, const char* const* names, int co
   entry.kind = FieldEditorKind::kCombo;
   entry.Constraint = [applicable](const GuiState& state) {
     const Applicability a = applicable(state);
-    return FieldEditorConstraint{
-      a.enabled, a.disabled_reason, false, 0.0, 0.0, nullptr, SliderScale::kLinear, a.note
-    };
+    FieldEditorConstraint c;
+    c.enabled = a.enabled;
+    c.disabled_reason = a.disabled_reason;
+    c.has_numeric_domain = false;
+    c.inactive_note = a.note;
+    return c;
   };
   entry.Render = [access, names, count](GuiState& state, const char* id_base) {
     int* slot = access(state);
@@ -394,7 +410,9 @@ Applicability NotUnderFullSkyNote(const GuiState& state) {
 // EffectiveFrontForLens), so full-sky and Globe only make it INERT — the note says the choice is
 // set aside, not lost.
 Applicability FrontClipAppliesNote(const GuiState& state) {
-  if (NotUnderFullSky(state).enabled == false) {
+  // The same lens set the effective value forces off (EffectiveFrontForLens): full-sky AND Globe.
+  // Missing one here would apply a clip the note claims is inert, or clip silently with no note.
+  if (!NotUnderFullSky(state).enabled || state.renderer.lens_type == kLensTypeGlobe) {
     return { true, nullptr,
              "This lens has no front or back to clip, so the front-hemisphere clip is not used "
              "right now. Your choice is kept and comes back when you switch to a lens that uses "
@@ -882,8 +900,11 @@ const std::unordered_map<std::string, FieldEditorEntry>& Registry() {
     // Summary still needs a word for the row; this is it, chosen here rather than spelled from the
     // key so the choice is visible. test_config_summary_labels.cpp excludes exactly this key from
     // its "every declared label is the panel's literal" scan (kExcludedFromLabelParityCheck).
+    // The stored choice survives a full-sky lens (no frame writer, no switch reset) and applies
+    // again under a lens that consumes it — the NOTE form, per the census split; a full-sky lens
+    // is not one of those lenses.
     map.emplace("renderer.visible", Labelled(ComboField([](GuiState& s) { return &s.renderer.visible; }, kVisibleNames,
-                                                        kVisibleCount, NotUnderFullSky),
+                                                        kVisibleCount, NotUnderFullSkyNote),
                                              "Visible"));
     map.emplace("renderer.front",
                 Labelled(BoolField([](GuiState& s) { return &s.renderer.front; }, FrontClipAppliesNote,

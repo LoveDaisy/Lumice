@@ -46,26 +46,31 @@ TEST(ChannelMathExclusionsGui, TheDiagnosticIsOnScreenOnlyUnderScreenTone) {
 
 // The combo is greyed under print, with a reason that names why, and live under screen.
 TEST(ChannelMathExclusionsGui, TheDisplayModeComboIsInapplicableUnderPrint) {
+  // Stored-setting form since the unlock task: live under every tone, note under print.
   const auto under_print = gui::ConstraintFor("renderer.display_mode", StateWith(0, LUMICE_TONE_PRINT));
-  EXPECT_FALSE(under_print.enabled);
-  EXPECT_TRUE(Mentions(under_print.disabled_reason, "Print")) << under_print.disabled_reason;
-  EXPECT_TRUE(gui::ConstraintFor("renderer.display_mode", StateWith(0, LUMICE_TONE_SCREEN)).enabled);
+  EXPECT_TRUE(under_print.enabled);
+  EXPECT_TRUE(Mentions(under_print.inactive_note, "Print")) << under_print.inactive_note;
+  const auto under_screen = gui::ConstraintFor("renderer.display_mode", StateWith(0, LUMICE_TONE_SCREEN));
+  EXPECT_TRUE(under_screen.enabled);
+  EXPECT_TRUE(under_screen.inactive_note == nullptr);
 }
 
 // The background photo is excluded while the diagnostic is on, and the reason names the mode rather
 // than falling through to "no image is loaded" — which is what this test binary would otherwise
 // see, having no photo. Under print the print reason wins, as the gate orders them.
 TEST(ChannelMathExclusionsGui, TheBackgroundPhotoIsInapplicableUnderTheDiagnostic) {
+  // Note form: the diagnostic's sentence rides inactive_note under the channel display, print
+  // outranks it when both hold, and the ordinary (no-image) note is what screen+normal falls
+  // through to.
   const auto channel = gui::ConstraintFor("bg_show", StateWith(LUMICE_DISPLAY_MODE_CHANNEL_BR, LUMICE_TONE_SCREEN));
-  EXPECT_FALSE(channel.enabled);
-  EXPECT_TRUE(Mentions(channel.disabled_reason, "Channel B-R")) << channel.disabled_reason;
+  EXPECT_TRUE(channel.enabled);
+  EXPECT_TRUE(Mentions(channel.inactive_note, "Channel B-R")) << channel.inactive_note;
 
   const auto normal = gui::ConstraintFor("bg_show", StateWith(LUMICE_DISPLAY_MODE_NORMAL, LUMICE_TONE_SCREEN));
-  EXPECT_FALSE(Mentions(normal.disabled_reason, "Channel B-R")) << normal.disabled_reason;
+  EXPECT_FALSE(Mentions(normal.inactive_note, "Channel B-R")) << normal.inactive_note;
 
   const auto print = gui::ConstraintFor("bg_show", StateWith(LUMICE_DISPLAY_MODE_CHANNEL_BR, LUMICE_TONE_PRINT));
-  EXPECT_FALSE(print.enabled);
-  EXPECT_TRUE(Mentions(print.disabled_reason, "Print")) << print.disabled_reason;
+  EXPECT_TRUE(Mentions(print.inactive_note, "Print")) << print.inactive_note;
 }
 
 // Annotation colours are deliberately NOT gated by this mode — the overlays are drawn on top of the
