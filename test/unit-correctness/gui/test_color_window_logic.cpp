@@ -166,6 +166,39 @@ TEST_F(ColorWindow, ARefRejectsAnyTextThatIsMoreThanASingleAtom) {
   EXPECT_NE(comma.message.find("';'"), std::string::npos) << comma.message;
 }
 
+// Refs have no crystal kind at edit time: accept the union of legal face sets, while keeping
+// the single-atom and syntax gates. Endpoint cases distinguish both pyramid-only face bands
+// from the prism faces, without duplicating the shared parser's grammar suite.
+TEST_F(ColorWindow, ARefAcceptsPyramidFacesWithoutRelaxingItsSingleAtomGate) {
+  const char* const kValid[] = { "13-25",
+                                 "13",
+                                 "18",
+                                 "23",
+                                 "28",
+                                 "entry:13",
+                                 "entry:18",
+                                 "exit:23",
+                                 "exit:28",
+                                 "entry:13 & exit:25",
+                                 "1-2",
+                                 "3-5",
+                                 "entry:1 & exit:8" };
+  for (const char* text : kValid) {
+    const auto result = gui::ValidateSingleAtomText(text);
+    EXPECT_EQ(result.state, LUMICE_RAYPATH_VALID) << text << ": " << result.message;
+    EXPECT_TRUE(result.message.empty()) << text;
+  }
+
+  const char* const kInvalid[] = { "12",       "19",          "22",         "29",
+                                   "entry:51", "entry:13-18", "exit:23-28", "13-25 & entry:2",
+                                   "13-25;3-5" };
+  for (const char* text : kInvalid) {
+    const auto result = gui::ValidateSingleAtomText(text);
+    EXPECT_EQ(result.state, LUMICE_RAYPATH_INVALID) << text;
+    EXPECT_FALSE(result.message.empty()) << text;
+  }
+}
+
 // ---- Per-ref symmetry ----
 //
 // Three independent bits, defaulting to none — deliberately unlike FilterConfig, and mirroring core's
