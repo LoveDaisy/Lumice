@@ -423,6 +423,11 @@ RayTraceDisplayState RayTraceDisplayStateFor(const RayTraceSession& trace, const
 // re-derives it).
 void OrbitBasis(float yaw_deg, float pitch_deg, double fwd[3], double right[3], double up[3]);
 
+// Positive display-frame axes: canvas content colours, not health/status semantics.
+inline constexpr ImU32 kRay3DAxisColors[] = { IM_COL32(245, 105, 110, 255), IM_COL32(115, 220, 140, 255),
+                                              IM_COL32(115, 165, 255, 255) };
+inline constexpr float kRay3DAxisLengthUi = 18.0f;
+
 // The last submitted GL canvas frame, invalidated on every region submission before any early
 // return. Tests independently project the frozen C-API mesh using these exact render parameters.
 struct Ray3DFrameInfo {
@@ -440,6 +445,14 @@ struct Ray3DFrameInfo {
                       // the frame tests can place the real camera (eye = -dist * fwd) and the
                       // real near plane without a second distance formula
   bool valid = false;
+  // Render feedback only: the complete reserved footprint and submitted axis/letter geometry.
+  bool axes_drawn = false;
+  ImVec2 axes_min;
+  ImVec2 axes_max;
+  ImVec2 axes_origin;
+  ImVec2 axes_tips[3];
+  ImVec2 axes_label_min[3];
+  ImVec2 axes_label_max[3];
 };
 const Ray3DFrameInfo& LastRay3DFrameInfo();
 

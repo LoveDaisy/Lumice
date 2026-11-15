@@ -1342,6 +1342,70 @@ void RotateBodyToWorld(const double pose[9], const float v[3], float out[3]) {
   out[2] = static_cast<float>(pose[6] * v[0] + pose[7] * v[1] + pose[8] * v[2]);
 }
 
+// A fixed-size, read-only compass of the CURRENT display frame. Consume the very rotation
+// passed to GL, not a second yaw/pitch convention or the crystal's physical pose.
+void DrawRay3DAxes(ImDrawList* dl, const float rotation[16], Ray3DFrameInfo& frame) {
+  const float length = UiPx(kRay3DAxisLengthUi);
+  const float half = length + ImGui::GetTextLineHeight() * .65f + UiPx(4.0f);
+  const float inset = UiPx(4.0f);
+  ImRect visible(frame.canvas_min,
+                 ImVec2(frame.canvas_min.x + frame.canvas_size.x, frame.canvas_min.y + frame.canvas_size.y));
+  visible.ClipWithFull(ImRect(dl->GetClipRectMin(), dl->GetClipRectMax()));
+  frame.axes_drawn = visible.GetWidth() >= half * 2 + inset * 2 && visible.GetHeight() >= half * 2 + inset * 2;
+  if (!frame.axes_drawn) {
+    return;  // compressed canvas: no clipped letters or invented directions
+  }
+  frame.axes_max = ImVec2(visible.Max.x - inset, visible.Max.y - inset);
+  frame.axes_min = ImVec2(frame.axes_max.x - half * 2, frame.axes_max.y - half * 2);
+  frame.axes_origin = ImVec2(frame.axes_max.x - half, frame.axes_max.y - half);
+  dl->AddRectFilled(frame.axes_min, frame.axes_max, IM_COL32(16, 18, 22, 255), UiPx(3.0f));
+  std::vector<ImRect> letters;
+  for (int axis = 0; axis < 3; ++axis) {
+    const ImVec2 delta(length * rotation[axis * 4], -length * rotation[axis * 4 + 1]);
+    const ImVec2 tip(frame.axes_origin.x + delta.x, frame.axes_origin.y + delta.y);
+    frame.axes_tips[axis] = tip;
+    const float norm = std::hypot(delta.x, delta.y);
+    const ImU32 color = kRay3DAxisColors[axis];
+    ImVec2 direction(0, -1);
+    if (norm > UiPx(0.5f)) {
+      direction = ImVec2(delta.x / norm, delta.y / norm);
+      dl->AddLine(frame.axes_origin, tip, color, UiPx(1.5f));
+      const float head = std::min(UiPx(4.0f), norm * 0.5f);
+      const ImVec2 base(tip.x - direction.x * head, tip.y - direction.y * head);
+      dl->AddTriangleFilled(tip, ImVec2(base.x - direction.y * head * .5f, base.y + direction.x * head * .5f),
+                            ImVec2(base.x + direction.y * head * .5f, base.y - direction.x * head * .5f), color);
+    } else {
+      dl->AddCircleFilled(tip, UiPx(2.0f), color);  // truly edge-on: retain identity, not a fake arrow
+    }
+    const char text[] = { static_cast<char>('X' + axis), '\0' };
+    const ImVec2 size = ImGui::CalcTextSize(text);
+    const float gap = UiPx(3.0f) + size.y * .5f;
+    ImVec2 pos(tip.x + direction.x * gap - size.x * .5f, tip.y + direction.y * gap - size.y * .5f);
+    // Keep complete letter footprints apart even when two axes project to the same ray.
+    // Three letters and eight perimeter slots suffice without altering the arrow directions.
+    const ImVec2 initial = pos;
+    for (int slot = 0; slot <= 8; ++slot) {
+      if (slot > 0) {
+        const float angle = (slot - 1) * 3.14159265f / 4.0f;
+        pos = ImVec2(frame.axes_origin.x + (half - size.x) * std::cos(angle) - size.x * .5f,
+                     frame.axes_origin.y + (half - size.y) * std::sin(angle) - size.y * .5f);
+      } else {
+        pos = initial;
+      }
+      pos.x = std::clamp(pos.x, frame.axes_min.x + inset, frame.axes_max.x - inset - size.x);
+      pos.y = std::clamp(pos.y, frame.axes_min.y + inset, frame.axes_max.y - inset - size.y);
+      const ImRect rect(pos, ImVec2(pos.x + size.x, pos.y + size.y));
+      if (std::none_of(letters.begin(), letters.end(), [&](const ImRect& r) { return r.Overlaps(rect); })) {
+        letters.push_back(rect);
+        break;
+      }
+    }
+    frame.axes_label_min[axis] = pos;
+    frame.axes_label_max[axis] = ImVec2(pos.x + size.x, pos.y + size.y);
+    dl->AddText(pos, color, text);
+  }
+}
+
 ImU32 SegmentColor(int kind, float alpha) {
   const ImU32 color = kRayTraceSegmentColors[kind == 0 ? 0 : kind == 1 ? 1 : 2];
   return (color & ~IM_COL32_A_MASK) | (static_cast<ImU32>(255 * alpha) << IM_COL32_A_SHIFT);
@@ -1730,6 +1794,7 @@ void RenderAnalyzeSunGlobeRegion(GuiState& state, const ImVec2& size) {
 
 void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
   g_ray3d_frame.valid = false;
+  g_ray3d_frame.axes_drawn = false;
   state.analysis.ray3d_fresnel_labels.clear();
   state.analysis.ray3d_fresnel_label_rects.clear();
   // The canvas and frame controls never scroll with result prose. The report scrolls
@@ -2066,6 +2131,11 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
         rendered.valid = true;
         ImDrawList* dl = graph_draw_list;
         dl->PushClipRect(canvas_min, canvas_max, true);
+        ImDrawListSplitter axes_layer;
+        axes_layer.Split(dl, 2);
+        axes_layer.SetCurrentChannel(dl, 1);
+        DrawRay3DAxes(dl, view_rotation, rendered);
+        axes_layer.SetCurrentChannel(dl, 0);
         // AddImage is the Image quad without a second layout item: the existing InvisibleButton
         // remains the sole canvas interaction target, at its existing ##r3d_canvas identity.
         dl->AddImage(static_cast<ImTextureID>(rendered.texture_id), canvas_min, canvas_max, ImVec2(0, 1), ImVec2(1, 0));
@@ -2163,6 +2233,15 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
                   const float vis_max_y = std::min(canvas_max.y, clip_max.y);
                   candidate = detail::ClampLabelPosToViewport(candidate, text_size, vis_min_x, vis_min_y,
                                                               vis_max_x - vis_min_x, vis_max_y - vis_min_y);
+                  // The compass is a HARD exclusion, including the least-overlap fallback.
+                  // A colliding candidate moves into the left viewport before label scoring;
+                  // unlike a finite penalty, this cannot lose to a crowded label cluster.
+                  if (rendered.axes_drawn &&
+                      ImRect(candidate, ImVec2(candidate.x + text_size.x, candidate.y + text_size.y))
+                          .Overlaps(ImRect(rendered.axes_min, rendered.axes_max))) {
+                    candidate = detail::ClampLabelPosToViewport(candidate, text_size, vis_min_x, vis_min_y,
+                                                                rendered.axes_min.x - vis_min_x, vis_max_y - vis_min_y);
+                  }
                   const ImRect candidate_rect(candidate, ImVec2(candidate.x + text_size.x, candidate.y + text_size.y));
                   float overlap = 0.0f;
                   for (const ImRect& placed_rect : placed_label_rects) {
@@ -2273,6 +2352,7 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
             dl->AddLine(pa, pb, ImGui::ColorConvertFloat4ToU32(AccentColor()), 1.5f);
           }
         }
+        axes_layer.Merge(dl);
         dl->PopClipRect();
       };
       render_canvas();
