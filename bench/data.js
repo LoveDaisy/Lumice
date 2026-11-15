@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794785808190,
+  "lastUpdate": 1794785810312,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9620,50 +9620,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "7ce6259807c4d988af8af1a1bee70b276ca2173e",
-          "message": "Merge pull request #492 from LoveDaisy/chore/raypath-docs-current-state\n\ndocs(raypath): align analysis docs with the current product state",
-          "timestamp": "2026-10-14T18:27:14+08:00",
-          "tree_id": "b5ab7d4c031478152f3808435eb5a75fa97f6fbf",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/7ce6259807c4d988af8af1a1bee70b276ca2173e"
-        },
-        "date": 1791973847340,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 94.4,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 100.1,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 99.2,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 94.1,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "d732ea5937ccbe41714459898520e6607d066b12",
           "message": "Merge pull request #493 from LoveDaisy/fix/gui-test-window-size-leak\n\ntest(gui): restore shared window basis at case entry with a leak sentinel",
           "timestamp": "2026-10-14T20:16:19+08:00",
@@ -14003,6 +13959,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 95.6,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "2cd2f085a930d16a2d25275a43cb4ede75694cbe",
+          "message": "Merge pull request #597 from LoveDaisy/feat/lens-bump-projection-cast-ub\n\nfix(core): clamp single-lens bump cast inputs into int domain",
+          "timestamp": "2026-11-16T07:33:03+08:00",
+          "tree_id": "a6aef670adbec2df787761450a1d13f42ccfcd1d",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/2cd2f085a930d16a2d25275a43cb4ede75694cbe"
+        },
+        "date": 1794785809632,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 92.8,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 100,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 98.4,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 92.1,
             "unit": "%"
           }
         ]
