@@ -16323,6 +16323,21 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       };
       IM_CHECK(exercise(false));
       IM_CHECK(exercise(true));
+      // Newlines alone are not truncation: the complete flattened line is already visible.
+      full = "Refused — short\nreason";
+      ctx->MouseMoveToPos(ImVec2(2.0f, 2.0f));
+      ctx->Yield(3);
+      IM_CHECK(drawn.find("Refused — short reason") != std::string::npos);
+      ImGuiWindow* bar = RegionWindowUnder("Long wait footer", "##QueryStatusBar");
+      IM_CHECK(bar != nullptr);
+      ctx->MouseMoveToPos(bar->Rect().GetCenter());
+      ctx->Yield(3);
+      IM_CHECK(drawn.find(full) == std::string::npos);
+      bool any_tooltip = false;
+      for (ImGuiWindow* window : ImGui::GetCurrentContext()->Windows) {
+        any_tooltip |= window->Active && !window->Hidden && (window->Flags & ImGuiWindowFlags_Tooltip);
+      }
+      IM_CHECK(!any_tooltip);
     };
   }
   {

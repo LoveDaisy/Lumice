@@ -194,6 +194,9 @@ MapQueryState MapQueryStateFor(const MapQuerySession& map);
 // An explicit Retry is waiting while the previous finite map remains on show.
 bool MapSupersededFor(const MapQuerySession& map);
 
+// Partial coverage is independent of query lifecycle; the raster and footer share this rule.
+bool MapInfoIsPartial(const LUMICE_PathMapInfo& info);
+
 // ---- The point face's session (742.6) --------------------------------------------------------------
 
 // What an outstanding point intent was issued for: the selection key (the ONE identity chain —

@@ -392,7 +392,9 @@ Render 与 Analyze 共享**同一份**取景/曝光/辅助线显示状态（disp
 
 七态：未选择 / 等待 / 有结果（完整）/ partial / 拒答 / 取消 / 多窗口。三面：主工作区（列表/诊断/
 主视图）、Raypath view 窗、姿态/轨迹窗。每格给呈现裁决＋证据指针（「→预算表 §11 Rx」= 该行给出
-该文案的可容纳证据；「锚 file:line」= 现文案沿用）。
+该文案的历史可容纳证据）。本表保留的 `file:line` 是各条原核查时的快照，不作当前行号保证；
+现役定位优先使用 `RenderPointAnswerBlock` / `RenderPointDetailsBlock` / `RenderAnalyzeSunGlobeRegion`
+等符号及 §15/§16 的当前机制合同，不能按已漂移行号判定机制仍在原位。
 
 | 态 | 主工作区 | Raypath view 窗 | 姿态/轨迹窗 |
 |---|---|---|---|

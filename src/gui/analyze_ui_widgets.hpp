@@ -20,9 +20,9 @@
 //   5. AnalyzeTextFitToWidth + ReserveAnalyzeStatusBar / RenderAnalyzeStatusBar — bounded
 //      text and fixed visible-client footer allocation, shared by the two floating windows.
 //
-// Everything here is header-only and gui-side: imgui, gui constants and the theme outlet — no
-// core/ or config/ include, so the gui-api-boundary rule is untouched. New consumers include
-// this header directly; nothing re-declares any of the five bodies.
+// Everything here is header-only and gui-side: imgui, visible-client geometry, GUI constants,
+// semantic colours and the theme outlet — no core/ or config/ include. Consumers include this
+// header directly; nothing re-declares a member of these mechanism families.
 // =================================================================================================
 
 #include <algorithm>
@@ -125,7 +125,7 @@ inline void RenderAnalyzeStatusBar(const AnalyzeStatusBarLayout& layout, const s
   ImGui::PushStyleColor(ImGuiCol_Text, warning ? WarningTextColor() : ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
   ImGui::TextUnformatted(fitted.c_str());
   ImGui::PopStyleColor();
-  if (fitted != full_text && ImGui::IsWindowHovered() && ImGui::BeginTooltip()) {
+  if (fitted != single_line && ImGui::IsWindowHovered() && ImGui::BeginTooltip()) {
     ImGui::PushTextWrapPos(ImGui::GetFontSize() * 32.0f);
     ImGui::TextUnformatted(full_text.c_str());
     ImGui::PopTextWrapPos();
