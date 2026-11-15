@@ -4088,7 +4088,10 @@ bool TraceAxesFootprints(ImGuiTestContext* ctx, bool direction_anchor = false) {
       IM_CHECK_RETV(reserved.Contains(letter), false);
       const auto ink = TraceCanvasVertices(gui::kRay3DAxisColors[axis]);
       IM_CHECK_RETV(!ink.empty(), false);
-      const bool letter_ink = std::any_of(ink.begin(), ink.end(), [&](const ImVec2& p) { return letter.Contains(p); });
+      ImRect glyph_envelope = letter;
+      glyph_envelope.Expand(gui::UiPx(1.5f));  // glyph bearings / pixel snapping extend beyond the advance rect
+      const bool letter_ink =
+          std::any_of(ink.begin(), ink.end(), [&](const ImVec2& p) { return glyph_envelope.Contains(p); });
       IM_CHECK_RETV(letter_ink, false);
       bool letters_apart = true;
       for (int other = 0; other < axis; ++other) {
@@ -4100,11 +4103,18 @@ bool TraceAxesFootprints(ImGuiTestContext* ctx, bool direction_anchor = false) {
         const ImVec2 want(frame.axes_origin.x + length * static_cast<float>(expected[axis][0]),
                           frame.axes_origin.y + length * static_cast<float>(expected[axis][1]));
         IM_CHECK_RETV(std::hypot(frame.axes_tips[axis].x - want.x, frame.axes_tips[axis].y - want.y) < .01f, false);
-        // The line and arrowhead must actually submit ink at BOTH independently predicted
-        // ends. Letter vertices are excluded: a glyph or fabricated feedback cannot pass.
+        // Inspect actual shape vertices (white atlas texel), not glyph vertices. The text's
+        // advance rectangle may include empty descender space over a short projected axis.
+        const auto* shared = ImGui::GetDrawListSharedData();
+        const ImVec2 white = shared->TexUvWhitePixel;
+        const ImVec4 line_uv = shared->TexUvLines[static_cast<int>(gui::UiPx(1.5f))];
         const auto ink_near = [&](const ImVec2& expected_point) {
-          return std::any_of(ink.begin(), ink.end(), [&](const ImVec2& p) {
-            return !letter.Contains(p) && std::hypot(p.x - expected_point.x, p.y - expected_point.y) < gui::UiPx(2.0f);
+          const auto& vertices = region->DrawList->VtxBuffer;
+          return std::any_of(vertices.begin(), vertices.end(), [&](const ImDrawVert& v) {
+            const bool shape_texel = (v.uv.x == white.x && v.uv.y == white.y) ||
+                                     (v.uv.y == line_uv.y && (v.uv.x == line_uv.x || v.uv.x == line_uv.z));
+            return v.col == gui::kRay3DAxisColors[axis] && shape_texel &&
+                   std::hypot(v.pos.x - expected_point.x, v.pos.y - expected_point.y) < gui::UiPx(2.0f);
           });
         };
         IM_CHECK_RETV(ink_near(frame.axes_origin) && ink_near(want), false);
@@ -4219,10 +4229,59 @@ bool TraceResetAndAxesTakeRealInput(ImGuiTestContext* ctx) {
                     gui::g_state.analyze_pose_view_globe_ratio == ratios[2] &&
                     gui::g_state.analyze_pose_view_curve_canvas_ratio == ratios[3],
                 false);
-  // Camera survives adoption and close/reopen; Reset remains explicit and repeatable.
+  // Sample and component switches preserve orbit; the explicit action still works afterwards.
+  const auto switch_leg = [&](int component, int sample) -> bool {
+    IM_CHECK_RETV(gui::PointValidSampleCount(*gui::g_state.analysis.point.adopted_result, component) > sample, false);
+    view.orbit_yaw_deg = 121;
+    view.orbit_pitch_deg = -41;
+    view.component_index = component;
+    view.sample_index = sample;
+    IM_CHECK_RETV(DriveUntil(ctx, [] { return CurrentTraceIsDrawn(); }, 30), false);
+    IM_CHECK_RETV(view.orbit_yaw_deg == 121 && view.orbit_pitch_deg == -41, false);
+    ctx->SetRef("//Pose & trace");
+    ctx->ItemClick("**/Reset View##r3d_reset");
+    ctx->Yield(2);
+    IM_CHECK_RETV(view.orbit_yaw_deg == 35 && view.orbit_pitch_deg == 22 && view.component_index == component &&
+                      view.sample_index == sample,
+                  false);
+    return true;
+  };
+  IM_CHECK_RETV(switch_leg(0, 1), false);
+  IM_CHECK_RETV(switch_leg(1, 0), false);  // the C03 result has two independently discovered components
+  view.component_index = restore.saved.component_index;
+  view.sample_index = restore.saved.sample_index;
+  IM_CHECK_RETV(DriveUntil(ctx, [] { return CurrentTraceIsDrawn(); }, 30), false);
+  // Withdrawal and a real point re-adoption preserve orbit; empty-state Reset asks for nothing.
+  const auto saved_sky = gui::g_state.analysis.sky_point;
+  struct RestoreSky {
+    gui::SkyPointIntent value;
+    ~RestoreSky() { gui::g_state.analysis.sky_point = value; }
+  } restore_sky{ saved_sky };
   view.orbit_yaw_deg = 121;
   view.orbit_pitch_deg = -41;
-  gui::ResetPointViewStateForNewAdoption(&view);
+  gui::g_state.analysis.sky_point = {};
+  ctx->Yield(3);
+  IM_CHECK_RETV(!gui::g_state.analysis.point.adopted_result && !gui::LastRay3DFrameInfo().axes_drawn, false);
+  IM_CHECK_RETV(view.orbit_yaw_deg == 121 && view.orbit_pitch_deg == -41, false);
+  const auto empty_point_id = gui::g_state.analysis.point.intent_id;
+  const auto empty_ray_id = gui::g_state.analysis.trace.intent_id;
+  ctx->ItemClick("**/Reset View##r3d_reset");
+  ctx->Yield(2);
+  IM_CHECK_RETV(view.orbit_yaw_deg == 35 && view.orbit_pitch_deg == 22 &&
+                    gui::g_state.analysis.point.intent_id == empty_point_id &&
+                    gui::g_state.analysis.trace.intent_id == empty_ray_id,
+                false);
+  view.orbit_yaw_deg = 121;
+  view.orbit_pitch_deg = -41;
+  gui::g_state.analysis.sky_point = saved_sky;
+  IM_CHECK_RETV(DriveUntil(ctx, [] { return CurrentTraceIsDrawn(); }, 60), false);
+  IM_CHECK_RETV(view.orbit_yaw_deg == 121 && view.orbit_pitch_deg == -41, false);
+  ctx->ItemClick("**/Reset View##r3d_reset");
+  ctx->Yield(2);
+  IM_CHECK_RETV(view.orbit_yaw_deg == 35 && view.orbit_pitch_deg == 22, false);
+  // Camera survives close/reopen; Reset remains explicit and repeatable.
+  view.orbit_yaw_deg = 121;
+  view.orbit_pitch_deg = -41;
   ctx->WindowClose("//Pose & trace");
   ctx->Yield(2);
   gui::g_state.analyze_pose_view_open = true;
