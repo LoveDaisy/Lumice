@@ -425,10 +425,18 @@ struct PointViewState {
                                      // values, the width mapping stays the only visual encoding
   bool crystal_frame = false;        // the 3D view's frame: false = world, true = crystal (AC4's one
                                      // physical state, two views — a display transform, nothing else)
-  float orbit_yaw_deg = 35.0f;       // the 3D orbit camera (drag to rotate, wheel to zoom)
-  float orbit_pitch_deg = 22.0f;
+  static constexpr float kDefaultOrbitYawDeg = 35.0f;
+  static constexpr float kDefaultOrbitPitchDeg = 22.0f;
+  float orbit_yaw_deg = kDefaultOrbitYawDeg;  // the 3D orbit camera (drag to rotate, wheel to zoom)
+  float orbit_pitch_deg = kDefaultOrbitPitchDeg;
   float orbit_zoom = 1.0f;  // 1 = the fit-to-content default
   PointCurveRangeMode curve_range_mode = PointCurveRangeMode::kFit;
+
+  // Restore orientation only; zoom and the other session display choices survive.
+  void ResetOrbitOrientation() {
+    orbit_yaw_deg = kDefaultOrbitYawDeg;
+    orbit_pitch_deg = kDefaultOrbitPitchDeg;
+  }
 };
 
 // Resets the display cursor for a NEW adoption: the component/sample selection belongs to the

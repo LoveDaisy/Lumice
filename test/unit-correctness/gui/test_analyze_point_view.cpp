@@ -144,6 +144,35 @@ TEST(AnalyzePointView, PointQueryStateTruthTable) {
   // The completed arm reads a real handle — the composition tests cover it over a live adoption.
 }
 
+TEST(AnalyzePointView, ResetOrbitRestoresOnlyOrientationAndIsIdempotent) {
+  PointViewState view;
+  view.orbit_yaw_deg = 143.0f;
+  view.orbit_pitch_deg = -37.0f;
+  view.orbit_zoom = 2.0f;
+  view.component_index = 3;
+  view.sample_index = 9;
+  view.playing = true;
+  view.last_play_step_s = 12.0;
+  view.crystal_frame = true;
+  view.show_deviation_grid = false;
+  view.show_fresnel_labels = true;
+  view.curve_range_mode = PointCurveRangeMode::kFull;
+  for (int i = 0; i < 2; ++i) {
+    view.ResetOrbitOrientation();
+    EXPECT_EQ(view.orbit_yaw_deg, PointViewState{}.orbit_yaw_deg);
+    EXPECT_EQ(view.orbit_pitch_deg, PointViewState{}.orbit_pitch_deg);
+    EXPECT_EQ(view.orbit_zoom, 2.0f);
+    EXPECT_EQ(view.component_index, 3);
+    EXPECT_EQ(view.sample_index, 9);
+    EXPECT_TRUE(view.playing);
+    EXPECT_EQ(view.last_play_step_s, 12.0);
+    EXPECT_TRUE(view.crystal_frame);
+    EXPECT_FALSE(view.show_deviation_grid);
+    EXPECT_TRUE(view.show_fresnel_labels);
+    EXPECT_EQ(view.curve_range_mode, PointCurveRangeMode::kFull);
+  }
+}
+
 TEST(AnalyzePointView, PlaybackStepsAndWrapsAndStops) {
   PointViewState view;
   view.playing = true;
