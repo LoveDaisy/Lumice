@@ -734,6 +734,257 @@ void PressureGui() {
   }
 }
 
+// A real C01 map + survey, observed through the product window. Expected curve samples use
+// independent double sky geometry, not the GUI forward; the indexed triangles and their own
+// command clips are the evidence of ink (legend flags and point counts cannot prove this).
+bool OverlayCoverageWitness(ImGuiTestContext* ctx) {
+  ResetTestState();
+  g_pressure = {};
+  std::ifstream input(std::string(LUMICE_E2E_CONFIG_DIR) + "/raypath_feature_random_regular.json");
+  nlohmann::json config;
+  input >> config;
+  config["scene"]["light_source"]["altitude"] = 20.0;
+  IM_CHECK_RETV(gui::DeserializeFromJson(config.dump(), gui::g_state), false);
+  LUMICE_Scene* raw_scene = nullptr;
+  IM_CHECK_RETV(LUMICE_SceneFromJson(config.dump().c_str(), &raw_scene) == LUMICE_OK, false);
+  std::unique_ptr<LUMICE_Scene, decltype(&LUMICE_SceneDestroy)> scene(raw_scene, LUMICE_SceneDestroy);
+  const int faces[] = { 3, 5 }, counts[] = { 2 };
+  LUMICE_PathMapRequest request{};
+  request.struct_size = sizeof(request);
+  request.crystal_id = 1;
+  request.faces = faces;
+  request.face_count = 2;
+  request.layer_face_counts = counts;
+  request.layer_count = 1;
+  request.full_sky = 1;
+  request.sample_count = 500000;
+  char error[512]{};
+  LUMICE_PathMap* map = nullptr;
+  IM_CHECK_RETV(LUMICE_AnalyzePathMap(scene.get(), &request, &map, error, sizeof(error)) == LUMICE_OK, false);
+  g_pressure.map.adopted_result = gui::MapHandle(map, gui::MapDeleter{});
+  g_pressure.map.adopted_id = gui::g_survey_executor.NextId(1785);
+  LUMICE_PathSurveyRequest survey_request{};
+  survey_request.struct_size = sizeof(survey_request);
+  survey_request.crystal_id = 1;
+  survey_request.faces = faces;
+  survey_request.face_count = 2;
+  survey_request.layer_face_counts = counts;
+  survey_request.layer_count = 1;
+  LUMICE_PathSurvey* survey = nullptr;
+  IM_CHECK_RETV(LUMICE_AnalyzePathSurvey(scene.get(), &survey_request, &survey, error, sizeof(error)) == LUMICE_OK,
+                false);
+  g_pressure.survey = gui::SurveyHandle(survey, gui::SurveyDeleter{});
+  gui::g_state.analysis.survey.adopted_result = g_pressure.survey;
+  gui::g_state.analysis.survey.intent_id = gui::g_survey_executor.NextId(1785);
+  const auto model = gui::BuildSurveyOverviewModel(*g_pressure.survey);
+  IM_CHECK_RETV(model.dispersion.available && model.dispersion.min_row_available && model.sun_available, false);
+  // No standing selection/query intent: the adopted, physically computed results are immutable.
+  g_pressure.prepare = true;
+  auto& renderer = gui::g_state.renderer;
+  renderer.lens_type = gui::kLensTypeFisheyeEquidist;
+  renderer.fov = 140.0f;
+  renderer.azimuth = 80.0f;
+  renderer.elevation = 20.0f;
+  renderer.roll = 0.0f;
+  renderer.visible = gui::kVisibleFull;
+  renderer.front = false;
+  gui::g_state.analyze_raypath_view_info_ratio = 0.2f;
+  gui::g_state.analyze_raypath_view_open = true;
+  ctx->Yield(3);
+  IM_CHECK_RETV(g_pressure.prepared && !g_pressure.failed, false);
+  ImGuiWindow* window = ctx->GetWindowByRef("//Raypath view");
+  IM_CHECK_RETV(window != nullptr, false);
+  const ImVec2 old_pos = window->Pos, old_size = window->Size;
+  struct Restore {
+    ImGuiWindow* window;
+    ImVec2 pos, size;
+    ~Restore() {
+      ImGui::SetWindowPos(window, pos, ImGuiCond_Always);
+      ImGui::SetWindowSize(window, size, ImGuiCond_Always);
+    }
+  } restore{ window, old_pos, old_size };
+  const auto origin = ImGui::GetMainViewport()->Pos;
+  ImGui::SetWindowPos(window, ImVec2(origin.x + 20, origin.y + 45), ImGuiCond_Always);
+  ImGui::SetWindowSize(window, ImVec2(1300, 650), ImGuiCond_Always);
+  ctx->Yield(3);
+  ctx->SetRef("//Raypath view");
+  const auto canvas = ctx->ItemInfo("**/##map_canvas");
+  IM_CHECK_RETV(canvas.ID != 0, false);
+  const auto rect = canvas.RectFull;
+  const auto timing = gui::LastMapObservationTiming();
+  const auto view = gui::LastFrozenMapView();
+  // Read the actual texture referenced by this window's image command on the GL thread.
+  // This is the displayed base map, not a made-up fill or a second query/render fixture.
+  std::vector<unsigned char> base_pixels;
+  g_frame_observer.before_swap = [&] {
+    for (ImGuiWindow* region : ImGui::GetCurrentContext()->Windows) {
+      if (!region->Active || region->RootWindow != window)
+        continue;
+      const auto* dl = region->DrawList;
+      for (const auto& cmd : dl->CmdBuffer) {
+        if (cmd.UserCallback || cmd.ElemCount != 6 || cmd.TextureId == ImGui::GetIO().Fonts->TexID)
+          continue;
+        const auto& vertex = dl->VtxBuffer[cmd.VtxOffset + dl->IdxBuffer[cmd.IdxOffset]];
+        if (std::abs(vertex.pos.x - rect.Min.x) < 0.1f && std::abs(vertex.pos.y - rect.Min.y) < 0.1f)
+          base_pixels =
+              lumice::test::ReadTexturePixels(static_cast<unsigned int>(cmd.TextureId), timing.width, timing.height);
+      }
+    }
+  };
+  g_fullframe_capture.Reset();
+  g_fullframe_capture.requested.store(true);
+  ctx->Yield(2);
+  g_frame_observer = {};
+  IM_CHECK_RETV(!base_pixels.empty() && g_fullframe_capture.done.load(), false);
+  IM_CHECK_RETV(lumice::test::SavePng(GuiTestTempPath("tilted_equidistant_overlay.png").string().c_str(),
+                                      g_fullframe_capture.pixels.data(), g_fullframe_capture.width,
+                                      g_fullframe_capture.height, 4),
+                false);
+  const double radius = std::min(timing.width, timing.height) * 0.5;
+  const double sx = rect.GetWidth() / timing.width, sy = rect.GetHeight() / timing.height;
+  const double a = view.azimuth * kDeg, e = view.elevation * kDeg;
+  const auto project = [&](const Direction& position) -> std::optional<ImVec2> {
+    const double x = -std::sin(a) * position[0] + std::cos(a) * position[1];
+    const double y =
+        -std::sin(e) * std::cos(a) * position[0] - std::sin(e) * std::sin(a) * position[1] + std::cos(e) * position[2];
+    const double z =
+        std::cos(e) * std::cos(a) * position[0] + std::cos(e) * std::sin(a) * position[1] + std::sin(e) * position[2];
+    const double theta = std::atan2(std::hypot(x, y), z);
+    if (theta >= kPi)
+      return std::nullopt;
+    const double scale = radius * theta / (view.fov * kDeg * 0.5) / std::max(std::hypot(x, y), 1e-15);
+    return ImVec2(static_cast<float>(rect.GetCenter().x + x * scale * sx),
+                  static_cast<float>(rect.GetCenter().y - y * scale * sy));
+  };
+  // Collect only triangles actually indexed by a draw command, keeping its effective clip.
+  struct Triangle {
+    ImVec2 p[3];
+    ImVec4 clip;
+    ImU32 color;
+  };
+  std::vector<Triangle> triangles;
+  for (ImGuiWindow* region : ImGui::GetCurrentContext()->Windows) {
+    if (!region->Active || region->RootWindow != window)
+      continue;
+    const auto* dl = region->DrawList;
+    for (const auto& cmd : dl->CmdBuffer) {
+      if (cmd.UserCallback)
+        continue;
+      for (unsigned i = 0; i + 2 < cmd.ElemCount; i += 3) {
+        Triangle triangle{};
+        triangle.clip = cmd.ClipRect;
+        for (unsigned k = 0; k < 3; ++k) {
+          const auto& vertex = dl->VtxBuffer[cmd.VtxOffset + dl->IdxBuffer[cmd.IdxOffset + i + k]];
+          triangle.p[k] = vertex.pos;
+          if ((vertex.col & IM_COL32_A_MASK) != 0)
+            triangle.color = vertex.col;
+        }
+        triangles.push_back(triangle);
+      }
+    }
+  }
+  const auto distance = [](ImVec2 p, ImVec2 p0, ImVec2 p1) {
+    const double dx = p1.x - p0.x, dy = p1.y - p0.y;
+    const double t = std::clamp(((p.x - p0.x) * dx + (p.y - p0.y) * dy) / std::max(dx * dx + dy * dy, 1e-20), 0.0, 1.0);
+    return std::hypot(p.x - p0.x - t * dx, p.y - p0.y - t * dy);
+  };
+  const double alt = model.sun_altitude_deg * kDeg, az = model.sun_azimuth_deg * kDeg;
+  const Direction sun = { std::cos(alt) * std::cos(az), std::cos(alt) * std::sin(az), std::sin(alt) };
+  // C01's altitude 20 degrees makes the meridional tangent and its azimuthal tangent explicit.
+  const Direction up = { -std::sin(alt) * std::cos(az), -std::sin(alt) * std::sin(az), std::cos(alt) };
+  const Direction side = { std::sin(az), -std::cos(az), 0 };
+  Source source{ g_pressure.map.adopted_result };
+  IM_CHECK_RETV(Read(source) && source.vmax > 0.0, false);
+  const ImU32 colors[] = { IM_COL32(200, 205, 215, 60), gui::kChromaticColourRed, gui::kChromaticColourBlue };
+  const double deltas[] = { 0, model.dispersion.value_red_deg, model.dispersion.value_blue_deg };
+  for (int curve = 0; curve < 3; ++curve) {
+    const auto check_curve = [&]() -> bool {
+      int checked = 0, inside = 0, outside = 0, behind = 0, data = 0;
+      std::optional<ImVec2> previous;
+      for (int s = 0; s <= 96; ++s) {
+        const double phi = 2.0 * kPi * s / 96;
+        Direction p{};
+        for (int k = 0; k < 3; ++k)
+          p[k] = curve == 0 ? (k == 0 ? std::cos(phi) :
+                               k == 1 ? std::sin(phi) :
+                                        0.0) :
+                              std::cos(deltas[curve] * kDeg) * sun[k] +
+                                  std::sin(deltas[curve] * kDeg) * (std::cos(phi) * up[k] + std::sin(phi) * side[k]);
+        const auto point = project(p);
+        if (previous && point) {
+          // Intersect the segment with the canvas instead of dropping edge-crossing pairs.
+          double lo = 0.0, hi = 1.0;
+          const double dx = point->x - previous->x, dy = point->y - previous->y;
+          const auto cut = [&](double start, double delta, double lower, double upper) {
+            if (std::abs(delta) < 1e-12)
+              return start >= lower && start <= upper;
+            double t0 = (lower - start) / delta, t1 = (upper - start) / delta;
+            if (t0 > t1)
+              std::swap(t0, t1);
+            lo = std::max(lo, t0);
+            hi = std::min(hi, t1);
+            return lo <= hi;
+          };
+          if (cut(previous->x, dx, rect.Min.x, rect.Max.x) && cut(previous->y, dy, rect.Min.y, rect.Max.y)) {
+            for (double fraction : { 0.25, 0.5, 0.75 }) {
+              const double t = lo + (hi - lo) * fraction;
+              const ImVec2 expected(static_cast<float>(previous->x + t * dx), static_cast<float>(previous->y + t * dy));
+              double nearest = 1e9;
+              for (const auto& triangle : triangles) {
+                if (triangle.color != colors[curve] || expected.x < triangle.clip.x || expected.x > triangle.clip.z ||
+                    expected.y < triangle.clip.y || expected.y > triangle.clip.w)
+                  continue;
+                for (int edge = 0; edge < 3; ++edge)
+                  nearest = std::min(nearest, distance(expected, triangle.p[edge], triangle.p[(edge + 1) % 3]));
+              }
+              if (nearest > 2.0) {
+                ctx->LogError("curve %d segment %d ink missing at %.3f,%.3f distance %.3f", curve, s, expected.x,
+                              expected.y, nearest);
+                return false;
+              }
+              const double px = (expected.x - rect.GetCenter().x) / sx;
+              const double py = (rect.GetCenter().y - expected.y) / sy;
+              const double theta = std::hypot(px, py) / radius * view.fov * kDeg * 0.5;
+              inside += std::hypot(px, py) < radius;
+              outside += std::hypot(px, py) > radius + 2;
+              behind += theta > kPi * 0.5 + 0.01;
+              const auto direction = OracleDirection(view, px + timing.width * 0.5, py + timing.height * 0.5,
+                                                     timing.width, timing.height, false);
+              const auto read_data = [&]() -> bool {
+                IM_CHECK_RETV(direction.has_value(), false);
+                const auto index = OracleIndex(source, *direction);
+                const int col = std::clamp(static_cast<int>(px + timing.width * 0.5), 0, timing.width - 1);
+                const int row = std::clamp(static_cast<int>(timing.height * 0.5 - py), 0, timing.height - 1);
+                const size_t offset = (static_cast<size_t>(row) * timing.width + col) * 4;
+                data += index && source.pixels.status[*index] == LUMICE_PATH_MAP_PIXEL_OK &&
+                        (base_pixels[offset] || base_pixels[offset + 1] || base_pixels[offset + 2]);
+                return true;
+              };
+              if (!read_data())
+                return false;
+              ++checked;
+            }
+          }
+        }
+        previous = point;
+      }
+      ctx->LogInfo(
+          "[overlay coverage] curve=%d points=%d inside=%d outside=%d behind=%d data=%d canvas=%dx%d "
+          "camera=140/80/20/0",
+          curve, checked, inside, outside, behind, data, timing.width, timing.height);
+      IM_CHECK_RETV(checked > 0 && inside > 0 && outside > 0 && behind > 0 && data > 0, false);
+      return true;
+    };
+    if (!check_curve())
+      return false;
+  }
+  gui::g_state.analyze_raypath_view_open = false;
+  gui::g_state.analysis = {};
+  g_pressure = {};
+  ctx->Yield(2);
+  return true;
+}
+
 bool MaximumTimingWitness(ImGuiTestContext* ctx) {
   ResetTestState();
   IM_CHECK_RETV(!g_enable_fixed_dt, false);
@@ -1099,6 +1350,9 @@ void RegisterFrozenMapTests(ImGuiTestEngine* engine) {
     }
   };
   t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(PartialPrefixWitness(ctx)); };
+  t = IM_REGISTER_TEST(engine, "frozen_map", "tilted_equidistant_overlay_coverage");
+  t->GuiFunc = [](ImGuiTestContext*) { PressureGui(); };
+  t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(OverlayCoverageWitness(ctx)); };
   t = IM_REGISTER_TEST(engine, "perf_test", "maximum_frozen_map_input_to_present");
   t->GuiFunc = [](ImGuiTestContext*) { PressureGui(); };
   t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(MaximumTimingWitness(ctx)); };

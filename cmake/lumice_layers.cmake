@@ -70,6 +70,7 @@ set(LUMICE_LAYER_foundation_FILES
   core/shared/traversal_shared.h
   include/lumice_api_version.h
   include/lumice_base.h
+  util/projection_domain.h
   util/annotation_line_width.hpp
   util/benchmark_rate.hpp
   util/bit_utils.hpp

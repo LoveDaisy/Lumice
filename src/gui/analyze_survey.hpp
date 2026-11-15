@@ -194,6 +194,9 @@ MapQueryState MapQueryStateFor(const MapQuerySession& map);
 // An explicit Retry is waiting while the previous finite map remains on show.
 bool MapSupersededFor(const MapQuerySession& map);
 
+// Partial coverage is independent of query lifecycle; the raster and footer share this rule.
+bool MapInfoIsPartial(const LUMICE_PathMapInfo& info);
+
 // ---- The point face's session (742.6) --------------------------------------------------------------
 
 // What an outstanding point intent was issued for: the selection key (the ONE identity chain —
@@ -308,7 +311,9 @@ std::string PointWaitLineFor(const PointQuerySession& point, double now_s, const
 // channel): ImGui text items have no ID, so the test engine cannot address a wait line —
 // instead each render site stores the string it drew THIS FRAME into its field here, and the
 // Analyze workspace clears all of them at frame entry, so a field's content equals the text the
-// user saw that frame (never a second truth the tests fabricated). The status bar's segment
+// user saw that frame (never a second truth the tests fabricated). In a bounded floating footer,
+// the field carries the complete original clause: either visible or accessible verbatim in its
+// truncation tooltip. The footer owns the write, not the former scrolling report. The status bar's segment
 // lives beside them: it is drawn by the always-rendered status bar, so its field is fresh in
 // every frame of either workspace. Session tier with the rest of RaypathAnalysisSession: the
 // per-reason resets clear it with the sessions the texts describe. Fields stale only while the
@@ -316,9 +321,9 @@ std::string PointWaitLineFor(const PointQuerySession& point, double now_s, const
 // window.
 struct WaitFeedbackTexts {
   std::string survey_wait_line;           // analyze_workspace.cpp, the overview's kWaiting line
-  std::string map_wait_line;              // analyze_map_view.cpp, the kWaiting branch's one text
-  std::string map_superseding_note;       // analyze_map_view.cpp, the Retry supersession note
-  std::string point_wait_line_fiber;      // analyze_point_view.cpp, the fiber region's kWaiting
+  std::string map_wait_line;              // analyze_map_view.cpp, the footer's kWaiting clause
+  std::string map_superseding_note;       // analyze_map_view.cpp, the footer's Retry supersession clause
+  std::string point_wait_line_fiber;      // analyze_point_view.cpp, the Pose footer's kWaiting clause
   std::string point_wait_line_details;    // analyze_point_view.cpp, the details' kWaiting
   std::string share_list_busy_dots;       // analysis_panel.cpp, the selected row's activity dots
   std::string status_bar_query_segment;   // app_panels.cpp, the status bar's active segment
@@ -403,37 +408,35 @@ struct RayTraceSession {
 // The sample index is an index into the SELECTED COMPONENT's VALID samples (the slider's
 // contract, AC3); the readers map it to the stored row. Playback writes the sample index and
 // nothing else — the sky point intent is untouched by construction (AC3).
-// A log-domain view window; equal endpoints mean fit-to-content. New point adoption resets it.
-struct PointCurveZoom {
-  double log_lo = 0.0;
-  double log_hi = 0.0;
-};
+// Curve range is a session-only display attribute: adoption resets Fit; closing the window keeps it.
+enum class PointCurveRangeMode { kFit, kFull };
 
 struct PointViewState {
   int component_index = 0;  // the selected component of the adopted document (clamped on adoption)
   int sample_index = 0;     // index into that component's VALID samples
   bool playing = false;     // playback advances sample_index; never any other state (AC3)
   double last_play_step_s = 0.0;
-  bool curve_pan_active = false;          // a right-button pan drag latched on the curve canvas: true from
-                                          // a press that began inside the canvas until the button's release,
-                                          // a new adoption or the canvas's own invalidation — all clear it,
-                                          // so a held gesture never leaks across documents or dead canvases
-  bool curve_left_press_ignored = false;  // a left press that BEGAN during a pan is swallowed until
-                                          // released: releasing the right button first must not wake
-                                          // the held left drag into a cursor write (§3.1's mutex)
-  bool show_deviation_grid = true;        // the sun grid's backdrop: drawn only when the result carries one
-  bool show_fresnel_labels = false;       // the 3D trace's per-segment Fresnel ratio numbers: a session
-                                          // display preference with the same survival set as the other
-                                          // toggles (kept across adoptions and window reopen; default
-                                          // off for a new process/document; never persisted, never in
-                                          // a query key) — the ratio numbers stay honest relative
-                                          // values, the width mapping stays the only visual encoding
-  bool crystal_frame = false;             // the 3D view's frame: false = world, true = crystal (AC4's one
-                                          // physical state, two views — a display transform, nothing else)
-  float orbit_yaw_deg = 35.0f;            // the 3D orbit camera (drag to rotate, wheel to zoom)
-  float orbit_pitch_deg = 22.0f;
-  float orbit_zoom = 1.0f;    // 1 = the fit-to-content default
-  PointCurveZoom curve_axis;  // session view state, clamped to the current component's fit range
+  bool show_deviation_grid = true;   // the sun grid's backdrop: drawn only when the result carries one
+  bool show_fresnel_labels = false;  // the 3D trace's per-segment Fresnel ratio numbers: a session
+                                     // display preference with the same survival set as the other
+                                     // toggles (kept across adoptions and window reopen; default
+                                     // off for a new process/document; never persisted, never in
+                                     // a query key) — the ratio numbers stay honest relative
+                                     // values, the width mapping stays the only visual encoding
+  bool crystal_frame = false;        // the 3D view's frame: false = world, true = crystal (AC4's one
+                                     // physical state, two views — a display transform, nothing else)
+  static constexpr float kDefaultOrbitYawDeg = 35.0f;
+  static constexpr float kDefaultOrbitPitchDeg = 22.0f;
+  float orbit_yaw_deg = kDefaultOrbitYawDeg;  // the 3D orbit camera (drag to rotate, wheel to zoom)
+  float orbit_pitch_deg = kDefaultOrbitPitchDeg;
+  float orbit_zoom = 1.0f;  // 1 = the fit-to-content default
+  PointCurveRangeMode curve_range_mode = PointCurveRangeMode::kFit;
+
+  // Restore orientation only; zoom and the other session display choices survive.
+  void ResetOrbitOrientation() {
+    orbit_yaw_deg = kDefaultOrbitYawDeg;
+    orbit_pitch_deg = kDefaultOrbitPitchDeg;
+  }
 };
 
 // Resets the display cursor for a NEW adoption: the component/sample selection belongs to the

@@ -401,7 +401,7 @@ migration are in
 - The diagnostic map and point queries run at a **reference wavelength, nominal geometry and a
   point sun** — they are deliberately not the D65 scene picture, and every caliber line says so.
   The dispersion pair is the engine's fixed 650/450 nm comparison.
-- Each query face carries its own budget (survey 15 s, point 2 s, the map its own default); a
+- Each query face carries its own budget (survey 30 s, point 2 s, the map its own default); a
   budget-stopped answer keeps the facts it established and says it is partial — it never pads
   with zeros or invents the missing part.
 - Direction-invariant (rank-0) classes answer with the **point mass** arm — no fiber, no

@@ -520,7 +520,7 @@ struct MapCanvasProjection {
 constexpr int kOverlaySegments = 96;
 
 bool ProjectToRect(const MapCanvasProjection& view, const double pos[3], const ImVec2& pic_min, float, double* out_x,
-                   double* out_y) {
+                   double* out_y, bool clip_viewport = true) {
   if ((view.camera.visible == kVisibleUpper && pos[2] < 0.0) ||
       (view.camera.visible == kVisibleLower && pos[2] > 0.0)) {
     return false;
@@ -532,11 +532,40 @@ bool ProjectToRect(const MapCanvasProjection& view, const double pos[3], const I
     if (travel[0] * matrix[6] + travel[1] * matrix[7] + travel[2] * matrix[8] > 0.0f)
       return false;
   }
-  const auto screen = ProjectWorldDirToScreen(view.camera, travel, view.width, view.height);
+  const auto screen = ProjectWorldDirToScreen(view.camera, travel, view.width, view.height, clip_viewport);
   if (screen[0] == kOverlaySentinel)
     return false;
   *out_x = pic_min.x + (screen[0] / view.width + 0.5f) * view.width_pt;
   *out_y = pic_min.y + (0.5f - screen[1] / view.height) * view.height_pt;
+  return true;
+}
+
+// Clip the whole segment, not its endpoints' membership: dropping an outside endpoint also
+// drops the visible tail. Account nominal canvas geometry here, just as the point walk did:
+// ancestor clip remains a draw-command concern, while the readout independently clamps into
+// that effective clip (including when its nominal anchor is hidden behind it).
+bool ClipCanvasSegment(const MapCanvasProjection& view, const ImVec2& origin, double& x0, double& y0, double& x1,
+                       double& y1) {
+  double lo = 0, hi = 1;
+  const double dx = x1 - x0, dy = y1 - y0;
+  const auto cut = [&](double start, double delta, double lower, double upper) {
+    if (lower > upper)
+      return false;
+    if (delta == 0)
+      return start >= lower && start <= upper;
+    double t0 = (lower - start) / delta, t1 = (upper - start) / delta;
+    if (t0 > t1)
+      std::swap(t0, t1);
+    lo = std::max(lo, t0);
+    hi = std::min(hi, t1);
+    return lo <= hi;
+  };
+  if (!cut(x0, dx, origin.x, origin.x + view.width_pt) || !cut(y0, dy, origin.y, origin.y + view.height_pt))
+    return false;
+  x1 = x0 + hi * dx;
+  y1 = y0 + hi * dy;
+  x0 += lo * dx;
+  y0 += lo * dy;
   return true;
 }
 
@@ -692,11 +721,13 @@ IsoDeltaWalk WalkIsoDeltaCircle(ImDrawList* dl, const MapCanvasProjection& view,
     SkyPointAboutSun(sun_pos, u, v, delta_deg, phi, p);
     double x = 0.0;
     double y = 0.0;
-    if (!ProjectToRect(view, p, pic_min, pic_px, &x, &y)) {
-      walk.drawn = 0;  // the run broke; the next in-disk point starts a fresh polyline
+    if (!ProjectToRect(view, p, pic_min, pic_px, &x, &y, false)) {
+      walk.drawn = 0;  // the lens domain broke; off-canvas endpoints remain available for clipping
       continue;
     }
-    ++walk.samples_in_disk;
+    const bool in_canvas =
+        x >= pic_min.x && x <= pic_min.x + view.width_pt && y >= pic_min.y && y <= pic_min.y + view.height_pt;
+    walk.samples_in_disk += in_canvas;
     const double travel[3] = { -p[0], -p[1], -p[2] };  // the projection's own input (ProjectToRect negates)
     const bool same_disk =
         s == 0 || ProjectionContinuous(view.camera.lens_type, prev_travel_z, travel[2], prev_travel, travel);
@@ -705,9 +736,17 @@ IsoDeltaWalk WalkIsoDeltaCircle(ImDrawList* dl, const MapCanvasProjection& view,
       prev_travel[k] = travel[k];
     }
     if (walk.drawn > 0 && same_disk && (!dashed || (s / kDashCycleSegments) % 2 == 0)) {
-      dl->AddLine(ImVec2(static_cast<float>(last_x), static_cast<float>(last_y)),
-                  ImVec2(static_cast<float>(x), static_cast<float>(y)), colour, thickness);
-      ++walk.lines_submitted;
+      double x0 = last_x, y0 = last_y, x1 = x, y1 = y;
+      if (ClipCanvasSegment(view, pic_min, x0, y0, x1, y1)) {
+        dl->AddLine(ImVec2(static_cast<float>(x0), static_cast<float>(y0)),
+                    ImVec2(static_cast<float>(x1), static_cast<float>(y1)), colour, thickness);
+        ++walk.lines_submitted;
+        if (!walk.have_top || std::min(y0, y1) < walk.top_y) {
+          walk.have_top = true;
+          walk.top_x = y0 < y1 ? x0 : x1;
+          walk.top_y = std::min(y0, y1);
+        }
+      }
     }
     if (!same_disk) {
       walk.drawn = 0;  // a projection break (disk flip or seam/pole jump) ends the run, the same
@@ -716,7 +755,7 @@ IsoDeltaWalk WalkIsoDeltaCircle(ImDrawList* dl, const MapCanvasProjection& view,
     last_x = x;
     last_y = y;
     ++walk.drawn;
-    if (!walk.have_top || y < walk.top_y) {
+    if (in_canvas && (!walk.have_top || y < walk.top_y)) {
       walk.have_top = true;
       walk.top_x = x;
       walk.top_y = y;
@@ -796,7 +835,8 @@ void DrawFrameAnchors(ImDrawList* dl, const MapCanvasProjection& view, const LUM
     double y1 = 0.0;
     double x2 = 0.0;
     double y2 = 0.0;
-    if (ProjectToRect(view, p1, pic_min, pic_px, &x1, &y1) && ProjectToRect(view, p2, pic_min, pic_px, &x2, &y2)) {
+    if (ProjectToRect(view, p1, pic_min, pic_px, &x1, &y1, false) &&
+        ProjectToRect(view, p2, pic_min, pic_px, &x2, &y2, false) && ClipCanvasSegment(view, pic_min, x1, y1, x2, y2)) {
       dl->AddLine(ImVec2(static_cast<float>(x1), static_cast<float>(y1)),
                   ImVec2(static_cast<float>(x2), static_cast<float>(y2)), IM_COL32(200, 205, 215, 60), 1.0f);
       horizon_drawn = true;
@@ -1421,8 +1461,7 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   const float canvas_avail_w = ImGui::GetContentRegionAvail().x;
   const float canvas_avail_h = ImGui::GetContentRegionAvail().y;
   const float pic_px = std::max(1.0f, canvas_avail_w);
-  const float pic_h =
-      std::max(1.0f, CanvasHeightBeforeReport(canvas_avail_h, 0.0f, UiPx(64.0f), ImGui::GetStyle().ItemSpacing.y));
+  const float pic_h = std::max(1.0f, canvas_avail_h);
   const ImVec2 pic_min = ImGui::GetCursorScreenPos();
   ImGui::InvisibleButton("##map_canvas", ImVec2(pic_px, pic_h));
   const bool canvas_hovered = ImGui::IsItemHovered();
@@ -1457,6 +1496,19 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
                  ImVec2(pic_min.x + pic_px, pic_min.y + pic_h), ImVec2(0, 1), ImVec2(1, 0));
   }
   dl->AddRect(pic_min, ImVec2(pic_min.x + pic_px, pic_min.y + pic_h), ImGui::GetColorU32(ImGuiCol_Separator));
+  if (MapQueryStateFor(map) == MapQueryState::kNoSelection) {
+    const char* guidance =
+        "Select a class in the share list; its reference map takes this region. The sky-point input in the "
+        "info panel beside it works without a map.";
+    const float wrap_w = std::max(1.0f, pic_px - UiPx(24.0f));
+    const ImVec2 text_size = ImGui::CalcTextSize(guidance, nullptr, false, wrap_w);
+    const ImVec2 text_min(pic_min.x + (pic_px - text_size.x) * 0.5f,
+                          pic_min.y + std::max(0.0f, (pic_h - text_size.y) * 0.5f));
+    dl->PushClipRect(pic_min, ImVec2(pic_min.x + pic_px, pic_min.y + pic_h), true);
+    dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), text_min, ImGui::GetColorU32(ImGuiCol_TextDisabled), guidance,
+                nullptr, wrap_w);
+    dl->PopClipRect();
+  }
   if (display.display_sampled) {
     dl->AddText(pic_min, ImGui::GetColorU32(ImGuiCol_Text), "Display sampled; raw cells unchanged");
   }
@@ -1592,44 +1644,6 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
     }
   }
 
-  ImGui::BeginChild("##MapState", RemainingReportSize());
-  // The state line (the four visible states + the two supersession notes). It reads the
-  // picture's own query state, so it stays with the picture; the controls it names — the
-  // wavelength, the sky-point input — live in the info region beside it.
-  if (display.partial)
-    ImGui::TextWrapped("Partial map: %d/%d completed members", display.members_evaluated, display.member_count);
-  const MapQueryState st = MapQueryStateFor(map);
-  const bool superseded = MapSupersededFor(map);
-  if (st == MapQueryState::kNoSelection) {
-    DisabledWrappedText(
-        "Select a class in the share list; its reference map takes this region. The sky-point input in the "
-        "info panel beside it works without a map.");
-  } else if (st == MapQueryState::kCancelled) {
-    DisabledWrappedText(
-        "Map cancelled. Frozen map remains; Retry repeats the full-sky request. Observation never retries.");
-  } else if (st == MapQueryState::kRefused && !superseded) {
-    ImGui::TextUnformatted("Map refused:");
-    DisabledWrappedText("%s", map.adopted_error.c_str());
-  } else if (st == MapQueryState::kWaiting && map.adopted_result == nullptr) {
-    // The queue is the truth the wait names (plan risk 4): the selection's survey — whose
-    // chromatic legs run ~15 s on a full-dimensional class — goes first on the one worker, and
-    // this map rides behind it. Only a map asked in that window can honestly say so. The line
-    // is the pure function's output and is reported to the render-feedback field: what the
-    // test reads is what was drawn (AC4).
-    const std::string wait_line = MapWaitLineFor(map, g_survey_executor.QueryOutstanding(QueryFace::kSurvey),
-                                                 ImGui::GetTime(), g_survey_executor.InflightPollSnapshot());
-    state.analysis.wait_feedback_texts.map_wait_line = wait_line;
-    DisabledWrappedText("%s", wait_line.c_str());
-  } else if (superseded) {
-    // The supersession note carries the Retry intent's elapsed wait and the poll's stage
-    // clause while the map
-    // query itself is computing (751; face-matched, so a queued survey's stage never lands here).
-    const std::string note = MapSupersedingNoteFor(map, ImGui::GetTime(), g_survey_executor.InflightPollSnapshot());
-    state.analysis.wait_feedback_texts.map_superseding_note = note;
-    DisabledWrappedText("%s", note.c_str());
-  }
-
-  ImGui::EndChild();
   ImGui::EndChild();  // ##AnalyzeRaypathView — the map region
 
   // ---- D3: the draggable strip between the two regions (contract §4.2) ----
@@ -1720,10 +1734,13 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
     lambda_scratch = static_cast<float>(state.analysis.map_wavelength_nm);
   }
   const float reference_w = ImGui::CalcTextSize("reference").x + ImGui::GetStyle().FramePadding.x * 2.0f;
-  float lambda_track = UiPx(140.0f);
-  lambda_track = std::min(lambda_track, ImGui::GetContentRegionAvail().x - ImGui::CalcTextSize("wl").x -
-                                            ImGui::GetStyle().ItemInnerSpacing.x);
-  lambda_track = std::max(lambda_track, UiPx(60.0f));
+  const float lambda_label_w = ImGui::CalcTextSize("wl").x + ImGui::GetStyle().ItemInnerSpacing.x;
+  const float lambda_row_w = ImGui::GetContentRegionAvail().x;
+  const float joined_track_w = lambda_row_w - lambda_label_w - reference_w - ImGui::GetStyle().ItemSpacing.x;
+  // Yield the elastic track before wrapping the fixed reference action. At the compressed
+  // viewport this recovers a full row for the report without hiding any control or its label.
+  const float track_budget = joined_track_w >= UiPx(60.0f) ? joined_track_w : lambda_row_w - lambda_label_w;
+  const float lambda_track = std::max(UiPx(60.0f), std::min(UiPx(140.0f), track_budget));
   ImGui::SetNextItemWidth(lambda_track);
   if (ImGui::SliderFloat("wl##map", &lambda_scratch, 350.0f, 900.0f, "%.0f nm", ImGuiSliderFlags_AlwaysClamp)) {
     state.analysis.map_wavelength_nm = static_cast<double>(lambda_scratch);
@@ -1736,6 +1753,9 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
         state.analysis.map_wavelength_nm > 0.0 ?
             "The wavelength this map answers at — an explicit value; editing it asks a new computation." :
             "The wavelength this map answers at — the engine's reference; editing the slider asks an explicit one.");
+  }
+  if (fits_on_line(reference_w)) {
+    ImGui::SameLine();
   }
   ImGui::BeginDisabled(state.analysis.map_wavelength_nm <= 0.0);
   if (ImGui::SmallButton("reference##map_lambda")) {
@@ -2158,8 +2178,8 @@ void RenderAnalyzeRaypathViewWindow(GuiState& state) {
   // not); this window keeps only its own wait-feedback hygiene: on the Render-workspace frames
   // it is the map fields' — and the staleness hints' — only render site, so a field's content is
   // exactly what the user saw THIS frame — the site that can draw it owns the clear. On an
-  // Analyze frame the workspace entry already pumped and cleared; this window's map region is
-  // then that frame's only map-field writer.
+  // Analyze frame the workspace entry already pumped and cleared; the footer below is
+  // then that frame's only map-wait-field writer.
   if (state.workspace.mode != GuiState::WorkspaceMode::kAnalyze) {
     WaitFeedbackTexts& feedback = state.analysis.wait_feedback_texts;
     feedback.map_wait_line.clear();
@@ -2250,11 +2270,55 @@ void RenderAnalyzeRaypathViewWindow(GuiState& state) {
     hint_feedback.map_drift_hint_rect_max_y = rect_max.y;
     hint_feedback.map_drift_hint = drift_text;
   }
-  // The body IS the map region (the whole capability moved out of the depth band in one piece:
-  // the raster and its gestures, the overlays, the state line, the caliber block, the sky-point
-  // tail). The region's own child keeps its name — the tests' addressing anchors to it. Its
-  // honest no-selection state (below, in the region) is the window's empty state.
-  RenderAnalyzeMapRegion(state, VisibleContentSize());
+  // Reserve the common footer before the body submits any child. Its state cannot change geometry.
+  const AnalyzeStatusBarLayout status_layout = ReserveAnalyzeStatusBar();
+  RenderAnalyzeMapRegion(state, status_layout.body_size);
+  const MapQuerySession& map = state.analysis.map;
+  const MapQueryState query_state = MapQueryStateFor(map);
+  // Waiting requires no adopted result; supersession requires a retained result. They cannot
+  // coincide: a retained-map retry reads Completed (or Refused), then takes the note below.
+  const bool superseded = MapSupersededFor(map);
+  std::string status;
+  bool warning = false;
+  switch (query_state) {
+    case MapQueryState::kNoSelection:
+      status = "No selection";
+      break;
+    case MapQueryState::kCancelled:
+      status = "Cancelled — frozen map remains; Retry repeats the full-sky request. Observation never retries.";
+      break;
+    case MapQueryState::kRefused:
+      status = "Refused — " + map.adopted_error;
+      warning = true;
+      break;
+    case MapQueryState::kWaiting: {
+      const std::string wait_line = MapWaitLineFor(map, g_survey_executor.QueryOutstanding(QueryFace::kSurvey),
+                                                   ImGui::GetTime(), g_survey_executor.InflightPollSnapshot());
+      status = "Waiting — " + wait_line;
+      state.analysis.wait_feedback_texts.map_wait_line = wait_line;
+      break;
+    }
+    case MapQueryState::kCompleted:
+      status = "Ready";
+      break;
+  }
+  if (superseded) {
+    const std::string note = MapSupersedingNoteFor(map, ImGui::GetTime(), g_survey_executor.InflightPollSnapshot());
+    status = "Superseded — " + note;
+    state.analysis.wait_feedback_texts.map_superseding_note = note;
+  }
+  // Partial coverage and supersession/cancellation are independent facts. Read the same source
+  // Info as the frozen display, not a second completion latch or the right column's point query.
+  LUMICE_PathMapInfo info{};
+  info.struct_size = sizeof(info);
+  if (map.adopted_result && LUMICE_PathMapGetInfo(map.adopted_result.get(), &info) == LUMICE_PATH_READ_OK &&
+      MapInfoIsPartial(info)) {
+    const std::string partial = "Partial map: " + std::to_string(info.members_evaluated) + "/" +
+                                std::to_string(info.member_count) + " completed members";
+    status = query_state == MapQueryState::kCompleted && !superseded ? partial : partial + " — " + status;
+    warning = true;
+  }
+  RenderAnalyzeStatusBar(status_layout, status, warning);
   ImGui::End();
 }
 

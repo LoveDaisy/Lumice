@@ -416,6 +416,12 @@ static constexpr int kSceneCount = sizeof(kScenes) / sizeof(kScenes[0]);
 // newly reachable rather than theoretical. Ordinary `return` still unwinds the C++ stack,
 // so a scope guard here is sufficient; disarm it via server_owned once the normal path has torn
 // the server down itself, to avoid a double Stop/Destroy.
+// Deliberately NOT the shared ScopedWatchdogThreshold primitive (test_gui_shared.hpp): that one
+// saves and overwrites at construction and restores at scope end, while this guard saves the
+// baseline at construction, the wait below overwrites mid-test, and the restore must ride this
+// destructor — ahead of the server teardown, and covering the export/capture tail after the
+// wait. Restoring at a wait-site scope end instead would shrink the raised budget before the
+// tail; composing would need a deferred-write variant of the primitive for one suite pair.
 struct ScopedServerAndWatchdogGuard {
   ImGuiTestEngineIO* engine_io;
   float saved_watchdog_warn;
@@ -498,20 +504,21 @@ void RegisterLensProjectionTests(ImGuiTestEngine* engine) {
       // sim thread the real time budget it actually needs, regardless of how fast or slow each GUI
       // iteration runs.
       //
-      // ImGuiTestEngine's own watchdog is a second, *independent* timer that measures simulated
-      // time (frame count * ConfigFixedDeltaTime), not wall clock — under --fixed-dt those two
-      // clocks are decoupled in either direction: unloaded, ~1,400 Yield()s/real-second inflate
-      // simulated time far ahead of real time; loaded, simulated time can still outrun a real-time
-      // deadline whenever the iteration rate stays merely above 60 Hz while sim throughput does
-      // not. Reproduced directly: with only the default widened threshold (180s) the watchdog's own
-      // IM_CHECK(false) fired at frame ~10,798 under heavy contention while the wall-clock deadline
-      // still had over 100 real seconds left. It is therefore raised far past anything the deadline
-      // below could accumulate at any plausible iteration rate — the wall-clock deadline is what
-      // actually bounds this wait against a genuine hang; the watchdog is left with no bound to
-      // enforce as a result. The guard restores both configs afterward regardless of outcome, so
-      // every other test still gets the tight default.
-      guard.engine_io->ConfigWatchdogWarning = 50000.0f;
-      guard.engine_io->ConfigWatchdogKillTest = 100000.0f;
+      // The whole-test watchdog is a second, independent timer. Under the fixed-dt clock contract
+      // (test_gui_main.cpp) it runs on the wall clock — the harness real-clock watchdog in that
+      // mode, the engine's own watchdog (whose time base is already real) otherwise — and reads
+      // these same threshold fields, so the values below are real-clock seconds in every mode.
+      // The wall-clock deadline below is what bounds this wait against a genuine hang (a deadline
+      // expiry fails the IM_CHECK cleanly), but the watchdog must still cover the test's whole
+      // legal chain — setup, the up-to-170s wait, and the export/capture tail — without cutting
+      // into the wait itself: an earlier iteration that widened the kill to only 180s was
+      // over-taken by the chain. The kill sits at 270s (170s deadline + ~100s of setup/tail
+      // headroom), finite where the interim 50000/100000 made the watchdog vanish; the warning
+      // runs 30s ahead of the kill, mirroring the engine's default warning/kill spacing. The
+      // guard restores both configs afterward regardless of outcome, so every other test still
+      // gets the tight default.
+      guard.engine_io->ConfigWatchdogWarning = 240.0f;
+      guard.engine_io->ConfigWatchdogKillTest = 270.0f;
       const auto wait_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(170);
       while (gui::g_state.sim_state != gui::GuiState::SimState::kDone &&
              std::chrono::steady_clock::now() < wait_deadline) {

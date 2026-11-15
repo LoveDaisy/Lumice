@@ -123,6 +123,9 @@ void ApplyStyle(ImGuiStyle& style);
 // coupling to a particular ImGuiCol_ slot lives here and nowhere else.
 ImVec4 AccentColor(float alpha = 1.0f);
 
+// Filled current segment, shared by workspace and curve-range switches. Pop four colors afterwards.
+void PushCurrentSegmentStyle();
+
 // Draws ImGui::Checkbox, then — because the theme's FrameBorderSize is 0 — adds a
 // low-contrast inset border around an UNCHECKED box so it stays legible against the panel
 // background. A checked box is already filled with the accent colour and needs no such aid.

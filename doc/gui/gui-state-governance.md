@@ -34,6 +34,10 @@ Run/Stopping、Full Spectrum/Colored、信号告警与 Modified 的转换只更�
 Render/Analyze 的纯文字双格是 T-session 工作区选择：当前格实填选中、点击 no-op，另一格仍只切换工作区，
 不把它降格为「窗口是否打开」的徽章。表达与组距合同见 `gui-visual-language.md` §4.8。
 
+**Contribution curve 的 Fit/Full** 是独立 T-session 显示属性（`PointViewState::curve_range_mode`）：
+新点采纳/文档重置回 Fit、关开窗口保留、分量切换按当前档重算范围。切档不写共享样本游标、播放或
+查询身份；hover 线/点/tooltip 每帧由鼠标和当前曲线派生，不储存第二 selection，不进快照/配置/默认值。
+
 **Look At 跟随（as-built）**：`GuiState::look_at` 只保存所选具名目标与跟随意图，是 T-session，不是相机姿态的第二份副本。具名方向、约束与状态转换由 `view_look_at` 单一 owner 解析；`RenderPreviewPanel` 在装配本帧 view 输入之前调用 `UpdateLockedLookAt`，且不受 View 折叠、是否已有纹理或 Run 状态影响。被接受的 `Elevation` / `Azimuth` 编辑与 preview camera drag 先解除 Lock，再保留本次输入；`Roll` / `FOV` / zoom 不解除。切到不同 lens 或进入 full-sky 禁用态会解除而不暂停旧锁；`Reset` 解除 Lock 但保留目标。`ResetFrontendState` 对 New / 成功 Open / Revert 都恢复 `Sun + unlocked`，失败或取消的 Open 不调用它，因而不清现有意图。该块不进 `.lmc`、用户默认值或 `ConfigSnapshot`，也不产生 dirty、epoch、display push 或额外 re-sim；太阳高度本身原有的 sim effect 不变。
 
 > **Raypath view 的共享相机机制**：唯一合同见 [raypath-view-camera.md](raypath-view-camera.md) §6–8，验证边界见§10。
@@ -497,6 +501,19 @@ GUI 的网格由 overlay 状态 + FOV 派生，核心文档的逐行角度表在
   可以是对的，但审计时必须**先分清一个派生态归哪个 tier，再检查对应的 owner**——不能默认所有派生态都归
   `ResetFrontendState` 管。§10.1 的缺口正是「猜对了机制类型、猜错了面板和 reason」的产物：Colors 的 Revert
   由 document-tier 路线正确覆盖，Analysis 的 Revert 落在 session-tier 路线的一条显式跳过分支上。
+
+### 10.4 浮窗查询状态：派生展示与反馈归属（2026-11-15）
+
+Raypath view 的 map 状态、Pose & trace 的 point 状态各由自己的会话派生，使用
+`analyze_ui_widgets.hpp` 同一固定单行底栏机制。它们不是新的生命周期、持久态或文档字段；
+不 dirty、不重发查询，不把右侧独立答案或代表轨迹的在途状态混入本窗查询状态。
+
+`WaitFeedbackTexts` 是绘制反馈，而非后台状态副本：`map_wait_line` / `map_superseding_note`
+由 Raypath view 底栏写入；历史字段名 `point_wait_line_fiber` 保留，唯一写点迁至 Pose 底栏；
+`point_wait_line_details` 仍由主窗摘要绘制处写入，不能由浮窗伪填。字段携带既有函数输出的原文：
+未省略时实际可见，省略时作为该栏真实 tooltip 的完整子句，前缀与 hover 原文来自同一帧文本。
+等待结束后清空；Analyze 帧仍由 workspace 入口先清，Render 帧由各开窗宿主先清再画，
+关窗字段沿用既有寿命、不冒充新鲜绘制。主窗活跃段与 survey 字段不受此迁移影响。
 
 ## 11. 视图侧副本与位置引用的重同步不变量
 

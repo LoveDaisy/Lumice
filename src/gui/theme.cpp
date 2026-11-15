@@ -63,6 +63,7 @@ ImFont* AddBodyFont(ImGuiIO& io, float size_px, float raster_density) {
     // loaded — removing them would repack the atlas and drift content-unrelated screenshots.
     ranges.AddChar(0x03B4);
     ranges.AddChar(0x03BB);
+    ranges.AddChar(0x03C1);  // rho: the contribution curve's axis-density symbol
     ranges.BuildRanges(&g_body_glyph_ranges);
   }
   // ImGui takes ownership of the buffer it rasterizes from and frees it with the
@@ -331,6 +332,14 @@ void ApplyPalette(ImGuiStyle& style, const Palette& p) {
 constexpr float kUncheckedBoxBorderAlpha = 0.13f;
 
 }  // namespace
+
+void PushCurrentSegmentStyle() {
+  const ImVec4 accent = AccentColor();
+  ImGui::PushStyleColor(ImGuiCol_Button, accent);
+  ImGui::PushStyleColor(ImGuiCol_ButtonHovered, accent);
+  ImGui::PushStyleColor(ImGuiCol_ButtonActive, accent);
+  ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_WindowBg));
+}
 
 ImVec4 AccentColor(float alpha) {
   const ImVec4 accent = ImGui::GetStyleColorVec4(ImGuiCol_CheckMark);

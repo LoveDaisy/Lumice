@@ -526,7 +526,7 @@ MapDisplayFrame DrawFrozenMap(const MapQuerySession& map, const ViewProjection& 
   if (g_display.reference.texture) {
     frame.members_evaluated = g_display.reference.info.members_evaluated;
     frame.member_count = g_display.reference.info.member_count;
-    frame.partial = g_display.reference.info.truncated || frame.members_evaluated < frame.member_count;
+    frame.partial = MapInfoIsPartial(g_display.reference.info);
   }
   const auto start = Clock::now();
   glBindFramebuffer(GL_FRAMEBUFFER, g_display.fbo);

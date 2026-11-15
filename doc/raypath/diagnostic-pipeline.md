@@ -381,7 +381,7 @@ as-built：CLI 五命令面已全落地（§7.4），GUI 工作区接线进行�
 ```
 Lumice analyze  -f cfg ...                                  # L0 既有，不动
 Lumice raypath survey -f cfg --crystal 1 --path 3-5 \
-    [--literal] [--lambda 550] [--budget 15s] [--mc-ess draws]   # L1 → schema4
+    [--literal] [--lambda 550] [--budget 30s] [--mc-ess draws]   # L1 → schema4
 Lumice raypath point  -f cfg --crystal 1 --path 3-5 --target 20,25 [--warm s.json]
 Lumice raypath probe  -f cfg --crystal 1 --path 3-5 \
     --along radial|edge-normal|arc|tangential --at ... [--warm s.json]
@@ -405,7 +405,7 @@ survey 落盘对象索引 + band-sum 地图 + 种子；point/probe 经 `--warm s
 L2 类，`--literal` 收窄到字面成员，词汇与 `analyze --symmetry` 对齐）× **问题参数**
 （`--target` / `--along` / `--lambda` / `--budget`）。
 
-继承 `analyze` 的 CLI 纪律：预算上限（默认 15s、显式上限）、进度走 stderr、Ctrl-C 早退写
+继承 `analyze` 的 CLI 纪律：预算上限（survey 默认 30s、point/probe/report 默认 15s、显式上限）、进度走 stderr、Ctrl-C 早退写
 部分结果、输出文件原子重写。
 
 ### 7.4 as-built 与 GUI 预演映射
@@ -468,7 +468,7 @@ L2 类，`--literal` 收窄到字面成员，词汇与 `analyze --symmetry` 对�
 | Tier 3 重型 | 能量对照 MC、ESS/TIR 份额探针 | 分钟级+ | 开发机/按需（`test/gui/parity/` 先例：在 test/、无 CI job、仅本地求值） |
 
 升档纪律：层间移动 = 先实测代价再动；任何进 PR 的增量须申报预算并对账。算术预警：9 case ×
-survey 默认 15s ≈ 2 分钟+ 串行，叠加 point/probe 与能量对照 MC——不分层直接进 PR 必冲预算。
+survey 默认 30s ≈ 4.5 分钟+ 串行，叠加 point/probe 与能量对照 MC——不分层直接进 PR 必冲预算。
 
 **收敛梯子纪律**：接受线先于数据预写（C15 台先例：按梯度实测收敛、钉相邻档漂移 ≤ 离散地板
 的档位为接受线，再写断言）。

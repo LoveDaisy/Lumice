@@ -1252,6 +1252,10 @@ std::vector<unsigned char> AnnotationMembership(const unsigned char* rgb, int w,
 // Same shape and same reason as the guard in test/gui/visual/test_gui_lens_projection.cpp: every
 // IM_CHECK* below can return early, and only a destructor tears down a running server and restores
 // a widened watchdog on that path.
+// Deliberately NOT the shared ScopedWatchdogThreshold primitive (test_gui_shared.hpp): the full
+// lifecycle rationale — baseline save at construction, mid-test overwrite, restore riding this
+// destructor ahead of the server teardown — is written once at the lens-projection suite's
+// ScopedServerAndWatchdogGuard, which this guard mirrors line for line.
 struct ScopedServerAndWatchdogGuard {
   ImGuiTestEngineIO* engine_io;
   float saved_watchdog_warn;
@@ -1482,13 +1486,18 @@ void RenderBothArms(ImGuiTestContext* ctx, const ParityScene& scene, ScopedServe
 
   // 3. Run to completion. kDone means the backend reported the committed epoch complete, so the
   // capture below is taken on a fixed amount of work rather than on whatever a poll happened to
-  // pick up. The wall-clock deadline (and the watchdog raised out of its way) is the same
-  // arrangement the lens-projection suite arrived at: under --fixed-dt the engine's watchdog
-  // measures SIMULATED time and can fire while a real-time budget still has minutes left.
+  // pick up. The wall-clock deadline plus the whole-test watchdog raised to cover the test's
+  // legal chain is the same arrangement the lens-projection suite arrived at: under the fixed-dt
+  // clock contract the watchdog runs on the wall clock (the harness real-clock watchdog in that
+  // mode, the engine's own real-time watchdog otherwise) and reads these same threshold fields as
+  // real-clock seconds. The kill sits at 270s — the 170s deadline below plus setup/tail headroom,
+  // finite where the interim 50000/100000 made the watchdog vanish — and the warning runs 30s
+  // ahead of it, mirroring the engine's default spacing. The guard restores both configs
+  // regardless of outcome, so every other test still gets the tight default.
   gui::DoRun(/*user_initiated=*/true);
   IM_CHECK_EQ((int)gui::g_state.run_intent, (int)gui::RunIntent::kRunning);
-  guard.engine_io->ConfigWatchdogWarning = 50000.0f;
-  guard.engine_io->ConfigWatchdogKillTest = 100000.0f;
+  guard.engine_io->ConfigWatchdogWarning = 240.0f;
+  guard.engine_io->ConfigWatchdogKillTest = 270.0f;
   const auto wait_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(170);
   while (gui::g_state.sim_state != gui::GuiState::SimState::kDone && std::chrono::steady_clock::now() < wait_deadline) {
     ctx->Yield(1);

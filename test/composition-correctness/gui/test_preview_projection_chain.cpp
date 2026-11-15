@@ -25,6 +25,8 @@
 #include <string>
 #include <unordered_set>
 
+#include "core/camera_rotation.hpp"
+#include "core/lens_proj_build.hpp"
 #include "gui/analysis_panel.hpp"
 #include "gui/analyze_map_view.hpp"
 #include "gui/app.hpp"  // AnnotationViewInputFor
@@ -53,6 +55,43 @@ RenderConfig LensAt(int lens_type, float fov_deg, float elevation_deg) {
   rc.azimuth = 0.0f;
   rc.roll = 0.0f;
   return rc;
+}
+
+// Continuous engine oracle assembled from engine pure forwards and engine layout helpers.
+// ProjectExitToPixel independently checks the corresponding integer-bin ownership below.
+std::array<float, 2> EngineContinuous(const lm_proj::ProjParams& p, const float d[3]) {
+  float x = 0, y = 0, z = 0;
+  lm_proj::ApplyRotTranspose(p.rot, -d[0], -d[1], -d[2], &x, &y, &z);
+  const int lens = p.proj_type;
+  const bool dual = LensIsFullSky(lens) && lens != kLensTypeRectangular;
+  if (dual) {
+    x = -d[0];
+    y = -d[1];
+    z = std::abs(d[2]);
+  }
+  lumice::projection::ProjXY xy{};
+  if (lens == kLensTypeLinear)
+    xy = lumice::projection::LinearForward(x, y, z);
+  else if (lens == kLensTypeFisheyeEqualArea || lens == kLensTypeDualFisheyeEqualArea)
+    xy = lumice::projection::FisheyeEqualAreaForward(x, y, z, 1);
+  else if (lens == kLensTypeFisheyeEquidist || lens == kLensTypeDualFisheyeEquidist)
+    xy = lumice::projection::FisheyeEquidistantForward(x, y, z, 1);
+  else if (lens == kLensTypeFisheyeStereographic || lens == kLensTypeDualFisheyeStereographic)
+    xy = lumice::projection::FisheyeStereographicForward(x, y, z, 1);
+  else if (lens == kLensTypeFisheyeOrthographic || lens == kLensTypeDualFisheyeOrthographic)
+    xy = lumice::projection::FisheyeOrthographicForward(x, y, z, 1);
+  else if (lens == kLensTypeRectangular) {
+    xy = lumice::projection::RectangularForward(z, -x, -y);
+    return { xy.x * p.scale, -xy.y * p.scale };
+  } else if (lens == kLensTypeGlobe) {
+    return { -x / (lm_proj::kGlobeCameraD + z) * p.scale, y / (lm_proj::kGlobeCameraD + z) * p.scale };
+  }
+  if (dual) {
+    float px = 0, py = 0;
+    lm_proj::DualFisheyeToPixelXY(xy.x, xy.y, d[2] <= 0, p.img_w, p.img_h, &px, &py);
+    return { px - p.img_w * 0.5f, py - p.img_h * 0.5f };
+  }
+  return { -xy.x * p.scale, xy.y * p.scale };
 }
 
 template <class T>
@@ -408,6 +447,153 @@ TEST(PreviewProjectionChain, LensTypesThatIgnoreFrontSeeNoFrontClipInTheProjecti
   // this pins, and one that zeroes everything would pass the loop while killing the clip outright.
   EXPECT_GT(zeroed, 0) << "no lens discards the front clip";
   EXPECT_GT(kept, 0) << "no lens keeps the front clip";
+}
+
+// This oracle constructs its camera and directions through the engine, never BuildViewMatrix.
+// Full-sky screen coordinates retain their historical y convention; the inverse-mirror entry
+// uses shader y-up. Odd canvas widths additionally exercise the engine's integer dual layout.
+TEST(PreviewProjectionChain, EngineInverseRoundTripOverEveryLensDomain) {
+  for (int lens = 0; lens < kLensTypeCount; ++lens) {
+    int compared = 0, rejected = 0;
+    for (const auto size : { std::array<int, 2>{ 96, 96 }, { 192, 96 }, { 97, 145 }, { 384, 192 } }) {
+      for (float fov : { 20.0f, 90.0f, LUMICE_MaxFov(static_cast<LUMICE_LensType>(lens)) }) {
+        if (fov > LUMICE_MaxFov(static_cast<LUMICE_LensType>(lens)))
+          continue;
+        for (int pose = 0; pose < (LensIsFullSky(lens) ? 1 : 2); ++pose) {
+          lumice::RenderConfig cfg;
+          cfg.lens_.type_ = static_cast<lumice::LensParam::LensType>(lens);
+          cfg.lens_.fov_ = fov;
+          cfg.resolution_[0] = size[0];
+          cfg.resolution_[1] = size[1];
+          cfg.view_.az_ = pose ? 37.0f : 0.0f;
+          cfg.view_.el_ = pose ? 23.0f : 0.0f;
+          cfg.view_.ro_ = pose ? EffectiveRollForLens(lens, 17.0f) : 0.0f;
+          cfg.overlap_ = 0.0f;
+          const auto rotation = lumice::MakeCameraRotation(cfg);
+          const auto params = lumice::BuildProjParams(cfg, rotation, static_cast<float>(std::min(size[0], size[1])));
+          ViewProjection vp{};
+          vp.lens_type = lens;
+          vp.fov = fov;
+          vp.azimuth = cfg.view_.az_;
+          vp.elevation = cfg.view_.el_;
+          vp.roll = cfg.view_.ro_;
+          for (int y = 1; y < size[1]; y += 7) {
+            for (int x = 1; x < size[0]; x += 7) {
+              const auto direction = lumice::mask_detail::PixelToWorld(cfg, params, rotation, x, y);
+              if (!direction.valid || !std::isfinite(direction.x) || !std::isfinite(direction.y) ||
+                  !std::isfinite(direction.z)) {
+                ++rejected;
+                continue;
+              }
+              const float d[] = { direction.x, direction.y, direction.z };
+              const float ex = x + 0.5f - size[0] * 0.5f;
+              const float ey = y + 0.5f - size[1] * 0.5f;
+              // Screen orthographic intentionally keeps its smaller, calibrated FOV circle.
+              if (lens == kLensTypeFisheyeOrthographic && std::hypot(ex, ey) > std::min(size[0], size[1]) * 0.5f + 0.5f)
+                continue;
+              const auto actual = ProjectWorldDirToScreen(vp, d, size[0], size[1]);
+              EXPECT_FALSE(IsSentinel(actual)) << "lens=" << lens << " fov=" << fov << " pixel=" << x << "," << y;
+              EXPECT_NEAR(actual[0], ex, 0.5f) << lens;
+              EXPECT_NEAR(actual[1], LensIsFullSky(lens) ? ey : -ey, 0.5f) << lens;
+              ++compared;
+            }
+          }
+        }
+      }
+    }
+    RecordProperty("inverse_lens_" + std::to_string(lens), compared);
+    EXPECT_GT(compared, 100) << lens;
+    if (lens != kLensTypeLinear)
+      EXPECT_GT(rejected, 0) << lens;
+  }
+}
+
+TEST(PreviewProjectionChain, EngineForwardWholeSphereAndOffCanvasMirror) {
+  for (int lens = 0; lens < kLensTypeCount; ++lens) {
+    int on_canvas = 0, off_canvas = 0;
+    for (float fov : { 20.0f, std::min(120.0f, LUMICE_MaxFov(static_cast<LUMICE_LensType>(lens))),
+                       LUMICE_MaxFov(static_cast<LUMICE_LensType>(lens)) }) {
+      lumice::RenderConfig cfg;
+      cfg.lens_.type_ = static_cast<lumice::LensParam::LensType>(lens);
+      cfg.lens_.fov_ = fov;
+      cfg.resolution_[0] = 640;
+      cfg.resolution_[1] = 320;
+      cfg.view_.az_ = LensIsFullSky(lens) ? 0.0f : 37.0f;
+      cfg.view_.el_ = LensIsFullSky(lens) ? 0.0f : 23.0f;
+      cfg.view_.ro_ = LensIsFullSky(lens) ? 0.0f : EffectiveRollForLens(lens, 17.0f);
+      cfg.overlap_ = 0;
+      const auto rotation = lumice::MakeCameraRotation(cfg);
+      const auto params = lumice::BuildProjParams(cfg, rotation, 320.0f);
+      ViewProjection vp{};
+      vp.lens_type = lens;
+      vp.fov = fov;
+      vp.azimuth = cfg.view_.az_;
+      vp.elevation = cfg.view_.el_;
+      vp.roll = cfg.view_.ro_;
+      float matrix[9];
+      BuildViewMatrix(vp.elevation, vp.azimuth, vp.roll, matrix);
+      for (int theta_deg = 5; theta_deg < 180; theta_deg += 5) {
+        if (lens == kLensTypeLinear && theta_deg == 90)
+          continue;  // exact perspective singularity: independent rotations round to either side
+        const float theta = theta_deg * lumice::math::kDegreeToRad;
+        for (int phi_deg = 3; phi_deg < 360; phi_deg += 5) {
+          const float phi = phi_deg * lumice::math::kDegreeToRad;
+          const lumice::projection::Dir3 c{ std::sin(theta) * std::cos(phi), std::sin(theta) * std::sin(phi),
+                                            std::cos(theta), true };
+          const auto world = lumice::mask_detail::CameraDirToWorld(rotation, c);
+          const float d[] = { world.x, world.y, world.z };
+          const auto hit = lm_proj::ProjectExitToPixel(params, d[0], d[1], d[2]);
+          const auto actual = ProjectWorldDirToScreen(vp, d, 640, 320);
+          if (!hit.count)
+            continue;  // trace numerical floors and geometric singularities have named pins below
+          const auto core = hit.hits[0];
+          const auto continuous = EngineContinuous(params, d);
+          if (core.px < 0 || core.px >= 640 || core.py < 0 || core.py >= 320) {
+            ++off_canvas;
+            EXPECT_TRUE(IsSentinel(actual) || std::abs(actual[0]) >= 319.5f || std::abs(actual[1]) >= 159.5f);
+            // No viewport rejection in the inverse-mirror contract.
+            if (lens != kLensTypeFisheyeOrthographic) {
+              float px = 0, py = 0;
+              bool valid = false;
+              detail::WorldDirToPixelForTesting(d[0], d[1], d[2], 640, 320, lens, fov, matrix, &px, &py, &valid);
+              EXPECT_TRUE(valid) << lens;
+              EXPECT_TRUE(std::isfinite(px) && std::isfinite(py));
+              EXPECT_LE(std::abs(px - continuous[0]) / std::max({ 1.0f, 160.0f, std::abs(continuous[0]) }), 2e-4f)
+                  << lens;
+              EXPECT_LE(std::abs(py + continuous[1]) / std::max({ 1.0f, 160.0f, std::abs(continuous[1]) }), 2e-4f)
+                  << lens;
+            }
+            continue;
+          }
+          if (lens == kLensTypeFisheyeOrthographic && (std::hypot(core.px - 320.0f, core.py - 160.0f) > 159.0f))
+            continue;  // independently pinned screen-only calibrated rim
+          EXPECT_FALSE(IsSentinel(actual)) << "lens=" << lens << " theta=" << theta_deg << " fov=" << fov;
+          if (IsSentinel(actual))
+            continue;
+          const float image_x = actual[0] + 320;
+          const float image_y = (LensIsFullSky(lens) ? actual[1] : -actual[1]) + 160;
+          EXPECT_NEAR(actual[0], continuous[0], 0.25f) << lens;
+          EXPECT_NEAR(LensIsFullSky(lens) ? actual[1] : -actual[1], continuous[1], 0.25f) << lens;
+          // Exact same integer bin away from its float-sensitive boundary; otherwise stay in
+          // the prescribed continuous sub-quarter-pixel band, not an arbitrary one-pixel delta.
+          const auto check_bin = [&](float coordinate, int bin) {
+            if (std::abs(coordinate - std::round(coordinate)) > 0.25f)
+              EXPECT_EQ(static_cast<int>(std::floor(coordinate)), bin) << lens;
+            else
+              EXPECT_LE(std::abs(coordinate - std::clamp(coordinate, static_cast<float>(bin), bin + 1.0f)), 0.25f)
+                  << lens;
+          };
+          check_bin(image_x, core.px);
+          check_bin(image_y, core.py);
+          ++on_canvas;
+        }
+      }
+    }
+    RecordProperty("forward_lens_" + std::to_string(lens), on_canvas);
+    EXPECT_GT(on_canvas, 10) << lens;
+    if (!LensIsFullSky(lens))
+      EXPECT_GT(off_canvas, 0) << lens;
+  }
 }
 
 }  // namespace

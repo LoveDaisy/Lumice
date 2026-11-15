@@ -145,12 +145,10 @@ constexpr float kPoseViewLeftFloor = 300.0f;
 // compress below them. Report content never changes these bounds.
 constexpr float kPoseViewGlobeFloor = 221.0f;
 constexpr float kPoseViewFactorsFloor = 140.0f;
-// D5 — the LEFT column's 3D | curve row floors (§16.4.1 suggested values, calibration
-// candidates until the real-frame pass): the 3D region's full form at its narrowest face
-// (title + frame switch + status + canvas 180 + report viewport + padding) and the curve
-// region's (title + status + canvas 84 + the companion's 8-line quota + the D7 strip). Both
-// fit the narrowest window's left column with ~3pt of drag room — that narrow margin is the
-// calibration obligation, not a claim.
+// D5's stored split floors, not the full-content requirements of either region. The default
+// 144pt report and three-line companion were revalidated at both window sizes and all UI tiers.
+// At the minimum window the fixed footer leaves less than the floor sum: the existing
+// proportional fallback applies, rather than the pre-footer calibration's ~3pt drag room.
 constexpr float kPoseViewLeft3dFloor = 300.0f;
 constexpr float kPoseViewCurveFloor = 330.0f;
 // D7 — the curve region's canvas | companion split: the canvas share's "never dragged" sentinel
@@ -159,20 +157,16 @@ constexpr float kPoseViewCurveFloor = 330.0f;
 // means the resize strategy's undragged state (companion at its fixed quota, canvas eats the
 // delta), never a user's split.
 constexpr float kPoseViewCurveCanvasRatioUndragged = 0.0f;
-// D7's split floors and the companion's fixed quota (§16.4.1 suggested values, calibration
-// candidates until the real-frame pass): the canvas's real-slice floor — the smallest canvas
-// that still draws a real slice before the region's honest scroll form takes over — the
-// companion's smallest readable budget, and the 8-line quota the UNDRAGGED state grants it.
-// The quota is a budget of LINES (live-measured height per frame), never content height — §15:
-// lines beyond it scroll, none is swallowed.
+// Fixed content budgets, independent of result state. At the default window the three curve
+// lines occupy 51/77/102px at 1x/1.5x/2x; their 54/81/108px quotas leave only line spacing.
+// Narrow wraps/partial notes scroll, and a D7 drag always takes priority over this quota.
 constexpr float kPoseViewCurveCanvasFloor = 40.0f;
 constexpr float kPoseViewCurveCompanionFloor = 32.0f;
-constexpr int kPoseViewCurveCompanionLines = 8;
-// The 3D region's report viewport's fixed budget (§16.4's resize strategy — D5's delta flows
-// to the two canvases, so the 3D report's allowance is FIXED, not a share of the region: the
-// old scaled 0.2x floor would re-take a growing slice of every stretch). Calibration candidate
-// until the real-frame pass; at the narrowest face the canvas above it still clears 150 pt.
-constexpr float kPoseView3dReportQuota = 48.0f;
+constexpr int kPoseViewCurveCompanionLines = 3;
+// The complete default 3D report occupies 141/212/282px at the three scale tiers. A fixed
+// 144pt viewport fits description, checkbox, legend/semantics and face transmittance;
+// narrower columns scroll their longer wraps. D5's resize delta still goes to the canvases.
+constexpr float kPoseView3dReportQuota = 144.0f;
 // The two analysis windows' title display spellings, the ONE source for every consumer of those
 // spellings: the windows' own Begin calls, the Raypath view window's in-place Pose button (the
 // constant plus the button's `###pose_open` addressing suffix), and the main window's Selection

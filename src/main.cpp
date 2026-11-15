@@ -643,7 +643,8 @@ void PrintSurveyUsage(const char* prog_name, std::ostream& output = std::cout) {
          << "  --lambda <nm>      The reference wavelength, in [350, 900]. Default: the config's\n"
          << "                     single wavelength or 550. (Named --lambda, not --wavelength: it\n"
          << "                     selects the routing reference, not a spectral integral.)\n"
-         << "  --budget <N>[s]    Integer seconds, the 's' optional (default 15; max 120). Recorded\n"
+         << "  --budget <N>[s]    Integer seconds, the 's' optional (default "
+         << LUMICE_PATH_SURVEY_DEFAULT_BUDGET_MS / 1000 << "; max 120). Recorded\n"
          << "                     in the document's budget block; the v1 routing leg is millisecond\n"
          << "                     work and does not consume it yet.\n"
          << "  --mc-ess <draws>   Also run the opt-in MC region ESS leg: the MC corroboration\n"
@@ -1476,6 +1477,10 @@ struct SurveyOptions {
   std::string path_text;                // as typed, for the progress line
   bool literal = false;                 // --literal: the literal sequence, not the physical class
   std::optional<double> wavelength_nm;  // --lambda; nullopt = the engine's reference choice
+  // --budget carries whole seconds and the request is built as seconds * 1000, so the default
+  // only round-trips to the engine's value when the constant is a whole number of seconds.
+  static_assert(LUMICE_PATH_SURVEY_DEFAULT_BUDGET_MS % 1000 == 0,
+                "the survey CLI's seconds spelling needs a whole-second default budget");
   int budget_seconds = LUMICE_PATH_SURVEY_DEFAULT_BUDGET_MS / 1000;  // --budget; the engine's ms constants clamp it
   long long mc_ess_draws = 0;         // --mc-ess; 0 = the opt-in MC region ESS leg does not run
   std::filesystem::path output_path;  // empty = stdout

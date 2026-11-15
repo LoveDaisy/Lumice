@@ -13,9 +13,9 @@
 // fixed dual-fisheye all-sky image in the preview shader / overlay labels).
 // That is a SEPARATE concern living behind the C-API boundary — src/gui/ may
 // not #include core/ headers (check_policies.py gate) and GLSL cannot include
-// C++ — so its lens math is deliberately duplicated. The ONLY value shared
-// across that boundary is globe kGlobeCameraD (see the "must match" anchor
-// below); the wider GUI lens-math duplication is tracked separately in backlog.
+// C++ — so its lens equations remain independent. Pure numerical domain facts cross that
+// boundary through util/projection_domain.h; GUI CPU forwards share gui/forward_projection.hpp.
+// Engine-vs-GUI parity tests guard the language/API boundary rather than comparing two GUI shells.
 //
 // Surface contract: scalar value semantics only. Caller owns
 // pixel-layout and visibility-rejection concerns.
@@ -27,6 +27,7 @@
 #ifndef LM_PROJ_SHARED_H_
 #define LM_PROJ_SHARED_H_
 
+#include "../../util/projection_domain.h"
 #include "lm_shims.h"
 
 namespace lm_proj {
@@ -260,9 +261,9 @@ LM_FN bool NeedsFarXyzShadow(int proj_type, float globe_back_fade, int visible, 
 //   why the GUI preview (whose stereographic inverse has no guard at all) and core still agree
 //   pixel for pixel. projection.cpp::FisheyeStereographicInverse derives its own r bound from THIS
 //   constant rather than restating the angle, so the two cannot drift.
-LM_CONSTANT float kFisheyeEqualAreaMinCz = -1.0f + 1e-3f;
-LM_CONSTANT float kFisheyeEquidistantMinCz = -1.0f + 1e-6f;
-LM_CONSTANT float kFisheyeStereographicMinCz = -0.99996192f;
+using lumice::projection_domain::kFisheyeEqualAreaMinCz;
+using lumice::projection_domain::kFisheyeEquidistantMinCz;
+using lumice::projection_domain::kFisheyeStereographicMinCz;
 
 // Apply the transpose of a row-major 3x3 matrix (equivalent to Rotation::ApplyInverse
 // in src/core/geo3d.cpp:79). Splits out of the switch so both fisheye and linear

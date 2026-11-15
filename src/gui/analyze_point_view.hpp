@@ -153,7 +153,7 @@ std::vector<std::string> PointMassLines(const LUMICE_PathPointMass& mass);
 
 // One arm's honest state at one point: a finite positive value (drawn on the log axis), an
 // exact zero the engine itself produced (a plate's declared-measure rho, a legal zero-area
-// endpoint — marked on the dedicated zero row, never mapped onto log), or unavailable (the
+// endpoint — named in the legend/tooltip, never mapped onto log), or unavailable (the
 // gate flag clear, or the value is not drawable: non-finite, negative) — a gap, never a zero.
 enum class PointCurveValueKind { kUnavailable, kExactZero, kPositive };
 
@@ -226,42 +226,15 @@ inline constexpr ImU32 kPointCurveArmColors[] = {
   kPointCurveProductColor,
 };
 
-// The shared axis pools only kPositive values across all five arms. The nearest-rank P1
-// lower bound and the relative noise floor keep tiny tails from consuming the log axis.
-inline constexpr double kCurveAxisLowerQuantile = 0.01;
-inline constexpr double kCurveAxisNoiseRatio = 1e-15;
-// A band within one decade has no extreme tail to trim; preserve its original endpoints.
-inline constexpr double kCurveAxisNarrowRatio = 10.0;
+// Mode-to-visible-window fit: finite positive union, exact endpoints, a 5-decade (Fit) or
+// 8-decade (Full) floor. Single values retain a one-decade display span, without changing the data.
 struct PointCurveAxisRange {
   bool valid = false;
   double lo = 0.0;
   double hi = 0.0;
 };
-PointCurveAxisRange PointCurveAxisFit(const PointContributionCurve& curve);
-inline constexpr double kCurveAxisZoomFactor = 1.12;
-// Reconcile the view window with the current fit, then zoom around anchor (0 = bottom, 1 = top).
-// The window never extends beyond the fit; spans stop at 0.25 decade or the full fit span.
-PointCurveAxisRange PointCurveVisibleRange(const PointCurveAxisRange& fit, PointCurveZoom* zoom, double wheel = 0.0,
-                                           double anchor = 0.5);
-// Pan the log window toward larger values for a drag DOWN (dy_norm > 0 — the ink follows the hand)
-// and toward smaller values for a drag up. `dy_norm` is the vertical drag as a fraction of the
-// plot height, so the same visual fraction of the plot always moves the same fraction of the
-// window's own log span, whatever the DPI or the data. Both endpoints shift by the same amount
-// and PointCurveVisibleRange's reconcile stays the ONE clamp: the window slides as a whole and
-// stops flush at the fit's edges, never compressed. A full-span window, a degenerate single-value
-// domain or an invalid fit has nothing to reveal and answers unchanged.
-PointCurveAxisRange PointCurvePanRange(const PointCurveAxisRange& fit, PointCurveZoom* zoom, double dy_norm);
-
-// Counts stored points, not (arm, point) pairs: multiple hidden arms at one point count once.
-// The extrema cover only hidden positive values; zeros and unavailable cells never count.
-struct PointCurveOutsideCount {
-  int points = 0;
-  double min = 0.0;
-  double max = 0.0;
-  bool above = false;
-};
-PointCurveOutsideCount PointCurveCountOutside(const PointContributionCurve& curve, double lo, double hi);
-std::string PointCurveOutsideLabel(const PointCurveOutsideCount& outside);
+PointCurveAxisRange PointCurveAxisFit(const PointContributionCurve& curve,
+                                      PointCurveRangeMode mode = PointCurveRangeMode::kFit);
 
 // One log-axis tick: a decade boundary (major) or its 2x/5x sub-multiple (minor).
 struct PointCurveLogTick {
@@ -287,9 +260,24 @@ struct PointCurveRun {
   int begin = 0;
   int end = 0;
 };
-// Optional values restrict runs to the inclusive visible window; outside values break runs.
-std::vector<PointCurveRun> PointCurvePositiveRuns(const PointCurveValueKind* kinds, size_t count,
-                                                  const double* values = nullptr, double lo = 0.0, double hi = 0.0);
+std::vector<PointCurveRun> PointCurvePositiveRuns(const PointCurveValueKind* kinds, size_t count);
+
+// Clip a positive segment in arclength/log-value space. Output y is normalized bottom=0/top=1.
+struct PointCurveSegment {
+  double x0, y0, x1, y1;
+};
+bool PointCurveClipSegment(double x0, double value0, double x1, double value1, const PointCurveAxisRange& range,
+                           PointCurveSegment* out);
+// Shared production drawing face: clip segments, not samples; zero/unavailable break runs.
+void DrawPointCurveArms(ImDrawList* draw_list, const PointContributionCurve& curve, const PointCurveAxisRange& range,
+                        const ImVec2& plot_min, const ImVec2& plot_max);
+// The production axis/seed drawing faces are shared with controlled real-frame fixtures.
+void DrawPointCurveLogAxis(ImDrawList* draw_list, const PointCurveAxisRange& range, const ImVec2& plot_min,
+                           const ImVec2& plot_max);
+void DrawPointCurveSeed(ImDrawList* draw_list, const PointContributionCurve& curve, const ImVec2& plot_min,
+                        const ImVec2& plot_max);
+// Fixed two-cell control; returns no business effects and never resets the shared pose cursor.
+void RenderPointCurveRangeControl(PointCurveRangeMode* mode);
 
 // ---- The u-globe (crystal-frame sun-direction sphere) -----------------------------------------------
 
@@ -312,10 +300,22 @@ bool MakeSunGlobeProjector(const LUMICE_SinglePathResult& result, int component,
 // sphere is in bounds; the antipode collapses to the rim).
 void SunGlobeProject(const SunGlobeProjector& projector, const double u[3], double* out_x, double* out_y);
 
-// One sun grid cell's backdrop colour, RGBA8, from the grid's own deviation (t = delta/pi into
-// the map's dark-to-light ramp family); cells the grid marks invalid get alpha 0 — the globe
-// shows data, never a painted zero (the map's rule).
-uint32_t SunGridCellColorRgba(double deviation_rad, uint8_t valid);
+// Current drawable cells only: finite deviations in the existing [0,3.15] rounding band.
+// Empty has no numeric meaning; an exactly constant field uses the ramp's middle colour.
+struct SunGridRange {
+  bool available = false;
+  double min_rad = 0.0;
+  double max_rad = 0.0;
+};
+SunGridRange SunGridDisplayRange(const LUMICE_PathSunGrid& grid);
+uint32_t SunGridCellColorRgba(double deviation_rad, uint8_t valid, const SunGridRange& range);
+std::string SunGridRangeText(const SunGridRange& range);
+// Shared production faces, also exercised by controlled real-frame fixtures. No borrowed data
+// escapes the frame; legend and backdrop consume the same range and colour authority.
+void DrawSunGridBackdrop(ImDrawList* dl, const LUMICE_PathSunGrid& grid, const SunGlobeProjector& projector,
+                         const SunGridRange& range, const ImVec2& centre, float radius);
+float SunGridLegendHeight(const SunGridRange& range, float width);
+void RenderSunGridLegend(const SunGridRange& range);
 
 // ---- The representative-ray display -----------------------------------------------------------------
 
@@ -435,6 +435,11 @@ RayTraceDisplayState RayTraceDisplayStateFor(const RayTraceSession& trace, const
 // re-derives it).
 void OrbitBasis(float yaw_deg, float pitch_deg, double fwd[3], double right[3], double up[3]);
 
+// Positive display-frame axes: canvas content colours, not health/status semantics.
+inline constexpr ImU32 kRay3DAxisColors[] = { IM_COL32(245, 105, 110, 255), IM_COL32(115, 220, 140, 255),
+                                              IM_COL32(115, 165, 255, 255) };
+inline constexpr float kRay3DAxisLengthUi = 18.0f;
+
 // The last submitted GL canvas frame, invalidated on every region submission before any early
 // return. Tests independently project the frozen C-API mesh using these exact render parameters.
 struct Ray3DFrameInfo {
@@ -452,6 +457,14 @@ struct Ray3DFrameInfo {
                       // the frame tests can place the real camera (eye = -dist * fwd) and the
                       // real near plane without a second distance formula
   bool valid = false;
+  // Render feedback only: the complete reserved footprint and submitted axis/letter geometry.
+  bool axes_drawn = false;
+  ImVec2 axes_min;
+  ImVec2 axes_max;
+  ImVec2 axes_origin;
+  ImVec2 axes_tips[3];
+  ImVec2 axes_label_min[3];
+  ImVec2 axes_label_max[3];
 };
 const Ray3DFrameInfo& LastRay3DFrameInfo();
 
@@ -484,7 +497,7 @@ void RenderPointDetailsBlock(GuiState& state, const SelectedClassIdentity& ident
 // four-state shell and its cancel actions stay in the main window's summary.
 void RenderPointAnswerBlock(GuiState& state);
 
-// The point session's one-line state word — the short status RenderPointStatus draws, and the
+// The point session's one-line state word — the Pose footer draws it, and the
 // main window's Selection header hint reuses (the mapping has one owner, two readers).
 // *partial, when non-null, is set iff the word is the partial completion's: the status row
 // paints that word in the warning color, and the completed read happens inside so the word and

@@ -19,6 +19,15 @@
 #include "include/lumice_base.h"
 #include "test_screenshot.hpp"
 
+// The gui/* include chain above can drag <windows.h> in on Windows, whose function-like
+// `Yield` macro erases ImGuiTestContext::Yield calls (MSVC C4002/C2059). imgui_te_context.h
+// undoes it, but only when it is included AFTER that chain — include order decides, and a
+// header every suite includes is the wrong place to rely on order. Mirror its undo here so
+// every consumer is order-independent (the fixed-dt clock contract TU hit exactly this).
+#ifdef Yield
+#undef Yield
+#endif
+
 namespace gui = lumice::gui;
 
 // Optional observation of the native test frame. Empty in ordinary cases; timing cases use
@@ -427,6 +436,28 @@ void StopPerfSimulation();
 // ReadOnly, say) for the predicate to still mean "the user cannot operate this".
 bool IsDisabled(const ImGuiTestItemInfo& info);
 
+// Scoped override of the whole-test watchdog thresholds, with restore on every path.
+//
+// The single authority for the save-overwrite-restore shape: under the fixed-dt clock contract
+// (FixedDtWatchdog in test_gui_main.cpp) these fields are real-clock seconds honored live by the
+// harness watchdog, and in non-fixed-dt runs the engine's own real-time watchdog reads the same
+// fields — one set of values, one semantic, both modes. Suites raise the whole-test budget over
+// their legal wait chain by constructing this with the widened values; the harness baseline is
+// whatever the run started with (the engine's 30/60 defaults, or a value an enclosing scope
+// raised). Which guard shape fits is a write-point decision, not a "has a server" one: a guard
+// that writes at construction (whole-case budget) composes this member — the panel guard's
+// shape; a guard whose write lands mid-wait and whose restore must precede its server teardown
+// to cover the export/capture tail keeps a local deferred-write variant instead (the lens guard
+// carries that lifecycle argument; parity points back at it).
+struct ScopedWatchdogThreshold {
+  ImGuiTestEngineIO* io;
+  float saved_warn;
+  float saved_kill;
+
+  ScopedWatchdogThreshold(ImGuiTestEngineIO* engine_io, float warn_s, float kill_s);
+  ~ScopedWatchdogThreshold();
+};
+
 // ========== The trailing-label column ==========
 //
 // Several panels build their rows on one three-column model — [wide control][value][label] — and
@@ -742,5 +773,10 @@ void RegisterThemeScanTests(ImGuiTestEngine* engine);
 void RegisterExportParityTests(ImGuiTestEngine* engine);
 void RegisterPreviewExportParityTests(ImGuiTestEngine* engine);
 void RegisterLmcRoundtripParityTests(ImGuiTestEngine* engine);
+// Takes the raw --filter value and the run's fixed-dt mode: the green legs pin the fixed-dt clock
+// contract (their assertions are only meaningful under --fixed-dt), and the deliberately-red
+// probes register only when the filter is exactly the probe's full name, so no pool run and no
+// substring-filtered run ever carries them (functional/test_fixed_dt_clock_contract.cpp).
+void RegisterFixedDtClockContractTests(ImGuiTestEngine* engine, const char* filter, bool fixed_dt_mode);
 
 #endif  // LUMICE_TEST_GUI_SHARED_HPP

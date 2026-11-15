@@ -365,11 +365,12 @@ void BuildViewMatrix(float elevation_deg, float azimuth_deg, float roll_deg, flo
 // Project a unit world-space direction to screen pixel coordinates matching the
 // fragment shader's coordinate system: origin at viewport center, x right, y up,
 // units = pixels (i.e. `pos = v_ndc * resolution * 0.5`). Returns sentinel
-// {-9999.f, -9999.f} if the direction is behind the camera, outside the viewport,
-// or the lens is unsupported (e.g. kLensTypeGlobe). Synced with the shader's
-// inverse projection helpers (linearInverse / fisheyeInverse / dualFisheyeInverse
-// / rectangularInverse) in preview_renderer.cpp.
-std::array<float, 2> ProjectWorldDirToScreen(const ViewProjection& vp, const float world_dir[3], int vp_w, int vp_h);
+// {-9999.f, -9999.f} if the direction has no lens-domain coordinate or is outside the
+// viewport. Segment drawing may opt out of rectangular clipping so a segment crossing the
+// viewport edge can be clipped as a segment rather than dropped with its outside endpoint.
+// Per-lens CPU forward math is shared with the inverse-mirror test entry.
+std::array<float, 2> ProjectWorldDirToScreen(const ViewProjection& vp, const float world_dir[3], int vp_w, int vp_h,
+                                             bool clip_viewport = true);
 
 // Preview drag sensitivity: how many degrees of azimuth/elevation one pixel of
 // mouse motion should produce, so that content at the center of the frame moves
