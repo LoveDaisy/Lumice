@@ -11,6 +11,7 @@
 #include "analytic/entry_measure.hpp"
 #include "analytic/fiber_continuation.hpp"
 #include "analytic/path_chain.hpp"
+#include "analytic/path_fiber.hpp"
 #include "analytic/path_rank.hpp"
 #include "analytic/so3.hpp"
 #include "raypath/detail/input_scope.hpp"
@@ -362,7 +363,154 @@ TraceEnd EndOf(const analytic::TraceResult& trace) {
   return { trace.status, trace.reason, trace.PoseCount() };
 }
 
-FiberComponent ToComponent(const analytic::DiscoveredComponent& c, PathContext* ctx) {
+// This is payload sampling along the ORIGINAL geodesic edges, not continuation: no corrector,
+// seed feedback or target-residual claim. Midpoint discovery is bounded, not an arbitrary-peak
+// certificate (a feature narrower than all probes can still be missed).
+class PayloadRefiner {
+ public:
+  PayloadRefiner(PathContext* ctx, const analytic::DiscoveryStop& stop, int limit, PointPayloadRefinementStats* stats)
+      : ctx_(ctx), stop_(stop), remaining_(std::clamp(limit, 0, kPointPayloadEvaluationLimit)), stats_(stats) {}
+
+  void Refine(FiberComponent* component) {
+    if (!CanEvaluate() || component->points.size() < 2) {
+      return;
+    }
+    double peak = 0.0;
+    for (const PointDetail& point : component->points) {
+      if (std::isfinite(point.rho)) {
+        peak = std::max(peak, point.rho);
+      }
+    }
+    // Probe every original edge first: the tail cutoff must not depend on traversal direction,
+    // and equal low endpoints are not a certificate that their interior is flat.
+    std::vector<Midpoint> roots;
+    for (size_t i = 0; i + 1 < component->points.size() && CanEvaluate(); ++i) {
+      roots.push_back(Probe(component->points[i], component->points[i + 1]));
+      if (std::isfinite(roots.back().rho)) {
+        peak = std::max(peak, roots.back().rho);
+      }
+    }
+    std::vector<PointDetail> points;
+    std::vector<double> increments;
+    const int original_seed_index = component->seed_index;
+    bool split = false;
+    for (size_t i = 0; i < component->points.size(); ++i) {
+      if (i == static_cast<size_t>(original_seed_index)) {
+        component->seed_index = static_cast<int>(points.size());
+      }
+      if (i > 0) {
+        // Keep an untouched edge byte-for-byte, including its recorded increment. Subdivided
+        // edges use measured subedge distances; never normalize them to conceal geometric drift.
+        increments.push_back(split ? analytic::so3::Distance(points.back().pose, component->points[i].pose) :
+                                     component->arclength_increments[i - 1]);
+      }
+      points.push_back(component->points[i]);
+      const size_t anchor_count = points.size();
+      if (i < roots.size()) {
+        Insert(component->points[i], component->points[i + 1], roots[i], peak, 0, &points, &increments);
+      }
+      split = points.size() != anchor_count;
+    }
+    component->points = std::move(points);
+    component->arclength_increments = std::move(increments);
+  }
+
+ private:
+  struct Midpoint {
+    double pose[9]{};
+    double rho = 0.0;
+  };
+
+  bool CanEvaluate() const { return remaining_ > 0 && !stop_.Stopped(); }
+
+  Midpoint Probe(const PointDetail& left, const PointDetail& right) {
+    --remaining_;
+    Midpoint mid;
+    double relative[9];
+    double tangent[3];
+    double step[9];
+    analytic::so3::MatTMul(left.pose, right.pose, relative);
+    analytic::so3::Log(relative, tangent);
+    for (double& value : tangent) {
+      value *= 0.5;
+    }
+    analytic::so3::Exp(tangent, step);
+    analytic::so3::MatMul(left.pose, step, mid.pose);
+    const auto start = stats_ ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+    mid.rho = ctx_->PoseDensity(mid.pose);
+    if (stats_) {
+      ++stats_->rho_probes;
+      stats_->rho_microseconds +=
+          std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - start).count();
+    }
+    return mid;
+  }
+
+  void Insert(const PointDetail& left, const PointDetail& right, const Midpoint& mid, double peak, int depth,
+              std::vector<PointDetail>* points, std::vector<double>* increments) {
+    constexpr double kLogCurvature = 0.005;
+    constexpr double kLogVariation = 0.25;
+    constexpr double kRelativeTail = 1e-6;
+    constexpr int kMaxDepth = 16;
+    if (!CanEvaluate() || depth >= kMaxDepth || !std::isfinite(mid.rho) || mid.rho < 0.0 ||
+        analytic::so3::Distance(left.pose, right.pose) <= 1e-12) {
+      return;
+    }
+    const double hi = std::max({ left.rho, right.rho, mid.rho });
+    if (!(hi > 0.0) || hi < peak * kRelativeTail) {
+      return;  // includes legal zero and underflow; no log floor invents a positive feature
+    }
+    if (left.rho > 0.0 && right.rho > 0.0 && mid.rho > 0.0) {
+      const double a = std::log(left.rho);
+      const double b = std::log(right.rho);
+      const double m = std::log(mid.rho);
+      if (std::fabs(m - 0.5 * (a + b)) <= kLogCurvature &&
+          std::max({ a, b, m }) - std::min({ a, b, m }) <= kLogVariation) {
+        return;
+      }
+    }
+    --remaining_;
+    const auto start = stats_ ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+    const auto diagnostic = analytic::EvaluatePathDiagnostics(ctx_->Table(), ctx_->Slots().data(), ctx_->SlotCount(),
+                                                              ctx_->Index(), ctx_->Incident(), mid.pose);
+    PointDetail detail = ctx_->Detail(mid.pose, std::numeric_limits<double>::quiet_NaN(), diagnostic.jacobian.available,
+                                      diagnostic.jacobian.value, diagnostic.jacobian.singular_values);
+    if (stats_) {
+      ++stats_->detail_evaluations;
+      stats_->detail_microseconds +=
+          std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - start).count();
+    }
+    // Domain validity is checked AT the candidate, never inferred from positive endpoint margins.
+    // Refused candidates cost a full evaluation but neither enter the list nor bridge an event.
+    if (!diagnostic.valid || !detail.valid || !std::isfinite(detail.rho) ||
+        (detail.jacobian_available && !std::isfinite(detail.factor_product))) {
+      if (stats_) {
+        ++stats_->rejected_candidates;
+      }
+      return;
+    }
+    if (CanEvaluate()) {
+      const Midpoint child = Probe(left, detail);
+      Insert(left, detail, child, peak, depth + 1, points, increments);
+    }
+    increments->push_back(analytic::so3::Distance(points->back().pose, detail.pose));
+    points->push_back(std::move(detail));
+    if (stats_) {
+      ++stats_->inserted_points;
+    }
+    if (CanEvaluate()) {
+      const Midpoint child = Probe(points->back(), right);
+      Insert(points->back(), right, child, peak, depth + 1, points, increments);
+    }
+  }
+
+  PathContext* ctx_;
+  const analytic::DiscoveryStop& stop_;
+  int remaining_;
+  PointPayloadRefinementStats* stats_;
+};
+
+FiberComponent ToComponent(const analytic::DiscoveredComponent& c, PathContext* ctx, PayloadRefiner* refiner) {
   FiberComponent out;
   out.kind = c.kind;
   for (int i = 0; i < 9; i++) {
@@ -393,6 +541,9 @@ FiberComponent ToComponent(const analytic::DiscoveredComponent& c, PathContext* 
   }
   out.arclength_increments.insert(out.arclength_increments.end(), c.forward.arclength_increments.begin(),
                                   c.forward.arclength_increments.end());
+  if (refiner) {
+    refiner->Refine(&out);
+  }
   // The component's factor integral: left-endpoint rectangular sum of factor_product * arclength
   // over consecutive point pairs whose first point carries a usable product (finite — NaN marks
   // an unusable read). Available points counted for the completeness declaration.
@@ -922,12 +1073,19 @@ Error RunPointExecution(const ConfigManager& config, const SinglePathRequest& in
     // the lattice points it never explored never became candidates.
     meta.interrupted = true;
   }
+  PayloadRefiner refiner(&ctx, stop, request.payload_evaluation_limit, request.payload_stats);
   for (const analytic::DiscoveredComponent& c : found.components) {
     if (stopped()) {
       meta.interrupted = true;
       break;  // the unconverted components stay unconverted: the document is partial, marked so
     }
-    result.Discovered().components.push_back(ToComponent(c, &ctx));
+    const auto start =
+        request.payload_stats ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+    result.Discovered().components.push_back(ToComponent(c, &ctx, &refiner));
+    if (request.payload_stats) {
+      request.payload_stats->assembly_microseconds +=
+          std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - start).count();
+    }
   }
   for (const analytic::IncompleteCandidate& c : found.incomplete) {
     result.Discovered().incomplete.push_back(ToIncomplete(c));
@@ -959,6 +1117,9 @@ Error AnalyzePathPointValue(const ConfigManager& config, const SinglePathRequest
     return { ErrorCode::kInvalidArgument, "null point output" };
   }
   *out = PointResult{};  // on error the caller's slot is left empty (the module's standing contract)
+  if (request.payload_stats) {
+    *request.payload_stats = {};
+  }
   PointData execution;
   std::optional<AdmittedWarmSource> admitted;
   if (const Error error = RunPointExecution(config, request, &execution, &admitted, geometry); !error.Ok()) {

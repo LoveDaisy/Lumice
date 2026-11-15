@@ -53,6 +53,19 @@ constexpr int kMaxSampleCount = 100000000;
 constexpr int kDefaultSunGridLatCount = 90;
 constexpr int kMaxSunGridLatCount = 1800;
 
+// Internal calibration/accounting only; never retained by the frozen result or exposed through C.
+struct PointPayloadRefinementStats {
+  int rho_probes = 0;
+  int detail_evaluations = 0;
+  int rejected_candidates = 0;
+  int inserted_points = 0;
+  double rho_microseconds = 0.0;
+  double detail_microseconds = 0.0;
+  double assembly_microseconds = 0.0;
+};
+
+constexpr int kPointPayloadEvaluationLimit = 1024;
+
 struct SinglePathRequest : PathSelection {
   // One face sequence per scattering layer, in Lumice face numbers (entry, internal reflections,
   // exit). v1 takes exactly one layer; the list shape exists so a shell can hand over whatever the
@@ -81,6 +94,10 @@ struct SinglePathRequest : PathSelection {
   // discovery legs' single stop and into the context's cancel-only stop.
   const analytic::StopToken* cancel = nullptr;
   std::optional<QueryDeadline> query_deadline;
+  // Shared across all components. Zero is the internal off baseline; larger values clamp to
+  // the production hard bound. Both rho-only probes and full candidate evaluations consume it.
+  int payload_evaluation_limit = kPointPayloadEvaluationLimit;
+  PointPayloadRefinementStats* payload_stats = nullptr;
 };
 
 // The whole analysis, one typed entry: the execution runs the discovery legs and — when

@@ -127,7 +127,7 @@ struct PointDetail {
   double pose[9]{};  // row-major body -> world
   PoseAngles angles;
   double sun_in_crystal[3]{};                    // u = R^T (sun direction): where the sun sits in the crystal frame
-  double residual_norm = 0.0;                    // |basis^T (F(R) - d)| as the continuation reports it
+  double residual_norm = 0.0;                    // continuation residual; NaN for assembly-only geodesic samples
   bool valid = false;                            // the path's direction-level validity at this pose
   double outgoing_direction[3]{};                // world
   std::vector<double> segment_directions;        // (faces + 1) * 3, body frame: incident, legs, outgoing
@@ -195,12 +195,14 @@ struct FiberComponent {
   // Arc only. A closed component leaves it default-constructed (pose_count 0): its status and
   // reason then mean nothing, and a shell reads `kind` before printing them.
   TraceEnd backward;
-  // One ordered point list. Closed: the forward trace, seed first, its last pose the corrected
-  // closing pose. Arc: the backward trace reversed, then the forward trace — the seed appears once,
-  // at `seed_index` — so the list runs from one boundary event to the other.
+  // One ordered point list: original trace anchors plus bounded, ordinary payload samples on
+  // their geodesic edges. Closed: seed first, last pose still the corrected closing pose. Arc:
+  // backward anchors reversed, then forward anchors; seed appears once at the remapped seed_index.
+  // forward/backward.pose_count count kernel anchors, not these assembly-only samples.
   std::vector<PointDetail> points;
   int seed_index = 0;
-  // The continuation's arclength (rad on SO(3)) between consecutive points: points.size() - 1 entries.
+  // SO(3) distance (rad) between consecutive stored points: points.size() - 1 entries. Subedges
+  // partition each original continuation edge without changing its length or endpoints.
   std::vector<double> arclength_increments;
   ComponentFactors factors;
 };

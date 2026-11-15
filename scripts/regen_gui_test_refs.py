@@ -323,7 +323,7 @@ SUITE_FILTER_EXPR = (
     "-zorder_priority_persists_across_rerun,-gpu_color_class_overflow,"
     "-run_after_analysis_renders_gpu,-survey_overview_shows_dispersion_and_profile,"
     "-map_region_shows_the_class_map_and_takes_the_pick,"
-    "-point_inspector_shows_the_point_fiber_and_the_path,"
+    "-point_inspector_shows_the_point_fiber_and_the_path,-refined_payload_sample_follows_curve_globe_and_trace,"
     "-analyze_full_chain_one_session,-internal_reflection_trace_from_the_real_consumer,"
     "-refused_class_names_the_refusal_and_keeps_the_witness,-refused_class_blockades_nothing,"
     "-narrow_column_clipped_rows_keep_their_entities,-analyze_result_carries_across_scale_tiers,-profile_rows_highlight_and_draw_on_the_map"

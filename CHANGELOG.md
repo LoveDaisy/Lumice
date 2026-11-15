@@ -129,8 +129,10 @@ with no merge commit to grep for, and direct-to-main commits appear in no PR lis
 The third is the mechanical trigger for the `Breaking Changes` subsection: if a version
 constant moved (`LUMICE_API_VERSION` in `lumice_base.h`, or `LUMICE_ANALYTIC_API_VERSION` in
 `lumice_analytic_core.h`), at least one PR in the span changed a C API surface and its entry
-has to say what a compiled consumer sees. (Before the release is cut, `<tag>` does not exist yet — use the
-branch, e.g. `v4.5.0..main`.)
+has to say what a compiled consumer sees. (Before the release is cut, `<tag>` does not exist
+yet — enumerate against the branch the release is being cut from: `main` for the default
+flow, the `release/X.Y.Z` branch for a release-branch cut; see `CONTRIBUTING.md`, "Releasing
+from a release branch". E.g. `v4.5.0..main`.)
 
 A PR's own description is not authoritative on whether it breaks the C API. Diff the header
 across each version boundary instead, to see *what* moved rather than only that it did:

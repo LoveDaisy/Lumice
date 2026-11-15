@@ -145,3 +145,39 @@ def test_declared_integral_matches_the_left_endpoint_rule(doc):
             assert math.isclose(factors["fiber_integral"], integral, rel_tol=1e-12, abs_tol=0.0)
         else:
             assert factors["fiber_integral"] is None
+
+
+def test_default_production_query_refines_narrow_column_and_keeps_diagnostics_honest(tmp_path):
+    # C16 source, deliberately narrowed orientation variant; not the owner's original scene.
+    config = json.loads((_CONFIG.parent / "raypath_feature_column.json").read_text())
+    config["crystal"][0]["axis"]["zenith"]["std"] = 0.25
+    config["scene"]["light_source"]["altitude"] = 20
+    path = tmp_path / "narrow-column.json"
+    path.write_text(json.dumps(config))
+    result = run_lumice([
+        "raypath", "point", "-f", str(path), "--crystal", "1", "--path", "3-5",
+        "--target", "40,30", "--events", "200k", "--grid", "0", "--wavelength", "550",
+    ])
+    assert result.returncode == 0, result.stderr
+    document = json.loads(result.stdout)
+    assert document["outcome"] == "discovered" and not document["meta"]["interrupted"]
+    assert document["components"]
+    added = 0
+    for component in document["components"]:
+        anchors = component["forward"]["pose_count"]
+        if component["kind"] == "arc":
+            anchors += component["backward"]["pose_count"] - 1
+        points = component["points"]
+        interpolated = [point for point in points if point["residual_norm"] is None]
+        assert len(points) == anchors + len(interpolated)
+        for point in interpolated:
+            assert point["valid"] and point["jacobian"]["available"]
+            assert math.isfinite(point["jacobian"]["value"])
+            assert math.isfinite(point["factor_product"])
+        added += len(interpolated)
+    assert added > 0, "the unchanged production C/CLI request must receive refined ordinary samples"
+    test_count_contract_and_increment_semantics(document)
+    test_closed_component_closes_back_on_its_seed(document)
+    test_seed_pose_is_the_component_seed(document)
+    test_factor_nulls_follow_the_flags(document)
+    test_declared_integral_matches_the_left_endpoint_rule(document)

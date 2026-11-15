@@ -17,10 +17,13 @@ on:
   #
   # A branch filter also drops tag pushes, which the unfiltered `push:` used to
   # catch: `v*` tags no longer run this workflow. That is intended, not lost
-  # coverage. A release tag is cut from a commit already on main, so this
-  # workflow has already run on that exact commit — a tag-push run was a third
-  # copy of the same result. Release artifacts are gated by release.yml, which
-  # keeps its own `push: tags: ['v*']` trigger and is unaffected by this filter.
+  # coverage. A release tag is cut from a commit this workflow has already run
+  # on — the pull_request leg validated it, whether that commit sits on main
+  # (the default flow) or on a release/X.Y.Z branch's merge commit (see
+  # CONTRIBUTING.md, "Releasing from a release branch") — so a tag-push run
+  # would be a third copy of the same result. Release artifacts are gated by
+  # release.yml, which keeps its own `push: tags: ['v*']` trigger and is
+  # unaffected by this filter.
   push:
     branches: [main]
   pull_request:

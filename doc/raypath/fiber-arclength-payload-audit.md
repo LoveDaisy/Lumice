@@ -239,3 +239,70 @@ index line; the live query outputs and the recomputation script were working fil
 probe's task record and are intentionally not repository assets. Downstream: 756 (factor
 curves) consumes §4-§5; 755.5 (pose-trace window) consumes §1's splice/zero conventions and §5
 item 1.
+
+## 7. Current assembly refinement contract (2026-11-14)
+
+The snapshot and live counts in §1–§6 remain historical, not today's sample-count promises.
+Point assembly now adds bounded **ordinary samples on the geodesic interiors of original
+continuation edges**. It does not change continuation, discovery seeds, or the closure-corrected
+last pose. No new C entry, environment variable, CLI/config switch, or GUI production change is
+required. The existing point execution enables refinement by default; internal C++ requests can
+set `payload_evaluation_limit = 0` for an unchanged assembly baseline.
+
+- **Sampling rule.** Probe original-edge midpoints before recursive subdivision, including edges
+  whose endpoints are both low. Refine when the positive log-density midpoint departs from the
+  endpoint log average by more than 0.005, or the three log values span more than 0.25. Ignore
+  tails below 1e-6 of the component's observed anchor/midpoint maximum; never log zero or invent
+  a positive floor. Depth is bounded by 16. These are measured finite-resolution choices, not a
+  certificate against arbitrary peaks narrower than every probe. The rule targets rho variation,
+  not a promise that every other factor has converged.
+- **Query-level work bound.** At most 1024 extra evaluations, shared across components: each
+  rho-only probe and each full `Detail` plus Jacobian evaluation consumes one unit, including
+  rejected candidates and probes not retained. A full evaluation includes its own rho read.
+  Quota exhaustion preserves an ordered, structurally complete component; it neither interrupts
+  discovery nor certifies curve quality. Cancellation/deadline checks precede each extra
+  evaluation; an in-flight evaluation may finish, but no next one starts after the stop is seen.
+  Existing execution/interrupted reporting remains the stop authority.
+- **Honest diagnostics.** An inserted pose is an interpolation, **not** an accepted corrector
+  state and not necessarily an exact solution over the query target. Its `residual_norm` is NaN
+  (C copies NaN; JSON writes null), never an inherited endpoint residual or a fabricated zero.
+  Its rho, optical validity, A and T are evaluated at that pose. Jacobian/singular values/K use
+  `EvaluatePathDiagnostics` at that same pose, with the existing availability gates. Invalid or
+  nonfinite candidates are not inserted; positive endpoint margins never certify the interior.
+- **Counting and ordering.** `point_count`, `total_points` and `available_points` describe the
+  refined ordinary sample list. `forward/backward.pose_count` still count kernel trace anchors.
+  Thus trace counts no longer determine `point_count`. Every original pose and diagnostic stays
+  unchanged and in order; the original seed appears once and its `seed_index` is remapped. The
+  arc's zero remains the backward far endpoint; seed cumulative arclength is unchanged.
+- **Lengths and integrals.** Each inserted row splits one original edge. Its subedge increment
+  is the directly measured SO(3) pose-pair distance, not a renormalized share; original unsplit
+  increments stay unchanged. The N/N−1 relation, original-edge length sums, total length and
+  closure remain at double precision (tests allow 1e-12 rad per segment and
+  `1e-12 * max(1, length)` rad on sums). The existing left-endpoint integral is recomputed on
+  the refined sequence, so its numeric value may change; unusable segments are still skipped,
+  never renormalized. Plate angle-Lebesgue zero remains a legal zero, not a new measure curve.
+
+Calibration used a **C16-derived variant**, not the owner's original scene: regular prism h1,
+zenith Gaussian 90°±0.25°, full-turn uniform azimuth, roll Gaussian 0°±5°, sun (20°,0°), 550 nm,
+literal 3-5, target (40°,30°), 200000 discovery samples, no sun grid. Independent uniform grids
+on the fixed off edges (128/256/512/1024 subdivisions) converged in peak height, half-height
+width and peak-normalized curve error. The isolated half-height window was 0.110165 rad wide:
+off had 2 local samples and 16.18% peak-normalized linear-reconstruction error; on had 25 local
+samples, maximum gap 9.09% of that width and 0.1513% error. Stored count changed 119→298, with
+476 rho probes + 179 full evaluations. Three interleaved Release query pairs measured a median
+on/off ratio of 1.0525; assembly medians were 0.1433→0.8825 ms. These numbers belong to that
+machine/input/build, not a cross-platform latency guarantee.
+
+Regression witnesses:
+
+- `SinglePathPayload.*` independently reconstructs the narrow-peak window and error from fixed
+  off-edge reference nodes, checks original anchors, subedge distances, seed order and integrals
+  on closed C16 / arc C03 / legal-zero C11 / zero-area C10, and checks shared quota/cancel behavior.
+- `test_raypath_point_payload_invariants.py` checks the default CLI request, null residuals,
+  trace-vs-ordinary counts, pose-pair distances, flags and recomputed integrals.
+- The real-frame GUI case `refined_payload_sample_follows_curve_globe_and_trace` reads a genuine
+  nonuniform C result, independently accumulates every x coordinate, mouse-selects an added
+  NaN-residual sample, and checks its stored index, factor values, submitted globe marker,
+  rendered 3D pose and representative-ray key, plus playback reachability. It runs in the
+  real-timing pool, not the fixed-dt correctness pool. The consumer remains the one described
+  in §5; there is no second GUI sample list.
