@@ -7,6 +7,7 @@
 #include <cstdarg>
 #include <cstdio>
 #include <cstring>
+#include <limits>
 #include <map>
 #include <optional>
 #include <tuple>
@@ -91,10 +92,7 @@ void ResetPointViewStateForNewAdoption(PointViewState* view) {
   view->sample_index = 0;
   view->playing = false;
   view->last_play_step_s = 0.0;
-  view->curve_axis = {};
-  view->curve_pan_active = false;          // a held pan does not carry across documents (it needs a new
-                                           // press inside the canvas to latch again)
-  view->curve_left_press_ignored = false;  // the swallow is a gesture-life state, same lifetime
+  view->curve_range_mode = PointCurveRangeMode::kFit;
   // The toggles and the camera survive: they are the user's display preferences for THIS
   // session, not per-document state.
 }
@@ -446,131 +444,23 @@ int PointCurveValidPositionNearX(const PointContributionCurve& curve, double x_r
   return best;
 }
 
-PointCurveAxisRange PointCurveAxisFit(const PointContributionCurve& curve) {
-  std::vector<double> positives;
-  positives.reserve(curve.points.size() * std::size(kCurveArmFields));
+PointCurveAxisRange PointCurveAxisFit(const PointContributionCurve& curve, PointCurveRangeMode mode) {
+  double lo = std::numeric_limits<double>::max();
+  double hi = 0.0;
   for (const PointCurvePoint& point : curve.points) {
-    for (const CurveArm& arm : kCurveArmFields) {
-      if (point.*arm.kind == PointCurveValueKind::kPositive) {
-        positives.push_back(point.*arm.value);
-      }
-    }
-  }
-  if (positives.empty()) {
-    return {};
-  }
-  const auto extrema = std::minmax_element(positives.begin(), positives.end());
-  const double lo = *extrema.first;
-  const double hi = *extrema.second;
-  if (lo >= hi / kCurveAxisNarrowRatio) {
-    return { true, lo, hi };
-  }
-  const size_t rank = static_cast<size_t>(std::ceil(kCurveAxisLowerQuantile * positives.size())) - 1;
-  std::nth_element(positives.begin(), positives.begin() + rank, positives.end());
-  return { true, std::max(positives[rank], hi * kCurveAxisNoiseRatio), hi };
-}
-
-PointCurveAxisRange PointCurveVisibleRange(const PointCurveAxisRange& fit, PointCurveZoom* zoom, double wheel,
-                                           double anchor) {
-  if (!fit.valid) {
-    return {};
-  }
-  const double fit_lo = std::log10(fit.lo);
-  if (fit.hi == fit.lo) {
-    zoom->log_lo = fit_lo;
-    zoom->log_hi = fit_lo + 1.0;
-    return fit;  // one value has no smaller data window; the plot still gives it a full decade
-  }
-  const double fit_hi = std::log10(fit.hi);
-  const double full_span = fit_hi - fit_lo;
-  double span = zoom->log_hi - zoom->log_lo;
-  if (!(span > 0.0)) {
-    zoom->log_lo = fit_lo;
-    span = full_span;
-  }
-  span = std::clamp(span, std::min(0.25, full_span), full_span);
-  zoom->log_lo = std::clamp(zoom->log_lo, fit_lo, std::max(fit_lo, fit_hi - span));
-  if (wheel != 0.0) {
-    anchor = std::clamp(anchor, 0.0, 1.0);
-    const double new_span =
-        std::clamp(span / std::pow(kCurveAxisZoomFactor, wheel), std::min(0.25, full_span), full_span);
-    zoom->log_lo = std::clamp(zoom->log_lo + anchor * (span - new_span), fit_lo, std::max(fit_lo, fit_hi - new_span));
-    span = new_span;
-  }
-  // log subtraction and a wheel-in/out round trip can leave the full span one ULP short.
-  // Snap only the window, never the sample values, so the exact fit boundary stays included.
-  if (full_span - span <= full_span * 1e-12) {
-    zoom->log_lo = fit_lo;
-    zoom->log_hi = fit_hi;
-    return fit;
-  }
-  zoom->log_hi = zoom->log_lo + span;
-  // Keep exact fit endpoints: a log/pow round trip must not hide a boundary value as "outside".
-  return { true, zoom->log_lo <= fit_lo ? fit.lo : std::pow(10.0, zoom->log_lo),
-           zoom->log_hi >= fit_hi ? fit.hi : std::pow(10.0, zoom->log_hi) };
-}
-
-PointCurveAxisRange PointCurvePanRange(const PointCurveAxisRange& fit, PointCurveZoom* zoom, double dy_norm) {
-  if (!fit.valid) {
-    return {};
-  }
-  // Degenerate and full-span windows have nothing to reveal; they keep the reconcile's own form.
-  if (fit.hi == fit.lo) {
-    return PointCurveVisibleRange(fit, zoom);
-  }
-  const double fit_lo = std::log10(fit.lo);
-  const double fit_hi = std::log10(fit.hi);
-  const double full_span = fit_hi - fit_lo;
-  const double span = zoom->log_hi - zoom->log_lo;
-  if (!(span > 0.0) || full_span - span <= full_span * 1e-12) {
-    return PointCurveVisibleRange(fit, zoom);
-  }
-  // The ink follows the hand: dragged down (dy_norm > 0) the window moves toward larger values.
-  // BOTH endpoints shift — the reconcile derives the span from log_hi - log_lo, so moving only
-  // log_lo would present it a compressed span and shrink the window. With both shifted the
-  // reconcile stays the ONE clamp: the window slides as a whole and stops flush at an edge,
-  // never compressed.
-  const double shift = dy_norm * span;
-  zoom->log_lo += shift;
-  zoom->log_hi += shift;
-  return PointCurveVisibleRange(fit, zoom);
-}
-
-PointCurveOutsideCount PointCurveCountOutside(const PointContributionCurve& curve, double lo, double hi) {
-  PointCurveOutsideCount outside;
-  for (const PointCurvePoint& point : curve.points) {
-    bool hidden = false;
     for (const CurveArm& arm : kCurveArmFields) {
       const double value = point.*arm.value;
-      if (point.*arm.kind != PointCurveValueKind::kPositive || (value >= lo && value <= hi)) {
-        continue;
+      if (point.*arm.kind == PointCurveValueKind::kPositive && value > 0.0 && std::isfinite(value)) {
+        lo = std::min(lo, value);
+        hi = std::max(hi, value);
       }
-      if (outside.points == 0 && !hidden) {
-        outside.min = value;
-        outside.max = value;
-      }
-      outside.min = std::min(outside.min, value);
-      outside.max = std::max(outside.max, value);
-      outside.above = outside.above || value > hi;
-      hidden = true;
     }
-    outside.points += hidden ? 1 : 0;
   }
-  return outside;
-}
-
-std::string PointCurveOutsideLabel(const PointCurveOutsideCount& outside) {
-  if (outside.points == 0) {
+  if (!(hi > 0.0)) {
     return {};
   }
-  char text[160];
-  if (outside.above) {
-    std::snprintf(text, sizeof(text), "%d points outside axis · min %.3g · max %.3g", outside.points, outside.min,
-                  outside.max);
-  } else {
-    std::snprintf(text, sizeof(text), "%d points below axis · min %.3g", outside.points, outside.min);
-  }
-  return text;
+  const double floor_ratio = mode == PointCurveRangeMode::kFull ? 1e-8 : 1e-5;
+  return { true, std::max(lo, hi * floor_ratio), hi };
 }
 
 std::vector<PointCurveLogTick> PointCurveLogTicks(double lo, double hi) {
@@ -2293,7 +2183,32 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
   ImGui::BeginChild("##AnalyzePoseCurve", size, ImGuiChildFlags_Borders);
   PointQuerySession& point = state.analysis.point;
   PointViewState& view = state.analysis.point_view;
-  ImGui::SeparatorText("Contribution curve");
+  // Fixed header: the range switch does not participate in either scrolling child.
+  ImGui::AlignTextToFramePadding();
+  ImGui::TextUnformatted("Contribution curve");
+  ImGui::SameLine();
+  const float cell_w =
+      std::max(ImGui::CalcTextSize("Fit").x, ImGui::CalcTextSize("Full").x) + 2.0f * ImGui::GetStyle().FramePadding.x;
+  for (int segment = 0; segment < 2; ++segment) {
+    const auto mode = segment == 0 ? PointCurveRangeMode::kFit : PointCurveRangeMode::kFull;
+    const bool current = view.curve_range_mode == mode;
+    if (current) {
+      PushCurrentSegmentStyle();
+    }
+    if (ImGui::Button(segment == 0 ? "Fit##curve_range" : "Full##curve_range", ImVec2(cell_w, 0)) && !current) {
+      view.curve_range_mode = mode;
+    }
+    if (current) {
+      ImGui::PopStyleColor(4);
+    }
+    if (ImGui::IsItemHovered()) {
+      ImGui::SetTooltip(segment == 0 ? "Up to 5 decades below the largest positive value." :
+                                       "Up to 8 decades below the largest positive value.");
+    }
+    if (segment == 0) {
+      ImGui::SameLine(0.0f, 0.0f);
+    }
+  }
 
   // ---- D7 — the curve region's canvas | companion split (§16.4): the canvas's share of the
   // span below the fixed head. The sentinel share (never dragged) grants the companion its
@@ -2322,9 +2237,6 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
     }
   }
   const ImVec2 graph_size(available.x, graph_h);
-  if (graph_h <= 0.0f) {
-    view.curve_pan_active = false;  // the canvas is gone; a held pan does not survive it (§3.1)
-  }
   const ImVec2 graph_min = ImGui::GetCursorScreenPos();
   ImDrawList* graph_draw_list = ImGui::GetWindowDrawList();
   bool graph_hovered = false;
@@ -2336,8 +2248,6 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
     graph_draw_list->AddRectFilled(graph_min, ImVec2(graph_min.x + graph_size.x, graph_min.y + graph_h),
                                    IM_COL32(16, 18, 22, 255));
   }
-  AnalyzeRegionWheelStanding();  // latch before this region writes its claim
-  AnalyzeRegionWheelClaim(graph_hovered, AnalyzeCurveWheelOwnerId());
   if (graph_h > 0.0f) {
     AnalyzeSplitter("##PoseCurveSplitter", SplitterDragAxis::kUpDown, available.x, graph_h, denom_7, canvas_floor_7,
                     denom_7 - companion_floor_7, canvas_floor_7 / std::max(1.0f, denom_7),
@@ -2516,102 +2426,14 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
       const bool canvas_hovered = graph_hovered;
       const bool canvas_active = graph_active;
       const double x_hi = n > 0 ? curve.points[n - 1].x_rad : 0.0;
-      // One shared fit over all positive arms, followed by the session's log-domain window.
-      const PointCurveAxisRange fit = PointCurveAxisFit(curve);
+      const PointCurveAxisRange visible = PointCurveAxisFit(curve, view.curve_range_mode);
       const float line_h = ImGui::GetTextLineHeight();
       const float summary_wrap = std::max(1.0f, avail.x - UiPx(12.0f));
-      const auto summary_for = [&](const PointCurveAxisRange& range) {
-        std::string text = range.valid ? PointCurveOutsideLabel(PointCurveCountOutside(curve, range.lo, range.hi)) : "";
-        if (ImGui::CalcTextSize(text.c_str()).x > summary_wrap) {
-          // Break between fields, not inside a decimal/exponent (ImGui also wraps at '.').
-          const size_t min_field = text.find(" · min ");
-          if (min_field != std::string::npos) {
-            text.replace(min_field, std::strlen(" · "), "\n");
-            const size_t max_field = text.find(" · max ");
-            if (max_field != std::string::npos && ImGui::CalcTextSize(text.c_str() + min_field + 1).x > summary_wrap) {
-              text.replace(max_field, std::strlen(" · "), "\n");
-            }
-          }
-        }
-        return text;
-      };
-      // The footer's two rows (§3.2): the X labels own their line unconditionally — an outside
-      // count no longer omits or displaces them — and the summary adds its real wrapped height
-      // on the row below. The zero row sits above both; the same arithmetic sizes the plot rect
-      // the layout spends and the mouse mapping consumes.
-      const auto footer_height = [&](const std::string& text) {
-        const float x_row = UiPx(13.0f) + ImGui::GetTextLineHeight();
-        float h = std::max(UiPx(28.0f), x_row);
-        if (!text.empty()) {
-          h = std::max(h, x_row + ImGui::GetStyle().ItemSpacing.y +
-                              ImGui::CalcTextSize(text.c_str(), nullptr, false, summary_wrap).y);
-        }
-        return h;
-      };
-      // The pan latch (§3.1's gesture contract): a right press that begins on the canvas owns the
-      // gesture until the button's release; a drag already owned by the left button is not stolen,
-      // and a press that began elsewhere never latches. Adoption and canvas invalidation clear the
-      // latch on their own paths (the reset and the degraded forms below).
-      if (!ImGui::IsMouseDown(ImGuiMouseButton_Right)) {
-        view.curve_pan_active = false;
-      } else if (canvas_hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Right) && !canvas_active) {
-        view.curve_pan_active = true;
-      }
-      // A left press that begins while the pan owns the gesture is swallowed for its whole life:
-      // the press still activates the canvas item (it accepts the left button), and releasing the
-      // RIGHT button first must not wake that held drag into a cursor write — a fresh left press
-      // afterwards selects normally (§3.1's mutex, both release orders).
-      if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
-        view.curve_left_press_ignored = false;
-      } else if (view.curve_pan_active && canvas_hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
-        view.curve_left_press_ignored = true;
-      }
-      const PointCurveAxisRange before_wheel = PointCurveVisibleRange(fit, &view.curve_axis);
-      const std::string before_summary = summary_for(before_wheel);
-      // The Y-input availability boundary, judged BEFORE any state write: the frame's own window
-      // (the one the summary was read from) and its real footer budget decide whether the Y
-      // gestures exist. Once the footer leaves nothing positive, a pan or a zoom would write
-      // state nothing shows — both stay dead and the pan latch dies here; the draw side
-      // re-judges below on the frame's final footer for the ink. The D7 floor's click-to-select
-      // contract survives this (the x mapping is width-defined; the write sits outside this
-      // boundary), and the shared wheel arbitration is untouched — the claim stands, the
-      // unconsumed event just passes.
-      const float before_real_h = canvas_h - UiPx(10.0f) - footer_height(before_summary);
-      const bool y_inputs_live = before_real_h >= UiPx(kPoseViewCurveMinPlot);
-      if (!y_inputs_live) {
-        view.curve_pan_active = false;  // the plot is gone; a held pan does not survive it
-      }
-      const float before_plot_h = std::max(1.0f, before_real_h);
-      const double mouse_anchor = 1.0 - (ImGui::GetIO().MousePos.y - canvas_min.y - UiPx(10.0f)) / before_plot_h;
-      const double anchor = mouse_anchor >= 0.0 && mouse_anchor <= 1.0 ? mouse_anchor : 0.5;
-      const double wheel =
-          AnalyzeRegionWheelStanding() && canvas_hovered && y_inputs_live ? ImGui::GetIO().MouseWheel : 0.0;
-      PointCurveAxisRange visible = PointCurveVisibleRange(fit, &view.curve_axis, wheel, anchor);
-      // The pan rides the post-zoom window (a wheel event during a drag still zooms exactly once,
-      // and the pan continues from the event's effective window): the drag's per-frame delta as a
-      // fraction of the same pre-write plot height the anchor uses. The press frame establishes
-      // ownership only — MouseDelta.y is the move relative to the PREVIOUS frame, so consuming it
-      // there would pan by the approach movement a mere right-click carried in with it. Pan
-      // writes no cursor, stops no playback and touches no query identity — the view window is
-      // its only subject.
-      const float pan_dy = view.curve_pan_active && y_inputs_live && !ImGui::IsMouseClicked(ImGuiMouseButton_Right) ?
-                               ImGui::GetIO().MouseDelta.y :
-                               0.0f;
-      if (pan_dy != 0.0f) {
-        visible = PointCurvePanRange(fit, &view.curve_axis, static_cast<double>(pan_dy) / before_plot_h);
-      }
       const double v_min = visible.lo;
       const double v_max = visible.hi;
       const bool have_range = visible.valid && x_hi > 0.0;
-      const std::string outside_label = wheel == 0.0 && pan_dy == 0.0f ? before_summary : summary_for(visible);
-      const float pad_b = footer_height(outside_label);
+      const float pad_b = std::max(UiPx(28.0f), UiPx(13.0f) + line_h);
       const float rough_plot_h = std::max(1.0f, canvas_h - UiPx(10.0f) - pad_b);
-      // The draw side of the availability boundary: the frame's FINAL footer (this frame's wheel
-      // or pan may have changed the summary's row count) decides whether the plot ink exists.
-      // Below the honest minimum the canvas renders its recoverable note form — no inverted
-      // rect, no clipped labels posing as present (§3.2's degradation) — and the Y-input side
-      // above already kept the hidden window untouched. The two judgments are the same
-      // arithmetic on the same canvas; they can only disagree across one transition frame.
       const float real_plot_h = canvas_h - UiPx(10.0f) - pad_b;
       const bool plot_fits = real_plot_h >= UiPx(kPoseViewCurveMinPlot);
       const int label_step = have_range ? PointCurveLogLabelStep(v_min, v_max, rough_plot_h, line_h) : 1;
@@ -2658,18 +2480,6 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
 
       dl->AddRectFilled(canvas_min, canvas_max, IM_COL32(16, 18, 22, 255));
       dl->AddRect(canvas_min, canvas_max, IM_COL32(70, 74, 82, 160));
-      // The gesture hint (§3.1): hover-only ink beside the rad unit — no permanent layout, and it
-      // yields when the top strip cannot host it (the narrowest faces keep their honest form).
-      if (canvas_hovered) {
-        const char* hint = "L select · wheel zoom · R pan Y";
-        const float hint_w = ImGui::CalcTextSize(hint).x;
-        const float hint_right = canvas_max.x - UiPx(6.0f) - ImGui::CalcTextSize("rad").x - UiPx(12.0f);
-        if (hint_right - hint_w >= canvas_min.x + UiPx(4.0f)) {
-          dl->AddText(ImVec2(hint_right - hint_w, canvas_min.y + UiPx(4.0f)), ImGui::GetColorU32(ImGuiCol_TextDisabled),
-                      hint);
-        }
-      }
-
       const auto v_to_py = [&](double v) {
         const double log_lo = have_range ? std::log10(v_min) : 0.0;
         double log_hi = have_range ? std::log10(v_max) : 0.0;
@@ -2718,19 +2528,7 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
           }
         }
       }
-      // The honest tail summary owns the row BELOW the x labels (§3.2's two rows): the outside
-      // count and its extrema never displace or cover the axis numbers, and the wrap width is
-      // the summary's own budget, not the labels' yield. Only where the plot itself fits — the
-      // degraded form names the missing plot instead of presenting cropped text.
-      if (plot_fits && !outside_label.empty()) {
-        const ImVec2 summary_size = ImGui::CalcTextSize(outside_label.c_str(), nullptr, false, summary_wrap);
-        const float summary_x = canvas_max.x - UiPx(6.0f) - summary_size.x;
-        const float summary_y = plot_max.y + UiPx(13.0f) + ImGui::GetTextLineHeight() + ImGui::GetStyle().ItemSpacing.y;
-        dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(summary_x, summary_y),
-                    ImGui::GetColorU32(ImGuiCol_TextDisabled), outside_label.c_str(), nullptr, summary_wrap);
-      }
-      // The plot's frame and the x labels — the labels are always in place now (§3.2): the
-      // summary's own row below carries the outside count, so the axis numbers never yield.
+      // X labels own their row regardless of the data range.
       const auto x_label = [&](float x, float y, const char* text) {
         dl->AddText(ImVec2(x, y), ImGui::GetColorU32(ImGuiCol_TextDisabled), text);
       };
@@ -2859,9 +2657,8 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
         // While the right button holds a pan, left events never reach the cursor write path —
         // and a left press that began during the pan stays swallowed until it is released, so
         // the two gestures are mutually exclusive for the whole life of the drag (§3.1).
-        if (!view.curve_left_press_ignored && !ImGui::IsMouseDown(ImGuiMouseButton_Right) &&
-            ((canvas_hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) ||
-             (canvas_active && ImGui::IsMouseDragging(ImGuiMouseButton_Left)))) {
+        if ((canvas_hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) ||
+            (canvas_active && ImGui::IsMouseDragging(ImGuiMouseButton_Left))) {
           write_cursor_from_mouse();
         }
       }
@@ -3022,8 +2819,6 @@ void RenderPoseFactorsRegion(GuiState& state, const ImVec2& size) {
 
 void RenderAnalyzePoseViewWindow(GuiState& state) {
   if (!state.analyze_pose_view_open) {
-    state.analysis.point_view.curve_pan_active = false;  // the curve canvas is gone with the
-                                                         // window; a held pan does not survive it
     return;
   }
   // The pumps run at RenderWorkspacePanels' entry (every GUI frame — windows open or not); this

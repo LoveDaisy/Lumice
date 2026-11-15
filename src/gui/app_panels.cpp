@@ -416,15 +416,6 @@ constexpr ToolbarCommand kToolbarSummary{ ICON_FA_FILE_LINES " Summary###toolbar
 constexpr ToolbarCommand kToolbarSettings{ ICON_FA_GEAR " Settings###toolbar_settings",
                                            ICON_FA_GEAR "###toolbar_settings" };
 
-// Selected mode, not a configured-content badge: the same solid accent / contrasting text as the
-// Axis label chips. Hover and press keep the selection visible rather than restoring a neutral fill.
-void PushToolbarCurrentModeStyle() {
-  const ImVec4 accent = AccentColor();
-  ImGui::PushStyleColor(ImGuiCol_Button, accent);
-  ImGui::PushStyleColor(ImGuiCol_ButtonHovered, accent);
-  ImGui::PushStyleColor(ImGuiCol_ButtonActive, accent);
-  ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_WindowBg));
-}
 }  // namespace
 
 // Pin a chrome panel to the main viewport so ImGui never promotes it to an
@@ -820,7 +811,7 @@ void RenderTopBar(float window_width) {
   {
     const bool analyze = g_state.workspace.mode == GuiState::WorkspaceMode::kAnalyze;
     if (!analyze) {
-      PushToolbarCurrentModeStyle();
+      PushCurrentSegmentStyle();
     }
     if (ImGui::Button("Render", ImVec2(cell_width, 0)) && analyze) {
       g_state.workspace.mode = GuiState::WorkspaceMode::kRender;
@@ -834,7 +825,7 @@ void RenderTopBar(float window_width) {
     }
     ImGui::SameLine(0.0f, 0.0f);
     if (analyze) {
-      PushToolbarCurrentModeStyle();
+      PushCurrentSegmentStyle();
     }
     if (ImGui::Button("Analyze", ImVec2(cell_width, 0)) && !analyze) {
       g_state.workspace.mode = GuiState::WorkspaceMode::kAnalyze;
