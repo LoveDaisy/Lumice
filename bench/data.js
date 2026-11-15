@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794709111234,
+  "lastUpdate": 1794709113616,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9608,50 +9608,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "46671819d8f4c160a624710d644cfca2c5892361",
-          "message": "Merge pull request #485 from LoveDaisy/chore/migrate-repo-name-lumice\n\ndocs: migrate repo name ice_halo_sim to Lumice",
-          "timestamp": "2026-10-12T13:34:20+08:00",
-          "tree_id": "aec7c127f5820de64118e9f6a204ec6cb003c8ff",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/46671819d8f4c160a624710d644cfca2c5892361"
-        },
-        "date": 1791783427775,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 89.6,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 99.8,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 98.4,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 94.9,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "e1ac9076ac5ba61fb78e51027bd35f89f6be05d7",
           "message": "Merge pull request #486 from LoveDaisy/fix/sun-diameter-zero-min\n\nfix(gui): allow sun diameter 0 (point source) in the GUI domain",
           "timestamp": "2026-10-12T20:22:38+08:00",
@@ -13986,6 +13942,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 94.7,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "distinct": true,
+          "id": "52d4760db8da0eab613a4e8821c28c9fbf22a470",
+          "message": "Merge pull request #590 from LoveDaisy/chore/release-branch-policy",
+          "timestamp": "2026-11-15T10:14:25+08:00",
+          "tree_id": "9f1e3ddf0ccf449ee2e2af88e676f95a914da999",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/52d4760db8da0eab613a4e8821c28c9fbf22a470"
+        },
+        "date": 1794709112835,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 97.2,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 100.1,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 98,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 91.9,
             "unit": "%"
           }
         ]
