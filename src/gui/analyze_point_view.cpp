@@ -2433,8 +2433,7 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
     // vocabulary; an arm with no positive value names the fact (J4's legend naming). SameLine is
     // a judgment (the 3D legend's rule): an entry wraps below when it no longer fits. ----
     const ImU32* const arm_colors = kPointCurveArmColors;  // the one palette (the tests read it too)
-    const char* arm_labels[kCurveArms] = { "axis density rad^-3", "A/a^2", "T total", "K 1/(J+eps)",
-                                           "axis density × A/a^2 × T × K" };
+    const char* arm_labels[kCurveArms] = { "ρ", "A/a²", "T", "K", "ρ·A/a²·T·K" };
     const auto value_of = [&](int arm, size_t i) -> double { return curve.points[i].*kCurveArmFields[arm].value; };
     const auto kind_of = [&](int arm, size_t i) { return curve.points[i].*kCurveArmFields[arm].kind; };
     int positive_seen[kCurveArms] = { 0, 0, 0, 0, 0 };
@@ -2866,12 +2865,8 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
           write_cursor_from_mouse();
         }
       }
-      // The readout line: the hovered sample while the hand is on the canvas, otherwise the
-      // current one — a real ImGui text row (wraps, is test-addressable; not a drawlist painting).
       if (hover_position >= 0) {
-        ImGui::TextWrapped("hover: %s", sample_readout(hover_position).c_str());
-      } else {
-        ImGui::TextWrapped("%s", sample_readout(std::clamp(view.sample_index, 0, valid_count - 1)).c_str());
+        ImGui::SetTooltip("%s\nLeft click or drag to select a pose.", sample_readout(hover_position).c_str());
       }
       // ---- The scroll region's tail: the partial note. The measure registration's note and
       // the current sample's factor readouts moved to the factors region (§16.4's content
@@ -2888,7 +2883,6 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
     if (info->execution != LUMICE_PATH_OUTCOME_COMPLETED) {
       WarningTextWrapped("Partial document (%s) — the curve on show is what arrived.", ExecutionText(info->execution));
     }
-    ImGui::TextWrapped("%s", sample_readout(std::clamp(view.sample_index, 0, valid_count - 1)).c_str());
   };
   render_content();
   ImGui::EndChild();

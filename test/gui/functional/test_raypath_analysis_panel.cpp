@@ -9184,6 +9184,10 @@ bool RefinedPayloadSampleFollowsCurveGlobeAndTrace(ImGuiTestContext* ctx) {
   return true;
 }
 
+namespace {
+bool CheckMapTextGlyphs(ImGuiTestContext* ctx, const char* surface, const std::string& text);
+}
+
 bool PoseCurveRegionDrawsAndMovesTheSharedCursor(ImGuiTestContext* ctx) {
   ScopedServerGuard guard;
   IM_CHECK_RETV(BringUpHaloScene(ctx, /*infinite=*/false), false);
@@ -9224,6 +9228,16 @@ bool PoseCurveRegionDrawsAndMovesTheSharedCursor(ImGuiTestContext* ctx) {
   ctx->LogInfo("[pose curve] region %.0fx%.0f SM %.1f, canvas %.0fx%.0f", static_cast<double>(curve->Size.x),
                static_cast<double>(curve->Size.y), static_cast<double>(curve->ScrollMax.y),
                static_cast<double>(canvas.RectFull.GetWidth()), static_cast<double>(canvas.RectFull.GetHeight()));
+  {
+    const std::string text = CaptureWindowFrameText(ctx, "Pose & trace");
+    bool all_symbols = true;
+    for (const char* symbol : { "ρ", "A/a²", "T", "K", "ρ·A/a²·T·K" }) {
+      all_symbols = all_symbols && text.find(symbol) != std::string::npos;
+    }
+    IM_CHECK_RETV(all_symbols, false);
+    IM_CHECK_RETV(CheckMapTextGlyphs(ctx, "curve legend", text), false);
+    IM_CHECK_RETV(text.find("hover:") == std::string::npos, false);
+  }
   IM_CHECK_RETV(SaveWindowPng(ctx, "//Pose & trace", GuiTestTempPath("pose_curve_region_default.png").string()), false);
 
   // ---- §16.4's content-owner faces at the default geometry (Step 6): the factors region

@@ -63,6 +63,7 @@ ImFont* AddBodyFont(ImGuiIO& io, float size_px, float raster_density) {
     // loaded — removing them would repack the atlas and drift content-unrelated screenshots.
     ranges.AddChar(0x03B4);
     ranges.AddChar(0x03BB);
+    ranges.AddChar(0x03C1);  // rho: the contribution curve's axis-density symbol
     ranges.BuildRanges(&g_body_glyph_ranges);
   }
   // ImGui takes ownership of the buffer it rasterizes from and frees it with the
