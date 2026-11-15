@@ -3935,6 +3935,63 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
     };
   }
 
+  // The sync-group picker popup (RenderSyncCell) is the second modal-internal BeginPopup call
+  // site, and carries the same detached-modal contract as the wedge preset dropdown above: when
+  // the editor is detached into its own TopMost OS viewport and this popup outgrows it —
+  // vertically when the row sits near the editor's bottom edge (Face Distance expanded or the
+  // table scrolled), horizontally when a member-list text widens it — ImGui late-creates the
+  // popup's own OS viewport, which must carry TopMost or it lands behind the editor (the same
+  // user-reported inversion). Drives the real swatch → popup path; the pin and containment legs
+  // below mean exactly what they mean in the wedge family (harness-observable half; OS z-order
+  // rests on the source chain and the task's real-GUI verification).
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "edit_modal", "sync_group_popup_topmost_arm");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      const ScopedPopups popup_guard(ctx);
+      gui::g_state.modal_immediate_mode = true;
+      ctx->Yield(2);
+
+      OpenCardEditor(ctx, 0, kCrystalTabRef);
+      ctx->Yield(4);
+      ctx->ItemOpen("**/Face Distance##modal");
+      ctx->Yield(2);
+
+      ctx->ItemClick("**/##sync_Face 5##modal_fd");
+      ctx->Yield(2);
+
+      // White-box handle into the popup: the "None" Selectable is rendered inside the same
+      // BeginPopup block, so its ItemInfo().Window is the popup window itself. Its id is anchored
+      // on ###sync_none, so it stays put while membership text changes.
+      const ImGuiTestItemInfo popup_item = ctx->ItemInfo("**/###sync_none");
+      IM_CHECK(popup_item.ID != 0);
+      IM_CHECK(popup_item.Window != nullptr);
+      const ImRect popup_rect = popup_item.Window->Rect();
+
+      // Containment (harness leg): the single viewport is the whole framebuffer, the same mapping
+      // "the main window's visible area" has in the wedge family.
+      const ImGuiViewport* vp = ImGui::GetMainViewport();
+      const ImRect vp_rect(vp->Pos, ImVec2(vp->Pos.x + vp->Size.x, vp->Pos.y + vp->Size.y));
+      IM_CHECK(vp_rect.Contains(popup_rect));
+
+      // The fix's mechanism pin, and this case's red/green anchor: the WindowClass contract of
+      // SetNextComboPopupTopMost, armed on this BeginPopup path exactly as on the wedge one.
+      IM_CHECK_EQ(popup_item.Window->WindowClass.ViewportFlagsOverrideSet & ImGuiViewportFlags_TopMost,
+                  ImGuiViewportFlags_TopMost);
+
+      // Selection round-trip: "+ New group" hands out id 1 to the ungrouped row — the click
+      // provably reaches a live item inside this popup. Join/snapshot semantics themselves are
+      // owned by joining_a_sync_group_snapshots_it_and_edits_propagate.
+      ctx->ItemClick("**/###sync_new");
+      ctx->Yield(2);
+      IM_CHECK_EQ(EntryCrystal().face_distance[2].sync_group, 1);
+
+      ctx->ItemClick(kClose);
+      ctx->Yield(2);
+      gui::g_state.modal_immediate_mode = false;
+    };
+  }
+
   // ===================================================================================
   // The pull: the pool changes under an open modal (see the helpers' note above).
   // ===================================================================================

@@ -772,8 +772,9 @@ bool SliderIntWithInput(const char* label, int* value, int min_val, int max_val,
 // behind the modal — invisible and click-throughable. Must be called before
 // every modal-internal `BeginCombo` / `Combo` / `RenderAxisDist` call site, and
 // before every modal-internal `BeginPopup` whose window can outgrow its host
-// (currently the wedge preset dropdown in SliderWithPresetEdit,
-// edit_modals.cpp) — Begin late-creates such a popup's own OS viewport without
+// (currently the wedge preset dropdown in SliderWithPresetEdit, edit_modals.cpp,
+// and the sync-group picker in RenderSyncCell, panels.cpp below) — Begin
+// late-creates such a popup's own OS viewport without
 // TopMost (imgui.cpp:7794-7806 of v1.91.8-docking), the same level inversion.
 //
 // MAINTAINER: any new Combo / BeginCombo inside modal rendering functions
@@ -796,7 +797,8 @@ bool SliderIntWithInput(const char* label, int* value, int min_val, int max_val,
 // before BeginPopup — both of BeginPopup's early-out paths clear NextWindowData
 // (imgui.cpp:12362 and BeginPopupEx's IsPopupOpen early-out), so the queued
 // class is consumed or dropped within the pair and never leaks to another
-// window. Pinned by the edit_modal wedge_preset_popup_* gui_test family.
+// window. Pinned by the edit_modal wedge_preset_popup_* and
+// sync_group_popup_topmost_arm gui_test cases.
 //
 // UPGRADE NOTE: re-verify the NextWindowData backup/restore path in
 // imgui_widgets.cpp::BeginCombo when upgrading ImGui past v1.91.8-docking.
@@ -1246,6 +1248,15 @@ bool RenderSyncCell(const char* label, CrystalConfig& cr, int slot) {
   if (clicked) {
     ImGui::OpenPopup(popup_id);
   }
+  // Same detached-modal contract as the wedge preset dropdown (see SetNextComboPopupTopMost and
+  // the wedge arming in SliderWithPresetEdit): this popup's width grows with the membership text
+  // and its height with the group count, so once the editor is detached into its own OS viewport
+  // a popup opened near an edge can outgrow that viewport — Begin then late-creates the popup's
+  // own OS viewport without TopMost, and it lands behind the editor's TopMost window. Queued here,
+  // between OpenPopup and BeginPopup: both of BeginPopup's early-out paths clear NextWindowData,
+  // so the class is consumed or dropped within this statement pair and cannot leak into an
+  // unrelated window on frames where the popup stays closed.
+  SetNextComboPopupTopMost();
   bool changed = false;
   if (ImGui::BeginPopup(popup_id)) {
     changed = RenderSyncPopupItems(cr, slot);
