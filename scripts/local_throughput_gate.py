@@ -14,6 +14,8 @@ What one run does, per leg, in a fixed order:
 
     lock -> resolve the commit (origin/main tip) ->
       metal: local idle pre-check -> build -> cool-down -> idle re-check -> pytest
+      gui-real-timing: idle pre-check -> build gui_test (own tree) -> cool-down
+             -> idle re-check -> gui_test (real-timing pool, junit export)
       cuda : probe remote -> remote idle pre-check -> sync + build (on remote disk)
              -> cool-down -> idle re-check -> pytest (on remote disk) -> collect
     -> append one record per leg to results.jsonl -> notify -> staleness check
@@ -26,6 +28,11 @@ measurements; ``skipped`` (busy, unreachable, locked) and ``error`` (build
 failure, no test executed, lost remote run) are not, and are kept apart from
 ``fail`` so an infrastructure problem is never read as a throughput regression.
 Only ``pass``/``fail`` count as "the gate really ran" for the staleness alarm.
+The gui-real-timing leg adds a fifth state, ``inconclusive``: the pool ran but
+the environment had no verdict (a gate timeout, a DriveUntil/watchdog
+environment timeout, or the frozen-map ms-budget reading red on a personal
+machine) — it is a real measurement of the environment, issues nothing of its
+own, and still does not refresh the staleness clock.
 
 The judgement itself is not re-implemented here: the script runs the two
 existing pytest files and classifies their exit code + junit XML. The ratios it
@@ -59,7 +66,54 @@ from typing import Callable, Dict, List, Optional, Sequence, Tuple
 # Constants
 # =============================================================================
 
-LEGS = ("metal", "cuda")
+LEGS = ("metal", "gui-real-timing", "cuda")
+
+# The gui-real-timing leg drives gui_test directly with the real-timing pool's
+# filter. Byte-for-byte copy of the literal on scripts/build.sh's real-timing
+# invocation (the one WITHOUT --fixed-dt); check_policies.py's
+# gui-test-suite-args-sync keeps the two in step. The first term "perf_test" is
+# a category match (the engine's filter matches name OR category), which is how
+# maximum_frozen_map_input_to_present and the other perf_test cases join the pool.
+GUI_REALTIMING_FILTER = (
+    "perf_test,revert_repushes_server_display_state,zorder_priority_persists_across_rerun,"
+    "gpu_color_class_overflow,run_after_analysis_renders_gpu,survey_overview_shows_dispersion_and_profile,"
+    "verdict_anchor_hover_and_toggle_on_the_map,map_region_shows_the_class_map_and_takes_the_pick,"
+    "point_inspector_shows_the_point_fiber_and_the_path,refined_payload_sample_follows_curve_globe_and_trace,"
+    "analyze_full_chain_one_session,internal_reflection_trace_from_the_real_consumer,"
+    "refused_class_names_the_refusal_and_keeps_the_witness,refused_class_blockades_nothing,"
+    "narrow_column_clipped_rows_keep_their_entities,analyze_result_carries_across_scale_tiers,"
+    "profile_rows_highlight_and_draw_on_the_map"
+)
+
+# The delay contract's three-ms-budget assertion lives inside one IM_CHECK
+# expression (test/gui/functional/test_frozen_map_view.cpp, the
+# maximum_frozen_map_input_to_present case); the engine logs a failing check as
+# `[NNNN] Error <file>:<line> '<expression>'`, so this fragment — the documented
+# contract value — identifies a *budget* red. A recalibrated budget in the test
+# must update this constant the same way a renamed pool member must update
+# GUI_REALTIMING_FILTER. The structural sibling (frames >= 120) is NOT listed:
+# any failing check that is neither the budget expression nor the case's outer
+# wrapper is a functional red, the fail-safe default.
+GUI_BUDGET_ASSERT_FRAGMENT = "max_observe <= 8.0"
+# The case wraps all of its assertions in one IM_CHECK, so that outer expression
+# fires for every failure mode and identifies nothing by itself.
+GUI_TIMING_WRAPPER_EXPR = "MaximumTimingWitness(ctx)"
+# The budget exemption names its case: the fragment above only grants the
+# environment verdict on the frozen-map delay contract, never pool-wide.
+GUI_FROZEN_TIMING_CASE = "maximum_frozen_map_input_to_present"
+# Wall-clock telemetry of an environment timeout, logged into the failing case's
+# own evidence. Only the engine's actual aborts count — the watchdog kill reads
+# "..., aborting." and the emergency exit line (imgui_te_engine.cpp UpdateWatchdog);
+# the ">N seconds, may be excessive." warning (LogWarning) fires routinely on a
+# slow case that then fails a real assertion, and must not demote it.
+GUI_TIMEOUT_MARKERS = ("[drive-gate] TIMEOUT", "seconds, aborting.",
+                       "[Watchdog] Emergency process exit")
+# A signal death reaches this script as -N from subprocess.run (SIGILL=4) or as
+# 128+N when a shell renders it. The known full-suite signature's boundary case
+# (test/AGENTS.md) is structurally unreachable from the filtered pool, so any
+# marker here is a new sample; the label below only records that fact.
+SIGILL_EXITS = (-4, 132)
+GUI_SIGILL_KNOWN_MARKER = "workspace_panorama_publishes_after_a_render"
 
 # The metal leg builds with scripts/build.sh, which needs these on PATH. Resolved
 # before anything expensive — even before the idle pre-check — because a missing
@@ -112,7 +166,7 @@ KEEP_RUN_DIRS = 30
 
 ISSUE_TAG = "[throughput-gate]"
 TEST_NAMESPACE_TAG = "[TEST]"
-ISSUE_KINDS = ("fail", "error", "stale")
+ISSUE_KINDS = ("fail", "error", "stale", "sigill")
 
 _RATIO_RE = re.compile(r"dual/single_a=([0-9.]+) dual/single_b=([0-9.]+)")
 _LEGACY_RE = re.compile(r"/legacy=([0-9.]+)x")
@@ -320,6 +374,180 @@ def classify_pytest(exit_code: Optional[int], junit_xml: Optional[str], test_nam
     return "error", f"pytest-exit-{exit_code} ({case.outcome}: {case.message[:200]})"
 
 
+# ---- gui real-timing pool classifier ----------------------------------------
+# Evidence formats pinned against real gui_test output (junit exporter
+# imgui_te_exporters.cpp writes the on-error log into the <failure> text
+# element; ConfigLogToTTY echoes the same lines to stderr): case start marker
+# `[NNNN] Test: '<category>' '<name>'..`, check lines
+# `[NNNN] OK|Error <file>:<line> '<expression>'`, the frozen-map value line
+# `[NNNN] [frozen-map-timing] frames=N p95=X ms max=Y ms observation-upper=Z ms`.
+
+
+@dataclass(frozen=True)
+class GuiCase:
+    name: str
+    status: str        # junit status attribute: "Success" | "Error" | "Unknown"
+    failure_text: str  # <failure> element text (the case's on-error log), "" when none
+
+
+def parse_gui_junit(xml_text: str) -> List[GuiCase]:
+    """Per-case name/status/failure-text. The engine's exporter lists every
+    registered test; unexecuted ones carry status="Unknown" + <skipped/>."""
+    root = ET.fromstring(xml_text)
+    cases = []
+    for tc in root.iter("testcase"):
+        failure = tc.find("failure")
+        cases.append(GuiCase(tc.get("name", ""), tc.get("status", ""),
+                             (failure.text or "") if failure is not None else ""))
+    return cases
+
+
+_FROZEN_TIMING_RE = re.compile(
+    r"\[frozen-map-timing\] frames=(\d+) p95=([0-9.eE+-]+) ms max=([0-9.eE+-]+) ms "
+    r"observation-upper=([0-9.eE+-]+) ms")
+_CASE_MARKER_RE = re.compile(r"Test: '([^']*)' '([^']*)'")
+_CHECK_ERROR_RE = re.compile(r"\[\d+\] Error \S+ '([^']*)'")
+
+
+def extract_frozen_timing(log_text: str) -> Optional[dict]:
+    """The maximum_frozen_map_input_to_present value line, whenever the run
+    produced one — pass or red — as trend fields independent of the verdict.
+    The last match wins: a failed case is re-run once and the final attempt's
+    numbers are the ones that decided."""
+    m = None
+    for m in _FROZEN_TIMING_RE.finditer(log_text):
+        pass
+    if m is None:
+        return None
+    return {"timing_frames": int(m.group(1)), "timing_p95_ms": float(m.group(2)),
+            "timing_max_ms": float(m.group(3)), "timing_observation_max_ms": float(m.group(4))}
+
+
+def _gui_case_span(log_text: str, case: str) -> str:
+    """Fallback evidence for a failed case when its junit failure text is
+    missing: the text from the case marker's LAST occurrence to the next one
+    (a failed case is re-run once; the last attempt decides)."""
+    starts = [m.end() for m in _CASE_MARKER_RE.finditer(log_text)
+              if m.group(2) == case]
+    if not starts:
+        return ""
+    begin = starts[-1]
+    nxt = [m.start() for m in _CASE_MARKER_RE.finditer(log_text)
+           if m.start() > begin]
+    return log_text[begin:nxt[0] if nxt else len(log_text)]
+
+
+def _attribute_gui_case(case: GuiCase, log_text: str) -> Tuple[str, str]:
+    """One failed case -> ("timeout" | "budget" | "functional", detail).
+
+    Primary evidence is the case's junit failure text (the engine exports the
+    on-error log per case, so retries and sibling cases cannot bleed in); the
+    TTY span is the fallback. Timeout markers decide first (a DriveUntil/watchdog
+    abort is the failure), then the failing-check expressions: the budget
+    expression alone (besides the case's outer wrapper, which fires for every
+    mode) is a budget red; anything else — including nothing recognizable, e.g.
+    the wrapper-only shape of an adoption breach — is a functional red, the
+    fail-safe default.
+    """
+    evidence = case.failure_text or _gui_case_span(log_text, case.name)
+    for marker in GUI_TIMEOUT_MARKERS:
+        if marker in evidence:
+            return "timeout", marker
+    errors = [m.group(1) for m in _CHECK_ERROR_RE.finditer(evidence)]
+    others = [e for e in errors
+              if GUI_BUDGET_ASSERT_FRAGMENT not in e and e != GUI_TIMING_WRAPPER_EXPR]
+    if others:
+        return "functional", others[0][:200]
+    if (case.name == GUI_FROZEN_TIMING_CASE
+            and any(GUI_BUDGET_ASSERT_FRAGMENT in e for e in errors)):
+        return "budget", GUI_BUDGET_ASSERT_FRAGMENT
+    return "functional", (case.failure_text.strip().splitlines() or ["<no evidence>"])[-1][:200]
+
+
+@dataclass(frozen=True)
+class GuiPoolVerdict:
+    status: str                    # pass / fail / error / inconclusive
+    reason: str
+    sigill: Optional[dict] = None  # event payload when the run died by signal
+    timing: Optional[dict] = None  # extract_frozen_timing's trend fields
+    failing_case: Optional[str] = None
+
+
+def classify_gui_pool(exit_code: Optional[int], junit_xml: Optional[str], log_text: str,
+                      sigill_load: Optional[dict] = None) -> GuiPoolVerdict:
+    """Map one gui_test run of the real-timing pool to a verdict.
+
+    pass         exit 0, >=1 case executed, no case in error.
+    fail         a functional red (any failing check that is not attributable to
+                 the environment), or a signal death (SIGILL sample event: the
+                 per-sample record the first-action protocol asks for — exit
+                 code, last case marker, log tail, and the crash-moment load
+                 snapshot the IO layer passes in via sigill_load).
+    inconclusive the run measured but the environment had no verdict: a gate
+                 timeout (exit 124), or every failure attributed to a
+                 DriveUntil/watchdog timeout or the frozen-map ms-budget.
+    error        infrastructure: no/unparseable junit, nothing executed, exit
+                 code contradicting the junit (the silent-green shapes), or an
+                 unexpected exit code.
+
+    SIGILL is checked before everything: a signal death leaves no junit, and it
+    is a sample to record, not a verdict to classify.
+    """
+    timing = extract_frozen_timing(log_text)
+    if exit_code is not None and exit_code in SIGILL_EXITS:
+        markers = list(_CASE_MARKER_RE.finditer(log_text))
+        event = {
+            "exit_code": exit_code,
+            "last_case_marker": markers[-1].group(2) if markers else "<none>",
+            "log_tail": log_text[-2000:],
+            "known_signature_boundary":
+                bool(markers) and markers[-1].group(2) == GUI_SIGILL_KNOWN_MARKER,
+        }
+        if sigill_load is not None:
+            event.update(sigill_load)
+        return GuiPoolVerdict("fail", f"sigill: exit {exit_code} (sample event)", sigill=event, timing=timing)
+    if exit_code == 124:
+        return GuiPoolVerdict("inconclusive", "gate-timeout (budget exhausted)", timing=timing)
+    if exit_code is None:
+        return GuiPoolVerdict("error", "gui-test-did-not-finish", timing=timing)
+    if junit_xml is None:
+        return GuiPoolVerdict("error", f"no-junit (gui_test exit {exit_code})", timing=timing)
+    try:
+        cases = parse_gui_junit(junit_xml)
+    except ET.ParseError as e:
+        return GuiPoolVerdict("error", f"junit-unparseable: {e}", timing=timing)
+    executed = [c for c in cases if c.status != "Unknown"]
+    failed = [c for c in executed if c.status == "Error"]
+    if not executed:
+        return GuiPoolVerdict("error", f"no-test-executed (gui_test exit {exit_code})", timing=timing)
+    if exit_code == 0:
+        if failed:
+            return GuiPoolVerdict("error", "gui-test junit mismatch (exit 0, junit reports errors)",
+                                  timing=timing)
+        return GuiPoolVerdict("pass", "", timing=timing)
+    if not failed:
+        return GuiPoolVerdict("error", f"gui-test junit mismatch (exit {exit_code}, junit all-pass)",
+                              timing=timing)
+    if exit_code != 1:
+        return GuiPoolVerdict("error", f"gui-test-exit-{exit_code} "
+                              f"({failed[0].name}: {failed[0].failure_text[:200]})", timing=timing)
+    attributed = [(c,) + _attribute_gui_case(c, log_text) for c in failed]
+    functional = [a for a in attributed if a[1] == "functional"]
+    if functional:
+        # A real defect signal is not downgraded by unrelated environment reds
+        # in the same run: they are recorded into the reason, the status stays
+        # fail.
+        env = [a for a in attributed if a[1] != "functional"]
+        env_note = ("; also " + "; ".join(f"{a[1]}: {a[0].name}" for a in env)) if env else ""
+        return GuiPoolVerdict("fail", "functional red: " + ", ".join(a[0].name for a in functional) + env_note,
+                              timing=timing, failing_case=functional[0][0].name)
+    timeouts = [a for a in attributed if a[1] == "timeout"]
+    budgets = [a for a in attributed if a[1] == "budget"]
+    parts = ([f"timeout: {a[0].name} ({a[2]})" for a in timeouts]
+             + [f"budget red: {a[0].name}" for a in budgets])
+    return GuiPoolVerdict("inconclusive", "; ".join(parts), timing=timing)
+
+
 def extract_ratios(log_text: str) -> dict:
     out = {}
     m = None
@@ -364,28 +592,39 @@ class Action:
 
 
 def decide_notifications(status: str, synthetic: bool, stale: bool,
-                         open_kinds: set, body: str) -> List[Action]:
+                         open_kinds: set, body: str, sigill: bool = False) -> List[Action]:
     """The single decision table: (this leg's outcome x open issues) -> actions.
 
-    status   | open issue of that kind    | action
-    ---------+----------------------------+-----------------------------------
-    fail     | fail open                  | comment (numbers only)
-    fail     | fail not open              | create fail
-    error    | error open                 | none
-    error    | error not open             | create error
-    pass     | (non-synthetic)            | close fail / error / stale if open
-    pass     | (synthetic)                | none — a doctored threshold proves nothing
-    fail     | (non-synthetic)            | also close stale if open (it really ran)
-    skipped  | -                          | none
-    stale    | stale or error open        | none (an open error already explains it)
-    stale    | neither open               | create stale
+    status      | open issue of that kind    | action
+    ------------+----------------------------+-----------------------------------
+    fail+sigill | sigill open                | comment (sample record)
+    fail+sigill | sigill not open            | create sigill
+    fail        | fail open                  | comment (numbers only)
+    fail        | fail not open              | create fail
+    error       | error open                 | none
+    error       | error not open             | create error
+    pass        | (non-synthetic)            | close fail / error / stale / sigill if open
+    pass        | (synthetic)                | none — a doctored threshold proves nothing
+    fail        | (non-synthetic)            | also close stale if open (it really ran)
+    skipped     | -                          | none
+    inconclusive| -                          | none of its own — but never returns
+                |                            | early, so the stale row below still fires
+    stale       | stale or error open        | none (an open error already explains it)
+    stale       | neither open               | create stale
+
+    ``inconclusive`` (the gui-real-timing leg's ran-but-environment-had-no-verdict
+    state) issues nothing of its own: an environment timeout or a machine-load
+    budget red is not a defect signal. It still does not refresh the staleness
+    clock, so a pool that hangs every night ages into the stale row below —
+    the freshness alarm is the separate channel that keeps covering it.
     """
     actions: List[Action] = []
     if status == "fail":
-        if "fail" in open_kinds:
-            actions.append(Action("comment", "fail", body))
+        kind = "sigill" if sigill else "fail"
+        if kind in open_kinds:
+            actions.append(Action("comment", kind, body))
         else:
-            actions.append(Action("create", "fail", body))
+            actions.append(Action("create", kind, body))
         if not synthetic and "stale" in open_kinds:
             actions.append(Action("close", "stale", "The gate measured again (fail)."))
     elif status == "error":
@@ -751,6 +990,83 @@ def wait_idle_once(ctx: Ctx, read: Callable[[], Readings], label: str):
     return ok, r, reasons
 
 
+# ---- gui real-timing leg (local) --------------------------------------------
+# Drives gui_test's real-timing pool — the functional contracts whose only home
+# is this pool (they have no fixed-dt sibling and no CI execution point). The
+# build is this leg's own tree in the gate clone: build.sh is off limits here
+# because -gt/-gtj RUNS the gui pools itself, and the leg must own the gui_test
+# invocation it classifies. The tree name keeps it apart from the metal leg's
+# build.sh tree; the two trees share only the source-anchored output directory
+# (build/<type>/<flavor>), whose file names do not collide (Lumice vs gui_test)
+# and whose libs are never read across legs — the legs run strictly in sequence.
+GUI_BUILD_TREE = "build/cmake_build/static-gate-gui"
+
+
+def gui_test_binary(repo: Path) -> Path:
+    # The output directory is anchored on CMAKE_SOURCE_DIR (CMakeLists.txt), so
+    # the binary lands here regardless of the -B tree.
+    return repo / "build" / "release" / "static" / "bin" / "gui_test"
+
+
+def run_gui_realtiming(ctx: Ctx, sha: str) -> dict:
+    rec: dict = {}
+    reason = missing_build_tools_reason(metal_build_tools_found())
+    if reason:
+        return {"status": "error", "reason": reason}
+    read = lambda: collect_readings(with_wsl_host=False)  # noqa: E731
+    ok, r, reasons = wait_idle_once(ctx, read, "gui-real-timing pre-check")
+    rec["idle_pre"] = r.to_json()
+    if not ok:
+        return {**rec, "status": "skipped", "reason": "busy (pre-check): " + " | ".join(reasons)}
+    repo = local_repo(ctx)
+    build_dir = repo / GUI_BUILD_TREE
+    t0 = time.monotonic()
+    rc = run_logged(ctx, ["cmake", "-S", str(repo), "-B", str(build_dir), "-G", "Ninja",
+                          "-DCMAKE_BUILD_TYPE=Release", "-DBUILD_TEST=ON", "-DBUILD_GUI=ON",
+                          "-DBUILD_BENCH=OFF", "-DBUILD_SHARED_LIBS=OFF"],
+                    ctx.run_dir / "gui-configure.log", cwd=repo, env=clean_env({}))
+    if rc == 0:
+        rc = run_logged(ctx, ["cmake", "--build", str(build_dir), "--target", "gui_test"],
+                        ctx.run_dir / "gui-build.log", cwd=repo, env=clean_env({}))
+    rec["build_seconds"] = round(time.monotonic() - t0, 1)
+    if rc != 0:
+        return {**rec, "status": "error", "reason": f"build failed (exit {rc}), see gui-build.log"}
+    ok, r, reasons = wait_idle(ctx, read, "gui re-check")
+    rec["idle_post"] = r.to_json()
+    if not ok:
+        return {**rec, "status": "skipped", "reason": "busy (post-build re-check): " + " | ".join(reasons)}
+    junit = ctx.run_dir / "gui-junit.xml"
+    t0 = time.monotonic()
+    rc = run_logged(ctx, [str(gui_test_binary(repo)), "--filter", GUI_REALTIMING_FILTER,
+                          "--export-junit", str(junit), "--no-user-config"],
+                    ctx.run_dir / "gui-test.log", cwd=repo, env=clean_env({}),
+                    timeout=ctx.args.pytest_timeout)
+    rec["gui_seconds"] = round(time.monotonic() - t0, 1)
+    # One reading, taken the moment the child returned and timestamped as
+    # sampling begins: it doubles as the post-run idle record and — on a signal
+    # death — as the crash-moment load snapshot, the first sample after the
+    # exit, before anything else can change the machine.
+    sampled_at = iso(utcnow())
+    r_after = read()
+    rec["idle_after_gui"] = r_after.to_json()
+    if ctx.args.dry_run:
+        return {**rec, "status": "skipped", "reason": "dry-run"}
+    sigill_load = None
+    if rc in SIGILL_EXITS:
+        sigill_load = {"load_snapshot": r_after.to_json(), "sampled_at": sampled_at}
+    junit_text = junit.read_text() if junit.is_file() else None
+    log_text = (ctx.run_dir / "gui-test.log").read_text(errors="replace")
+    v = classify_gui_pool(rc, junit_text, log_text, sigill_load=sigill_load)
+    out = {**rec, "status": v.status, "reason": v.reason, "gui_exit": rc}
+    if v.sigill is not None:
+        out["sigill_event"] = v.sigill
+    if v.timing is not None:
+        out.update(v.timing)
+    if v.failing_case is not None:
+        out["failing_case"] = v.failing_case
+    return out
+
+
 # ---- cuda leg (remote) ------------------------------------------------------
 
 
@@ -987,7 +1303,11 @@ PUBLIC_REASON_CATEGORIES = (
     "busy", "unreachable", "dry-run", "locked", "no-test-executed", "no-junit", "junit-unparseable",
     "pytest-did-not-finish", "pytest-exit", "build failed", "build tools missing from PATH",
     "remote build failed", "remote pytest", "could not start", "source", "internal",
-    "metal leg needs macOS")
+    "metal leg needs macOS", "gui-real-timing leg needs macOS",
+    # gui-real-timing leg verdict categories: the case names and evidence stay in
+    # the local record; the public issue shows only which class of red it was.
+    "functional red", "timeout", "budget red", "sigill", "gate-timeout", "gui-test junit mismatch",
+    "gui-test-did-not-finish", "gui-test-exit")
 
 
 def public_reason(reason: str) -> str:
@@ -999,9 +1319,16 @@ def public_reason(reason: str) -> str:
     return "unspecified"
 
 
+LEG_ROLES = {
+    "metal": "Metal reference machine",
+    "cuda": "CUDA reference machine (Linux)",
+    "gui-real-timing": "GUI real-timing pool, on the Metal reference machine",
+}
+
+
 def issue_body(leg: str, rec: dict, stale_since: Optional[str]) -> str:
     lines = [
-        f"Leg: `{leg}` — role: {'Metal reference machine' if leg == 'metal' else 'CUDA reference machine (Linux)'}",
+        f"Leg: `{leg}` — role: {LEG_ROLES.get(leg, 'unlisted role')}",
         f"Commit: `{rec.get('sha', '?')}`",
         f"Run: `{rec.get('run_id')}`" + ("  (synthetic: threshold overridden)" if rec.get("synthetic") else ""),
         f"Status: **{rec['status']}**" + (f" — {public_reason(rec['reason'])}" if rec.get("reason") else ""),
@@ -1009,6 +1336,16 @@ def issue_body(leg: str, rec: dict, stale_since: Optional[str]) -> str:
     if "ratio_a" in rec:
         lines.append(f"dual/single_a = {rec['ratio_a']:.3f}, dual/single_b = {rec['ratio_b']:.3f}"
                      f" (gate >= {rec.get('threshold', '?')}); dual/legacy = {rec.get('vs_legacy', '?')}x")
+    if leg == "gui-real-timing":
+        # Identifiers only — a case name and the SIGILL exit/marker are repo
+        # symbols a reader can grep; evidence free text (log tails, load
+        # snapshots) stays in the local record.
+        if rec.get("failing_case"):
+            lines.append(f"Failing case: `{rec['failing_case']}`")
+        event = rec.get("sigill_event")
+        if event:
+            lines.append(f"SIGILL sample: exit `{event.get('exit_code', '?')}`, "
+                         f"last case marker: `{event.get('last_case_marker', '?')}`")
     if stale_since:
         lines.append(f"Last real measurement (pass or fail): {stale_since}")
     lines.append("")
@@ -1028,7 +1365,8 @@ def notify(ctx: Ctx, state: dict, leg: str, rec: dict, stale: bool) -> None:
         rec["notify_failed"] = str(e)
         return
     body = issue_body(leg, rec, rec.get("last_real_run") if stale else None)
-    for a in decide_notifications(rec["status"], bool(rec.get("synthetic")), stale, opened, body):
+    for a in decide_notifications(rec["status"], bool(rec.get("synthetic")), stale, opened, body,
+                                  sigill=bool(rec.get("sigill_event"))):
         if ctx.args.dry_run:
             ctx.log(f"notify (dry-run): {a.op} {issue_title(leg, a.kind, namespace)!r}")
             continue
@@ -1063,7 +1401,7 @@ def replay_pending(ctx: Ctx, state: dict) -> None:
 def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0],
                                 formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    p.add_argument("--leg", choices=("metal", "cuda", "all"), default="all")
+    p.add_argument("--leg", choices=("metal", "gui-real-timing", "cuda", "all"), default="all")
     p.add_argument("--remote", default="home-wsl", help="ssh alias of the CUDA reference machine (Linux role)")
     p.add_argument("--remote-dir", default="Codes/lumice-throughput-gate",
                    help="remote directory, relative to the remote $HOME")
@@ -1168,6 +1506,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     rec = {"status": "error", "reason": "metal leg needs macOS"}
                 else:
                     rec = run_metal(ctx, sha)
+            elif leg == "gui-real-timing":
+                if platform.system() != "Darwin":
+                    rec = {"status": "error", "reason": "gui-real-timing leg needs macOS"}
+                else:
+                    rec = run_gui_realtiming(ctx, sha)
             else:
                 rec = run_cuda(ctx, sha, resume_rdir=args.collect_remote)
         except Exception as e:  # noqa: BLE001 - one leg must not take the other, or the state, down with it

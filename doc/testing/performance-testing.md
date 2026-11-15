@@ -469,6 +469,7 @@ The precise gate's legs:
 | Leg | Where it runs | What it runs |
 |---|---|---|
 | `metal` | Metal reference machine, locally | `test_metal_dual_renderer_throughput` |
+| `gui-real-timing` | Metal reference machine, locally | gui_test's real-timing pool, driven as one `gui_test` invocation with junit export |
 | `cuda` | CUDA reference machine (Linux role), dispatched over ssh; only when reachable | `test_cuda_dual_renderer_throughput` |
 
 The CUDA reference machine's **Windows** role is **not covered**: dispatching there means
@@ -499,7 +500,11 @@ timeout) are infrastructure, kept apart from `fail` so a broken build is never r
 regression — and an exit-0 run whose target test was skipped is an `error`, not a pass (the silent
 green of a missing binary or an unset `LUMICE_HAS_CUDA`). Captured child output is decoded with
 replacement (`errors="replace"`): one stray non-UTF-8 byte in, say, another process's `ps` entry
-becomes U+FFFD in the readings and logs instead of raising and discarding the run's records.
+becomes U+FFFD in the readings and logs instead of raising and discarding the run's records. The
+`gui-real-timing` leg adds a fifth state, **`inconclusive`**: the pool ran but the environment had
+no verdict. It issues nothing of its own and is still not a measurement — it does not refresh the
+staleness clock, so a pool that cannot produce a verdict keeps aging into the `stale` alarm below;
+"ran but undecidable every night" must not masquerade as "the machine was busy".
 
 **Idle.** A measurement taken while something else loads the machine is a false red, so a leg only
 measures when its machine is idle, and only the re-check **after** the build decides (the
@@ -511,7 +516,56 @@ load, process table and the GPU's utilization, read from inside WSL through inte
 (`powershell.exe`, `nvidia-smi`). A reading that cannot be taken counts as busy. Thresholds are the
 script's `--load-per-core` / `--host-cpu-percent` / `--gpu-util-percent`; every record carries the
 thresholds and the readings it was judged on. The cross-machine exclusion is best effort: check
-and run are not atomic, so each record also keeps a reading taken right after the test.
+and run are not atomic, so each record also keeps a reading taken right after the test. For the
+`gui-real-timing` leg this is not overhead but the gate itself: its pool is wall-clock sensitive,
+and a run under residual load manufactures functional reds (measured: the analysis-chain cases
+fail on not-yet-rendered report text under a synthetic 10-core load, without any timeout line).
+
+**Classifying the gui-real-timing pool.** The build is the leg's own tree of the gate clone
+(`build/cmake_build/static-gate-gui`, configure `BUILD_TEST=ON BUILD_GUI=ON`, build only the
+`gui_test` target); `scripts/build.sh` is not used, because its `-gt`/`-gtj` forms run the gui
+pools themselves and the leg must own the `gui_test` invocation it classifies. The pool filter is
+a byte-identical copy of `scripts/build.sh`'s real-timing literal — one of three gui filter
+literals that `check_policies.py`'s `gui-test-suite-args-sync` keeps in step. The first filter
+term (`perf_test`) is a category match, which is how the pool also carries the documented
+input-to-present delay contract (`maximum_frozen_map_input_to_present`,
+`doc/gui/raypath-view-camera.md`). The pool is wall-clock by nature: ~4 minutes on the reference
+machine against a 1-hour drive budget (`--pytest-timeout`, shared with the other legs).
+
+The junit report names every case and, on failure, carries that case's on-error log, so each
+failure is attributed per case; the failing check logs as `[NNNN] Error <file>:<line> '<expr>'`:
+
+- **timeout telemetry** — a `[drive-gate] TIMEOUT` line (the DriveUntil budget,
+  `test_raypath_analysis_panel.cpp`) or a real-clock `[Watchdog]` abort inside the case's
+  evidence → the environment had no verdict;
+- **the frozen-map ms budget** — the budget assertion's expression (identified by its documented
+  contract fragment `max_observe <= 8.0`; a recalibrated budget in the test must move the gate's
+  `GUI_BUDGET_ASSERT_FRAGMENT` the same way a renamed pool member must move the filter) → the
+  personal machine, not a defect;
+- **everything else is a functional red** — the fail-safe default. It covers assertions that log
+  no expression of their own (the case's adoption breach), the structural sibling
+  (`frames >= 120`), and any shape the evidence cannot attribute: better one more issue than a
+  silently demoted contract. Unattributable never means exempt.
+
+Functional reds anywhere → `fail`; only timeouts/budget reds → `inconclusive`; a gate-level
+timeout (the drive budget exhausted) → `inconclusive`. The frozen-map timing values
+(`[frozen-map-timing] frames/p95/max/observation-upper`) are recorded as `timing_*` trend fields
+on every run that prints them — pass or red — so the normal daily run keeps the baseline a budget
+trend needs. A signal death (exit 132 / SIGILL) is not classified at all: it is recorded as a
+**sample event** per the first-action protocol in `test/AGENTS.md` (exit code, log tail, last
+case marker) plus a crash-moment load snapshot taken before anything else changes the machine,
+and reported as a `sigill` issue. The known full-suite signature's boundary case is not in this
+pool, so any marker here is a new sample by definition. `ISSUE_KINDS` gains that fourth kind —
+titles `[throughput-gate] gui-real-timing sigill`; a fail-with-sigill comments the sigill thread,
+not the fail thread, and a real `pass` closes all four kinds.
+
+**Deploying the leg.** launchd runs the installed copy of the script
+(`~/.local/share/lumice-throughput-gate/`), so after this leg lands, `scripts/install_throughput_gate.sh`
+must be re-run on the reference machine — until then the daily schedule cannot see the leg at
+all, and staleness cannot fire for a leg the installed script does not know. Verify both: the
+installed copy contains the leg (`grep -c gui-real-timing
+~/.local/share/lumice-throughput-gate/local_throughput_gate.py`), and a scheduled run's
+`results.jsonl` actually gains a `gui-real-timing` record.
 
 **How often, and what makes noise.** Once a day (launchd, 03:30 by default). CUDA's unlocked boost
 clock makes individual drain-aligned windows noisy even when the host and GPU are idle; interleaving
@@ -526,7 +580,11 @@ sample; every run's ratios are in the record.
   reason, ratios and the absolute median rays/s of every arm (`median_mrps_*`) copied from the
   test's own summary lines, commit, idle readings, durations, trigger (`manual` / `launchd`).
   Read the absolute medians, not only the ratio: a run under different conditions can pass on
-  the ratio while every arm is several times slower (see the QoS note below).
+  the ratio while every arm is several times slower (see the QoS note below). The
+  `gui-real-timing` leg's lines carry its own payload instead of ratios: the `timing_*` trend
+  fields when the frozen-map value line was printed, the failing case on a functional red, and
+  the full SIGILL sample event (exit code, marker, log tail, crash-moment load) — evidence free
+  text lives only here, the public issue shows identifiers and categories.
 - `~/.local/state/lumice-throughput-gate/runs/<run_id>/` — the run's log, build and pytest logs,
   junit XML, and the collected remote directory (last 30 runs kept).
 - **GitHub issues**, the channel you are expected to see: titles
@@ -561,10 +619,10 @@ launchctl print gui/$(id -u)/com.lumice.throughput-gate | grep -E 'state|runs|la
 tail -n 2 ~/.local/state/lumice-throughput-gate/results.jsonl
 ```
 
-**Manual runs and drills.** `python3 scripts/local_throughput_gate.py --leg metal|cuda|all
-[--dry-run]`. `--threshold-override X --issue-namespace test` makes a synthetic run whose issues
-carry a `[TEST]` prefix, which never counts as a real measurement and never closes a real issue;
-`--help` lists the rest.
+**Manual runs and drills.** `python3 scripts/local_throughput_gate.py --leg
+metal|gui-real-timing|cuda|all [--dry-run]`. `--threshold-override X --issue-namespace test` makes
+a synthetic run whose issues carry a `[TEST]` prefix, which never counts as a real measurement and
+never closes a real issue; `--help` lists the rest.
 
 ## GPU utilization ceiling: register pressure is a real cost, not compiler slack
 
