@@ -22,6 +22,7 @@
 #include "gui/field_editor_registry.hpp"
 #include "gui/panels.hpp"
 #include "gui/secondary_window_sizing.hpp"
+#include "gui/semantic_colors.hpp"
 #include "gui/theme.hpp"
 #include "gui/user_defaults.hpp"
 #include "imgui.h"
@@ -619,6 +620,15 @@ void RenderCurrentValueCell(GuiState& state, const DefaultDiffRow& row, bool& ro
   const FieldEditorEntry* editor = FindFieldEditor(row.key_path);
   if (editor == nullptr) {
     ImGui::TextDisabled("%s", FormatDiffValue(row.current_value).c_str());
+    // renderer.ray_color is the ONE deliberately-unregistered leaf (field_editor_registry.cpp):
+    // a keep-locked row whose reason is mechanism, not mood — the GUI's scene build overwrites the
+    // value with the material's own spectral colour, so an editor here would accept input nothing
+    // consumes. AC2's keep-locked condition ② lives here: say why, and where the real writer is.
+    if (row.key_path == "renderer.ray_color" && ImGui::IsItemHovered()) {
+      ImGui::SetTooltip(
+          "This setting has no editor anywhere in the GUI by design: the GUI build always uses "
+          "the material's own spectral colour. The value is set from the CLI or a config JSON.");
+    }
     return;
   }
 
@@ -642,6 +652,13 @@ void RenderCurrentValueCell(GuiState& state, const DefaultDiffRow& row, bool& ro
   ImGui::EndDisabled();
   ImGui::EndGroup();
 
+  if (constraint.enabled && constraint.inactive_note != nullptr && ImGui::IsItemHovered()) {
+    // The stored/effective split (field_editor_registry.hpp): the control is live and Save would
+    // write what it shows, but the current configuration does not consume the value. The note is
+    // the only place the panel says so — a silently-stored-never-used edit is the same
+    // "changed something, nothing happened" family the checkbox rule above closes.
+    ImGui::SetTooltip("%s", constraint.inactive_note);
+  }
   if (!constraint.enabled && constraint.disabled_reason != nullptr &&
       ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
     ImGui::SetTooltip("%s", constraint.disabled_reason);
@@ -751,9 +768,16 @@ void RenderSettingsTable(GuiState& state, float table_height) {
     // the whole point of the column — could otherwise only be asserted against the row struct the
     // panel is supposed to be reading. With "##" (not "###") the item's id hashes the whole label,
     // so a test that addresses it by the value it expects is asserting what was drawn.
-    // Disabled: it is read-only, and greying it says so without adding a control.
+    // Disabled: it is read-only, and greying it says so without adding a control. The hover (kept
+    // working through AllowWhenDisabled) is what makes the greying a statement rather than a
+    // mystery — this column is the factory reference, not a second editor.
     const std::string origin_id = FormatDiffValue(row.factory_value) + "##origin_" + row.key_path;
     ImGui::Selectable(origin_id.c_str(), false, ImGuiSelectableFlags_Disabled);
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+      ImGui::SetTooltip(
+          "The built-in value this build ships. Editing happens in the Current "
+          "value column; un-checking the row on save returns here.");
+    }
 
     ImGui::TableNextColumn();
     // Source is "is this key written in my override file", not "does its value differ from
@@ -1061,11 +1085,94 @@ std::vector<WedgeMillerTriple> CopyWedgePresets() {
 // notice, but this panel shows the DOCUMENT, which keeps them verbatim) is shown with a warning
 // and a live delete button, not hidden: hiding it would leave the user a file they cannot fix from
 // the UI that wrote it.
+// The one saved row being edited, and its three scratch inputs. One editor at a time — the same
+// single-scratch shape the angle-list editor uses — because two simultaneous editors of one list
+// would have to agree about which row's commit lands first, and there is no question here that
+// needs two answers at once. Index is -1 when nothing is being edited; a deletion under the editor
+// resets it (the indices shift, so a stale index would edit the wrong row).
+int g_wedge_edit_row = -1;
+WedgeMillerTriple g_wedge_edit_scratch{};
+
+// The editor popup for g_wedge_edit_row, drawn by the library loop (which owns `saved`, the list
+// the commit writes back). Live feedback comes from the same EvaluateCustomWedgeInput verdict the
+// row and the dropdown's Apply button use; the duplicate rule matches the Add button's — a triple
+// that is a built-in or another saved entry (the row under edit excepted) is refused, not saved.
+void RenderWedgeEditPopup(std::vector<WedgeMillerTriple>& saved) {
+  if (g_wedge_edit_row < 0 || g_wedge_edit_row >= static_cast<int>(saved.size())) {
+    g_wedge_edit_row = -1;  // a delete under the editor shifted or emptied the list
+    return;
+  }
+  const std::string popup_id = "###wedge_preset_edit_popup_" + std::to_string(g_wedge_edit_row);
+  if (!ImGui::BeginPopup(popup_id.c_str())) {
+    return;
+  }
+
+  ImGui::TextUnformatted("Edit the Miller indices; the angle follows.");
+  ImGui::Separator();
+  ImGui::SetNextItemWidth(UiPx(70.0f));
+  ImGui::InputInt("h", &g_wedge_edit_scratch.h);
+  ImGui::SameLine();
+  ImGui::SetNextItemWidth(UiPx(70.0f));
+  ImGui::InputInt("k", &g_wedge_edit_scratch.k);
+  ImGui::SameLine();
+  ImGui::SetNextItemWidth(UiPx(70.0f));
+  ImGui::InputInt("l", &g_wedge_edit_scratch.l);
+
+  const CustomWedgeInputFeedback fb =
+      EvaluateCustomWedgeInput(g_wedge_edit_scratch.h, g_wedge_edit_scratch.k, g_wedge_edit_scratch.l);
+  const WedgeMillerTriple candidate{ g_wedge_edit_scratch.h, g_wedge_edit_scratch.k, g_wedge_edit_scratch.l };
+  bool duplicate = IsBuiltInWedgeMillerIndex(candidate.h, candidate.k, candidate.l);
+  for (size_t i = 0; i < saved.size() && !duplicate; ++i) {
+    if (static_cast<int>(i) != g_wedge_edit_row && saved[i] == candidate) {
+      duplicate = true;
+    }
+  }
+
+  if (!fb.can_apply) {
+    ImGui::TextColored(WarningTextColor(), "%s", fb.message.c_str());
+  } else if (duplicate) {
+    ImGui::TextColored(WarningTextColor(), "That preset is already available.");
+  } else {
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted(FormatWedgePresetLabel(candidate.h, candidate.l, fb.angle_deg).c_str());
+  }
+
+  const bool save_ok = fb.can_apply && !duplicate;
+  ImGui::BeginDisabled(!save_ok);
+  if (ImGui::Button(ICON_FA_CHECK " Save##wedge_edit_save")) {
+    saved[static_cast<size_t>(g_wedge_edit_row)] = candidate;
+    WriteWedgePresetsToDoc(g_copy_doc, saved);
+    g_status_message = "Edited a saved wedge preset; press Save to keep the change.";
+    g_wedge_edit_row = -1;
+    ImGui::CloseCurrentPopup();
+  }
+  ImGui::EndDisabled();
+  if (!save_ok && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+    ImGui::SetTooltip("%s", !fb.can_apply ? fb.message.c_str() : "That triple is already in the list (or built in).");
+  }
+  ImGui::SameLine();
+  if (ImGui::Button(ICON_FA_XMARK " Cancel##wedge_edit_cancel")) {
+    g_wedge_edit_row = -1;
+    ImGui::CloseCurrentPopup();
+  }
+  ImGui::EndPopup();
+}
+
 bool RenderWedgePresetRow(size_t index, const WedgeMillerTriple& triple) {
   const CustomWedgeInputFeedback fb = EvaluateCustomWedgeInput(triple.h, triple.k, triple.l);
 
   const std::string delete_id = ICON_FA_TRASH "###wedge_preset_delete_" + std::to_string(index);
   const bool deleted = ImGui::Button(delete_id.c_str());
+  ImGui::SameLine();
+  // In-place edit of the saved entry: the indices are the stored truth and the angle derives from
+  // them, so editing means editing the indices (the derived angle is not a second input — a
+  // contradictory pair is the exact state the store's shape exists to prevent).
+  const std::string edit_id = ICON_FA_PEN "###wedge_preset_edit_" + std::to_string(index);
+  if (ImGui::Button(edit_id.c_str())) {
+    g_wedge_edit_row = static_cast<int>(index);
+    g_wedge_edit_scratch = triple;
+    ImGui::OpenPopup(("###wedge_preset_edit_popup_" + std::to_string(index)).c_str());
+  }
   ImGui::SameLine();
 
   if (fb.can_apply) {
@@ -1095,9 +1202,10 @@ void RenderWedgePresetLibrary() {
   // range, so it gets Basic Latin plus Latin-1. The degree sign the labels carry is inside it; an
   // em dash is not.
   ImGui::TextWrapped(
-      "Save the crystal faces you use often. Each is stored as its Miller indices, so it keeps "
-      "meaning the same face if the ice constants are ever corrected. The four built-in presets "
-      "are always offered and are not listed here.");
+      "Save the crystal faces you use often. Each is stored as its Miller indices — edit them in "
+      "place (the pen beside a row) and the angle follows — so an entry keeps meaning the same "
+      "face if the ice constants are ever corrected. The four built-in presets are always offered "
+      "and are not listed here.");
 
   std::vector<WedgeMillerTriple> saved = CopyWedgePresets();
   for (size_t i = 0; i < saved.size(); ++i) {
@@ -1106,12 +1214,19 @@ void RenderWedgePresetLibrary() {
       saved.erase(saved.begin() + static_cast<std::ptrdiff_t>(i));
       WriteWedgePresetsToDoc(g_copy_doc, saved);
       g_status_message = "Removed a saved wedge preset; press Save to keep the change.";
+      // The editor keys its popup by row index, which this deletion just shifted — close it rather
+      // than let it follow the wrong row.
+      g_wedge_edit_row = -1;
       // One deletion per frame. Continuing the loop over a list an element shorter would render
       // the rest under ids that have shifted, which is the row-index reuse ImGui warns about; the
       // next frame re-reads the document and draws the remainder correctly.
       break;
     }
   }
+  // The editor popup draws after the rows so it anchors on the row's edit button in the same
+  // frame that button was clicked; the commit writes through `saved`, the same list the delete
+  // path writes through.
+  RenderWedgeEditPopup(saved);
 
   int h = 0;
   int k = 0;
@@ -1476,6 +1591,8 @@ void ResetDefaultsPanelTestState() {
   g_status_message.clear();
   g_preset_warnings = PresetWarnings{};
   g_preset_dist_buffers = PresetDistBuffers{};
+  g_wedge_edit_row = -1;
+  g_wedge_edit_scratch = WedgeMillerTriple{};
   // Reset HERE and not in OpenDefaultsPanel: it is a measurement of ImGui's own TreeNode fold
   // state, which ImGui keeps across closes of this panel, so the measurement should outlive a close
   // exactly as the thing it measures does. Test isolation is the one place that state is torn down.

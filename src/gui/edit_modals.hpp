@@ -165,6 +165,17 @@ void ClearAxisPresetMemory();
 void OpenSpectrumModal(GuiState& state);
 void RenderSpectrumModal(GuiState& state);
 
+// The editor body the modal hosts, shared with the defaults panel's spectrum cell (which opens
+// the same rows as a plain, non-modal popup anchored at its cell — the settings panel is itself
+// a modal, so a second modal would stack two input grabs on one field). Seeds the scratch buffer
+// from `state` (existing custom spectrum, else the uniform seed). `RenderSpectrumModal` calls it
+// through its own open path; OpenSpectrumModal's seeding is this function plus the pending flag.
+void SeedSpectrumEditor(GuiState& state);
+// Rows, add/remove, the soft-cap warning and the OK/Cancel/Reset row. Returns true exactly when
+// OK committed this frame (the one transactional write of custom_spectrum + spectrum_index — the
+// invariant "index == custom implies non-empty buffer" holds through it).
+bool RenderSpectrumEditorBody(GuiState& state);
+
 // Screen y of the top edge of the Expanded layout's section header titled `title` ("Crystal",
 // "Axis" or "Filter") as last drawn; -1 for an unknown title or one not drawn yet.
 // Intended for GUI test assertions; production code should not call this.

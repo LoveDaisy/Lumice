@@ -3393,14 +3393,18 @@ void ResetSpectrumModalStateGlobals() {
 
 }  // namespace
 
-void OpenSpectrumModal(GuiState& state) {
-  g_spectrum_modal_open_pending = true;
+void SeedSpectrumEditor(GuiState& state) {
   // Seed the edit buffer with the current custom spectrum, if any; otherwise the preset seed.
   if (!state.sun.custom_spectrum.empty()) {
     g_spectrum_edit_buf = state.sun.custom_spectrum;
   } else {
     g_spectrum_edit_buf = BuildPresetSeed();
   }
+}
+
+void OpenSpectrumModal(GuiState& state) {
+  g_spectrum_modal_open_pending = true;
+  SeedSpectrumEditor(state);
 }
 
 void RenderSpectrumModal(GuiState& state) {
@@ -3423,12 +3427,23 @@ void RenderSpectrumModal(GuiState& state) {
 
   ImGui::TextUnformatted("Discrete wavelength/weight list");
   ImGui::Separator();
+  RenderSpectrumEditorBody(state);
 
+  // Title-bar × = Cancel-equivalent: discard the edit buffer without committing. spectrum_index was
+  // never mutated on open, so there is nothing to restore — same exit path as Cancel/Escape.
+  if (!title_x_open) {
+    ImGui::CloseCurrentPopup();
+  }
+
+  ImGui::EndPopup();
+}
+
+bool RenderSpectrumEditorBody(GuiState& state) {
   // No in-modal "import preset": this editor does discrete wavelength editing only. Preset spectra
   // (D65 etc.) are chosen from the Sun-panel Spectrum combo, not here — that avoids a misleading
   // in-modal preset picker that couldn't reproduce a real illuminant SPD anyway (GUI can't include
   // core SPD headers per the API boundary). A fresh custom spectrum still opens seeded with a uniform
-  // grid (BuildPresetSeed in OpenSpectrumModal) as an editable starting point.
+  // grid (BuildPresetSeed) as an editable starting point.
 
   // Editable rows.
   int remove_idx = -1;
@@ -3477,6 +3492,7 @@ void RenderSpectrumModal(GuiState& state) {
   // Action row: OK / Cancel (dialog-terminating) on the left; Reset (a non-terminating edit action)
   // right-aligned on the same row so it reads as a distinct class and resists being mis-clicked as a
   // third confirm button.
+  bool committed = false;
   const bool ok_disabled = SpectrumCommitBlocked(g_spectrum_edit_buf.size());
   ImGui::BeginDisabled(ok_disabled);
   if (ImGui::Button(ICON_FA_CHECK " OK##spec_ok", ImVec2(UiPx(80.0f), 0.0f))) {
@@ -3493,6 +3509,7 @@ void RenderSpectrumModal(GuiState& state) {
     state.sun.spectrum_index = kCustomSpectrumIndex;
     // No manual MarkDirty: both fields belong to `sun`, which participates in the
     // reconciler auto-diff (kFieldTierTable → kStructSoft).
+    committed = true;
     ImGui::CloseCurrentPopup();
   }
   ImGui::EndDisabled();
@@ -3520,14 +3537,7 @@ void RenderSpectrumModal(GuiState& state) {
   if (ImGui::Button("Reset##spec_reset", ImVec2(UiPx(kResetBtnW), 0))) {
     g_spectrum_edit_buf = BuildPresetSeed();
   }
-
-  // Title-bar × = Cancel-equivalent: discard the edit buffer without committing. spectrum_index was
-  // never mutated on open, so there is nothing to restore — same exit path as Cancel/Escape.
-  if (!title_x_open) {
-    ImGui::CloseCurrentPopup();
-  }
-
-  ImGui::EndPopup();
+  return committed;
 }
 
 }  // namespace lumice::gui

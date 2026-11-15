@@ -1085,6 +1085,15 @@ bool PreviewShowsPicture() {
   return g_preview.HasTexture() || g_preview.HasBackground();
 }
 
+// The two families' fold presets (see the comment at their use site below for the provenance
+// split). File scope so the defaults panel's angle rows offer the same tables the folds do — one
+// list of halo radii, one of framing radii, not a third copy of either.
+constexpr float kSunCircleFoldPresets[] = { 9.0f, 22.0f, 28.0f, 46.0f };
+constexpr float kLensCenterCircleFoldPresets[] = { 22.0f, 46.0f, 90.0f };
+constexpr std::size_t kSunCircleFoldPresetCount = sizeof(kSunCircleFoldPresets) / sizeof(kSunCircleFoldPresets[0]);
+constexpr std::size_t kLensCenterCircleFoldPresetCount =
+    sizeof(kLensCenterCircleFoldPresets) / sizeof(kLensCenterCircleFoldPresets[0]);
+
 // The angle list behind an angular-distance row's fold: presets, a custom-angle input, and the
 // current list with per-entry delete.
 //
@@ -1105,7 +1114,8 @@ bool PreviewShowsPicture() {
 // offer. The typed scratch value is one `static` shared by both callers on purpose: only one popup
 // is open at a time, and a number half-typed for one family is not a value worth keeping apart per
 // family.
-void RenderCircleAnglePopup(AngularDistFamily family, const float* presets, size_t preset_count) {
+void RenderCircleAnglePopup(AngularDistFamily family, const float* presets, size_t preset_count,
+                            bool allow_pick = true) {
   std::vector<float>& angles = AngularDistFamilyAngles(g_state, family);
   bool at_limit = AngularDistCirclesAtLimit(angles.size());
 
@@ -1142,22 +1152,26 @@ void RenderCircleAnglePopup(AngularDistFamily family, const float* presets, size
   // Pick the radius on the preview instead of typing it (angular_dist_picker.hpp). On the typed
   // input's row because it is the same act — adding one radius — by pointing rather than by number.
   // Greyed at the cap for the reason "+" is, and with no picture on screen, where there is nothing
-  // to point at. Closes the popup: the next click belongs to the preview.
-  ImGui::SameLine();
-  const bool can_pick = !at_limit && PreviewShowsPicture();
-  ImGui::BeginDisabled(!can_pick);
-  if (ImGui::Button(ICON_FA_CROSSHAIRS "##pick_circle")) {
-    ArmAngularDistPicker(g_state, family);
-    g_bg_pick.active = false;  // one click-taking mode at a time (gui_state.hpp); the analysis pick
-                               // is disarmed inside ArmAngularDistPicker, the eyedropper lives here
-    ImGui::CloseCurrentPopup();
-  }
-  ImGui::EndDisabled();
-  if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-    ImGui::SetTooltip("%s", at_limit               ? "The list is full." :
-                            !PreviewShowsPicture() ? "Needs a picture on the preview to point at." :
-                                                     "Pick on preview: a ring follows the cursor; click to add it.\n"
-                                                     "Esc or right click cancels.");
+  // to point at. Closes the popup: the next click belongs to the preview. Omitted entirely by the
+  // defaults panel's invocations (allow_pick=false): the modal covers the picture, so the button
+  // would arm a picker the user cannot click into until the panel closes.
+  if (allow_pick) {
+    ImGui::SameLine();
+    const bool can_pick = !at_limit && PreviewShowsPicture();
+    ImGui::BeginDisabled(!can_pick);
+    if (ImGui::Button(ICON_FA_CROSSHAIRS "##pick_circle")) {
+      ArmAngularDistPicker(g_state, family);
+      g_bg_pick.active = false;  // one click-taking mode at a time (gui_state.hpp); the analysis pick
+                                 // is disarmed inside ArmAngularDistPicker, the eyedropper lives here
+      ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndDisabled();
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+      ImGui::SetTooltip("%s", at_limit               ? "The list is full." :
+                              !PreviewShowsPicture() ? "Needs a picture on the preview to point at." :
+                                                       "Pick on preview: a ring follows the cursor; click to add it.\n"
+                                                       "Esc or right click cancels.");
+    }
   }
 
   // Current list with delete buttons
@@ -1409,21 +1423,19 @@ void RenderAngularDistSection() {
   // the_columns_line_up_and_no_name_is_cut_off is the arbiter of what fits. Display strings only —
   // no id, no serialization key; the ids and keys keep the families' own names.
   //
-  // The two families' fold presets: Sun keeps halo astronomy's standing radii (9°/28° are pyramid-
-  // crystal halo radii with no meaning about the lens centre); Lens Center's match its own default
-  // list — framing/calibration radii, not halo radii, so they have their own table rather than
-  // sharing Sun's.
-  static const float kSunCirclePresets[] = { 9.0f, 22.0f, 28.0f, 46.0f };
-  static const float kLensCenterCirclePresets[] = { 22.0f, 46.0f, 90.0f };
+  // The two families' fold presets, shared with RenderCircleAngleEditorPopup (file scope below):
+  // Sun keeps halo astronomy's standing radii (9°/28° are pyramid-crystal halo radii with no
+  // meaning about the lens centre); Lens Center's match its own default list — framing/calibration
+  // radii, not halo radii, so they have their own table rather than sharing Sun's.
   const OverlayRowSpec rows[] = {
     { "Sun", "##sun_circles_color", g_state.sun_circles_color, "overlay_sun_circles_color", "##sun_circles_line",
       &g_state.show_sun_circles_line, "##sun_circles_label", &g_state.show_sun_circles_label, "##sun_circles_alpha",
       "overlay_sun_circles_alpha", &g_state.sun_circles_alpha, "###sun_circles_fold", AngularDistFamily::kSun,
-      kSunCirclePresets, std::size(kSunCirclePresets) },
+      kSunCircleFoldPresets, kSunCircleFoldPresetCount },
     { "Lens Center", "##view_dist_color", g_state.view_dist_color, "overlay_view_dist_color", "##view_dist_line",
       &g_state.show_view_dist_line, "##view_dist_label", &g_state.show_view_dist_label, "##view_dist_alpha",
       "overlay_view_dist_alpha", &g_state.view_dist_alpha, "###view_dist_fold", AngularDistFamily::kView,
-      kLensCenterCirclePresets, std::size(kLensCenterCirclePresets) },
+      kLensCenterCircleFoldPresets, kLensCenterCircleFoldPresetCount },
   };
   RenderOverlayRowsTable("##AngularDistTable", rows, 2, /*with_headers=*/false);
 }
@@ -1993,11 +2005,14 @@ void RenderDisplayTimeControlsGroup(GuiState& state, bool host_bg_pick) {
   // PHOTOGRAPH and its transform; two different things under one word in one screen is how the
   // word stops meaning anything.
   //
-  // Which arm is drawn is the registry's call, not a tone comparison made here: the two ground
-  // fields carry complementary applicability gates (WhenScreenTone / WhenPrintTone in
-  // field_editor_registry.cpp), and the Summary page reads the same `enabled` bit to decide which
-  // of the two rows it prints — so the swatch on screen and the row on the page cannot disagree.
-  if (ConstraintFor("renderer.background", state).enabled) {
+  // Which arm is drawn is a tone comparison made HERE, no longer the registry's call: since the
+  // defaults-panel unlock task both ground fields are stored settings with no applicability gate
+  // at all (the registry carries the "not consumed right now" sentence instead), so the old
+  // `ConstraintFor("renderer.background").enabled` read would always be true and the panel would
+  // never show the paper swatch. This row is the panel's VIEW rule — show the ground the current
+  // operator uses — while both settings stay editable (here under their own tone, in the
+  // defaults panel under any tone; the Summary lists both rows unconditionally).
+  if (!IsPrintTone(r)) {
     ImGui::ColorEdit3(PanelLabel("renderer.background", "display_sky_color").c_str(), r.background,
                       ImGuiColorEditFlags_NoInputs);
     if (ImGui::IsItemHovered()) {
@@ -2110,6 +2125,17 @@ void RenderDisplayTimeControlsGroup(GuiState& state, bool host_bg_pick) {
   }
 }
 
+void RenderCircleAngleEditorPopup(AngularDistFamily family, bool allow_pick) {
+  switch (family) {
+    case AngularDistFamily::kSun:
+      RenderCircleAnglePopup(family, kSunCircleFoldPresets, kSunCircleFoldPresetCount, allow_pick);
+      break;
+    case AngularDistFamily::kView:
+      RenderCircleAnglePopup(family, kLensCenterCircleFoldPresets, kLensCenterCircleFoldPresetCount, allow_pick);
+      break;
+  }
+}
+
 void RenderRightPanel(GLFWwindow* window, float window_width, float window_height) {
   float panel_height = window_height - UiPx(kTopBarHeight) - UiPx(kStatusBarHeight);
 
@@ -2167,19 +2193,14 @@ void RenderRightPanel(GLFWwindow* window, float window_width, float window_heigh
       DoClearBackground();
     }
     ImGui::SameLine();
-    // Show's own gate, nested inside it and read through ConstraintFor rather than from the local
-    // `no_bg`, so this control and the defaults panel's row for the same field answer with ONE
-    // predicate. They used to be two — `no_bg` here, WhenBackgroundLoaded there — which agreed for
-    // as long as "is an image loaded" was the only reason to disable, and stopped agreeing the
-    // moment Print became a second one. A doubly-pushed disabled state is idempotent, so the nesting
-    // costs nothing; what it buys is the tooltip, which the outer scope cannot carry because the
-    // row's controls each have their own reason.
-    const FieldEditorConstraint bg_show_c = ConstraintFor("bg_show", g_state);
-    ImGui::BeginDisabled(!bg_show_c.enabled);
+    // Show's gate is the panel's own view rule now (the BeginDisabled(no_bg) above): since the
+    // defaults-panel unlock task the registry's bg_show is a stored setting with no applicability
+    // gate at all (the "not consumed right now" sentence lives in its constraint as a note), so
+    // the old ConstraintFor read here would always be enabled and its disabled_reason always null.
+    // The one state this panel still refuses — nothing to show — carries its own sentence.
     Checkbox("Show##display_bg", &g_state.bg_show);
-    ImGui::EndDisabled();
-    if (bg_show_c.disabled_reason != nullptr && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-      ImGui::SetTooltip("%s", bg_show_c.disabled_reason);
+    if (no_bg && ImGui::IsItemHovered()) {
+      ImGui::SetTooltip("No background image is loaded (Load Bg above).");
     }
     ImGui::EndDisabled();
 
