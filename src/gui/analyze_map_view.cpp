@@ -2275,6 +2275,9 @@ void RenderAnalyzeRaypathViewWindow(GuiState& state) {
   RenderAnalyzeMapRegion(state, status_layout.body_size);
   const MapQuerySession& map = state.analysis.map;
   const MapQueryState query_state = MapQueryStateFor(map);
+  // Waiting requires no adopted result; supersession requires a retained result. They cannot
+  // coincide: a retained-map retry reads Completed (or Refused), then takes the note below.
+  const bool superseded = MapSupersededFor(map);
   std::string status;
   bool warning = false;
   switch (query_state) {
@@ -2299,7 +2302,7 @@ void RenderAnalyzeRaypathViewWindow(GuiState& state) {
       status = "Ready";
       break;
   }
-  if (MapSupersededFor(map)) {
+  if (superseded) {
     const std::string note = MapSupersedingNoteFor(map, ImGui::GetTime(), g_survey_executor.InflightPollSnapshot());
     status = "Superseded — " + note;
     state.analysis.wait_feedback_texts.map_superseding_note = note;
@@ -2312,7 +2315,7 @@ void RenderAnalyzeRaypathViewWindow(GuiState& state) {
       MapInfoIsPartial(info)) {
     const std::string partial = "Partial map: " + std::to_string(info.members_evaluated) + "/" +
                                 std::to_string(info.member_count) + " completed members";
-    status = query_state == MapQueryState::kCompleted && !MapSupersededFor(map) ? partial : partial + " — " + status;
+    status = query_state == MapQueryState::kCompleted && !superseded ? partial : partial + " — " + status;
     warning = true;
   }
   RenderAnalyzeStatusBar(status_layout, status, warning);

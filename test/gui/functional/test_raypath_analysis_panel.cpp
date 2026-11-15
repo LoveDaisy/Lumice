@@ -16434,6 +16434,34 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       IM_CHECK(map_region != nullptr);
       // Independent rendered boundary oracle: a reintroduced 64pt reservation must fail this.
       IM_CHECK_FLOAT_NEAR(canvas.RectFull.Max.y, map_region->WorkRect.Max.y, 1.0f);
+      // AddText guidance has no ImGui text item: inspect the real font-atlas quads instead.
+      // The empty canvas has no other disabled-colour glyphs; image/border quads are excluded
+      // by their UVs and glyph-sized footprint, independently of the placement arithmetic.
+      ImRect guidance_ink(ImVec2(FLT_MAX, FLT_MAX), ImVec2(-FLT_MAX, -FLT_MAX));
+      int guidance_glyphs = 0;
+      const ImU32 guidance_color = ImGui::GetColorU32(ImGuiCol_TextDisabled);
+      const auto& vertices = map_region->DrawList->VtxBuffer;
+      for (int i = 0; i + 3 < vertices.Size; ++i) {
+        if (vertices[i].col != guidance_color || vertices[i + 1].col != guidance_color ||
+            vertices[i + 2].col != guidance_color || vertices[i + 3].col != guidance_color ||
+            vertices[i].uv.x == vertices[i + 2].uv.x || vertices[i].uv.y == vertices[i + 2].uv.y) {
+          continue;
+        }
+        ImRect glyph(vertices[i].pos, vertices[i].pos);
+        for (int k = 1; k < 4; ++k) {
+          glyph.Add(vertices[i + k].pos);
+        }
+        if (canvas.RectFull.Overlaps(glyph) && glyph.GetWidth() <= ImGui::GetTextLineHeight() * 2.0f &&
+            glyph.GetHeight() <= ImGui::GetTextLineHeight() * 1.5f) {
+          guidance_ink.Add(glyph);
+          ++guidance_glyphs;
+          i += 3;
+        }
+      }
+      IM_CHECK_GT(guidance_glyphs, 80);
+      IM_CHECK(canvas.RectFull.Contains(guidance_ink));
+      IM_CHECK(std::abs(guidance_ink.GetCenter().x - canvas.RectFull.GetCenter().x) < gui::UiPx(8.0f));
+      IM_CHECK(std::abs(guidance_ink.GetCenter().y - canvas.RectFull.GetCenter().y) < ImGui::GetTextLineHeight());
       ctx->SetRef("");
       // The separate fake state exercises layout branches only. Actual query adoption and
       // physical interaction remain the real-consumer cases' responsibility.
@@ -16731,6 +16759,10 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       IM_CHECK(compare());
       IM_CHECK(map_text.find("Partial map:") != std::string::npos);
       IM_CHECK(!probe.analysis.wait_feedback_texts.map_superseding_note.empty());
+      // A retained-map retry is Completed, never Waiting under the session predicates.
+      IM_CHECK(gui::MapQueryStateFor(probe.analysis.map) == gui::MapQueryState::kCompleted);
+      IM_CHECK(gui::MapSupersededFor(probe.analysis.map));
+      IM_CHECK(probe.analysis.wait_feedback_texts.map_wait_line.empty());
       IM_CHECK(check_hover_full_text("Raypath view",
                                      "Partial map: " + std::to_string(map_info.members_evaluated) + "/" +
                                          std::to_string(map_info.member_count) + " completed members — Superseded — " +
@@ -16794,6 +16826,9 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       probe.analysis.point.adopted_error.clear();
       ctx->Yield(1);
       IM_CHECK(gui::MapQueryStateFor(probe.analysis.map) == gui::MapQueryState::kWaiting);
+      IM_CHECK(probe.analysis.map.adopted_result == nullptr);
+      IM_CHECK(!gui::MapSupersededFor(probe.analysis.map));
+      IM_CHECK(probe.analysis.wait_feedback_texts.map_superseding_note.empty());
       ctx->ItemInputValue("**/az°##sky", 180.0f);
       ctx->ItemClick("**/Set sky point###sky_set");
       IM_CHECK(probe.analysis.sky_point.valid);
