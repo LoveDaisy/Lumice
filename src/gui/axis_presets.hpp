@@ -141,24 +141,16 @@ struct AxisPresetEntry {
   AxisDist zenith;
   AxisDist azimuth;
   AxisDist roll;
-  // Whether a user may retune this preset's zenith and have it persist. THE single source for
-  // that question — the write guard (user_defaults.cpp), the "Save as <preset>" gesture and the
-  // panel's editable-cell test all read this field rather than each restating the same four names.
-  //
-  // The name says "std" because std was the first adjustable face; the field now gates BOTH faces a
-  // preset's zenith exposes, the std input and the distribution-type combo. They are one population
-  // by construction — a type override is only meaningful inside the classifier's accepted set for
-  // this preset (IsAcceptedZenithType below), and the presets with an accepted set are exactly the
-  // ones with a tunable std — so a second flag would be a second spelling of the same fact.
-  //
-  // False for Random (defined as three uniform-360 axes: there is no narrow-distribution field to
-  // widen, so an input box for it would be one that does nothing) and for Custom (not a built-in
-  // identity at all — it is the classifier's "none of the above").
-  bool has_adjustable_zenith_std;
   // Key this preset occupies in the override file under presets.axis.<name>. Lowercase, matching
   // the other enum name tables (kLensTypeJsonNames et al.). nullptr for the presets that store
-  // nothing — kept in lockstep with has_adjustable_zenith_std by the static_assert below, so the
-  // two cannot drift into disagreeing about which presets are storable.
+  // nothing — Custom ("none of the above" has no definition of its own) — and, since this task
+  // opened every face of the library to the user, for nothing else: Random stores its three
+  // uniform-360 axes like any other preset (old override files predating its key resolve to the
+  // factory definition). This pointer is THE single source for the storable question — the
+  // override store (user_defaults.cpp), the panel's editable cells and the "(mine)" marker all
+  // read it rather than each restating a name list; the former has_adjustable_zenith_std flag
+  // (which gated the two zenith faces only) was deleted with the zenith-only store, its
+  // population having been this pointer's all along.
   const char* override_json_name;
 };
 
@@ -167,60 +159,21 @@ inline constexpr AxisDist kRollFreeUniform{ AxisDistType::kUniform, 0.0f, 360.0f
 inline constexpr AxisDist kRollLockedGauss{ AxisDistType::kGauss, 0.0f, 1.0f };
 
 inline constexpr AxisPresetEntry kAxisPresets[] = {
-  { "Column",
-    AxisPreset::kColumn,
-    { AxisDistType::kGauss, 90.0f, 1.0f },
-    kAzFullUniform,
-    kRollFreeUniform,
-    true,
-    "column" },
-  { "Plate",
-    AxisPreset::kPlate,
-    { AxisDistType::kGauss, 0.0f, 1.0f },
-    kAzFullUniform,
-    kRollFreeUniform,
-    true,
-    "plate" },
-  { "Parry",
-    AxisPreset::kParry,
-    { AxisDistType::kGauss, 90.0f, 1.0f },
-    kAzFullUniform,
-    kRollLockedGauss,
-    true,
-    "parry" },
+  { "Column", AxisPreset::kColumn, { AxisDistType::kGauss, 90.0f, 1.0f }, kAzFullUniform, kRollFreeUniform, "column" },
+  { "Plate", AxisPreset::kPlate, { AxisDistType::kGauss, 0.0f, 1.0f }, kAzFullUniform, kRollFreeUniform, "plate" },
+  { "Parry", AxisPreset::kParry, { AxisDistType::kGauss, 90.0f, 1.0f }, kAzFullUniform, kRollLockedGauss, "parry" },
   // Lowitz default zenith uses Gauss (v11 内测反馈：gauss 更符合物理直觉; classifier 仍接受 zigzag).
-  { "Lowitz",
-    AxisPreset::kLowitz,
-    { AxisDistType::kGauss, 0.0f, 40.0f },
-    kAzFullUniform,
-    kRollLockedGauss,
-    true,
-    "lowitz" },
-  { "Random", AxisPreset::kRandom, kAzFullUniform, kAzFullUniform, kRollFreeUniform, false, nullptr },
+  { "Lowitz", AxisPreset::kLowitz, { AxisDistType::kGauss, 0.0f, 40.0f }, kAzFullUniform, kRollLockedGauss, "lowitz" },
+  { "Random", AxisPreset::kRandom, kAzFullUniform, kAzFullUniform, kRollFreeUniform, "random" },
   { "Custom",
     AxisPreset::kCustom,
     { AxisDistType::kGauss, 90.0f, 20.0f },
     kAzFullUniform,
     { AxisDistType::kGauss, 0.0f, 20.0f },
-    false,
     nullptr },
 };
 
 namespace axis_preset_detail {
-
-// has_adjustable_zenith_std and override_json_name answer two different questions ("may the user
-// retune it" vs "what is it called on disk"), but their populations are the same set by
-// construction: a preset with nothing to adjust has nothing to store. Binding them at compile time
-// means a future preset added with only one of the two filled in is a build error rather than a
-// preset that is editable in the UI and silently discarded on save (or vice versa).
-constexpr bool AxisPresetTableIsConsistent() {
-  for (const auto& entry : kAxisPresets) {
-    if (entry.has_adjustable_zenith_std != (entry.override_json_name != nullptr)) {
-      return false;
-    }
-  }
-  return true;
-}
 
 // The override store and the panel both reach an entry by casting an AxisPreset to an index, so
 // position and identity have to agree. Checked here rather than left to the reader: a reordered
@@ -234,11 +187,22 @@ constexpr bool AxisPresetTableIsInEnumOrder() {
   return true;
 }
 
+// Every non-Custom preset carries an override key and Custom carries none: the storable set and
+// the override file's key set are one population, and the one Custom row is the only nullptr.
+constexpr bool AxisPresetTableIsConsistent() {
+  for (const auto& entry : kAxisPresets) {
+    if ((entry.id == AxisPreset::kCustom) != (entry.override_json_name == nullptr)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 }  // namespace axis_preset_detail
 
 static_assert(axis_preset_detail::AxisPresetTableIsConsistent(),
-              "kAxisPresets: has_adjustable_zenith_std must be true exactly for the entries that carry an "
-              "override_json_name — the UI's editable set and the override file's key set are one population");
+              "kAxisPresets: every entry except Custom must carry an override_json_name — the UI's "
+              "editable set and the override file's key set are one population");
 
 // One row per AxisPreset enumerator — the size fact the memory-slot helpers below size their
 // per-label arrays by.
@@ -262,9 +226,9 @@ inline constexpr const AxisPresetEntry& AxisPresetEntryFor(AxisPreset preset) {
 // answer (warn + derive-once), while the write side always produces a table name. Deliberately not
 // routed through kAxisPresets[].label — that field is the capitalized display name, and reusing it
 // as the stored spelling would couple the .lmc wire format to a UI string. Not override_json_name
-// either: that one is nullptr for Random/Custom, which store nothing in the override file but
-// still need a label spelling. A distinct switch, all six values listed, so a renamed or added
-// enumerator breaks the build here instead of silently changing what gets written.
+// either: that one is nullptr for Custom (which stores nothing in the override file) and spells
+// the preset-library's own namespace, while this table spells the .lmc label — one name in two
+// namespaces here is a coincidence the two tables must not fuse over.
 inline const char* AxisPresetJsonName(AxisPreset preset) {
   switch (preset) {
     case AxisPreset::kColumn:

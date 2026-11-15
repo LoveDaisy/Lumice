@@ -199,30 +199,30 @@ TEST_F(UserDefaultsChain, StdDisplayIsExactlyEnoughToReadBackTheSameFloatAndNoLo
 TEST_F(UserDefaultsChain, PresetOverrideDocumentWriteReadEraseCompose) {
   nlohmann::json doc = nlohmann::json::object();
 
-  EXPECT_FALSE(ReadAxisPresetZenithStdFromDoc(doc, AxisPreset::kColumn).has_value())
+  EXPECT_FALSE(ReadAxisPresetStdFromDoc(doc, AxisPreset::kColumn, AxisSlot::kZenith).has_value())
       << "an empty document stores nothing";
 
-  WriteAxisPresetZenithStdToDoc(doc, AxisPreset::kColumn, 0.75f);
-  const std::optional<float> read_back = ReadAxisPresetZenithStdFromDoc(doc, AxisPreset::kColumn);
+  WriteAxisPresetStdToDoc(doc, AxisPreset::kColumn, AxisSlot::kZenith, 0.75f);
+  const std::optional<float> read_back = ReadAxisPresetStdFromDoc(doc, AxisPreset::kColumn, AxisSlot::kZenith);
   ASSERT_TRUE(read_back.has_value());
   EXPECT_FLOAT_EQ(*read_back, 0.75f);
 
   // A second preset must survive the first one's erase — the operations are surgical edits of a
   // shared document, not whole-document rewrites.
-  WriteAxisPresetZenithStdToDoc(doc, AxisPreset::kPlate, 0.25f);
-  EraseAxisPresetZenithStdFromDoc(doc, AxisPreset::kColumn);
+  WriteAxisPresetStdToDoc(doc, AxisPreset::kPlate, AxisSlot::kZenith, 0.25f);
+  EraseAxisPresetStdFromDoc(doc, AxisPreset::kColumn, AxisSlot::kZenith);
 
-  EXPECT_FALSE(ReadAxisPresetZenithStdFromDoc(doc, AxisPreset::kColumn).has_value());
-  const std::optional<float> other = ReadAxisPresetZenithStdFromDoc(doc, AxisPreset::kPlate);
+  EXPECT_FALSE(ReadAxisPresetStdFromDoc(doc, AxisPreset::kColumn, AxisSlot::kZenith).has_value());
+  const std::optional<float> other = ReadAxisPresetStdFromDoc(doc, AxisPreset::kPlate, AxisSlot::kZenith);
   ASSERT_TRUE(other.has_value()) << "erasing one preset took the other with it";
   EXPECT_FLOAT_EQ(*other, 0.25f);
 
-  EraseAxisPresetZenithStdFromDoc(doc, AxisPreset::kPlate);
+  EraseAxisPresetStdFromDoc(doc, AxisPreset::kPlate, AxisSlot::kZenith);
   EXPECT_FALSE(doc.contains("presets")) << "the last erase left an empty skeleton behind: " << doc.dump();
 
   // A preset with no adjustable face has no key at all, so all three operations are no-ops for it.
-  WriteAxisPresetZenithStdToDoc(doc, AxisPreset::kRandom, 0.5f);
-  EXPECT_FALSE(ReadAxisPresetZenithStdFromDoc(doc, AxisPreset::kRandom).has_value());
+  WriteAxisPresetStdToDoc(doc, AxisPreset::kRandom, AxisSlot::kZenith, 0.5f);
+  EXPECT_FALSE(ReadAxisPresetStdFromDoc(doc, AxisPreset::kRandom, AxisSlot::kZenith).has_value());
 }
 
 // The read is RAW on purpose: it reports what the document says. Since the axis label went sticky,
@@ -232,22 +232,24 @@ TEST_F(UserDefaultsChain, PresetOverrideDocumentWriteReadEraseCompose) {
 TEST_F(UserDefaultsChain, DocumentReadIsRawAndTheBadgePredicateOwnsTheDrift) {
   nlohmann::json doc = nlohmann::json::object();
   const float kOutOfDomain = 1e6f;
-  WriteAxisPresetZenithStdToDoc(doc, AxisPreset::kColumn, kOutOfDomain);
+  WriteAxisPresetStdToDoc(doc, AxisPreset::kColumn, AxisSlot::kZenith, kOutOfDomain);
 
-  const std::optional<float> stored = ReadAxisPresetZenithStdFromDoc(doc, AxisPreset::kColumn);
+  const std::optional<float> stored = ReadAxisPresetStdFromDoc(doc, AxisPreset::kColumn, AxisSlot::kZenith);
   ASSERT_TRUE(stored.has_value());
   EXPECT_FLOAT_EQ(*stored, kOutOfDomain) << "the reader silently normalised a value it was asked to report";
 
   // The badge predicate sees exactly what the document holds, and answers honestly about it.
   const AxisPresetEntry& entry = AxisPresetEntryFor(AxisPreset::kColumn);
   const AxisDist zenith = EffectiveAxisPresetZenith(entry);
-  AdoptAxisPresetZenithStdOverrideInMemory(AxisPreset::kColumn, kOutOfDomain);
+  AxisPresetOverride out_of_domain{};
+  out_of_domain.axes[0].std = kOutOfDomain;
+  AdoptAxisPresetFacesInMemory(AxisPreset::kColumn, out_of_domain);
   const AxisDist overridden = EffectiveAxisPresetZenith(entry);
   EXPECT_TRUE(AxisLabelOutOfDomain(AxisPreset::kColumn, overridden, entry.azimuth, entry.roll))
       << "an out-of-domain override that the badge would miss";
   EXPECT_FALSE(AxisLabelOutOfDomain(AxisPreset::kColumn, zenith, entry.azimuth, entry.roll))
       << "the factory row must stay badge-negative";
-  AdoptAxisPresetZenithStdOverrideInMemory(AxisPreset::kColumn, std::nullopt);
+  AdoptAxisPresetFacesInMemory(AxisPreset::kColumn, AxisPresetOverride{});
 
   // The domain sentences beside the controls are UI copy with a constraint on them: both must
   // describe something. A placeholder leaves the user reading a number with no stated meaning.
@@ -265,21 +267,24 @@ TEST_F(UserDefaultsChain, DocumentReadIsRawAndTheBadgePredicateOwnsTheDrift) {
 TEST_F(UserDefaultsChain, OverridePresenceIsNotTheSameQuestionAsTheResultingDistribution) {
   UseFreshConfigDir("presence");
 
-  EXPECT_FALSE(GetUserAxisPresetZenithStdOverride(AxisPreset::kColumn).has_value()) << "nothing has been adopted yet";
+  EXPECT_FALSE(GetUserAxisPresetStdOverride(AxisPreset::kColumn, AxisSlot::kZenith).has_value())
+      << "nothing has been adopted yet";
 
   // Adopt a value that is (very likely) also what the factory row carries. The composed
   // distribution is then indistinguishable from the un-overridden one — only the presence accessor
   // can still tell the panel there is something here to show and revert.
   const AxisPresetEntry& entry = AxisPresetEntryFor(AxisPreset::kColumn);
   const float factory_std = entry.zenith.std;
-  AdoptAxisPresetZenithStdOverrideInMemory(AxisPreset::kColumn, factory_std);
+  AxisPresetOverride factory_std_face{};
+  factory_std_face.axes[0].std = factory_std;
+  AdoptAxisPresetFacesInMemory(AxisPreset::kColumn, factory_std_face);
 
-  const std::optional<float> present = GetUserAxisPresetZenithStdOverride(AxisPreset::kColumn);
+  const std::optional<float> present = GetUserAxisPresetStdOverride(AxisPreset::kColumn, AxisSlot::kZenith);
   ASSERT_TRUE(present.has_value()) << "an adopted value that equals factory is still an adopted value";
   EXPECT_FLOAT_EQ(*present, factory_std);
 
-  AdoptAxisPresetZenithStdOverrideInMemory(AxisPreset::kColumn, std::nullopt);
-  EXPECT_FALSE(GetUserAxisPresetZenithStdOverride(AxisPreset::kColumn).has_value())
+  AdoptAxisPresetFacesInMemory(AxisPreset::kColumn, AxisPresetOverride{});
+  EXPECT_FALSE(GetUserAxisPresetStdOverride(AxisPreset::kColumn, AxisSlot::kZenith).has_value())
       << "reverting to the factory value must remove the override, not store the factory number";
 }
 
