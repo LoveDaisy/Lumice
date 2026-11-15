@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <cstring>
 
 #include "gui/app.hpp"
@@ -47,12 +48,22 @@ constexpr int kAlphaSaltCount = 2;
 constexpr int kAlphaSalts[kAlphaSaltCount] = { 55, 57 };  // upper_alpha / lower_alpha
 
 int CrystalParamHash(const CrystalConfig& c) {
-  // Simple hash to detect parameter changes
-  int h = static_cast<int>(c.type);
-  auto hash_float = [](float f) {
-    int i;
-    std::memcpy(&i, &f, sizeof(i));
-    return i;
+  // Simple hash to detect parameter changes. All arithmetic runs in the uint32_t domain:
+  // hash_float reads the raw float bit pattern, which spans the whole int32 range (1.0f ->
+  // 0x3F800000 = 1065353216), so multiplying it against a salt in int arithmetic is
+  // deterministic signed-integer-overflow UB (UBSan flags it on default parameters). uint32_t
+  // multiplication is defined for every input, and an overflowing two's-complement int multiply
+  // de facto wraps to the same low 32 bits on every supported compiler, so the value produced
+  // here is bit-identical to the pre-migration de-facto one: consumers see no cache
+  // invalidation, and the g_crystal_mesh_hash -1 sentinel is untouched. The single
+  // uint32_t -> int narrowing happens at the return — implementation-defined until C++20,
+  // two's-complement (mod 2^32) on all compilers this repo builds with.
+  uint32_t h = static_cast<uint32_t>(static_cast<int>(c.type));
+  auto hash_float = [](float f) -> uint32_t {
+    static_assert(sizeof(float) == sizeof(uint32_t), "bit-pattern hash assumes 32-bit float");
+    uint32_t u;
+    std::memcpy(&u, &f, sizeof(u));
+    return u;
   };
   // Each shape field is a ShapeDist: hash all three components ({type, center, spread}) so a change
   // to the distribution type or spread (not just the center) is detected and re-uploads the mesh.
@@ -60,11 +71,11 @@ int CrystalParamHash(const CrystalConfig& c) {
   // group MUST be hashed — changing only the grouping changes the geometry (synced scalars share
   // one draw), and a hash blind to it leaves the stale mesh on screen, which reads as "the feature
   // does not work" rather than as a caching bug.
-  auto hash_shape = [&](const ShapeDist& d, int salt) {
-    int hh = static_cast<int>(d.type) * salt;
+  auto hash_shape = [&](const ShapeDist& d, uint32_t salt) -> uint32_t {
+    uint32_t hh = static_cast<uint32_t>(static_cast<int>(d.type)) * salt;
     hh ^= hash_float(d.center) * (salt + 1);
     hh ^= hash_float(d.spread) * (salt + 2);
-    hh ^= d.sync_group * (salt + 3);
+    hh ^= static_cast<uint32_t>(d.sync_group) * (salt + 3);
     return hh;
   };
   // Salts are spaced ≥4 apart because each ShapeDist consumes four consecutive slots. They were
@@ -82,7 +93,7 @@ int CrystalParamHash(const CrystalConfig& c) {
     // sync_group slot the same multiplier as face i+1's type slot, letting two changes cancel.
     h ^= hash_shape(c.face_distance[i], kShapeSaltBases[4 + i]);
   }
-  return h;
+  return static_cast<int>(h);
 }
 
 // Compile-time proof of the property CrystalParamHash relies on: no two slots share a multiplier.
