@@ -492,8 +492,12 @@ void RegisterViewDisplayControlTests(ImGuiTestEngine* engine) {
 
       gui::g_state.renderer.lens_type = gui::kLensTypeGlobe;
       ctx->Yield(3);
-      IM_CHECK(IsDisabled(ctx->ItemInfo("**/##Roll##view_input")));  // the control says so
-      IM_CHECK_EQ(gui::g_state.renderer.roll, 15.0f);                // ...but the value survives
+      // The unlock task made the slider LIVE under Globe: the render keeps reading
+      // EffectiveRollForLens (0) without writing back, so the control edits the stored value and
+      // the value survives — the slider being enabled IS the new shape of "the control says so",
+      // with the registry's inactive_note carrying the sentence.
+      IM_CHECK(!IsDisabled(ctx->ItemInfo("**/##Roll##view_input")));
+      IM_CHECK_EQ(gui::g_state.renderer.roll, 15.0f);  // ...and the value survives untouched
 
       gui::g_state.renderer.lens_type = gui::kLensTypeFisheyeEquidist;
       ctx->Yield(3);
@@ -568,6 +572,12 @@ void RegisterViewDisplayControlTests(ImGuiTestEngine* engine) {
   // registry the call site now reads, for the reason spelled out above: asking the registry what to
   // expect would compare one line of code against itself.
   {
+    // The unlock task split this row's gating: Front and the hemisphere radios are STORED choices
+    // with no frame writer, so they are LIVE under every lens now (the "does not apply here" half
+    // moved into the registry's inactive_note, and EffectiveFrontForLens keeps the effective
+    // display). What the row still refuses is nothing. The per-lens sweep now pins THAT: every
+    // widget enabled under every lens — the retired assertion was the grey-out, and a half-reverted
+    // gate (any lens re-greying any widget) is what this catches.
     ImGuiTest* t =
         IM_REGISTER_TEST(engine, "view_display_controls", "the_visibility_row_is_gated_per_lens_by_two_rules");
     t->TestFunc = [](ImGuiTestContext* ctx) {
@@ -581,21 +591,17 @@ void RegisterViewDisplayControlTests(ImGuiTestEngine* engine) {
         gui::g_state.renderer.lens_type = lens;
         ctx->Yield(3);
 
-        const bool full_sky = gui::LensIsFullSky(lens);
-        // Front's gate is the wider one: it does not apply under the globe either.
-        const bool front_applies = !(full_sky || lens == gui::kLensTypeGlobe);
-
         for (const char* ref : kHemisphere) {
-          if (IsDisabled(ctx->ItemInfo(ref)) != full_sky) {
-            IM_ERRORF("lens %d: %s is %s", lens, ref, full_sky ? "enabled" : "disabled");
+          if (IsDisabled(ctx->ItemInfo(ref))) {
+            IM_ERRORF("lens %d: %s is disabled — the stored choice must stay editable", lens, ref);
           }
 
           if (ctx->IsError()) {
             break;
           }
         }
-        if (IsDisabled(ctx->ItemInfo("**/Front##visible")) == front_applies) {
-          IM_ERRORF("lens %d: Front is %s", lens, front_applies ? "disabled" : "enabled");
+        if (IsDisabled(ctx->ItemInfo("**/Front##visible"))) {
+          IM_ERRORF("lens %d: Front is disabled — the stored choice must stay editable", lens);
         }
 
         if (ctx->IsError()) {
@@ -658,7 +664,10 @@ void RegisterViewDisplayControlTests(ImGuiTestEngine* engine) {
 
       gui::g_state.renderer.lens_type = gui::kLensTypeDualFisheyeEqualArea;
       ctx->Yield(3);
-      IM_CHECK(IsDisabled(ctx->ItemInfo("**/Front##visible")));
+      // The unlock task made the checkbox live under every lens: the tick shows the EFFECTIVE
+      // clip (unchecked here — the whole-sky projection does not clip) while the stored choice
+      // sits untouched behind it, which is the same set-aside contract with the grey-out retired.
+      IM_CHECK(!IsDisabled(ctx->ItemInfo("**/Front##visible")));
       IM_CHECK(!ctx->ItemIsChecked("**/Front##visible"));
       IM_CHECK(gui::g_state.renderer.front);  // the choice is set aside, not lost
 
@@ -716,8 +725,10 @@ void RegisterViewDisplayControlTests(ImGuiTestEngine* engine) {
   }
 
   // P22 / P25. Which of the four applies, per lens — the half of the gating that is not a number.
-  // The three configurations differ from each other in exactly one field's answer (the globe greys
-  // roll and nothing else), so a gate that had collapsed to a single condition fails here.
+  // The configurations differ in what the gates REFUSE: under the full-sky lenses all four sliders
+  // stay greyed (the frame loop zeroes the angles, and a lens switch resets fov — the writer-based
+  // half of the unlock split), while Globe now greys nothing at all. A gate that had collapsed to a
+  // single condition, or one that re-greys Globe, fails here.
   {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "view_display_controls", "which_view_sliders_apply_depends_on_the_lens");
     t->TestFunc = [](ImGuiTestContext* ctx) {
@@ -741,7 +752,10 @@ void RegisterViewDisplayControlTests(ImGuiTestEngine* engine) {
       IM_CHECK(!IsDisabled(ctx->ItemInfo("**/##FOV##view_input")));
       IM_CHECK(!IsDisabled(ctx->ItemInfo("**/##Elevation##view_input")));
       IM_CHECK(!IsDisabled(ctx->ItemInfo("**/##Azimuth##view_input")));
-      IM_CHECK(IsDisabled(ctx->ItemInfo("**/##Roll##view_input")));
+      // The unlock task made roll live under Globe too: the render keeps reading
+      // EffectiveRollForLens (0) without writing back, so the slider edits the stored value —
+      // the grey-out this block used to pin is the thing that moved to an inactive_note.
+      IM_CHECK(!IsDisabled(ctx->ItemInfo("**/##Roll##view_input")));
 
       // Full sky: no view angle applies at all, and the angles already stored are zeroed rather
       // than merely greyed. The second half is load-bearing outside this suite:
@@ -956,9 +970,9 @@ void RegisterViewDisplayControlTests(ImGuiTestEngine* engine) {
   // KNOWN LIMIT, so the next reader does not take this for more than it is: the "no image loaded"
   // half is NOT distinguishable from here. That slider sits inside an outer disabled scope which
   // also wraps the Show checkbox and therefore stays, and which greys the slider on its own whether
-  // or not the field's own gate agrees. What this case DOES separate is the other half — with an
-  // image loaded, greyed follows the Show toggle, and that is the condition the call site used to
-  // compute for itself.
+  // or not the field's own gate agrees. Since the unlock task the field's own gate is gone (a
+  // stored choice, editable with an image loaded whether it is shown), so this case now pins the
+  // always-live half of that contract across the Show toggle.
   {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "view_display_controls", "the_background_alpha_follows_the_show_toggle");
     t->GuiFunc = [](ImGuiTestContext*) {
@@ -982,7 +996,11 @@ void RegisterViewDisplayControlTests(ImGuiTestEngine* engine) {
 
       gui::g_state.bg_show = false;
       ctx->Yield(3);
-      IM_CHECK(IsDisabled(ctx->ItemInfo("**/##Alpha##display_input")));
+      // The unlock task made the bg fields stored settings: with an image loaded the slider stays
+      // live while hidden (the "not consumed right now" half moved into the registry's
+      // inactive_note), and the value it edits keeps round-tripping — the grey-out this case used
+      // to pin is retired.
+      IM_CHECK(!IsDisabled(ctx->ItemInfo("**/##Alpha##display_input")));
 
       gui::g_state.bg_show = true;
       ctx->Yield(3);
@@ -1035,9 +1053,13 @@ void RegisterViewDisplayControlTests(ImGuiTestEngine* engine) {
       // exists to reject. Three rows do not need the loop anyway.
       gui::g_state.bg_show = false;
       ctx->Yield(3);
-      IM_CHECK(IsDisabled(ctx->ItemInfo("##Offset X##display_bg_input")));
-      IM_CHECK(IsDisabled(ctx->ItemInfo("##Offset Y##display_bg_input")));
-      IM_CHECK(IsDisabled(ctx->ItemInfo("##Zoom##display_bg_input")));
+      // The unlock task made the transform fields stored settings: hidden-but-loaded leaves them
+      // live (the "not consumed right now" half is the registry's inactive_note), so the old
+      // "greyed follows Show" sweep became the always-live sweep below — the domains and the
+      // clamps, which are the load-bearing half, are unchanged.
+      IM_CHECK(!IsDisabled(ctx->ItemInfo("##Offset X##display_bg_input")));
+      IM_CHECK(!IsDisabled(ctx->ItemInfo("##Offset Y##display_bg_input")));
+      IM_CHECK(!IsDisabled(ctx->ItemInfo("##Zoom##display_bg_input")));
 
       gui::g_state.bg_show = true;
       ctx->Yield(3);

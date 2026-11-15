@@ -55,27 +55,31 @@ const char* const kGatedColourFields[] = {
 
 }  // namespace
 
-// Instance 4. Under print the CLI draws every overlay line by ink density and never reads these
-// colours (test_render_consumer_print_mode.cpp owns that half), so a swatch that still invited an
-// edit would be offering a control over nothing.
+// Instance 4, control half as of the unlock task. Under print the CLI draws every overlay line by
+// ink density and never reads these colours (test_render_consumer_print_mode.cpp owns that
+// physical half), but the swatches are STORED settings now: live under every tone, with the
+// registry carrying the print sentence as the inactive_note instead of the grey-out. The case
+// pins that shape — enabled under both tones, note present exactly under print.
 TEST(PrintModeColourExclusionsGui, OverlayColourSwatchesAreInapplicableUnderPrint) {
   const gui::GuiState print = StateWithTone(LUMICE_TONE_PRINT);
   const gui::GuiState screen = StateWithTone(LUMICE_TONE_SCREEN);
 
   for (const char* key : kGatedColourFields) {
     const gui::FieldEditorConstraint under_print = gui::ConstraintFor(key, print);
-    EXPECT_FALSE(under_print.enabled) << key;
-    EXPECT_TRUE(Mentions(under_print.disabled_reason, "Print")) << key << ": " << under_print.disabled_reason;
+    EXPECT_TRUE(under_print.enabled) << key;
+    EXPECT_TRUE(Mentions(under_print.inactive_note, "Print")) << key << ": " << under_print.inactive_note;
 
-    EXPECT_TRUE(gui::ConstraintFor(key, screen).enabled) << key << " must be editable under tone=screen";
+    const gui::FieldEditorConstraint under_screen = gui::ConstraintFor(key, screen);
+    EXPECT_TRUE(under_screen.enabled) << key << " must be editable under tone=screen";
+    EXPECT_TRUE(under_screen.inactive_note == nullptr) << key << ": " << under_screen.inactive_note;
   }
 
   // The marker family reaches the same gate through its registration loop, so one member is enough
   // to show the loop passes the gate on; a member-by-member sweep would only re-test the loop.
   const std::string marker_key = gui::MarkerFieldKey(0, gui::MarkerKeyPart::kColor);
-  EXPECT_FALSE(gui::ConstraintFor(marker_key, print).enabled);
-  EXPECT_TRUE(Mentions(gui::ConstraintFor(marker_key, print).disabled_reason, "Print"));
-  EXPECT_TRUE(gui::ConstraintFor(marker_key, screen).enabled);
+  EXPECT_TRUE(gui::ConstraintFor(marker_key, print).enabled);
+  EXPECT_TRUE(Mentions(gui::ConstraintFor(marker_key, print).inactive_note, "Print"));
+  EXPECT_TRUE(gui::ConstraintFor(marker_key, screen).inactive_note == nullptr);
 }
 
 // The other half of the same boundary, asserted rather than left to the reader of the registry. The
@@ -100,17 +104,22 @@ TEST(PrintModeColourExclusionsGui, TheLensBorderCompanionsAreNotGated) {
 // swatch is enabled and the Summary page prints whichever row is enabled, and both read this pair.
 // A gate that let both apply, or neither, would put two swatches (or none) on screen.
 TEST(PrintModeColourExclusionsGui, ExactlyOneGroundColourAppliesUnderEitherTone) {
+  // The gates became notes: both grounds are stored settings, enabled under every tone, and the
+  // note under the inert tone is the one that names it. The panel's one-swatch alternation is
+  // that panel's own view rule now (decided locally by the tone), and the page lists both rows —
+  // the complement this case used to pin belonged to the grey-out, retired by the unlock task.
   for (const int tone : { LUMICE_TONE_SCREEN, LUMICE_TONE_PRINT }) {
     const gui::GuiState state = StateWithTone(tone);
-    const bool sky = gui::ConstraintFor("renderer.background", state).enabled;
-    const bool paper = gui::ConstraintFor("renderer.paper", state).enabled;
-    EXPECT_NE(sky, paper) << "tone " << tone;
-    EXPECT_EQ(sky, tone == LUMICE_TONE_SCREEN) << "tone " << tone;
-    if (!sky) {
-      EXPECT_TRUE(Mentions(gui::ConstraintFor("renderer.background", state).disabled_reason, "Print"));
-    }
-    if (!paper) {
-      EXPECT_TRUE(Mentions(gui::ConstraintFor("renderer.paper", state).disabled_reason, "Screen"));
+    const gui::FieldEditorConstraint sky = gui::ConstraintFor("renderer.background", state);
+    const gui::FieldEditorConstraint paper = gui::ConstraintFor("renderer.paper", state);
+    EXPECT_TRUE(sky.enabled) << "tone " << tone;
+    EXPECT_TRUE(paper.enabled) << "tone " << tone;
+    if (tone == LUMICE_TONE_PRINT) {
+      EXPECT_TRUE(Mentions(sky.inactive_note, "Print")) << sky.inactive_note;
+      EXPECT_TRUE(paper.inactive_note == nullptr) << paper.inactive_note;
+    } else {
+      EXPECT_TRUE(sky.inactive_note == nullptr) << sky.inactive_note;
+      EXPECT_TRUE(Mentions(paper.inactive_note, "Screen")) << paper.inactive_note;
     }
   }
 }
@@ -121,20 +130,24 @@ TEST(PrintModeColourExclusionsGui, ExactlyOneGroundColourAppliesUnderEitherTone)
 // one, which would not enable the control. So the case discriminates on the TEXT, and its screen
 // arm asserts the other reason is still the one given.
 TEST(PrintModeColourExclusionsGui, TheBackgroundPhotoIsInapplicableUnderPrintForThePrintReason) {
+  // The stored-choice form: the control stays live and the print sentence rides the note. The
+  // reason still matters — under print it must name Print, not the no-image fallback this binary
+  // would otherwise hit, and under screen it must fall through to that fallback.
   const gui::FieldEditorConstraint under_print = gui::ConstraintFor("bg_show", StateWithTone(LUMICE_TONE_PRINT));
-  EXPECT_FALSE(under_print.enabled);
-  EXPECT_TRUE(Mentions(under_print.disabled_reason, "Print")) << under_print.disabled_reason;
+  EXPECT_TRUE(under_print.enabled);
+  EXPECT_TRUE(Mentions(under_print.inactive_note, "Print")) << under_print.inactive_note;
 
   const gui::FieldEditorConstraint under_screen = gui::ConstraintFor("bg_show", StateWithTone(LUMICE_TONE_SCREEN));
-  EXPECT_FALSE(Mentions(under_screen.disabled_reason, "Print"))
-      << "tone=screen must fall through to the ordinary reason, got: " << under_screen.disabled_reason;
+  EXPECT_TRUE(under_screen.enabled);
+  EXPECT_FALSE(Mentions(under_screen.inactive_note, "Print"))
+      << "tone=screen must fall through to the ordinary reason, got: " << under_screen.inactive_note;
 
-  // The four transform fields inherit the gate through WhenBackgroundShown rather than declaring it
-  // again. Asserted because that inheritance is the reason they were not touched.
+  // The four transform fields inherit the note through BackgroundShownNote rather than declaring
+  // it again. Asserted because that inheritance is the reason they were not touched.
   for (const char* key : { "bg_alpha", "bg_offset_x", "bg_offset_y", "bg_scale" }) {
     const gui::FieldEditorConstraint c = gui::ConstraintFor(key, StateWithTone(LUMICE_TONE_PRINT));
-    EXPECT_FALSE(c.enabled) << key;
-    EXPECT_TRUE(Mentions(c.disabled_reason, "Print")) << key << ": " << c.disabled_reason;
+    EXPECT_TRUE(c.enabled) << key;
+    EXPECT_TRUE(Mentions(c.inactive_note, "Print")) << key << ": " << c.inactive_note;
   }
 }
 
