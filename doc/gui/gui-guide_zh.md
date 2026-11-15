@@ -75,6 +75,12 @@ GUI 需要 display server 和支持 OpenGL 3.2 Core Profile 的 GPU。
   与它的两个邻居不同，它一改就立刻作用于当前窗口；**Save as my defaults** 会把它保存下来供以后每次启动
   使用（`user_defaults.json` 里的 `app.ui_scale_multiplier`），试过但没保存的值会一直生效到程序退出——
   控件旁的 `(this window: N%)` 标注显示的就是当前窗口实际在用的值。
+
+  列出的每一项设置都可以就地编辑：当前配置用不到的字段（另一色调下的地面色、无图时的背景变换、
+  Infinite rays 开启时的 `Rays(M)`、Globe 下的 `Roll`）保持可编辑，悬停说明取值被保留、待其生效
+  条件满足时采用。`Presets` 区可调每个可存储预设（Column / Plate / Parry / Lowitz 与 Random；旧
+  文件缺 Random 覆盖时回退其内置定义）每根轴的每个面——分布类型、均值、离散度；每条已存 wedge
+  预设的 Miller 指数可就地编辑（角度随之重算）。
 - **⚠ Revert**：位于顶栏右端、右面板折叠按钮左侧。仅当模拟结束后又改了参数（状态 `Modified`）时出现；用于把配置还原到产生上次结果时的状态。隐藏时它的位置仍被保留，所以它出现时栏上其他按钮都不会移动。
 - **右面板折叠按钮**：`<` / `>` 与左侧对称（也可用快捷键 `]`）。
 
@@ -149,7 +155,7 @@ GUI 需要 display server 和支持 OpenGL 3.2 Core Profile 的 GPU。
 
 ### View（视图）
 
-- **Projection**：`Lens Type` 提供 11 种 lens 投影 —— Linear、Rectangular、Globe、Fisheye（Equidistant / Equal Area / Stereographic / Orthographic）以及 Dual Fisheye（Equidistant / Equal Area / Stereographic / Orthographic）。Combo 中按分组排序，使 Orthographic 变体紧邻其 fisheye / dual-fisheye 同族；`FOV` 由具体 lens 限定上限。`Visibility` 中 `Upper` / `Full` / `Lower` 选择天空的垂直范围，独立的 `Front` 复选框再裁掉相机背向半球；full-sky lens 同时禁用两者，Globe 则禁用 `Front`。Globe 下另显示 `Back fade`：让球体背面的光与网格像雾一样透过近侧（0–2；0 只显示近侧）。
+- **Projection**：`Lens Type` 提供 11 种 lens 投影 —— Linear、Rectangular、Globe、Fisheye（Equidistant / Equal Area / Stereographic / Orthographic）以及 Dual Fisheye（Equidistant / Equal Area / Stereographic / Orthographic）。Combo 中按分组排序，使 Orthographic 变体紧邻其 fisheye / dual-fisheye 同族；`FOV` 由具体 lens 限定上限。`Visibility` 中 `Upper` / `Full` / `Lower` 选择天空的垂直范围，独立的 `Front` 复选框再裁掉相机背向半球；full-sky lens 会禁用 FOV 与视角滑条（全天投影没有视角姿态），而 `Visibility` 与 `Front` 仍可编辑——其选择被保留、只是当前不生效，悬停有说明。Globe 下视图固定 `Roll` 为 0（滑条编辑的是存储值，切回会用到 roll 的 lens 时恢复），另显示 `Back fade`：让球体背面的光与网格像雾一样透过近侧（0–2；0 只显示近侧）。
 - **Camera**：`Elevation`、`Azimuth`、`Roll`。Dual-fisheye 这些 full-sky lens 会禁用三者并使用规范化的零姿态。
   底行依次为 `Reset` → `Look At` → `Lock`。`Look At` 下拉框会立即把相机指向一个具名方向：Overlay 面板能画出的六个参考点（Zenith、Nadir、Sun、Subsun、Anthelion、Antisolar），以及一组相对太阳的 **Horizon** 地平线方位——`Toward sun`、`Sun +90°`、`Away from sun`、`Sun -90°`（仰角 0；标签里的数就是选中后 `Azimuth` 滑条会显示的数，因为太阳固定在方位角 0）。选择只写 `Elevation` 与 `Azimuth`，`Roll` 与 `FOV` 保持原取景。勾选 `Lock` 后，太阳高度等场景值变化时相机会持续跟随所选方向，无须先 Run。手动修改 `Elevation` / `Azimuth` 或在预览中拖动旋转会关闭 Lock 并保留本次手动视角；修改 `Roll`、`FOV` 或滚轮缩放不会解锁。所选目标仍会保留，再次勾选 Lock 即可恢复跟随。`Reset`、切换到不同 lens、文档 New/Open/Revert 都会关闭 Lock；文档切换还会把所选目标恢复为 Sun。Full-sky lens 下两个控件均禁用。
 
@@ -161,7 +167,7 @@ GUI 需要 display server 和支持 OpenGL 3.2 Core Profile 的 GPU。
 
 - **Rendering**：`Resolution`（512 / 1024 / 2048 / 4096；更改会触发重新模拟，控件悬停提示会说明）；`EV`（曝光偏移，-6 ~ +6 stops）。
 - **Adaptive Brightness（自适应亮度）**：始终启用，无开关。Relative 模式使用场景固定全天平面的 P99 天空辐亮度 `anchor_l99_sky`，不受 lens / FOV / 相机 / visible 范围 / 输出分辨率影响；偏移量以 `+N.NN EV auto` 显示在手动 EV 滑条旁。切换 filter 不会改变锚点。完整算法与可加性不变量见 [`doc/rendering/adaptive-brightness.zh.md`](../rendering/adaptive-brightness.zh.md)。
-- **Background（背景）**：`Load Bg...`、`Clear`、`Show` 复选框、以及 `Alpha` 滑块（控制背景在渲染图下的合成透明度）。该段还承载 `Aspect` 组合框：一个菜单列出全部可达的「预设 × 方向」条目——Free、16:9、16:9 Portrait、3:2、3:2 Portrait、4:3、4:3 Portrait、1:1、2:1、2:1 Portrait、Match Background。未加载图片时 `Match Background` 一项置灰，这也是该组合框放在本段的原因。请求的长宽比无法满足（窗口太小）时会出现提示行，显示实际可用比与请求比。
+- **Background（背景）**：`Load Bg...`、`Clear`、`Show` 复选框、以及 `Alpha` 滑块（控制背景在渲染图下的合成透明度）。该段还承载 `Aspect` 组合框：一个菜单列出全部可达的「预设 × 方向」条目——Free、16:9、16:9 Portrait、3:2、3:2 Portrait、4:3、4:3 Portrait、1:1、2:1、2:1 Portrait、Match Background。未加载图片时 `Match Background` 仍可选择——此时行为等同 `Free`，条目悬停有说明；这也是该组合框放在本段的原因。请求的长宽比无法满足（窗口太小）时会出现提示行，显示实际可用比与请求比。
 
 ### Overlay（叠加）
 
@@ -229,7 +235,7 @@ Render Preview 上的辅助线，以一张表格呈现——每条辅助线回�
 - 类型 RadioButton：`Gauss`、`Uniform`、`Zigzag`、`Laplacian`，以及保留兼容的 `GaussLegacy`。
 - `mean`（中心角）和 `std`（含义随类型而变 —— Gauss 时是标准差、Uniform 时是全范围、Zigzag 时是振幅、Laplacian 时是 scale）。
 
-- **Reset All**：tab 的尾行——一颗定宽按钮，与 Crystal tab 的 `Reset All`、Filter tab 的 `Remove Filter` 同族。它把当前标签的定义重新载入上方三组分布——在 preset 库里重调过的用重调后的值。其余一切不动：标签不动，记住的参数不动，预览视角也不动。在 `Custom` 下禁用（Custom 没有定义可回到）。
+- **Reset All**：tab 的尾行——一颗定宽按钮，与 Crystal tab 的 `Reset All`、Filter tab 的 `Remove Filter` 同族。它把当前标签的定义重新载入上方三组分布——在 preset 库里重调过的轴与面用重调后的值。其余一切不动：标签不动，记住的参数不动，预览视角也不动。在 `Custom` 下禁用（Custom 没有定义可回到）。
 
 手动重调分布不会改标签，标签在保存与重新打开文档后依然保留（存在 `.lmc` 里）。在标签机制之前保存的文档，加载时从参数推导一次标签。chip 的记忆本身是会话内的交互状态，不写入文档；要把重调永久保存是 preset 库的职责。
 

@@ -220,9 +220,18 @@ TEST_F(UserDefaultsChain, PresetOverrideDocumentWriteReadEraseCompose) {
   EraseAxisPresetStdFromDoc(doc, AxisPreset::kPlate, AxisSlot::kZenith);
   EXPECT_FALSE(doc.contains("presets")) << "the last erase left an empty skeleton behind: " << doc.dump();
 
-  // A preset with no adjustable face has no key at all, so all three operations are no-ops for it.
+  // Custom is the one preset with no key at all, so all three operations are no-ops for it — and a
+  // no-op write must not resurrect the subtree the prune above just removed.
+  WriteAxisPresetStdToDoc(doc, AxisPreset::kCustom, AxisSlot::kZenith, 0.5f);
+  EXPECT_FALSE(ReadAxisPresetStdFromDoc(doc, AxisPreset::kCustom, AxisSlot::kZenith).has_value());
+  EXPECT_FALSE(doc.contains("presets"));
+
+  // Random composes like any other storable preset since the defaults-panel unlock task (its
+  // per-axis face independence is pinned in test_user_defaults.cpp).
   WriteAxisPresetStdToDoc(doc, AxisPreset::kRandom, AxisSlot::kZenith, 0.5f);
-  EXPECT_FALSE(ReadAxisPresetStdFromDoc(doc, AxisPreset::kRandom, AxisSlot::kZenith).has_value());
+  const std::optional<float> random_std = ReadAxisPresetStdFromDoc(doc, AxisPreset::kRandom, AxisSlot::kZenith);
+  ASSERT_TRUE(random_std.has_value()) << "Random's write landed but the reader cannot see it";
+  EXPECT_FLOAT_EQ(*random_std, 0.5f);
 }
 
 // The read is RAW on purpose: it reports what the document says. Since the axis label went sticky,

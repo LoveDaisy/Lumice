@@ -605,7 +605,7 @@ FieldEditorEntry CustomSpectrumField() {
   entry.Constraint = [](const GuiState&) { return FieldEditorConstraint{}; };
   entry.Render = [](GuiState& state, const char* id_base) {
     bool committed = false;
-    const std::string edit_id = std::string(ICON_FA_PEN) + " Edit spectrum..." + HiddenLabel(id_base);
+    const std::string edit_id = std::string(ICON_FA_PEN) + " Edit spectrum..." + std::string("###") + id_base;
     if (ImGui::Button(edit_id.c_str())) {
       SeedSpectrumEditor(state);
       ImGui::OpenPopup(HiddenLabel(id_base).c_str());
@@ -628,7 +628,7 @@ FieldEditorEntry SpectrumField() {
       return preset_render(state, id_base);
     }
     bool committed = false;
-    if (ImGui::Button((std::string("Custom spectrum...") + HiddenLabel(id_base)).c_str())) {
+    if (ImGui::Button((std::string("Custom spectrum...") + std::string("###") + id_base).c_str())) {
       SeedSpectrumEditor(state);
       ImGui::OpenPopup(HiddenLabel(id_base).c_str());
     }
@@ -703,7 +703,9 @@ FieldEditorEntry CircleAngleListField(AngularDistFamily family) {
     // row re-read + adopted when it did). A bool flag from the body would also fire on a no-op
     // frame of an open popup.
     const std::vector<float> before = AngularDistFamilyAngles(state, family);
-    const std::string edit_id = std::string(ICON_FA_ELLIPSIS) + " Edit angles..." + HiddenLabel(id_base);
+    // "###" form, like every id this panel exposes (defaults_panel.cpp): the test ref carries the
+    // short suffix alone instead of the glyph-prefixed label.
+    const std::string edit_id = std::string(ICON_FA_ELLIPSIS) + " Edit angles..." + std::string("###") + id_base;
     if (ImGui::Button(edit_id.c_str())) {
       ImGui::OpenPopup(HiddenLabel(id_base).c_str());
     }
@@ -732,7 +734,7 @@ FieldEditorEntry BackgroundPathField() {
   entry.kind = FieldEditorKind::kListEditor;
   entry.Constraint = [](const GuiState&) { return FieldEditorConstraint{}; };
   entry.Render = [](GuiState& state, const char* id_base) {
-    const std::string choose_id = std::string(ICON_FA_FOLDER_OPEN) + " Choose file..." + HiddenLabel(id_base);
+    const std::string choose_id = std::string(ICON_FA_FOLDER_OPEN) + " Choose file..." + std::string("###") + id_base;
     if (ImGui::Button(choose_id.c_str())) {
       g_background_file_dialog_request = true;
     }
