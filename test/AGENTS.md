@@ -303,16 +303,17 @@ that spends the signal instead of recording it):
 
 ### 2026-11-16 ASan/UBSan variant campaign — blind, attribution unchanged
 
-First-actions route 3(b) was executed on 2026-11-16 (overnight, machine
-otherwise idle): a clang ASan+UBSan variant of `gui_test` built in a separate
-build tree via configure-time flags (`-fsanitize=address,undefined
--fno-omit-frame-pointer -gline-tables-only` on every TU, closure-verified via
-`compile_commands.json`; IPO/LTO disabled after LTO left the final binary
-without line tables — dSYM extraction yielded a single CU and offline `atos`
-mapping degraded to symbol+offset), driven with
+First-actions route 3(b) was executed on 2026-11-16 (overnight; every round
+gated pre-flight on 1-min load < 8 and no concurrent drive runners — mid-round
+exclusivity was not mechanically verified, so the rounds are gated-start
+samples, not verified full-exclusivity samples): a clang ASan+UBSan variant
+of `gui_test` built in a separate build tree via configure-time flags
+(`-fsanitize=address,undefined -fno-omit-frame-pointer -gline-tables-only` on
+every TU, closure-verified via `compile_commands.json`; IPO/LTO disabled after
+LTO left the final binary without line tables — dSYM extraction yielded a
+single CU and offline `atos` mapping degraded to symbol+offset), driven with
 `ASAN_OPTIONS=detect_leaks=0:handle_sigill=1:handle_abort=1:handle_sigfpe=1:detect_stack_use_after_return=1`
-and `UBSAN_OPTIONS=print_stacktrace=1`. Four rounds ran, each gated on
-1-min load < 8 and no concurrent drive runners:
+and `UBSAN_OPTIONS=print_stacktrace=1`. Four rounds ran:
 
 - Three boundary-subset rounds (the 25-token filter shape, 342 cases,
   14m14s / 14m27s / 14m24s at load 3.56 / 6.75 / 7.71) and one full-suite
@@ -323,11 +324,14 @@ and `UBSAN_OPTIONS=print_stacktrace=1`. Four rounds ran, each gated on
   boundary gap was crossed cleanly in every round — the original 4-crash
   position did not so much as produce a sanitizer diagnostic in its
   neighborhood. These 4 instrumented crossings join the 3 un-instrumented
-  clean runs as non-reproductions; per-crossing the crash is now 4/11 across
-  both shapes. The perturbation caveat stands: sanitizer perturbation itself
-  is a candidate variable for a timing-sensitive crash, so this is a blind
-  sample, not a negative result — the attribution statement above (three
-  families unexcluded, none favored) is unchanged.
+  clean runs as non-reproductions, counted per batch (un-instrumented history:
+  4 crashes / 3 clean full runs; this campaign, ASan+UBSan with IPO off:
+  0 hits in 3 subset rounds + 1 full round) — the batches do not share one
+  experimental condition, so no merged crash rate is implied. The perturbation
+  caveat stands: sanitizer perturbation itself is a candidate variable for a
+  timing-sensitive crash, so this is a blind sample, not a negative result —
+  the attribution statement above (three families unexcluded, none favored)
+  is unchanged.
 - Independent observations, recorded but not linked to the SIGILL: each
   round printed 10 recoverable UBSan diagnostics at two product sites far
   from the boundary — `projection_shared.h:368/370` (float→int conversion
@@ -337,7 +341,16 @@ and `UBSAN_OPTIONS=print_stacktrace=1`. Four rounds ran, each gated on
   full — all assertion failures in `export_parity` and analyze/raypath
   groups; sanitizer slowdown on budget-tight cases and suite drift since the
   earlier measurement are the unranked candidates). Neither observation
-  reproduces the SIGILL signature and neither is treated as its cause.
+  reproduces the SIGILL signature and neither is treated as its cause. Both
+  UB families are nevertheless confirmed product UB by mechanism, independent
+  of that attribution: `CrystalParamHash` reads float bit patterns into
+  `int` via `memcpy` and multiplies them by small salts, which overflows
+  signed `int` whenever the bit pattern's magnitude exceeds `INT_MAX / salt`
+  (deterministic given the offending parameter values), and the single-lens
+  bump path `static_cast<int>`s projected coordinates that can exceed the
+  `int` range for far-off-sensor rays. Repair handoff for both families is
+  recommended to the owner as separate confirmed defects — recorded here as
+  evidence, deliberately not fixed in this change.
 
 ## GUI Test Reference Regeneration (reference groups)
 
