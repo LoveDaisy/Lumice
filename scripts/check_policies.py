@@ -1258,8 +1258,13 @@ def check_no_default_constructed_crystal_slots() -> list[Violation]:
 
 BUILD_SH = REPO_ROOT / "scripts" / "build.sh"
 REGEN_GUI_TEST_REFS_PY = REPO_ROOT / "scripts" / "regen_gui_test_refs.py"
+GATE_PY = REPO_ROOT / "scripts" / "local_throughput_gate.py"
 
 _BUILD_SH_CORRECTNESS_FILTER = re.compile(r'GUI_TEST_BIN"\s+--fixed-dt\s+--filter\s+"([^"]+)"')
+# The real-timing invocation has no --fixed-dt between the binary and --filter, so
+# this pattern matches that line and cannot match the correctness-pool one.
+_BUILD_SH_REALTIME_FILTER = re.compile(r'GUI_TEST_BIN"\s+--filter\s+"([^"]+)"')
+_GATE_REALTIME_FILTER = re.compile(r'GUI_REALTIMING_FILTER\s*=\s*\(\s*((?:"[^"]*"\s*)+)\)', re.DOTALL)
 # Matches SUITE_FILTER_EXPR's value however it is broken across adjacent string-literal lines
 # (Python concatenates those at parse time); DOTALL lets the group span the newline between them.
 _REGEN_SUITE_FILTER_EXPR = re.compile(
@@ -1320,6 +1325,52 @@ def check_gui_test_suite_args_sync() -> list[Violation]:
                 f"scripts/build.sh's gui_test correctness-pool `--filter` "
                 f"({build_sh_filter!r}); update SUITE_FILTER_EXPR so reference calibration "
                 "keeps running under the same condition CI actually asserts under.",
+            )
+        )
+
+    # Third literal of the same family: build.sh's real-timing pool filter and the
+    # throughput gate's GUI_REALTIMING_FILTER must stay byte-identical, or the gate
+    # nightly measures a different pool than the one the build/CI contract names.
+    if not GATE_PY.exists():
+        return out
+    gate_text = GATE_PY.read_text(encoding="utf-8")
+    m3 = _BUILD_SH_REALTIME_FILTER.search(build_sh_text)
+    if not m3:
+        out.append(
+            Violation(
+                BUILD_SH,
+                1,
+                "gui-test-suite-args-sync",
+                "could not locate the gui_test real-timing-pool `--filter` invocation "
+                "(expected `\"$GUI_TEST_BIN\" --filter \"...\"` without --fixed-dt); update this "
+                "check's pattern alongside any build.sh restructuring.",
+            )
+        )
+        return out
+    m4 = _GATE_REALTIME_FILTER.search(gate_text)
+    if not m4:
+        out.append(
+            Violation(
+                GATE_PY,
+                1,
+                "gui-test-suite-args-sync",
+                "could not locate GUI_REALTIMING_FILTER's value (expected "
+                '`GUI_REALTIMING_FILTER = ("..." "...")`); update this check\'s pattern '
+                "alongside any local_throughput_gate.py restructuring.",
+            )
+        )
+        return out
+    gate_filter = "".join(_QUOTED_STRING.findall(m4.group(1)))
+    if m3.group(1) != gate_filter:
+        out.append(
+            Violation(
+                GATE_PY,
+                gate_text.count("\n", 0, m4.start()) + 1,
+                "gui-test-suite-args-sync",
+                f"GUI_REALTIMING_FILTER ({gate_filter!r}) no longer matches "
+                f"scripts/build.sh's gui_test real-timing-pool `--filter` "
+                f"({m3.group(1)!r}); the throughput gate must drive the same pool "
+                "build.sh names — update the copy that is out of date.",
             )
         )
     return out
