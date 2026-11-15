@@ -99,6 +99,14 @@ From left to right, the Top Bar exposes:
   is changed; **Save as my defaults** keeps it for every later start (`app.ui_scale_multiplier` in
   `user_defaults.json`), and a value tried but not saved stays in force until the program exits —
   the `(this window: N%)` note beside the control shows what the window is actually using.
+
+  Every listed setting is editable in place: a field the current configuration does not consume
+  (a ground colour under the other tone, the background transform with no image, `Rays(M)` under
+  Infinite rays, `Roll` under Globe) stays editable and shows a hover note saying the value is
+  kept for when it applies again. The `Presets` section tunes every face — type, mean, spread —
+  of every axis of every storable preset (Column / Plate / Parry / Lowitz and Random; old files
+  without a retuned Random resolve to its built-in definition), and each saved wedge preset's
+  Miller indices are editable in place (the angle follows).
 - **⚠ Revert**: at the right end of the bar, beside the right panel toggle. Appears only after parameters have been changed since the last simulation finished (status `Modified`); restores the configuration that produced the last result. Its slot is held while it is hidden, so nothing else on the bar moves when it appears.
   The Colored/Full Spectrum control and warning reserve a fixed slot, so signal or run-state updates never move neighbouring commands or change the label tier.
 - **Right panel collapse**: `<` / `>` mirror the left toggle (also bound to the `]` key).
@@ -174,7 +182,7 @@ The right panel groups every parameter that influences how the simulated rays ar
 
 ### View
 
-- **Projection**: `Lens Type` chooses among 11 lens projections — Linear, Rectangular, Globe, Fisheye (Equidistant / Equal Area / Stereographic / Orthographic), and Dual Fisheye (Equidistant / Equal Area / Stereographic / Orthographic). The combo presents them grouped so orthographic variants sit next to their siblings. `FOV` is clamped per lens. Under `Visibility`, `Upper` / `Full` / `Lower` select the vertical sky range, while the separate `Front` checkbox clips to the camera-facing hemisphere; full-sky lenses disable both controls, and Globe disables `Front`. Under Globe a `Back fade` slider appears: it lets the far side of the sphere — light and grid alike — show through the near side with fog-like attenuation (0–2; 0 shows only the near side).
+- **Projection**: `Lens Type` chooses among 11 lens projections — Linear, Rectangular, Globe, Fisheye (Equidistant / Equal Area / Stereographic / Orthographic), and Dual Fisheye (Equidistant / Equal Area / Stereographic / Orthographic). The combo presents them grouped so orthographic variants sit next to their siblings. `FOV` is clamped per lens. Under `Visibility`, `Upper` / `Full` / `Lower` select the vertical sky range, while the separate `Front` checkbox clips to the camera-facing hemisphere; full-sky lenses disable the FOV and view-angle sliders (a whole-sky projection has no view pose), while `Visibility` and `Front` stay editable — their choices are kept and simply not used there, which a hover note says. Under Globe the view keeps `Roll` at 0 (the slider edits the stored value, which comes back under a lens that uses roll), and a `Back fade` slider appears: it lets the far side of the sphere — light and grid alike — show through the near side with fog-like attenuation (0–2; 0 shows only the near side).
 - **Camera**: `Elevation`, `Azimuth`, `Roll`. The dual-fisheye full-sky lenses disable them and use the canonical zero pose.
   The bottom row is `Reset` → `Look At` → `Lock`. The `Look At` combo points the camera at a named direction immediately: the six reference points the Overlay panel can draw (Zenith, Nadir, Sun, Subsun, Anthelion, Antisolar), and a **Horizon** series of four level bearings relative to the sun — `Toward sun`, `Sun +90°`, `Away from sun`, `Sun -90°` (elevation 0; the number is what the `Azimuth` slider will read, since the sun sits at azimuth 0). The choice writes only `Elevation` and `Azimuth`; `Roll` and `FOV` remain as framed. With `Lock` checked, the camera keeps following the selected direction as scene values such as Sun altitude change, without requiring Run. Editing `Elevation` or `Azimuth`, or dragging the preview to rotate it, turns Lock off and keeps that manual view; changing `Roll`, `FOV`, or preview zoom does not. The selected target is retained so checking Lock again resumes it. `Reset`, a different lens, or a document New/Open/Revert turns Lock off; document changes also restore the selected target to Sun. Full-sky lenses disable both controls.
 
@@ -186,7 +194,7 @@ The lens choice changes the geometry of the projected image dramatically:
 
 - **Rendering**: `Resolution` (512 / 1024 / 2048 / 4096; changing it re-runs the simulation — the control's tooltip says so), and `EV` (-6 to +6 stops of exposure offset).
 - **Adaptive Brightness**: always on — no toggle. Relative mode uses the scene's fixed all-sky P99 radiance (`anchor_l99_sky`), independent of lens / FOV / camera / visible range / output resolution; the applied offset is shown as `+N.NN EV auto` next to the manual EV slider. Filter switches do not jump the anchor. See [`doc/rendering/adaptive-brightness.md`](../rendering/adaptive-brightness.md) for the full algorithm and additivity invariant.
-- **Background**: `Load Bg...`, `Clear`, the `Show` checkbox, and an `Alpha` slider for compositing the loaded background under the rendered halo. The section also hosts the `Aspect` combo, which lists every reachable preset-and-orientation pair in one menu — Free, 16:9, 16:9 Portrait, 3:2, 3:2 Portrait, 4:3, 4:3 Portrait, 1:1, 2:1, 2:1 Portrait, Match Background. `Match Background` greys until an image is loaded, which is why the combo lives here. When the requested aspect cannot be honoured (window too small) a warning row reports the achieved versus requested ratio.
+- **Background**: `Load Bg...`, `Clear`, the `Show` checkbox, and an `Alpha` slider for compositing the loaded background under the rendered halo. The section also hosts the `Aspect` combo, which lists every reachable preset-and-orientation pair in one menu — Free, 16:9, 16:9 Portrait, 3:2, 3:2 Portrait, 4:3, 4:3 Portrait, 1:1, 2:1, 2:1 Portrait, Match Background. `Match Background` is selectable even with no image loaded — it then behaves like `Free` until one is, which a hover on the item says — which is why the combo lives here. When the requested aspect cannot be honoured (window too small) a warning row reports the achieved versus requested ratio.
 
 ### Overlay
 
@@ -259,7 +267,7 @@ Three independent angular distributions controlling crystal orientation: `zenith
 - A type radio: `Gauss`, `Uniform`, `Zigzag`, `Laplacian`, or the legacy `GaussLegacy`.
 - A `mean` (the centre angle) and a `std` whose meaning depends on the type — standard deviation for Gauss, full range for Uniform, amplitude for Zigzag, and scale for Laplacian.
 
-- **Reset All**: the tab's tail row — one fixed-width button, the same family as the Crystal tab's `Reset All` and the Filter tab's `Remove Filter`. It reloads the current label's definition into the three distributions above, your retuned value from the preset library where you saved one. Nothing else moves: the label stays, the remembered parameters stay, and the preview's view does not move. It is disabled under `Custom`, which has no definition to reset to.
+- **Reset All**: the tab's tail row — one fixed-width button, the same family as the Crystal tab's `Reset All` and the Filter tab's `Remove Filter`. It reloads the current label's definition into the three distributions above, your retuned values from the preset library where you saved any. Nothing else moves: the label stays, the remembered parameters stay, and the preview's view does not move. It is disabled under `Custom`, which has no definition to reset to.
 
 Retuning the distributions never renames the label, and the label survives saving and reopening the document (stored in the `.lmc`). Files saved before labels existed get theirs derived once from the parameters on load. The chip memory itself is session-only interaction state — it is not saved into the document; making a retune permanent is the preset library's job.
 

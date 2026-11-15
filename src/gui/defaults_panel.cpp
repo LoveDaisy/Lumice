@@ -20,6 +20,7 @@
 #include "gui/destructive_style.hpp"
 #include "gui/edit_modals.hpp"
 #include "gui/field_editor_registry.hpp"
+#include "gui/gui_logger.hpp"
 #include "gui/panels.hpp"
 #include "gui/secondary_window_sizing.hpp"
 #include "gui/semantic_colors.hpp"
@@ -1109,14 +1110,29 @@ void RenderWedgeEditPopup(std::vector<WedgeMillerTriple>& saved) {
 
   ImGui::TextUnformatted("Edit the Miller indices; the angle follows.");
   ImGui::Separator();
+  // "###" suffixes so a test can address each box without substring-matching every label in the
+  // panel that happens to contain the letter (ref "**/h" lands in the search box otherwise).
+  //
+  // COMMIT ON DEACTIVATION, like every numeric cell in this panel: an edit that ends (Enter /
+  // focus loss) and reads as a legal, non-duplicate triple lands in the working copy right there;
+  // a refused or duplicate verdict writes nothing, and the graded line below says why. There is
+  // deliberately no Save/Cancel pair here: Cancel would have to un-write a working copy that
+  // every other edit in this panel leaves in place, and Save would be the one button whose click
+  // a user must remember inside a transient popup — the panel's Save stays the only commit.
+  // A committed edit ends here: any of the three boxes deactivating (Enter / focus loss) is the
+  // commit attempt's trigger, evaluated against the verdict below.
+  bool deactivated = false;
   ImGui::SetNextItemWidth(UiPx(70.0f));
-  ImGui::InputInt("h", &g_wedge_edit_scratch.h);
+  ImGui::InputInt("h###wedge_edit_h", &g_wedge_edit_scratch.h);
+  deactivated |= ImGui::IsItemDeactivatedAfterEdit();
   ImGui::SameLine();
   ImGui::SetNextItemWidth(UiPx(70.0f));
-  ImGui::InputInt("k", &g_wedge_edit_scratch.k);
+  ImGui::InputInt("k###wedge_edit_k", &g_wedge_edit_scratch.k);
+  deactivated |= ImGui::IsItemDeactivatedAfterEdit();
   ImGui::SameLine();
   ImGui::SetNextItemWidth(UiPx(70.0f));
-  ImGui::InputInt("l", &g_wedge_edit_scratch.l);
+  ImGui::InputInt("l###wedge_edit_l", &g_wedge_edit_scratch.l);
+  deactivated |= ImGui::IsItemDeactivatedAfterEdit();
 
   const CustomWedgeInputFeedback fb =
       EvaluateCustomWedgeInput(g_wedge_edit_scratch.h, g_wedge_edit_scratch.k, g_wedge_edit_scratch.l);
@@ -1136,24 +1152,13 @@ void RenderWedgeEditPopup(std::vector<WedgeMillerTriple>& saved) {
     ImGui::AlignTextToFramePadding();
     ImGui::TextUnformatted(FormatWedgePresetLabel(candidate.h, candidate.l, fb.angle_deg).c_str());
   }
-
-  const bool save_ok = fb.can_apply && !duplicate;
-  ImGui::BeginDisabled(!save_ok);
-  if (ImGui::Button(ICON_FA_CHECK " Save##wedge_edit_save")) {
+  // The committed form of the scratch: exactly when an edit ended and the verdict is clean and
+  // the triple is not a duplicate, it lands in the working copy (the row then re-reads it, angle
+  // included). A refused or duplicate verdict writes nothing; the graded line above says why.
+  if (deactivated && fb.can_apply && !duplicate) {
     saved[static_cast<size_t>(g_wedge_edit_row)] = candidate;
     WriteWedgePresetsToDoc(g_copy_doc, saved);
     g_status_message = "Edited a saved wedge preset; press Save to keep the change.";
-    g_wedge_edit_row = -1;
-    ImGui::CloseCurrentPopup();
-  }
-  ImGui::EndDisabled();
-  if (!save_ok && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-    ImGui::SetTooltip("%s", !fb.can_apply ? fb.message.c_str() : "That triple is already in the list (or built in).");
-  }
-  ImGui::SameLine();
-  if (ImGui::Button(ICON_FA_XMARK " Cancel##wedge_edit_cancel")) {
-    g_wedge_edit_row = -1;
-    ImGui::CloseCurrentPopup();
   }
   ImGui::EndPopup();
 }
