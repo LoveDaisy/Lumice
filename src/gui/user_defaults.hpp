@@ -504,19 +504,18 @@ std::string DescribeAxisPresetZenithTypeDomain(AxisPreset preset);
 std::string DescribeAxisPresetDomain(AxisPreset preset);
 
 // The shortest %g precision (6..9) that still reads back as exactly this float via strtof. Shared
-// by FormatAxisPresetStd below and by the §1 panel's InputFloat display format so both places pick
+// by FormatAxisPresetFloat below and by the §1 panel's InputFloat display format so both places pick
 // precision the same way: a fixed digit count anywhere renders the tuned values a user types
 // correctly (0.3 stays "0.3") but collapses a clamp target that happens to need one more digit —
 // nextafter(10, 0) needs 7 ("9.999999"), nextafter(15, +inf) needs 8 ("15.000001") — and a value
 // that reads as the boundary itself contradicts the "must stay less/greater than N" text next to
 // it. Escalating only when the shorter form is lossy keeps the common case short everywhere.
-int RoundTripPrecisionForAxisPresetStd(float value);
+int RoundTripPrecisionForAxisPresetFloat(float value);
 
-// Display form of a std value, via RoundTripPrecisionForAxisPresetStd. Shared so the panel, the
-// modal gesture and the load-time notice print "0.3" and "9.99999" the same way; std::to_string
-// would render both as a run of trailing zeros or digits that reads like precision the value does
-// not carry.
-std::string FormatAxisPresetStd(float value);
+// Display form of a preset numeric face (spread or mean), via RoundTripPrecisionForAxisPresetFloat. Shared so the
+// panel, the modal gesture and the load-time notice print "0.3" and "9.99999" the same way; std::to_string would render
+// both as a run of trailing zeros or digits that reads like precision the value does not carry.
+std::string FormatAxisPresetFloat(float value);
 
 // Drop every loaded preset override. MakeNewDocumentState() no longer needs this itself (it
 // replaces the whole override set with one unconditional assignment on every call — see its
@@ -572,7 +571,7 @@ inline bool operator!=(const WedgeMillerTriple& a, const WedgeMillerTriple& b) {
 
 // The wedge half of an override DOCUMENT, with no IO: read / write / erase presets.wedge.
 //
-// The read is RAW, in the same sense ReadAxisPresetZenithStdFromDoc is raw and for a sharper
+// The read is RAW, in the same sense ReadAxisPresetStdFromDoc is raw and for a sharper
 // reason: it validates JSON SHAPE (an array of objects with three integer fields) and nothing else.
 // It does NOT ask whether a triple converts, and it does NOT call NoteUserDefaultsDowngrade. The
 // defaults panel calls it every frame it paints the list, and a notice channel driven from a render
@@ -584,7 +583,7 @@ inline bool operator!=(const WedgeMillerTriple& a, const WedgeMillerTriple& b) {
 // that matters: presets.axis, the app preferences and the GuiState half of the document survive by
 // construction. An empty list ERASES the key instead of writing `[]`, so a file that has been
 // cleared does not keep a `"presets": {"wedge": []}` skeleton — the same pruning
-// EraseAxisPresetZenithStdFromDoc does for its parents.
+// EraseAxisPresetStdFromDoc does for its parents.
 std::vector<WedgeMillerTriple> ReadWedgePresetsFromDoc(const nlohmann::json& doc);
 void WriteWedgePresetsToDoc(nlohmann::json& doc, const std::vector<WedgeMillerTriple>& presets);
 void EraseWedgePresetsFromDoc(nlohmann::json& doc);
@@ -596,7 +595,7 @@ const std::vector<WedgeMillerTriple>& GetUserWedgePresets();
 // Point the cache at a new list without touching any file. Whole-list replacement, never a partial
 // edit — for a caller that has ALREADY committed the document (the defaults panel writes its whole
 // working copy in one go, so by the time it calls this the list is on disk). The same "disk first,
-// then memory" contract AdoptAxisPresetZenithStdOverrideInMemory states, and for the same reason:
+// then memory" contract AdoptAxisPresetFacesInMemory states, and for the same reason:
 // memory that leads disk is how "what this session resolves" and "what the next launch reads" drift
 // apart.
 void AdoptWedgePresetOverridesInMemory(std::vector<WedgeMillerTriple> presets);
@@ -688,7 +687,7 @@ void NoteUserDefaultsDowngrade(std::string notice);
 // a typo in it must not cost the user their document defaults, nor vice versa.
 std::optional<bool> ReadUseGpuBackendFromDoc(const nlohmann::json& doc);
 void WriteUseGpuBackendToDoc(nlohmann::json& doc, bool value);
-// Prunes the parents it empties, like EraseAxisPresetZenithStdFromDoc, so a file opened by hand
+// Prunes the parents it empties, like EraseAxisPresetOverridesFromDoc, so a file opened by hand
 // does not accumulate an empty `"app": {}` skeleton.
 //
 // No production caller today — the panel writes both states explicitly rather than erasing, so

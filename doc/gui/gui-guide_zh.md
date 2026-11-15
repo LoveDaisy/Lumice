@@ -76,9 +76,11 @@ GUI 需要 display server 和支持 OpenGL 3.2 Core Profile 的 GPU。
   使用（`user_defaults.json` 里的 `app.ui_scale_multiplier`），试过但没保存的值会一直生效到程序退出——
   控件旁的 `(this window: N%)` 标注显示的就是当前窗口实际在用的值。
 
-  列出的每一项设置都可以就地编辑：当前配置用不到的字段（另一色调下的地面色、无图时的背景变换、
+  几乎所有列出的设置都可就地编辑：当前配置用不到的字段（另一色调下的地面色、无图时的背景变换、
   Infinite rays 开启时的 `Rays(M)`、Globe 下的 `Roll`）保持可编辑，悬停说明取值被保留、待其生效
-  条件满足时采用。`Presets` 区可调每个可存储预设（Column / Plate / Parry / Lowitz 与 Random；旧
+  条件满足时采用。两类行有意保持只读并在悬停说明原因：`renderer.ray_color`（GUI 构建始终使用
+  材质自身光谱色，该值由 CLI 或 config JSON 设置），以及全屏镜头下的四个视角角（帧循环会在任何
+  保存生效前把它们归零）。`Presets` 区可调每个可存储预设（Column / Plate / Parry / Lowitz 与 Random；旧
   文件缺 Random 覆盖时回退其内置定义）每根轴的每个面——分布类型、均值、离散度；每条已存 wedge
   预设的 Miller 指数可就地编辑（角度随之重算）。
 - **⚠ Revert**：位于顶栏右端、右面板折叠按钮左侧。仅当模拟结束后又改了参数（状态 `Modified`）时出现；用于把配置还原到产生上次结果时的状态。隐藏时它的位置仍被保留，所以它出现时栏上其他按钮都不会移动。

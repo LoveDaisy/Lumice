@@ -426,43 +426,41 @@ AxisPresetOverrides ParseAxisPresetOverrides(const nlohmann::json& root) {
       continue;
     }
 
+    // One judgement for both numeric faces: the four outcomes a stored float can be in (absent is
+    // silence, not degradation; a non-number and a non-finite each refuse with one counted notice;
+    // anything else stores verbatim). Spelled once, so the mean and std faces cannot drift into
+    // two wordings of one rule — this replaces the line-twin blocks the faces used to carry.
+    const auto parse_numeric_face = [&](const std::string& key) -> std::optional<float> {
+      const auto it = node.find(key);
+      if (it == node.end()) {
+        return std::nullopt;
+      }
+      if (!it->is_number()) {
+        ++g_downgrade_count;
+        GUI_LOG_WARNING("[GUI] User defaults: presets.axis.{}.{} is not a number; ignoring it",
+                        entry.override_json_name, key);
+        return std::nullopt;
+      }
+      const float value = it->get<float>();
+      if (!std::isfinite(value)) {
+        ++g_downgrade_count;
+        GUI_LOG_WARNING("[GUI] User defaults: presets.axis.{}.{} is not finite; ignoring it", entry.override_json_name,
+                        key);
+        return std::nullopt;
+      }
+      return value;
+    };
+
     AxisPresetOverride slot{};
     for (int axis_index = 0; axis_index < 3; ++axis_index) {
       const AxisSlot axis = static_cast<AxisSlot>(axis_index);
       const std::string prefix = AxisSlotJsonPrefix(axis);
 
-      const std::string mean_key = prefix + "_mean";
-      const auto mean_it = node.find(mean_key);
-      if (mean_it != node.end()) {
-        float value = 0.0f;
-        if (!mean_it->is_number()) {
-          ++g_downgrade_count;
-          GUI_LOG_WARNING("[GUI] User defaults: presets.axis.{}.{} is not a number; ignoring it",
-                          entry.override_json_name, mean_key);
-        } else if (!std::isfinite(value = mean_it->get<float>())) {
-          ++g_downgrade_count;
-          GUI_LOG_WARNING("[GUI] User defaults: presets.axis.{}.{} is not finite; ignoring it",
-                          entry.override_json_name, mean_key);
-        } else {
-          slot.axes[axis_index].mean = value;
-        }
+      if (const auto mean = parse_numeric_face(prefix + "_mean")) {
+        slot.axes[axis_index].mean = *mean;
       }
-
-      const std::string std_key = prefix + "_std";
-      const auto std_it = node.find(std_key);
-      if (std_it != node.end()) {
-        float value = 0.0f;
-        if (!std_it->is_number()) {
-          ++g_downgrade_count;
-          GUI_LOG_WARNING("[GUI] User defaults: presets.axis.{}.{} is not a number; ignoring it",
-                          entry.override_json_name, std_key);
-        } else if (!std::isfinite(value = std_it->get<float>())) {
-          ++g_downgrade_count;
-          GUI_LOG_WARNING("[GUI] User defaults: presets.axis.{}.{} is not finite; ignoring it",
-                          entry.override_json_name, std_key);
-        } else {
-          slot.axes[axis_index].std = value;
-        }
+      if (const auto spread = parse_numeric_face(prefix + "_std")) {
+        slot.axes[axis_index].std = *spread;
       }
 
       const std::string type_key = prefix + "_type";
@@ -565,7 +563,7 @@ std::vector<WedgeMillerTriple> ParseWedgePresetOverrides(const nlohmann::json& r
   return result;
 }
 
-int RoundTripPrecisionForAxisPresetStd(float value) {
+int RoundTripPrecisionForAxisPresetFloat(float value) {
   char buffer[40];
   for (int precision = 6; precision < 9; ++precision) {
     std::snprintf(buffer, sizeof(buffer), "%.*g", precision, static_cast<double>(value));
@@ -576,22 +574,23 @@ int RoundTripPrecisionForAxisPresetStd(float value) {
   return 9;
 }
 
-std::string FormatAxisPresetStd(float value) {
+std::string FormatAxisPresetFloat(float value) {
   // Shortest form that reads back as the same float, not a fixed precision. A fixed %.6g renders
   // the tuned values a user types correctly (0.3 stays "0.3") but collapses the clamp target —
   // nextafter(10, 0) is 9.99999905, which %.6g rounds to "10" and turns the notice into a
   // contradiction: "10 was stored instead. Allowed: less than 10." Escalating only when the short
   // form is lossy keeps the common case short AND the boundary case honest.
   char buffer[40];
-  std::snprintf(buffer, sizeof(buffer), "%.*g", RoundTripPrecisionForAxisPresetStd(value), static_cast<double>(value));
+  std::snprintf(buffer, sizeof(buffer), "%.*g", RoundTripPrecisionForAxisPresetFloat(value),
+                static_cast<double>(value));
   return buffer;
 }
 
 std::string DescribeAxisPresetZenithStdDomain(AxisPreset preset) {
   if (preset == AxisPreset::kLowitz) {
-    return "greater than " + FormatAxisPresetStd(kLowitzZenithStdLowerBound);
+    return "greater than " + FormatAxisPresetFloat(kLowitzZenithStdLowerBound);
   }
-  return "greater than 0 and less than " + FormatAxisPresetStd(kColumnPlateParryZenithStdUpperBound);
+  return "greater than 0 and less than " + FormatAxisPresetFloat(kColumnPlateParryZenithStdUpperBound);
 }
 
 std::string DescribeAxisPresetZenithTypeDomain(AxisPreset preset) {
@@ -622,9 +621,9 @@ std::string DescribeAxisPresetDomain(AxisPreset preset) {
   }
   const AxisPresetEntry& entry = AxisPresetEntryFor(preset);
   std::string out = "zenith mean within ";
-  out += FormatAxisPresetStd(axis_preset_detail::kEpsilon);
+  out += FormatAxisPresetFloat(axis_preset_detail::kEpsilon);
   out += " of ";
-  out += FormatAxisPresetStd(entry.zenith.mean);
+  out += FormatAxisPresetFloat(entry.zenith.mean);
   out += " with spread ";
   out += DescribeAxisPresetZenithStdDomain(preset);
   out += "; azimuth a full-circle uniform; roll ";
@@ -714,7 +713,7 @@ namespace {
 
 // The write-side node accessor: same lookup as FindAxisPresetNode, but the callers start from a
 // document this process controls (the panel's working copy), so operator[] normalization is fine
-// on the write path — the same stance WriteAxisPresetZenithStdToDoc already took.
+// on the write path — the same stance WriteAxisPresetStdToDoc already took.
 nlohmann::json& WriteAxisPresetNode(nlohmann::json& doc, AxisPreset preset) {
   if (!doc.is_object()) {
     doc = nlohmann::json::object();
@@ -757,7 +756,7 @@ std::vector<WedgeMillerTriple> ReadWedgePresetsFromDoc(const nlohmann::json& doc
   if (!doc.is_object()) {
     return result;
   }
-  // find() rather than the operator[] chain, for the same reason as ReadAxisPresetZenithStdFromDoc:
+  // find() rather than the operator[] chain, for the same reason as ReadAxisPresetStdFromDoc:
   // the document is user-editable, and operator[] on a non-object throws a type_error that would
   // take the caller down over a hand-edit.
   const auto presets = doc.find("presets");
@@ -841,7 +840,7 @@ const std::vector<WedgeMillerTriple>& GetUserWedgePresets() {
 
 void AdoptWedgePresetOverridesInMemory(std::vector<WedgeMillerTriple> presets) {
   // Whole-list assignment, never "clear then refill". Same discipline as
-  // AdoptAxisPresetZenithStdOverrideInMemory, which this scrum's predecessor spent three
+  // AdoptAxisPresetFacesInMemory, which this scrum's predecessor spent three
   // code-review rounds arriving at.
   g_user_wedge_presets = std::move(presets);
 }
@@ -915,26 +914,15 @@ void EraseAxisPresetTypeFromDoc(nlohmann::json& doc, AxisPreset preset, AxisSlot
 }
 
 void EraseAxisPresetOverridesFromDoc(nlohmann::json& doc, AxisPreset preset) {
-  const AxisPresetEntry& entry = AxisPresetEntryFor(preset);
-  if (entry.override_json_name == nullptr) {
-    return;
-  }
-  if (!doc.is_object()) {
-    doc = nlohmann::json::object();
-  }
-  const auto presets_it = doc.find("presets");
-  if (presets_it == doc.end() || !presets_it->is_object()) {
-    return;
-  }
-  const auto axis_it = presets_it->find("axis");
-  if (axis_it != presets_it->end() && axis_it->is_object()) {
-    axis_it->erase(entry.override_json_name);
-    if (axis_it->empty()) {
-      presets_it->erase("axis");
-    }
-  }
-  if (presets_it->empty()) {
-    doc.erase("presets");
+  // Spelled as the three per-key erasers rather than a second walk of the prune: the parent
+  // pruning invariant (node empty -> `axis` empty -> `presets` empty, each pruned when it empties)
+  // has one owner in EraseAxisPresetKeyFromDoc, and a whole-node walker beside it would be the
+  // parallel implementation that drifts the day the rule moves. Three no-op-safe calls compose to
+  // exactly "the node and its emptied parents are gone".
+  for (const AxisSlot slot : { AxisSlot::kZenith, AxisSlot::kAzimuth, AxisSlot::kRoll }) {
+    EraseAxisPresetStdFromDoc(doc, preset, slot);
+    EraseAxisPresetMeanFromDoc(doc, preset, slot);
+    EraseAxisPresetTypeFromDoc(doc, preset, slot);
   }
 }
 
@@ -954,7 +942,7 @@ std::optional<bool> ReadUseGpuBackendFromDoc(const nlohmann::json& doc) {
   if (!doc.is_object()) {
     return std::nullopt;
   }
-  // find() rather than the operator[] chain, for the same reason as ReadAxisPresetZenithStdFromDoc:
+  // find() rather than the operator[] chain, for the same reason as ReadAxisPresetStdFromDoc:
   // the document is user-editable and operator[] on a non-object throws.
   const auto app = doc.find(kAppRootKey);
   if (app == doc.end() || !app->is_object()) {
