@@ -129,7 +129,7 @@ json ReadOverlayDoc(const std::filesystem::path& dir) {
 //
 // The cases below use this to STAGE a precondition rather than to assert on it — the thing under
 // test is what happens next (a reload, a revert, a classification). It deliberately goes through
-// WriteAxisPresetZenithStdToDoc instead of spelling the JSON path by hand: a test that hardcoded
+// WriteAxisPresetStdToDoc instead of spelling the JSON path by hand: a test that hardcoded
 // `doc["presets"]["axis"][...]` would keep passing after the document shape moved, staging a file
 // the production reader no longer looks at.
 //
@@ -137,7 +137,7 @@ json ReadOverlayDoc(const std::filesystem::path& dir) {
 // case that meant to stage 0.3 quietly stage something else if a domain ever moved.
 bool SeedPresetOverrideOnDisk(const std::filesystem::path& dir, gui::AxisPreset preset, float stored_value) {
   json doc = ReadOverlayDoc(dir);
-  gui::WriteAxisPresetZenithStdToDoc(doc, preset, stored_value);
+  gui::WriteAxisPresetStdToDoc(doc, preset, gui::AxisSlot::kZenith, stored_value);
   return gui::WriteUserDefaultsFile(dir, doc);
 }
 
@@ -150,7 +150,7 @@ bool SeedPresetOverrideOnDisk(const std::filesystem::path& dir, gui::AxisPreset 
 // one: the disk-side revert wrapper this file used to call was a second write path that the panel
 // itself never went through, and the live path composes these three primitives at its own call
 // site. The assertions below are about the DOCUMENT shape the erase leaves behind, which is
-// EraseAxisPresetZenithStdFromDoc's own contract and the half a wholesale rewrite would break.
+// EraseAxisPresetStdFromDoc's own contract and the half a wholesale rewrite would break.
 //
 // ⛔ Do NOT reuse this helper to assert the disk-first ORDER itself. It reproduces that order to
 // build a starting state, so an assertion about ordering made through it would be checking this
@@ -160,12 +160,37 @@ bool SeedPresetOverrideOnDisk(const std::filesystem::path& dir, gui::AxisPreset 
 // it here is exactly the parallel-implementation shape this task deleted.
 bool RestoreOnePresetOnDisk(const std::filesystem::path& dir, gui::AxisPreset preset) {
   json doc = ReadOverlayDoc(dir);
-  gui::EraseAxisPresetZenithStdFromDoc(doc, preset);
+  gui::EraseAxisPresetStdFromDoc(doc, preset, gui::AxisSlot::kZenith);
   if (!gui::WriteUserDefaultsFile(dir, doc)) {
     return false;
   }
-  gui::AdoptAxisPresetZenithStdOverrideInMemory(preset, std::nullopt);
+  // Wholesale slot adopt, rebuilt FROM the document — the store's own whole-slot reader, which
+  // is the same shape the panel's CommitCopy uses, so this helper cannot drift from the live
+  // memory-follows-disk path it is staging. The azimuth/roll faces are cleared after: this
+  // helper's staged documents hold only zenith faces by construction, and a cache slot pointing
+  // at faces no staged file ever held would leak a neighbouring case's state into the claim.
+  gui::AxisPresetOverride faces = gui::ReadAxisPresetOverridesFromDoc(doc, preset);
+  for (int axis = 1; axis < gui::kAxisSlotCount; ++axis) {
+    faces.axes[axis] = gui::AxisDistOverride{};
+  }
+  gui::AdoptAxisPresetFacesInMemory(preset, faces);
   return true;
+}
+
+// Stage ONE zenith face into the process-wide cache through the store's only adopt shape: a
+// wholesale slot replacement holding exactly that face. The per-face adopt wrappers the store
+// used to carry are gone with the zenith-only store; cases that need two faces staged build the
+// AxisPresetOverride themselves.
+void AdoptZenithStdFace(gui::AxisPreset preset, std::optional<float> value) {
+  gui::AxisPresetOverride faces{};
+  faces.axes[0].std = value;
+  gui::AdoptAxisPresetFacesInMemory(preset, faces);
+}
+
+void AdoptZenithTypeFace(gui::AxisPreset preset, std::optional<gui::AxisDistType> value) {
+  gui::AxisPresetOverride faces{};
+  faces.axes[0].type = value;
+  gui::AdoptAxisPresetFacesInMemory(preset, faces);
 }
 
 }  // namespace
@@ -315,11 +340,11 @@ TEST_F(UserDefaults, ac3_sparse_overlay_round_trip) {
   EXPECT_EQ(state.renderer.fov, factory.renderer.fov);
 
   // Preset-library half, read through its own query interface.
-  const auto column = gui::GetUserAxisPresetZenithStdOverride(gui::AxisPreset::kColumn);
+  const auto column = gui::GetUserAxisPresetStdOverride(gui::AxisPreset::kColumn, gui::AxisSlot::kZenith);
   ASSERT_TRUE(column.has_value());
   EXPECT_EQ(*column, 0.3f);
   // A preset with no entry stays "no override" rather than defaulting to something.
-  EXPECT_TRUE(!gui::GetUserAxisPresetZenithStdOverride(gui::AxisPreset::kLowitz).has_value());
+  EXPECT_TRUE(!gui::GetUserAxisPresetStdOverride(gui::AxisPreset::kLowitz, gui::AxisSlot::kZenith).has_value());
 
   // A well-formed file is not a degradation, and a stored value is not announced.
   EXPECT_EQ(gui::TakeUserDefaultsDowngradeCount(), 0);
@@ -903,7 +928,8 @@ TEST_F(UserDefaults, ABrokenOverrideFileCostsTheDefaultsAndSaysSoWithoutBreaking
     EXPECT_EQ(state.layers.size(), static_cast<size_t>(1)) << c.name;
     // Nothing here leaves a preset override behind, and a REJECTED value is a drop rather than a
     // clamp: it is counted, but it must not also arrive as a "we adjusted this for you" notice.
-    EXPECT_TRUE(!gui::GetUserAxisPresetZenithStdOverride(gui::AxisPreset::kColumn).has_value()) << c.name;
+    EXPECT_TRUE(!gui::GetUserAxisPresetStdOverride(gui::AxisPreset::kColumn, gui::AxisSlot::kZenith).has_value())
+        << c.name;
     EXPECT_TRUE(gui::TakeUserDefaultsDowngradeNotices().empty()) << c.name;
   }
 }
@@ -953,7 +979,7 @@ TEST_F(UserDefaults, AnOutOfDomainPresetValueIsStoredVerbatimAndUnannounced) {
     doc["presets"]["axis"][c.preset_key]["zenith_std"] = c.stored;
     gui::MakeNewDocumentState(DirWith("verbatim", doc));
 
-    const auto stored = gui::GetUserAxisPresetZenithStdOverride(c.preset);
+    const auto stored = gui::GetUserAxisPresetStdOverride(c.preset, gui::AxisSlot::kZenith);
     if (!stored.has_value()) {
       ADD_FAILURE() << c.name << ": no stored override for this preset";
       continue;  // no value to compare for this row; the rest still get checked
@@ -995,7 +1021,7 @@ TEST_F(UserDefaults, d8_preset_override_does_not_leak_across_calls) {
     doc["presets"]["axis"]["column"]["zenith_std"] = 3.0f;
     EXPECT_TRUE(gui::WriteUserDefaultsFile(dir, doc));
     gui::MakeNewDocumentState(dir);
-    const auto first = gui::GetUserAxisPresetZenithStdOverride(gui::AxisPreset::kColumn);
+    const auto first = gui::GetUserAxisPresetStdOverride(gui::AxisPreset::kColumn, gui::AxisSlot::kZenith);
     if (!first.has_value()) {
       ADD_FAILURE() << c.name << ": no stored override after the first call";
       continue;  // no value to compare for this row; the rest still get checked
@@ -1022,7 +1048,8 @@ TEST_F(UserDefaults, d8_preset_override_does_not_leak_across_calls) {
       EXPECT_TRUE(gui::WriteUserDefaultsFile(dir, json::object()));
       gui::MakeNewDocumentState(dir);
     }
-    EXPECT_TRUE(!gui::GetUserAxisPresetZenithStdOverride(gui::AxisPreset::kColumn).has_value()) << c.name;
+    EXPECT_TRUE(!gui::GetUserAxisPresetStdOverride(gui::AxisPreset::kColumn, gui::AxisSlot::kZenith).has_value())
+        << c.name;
   }
 }
 
@@ -1053,7 +1080,7 @@ TEST_F(UserDefaults, preset_identity_survives_retuning) {
     // Staged straight into the in-memory cache: every tuned_std here sits inside its own
     // domain, so this is the same state a committed edit would leave behind, minus the IO the
     // claim under test does not involve.
-    gui::AdoptAxisPresetZenithStdOverrideInMemory(c.preset, c.tuned_std);
+    AdoptZenithStdFace(c.preset, c.tuned_std);
 
     // Exactly what the modal's preset button assembles into its edit buffer.
     const gui::AxisDist zenith = gui::EffectiveAxisPresetZenith(entry);
@@ -1086,7 +1113,8 @@ TEST_F(UserDefaults, preset_write_stores_out_of_domain_values_verbatim) {
   EXPECT_TRUE(gui::WriteUserDefaultsFile(dir, doc));
   gui::MakeNewDocumentState(dir);
 
-  EXPECT_EQ(gui::GetUserAxisPresetZenithStdOverride(gui::AxisPreset::kColumn), std::optional<float>(25.0f))
+  EXPECT_EQ(gui::GetUserAxisPresetStdOverride(gui::AxisPreset::kColumn, gui::AxisSlot::kZenith),
+            std::optional<float>(25.0f))
       << "the store bent the value back into the classifier's domain";
   EXPECT_EQ(gui::TakeUserDefaultsDowngradeCount(), 0) << "an ordinary retune must not read as a degradation";
 
@@ -1118,7 +1146,7 @@ TEST_F(UserDefaults, preset_override_round_trips_across_a_reload_and_reverting_o
   seed["bg_alpha"] = 0.42f;
   EXPECT_TRUE(gui::WriteUserDefaultsFile(dir, seed));
 
-  // Two independent read-modify-write cycles through WriteAxisPresetZenithStdToDoc, the owner
+  // Two independent read-modify-write cycles through WriteAxisPresetStdToDoc, the owner
   // of the document shape the panel's Save also goes through.
   EXPECT_TRUE(SeedPresetOverrideOnDisk(dir, gui::AxisPreset::kColumn, 0.3f));
   EXPECT_TRUE(SeedPresetOverrideOnDisk(dir, gui::AxisPreset::kPlate, 0.5f));
@@ -1144,7 +1172,7 @@ TEST_F(UserDefaults, preset_override_round_trips_across_a_reload_and_reverting_o
   // memory-side assertion after the revert is about, so that one is about a value that was really
   // there rather than one which never arrived.
   gui::MakeNewDocumentState(dir);
-  const auto loaded = gui::GetUserAxisPresetZenithStdOverride(gui::AxisPreset::kColumn);
+  const auto loaded = gui::GetUserAxisPresetStdOverride(gui::AxisPreset::kColumn, gui::AxisSlot::kZenith);
   ASSERT_TRUE(loaded.has_value());
   EXPECT_EQ(*loaded, 0.3f);
   // ...and that is what pressing the Column button would write into the crystal.
@@ -1153,9 +1181,9 @@ TEST_F(UserDefaults, preset_override_round_trips_across_a_reload_and_reverting_o
   // Drop the in-memory state the way a restart would, then re-resolve: the value has to come back
   // off the disk rather than out of the cache the write left warm.
   gui::ResetUserAxisPresetOverrides();
-  EXPECT_TRUE(!gui::GetUserAxisPresetZenithStdOverride(gui::AxisPreset::kColumn).has_value());
+  EXPECT_TRUE(!gui::GetUserAxisPresetStdOverride(gui::AxisPreset::kColumn, gui::AxisSlot::kZenith).has_value());
   gui::MakeNewDocumentState(dir);
-  const auto reloaded = gui::GetUserAxisPresetZenithStdOverride(gui::AxisPreset::kColumn);
+  const auto reloaded = gui::GetUserAxisPresetStdOverride(gui::AxisPreset::kColumn, gui::AxisSlot::kZenith);
   ASSERT_TRUE(reloaded.has_value());
   EXPECT_EQ(*reloaded, 0.3f);
 
@@ -1163,7 +1191,7 @@ TEST_F(UserDefaults, preset_override_round_trips_across_a_reload_and_reverting_o
 
   // Factory again, field by field against the table itself.
   const auto& column = gui::AxisPresetEntryFor(gui::AxisPreset::kColumn);
-  EXPECT_TRUE(!gui::GetUserAxisPresetZenithStdOverride(gui::AxisPreset::kColumn).has_value());
+  EXPECT_TRUE(!gui::GetUserAxisPresetStdOverride(gui::AxisPreset::kColumn, gui::AxisSlot::kZenith).has_value());
   const gui::AxisDist restored = gui::EffectiveAxisPresetZenith(column);
   EXPECT_EQ(static_cast<int>(restored.type), static_cast<int>(column.zenith.type));
   EXPECT_EQ(restored.mean, column.zenith.mean);
@@ -1185,27 +1213,29 @@ TEST_F(UserDefaults, preset_override_round_trips_across_a_reload_and_reverting_o
   EXPECT_EQ(pruned.value("bg_alpha", 0.0f), 0.42f);
 }
 
-// AC7 — Random has no adjustable face, so nothing about it may reach the file. Asserted at the
-// STORE, not only at the UI: the UI not drawing an input is the first defense, and a defense
-// that exists only in a widget is one a future refactor removes without noticing.
-TEST_F(UserDefaults, preset_without_adjustable_face_is_never_written) {
-  const auto dir = FreshOverlayDir("preset_random");
+// Custom is the classifier's "none of the above", not a built-in identity, so nothing about it
+// may reach the file. Asserted at the STORE, not only at the UI: the UI not drawing an input is
+// the first defense, and a defense that exists only in a widget is one a future refactor removes
+// without noticing. (Random used to share this no-op status; since the defaults-panel unlock task
+// it stores its three axes like any other storable preset — see
+// preset_random_is_storable_and_old_files_resolve_to_factory.)
+TEST_F(UserDefaults, preset_custom_stores_nothing) {
+  const auto dir = FreshOverlayDir("preset_custom");
   ScopedUserConfigSource guard(gui::UserConfigSource::kExplicitDir, dir);
 
   json working = json::object();
-  for (const auto preset : { gui::AxisPreset::kRandom, gui::AxisPreset::kCustom }) {
-    EXPECT_TRUE(!gui::GetUserAxisPresetZenithStdOverride(preset).has_value());
-    // Both document mutators are no-ops for these presets, asserted in both directions: a write
-    // must not invent a key, and an erase must not leave a `presets`/`axis` skeleton behind. They
-    // are the primitives the panel's §1 controls call, so this is the store-level defense in the
-    // place the panel would actually hit it.
-    // One assertion per direction, not one after both: checking only the net effect of write+erase
-    // would still pass if a future write DID invent a key, so long as the erase removed it again.
-    gui::WriteAxisPresetZenithStdToDoc(working, preset, 3.0f);
-    EXPECT_TRUE(working.empty());  // a write must not invent a key
-    gui::EraseAxisPresetZenithStdFromDoc(working, preset);
-    EXPECT_TRUE(working.empty());  // an erase must not leave a skeleton behind
-  }
+  const auto preset = gui::AxisPreset::kCustom;
+  EXPECT_TRUE(!gui::GetUserAxisPresetStdOverride(preset, gui::AxisSlot::kZenith).has_value());
+  // Both document mutators are no-ops for it, asserted in both directions: a write must not invent
+  // a key, and an erase must not leave a `presets`/`axis` skeleton behind. They are the primitives
+  // the panel's §1 controls call, so this is the store-level defense in the place the panel would
+  // actually hit it.
+  // One assertion per direction, not one after both: checking only the net effect of write+erase
+  // would still pass if a future write DID invent a key, so long as the erase removed it again.
+  gui::WriteAxisPresetStdToDoc(working, preset, gui::AxisSlot::kZenith, 3.0f);
+  EXPECT_TRUE(working.empty());  // a write must not invent a key
+  gui::EraseAxisPresetStdFromDoc(working, preset, gui::AxisSlot::kZenith);
+  EXPECT_TRUE(working.empty());  // an erase must not leave a skeleton behind
 
   // Nothing reached the file either.
   EXPECT_TRUE(gui::WriteUserDefaultsFile(dir, working));
@@ -1214,16 +1244,15 @@ TEST_F(UserDefaults, preset_without_adjustable_face_is_never_written) {
 
   // And the table itself agrees about which presets those are, so this test cannot pass by
   // testing a set that has quietly stopped matching the one the UI renders.
-  int adjustable = 0;
+  int storable = 0;
   for (const auto& entry : gui::kAxisPresets) {
-    if (entry.has_adjustable_zenith_std) {
-      ++adjustable;
-      EXPECT_TRUE(entry.override_json_name != nullptr);
+    if (entry.override_json_name != nullptr) {
+      ++storable;
     } else {
-      EXPECT_TRUE(entry.override_json_name == nullptr);
+      EXPECT_EQ(static_cast<int>(entry.id), static_cast<int>(gui::AxisPreset::kCustom));
     }
   }
-  EXPECT_EQ(adjustable, 4);  // Column / Plate / Parry / Lowitz
+  EXPECT_EQ(storable, 5);  // Column / Plate / Parry / Lowitz / Random
 }
 
 // ================================================================================================
@@ -1235,12 +1264,12 @@ TEST_F(UserDefaults, preset_without_adjustable_face_is_never_written) {
 // reads back as the enumerator, and the erase takes only its own key — the std beside it stays.
 TEST_F(UserDefaults, preset_zenith_type_override_write_and_read) {
   for (const auto& entry : gui::kAxisPresets) {
-    if (!entry.has_adjustable_zenith_std) {
+    if (entry.override_json_name == nullptr) {
       continue;
     }
     json doc = json::object();
-    gui::WriteAxisPresetZenithStdToDoc(doc, entry.id, 0.3f);
-    gui::WriteAxisPresetZenithTypeToDoc(doc, entry.id, gui::AxisDistType::kLaplacian);
+    gui::WriteAxisPresetStdToDoc(doc, entry.id, gui::AxisSlot::kZenith, 0.3f);
+    gui::WriteAxisPresetTypeToDoc(doc, entry.id, gui::AxisSlot::kZenith, gui::AxisDistType::kLaplacian);
 
     // What LANDED, through this file's raw readers: the spelling is the shared table's, which is
     // also what SerializeAxisDist writes into an .lmc — pinned as the literal so a re-spelling of
@@ -1249,7 +1278,7 @@ TEST_F(UserDefaults, preset_zenith_type_override_write_and_read) {
         << entry.label;
     EXPECT_EQ(ReadPresetStd(doc, entry.override_json_name), std::optional<float>(0.3f)) << entry.label;
 
-    const auto read = gui::ReadAxisPresetZenithTypeFromDoc(doc, entry.id);
+    const auto read = gui::ReadAxisPresetTypeFromDoc(doc, entry.id, gui::AxisSlot::kZenith);
     if (!read.has_value()) {
       ADD_FAILURE() << entry.label << ": the type that was just written does not read back";
       continue;
@@ -1258,20 +1287,20 @@ TEST_F(UserDefaults, preset_zenith_type_override_write_and_read) {
 
     // Erase is per key: the type goes, the std beside it does not, and the node survives because
     // it still has a key.
-    gui::EraseAxisPresetZenithTypeFromDoc(doc, entry.id);
-    EXPECT_TRUE(!gui::ReadAxisPresetZenithTypeFromDoc(doc, entry.id).has_value()) << entry.label;
+    gui::EraseAxisPresetTypeFromDoc(doc, entry.id, gui::AxisSlot::kZenith);
+    EXPECT_TRUE(!gui::ReadAxisPresetTypeFromDoc(doc, entry.id, gui::AxisSlot::kZenith).has_value()) << entry.label;
     EXPECT_EQ(ReadPresetStd(doc, entry.override_json_name), std::optional<float>(0.3f)) << entry.label;
     EXPECT_TRUE(doc.contains("presets")) << entry.label;
 
     // ...and the other way round: erasing the std leaves the type.
-    gui::WriteAxisPresetZenithTypeToDoc(doc, entry.id, gui::AxisDistType::kUniform);
-    gui::EraseAxisPresetZenithStdFromDoc(doc, entry.id);
+    gui::WriteAxisPresetTypeToDoc(doc, entry.id, gui::AxisSlot::kZenith, gui::AxisDistType::kUniform);
+    gui::EraseAxisPresetStdFromDoc(doc, entry.id, gui::AxisSlot::kZenith);
     EXPECT_TRUE(!ReadPresetStd(doc, entry.override_json_name).has_value()) << entry.label;
     EXPECT_EQ(ReadPresetTypeSpelling(doc, entry.override_json_name), std::optional<std::string>("uniform"))
         << entry.label;
 
     // Last key out prunes the node and its parents.
-    gui::EraseAxisPresetZenithTypeFromDoc(doc, entry.id);
+    gui::EraseAxisPresetTypeFromDoc(doc, entry.id, gui::AxisSlot::kZenith);
     EXPECT_TRUE(doc.empty()) << entry.label;
   }
 
@@ -1279,30 +1308,125 @@ TEST_F(UserDefaults, preset_zenith_type_override_write_and_read) {
   // is the validator's), while a spelling the shared table does not know reads as absent.
   json hand_edited = json::object();
   hand_edited["presets"]["axis"]["column"]["zenith_type"] = "zigzag";
-  const auto raw = gui::ReadAxisPresetZenithTypeFromDoc(hand_edited, gui::AxisPreset::kColumn);
+  const auto raw = gui::ReadAxisPresetTypeFromDoc(hand_edited, gui::AxisPreset::kColumn, gui::AxisSlot::kZenith);
   ASSERT_TRUE(raw.has_value());
   EXPECT_EQ(static_cast<int>(*raw), static_cast<int>(gui::AxisDistType::kZigzag));
   hand_edited["presets"]["axis"]["column"]["zenith_type"] = "Gauss";  // display name, not the JSON one
-  EXPECT_TRUE(!gui::ReadAxisPresetZenithTypeFromDoc(hand_edited, gui::AxisPreset::kColumn).has_value());
+  EXPECT_TRUE(
+      !gui::ReadAxisPresetTypeFromDoc(hand_edited, gui::AxisPreset::kColumn, gui::AxisSlot::kZenith).has_value());
   hand_edited["presets"]["axis"]["column"]["zenith_type"] = 3;  // not even a string
-  EXPECT_TRUE(!gui::ReadAxisPresetZenithTypeFromDoc(hand_edited, gui::AxisPreset::kColumn).has_value());
+  EXPECT_TRUE(
+      !gui::ReadAxisPresetTypeFromDoc(hand_edited, gui::AxisPreset::kColumn, gui::AxisSlot::kZenith).has_value());
 }
 
 // AC3 — the mechanical proof that a type override stays inside the classifier's legal domain:
 // every adjustable preset × every type its accepted set lists, pushed through the same cache and
 // the same resolution the modal's preset button uses, still classifies as itself. The factory std
 // is left in place so the claim is about the type alone.
+// The NON-zenith axis faces: the document primitives land per axis and per face, read back, and
+// each erase takes only its own key. The store's face family is one spelling for all three axes —
+// this is where a wrong-slot write (azimuth landing under zenith, the mis-wiring family the panel's
+// per-axis cells make reachable) shows up as a failed read-back rather than silently working.
+TEST_F(UserDefaults, preset_axis_faces_are_independent_per_axis) {
+  for (const auto& entry : gui::kAxisPresets) {
+    if (entry.override_json_name == nullptr) {
+      continue;
+    }
+    json doc = json::object();
+    gui::WriteAxisPresetMeanToDoc(doc, entry.id, gui::AxisSlot::kAzimuth, 45.0f);
+    gui::WriteAxisPresetStdToDoc(doc, entry.id, gui::AxisSlot::kRoll, 2.5f);
+    gui::WriteAxisPresetTypeToDoc(doc, entry.id, gui::AxisSlot::kRoll, gui::AxisDistType::kZigzag);
+
+    // What LANDED: the keys are the axis-prefixed ones, spelled per the document contract.
+    EXPECT_EQ(doc["presets"]["axis"][entry.override_json_name]["azimuth_mean"].get<float>(), 45.0f) << entry.label;
+    EXPECT_EQ(doc["presets"]["axis"][entry.override_json_name]["roll_std"].get<float>(), 2.5f) << entry.label;
+    EXPECT_EQ(doc["presets"]["axis"][entry.override_json_name]["roll_type"].get<std::string>(), "zigzag")
+        << entry.label;
+
+    // The reads answer per axis; the zenith faces of the same node are untouched.
+    EXPECT_EQ(gui::ReadAxisPresetMeanFromDoc(doc, entry.id, gui::AxisSlot::kAzimuth), std::optional<float>(45.0f));
+    EXPECT_EQ(gui::ReadAxisPresetStdFromDoc(doc, entry.id, gui::AxisSlot::kRoll), std::optional<float>(2.5f));
+    EXPECT_EQ(gui::ReadAxisPresetTypeFromDoc(doc, entry.id, gui::AxisSlot::kRoll),
+              std::optional<gui::AxisDistType>(gui::AxisDistType::kZigzag));
+    EXPECT_FALSE(gui::ReadAxisPresetMeanFromDoc(doc, entry.id, gui::AxisSlot::kRoll).has_value());
+    EXPECT_FALSE(gui::ReadAxisPresetStdFromDoc(doc, entry.id, gui::AxisSlot::kAzimuth).has_value());
+    EXPECT_FALSE(gui::ReadAxisPresetMeanFromDoc(doc, entry.id, gui::AxisSlot::kZenith).has_value());
+
+    // Each erase takes only its own key; the other axes' faces survive.
+    gui::EraseAxisPresetMeanFromDoc(doc, entry.id, gui::AxisSlot::kAzimuth);
+    EXPECT_FALSE(gui::ReadAxisPresetMeanFromDoc(doc, entry.id, gui::AxisSlot::kAzimuth).has_value());
+    EXPECT_EQ(gui::ReadAxisPresetStdFromDoc(doc, entry.id, gui::AxisSlot::kRoll), std::optional<float>(2.5f));
+  }
+}
+
+// Random stores its three uniform-360 axes like any other storable preset, and a file that predates
+// its key resolves to the factory definition — the old-format compatibility the panel's Random rows
+// rely on.
+TEST_F(UserDefaults, preset_random_is_storable_and_old_files_resolve_to_factory) {
+  const auto dir = FreshOverlayDir("preset_random_faces");
+  ScopedUserConfigSource guard(gui::UserConfigSource::kExplicitDir, dir);
+
+  // An OLD file: only Column's zenith std. Nothing for Random.
+  json seed;
+  seed["presets"]["axis"]["column"]["zenith_std"] = 0.3f;
+  EXPECT_TRUE(gui::WriteUserDefaultsFile(dir, seed));
+  gui::MakeNewDocumentState(dir);
+
+  const auto& random = gui::AxisPresetEntryFor(gui::AxisPreset::kRandom);
+  ASSERT_NE(random.override_json_name, nullptr) << "Random must carry an override key";
+  EXPECT_FALSE(gui::GetUserAxisPresetMeanOverride(gui::AxisPreset::kRandom, gui::AxisSlot::kZenith).has_value());
+  EXPECT_FALSE(gui::GetUserAxisPresetStdOverride(gui::AxisPreset::kRandom, gui::AxisSlot::kRoll).has_value());
+  const gui::AxisDist effective = gui::EffectiveAxisPresetDist(random, gui::AxisSlot::kZenith);
+  EXPECT_EQ(effective.mean, random.zenith.mean);
+  EXPECT_EQ(effective.std, random.zenith.std);
+
+  // Store Random faces through the production owners, reload, and the effective definition follows.
+  json doc = ReadOverlayDoc(dir);
+  gui::WriteAxisPresetMeanToDoc(doc, gui::AxisPreset::kRandom, gui::AxisSlot::kZenith, 30.0f);
+  gui::WriteAxisPresetStdToDoc(doc, gui::AxisPreset::kRandom, gui::AxisSlot::kRoll, 5.0f);
+  EXPECT_TRUE(gui::WriteUserDefaultsFile(dir, doc));
+  gui::MakeNewDocumentState(dir);
+  EXPECT_EQ(gui::EffectiveAxisPresetDist(random, gui::AxisSlot::kZenith).mean, 30.0f);
+  EXPECT_EQ(gui::EffectiveAxisPresetDist(random, gui::AxisSlot::kRoll).std, 5.0f);
+  // Column's staged std survived the reload beside Random's new keys.
+  EXPECT_EQ(gui::GetUserAxisPresetStdOverride(gui::AxisPreset::kColumn, gui::AxisSlot::kZenith),
+            std::optional<float>(0.3f));
+}
+
+// The chip's definition assembly resolves EVERY axis through the stored faces — the modal's chip
+// switch and Reset All build the loaded triple from these three calls, so a per-axis composition
+// miss here is a wrong distribution on the crystal.
+TEST_F(UserDefaults, effective_definition_resolves_every_axis_face) {
+  gui::AxisPresetOverride faces{};
+  faces.axes[0].std = 4.0f;                            // zenith std
+  faces.axes[1].mean = 120.0f;                         // azimuth mean
+  faces.axes[2].type = gui::AxisDistType::kLaplacian;  // roll type
+  gui::AdoptAxisPresetFacesInMemory(gui::AxisPreset::kColumn, faces);
+
+  const auto& column = gui::AxisPresetEntryFor(gui::AxisPreset::kColumn);
+  const gui::AxisDist zenith = gui::EffectiveAxisPresetDist(column, gui::AxisSlot::kZenith);
+  const gui::AxisDist azimuth = gui::EffectiveAxisPresetDist(column, gui::AxisSlot::kAzimuth);
+  const gui::AxisDist roll = gui::EffectiveAxisPresetDist(column, gui::AxisSlot::kRoll);
+  EXPECT_EQ(zenith.std, 4.0f);
+  EXPECT_EQ(zenith.mean, column.zenith.mean);  // unstored faces stay factory
+  EXPECT_EQ(azimuth.mean, 120.0f);
+  EXPECT_EQ(azimuth.std, column.azimuth.std);
+  EXPECT_EQ(static_cast<int>(roll.type), static_cast<int>(gui::AxisDistType::kLaplacian));
+  EXPECT_EQ(roll.mean, column.roll.mean);
+  gui::AdoptAxisPresetFacesInMemory(gui::AxisPreset::kColumn, gui::AxisPresetOverride{});
+}
+
 TEST_F(UserDefaults, preset_identity_survives_type_retuning) {
   const auto dir = FreshOverlayDir("preset_type_identity");
   ScopedUserConfigSource guard(gui::UserConfigSource::kExplicitDir, dir);
 
   int combinations = 0;
   for (const auto& entry : gui::kAxisPresets) {
-    if (!entry.has_adjustable_zenith_std) {
+    if (entry.override_json_name == nullptr) {
       continue;
     }
     for (const auto& choice : gui::AcceptedZenithTypesForPreset(entry.id)) {
-      gui::AdoptAxisPresetZenithTypeOverrideInMemory(entry.id, choice.type);
+      AdoptZenithTypeFace(entry.id, choice.type);
       const gui::AxisDist zenith = gui::EffectiveAxisPresetZenith(entry);
       EXPECT_EQ(static_cast<int>(zenith.type), static_cast<int>(choice.type)) << entry.label << " / " << choice.label;
       EXPECT_EQ(zenith.mean, entry.zenith.mean);
@@ -1312,9 +1436,10 @@ TEST_F(UserDefaults, preset_identity_survives_type_retuning) {
           << entry.label << " / " << choice.label;
       ++combinations;
     }
-    gui::AdoptAxisPresetZenithTypeOverrideInMemory(entry.id, std::nullopt);
+    gui::AdoptAxisPresetFacesInMemory(entry.id, gui::AxisPresetOverride{});
   }
-  EXPECT_EQ(combinations, 4 + 4 + 4 + 5);  // Column / Plate / Parry gauss-like; Lowitz + zigzag
+  EXPECT_EQ(combinations,
+            4 + 4 + 4 + 5);  // Column / Plate / Parry gauss-like; Lowitz + zigzag (Random's accepted set is empty)
 }
 
 // Since the axis label went sticky, a stored type is adopted whatever the classifier would keep
@@ -1330,18 +1455,18 @@ TEST_F(UserDefaults, preset_zenith_type_stores_any_recognisable_spelling) {
   doc["presets"]["axis"]["column"]["zenith_std"] = 0.3f;          // a good std in the same node is kept
   doc["presets"]["axis"]["plate"]["zenith_type"] = "triangular";  // not a spelling at all
   EXPECT_TRUE(gui::WriteUserDefaultsFile(dir, doc));
-  gui::AdoptAxisPresetZenithTypeOverrideInMemory(gui::AxisPreset::kColumn,
-                                                 gui::AxisDistType::kLaplacian);  // stale
+  AdoptZenithTypeFace(gui::AxisPreset::kColumn, gui::AxisDistType::kLaplacian);  // stale
   gui::MakeNewDocumentState(dir);
 
   const auto& column = gui::AxisPresetEntryFor(gui::AxisPreset::kColumn);
-  const auto stored_type = gui::GetUserAxisPresetZenithTypeOverride(gui::AxisPreset::kColumn);
+  const auto stored_type = gui::GetUserAxisPresetTypeOverride(gui::AxisPreset::kColumn, gui::AxisSlot::kZenith);
   ASSERT_TRUE(stored_type.has_value()) << "a recognisable spelling outside the accepted set was refused";
   EXPECT_EQ(static_cast<int>(*stored_type), static_cast<int>(gui::AxisDistType::kZigzag));
   EXPECT_EQ(static_cast<int>(gui::EffectiveAxisPresetZenith(column).type),
             static_cast<int>(gui::AxisDistType::kZigzag));
-  EXPECT_EQ(gui::GetUserAxisPresetZenithStdOverride(gui::AxisPreset::kColumn), std::optional<float>(0.3f));
-  EXPECT_TRUE(!gui::GetUserAxisPresetZenithTypeOverride(gui::AxisPreset::kPlate).has_value());
+  EXPECT_EQ(gui::GetUserAxisPresetStdOverride(gui::AxisPreset::kColumn, gui::AxisSlot::kZenith),
+            std::optional<float>(0.3f));
+  EXPECT_TRUE(!gui::GetUserAxisPresetTypeOverride(gui::AxisPreset::kPlate, gui::AxisSlot::kZenith).has_value());
 
   // Exactly one notice: the unspellable "triangular". The Column retune is not a degradation.
   EXPECT_EQ(gui::TakeUserDefaultsDowngradeCount(), 1);
@@ -1350,15 +1475,17 @@ TEST_F(UserDefaults, preset_zenith_type_stores_any_recognisable_spelling) {
   EXPECT_NE(notices[0].find("presets.axis.plate"), std::string::npos) << notices[0];
   EXPECT_NE(notices[0].find("triangular"), std::string::npos) << notices[0];
 
-  // Random / Custom keep their no adjustable face: the document primitives are no-ops for them in
-  // both directions, as for the std face.
-  for (const auto preset : { gui::AxisPreset::kRandom, gui::AxisPreset::kCustom }) {
+  // Custom keeps its no-override status: the document primitives are no-ops for it in both
+  // directions, as for the std face. (Random's type face is storable since the unlock task and is
+  // covered by the per-axis face test.)
+  {
     json working = json::object();
-    gui::WriteAxisPresetZenithTypeToDoc(working, preset, gui::AxisDistType::kUniform);
+    gui::WriteAxisPresetTypeToDoc(working, gui::AxisPreset::kCustom, gui::AxisSlot::kZenith,
+                                  gui::AxisDistType::kUniform);
     EXPECT_TRUE(working.empty());
-    gui::EraseAxisPresetZenithTypeFromDoc(working, preset);
+    gui::EraseAxisPresetTypeFromDoc(working, gui::AxisPreset::kCustom, gui::AxisSlot::kZenith);
     EXPECT_TRUE(working.empty());
-    EXPECT_TRUE(!gui::ReadAxisPresetZenithTypeFromDoc(working, preset).has_value());
+    EXPECT_TRUE(!gui::ReadAxisPresetTypeFromDoc(working, gui::AxisPreset::kCustom, gui::AxisSlot::kZenith).has_value());
   }
 }
 
@@ -1377,10 +1504,11 @@ TEST_F(UserDefaults, preset_plate_full_360_uniform_retune_is_stored_verbatim) {
   gui::MakeNewDocumentState(dir);
 
   const auto& plate = gui::AxisPresetEntryFor(gui::AxisPreset::kPlate);
-  const auto type = gui::GetUserAxisPresetZenithTypeOverride(gui::AxisPreset::kPlate);
+  const auto type = gui::GetUserAxisPresetTypeOverride(gui::AxisPreset::kPlate, gui::AxisSlot::kZenith);
   ASSERT_TRUE(type.has_value());
   EXPECT_EQ(static_cast<int>(*type), static_cast<int>(gui::AxisDistType::kUniform));
-  EXPECT_EQ(gui::GetUserAxisPresetZenithStdOverride(gui::AxisPreset::kPlate), std::optional<float>(360.0f));
+  EXPECT_EQ(gui::GetUserAxisPresetStdOverride(gui::AxisPreset::kPlate, gui::AxisSlot::kZenith),
+            std::optional<float>(360.0f));
 
   const gui::AxisDist zenith = gui::EffectiveAxisPresetZenith(plate);
   EXPECT_EQ(static_cast<int>(zenith.type), static_cast<int>(gui::AxisDistType::kUniform));
@@ -1408,16 +1536,16 @@ TEST_F(UserDefaults, preset_zenith_type_override_round_trips_across_a_reload_and
   // only a type.
   {
     json doc = ReadOverlayDoc(dir);
-    gui::WriteAxisPresetZenithStdToDoc(doc, gui::AxisPreset::kColumn, 0.3f);
-    gui::WriteAxisPresetZenithTypeToDoc(doc, gui::AxisPreset::kColumn, gui::AxisDistType::kLaplacian);
-    gui::WriteAxisPresetZenithTypeToDoc(doc, gui::AxisPreset::kPlate, gui::AxisDistType::kUniform);
+    gui::WriteAxisPresetStdToDoc(doc, gui::AxisPreset::kColumn, gui::AxisSlot::kZenith, 0.3f);
+    gui::WriteAxisPresetTypeToDoc(doc, gui::AxisPreset::kColumn, gui::AxisSlot::kZenith, gui::AxisDistType::kLaplacian);
+    gui::WriteAxisPresetTypeToDoc(doc, gui::AxisPreset::kPlate, gui::AxisSlot::kZenith, gui::AxisDistType::kUniform);
     EXPECT_TRUE(gui::WriteUserDefaultsFile(dir, doc));
   }
 
   gui::MakeNewDocumentState(dir);
   const auto& column = gui::AxisPresetEntryFor(gui::AxisPreset::kColumn);
   {
-    const auto loaded = gui::GetUserAxisPresetZenithTypeOverride(gui::AxisPreset::kColumn);
+    const auto loaded = gui::GetUserAxisPresetTypeOverride(gui::AxisPreset::kColumn, gui::AxisSlot::kZenith);
     ASSERT_TRUE(loaded.has_value());
     EXPECT_EQ(static_cast<int>(*loaded), static_cast<int>(gui::AxisDistType::kLaplacian));
     const gui::AxisDist effective = gui::EffectiveAxisPresetZenith(column);
@@ -1427,18 +1555,24 @@ TEST_F(UserDefaults, preset_zenith_type_override_round_trips_across_a_reload_and
 
   // Drop the cache the way a restart would; the value has to come back off the disk.
   gui::ResetUserAxisPresetOverrides();
-  EXPECT_TRUE(!gui::GetUserAxisPresetZenithTypeOverride(gui::AxisPreset::kColumn).has_value());
+  EXPECT_TRUE(!gui::GetUserAxisPresetTypeOverride(gui::AxisPreset::kColumn, gui::AxisSlot::kZenith).has_value());
   gui::MakeNewDocumentState(dir);
-  ASSERT_TRUE(gui::GetUserAxisPresetZenithTypeOverride(gui::AxisPreset::kColumn).has_value());
+  ASSERT_TRUE(gui::GetUserAxisPresetTypeOverride(gui::AxisPreset::kColumn, gui::AxisSlot::kZenith).has_value());
 
-  // Restore Column's TYPE only, disk first then memory, as the panel's Restore + Save do.
+  // Restore Column's TYPE only, disk first then memory, as the panel's Restore + Save do. The
+  // cache side is the wholesale slot adopt rebuilt from the document, so the std face the node
+  // still holds is carried by the document, not by the store.
   {
     json doc = ReadOverlayDoc(dir);
-    gui::EraseAxisPresetZenithTypeFromDoc(doc, gui::AxisPreset::kColumn);
+    gui::EraseAxisPresetTypeFromDoc(doc, gui::AxisPreset::kColumn, gui::AxisSlot::kZenith);
     EXPECT_TRUE(gui::WriteUserDefaultsFile(dir, doc));
-    gui::AdoptAxisPresetZenithTypeOverrideInMemory(gui::AxisPreset::kColumn, std::nullopt);
+    gui::AxisPresetOverride faces{};
+    faces.axes[0].std = gui::ReadAxisPresetStdFromDoc(doc, gui::AxisPreset::kColumn, gui::AxisSlot::kZenith);
+    faces.axes[0].mean = gui::ReadAxisPresetMeanFromDoc(doc, gui::AxisPreset::kColumn, gui::AxisSlot::kZenith);
+    faces.axes[0].type = gui::ReadAxisPresetTypeFromDoc(doc, gui::AxisPreset::kColumn, gui::AxisSlot::kZenith);
+    gui::AdoptAxisPresetFacesInMemory(gui::AxisPreset::kColumn, faces);
   }
-  EXPECT_TRUE(!gui::GetUserAxisPresetZenithTypeOverride(gui::AxisPreset::kColumn).has_value());
+  EXPECT_TRUE(!gui::GetUserAxisPresetTypeOverride(gui::AxisPreset::kColumn, gui::AxisSlot::kZenith).has_value());
   {
     const gui::AxisDist restored = gui::EffectiveAxisPresetZenith(column);
     EXPECT_EQ(static_cast<int>(restored.type), static_cast<int>(column.zenith.type));
@@ -1449,22 +1583,36 @@ TEST_F(UserDefaults, preset_zenith_type_override_round_trips_across_a_reload_and
   EXPECT_EQ(ReadPresetStd(doc, "column"), std::optional<float>(0.3f));
   EXPECT_EQ(ReadPresetTypeSpelling(doc, "plate"), std::optional<std::string>("uniform"));
   EXPECT_EQ(doc.value("bg_alpha", 0.0f), 0.42f);
-  EXPECT_EQ(static_cast<int>(*gui::GetUserAxisPresetZenithTypeOverride(gui::AxisPreset::kPlate)),
+  EXPECT_EQ(static_cast<int>(*gui::GetUserAxisPresetTypeOverride(gui::AxisPreset::kPlate, gui::AxisSlot::kZenith)),
             static_cast<int>(gui::AxisDistType::kUniform));
 
-  // Adopting the std face must not disturb the type face in the same slot, and vice versa —
-  // the "whole-struct assignment" discipline carries the other half over.
-  gui::AdoptAxisPresetZenithStdOverrideInMemory(gui::AxisPreset::kPlate, 0.5f);
-  EXPECT_EQ(static_cast<int>(*gui::GetUserAxisPresetZenithTypeOverride(gui::AxisPreset::kPlate)),
-            static_cast<int>(gui::AxisDistType::kUniform));
-  gui::AdoptAxisPresetZenithTypeOverrideInMemory(gui::AxisPreset::kPlate, std::nullopt);
-  EXPECT_EQ(gui::GetUserAxisPresetZenithStdOverride(gui::AxisPreset::kPlate), std::optional<float>(0.5f));
+  // The wholesale adopt REPLACES the whole slot — there is no per-face carry-over inside the
+  // store. The carrier of the other faces is the document (CommitCopy and the helpers above read
+  // it back and adopt wholesale), which is why a face-only edit that skipped the document would
+  // drop its siblings: the discipline lives in reading the document, not in the store.
+  {
+    gui::AxisPresetOverride both{};
+    both.axes[0].std = 0.5f;
+    both.axes[0].type = gui::AxisDistType::kUniform;
+    gui::AdoptAxisPresetFacesInMemory(gui::AxisPreset::kPlate, both);
+    EXPECT_EQ(gui::GetUserAxisPresetStdOverride(gui::AxisPreset::kPlate, gui::AxisSlot::kZenith),
+              std::optional<float>(0.5f));
+    EXPECT_EQ(static_cast<int>(*gui::GetUserAxisPresetTypeOverride(gui::AxisPreset::kPlate, gui::AxisSlot::kZenith)),
+              static_cast<int>(gui::AxisDistType::kUniform));
+
+    gui::AxisPresetOverride std_only{};
+    std_only.axes[0].std = 0.5f;
+    gui::AdoptAxisPresetFacesInMemory(gui::AxisPreset::kPlate, std_only);
+    EXPECT_EQ(gui::GetUserAxisPresetStdOverride(gui::AxisPreset::kPlate, gui::AxisSlot::kZenith),
+              std::optional<float>(0.5f));
+    EXPECT_TRUE(!gui::GetUserAxisPresetTypeOverride(gui::AxisPreset::kPlate, gui::AxisSlot::kZenith).has_value());
+  }
 
   // Emptying the last key of the last preset prunes the skeleton, as for the std face.
   {
     json pruned_doc = ReadOverlayDoc(dir);
-    gui::EraseAxisPresetZenithStdFromDoc(pruned_doc, gui::AxisPreset::kColumn);
-    gui::EraseAxisPresetZenithTypeFromDoc(pruned_doc, gui::AxisPreset::kPlate);
+    gui::EraseAxisPresetStdFromDoc(pruned_doc, gui::AxisPreset::kColumn, gui::AxisSlot::kZenith);
+    gui::EraseAxisPresetTypeFromDoc(pruned_doc, gui::AxisPreset::kPlate, gui::AxisSlot::kZenith);
     EXPECT_TRUE(!pruned_doc.contains("presets"));
     EXPECT_EQ(pruned_doc.value("bg_alpha", 0.0f), 0.42f);
   }
@@ -1510,8 +1658,9 @@ TEST_F(UserDefaults, AnOrdinaryRetuneIsQuietAtLoad) {
 
     EXPECT_TRUE(gui::PeekLoadNotice().empty())
         << c.name << ": an ordinary retune surfaced a load warning: \"" << gui::PeekLoadNotice() << "\"";
-    EXPECT_EQ(gui::GetUserAxisPresetZenithStdOverride(c.preset_key == std::string("column") ? gui::AxisPreset::kColumn :
-                                                                                              gui::AxisPreset::kLowitz),
+    EXPECT_EQ(gui::GetUserAxisPresetStdOverride(
+                  c.preset_key == std::string("column") ? gui::AxisPreset::kColumn : gui::AxisPreset::kLowitz,
+                  gui::AxisSlot::kZenith),
               std::optional<float>(c.stored))
         << c.name;
     gui::ClearLoadNotice();
@@ -1891,7 +2040,7 @@ TEST_F(UserDefaults, wedge_presets_round_trip_as_indices_and_leave_the_schema_st
   json doc = json::object();
   doc["bg_alpha"] = 0.42f;
   doc[gui::kUserDefaultsOverlaySchemaVersionKey] = gui::kUserDefaultsOverlaySchemaVersion;
-  gui::WriteAxisPresetZenithStdToDoc(doc, gui::AxisPreset::kColumn, 0.3f);
+  gui::WriteAxisPresetStdToDoc(doc, gui::AxisPreset::kColumn, gui::AxisSlot::kZenith, 0.3f);
 
   const std::vector<gui::WedgeMillerTriple> saved = { { 2, 0, 1 }, { 1, 0, 3 } };
   gui::WriteWedgePresetsToDoc(doc, saved);

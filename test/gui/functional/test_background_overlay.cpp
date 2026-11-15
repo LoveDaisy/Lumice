@@ -503,10 +503,13 @@ void RegisterBackgroundOverlayTests(ImGuiTestEngine* engine) {
       IM_CHECK_EQ(img_ref.size(), img_print.size());
       IM_CHECK(img_ref == img_print);
 
-      // And the Show control says so, rather than leaving the user to wonder why nothing happened.
+      // And the control says so, rather than leaving the user to wonder why nothing happened: the
+      // unlock task made bg_show a stored setting, so the constraint keeps the control LIVE and
+      // carries the explanation as an inactive_note, while the physical exclusion pinned above
+      // stays byte-exact.
       const gui::FieldEditorConstraint c = gui::ConstraintFor("bg_show", gui::g_state);
-      IM_CHECK_EQ(c.enabled, false);
-      IM_CHECK(c.disabled_reason != nullptr);
+      IM_CHECK_EQ(c.enabled, true);
+      IM_CHECK(c.inactive_note != nullptr);
 
       std::remove(path_ref.c_str());
       std::remove(path_print.c_str());

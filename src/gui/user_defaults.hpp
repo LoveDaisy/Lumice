@@ -364,88 +364,143 @@ nlohmann::json ReadOverlayJsonIfPresent(const std::filesystem::path& dir);
 // downgrade is counted — a partially applied overlay would be worse than none.
 void ApplyUserDefaultsOverlay(GuiState& state, const nlohmann::json& doc);
 
-// The user's zenith-std override for a built-in axis preset, if any. nullopt means "use the
-// factory value". Prefer EffectiveAxisPresetZenith() below at consumption sites — this raw
-// accessor exists for the tests and for the panel's "is anything saved for this preset" cell.
+// --------------------------------------------------------------------------------------------------
+// The preset-library override store, generalized to all three axes.
 //
-// IT CANNOT BE FOLDED INTO EffectiveAxisPresetZenith, and has been mistaken for dead code twice
-// on the assumption that it can. That function returns the COMPOSED AxisDist, in which "nothing
-// stored" and "stored a number that happens to equal the factory value" are indistinguishable —
-// the two produce the same struct. Only this accessor answers the question the panel and the
-// tests actually ask, which is about the OVERRIDE's existence and not about the resulting
-// distribution: the same presence-vs-value distinction DefaultDiffRow::has_saved_override draws
-// for the settings half of the file.
-std::optional<float> GetUserAxisPresetZenithStdOverride(AxisPreset preset);
+// One axis of one preset carries THREE face values — distribution type, mean, spread ("std") — and
+// each face is stored and adopted INDEPENDENTLY: a user may retune only Column's zenith mean and
+// leave its std and type at the factory values, so presence is per face, never per axis or per
+// preset. The face family below is the ONE spelling of that store; the former zenith-only pair of
+// families (std, type) was folded into it when azimuth/roll joined — two families for the same
+// question was the shape that would have drifted.
+//
+// Storable population: every built-in preset whose kAxisPresets row carries an override_json_name —
+// Column/Plate/Parry/Lowitz AND Random (whose three uniform-360 axes are storable parameters like
+// any other; old override files that predate its key simply resolve to the factory definition).
+// Custom is not a built-in identity and stores nothing. Face VALUES are free — since the axis label
+// went sticky, a preset may be retuned outside what ClassifyAxisPreset would keep it under (the
+// crystal carrying it shows the out-of-domain badge), so the only refusals left are the sanity
+// ones: a non-finite number, a type the table cannot spell.
+// --------------------------------------------------------------------------------------------------
 
-// The zenith-TYPE half of the same override, with the same presence-vs-value distinction and the
-// same reason for existing beside EffectiveAxisPresetZenith. nullopt means "use the factory type".
-std::optional<AxisDistType> GetUserAxisPresetZenithTypeOverride(AxisPreset preset);
+// Which axis of a preset a face call addresses. Named because `1` or `2` at a call site answers
+// "which axis?" to nobody; the value IS the AxisTriple index (AxisPresetsMemorySlots, g_axis_buf),
+// and the panel walks the axes by casting this enum.
+enum class AxisSlot { kZenith = 0, kAzimuth = 1, kRoll = 2 };
+
+// The axis count the slot arrays ride on — the same "table size follows the enum" discipline the
+// preset slots keep with kAxisPresetSlotCount, at the axis grain.
+inline constexpr std::size_t kAxisSlotCount = 3;
+static_assert(kAxisSlotCount == static_cast<std::size_t>(AxisSlot::kRoll) + 1,
+              "kAxisSlotCount must track AxisSlot's enumerators");
+
+// One axis' stored override, as presence-per-face optionals. The type's payload is the AxisDistType
+// itself; the numeric faces carry their floats raw — verbatim, however far outside the classifier's
+// usual range (the sticky-label reasoning above).
+struct AxisDistOverride {
+  std::optional<AxisDistType> type;
+  std::optional<float> mean;
+  std::optional<float> std;
+};
+
+// All three axes of one preset, as the parse and the wholesale adopt spell it. Indexed by
+// static_cast<int>(AxisSlot).
+struct AxisPresetOverride {
+  AxisDistOverride axes[kAxisSlotCount];
+};
+
+// The user's stored override for ONE face, if any. nullopt means "use the factory value". Prefer
+// EffectiveAxisPresetDist at consumption sites — these raw accessors exist for the tests and for
+// the panel's "is anything saved for this face" questions.
+//
+// THEY CANNOT BE FOLDED INTO EffectiveAxisPresetDist, and the zenith pair was mistaken for dead
+// code twice on the assumption that it can. That function returns the COMPOSED AxisDist, in which
+// "nothing stored" and "stored a number that happens to equal the factory value" are
+// indistinguishable — the two produce the same struct. Only these accessors answer the question
+// the panel and the tests actually ask, which is about the OVERRIDE's existence and not about the
+// resulting distribution: the same presence-vs-value distinction DefaultDiffRow::has_saved_override
+// draws for the settings half of the file.
+std::optional<float> GetUserAxisPresetStdOverride(AxisPreset preset, AxisSlot slot);
+std::optional<float> GetUserAxisPresetMeanOverride(AxisPreset preset, AxisSlot slot);
+std::optional<AxisDistType> GetUserAxisPresetTypeOverride(AxisPreset preset, AxisSlot slot);
 
 // --------------------------------------------------------------------------------------------------
 // Preset-library write side.
 //
-// The read side above (405.2) could already resolve an override; nothing could PRODUCE one. These
-// close that loop. All of them are surgical edits of the existing override document — the
-// GuiState half of the file and every other preset survive by construction, not by each call site
-// remembering to preserve them.
-//
-// Scope of what is storable: the two zenith faces a preset exposes, std and type. The face values
-// themselves are free — since the axis label went sticky, a preset may be retuned outside what
-// ClassifyAxisPreset would keep it under (the crystal carrying it shows the out-of-domain badge),
-// so the only refusals left are the sanity ones: a non-finite std, a type the table cannot spell.
+// The read side could already resolve an override; nothing could PRODUCE one. These close that
+// loop. All of them are surgical edits of the existing override document — the GuiState half of the
+// file and every other preset survive by construction, not by each call site remembering to
+// preserve them. One axis' node holds up to three keys — <axis>_type, <axis>_mean, <axis>_std —
+// and each write/erase touches exactly its own key.
 // --------------------------------------------------------------------------------------------------
 
 // The preset library's half of an override DOCUMENT, with no IO: read / write / erase
-// presets.axis.<preset>.zenith_std.
+// presets.axis.<preset>.<axis>_std.
 //
 // One owner for that document shape, so the panel's in-memory copy and the file it is eventually
 // written back as cannot spell the same setting two ways. The erase prunes the parents it empties,
-// so a file someone opens by hand does not accumulate `"presets": {"axis": {}}` skeletons. A preset
-// with no adjustable face has no key at all, so all three are no-ops (read: nullopt) for it.
+// so a file someone opens by hand does not accumulate `"presets": {"axis": {}}` skeletons. A
+// preset with no override key stores nothing at all, so all of these are no-ops (read: nullopt)
+// for it.
 //
 // The read is deliberately RAW: it reports what the document says. Since the axis label went
 // sticky, an out-of-range value is an ordinary stored state — the crystal carrying it shows the
 // out-of-domain badge — so there is no "what is in effect" folding to avoid: what is stored IS
 // what is in effect.
-std::optional<float> ReadAxisPresetZenithStdFromDoc(const nlohmann::json& doc, AxisPreset preset);
-void WriteAxisPresetZenithStdToDoc(nlohmann::json& doc, AxisPreset preset, float stored_value);
-void EraseAxisPresetZenithStdFromDoc(nlohmann::json& doc, AxisPreset preset);
+std::optional<float> ReadAxisPresetStdFromDoc(const nlohmann::json& doc, AxisPreset preset, AxisSlot slot);
+void WriteAxisPresetStdToDoc(nlohmann::json& doc, AxisPreset preset, AxisSlot slot, float stored_value);
+void EraseAxisPresetStdFromDoc(nlohmann::json& doc, AxisPreset preset, AxisSlot slot);
 
-// The same three for presets.axis.<preset>.zenith_type, the sibling key in the same node. Each
-// face erases only its own key; the node (then `axis`, then `presets`) is pruned when the last
-// key leaves, so restoring one face never drops the other and never leaves a skeleton.
-//
-// The type is spelled on disk with AxisDistTypeJsonName — the table the .lmc writer uses — and
-// the read is RAW like the std one: any recognised spelling comes back, whatever the classifier
-// would keep the preset under (same sticky reasoning as the std face); a spelling the table does
-// not know has no AxisDistType to return and reads as absent.
-std::optional<AxisDistType> ReadAxisPresetZenithTypeFromDoc(const nlohmann::json& doc, AxisPreset preset);
-void WriteAxisPresetZenithTypeToDoc(nlohmann::json& doc, AxisPreset preset, AxisDistType stored_type);
-void EraseAxisPresetZenithTypeFromDoc(nlohmann::json& doc, AxisPreset preset);
+// The mean face — same contract, sibling key <axis>_mean.
+std::optional<float> ReadAxisPresetMeanFromDoc(const nlohmann::json& doc, AxisPreset preset, AxisSlot slot);
+void WriteAxisPresetMeanToDoc(nlohmann::json& doc, AxisPreset preset, AxisSlot slot, float stored_value);
+void EraseAxisPresetMeanFromDoc(nlohmann::json& doc, AxisPreset preset, AxisSlot slot);
 
-// Point the in-memory preset cache at `stored_value` (nullopt = "nothing stored, use the factory
-// value") without touching any file.
+// The type face, sibling key <axis>_type. The type is spelled on disk with AxisDistTypeJsonName —
+// the table the .lmc writer uses — and the read is RAW like the numeric faces: any recognised
+// spelling comes back, whatever the classifier would keep the preset under; a spelling the table
+// does not know has no AxisDistType to return and reads as absent.
+std::optional<AxisDistType> ReadAxisPresetTypeFromDoc(const nlohmann::json& doc, AxisPreset preset, AxisSlot slot);
+void WriteAxisPresetTypeToDoc(nlohmann::json& doc, AxisPreset preset, AxisSlot slot, AxisDistType stored_type);
+void EraseAxisPresetTypeFromDoc(nlohmann::json& doc, AxisPreset preset, AxisSlot slot);
+
+// Erase EVERY face of one preset — the node, then `axis`, then `presets`, each pruned when it
+// empties. "Restore to factory" means every face this preset exposes, so the Restore button calls
+// this once instead of walking nine erasers.
+void EraseAxisPresetOverridesFromDoc(nlohmann::json& doc, AxisPreset preset);
+
+// Point the in-memory preset cache at `override` (whole slot, all three axes) without touching any
+// file. Whole-struct assignment — never "clear the parts that look stale" — because a partial
+// update to this exact global has cost this scrum three code-review rounds before.
 //
 // For a caller that has ALREADY committed the document itself — the defaults panel writes its
 // whole working copy in one go, so by the time it calls this the value is on disk. Nothing else
 // should: memory that leads disk is exactly how "what this session resolves" and "what the next
 // launch reads" drift apart. That ordering is the panel's own to keep, and it says so at the call
-// site (defaults_panel.cpp's CommitCopy, "ORDER IS PART OF THE CONTRACT"); there is deliberately
-// no store-side revert wrapper composing the two here, because a second writer of this file is a
-// second answer to "what did the user save".
-void AdoptAxisPresetZenithStdOverrideInMemory(AxisPreset preset, std::optional<float> stored_value);
+// site (defaults_panel.cpp's CommitCopy, "ORDER IS PART OF THE CONTRACT").
+void AdoptAxisPresetFacesInMemory(AxisPreset preset, const AxisPresetOverride& override);
 
-// The type face's adopt, under the same disk-first contract. Only the type half of the slot moves;
-// the std half carries over. The caller is expected to have judged the spelling recognisable
-// (ReadAxisPresetZenithTypeFromDoc answers nullopt for one that is not) — the cache is trusted at
-// the point of use.
-void AdoptAxisPresetZenithTypeOverrideInMemory(AxisPreset preset, std::optional<AxisDistType> stored_type);
+// The factory distribution of one preset's axis — the value every absent face falls back to, and
+// the one spelling of the slot->field selection (entry.zenith/azimuth/roll spelled out per call
+// site is exactly the index-mistake family this header keeps closed).
+AxisDist FactoryAxisDist(const AxisPresetEntry& entry, AxisSlot slot);
 
-// The zenith distribution a preset button actually writes: the factory row, with the user's std
-// and type substituted when either is stored. Single source for that resolution — the axis modal's preset
-// buttons and the library panel both call it, so "what Column gives you" cannot differ between the
+// One axis' EFFECTIVE distribution: the factory row, with each face's stored value substituted
+// where one is present. Single source for that resolution — the axis modal's chip switch and Reset
+// button and the library panel all call it, so "what Column gives you" cannot differ between the
 // place you press it and the place you configure it.
-AxisDist EffectiveAxisPresetZenith(const AxisPresetEntry& entry);
+AxisDist EffectiveAxisPresetDist(const AxisPresetEntry& entry, AxisSlot slot);
+
+// The whole override document -> one preset's slot, as the adopter spells it: every face the
+// document holds, absence included (nullopt = factory). One spelling of the nine-face read loop —
+// the panel's Save adopts through this, and so does any test staging "cache := document".
+AxisPresetOverride ReadAxisPresetOverridesFromDoc(const nlohmann::json& doc, AxisPreset preset);
+
+// The zenith spelling of the same question — axis 0. Kept as a named form because the call sites
+// and tests that only ever meant the zenith read better saying so.
+inline AxisDist EffectiveAxisPresetZenith(const AxisPresetEntry& entry) {
+  return EffectiveAxisPresetDist(entry, AxisSlot::kZenith);
+}
 
 // Human-readable form of the domain a preset's zenith std must stay inside, e.g.
 // "greater than 0 and less than 10". For UI copy only.
@@ -465,19 +520,18 @@ std::string DescribeAxisPresetZenithTypeDomain(AxisPreset preset);
 std::string DescribeAxisPresetDomain(AxisPreset preset);
 
 // The shortest %g precision (6..9) that still reads back as exactly this float via strtof. Shared
-// by FormatAxisPresetStd below and by the §1 panel's InputFloat display format so both places pick
+// by FormatAxisPresetFloat below and by the §1 panel's InputFloat display format so both places pick
 // precision the same way: a fixed digit count anywhere renders the tuned values a user types
 // correctly (0.3 stays "0.3") but collapses a clamp target that happens to need one more digit —
 // nextafter(10, 0) needs 7 ("9.999999"), nextafter(15, +inf) needs 8 ("15.000001") — and a value
 // that reads as the boundary itself contradicts the "must stay less/greater than N" text next to
 // it. Escalating only when the shorter form is lossy keeps the common case short everywhere.
-int RoundTripPrecisionForAxisPresetStd(float value);
+int RoundTripPrecisionForAxisPresetFloat(float value);
 
-// Display form of a std value, via RoundTripPrecisionForAxisPresetStd. Shared so the panel, the
-// modal gesture and the load-time notice print "0.3" and "9.99999" the same way; std::to_string
-// would render both as a run of trailing zeros or digits that reads like precision the value does
-// not carry.
-std::string FormatAxisPresetStd(float value);
+// Display form of a preset numeric face (spread or mean), via RoundTripPrecisionForAxisPresetFloat. Shared so the
+// panel, the modal gesture and the load-time notice print "0.3" and "9.99999" the same way; std::to_string would render
+// both as a run of trailing zeros or digits that reads like precision the value does not carry.
+std::string FormatAxisPresetFloat(float value);
 
 // Drop every loaded preset override. MakeNewDocumentState() no longer needs this itself (it
 // replaces the whole override set with one unconditional assignment on every call — see its
@@ -533,7 +587,7 @@ inline bool operator!=(const WedgeMillerTriple& a, const WedgeMillerTriple& b) {
 
 // The wedge half of an override DOCUMENT, with no IO: read / write / erase presets.wedge.
 //
-// The read is RAW, in the same sense ReadAxisPresetZenithStdFromDoc is raw and for a sharper
+// The read is RAW, in the same sense ReadAxisPresetStdFromDoc is raw and for a sharper
 // reason: it validates JSON SHAPE (an array of objects with three integer fields) and nothing else.
 // It does NOT ask whether a triple converts, and it does NOT call NoteUserDefaultsDowngrade. The
 // defaults panel calls it every frame it paints the list, and a notice channel driven from a render
@@ -545,7 +599,7 @@ inline bool operator!=(const WedgeMillerTriple& a, const WedgeMillerTriple& b) {
 // that matters: presets.axis, the app preferences and the GuiState half of the document survive by
 // construction. An empty list ERASES the key instead of writing `[]`, so a file that has been
 // cleared does not keep a `"presets": {"wedge": []}` skeleton — the same pruning
-// EraseAxisPresetZenithStdFromDoc does for its parents.
+// EraseAxisPresetStdFromDoc does for its parents.
 std::vector<WedgeMillerTriple> ReadWedgePresetsFromDoc(const nlohmann::json& doc);
 void WriteWedgePresetsToDoc(nlohmann::json& doc, const std::vector<WedgeMillerTriple>& presets);
 void EraseWedgePresetsFromDoc(nlohmann::json& doc);
@@ -557,7 +611,7 @@ const std::vector<WedgeMillerTriple>& GetUserWedgePresets();
 // Point the cache at a new list without touching any file. Whole-list replacement, never a partial
 // edit — for a caller that has ALREADY committed the document (the defaults panel writes its whole
 // working copy in one go, so by the time it calls this the list is on disk). The same "disk first,
-// then memory" contract AdoptAxisPresetZenithStdOverrideInMemory states, and for the same reason:
+// then memory" contract AdoptAxisPresetFacesInMemory states, and for the same reason:
 // memory that leads disk is how "what this session resolves" and "what the next launch reads" drift
 // apart.
 void AdoptWedgePresetOverridesInMemory(std::vector<WedgeMillerTriple> presets);
@@ -649,7 +703,7 @@ void NoteUserDefaultsDowngrade(std::string notice);
 // a typo in it must not cost the user their document defaults, nor vice versa.
 std::optional<bool> ReadUseGpuBackendFromDoc(const nlohmann::json& doc);
 void WriteUseGpuBackendToDoc(nlohmann::json& doc, bool value);
-// Prunes the parents it empties, like EraseAxisPresetZenithStdFromDoc, so a file opened by hand
+// Prunes the parents it empties, like EraseAxisPresetOverridesFromDoc, so a file opened by hand
 // does not accumulate an empty `"app": {}` skeleton.
 //
 // No production caller today — the panel writes both states explicitly rather than erasing, so

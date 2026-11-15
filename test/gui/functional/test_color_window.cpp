@@ -18,7 +18,8 @@
 // other does not); a class edit does not mark the document modified, so Revert never offers itself
 // and the next Run silently drops the edit; reordering rows moves the wrong pair; the row jitters
 // sideways every time an eye is toggled; an eye says "showing" for a class the composite has
-// already excluded.
+// already excluded; adjacent color classes dissolve into one undifferentiated stack, or a hover
+// lights the whole expanded class instead of the one row the pointer is on.
 //
 // Two propositions from the catalogue are deliberately NOT covered here, and the reason is
 // mechanical rather than a judgement call. The top-bar aggregate pip and the per-row warning
@@ -46,6 +47,7 @@
 #include "gui/file_io.hpp"       // BuildScene — the committed-scene leg of the PBD default
 #include "gui/gui_state.hpp"
 #include "gui/raypath_segments.hpp"
+#include "imgui_internal.h"  // ImGuiWindow/ImRect — the class-chrome cases read the window's own draw list
 #include "support/scoped_result_frame.hpp"
 #include "test_gui_shared.hpp"
 
@@ -204,6 +206,101 @@ void ComboPick(ImGuiTestContext* ctx, const char* combo_ref, const char* entry) 
 std::string TopBarToggleRef(bool composite_now) {
   return std::string("##TopBar/") + (composite_now ? "Colored" : "Full Spectrum") + "##CompositePreviewToggle";
 }
+
+// ---------------- class-list chrome (draw-list readers) ----------------
+//
+// The class-boundary line and the per-row hover wash are pure draw-list work in the product, so
+// the observable is the Colors window's own merged vertex buffer, bucketed by an exact style
+// colour that the test reads from the same live style the window drew with. No colour is spelled
+// here that the product derives from a theme slot.
+
+// One filled primitive's screen-space box, reconstructed from the window's draw list.
+struct ScreenRect {
+  ImVec2 min;
+  ImVec2 max;
+  bool Contains(const ImVec2& p) const { return p.x >= min.x && p.x <= max.x && p.y >= min.y && p.y <= max.y; }
+};
+
+// Filled quads of one exact colour. AddRectFilled emits one quad (two triangles over four shared
+// vertices) whose vertices all carry the primitive's exact colour, so triangles bucketed by
+// colour and deduplicated by bounding box reconstruct the primitives. Rounded fills decompose
+// into per-slice triangles, but neither watched colour (Separator / Header) is drawn rounded in
+// this window, and at rest nothing else in it draws either: the unframed tree node paints a
+// Header-family background only while hovered (as HeaderHovered, a different slot), so an empty
+// Header bucket is a trustworthy "nothing is lit" answer.
+std::vector<ScreenRect> CollectColorQuads(ImGuiTestContext* ctx, ImU32 color) {
+  ImGuiWindow* win = ctx->GetWindowByRef(kColorsWindowRef);
+  IM_CHECK_RETV(win != nullptr, {});
+  const ImDrawList* dl = win->DrawList;
+  std::vector<ScreenRect> quads;
+  for (int i = 0; i + 2 < dl->IdxBuffer.Size; i += 3) {
+    const ImDrawVert& a = dl->VtxBuffer[dl->IdxBuffer[i]];
+    const ImDrawVert& b = dl->VtxBuffer[dl->IdxBuffer[i + 1]];
+    const ImDrawVert& c = dl->VtxBuffer[dl->IdxBuffer[i + 2]];
+    if (a.col != color || b.col != color || c.col != color) {
+      continue;
+    }
+    const float min_x = ImMin(a.pos.x, ImMin(b.pos.x, c.pos.x));
+    const float min_y = ImMin(a.pos.y, ImMin(b.pos.y, c.pos.y));
+    const float max_x = ImMax(a.pos.x, ImMax(b.pos.x, c.pos.x));
+    const float max_y = ImMax(a.pos.y, ImMax(b.pos.y, c.pos.y));
+    bool seen = false;
+    for (const ScreenRect& q : quads) {
+      if (q.min.x == min_x && q.min.y == min_y && q.max.x == max_x && q.max.y == max_y) {
+        seen = true;
+        break;
+      }
+    }
+    if (!seen) {
+      quads.push_back({ ImVec2(min_x, min_y), ImVec2(max_x, max_y) });
+    }
+  }
+  return quads;
+}
+
+ImU32 RowWashColour() {
+  return ImGui::GetColorU32(ImGuiCol_Header);
+}
+
+ImU32 SeparatorLineColour() {
+  return ImGui::GetColorU32(ImGuiCol_Separator);
+}
+
+// The horizontal span of a class-level full-width line, read off the TOPMOST separator line —
+// the toolbar separator, drawn by the same ImGui::Separator() code path as the boundary lines
+// and the row washes. Assertions that a boundary line or a wash spans the list compare against
+// this reference rather than any rectangle-vocabulary getter, so the test cannot disagree with
+// the product about what "full width" means. Requires the toolbar line to be on screen (true
+// whenever the window is not scrolled); scrolled legs assert containment only.
+bool ColorsLineSpan(ImGuiTestContext* ctx, float& x_min, float& x_max) {
+  const std::vector<ScreenRect> lines = CollectColorQuads(ctx, SeparatorLineColour());
+  IM_CHECK_RETV(!lines.empty(), false);
+  const ScreenRect* topmost = &lines[0];
+  for (const ScreenRect& q : lines) {
+    if (q.min.y < topmost->min.y) {
+      topmost = &q;
+    }
+  }
+  x_min = topmost->min.x;
+  x_max = topmost->max.x;
+  return true;
+}
+
+// Move the mouse to one item's centre and settle. Returns the item's rect, captured at query
+// time — the layout does not depend on where the mouse went afterwards, so this rect is the
+// row marker the wash must cover (and the neighbours' rects the wash must not). Restores the
+// window ref so callers can resolve literal item paths afterwards.
+ImRect HoverItemCentre(ImGuiTestContext* ctx, const char* item_ref) {
+  ctx->SetRef(kColorsWindowRef);
+  const ImGuiTestItemInfo info = ctx->ItemInfo(item_ref);
+  ctx->SetRef("");
+  ctx->MouseMoveToPos(
+      ImVec2((info.RectFull.Min.x + info.RectFull.Max.x) * 0.5f, (info.RectFull.Min.y + info.RectFull.Max.y) * 0.5f));
+  ctx->Yield(2);
+  ctx->SetRef(kColorsWindowRef);
+  return ImRect(info.RectFull.Min, info.RectFull.Max);
+}
+
 
 // Drive a finite CPU run to completion. Returns false on timeout so the caller can fail at its own
 // assertion line rather than inside a helper.
@@ -1089,6 +1186,349 @@ void RegisterColorWindowTests(ImGuiTestEngine* engine) {
       IM_CHECK_STR_EQ(gui::g_state.raypath_color[0].match[0].predicate_text.c_str(), "3-5");
       IM_CHECK_STR_EQ(gui::g_state.raypath_color[0].match[1].predicate_text.c_str(), "4-6");
 
+      CloseColorsWindow(ctx);
+    };
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // Class-list chrome. The class-boundary separator and the per-row hover wash answer "which
+  // lines belong to one class" and "which row am I on" — both pure draw-list signals, asserted
+  // through the window's own vertex buffer (see the readers above).
+  // ---------------------------------------------------------------------------------------------
+
+  // The boundary line exists only between adjacent classes: none before the first, none after
+  // the last, exactly one between two, and it sits between the two rows' content — not where the
+  // toolbar separator is, and not somewhere the last class's expansion cannot move it away from.
+  {
+    ImGuiTest* t =
+        IM_REGISTER_TEST(engine, "color_window", "class_boundary_line_appears_only_between_adjacent_classes");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      ctx->Yield(2);
+      OpenColorsWindow(ctx);
+      ctx->SetRef("");
+      ctx->MouseMoveToPos(ImVec2(5.0f, 5.0f));  // park the mouse off the window: keep the frame inert
+      ctx->Yield(2);
+      ctx->SetRef(kColorsWindowRef);
+
+      // Zero classes: the toolbar separator is the only full-width line.
+      IM_CHECK_EQ(CollectColorQuads(ctx, SeparatorLineColour()).size(), (size_t)1);
+
+      gui::g_state.raypath_color.push_back(MakeMatchAllClass(1.0f, 0.0f, 0.0f, /*z_order=*/0));
+      ctx->Yield(4);
+      // One class: still no class-boundary line — none before the first, none after the last.
+      IM_CHECK_EQ(CollectColorQuads(ctx, SeparatorLineColour()).size(), (size_t)1);
+
+      gui::g_state.raypath_color.push_back(MakeMatchAllClass(0.0f, 1.0f, 0.0f, /*z_order=*/1));
+      ctx->Yield(4);
+      const std::vector<ScreenRect> lines = CollectColorQuads(ctx, SeparatorLineColour());
+      IM_CHECK_EQ(lines.size(), (size_t)2);
+      if (lines.size() == 2) {
+        const ScreenRect& boundary = lines[0].min.y > lines[1].min.y ? lines[0] : lines[1];
+        const ImRect title0 = ImRect(ctx->ItemInfo("**/$$0/" ICON_FA_EYE).RectFull);
+        const ImRect title1 = ImRect(ctx->ItemInfo("**/$$1/" ICON_FA_EYE).RectFull);
+        // A hairline spanning the content width, strictly between class 0's title content and
+        // class 1's title content.
+        IM_CHECK(boundary.max.y - boundary.min.y <= 2.0f);
+        IM_CHECK(boundary.min.y > title0.Max.y - 1.0f);
+        IM_CHECK(boundary.max.y < title1.Min.y + 1.0f);
+        // The boundary line and the toolbar separator are drawn by the same Separator() code
+        // path at the same indent level: they must share one horizontal grid.
+        float line_x_min = 0.0f;
+        float line_x_max = 0.0f;
+        IM_CHECK(ColorsLineSpan(ctx, line_x_min, line_x_max));
+        IM_CHECK(ImAbs(boundary.min.x - line_x_min) <= 0.5f && ImAbs(boundary.max.x - line_x_max) <= 0.5f);
+      }
+
+      // Expansion grows class 0: the boundary must follow below its last ref row, not stay at
+      // the collapsed position.
+      float expanded_y = -1.0f;
+      gui::g_state.raypath_color[0].match.push_back(
+          MakeRef(0, gui::g_state.layers[0].entries[0].crystal_id, /*match_all=*/true));
+      ctx->Yield(2);
+      ctx->ItemOpenAll(kColorsWindowRef);
+      ctx->Yield(2);
+      const std::vector<ScreenRect> expanded = CollectColorQuads(ctx, SeparatorLineColour());
+      IM_CHECK_EQ(expanded.size(), (size_t)2);
+      if (expanded.size() == 2) {
+        const ScreenRect& boundary = expanded[0].min.y > expanded[1].min.y ? expanded[0] : expanded[1];
+        const ImRect last_ref_row = ImRect(ctx->ItemInfo("$$0/##body/$$1/" ICON_FA_XMARK "##ref_del").RectFull);
+        const ImRect title1 = ImRect(ctx->ItemInfo("**/$$1/" ICON_FA_EYE).RectFull);
+        IM_CHECK(boundary.min.y > last_ref_row.Max.y - 1.0f);  // after ALL of class 0's content
+        IM_CHECK(boundary.max.y < title1.Min.y + 1.0f);
+        expanded_y = boundary.min.y;
+      }
+
+      // Collapsing class 0 shrinks it back: the boundary rises and the old position is vacated
+      // (no stale line).
+      ctx->ItemClick("$$0/##body");
+      ctx->Yield(2);
+      const std::vector<ScreenRect> collapsed = CollectColorQuads(ctx, SeparatorLineColour());
+      IM_CHECK_EQ(collapsed.size(), (size_t)2);
+      if (collapsed.size() == 2 && expanded.size() == 2) {
+        const ScreenRect& boundary = collapsed[0].min.y > collapsed[1].min.y ? collapsed[0] : collapsed[1];
+        const ImRect title0 = ImRect(ctx->ItemInfo("**/$$0/" ICON_FA_EYE).RectFull);
+        const ImRect title1 = ImRect(ctx->ItemInfo("**/$$1/" ICON_FA_EYE).RectFull);
+        IM_CHECK(boundary.min.y > title0.Max.y - 1.0f);
+        IM_CHECK(boundary.max.y < title1.Min.y + 1.0f);
+        IM_CHECK(boundary.min.y < expanded_y);  // moved up with the content it follows
+      }
+
+      CloseColorsWindow(ctx);
+    };
+  }
+
+  // Each logical row (title / combine / ref / add-ref) carries its own hover wash: exactly one
+  // wash at a time, covering the full content width of the hovered row — including the
+  // whitespace between and after its controls — and none of the sibling rows' or the other
+  // class's rows. Pure hovering must not dirty the document, and a control under the wash must
+  // still take its click.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "color_window", "hover_wash_follows_logical_rows_and_clears_on_leave");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      ctx->Yield(2);
+      {
+        gui::ColorClassConfig cls = MakeMatchAllClass(1.0f, 0.0f, 0.0f, /*z_order=*/0);
+        cls.match.push_back(MakeRef(0, gui::g_state.layers[0].entries[0].crystal_id, /*match_all=*/true));
+        gui::g_state.raypath_color.push_back(cls);
+        gui::g_state.raypath_color.push_back(MakeMatchAllClass(0.0f, 1.0f, 0.0f, /*z_order=*/1));
+      }
+      SeedCommittedBaseline(ctx);
+      OpenColorsWindow(ctx);
+      ctx->ItemOpenAll(kColorsWindowRef);
+      ctx->Yield(2);
+
+      const ImU32 wash_colour = RowWashColour();
+      // The hovered row is the ONLY lit one: one wash, the class list's full line span,
+      // containing the hovered row's marker and none of the other rows' markers.
+      const auto expect_wash_exclusively_on = [&](const ImRect& row, std::initializer_list<const char*> others) {
+        ctx->SetRef(kColorsWindowRef);
+        const std::vector<ScreenRect> washes = CollectColorQuads(ctx, wash_colour);
+        float x_min = 0.0f;
+        float x_max = 0.0f;
+        IM_CHECK(ColorsLineSpan(ctx, x_min, x_max));
+        IM_CHECK_EQ(washes.size(), (size_t)1);
+        if (washes.size() == 1) {
+          const ImVec2 centre((row.Min.x + row.Max.x) * 0.5f, (row.Min.y + row.Max.y) * 0.5f);
+          IM_CHECK(washes[0].Contains(centre));
+          IM_CHECK(washes[0].min.y <= row.Min.y + 0.5f && washes[0].max.y >= row.Max.y - 0.5f);
+          IM_CHECK(ImAbs(washes[0].min.x - x_min) <= 0.5f && ImAbs(washes[0].max.x - x_max) <= 0.5f);
+          // Collected, then asserted once after the loop: one lit neighbour must not stop the
+          // scan short of the rest (same shape as the symmetry-bits case above).
+          std::string lit;
+          for (const char* other : others) {
+            const ImRect other_row = ImRect(ctx->ItemInfo(other).RectFull);
+            const ImVec2 other_centre((other_row.Min.x + other_row.Max.x) * 0.5f,
+                                      (other_row.Min.y + other_row.Max.y) * 0.5f);
+            if (washes[0].Contains(other_centre)) {
+              lit += std::string(" ") + other;
+            }
+          }
+          IM_CHECK_STR_EQ(lit.c_str(), "");
+        }
+      };
+
+      // Ref row 0, over its layer combo: wash on this row only.
+      expect_wash_exclusively_on(HoverItemCentre(ctx, "$$0/##body/$$0/##layer"),
+                                 { "**/$$0/" ICON_FA_EYE, "$$0/##body/##combine", "$$0/##body/$$1/##layer",
+                                   "**/" ICON_FA_PLUS " Add Ref", "**/$$1/" ICON_FA_EYE });
+
+      // Same row, over the trailing whitespace right of its delete button: the wash persists
+      // with the same extent — it follows the row rectangle, not an item under the pointer.
+      {
+        ctx->SetRef(kColorsWindowRef);
+        const ImRect ref0 = ImRect(ctx->ItemInfo("$$0/##body/$$0/##layer").RectFull);
+        float x_max = 0.0f;
+        float x_min = 0.0f;
+        IM_CHECK(ColorsLineSpan(ctx, x_min, x_max));
+        ctx->SetRef("");
+        ctx->MouseMoveToPos(ImVec2(x_max - 20.0f, (ref0.Min.y + ref0.Max.y) * 0.5f));
+        ctx->Yield(2);
+        const std::vector<ScreenRect> washes = CollectColorQuads(ctx, wash_colour);
+        IM_CHECK_EQ(washes.size(), (size_t)1);
+        if (washes.size() == 1) {
+          IM_CHECK(washes[0].Contains(ImVec2((ref0.Min.x + ref0.Max.x) * 0.5f, ref0.Min.y + 1.0f)));
+          IM_CHECK(washes[0].Contains(ImVec2(ref0.Max.x - 1.0f, ref0.Max.y - 1.0f)));
+        }
+      }
+
+      // Ref row 1: the wash moves with the pointer — ref row 0 goes dark.
+      expect_wash_exclusively_on(HoverItemCentre(ctx, "$$0/##body/$$1/##layer"),
+                                 { "$$0/##body/$$0/##layer", "**/$$0/" ICON_FA_EYE, "**/$$1/" ICON_FA_EYE });
+
+      // Add Ref row.
+      expect_wash_exclusively_on(HoverItemCentre(ctx, "**/" ICON_FA_PLUS " Add Ref"),
+                                 { "$$0/##body/$$1/##layer", "**/$$0/" ICON_FA_EYE });
+
+      // The other class's title row: same signal, other class — class 0's title stays dark.
+      expect_wash_exclusively_on(HoverItemCentre(ctx, "**/$$1/" ICON_FA_EYE),
+                                 { "**/$$0/" ICON_FA_EYE, "$$0/##body/$$0/##layer" });
+
+      // Class 0's title row over its own eye button: the operation controls sit inside the wash.
+      expect_wash_exclusively_on(HoverItemCentre(ctx, "**/$$0/" ICON_FA_EYE),
+                                 { "**/$$1/" ICON_FA_EYE, "$$0/##body/$$0/##layer" });
+
+      // Combine row.
+      expect_wash_exclusively_on(HoverItemCentre(ctx, "$$0/##body/##combine"),
+                                 { "**/$$0/" ICON_FA_EYE, "$$0/##body/$$0/##layer" });
+
+      // Leaving the window extinguishes every wash.
+      ctx->SetRef("");
+      ctx->MouseMoveToPos(ImVec2(5.0f, 5.0f));
+      ctx->Yield(2);
+      IM_CHECK(CollectColorQuads(ctx, wash_colour).empty());
+
+      // Compatibility: the wash never took an item id or a click. Pure hovering left the
+      // committed baseline untouched, and a control inside the washed row still eats its click.
+      IM_CHECK(!gui::g_state.dirty);
+      IM_CHECK_EQ(static_cast<int>(gui::g_state.sim_state), static_cast<int>(gui::GuiState::SimState::kDone));
+      ctx->SetRef(kColorsWindowRef);
+      ctx->ItemClick("$$0/##body/$$0/whole");
+      ctx->Yield(2);
+      IM_CHECK(!gui::g_state.raypath_color[0].match[0].match_all);
+      IM_CHECK(gui::g_state.dirty);
+
+      CloseColorsWindow(ctx);
+    };
+  }
+
+  // With a combo popup open, the mouse lives in the popup's window: nothing in the Colors
+  // window may light through it, no matter how the popup overlaps the rows underneath.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "color_window", "open_combo_popup_keeps_the_rows_unlit");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      ctx->Yield(2);
+      {
+        gui::ColorClassConfig cls = MakeMatchAllClass(1.0f, 0.0f, 0.0f, /*z_order=*/0);
+        cls.match.push_back(MakeRef(0, gui::g_state.layers[0].entries[0].crystal_id, /*match_all=*/true));
+        gui::g_state.raypath_color.push_back(cls);
+      }
+      OpenColorsWindow(ctx);
+      ctx->ItemOpenAll(kColorsWindowRef);
+      ctx->Yield(2);
+
+      ctx->ItemClick("$$0/##body/$$0/##layer");  // opens the layer popup
+      ctx->Yield(2);
+      ctx->SetRef("//$FOCUSED");
+      IM_CHECK(ctx->ItemExists("**/Layer 1"));  // sanity: the popup is up
+      ctx->MouseMove("**/Layer 1");
+      ctx->Yield(2);
+      ctx->SetRef(kColorsWindowRef);
+      IM_CHECK(CollectColorQuads(ctx, RowWashColour()).empty());
+
+      // Closing the popup and returning to the row restores the wash.
+      ctx->SetRef("");
+      ctx->KeyPress(ImGuiKey_Escape);
+      ctx->Yield(2);
+      HoverItemCentre(ctx, "$$0/##body/$$0/##layer");
+      IM_CHECK_EQ(CollectColorQuads(ctx, RowWashColour()).size(), (size_t)1);
+
+      CloseColorsWindow(ctx);
+    };
+  }
+
+  // A window too short for its content scrolls; a wash still lands on the row the pointer is
+  // over — including a row that only became visible by scrolling — and not on the rows that
+  // scrolled away.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "color_window", "scrolled_window_keeps_wash_on_target_row");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      ctx->Yield(2);
+      for (int c = 0; c < 2; c++) {
+        gui::ColorClassConfig cls = MakeMatchAllClass(c == 0 ? 1.0f : 0.0f, c == 0 ? 0.0f : 1.0f, 0.0f, c);
+        for (int r = 0; r < 2; r++) {
+          cls.match.push_back(MakeRef(0, gui::g_state.layers[0].entries[0].crystal_id, /*match_all=*/true));
+        }
+        gui::g_state.raypath_color.push_back(cls);
+      }
+      OpenColorsWindow(ctx);
+      ctx->WindowResize(kColorsWindowRef, ImVec2(760, 240));
+      ctx->Yield(2);
+      ctx->ItemOpenAll(kColorsWindowRef);
+      ctx->Yield(2);
+
+      // Bottom: class 1's rows are in view, class 0's are scrolled out above.
+      ctx->ScrollToBottom(kColorsWindowRef);
+      ctx->Yield(2);
+      const ImRect scrolled_in = HoverItemCentre(ctx, "$$1/##body/$$2/##layer");
+      {
+        const std::vector<ScreenRect> washes = CollectColorQuads(ctx, RowWashColour());
+        IM_CHECK_EQ(washes.size(), (size_t)1);
+        if (washes.size() == 1) {
+          IM_CHECK(washes[0].Contains(
+              ImVec2((scrolled_in.Min.x + scrolled_in.Max.x) * 0.5f, (scrolled_in.Min.y + scrolled_in.Max.y) * 0.5f)));
+          const ImRect scrolled_out = ImRect(ctx->ItemInfo("$$0/##body/$$0/##layer").RectFull);
+          IM_CHECK(!washes[0].Contains(ImVec2((scrolled_out.Min.x + scrolled_out.Max.x) * 0.5f,
+                                              (scrolled_out.Min.y + scrolled_out.Max.y) * 0.5f)));
+        }
+      }
+
+      // Back to the top: the wash follows without a stale band left where class 1 was.
+      ctx->ScrollToItem("$$0/##body/$$0/##layer", ImGuiAxis_Y);
+      ctx->Yield(2);
+      const ImRect back_on_top = HoverItemCentre(ctx, "$$0/##body/$$0/##layer");
+      {
+        const std::vector<ScreenRect> washes = CollectColorQuads(ctx, RowWashColour());
+        IM_CHECK_EQ(washes.size(), (size_t)1);
+        if (washes.size() == 1) {
+          IM_CHECK(washes[0].Contains(
+              ImVec2((back_on_top.Min.x + back_on_top.Max.x) * 0.5f, (back_on_top.Min.y + back_on_top.Max.y) * 0.5f)));
+          const ImRect below = ImRect(ctx->ItemInfo("$$1/##body/$$2/##layer").RectFull);
+          IM_CHECK(!washes[0].Contains(ImVec2((below.Min.x + below.Max.x) * 0.5f, (below.Min.y + below.Max.y) * 0.5f)));
+        }
+      }
+
+      CloseColorsWindow(ctx);
+    };
+  }
+
+  // The wash geometry is derived from the live layout, so at a non-default UI scale the bands
+  // still land on their own rows — the scale leg re-runs the adjacent-refs pairwise assertions
+  // where a cached or hardcoded row height would drift.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "color_window", "ui_scale_1_5x_keeps_row_washes_on_their_rows");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      ctx->Yield(2);
+      const float previous_scale = gui::g_ui_scale_multiplier;
+      gui::SetUiScaleMultiplierImmediate(1.5f);
+      ctx->Yield(4);
+      {
+        gui::ColorClassConfig cls = MakeMatchAllClass(1.0f, 0.0f, 0.0f, /*z_order=*/0);
+        cls.match.push_back(MakeRef(0, gui::g_state.layers[0].entries[0].crystal_id, /*match_all=*/true));
+        gui::g_state.raypath_color.push_back(cls);
+        gui::g_state.raypath_color.push_back(MakeMatchAllClass(0.0f, 1.0f, 0.0f, /*z_order=*/1));
+      }
+      OpenColorsWindow(ctx);
+      ctx->ItemOpenAll(kColorsWindowRef);
+      ctx->Yield(2);
+
+      const ImRect ref0 = HoverItemCentre(ctx, "$$0/##body/$$0/##layer");
+      {
+        const std::vector<ScreenRect> washes = CollectColorQuads(ctx, RowWashColour());
+        IM_CHECK_EQ(washes.size(), (size_t)1);
+        if (washes.size() == 1) {
+          IM_CHECK(washes[0].Contains(ImVec2((ref0.Min.x + ref0.Max.x) * 0.5f, (ref0.Min.y + ref0.Max.y) * 0.5f)));
+          const ImRect ref1 = ImRect(ctx->ItemInfo("$$0/##body/$$1/##layer").RectFull);
+          IM_CHECK(!washes[0].Contains(ImVec2((ref1.Min.x + ref1.Max.x) * 0.5f, (ref1.Min.y + ref1.Max.y) * 0.5f)));
+        }
+      }
+      const ImRect ref1 = HoverItemCentre(ctx, "$$0/##body/$$1/##layer");
+      {
+        const std::vector<ScreenRect> washes = CollectColorQuads(ctx, RowWashColour());
+        IM_CHECK_EQ(washes.size(), (size_t)1);
+        if (washes.size() == 1) {
+          IM_CHECK(washes[0].Contains(ImVec2((ref1.Min.x + ref1.Max.x) * 0.5f, (ref1.Min.y + ref1.Max.y) * 0.5f)));
+          IM_CHECK(!washes[0].Contains(ImVec2((ref0.Min.x + ref0.Max.x) * 0.5f, (ref0.Min.y + ref0.Max.y) * 0.5f)));
+        }
+      }
+
+      // Restore the dial and the window basis so later cases (and reference shots) inherit 1x.
+      gui::SetUiScaleMultiplierImmediate(previous_scale);
+      ctx->Yield(4);
       CloseColorsWindow(ctx);
     };
   }

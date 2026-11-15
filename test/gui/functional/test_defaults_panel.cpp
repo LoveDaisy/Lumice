@@ -479,14 +479,15 @@ bool AnyValueWidgetExists(ImGuiTestContext* ctx, const std::string& key_path) {
 // The id of one cell of one axis row inside one preset's table, reproduced from the ID stack the
 // panel builds rather than searched for by label.
 //
-// Forced, and by a different mechanism from SettingsCellID's: the three axis rows draw their cells
-// under the SAME labels ("##type" / "##mean" / "##std"), told apart only by the PushID the panel
-// wraps each row in. A wildcard label search therefore has no unique match and comes back with
-// nothing at all — measured, and it looks exactly like "the cell is drawn as text", which is this
-// file's only claim about those cells.
+// Forced, and by a different mechanism from SettingsCellID's: BeginCombo does not register its
+// label with the test engine, so a wildcard search has no match for the type cells at all —
+// measured, and it looks exactly like "the cell is drawn as text", which is this file's only
+// claim about those cells.
 //
-// The chain from `host` is the preset's TreeNode (which pushes its own id until TreePop), the table
-// (which pushes an override id for its whole body), and the row's PushID.
+// The chain from `host` is the preset's TreeNode (which pushes its own id until TreePop) and the
+// table (which pushes an override id for its whole body); the cells' own labels carry the
+// preset/axis/face identity ("###preset_std_column_2"), so no per-row PushID layer exists to
+// reproduce.
 //
 // `host` is passed in rather than derived from the panel window, and that is the one link that
 // cannot be reproduced by hashing: BeginChild composes a window NAME out of its parent's name, its
@@ -494,16 +495,20 @@ bool AnyValueWidgetExists(ImGuiTestContext* ctx, const std::string& key_path) {
 // name — not the hash the caller can see. Taking it from a known item's ItemInfo().Window sidesteps
 // the whole question, and the caller checks the derivation against that item's own id before using
 // it on the cells it cannot address any other way.
-ImGuiID PresetAxisCellID(ImGuiWindow* host, const char* preset_label, const char* axis, const char* cell) {
+ImGuiID PresetAxisCellID(ImGuiWindow* host, const char* preset_label, const char* preset_key, int axis_index,
+                         const char* face) {
   if (host == nullptr) {
     return 0;
   }
+  // The cells' ids are unique per preset+axis+face ("###preset_std_column_2"); the ID stack they
+  // hash under is window -> tree node -> table (the per-axis PushID layer the earlier id scheme
+  // had is gone — the axis index rides in the label now).
   const std::string node = std::string("###preset_") + preset_label;
   const std::string table = std::string("##preset_table_") + preset_label;
+  const std::string cell = std::string("###preset_") + face + "_" + preset_key + "_" + std::to_string(axis_index);
   ImGuiID id = ImGui::GetIDWithSeed(node.c_str(), nullptr, host->ID);
   id = ImGui::GetIDWithSeed(table.c_str(), nullptr, id);
-  id = ImGui::GetIDWithSeed(axis, nullptr, id);
-  return ImGui::GetIDWithSeed(cell, nullptr, id);
+  return ImGui::GetIDWithSeed(cell.c_str(), nullptr, id);
 }
 
 // The text an input box is SHOWING, read by activating it.
@@ -779,7 +784,7 @@ void RegisterDefaultsPanelTests(ImGuiTestEngine* engine) {
       panel.OpenOn(gui::DefaultsPanelSection::kPresets);
       ctx->ItemOpen("**/###preset_Column");
       ctx->Yield(2);
-      ctx->ItemInputValue("**/###preset_std_column", 0.5f);  // a preset edit
+      ctx->ItemInputValue("**/###preset_std_column_0", 0.5f);  // a preset edit
       ctx->Yield(2);
       ctx->ItemClose("**/###preset_Column");
       ctx->ItemOpen("**/###preset_Plate");
@@ -802,10 +807,10 @@ void RegisterDefaultsPanelTests(ImGuiTestEngine* engine) {
       IM_CHECK_EQ(ReadOverlayBytes(panel.dir()), before);
       // ...and nothing leaked into the in-memory halves either — both directions of the preset edit
       // (a changed value, a dropped override) and the settings half.
-      const auto column = gui::GetUserAxisPresetZenithStdOverride(gui::AxisPreset::kColumn);
+      const auto column = gui::GetUserAxisPresetStdOverride(gui::AxisPreset::kColumn, gui::AxisSlot::kZenith);
       IM_CHECK(column.has_value());
       IM_CHECK_EQ(*column, 0.3f);
-      const auto plate = gui::GetUserAxisPresetZenithStdOverride(gui::AxisPreset::kPlate);
+      const auto plate = gui::GetUserAxisPresetStdOverride(gui::AxisPreset::kPlate, gui::AxisSlot::kZenith);
       IM_CHECK(plate.has_value());
       IM_CHECK_EQ(*plate, 0.6f);
       IM_CHECK_EQ(gui::MakeNewDocumentState().bg_alpha, 0.42f);
@@ -838,7 +843,7 @@ void RegisterDefaultsPanelTests(ImGuiTestEngine* engine) {
       panel.OpenOn(gui::DefaultsPanelSection::kPresets);
       ctx->ItemOpen("**/###preset_Column");
       ctx->Yield(2);
-      ctx->ItemInputValue("**/###preset_std_column", 0.5f);
+      ctx->ItemInputValue("**/###preset_std_column_0", 0.5f);
       ctx->Yield(2);
       ctx->ItemClose("**/###preset_Column");
       ctx->ItemOpen("**/###defaults_settings");
@@ -1866,10 +1871,12 @@ void RegisterDefaultsPanelTests(ImGuiTestEngine* engine) {
   }
 
   {
-    // The Settings row's Front tick follows the same stored/effective split as the main panel's:
-    // under a full-sky lens it reads unchecked and greyed while renderer.front keeps the choice.
-    // The row is drawn by the registry's BoolField, not by the hand-written main-panel checkbox, so
-    // the two copies of the "show effective, write stored" glue are each pinned by their own case.
+    // The Settings row's Front tick follows the same stored/effective split as the main panel's,
+    // and since the defaults-panel unlock task the cell is LIVE under a full-sky lens: it shows
+    // the EFFECTIVE clip (unchecked — the whole-sky projection does not clip) while the click
+    // writes the stored choice, which is kept for the lens that uses it. The row is drawn by the
+    // registry's BoolField, not by the hand-written main-panel checkbox, so the two copies of the
+    // "show effective, write stored" glue are each pinned by their own case.
     ImGuiTest* t =
         IM_REGISTER_TEST(engine, "defaults_panel", "the_front_cell_shows_the_effective_clip_and_keeps_the_choice");
     t->TestFunc = [](ImGuiTestContext* ctx) {
@@ -1889,7 +1896,9 @@ void RegisterDefaultsPanelTests(ImGuiTestEngine* engine) {
       gui::g_state.renderer.lens_type = gui::kLensTypeDualFisheyeEqualArea;
       panel.OpenOn(gui::DefaultsPanelSection::kSettings);
       FilterTo(ctx, "renderer.front");
-      IM_CHECK(IsDisabled(ctx->ItemInfo(ValueWidgetRef("renderer.front").c_str())));
+      // Live, not greyed (the unlock task retired the full-sky grey-out): the stored choice shows
+      // through the effective display as unchecked, and is untouched.
+      IM_CHECK(!IsDisabled(ctx->ItemInfo(ValueWidgetRef("renderer.front").c_str())));
       IM_CHECK(!ctx->ItemIsChecked(ValueWidgetRef("renderer.front").c_str()));
       IM_CHECK(gui::g_state.renderer.front);
       FilterTo(ctx, "");
@@ -1916,16 +1925,32 @@ void RegisterDefaultsPanelTests(ImGuiTestEngine* engine) {
       ScopedPanel panel(ctx, "panel_unregistered");
 
       // The registry's answer, asked directly. This IS the criterion the panel branches on, so it
-      // is asserted rather than inferred from what got drawn.
-      IM_CHECK(gui::FindFieldEditor("bg_path") == nullptr);
-      IM_CHECK(gui::FindFieldEditor("overlay_sun_circle_angles") == nullptr);
-      IM_CHECK(gui::FindFieldEditor("overlay_view_dist_angles") == nullptr);
+      // is asserted rather than inferred from what got drawn. The three leaves that used to be
+      // unregistered grew cell-hosted editors in the defaults-panel unlock task; renderer.ray_color
+      // is the one deliberately-unregistered leaf left (keep-locked with a mechanism: the GUI build
+      // hard-codes the natural-colour sentinel over it).
+      IM_CHECK(gui::FindFieldEditor("renderer.ray_color") == nullptr);
+      IM_CHECK(gui::FindFieldEditor("bg_path") != nullptr);
+      IM_CHECK(gui::FindFieldEditor("overlay_sun_circle_angles") != nullptr);
+      IM_CHECK(gui::FindFieldEditor("overlay_view_dist_angles") != nullptr);
       IM_CHECK(gui::FindFieldEditor("overlay_grid_alpha") != nullptr);
 
       panel.OpenOn(gui::DefaultsPanelSection::kSettings);
 
-      // Per key, non-fatally: they are different unregistered SHAPES (a path string, two arrays
-      // owned by two families), and which of them grew an editor is the diagnosis.
+      // The unregistered row keeps the "no value widget" shape, with its hover explanation now
+      // part of the keep-locked contract (AC2 ②): the grey text is the designed form, and the
+      // tooltip is what says why and where the real writer lives.
+      {
+        FilterTo(ctx, "renderer.ray_color");
+        if (!ctx->ItemExists(AdoptCheckboxRef("renderer.ray_color").c_str())) {
+          IM_ERRORF("row '%s' was not rendered at all, so its cell says nothing", "renderer.ray_color");
+        } else if (AnyValueWidgetExists(ctx, "renderer.ray_color")) {
+          IM_ERRORF("row '%s' has an editor, but no field editor is registered for it", "renderer.ray_color");
+        }
+      }
+
+      // And the three unlocked leaves carry the opposite shape: each now HAS a cell-hosted editor,
+      // so the probe must not mistake them for unregistered rows any more.
       for (const char* unregistered : { "bg_path", "overlay_sun_circle_angles", "overlay_view_dist_angles" }) {
         FilterTo(ctx, unregistered);
         if (!ctx->ItemExists(AdoptCheckboxRef(unregistered).c_str())) {
@@ -2513,9 +2538,9 @@ void RegisterDefaultsPanelTests(ImGuiTestEngine* engine) {
       ctx->ItemOpen("**/###preset_Column");
       ctx->Yield(3);
 
-      ctx->ItemInputValue("**/###preset_std_column", 25.0f);
+      ctx->ItemInputValue("**/###preset_std_column_0", 25.0f);
       ctx->Yield(3);
-      IM_CHECK(!ctx->ItemExists("**/###preset_warning_column"));
+      IM_CHECK(!ctx->ItemExists("**/###preset_warning_column_0"));
       SaveDefaultsPanel(ctx);
       {
         const auto stored = ReadPresetStd(ReadOverlayFile(panel.dir()), "column");
@@ -2524,7 +2549,7 @@ void RegisterDefaultsPanelTests(ImGuiTestEngine* engine) {
         IM_CHECK_EQ(gui::TakeUserDefaultsDowngradeCount(), 0);
       }
 
-      ctx->ItemInputValue("**/###preset_std_column", 0.3f);
+      ctx->ItemInputValue("**/###preset_std_column_0", 0.3f);
       ctx->Yield(3);
       SaveDefaultsPanel(ctx);
       {
@@ -2541,8 +2566,8 @@ void RegisterDefaultsPanelTests(ImGuiTestEngine* engine) {
     // The remaining shape of the old clamp-era defect: a value that needs eight significant digits
     // — nextafter(15, +inf) = 15.000001, as an older build's clamp target or a hand edit would
     // store — must not render as "15" through a fixed short format, because "15" parses to exactly
-    // the excluded bound. The precision is computed per value (RoundTripPrecisionForAxisPresetStd,
-    // via the box's PresetStdDisplayFormat), and the case pins the on-screen half of that rule.
+    // the excluded bound. The precision is computed per value (RoundTripPrecisionForAxisPresetFloat,
+    // via the box's PresetDistDisplayFormat), and the case pins the on-screen half of that rule.
     //
     // Seeded straight into the file, the way an old build's stored value arrives. Read by
     // activating the box, the only way its text is observable at all (see ActivatedInputText).
@@ -2554,7 +2579,7 @@ void RegisterDefaultsPanelTests(ImGuiTestEngine* engine) {
       ctx->ItemOpen("**/###preset_Lowitz");
       ctx->Yield(3);
 
-      const std::string shown = ActivatedInputText(ctx, "**/###preset_std_lowitz");
+      const std::string shown = ActivatedInputText(ctx, "**/###preset_std_lowitz_0");
       IM_CHECK(!shown.empty());
       // The claim, stated as the reader's own test rather than against a number: what the box shows
       // must READ BACK as the stored value. "15" parses to exactly the neighbouring bound, so this
@@ -2582,7 +2607,7 @@ void RegisterDefaultsPanelTests(ImGuiTestEngine* engine) {
       panel.OpenOn(gui::DefaultsPanelSection::kPresets);
       ctx->ItemOpen("**/###preset_Column");
       ctx->Yield(2);
-      ctx->ItemInputValue("**/###preset_std_column", 0.3f);
+      ctx->ItemInputValue("**/###preset_std_column_0", 0.3f);
       ctx->Yield(2);
       // Column folds first: with both nodes unfolded the sticky-semantics sentence (one wrapped
       // line taller than the clamp sentence it replaced) pushes Plate's std input past the clip,
@@ -2591,7 +2616,7 @@ void RegisterDefaultsPanelTests(ImGuiTestEngine* engine) {
       ctx->Yield(1);
       ctx->ItemOpen("**/###preset_Plate");
       ctx->Yield(2);
-      ctx->ItemInputValue("**/###preset_std_plate", 0.5f);
+      ctx->ItemInputValue("**/###preset_std_plate_0", 0.5f);
       ctx->Yield(2);
       SaveDefaultsPanel(ctx);
 
@@ -2617,21 +2642,122 @@ void RegisterDefaultsPanelTests(ImGuiTestEngine* engine) {
   }
 
   {
-    // A preset with no adjustable face offers NO input that would be ignored — a box that accepted
-    // a number and discarded it would be worse than saying so in words.
+    // A NON-zenith face edit, on Random (the preset the old read-only rows covered): the azimuth
+    // mean input writes presets.axis.random.azimuth_mean — the per-axis key, not a zenith key with
+    // a wrong payload — and the Save reaches the disk the same way every zenith face does. This is
+    // the representative of the 24 cells the unlock task turned live; the per-axis store-level
+    // independence is pinned in gui_unit_test.
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "defaults_panel", "a_non_zenith_face_edit_saves_under_its_axis");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ScopedPanel panel(ctx, "panel_random_azimuth");
+      panel.OpenOn(gui::DefaultsPanelSection::kPresets);
+      ctx->ItemOpen("**/###preset_Random");
+      ctx->Yield(2);
+
+      // Axis row 1 is Azimuth; the mean input's id carries the axis index, which is what makes a
+      // wrong-row write land under a different key and fail this claim instead of passing.
+      ctx->ItemInputValue("**/###preset_mean_random_1", 30.0f);
+      ctx->Yield(3);
+      SaveDefaultsPanel(ctx);
+
+      const json saved = ReadOverlayFile(panel.dir());
+      IM_CHECK(saved.contains("presets"));
+      IM_CHECK(saved["presets"]["axis"].contains("random"));
+      IM_CHECK(saved["presets"]["axis"]["random"].contains("azimuth_mean"));
+      IM_CHECK_EQ(saved["presets"]["axis"]["random"]["azimuth_mean"].get<float>(), 30.0f);
+      IM_CHECK(!saved["presets"]["axis"]["random"].contains("zenith_mean"));
+      IM_CHECK(!saved["presets"]["axis"]["random"].contains("azimuth_std"));
+    };
+  }
+
+  {
+    // The bg_path cell's deferred commit, panel half: the file dialog itself is an OS sheet no
+    // test can drive, so the claim under test is the ADOPTION contract — an outside-frame load
+    // that changed the document checks the row and the next Save writes the path. This is the
+    // mechanism that closes the "Save reported success but the file holds nothing" family for the
+    // one cell whose edit lands outside the panel's editor Render.
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "defaults_panel", "a_background_load_adopted_by_the_panel_saves_the_path");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ScopedPanel panel(ctx, "panel_bg_adopt");
+      panel.OpenOn(gui::DefaultsPanelSection::kSettings);
+      FilterTo(ctx, "bg_path");
+      ctx->Yield(2);
+
+      // The checkbox EXISTS whether or not it is ticked; "nothing adopted yet" is the unchecked
+      // half of that.
+      IM_CHECK(!ctx->ItemIsChecked("**/###adopt_bg_path"));
+
+      // The frame loop's claim, driven directly (the dialog is the untestable half): the state's
+      // path is what the loader leaves behind, exactly as it would after a real pick.
+      gui::g_state.bg_path = "/tmp/lumice-test-bg.png";
+      gui::NotifyDefaultsBackgroundAdopted();
+      ctx->Yield(3);
+
+      // The row is checked, the Current value cell re-read the new path, and Save writes it.
+      IM_CHECK(ctx->ItemIsChecked("**/###adopt_bg_path"));
+      SaveDefaultsPanel(ctx);
+      const json saved = ReadOverlayFile(panel.dir());
+      IM_CHECK(saved.contains("bg_path"));
+      IM_CHECK_STR_EQ(saved["bg_path"].get<std::string>().c_str(), "/tmp/lumice-test-bg.png");
+    };
+  }
+
+  {
+    // The spectrum row's popup, closed loop: "Custom spectrum..." opens the shared editor over
+    // the defaults modal (a plain popup, not a stacked modal), the OK commits transactionally and
+    // the row joins the set Save writes, and the saved file round-trips the array. This is the
+    // third of the three cell-hosted editors — the angle list and the wedge rows have theirs.
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "defaults_panel", "a_spectrum_cell_edits_and_saves_the_custom_spectrum");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ScopedPanel panel(ctx, "panel_spectrum_cell");
+      // Seed the custom state after the scoped reset, before the panel opens: the spectrum row
+      // shows the Custom entry point only while a custom spectrum is in use (the preset combo
+      // otherwise), and the panel snapshots the state at open.
+      gui::g_state.sun.spectrum_index = gui::kCustomSpectrumIndex;
+      gui::g_state.sun.custom_spectrum = { { 400.0f, 1.0f }, { 550.0f, 1.0f }, { 700.0f, 1.0f } };
+      panel.OpenOn(gui::DefaultsPanelSection::kSettings);
+      FilterTo(ctx, "sun.spectrum");
+      ctx->Yield(2);
+
+      ctx->ItemClick("**/###value_sun.spectrum");  // "Custom spectrum..." — the custom-state entry
+      ctx->Yield(2);
+      // The editor body's first wavelength box, under its own row id (the body is the Sun panel's
+      // shared one; rows are per-index PushID'd). The popup commits ON DEACTIVATION — the same
+      // contract as every numeric cell of this panel and the wedge editor, for the same reason:
+      // a plain popup's buttons are what a driven click cannot reliably reach.
+      ctx->ItemInputValue("**/wl(nm)##wl", 410.0f);
+      ctx->Yield(3);
+
+      IM_CHECK_EQ(static_cast<int>(gui::g_state.sun.spectrum_index), static_cast<int>(gui::kCustomSpectrumIndex));
+      IM_CHECK_EQ(gui::g_state.sun.custom_spectrum.size(), (size_t)3);
+      IM_CHECK_EQ(gui::g_state.sun.custom_spectrum[0].wavelength, 410.0f);
+      SaveDefaultsPanel(ctx);
+      const json saved = ReadOverlayFile(panel.dir());
+      IM_CHECK(saved.contains("sun"));
+      IM_CHECK(saved["sun"].contains("custom_spectrum"));
+      IM_CHECK_EQ(saved["sun"]["custom_spectrum"].size(), (size_t)3);  // the seeded three rows
+      IM_CHECK_EQ(saved["sun"]["spectrum"].get<std::string>(), "custom");
+      IM_CHECK_EQ(saved["sun"]["custom_spectrum"][0]["wavelength"].get<float>(), 410.0f);
+    };
+  }
+
+  {
+    // Every storable preset offers the full set of rows and inputs — no face of the library is
+    // locked any more (the former "no adjustable face offers no input" case pinned Random's
+    // read-only shape, which this task retired: Random stores its three uniform-360 axes like any
+    // other preset).
     //
     // A structural sweep over the library table rather than a look at one name: the std input and
-    // the restore button must exist for every adjustable preset and for none of the others, derived
-    // from the same table the panel renders from, so this cannot drift into checking a stale list
-    // of four names. It also pins the library's membership — the classifier's "none of the above"
-    // is not a built-in identity and has nothing for a library to hold about it.
-    ImGuiTest* t = IM_REGISTER_TEST(engine, "defaults_panel", "a_preset_with_no_adjustable_face_offers_no_input");
+    // the restore button must exist for every preset with an override key, derived from the same
+    // table the panel renders from, so this cannot drift into checking a stale list of five names.
+    // It also pins the library's membership — the classifier's "none of the above" is not a
+    // built-in identity and has nothing for a library to hold about it.
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "defaults_panel", "every_storable_preset_offers_its_axis_rows");
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ScopedPanel panel(ctx, "panel_preset_membership");
       panel.OpenOn(gui::DefaultsPanelSection::kPresets);
 
-      int adjustable_seen = 0;
-      int fixed_seen = 0;
+      int storable_seen = 0;
       // Reported per preset rather than asserted fatally: "which preset is wrong" is the entire
       // content of a failure here, and a fatal assert would also leave whichever node it was
       // inspecting unfolded, which the teardown then has to undo for a case that never reached its
@@ -2653,31 +2779,20 @@ void RegisterDefaultsPanelTests(ImGuiTestEngine* engine) {
         ctx->ItemOpen(node_ref.c_str());
         ctx->Yield(2);
 
-        if (entry.has_adjustable_zenith_std) {
-          ++adjustable_seen;
-          const std::string std_ref = std::string("**/###preset_std_") + entry.override_json_name;
-          const std::string restore_ref = std::string("**/###preset_restore_") + entry.override_json_name;
-          if (!ctx->ItemExists(std_ref.c_str())) {
-            IM_ERRORF("preset '%s' is adjustable but offers no std input", entry.label);
-          }
-          if (ctx->IsError()) {
-            break;
-          }
-          if (!ctx->ItemExists(restore_ref.c_str())) {
-            IM_ERRORF("preset '%s' is adjustable but offers no restore button", entry.label);
-          }
-          if (ctx->IsError()) {
-            break;
-          }
-        } else {
-          ++fixed_seen;
-          // Nothing keyed on a json name can exist for it — it has none. Probing the id an
-          // adjustable preset would carry, spelled from the label instead, since that is the only
-          // name this preset has.
-          const std::string std_ref = std::string("**/###preset_std_") + gui::AxisPresetLabel(entry.id);
-          if (ctx->ItemExists(std_ref.c_str())) {
-            IM_ERRORF("preset '%s' has nothing to tune but offers an input anyway", entry.label);
-          }
+        ++storable_seen;
+        const std::string std_ref = std::string("**/###preset_std_") + entry.override_json_name + "_0";
+        const std::string restore_ref = std::string("**/###preset_restore_") + entry.override_json_name;
+        if (!ctx->ItemExists(std_ref.c_str())) {
+          IM_ERRORF("preset '%s' is storable but offers no std input", entry.label);
+        }
+        if (ctx->IsError()) {
+          break;
+        }
+        if (!ctx->ItemExists(restore_ref.c_str())) {
+          IM_ERRORF("preset '%s' is storable but offers no restore button", entry.label);
+        }
+        if (ctx->IsError()) {
+          break;
         }
         // Either branch above may have just reported non-fatally; ItemClose/Yield below drive ctx
         // unconditionally and must not run on top of that (see ctx->IsError() in
@@ -2688,8 +2803,7 @@ void RegisterDefaultsPanelTests(ImGuiTestEngine* engine) {
         ctx->ItemClose(node_ref.c_str());
         ctx->Yield(1);
       }
-      IM_CHECK_EQ(adjustable_seen, 4);  // Column / Plate / Parry / Lowitz
-      IM_CHECK_EQ(fixed_seen, 1);       // Random
+      IM_CHECK_EQ(storable_seen, 5);  // Column / Plate / Parry / Lowitz / Random
 
       // Nothing was written by merely looking at the library.
       IM_CHECK(ReadOverlayFile(panel.dir()).empty());
@@ -2697,19 +2811,20 @@ void RegisterDefaultsPanelTests(ImGuiTestEngine* engine) {
   }
 
   {
-    // The axes a preset does not let you edit are DISABLED CONTROLS, not text.
+    // Every face of every axis row of a storable preset is an ENABLED control.
     //
-    // The distinction is the whole point of drawing them that way: a control shows the shape of the
-    // value (a distribution picker, a number) while being honest that it cannot be changed here. A
-    // text cell would leave the user hunting for the editor; an enabled control would be a lie.
+    // The former case here asserted the opposite shape: azimuth/roll rows and the zenith mean were
+    // DISABLED controls, "honest that they cannot be changed here". This task retired that lock —
+    // the library stores all nine faces of every storable preset — so the assertion now runs the
+    // other way: a control that exists and is disabled would be the lie, and the sweep below is
+    // what catches the half-reverted state (inputs enabled, one row still under BeginDisabled).
     //
-    // Falsifiable because the two shapes differ in what reaches the test engine at all:
-    // ImGui::Text* items are submitted with id 0 and are invisible here, so an item that EXISTS is
-    // already evidence it is a control, and the disabled flag is the second half.
-    ImGuiTest* t =
-        IM_REGISTER_TEST(engine, "defaults_panel", "the_axes_a_preset_does_not_let_you_edit_are_disabled_controls");
+    // Falsifiable because shapes differ in what reaches the test engine at all: ImGui::Text*
+    // items are submitted with id 0 and are invisible here, so an item that EXISTS is already
+    // evidence it is a control, and the disabled flag is the second half.
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "defaults_panel", "every_axis_cell_of_a_storable_preset_is_enabled");
     t->TestFunc = [](ImGuiTestContext* ctx) {
-      ScopedPanel panel(ctx, "panel_readonly_axes");
+      ScopedPanel panel(ctx, "panel_editable_axes");
       panel.OpenOn(gui::DefaultsPanelSection::kPresets);
       // Column, the FIRST preset in the library, and that choice is forced rather than arbitrary:
       // the section's body is a bounded child, so a preset further down the list has its table
@@ -2717,43 +2832,38 @@ void RegisterDefaultsPanelTests(ImGuiTestEngine* engine) {
       // engine's search. Measured, on the last preset in the list: all three cells came back "not
       // an item at all", which is the same answer a text cell would give and would have read as
       // this case's own subject failing.
-      //
-      // Column also puts the contrast in one table: its Zenith std is the one editable cell in the
-      // library, and the cells around it are the read-only ones. Assert both and the claim is
-      // "these are disabled" rather than "everything here happens to be disabled".
       ctx->ItemOpen("**/###preset_Column");
       ctx->Yield(3);
 
       // The anchor: the one cell in this table that CAN be addressed by label, because its id is
       // unique. Two jobs. It is asked first and fatally, because every probe below is a report
       // rather than an abort and the test context short-circuits once ANY error is on record — a
-      // collapsed node would otherwise produce six "drawn as text?" lines that are all collateral
+      // collapsed node would otherwise produce nine "drawn as text?" lines that are all collateral
       // from one missing table. And its window is the seed the other cells' ids are derived from.
-      const auto anchor = ctx->ItemInfo("**/###preset_std_column");
+      const auto anchor = ctx->ItemInfo("**/###preset_std_column_0");
       IM_CHECK(anchor.ID != 0);
       IM_CHECK(anchor.Window != nullptr);
-      IM_CHECK(!IsDisabled(anchor));  // the sibling that IS editable, so "disabled" below is a fact
-                                      // about which cells are read-only rather than an artifact of
-                                      // how this case reads them
+      IM_CHECK(!IsDisabled(anchor));
 
       // The derivation, checked against the one id this case already knows, before it is trusted on
       // the cells it is the only way to reach. A silently wrong chain would report every cell as
       // "not an item at all" — which is indistinguishable from the defect under test.
-      IM_CHECK_EQ(PresetAxisCellID(anchor.Window, "Column", "zenith", "###preset_std_column"), anchor.ID);
+      IM_CHECK_EQ(PresetAxisCellID(anchor.Window, "Column", "column", 0, "std"), anchor.ID);
 
-      // Every read-only cell of the two axes Column does not let you tune, one report each: which
-      // of the six stopped being a control is the diagnosis, and a fatal assertion would name only
-      // the first — and, worse, would leave the remaining probes unrun, since the test context
-      // short-circuits every action once an error is on record.
-      for (const char* axis : { "azimuth", "roll" }) {
-        for (const char* cell : { "##type", "##mean", "##std" }) {
-          const ImGuiID id = PresetAxisCellID(anchor.Window, "Column", axis, cell);
+      // Every cell of every axis row, one report each: which of the nine stopped being an enabled
+      // control is the diagnosis, and a fatal assertion would name only the first — and, worse,
+      // would leave the remaining probes unrun, since the test context short-circuits every action
+      // once an error is on record.
+      for (int axis_index = 0; axis_index < 3; ++axis_index) {
+        const char* axis_name = axis_index == 0 ? "zenith" : (axis_index == 1 ? "azimuth" : "roll");
+        for (const char* face : { "type", "mean", "std" }) {
+          const ImGuiID id = PresetAxisCellID(anchor.Window, "Column", "column", axis_index, face);
           if (id == 0 || !ctx->ItemExists(id)) {
-            IM_ERRORF("read-only cell %s/%s is not an item at all — drawn as text?", axis, cell);
+            IM_ERRORF("editable cell %s/%s is not an item at all — drawn as text?", axis_name, face);
             continue;
           }
-          if (!IsDisabled(ctx->ItemInfo(id))) {
-            IM_ERRORF("read-only cell %s/%s is enabled — this row cannot be edited here", axis, cell);
+          if (IsDisabled(ctx->ItemInfo(id))) {
+            IM_ERRORF("editable cell %s/%s is disabled — this face was supposed to be unlocked", axis_name, face);
           }
 
           if (ctx->IsError()) {
@@ -2764,25 +2874,6 @@ void RegisterDefaultsPanelTests(ImGuiTestEngine* engine) {
         if (ctx->IsError()) {
           break;
         }
-      }
-
-      // The tunable row's mean is read-only too: a Zenith the user can retune still does not let
-      // them move its centre, which is what the classifier pins.
-      {
-        const ImGuiID id = PresetAxisCellID(anchor.Window, "Column", "zenith", "##mean");
-        if (id == 0 || !ctx->ItemExists(id)) {
-          IM_ERRORF("read-only cell zenith/%s is not an item at all — drawn as text?", "##mean");
-        } else if (!IsDisabled(ctx->ItemInfo(id))) {
-          IM_ERRORF("read-only cell zenith/%s is enabled — the mean is not tunable here", "##mean");
-        }
-      }
-      // ...while its TYPE is the second live cell: an enabled combo, under its own id, so a user
-      // can move the distribution family within the set the classifier keeps Column under.
-      {
-        const ImGuiID id = PresetAxisCellID(anchor.Window, "Column", "zenith", "###preset_type_column");
-        IM_CHECK(id != 0);
-        IM_CHECK(ctx->ItemExists(id));
-        IM_CHECK(!IsDisabled(ctx->ItemInfo(id)));
       }
     };
   }
@@ -2804,10 +2895,10 @@ void RegisterDefaultsPanelTests(ImGuiTestEngine* engine) {
 
       // The combo's id, derived the way the read-only-cells case derives its cells: BeginCombo
       // never registers its label with the engine, so a wildcard search cannot find it.
-      const auto anchor = ctx->ItemInfo("**/###preset_std_column");
+      const auto anchor = ctx->ItemInfo("**/###preset_std_column_0");
       IM_CHECK(anchor.ID != 0);
       IM_CHECK(anchor.Window != nullptr);
-      const ImGuiID type_combo = PresetAxisCellID(anchor.Window, "Column", "zenith", "###preset_type_column");
+      const ImGuiID type_combo = PresetAxisCellID(anchor.Window, "Column", "column", 0, "type");
       IM_CHECK(type_combo != 0);
       IM_CHECK(ctx->ItemExists(type_combo));
 
@@ -2859,7 +2950,7 @@ void RegisterDefaultsPanelTests(ImGuiTestEngine* engine) {
       // And a fresh session reads it back off the file, still classified as Column.
       gui::ResetUserAxisPresetOverrides();
       gui::g_state = gui::MakeNewDocumentState();
-      const auto reloaded = gui::GetUserAxisPresetZenithTypeOverride(gui::AxisPreset::kColumn);
+      const auto reloaded = gui::GetUserAxisPresetTypeOverride(gui::AxisPreset::kColumn, gui::AxisSlot::kZenith);
       IM_CHECK(reloaded.has_value());
       IM_CHECK_EQ(static_cast<int>(*reloaded), static_cast<int>(gui::AxisDistType::kLaplacian));
       const auto& column = gui::AxisPresetEntryFor(gui::AxisPreset::kColumn);
@@ -2871,7 +2962,7 @@ void RegisterDefaultsPanelTests(ImGuiTestEngine* engine) {
       panel.OpenOn(gui::DefaultsPanelSection::kPresets);
       ctx->ItemOpen("**/###preset_Column");
       ctx->Yield(2);
-      ctx->ItemInputValue("**/###preset_std_column", 0.3f);
+      ctx->ItemInputValue("**/###preset_std_column_0", 0.3f);
       ctx->Yield(3);
       ctx->ItemClick("**/###preset_restore_column");
       ctx->Yield(3);
@@ -2881,8 +2972,8 @@ void RegisterDefaultsPanelTests(ImGuiTestEngine* engine) {
         IM_CHECK(!ReadPresetType(stored, "column").has_value());
         IM_CHECK(!ReadPresetStd(stored, "column").has_value());
       }
-      IM_CHECK(!gui::GetUserAxisPresetZenithTypeOverride(gui::AxisPreset::kColumn).has_value());
-      IM_CHECK(!gui::GetUserAxisPresetZenithStdOverride(gui::AxisPreset::kColumn).has_value());
+      IM_CHECK(!gui::GetUserAxisPresetTypeOverride(gui::AxisPreset::kColumn, gui::AxisSlot::kZenith).has_value());
+      IM_CHECK(!gui::GetUserAxisPresetStdOverride(gui::AxisPreset::kColumn, gui::AxisSlot::kZenith).has_value());
     };
   }
 
@@ -2938,7 +3029,7 @@ void RegisterDefaultsPanelTests(ImGuiTestEngine* engine) {
 
       ctx->ItemOpen(kColumn);
       ctx->Yield(2);
-      ctx->ItemInputValue("**/###preset_std_column", 0.3f);
+      ctx->ItemInputValue("**/###preset_std_column_0", 0.3f);
       ctx->Yield(3);
       ctx->ItemClose(kColumn);
       ctx->Yield(2);
@@ -2970,14 +3061,14 @@ void RegisterDefaultsPanelTests(ImGuiTestEngine* engine) {
 
       const auto before_bytes = ReadOverlayBytes(panel.dir());
       IM_CHECK(before_bytes.has_value());
-      const auto before_cache = gui::GetUserAxisPresetZenithStdOverride(gui::AxisPreset::kColumn);
+      const auto before_cache = gui::GetUserAxisPresetStdOverride(gui::AxisPreset::kColumn, gui::AxisSlot::kZenith);
       IM_CHECK(before_cache.has_value());
       IM_CHECK_EQ(*before_cache, 0.3f);
 
       panel.OpenOn(gui::DefaultsPanelSection::kPresets);
       ctx->ItemOpen("**/###preset_Column");
       ctx->Yield(2);
-      ctx->ItemInputValue("**/###preset_std_column", 0.7f);
+      ctx->ItemInputValue("**/###preset_std_column_0", 0.7f);
       ctx->Yield(3);
       // The cache still answers the old value while the panel is open: the edit is uncommitted, not
       // ignored (the collapsed-title case above is where "the panel does show it" is asserted).
@@ -2985,7 +3076,7 @@ void RegisterDefaultsPanelTests(ImGuiTestEngine* engine) {
       panel.Close();
 
       IM_CHECK_EQ(ReadOverlayBytes(panel.dir()), before_bytes);
-      IM_CHECK_EQ(gui::GetUserAxisPresetZenithStdOverride(gui::AxisPreset::kColumn), before_cache);
+      IM_CHECK_EQ(gui::GetUserAxisPresetStdOverride(gui::AxisPreset::kColumn, gui::AxisSlot::kZenith), before_cache);
 
       // Restore-to-factory is the other direction of the same claim: it must not silently drop a
       // stored override either.
@@ -2997,7 +3088,7 @@ void RegisterDefaultsPanelTests(ImGuiTestEngine* engine) {
       panel.Close();
 
       IM_CHECK_EQ(ReadOverlayBytes(panel.dir()), before_bytes);
-      IM_CHECK_EQ(gui::GetUserAxisPresetZenithStdOverride(gui::AxisPreset::kColumn), before_cache);
+      IM_CHECK_EQ(gui::GetUserAxisPresetStdOverride(gui::AxisPreset::kColumn, gui::AxisSlot::kZenith), before_cache);
     };
   }
 
@@ -3038,12 +3129,12 @@ void RegisterDefaultsPanelTests(ImGuiTestEngine* engine) {
         ctx->Yield(4);
         ctx->ItemOpen("**/###preset_Column");
         ctx->Yield(2);
-        ctx->ItemInputValue("**/###preset_std_column", 0.7f);
+        ctx->ItemInputValue("**/###preset_std_column_0", 0.7f);
         ctx->Yield(3);
         before_bytes = ReadOverlayBytes(dir);
       }
       IM_CHECK(before_bytes.has_value());
-      const auto before_cache = gui::GetUserAxisPresetZenithStdOverride(gui::AxisPreset::kColumn);
+      const auto before_cache = gui::GetUserAxisPresetStdOverride(gui::AxisPreset::kColumn, gui::AxisSlot::kZenith);
       IM_CHECK(before_cache.has_value());
       IM_CHECK_EQ(*before_cache, 0.3f);
 
@@ -3052,7 +3143,7 @@ void RegisterDefaultsPanelTests(ImGuiTestEngine* engine) {
       {
         ScopedUserConfigSource disabled(gui::UserConfigSource::kDisabled);
         SaveDefaultsPanel(ctx);
-        IM_CHECK_EQ(gui::GetUserAxisPresetZenithStdOverride(gui::AxisPreset::kColumn), before_cache);
+        IM_CHECK_EQ(gui::GetUserAxisPresetStdOverride(gui::AxisPreset::kColumn, gui::AxisSlot::kZenith), before_cache);
         IM_CHECK_EQ(ReadOverlayBytes(dir), before_bytes);
       }
 
@@ -3063,7 +3154,8 @@ void RegisterDefaultsPanelTests(ImGuiTestEngine* engine) {
       {
         ScopedUserConfigSource writable(gui::UserConfigSource::kExplicitDir, dir);
         SaveDefaultsPanel(ctx);
-        IM_CHECK_EQ(gui::GetUserAxisPresetZenithStdOverride(gui::AxisPreset::kColumn).value_or(-1.0f), 0.7f);
+        IM_CHECK_EQ(gui::GetUserAxisPresetStdOverride(gui::AxisPreset::kColumn, gui::AxisSlot::kZenith).value_or(-1.0f),
+                    0.7f);
         IM_CHECK_EQ(ReadPresetStd(ReadOverlayFile(dir), "column").value_or(-1.0f), 0.7f);
         // By hand, because this case does not use ScopedPanel and therefore does not get its
         // teardown: the Column node opened above is ImGui window storage that outlives this case,
@@ -3097,7 +3189,14 @@ void RegisterDefaultsPanelTests(ImGuiTestEngine* engine) {
       panel.OpenOn(gui::DefaultsPanelSection::kPresets);
       ctx->ItemOpen("**/###preset_Column");
       ctx->Yield(2);
-      ctx->ItemInputValue("**/###preset_std_column", 0.3f);
+      // One face per axis: the zenith std (the pre-existing face), the AZIMUTH mean and the ROLL
+      // std (the faces the unlock task added). Asserting all three at the crystal is what pins
+      // the chip's definition assembly — a getter that resolves the faces but a call site that
+      // still reads factory azimuth/roll would pass every store-level test and still deliver a
+      // wrong crystal here.
+      ctx->ItemInputValue("**/###preset_std_column_0", 0.3f);
+      ctx->ItemInputValue("**/###preset_mean_column_1", 120.0f);
+      ctx->ItemInputValue("**/###preset_std_column_2", 5.0f);
       ctx->Yield(3);
       SaveDefaultsPanel(ctx);
       panel.Close();
@@ -3114,11 +3213,14 @@ void RegisterDefaultsPanelTests(ImGuiTestEngine* engine) {
 
       const auto& edited = gui::CrystalOf(gui::g_state, gui::g_state.layers[0].entries[0]);
       IM_CHECK_EQ(edited.zenith.std, 0.3f);
-      IM_CHECK_EQ(static_cast<int>(gui::ClassifyAxisPreset(edited.zenith, edited.azimuth, edited.roll)),
-                  static_cast<int>(gui::AxisPreset::kColumn));
+      IM_CHECK_EQ(edited.azimuth.mean, 120.0f);
+      IM_CHECK_EQ(edited.roll.std, 5.0f);
       // The chip also sets the label — the switch is the whole gesture, so a crystal that just
-      // became Column reads as Column.
+      // became Column reads as Column. And the label is STICKY: a retuned definition now loads
+      // parameters the classifier reads as Custom, which is exactly the state the crystal's
+      // out-of-domain badge exists to report — not something the chip bends back.
       IM_CHECK_EQ(static_cast<int>(edited.axis_preset), static_cast<int>(gui::AxisPreset::kColumn));
+      IM_CHECK(gui::AxisLabelOutOfDomain(gui::AxisPreset::kColumn, edited.zenith, edited.azimuth, edited.roll));
     };
   }
 
@@ -3343,16 +3445,25 @@ void RegisterDefaultsPanelTests(ImGuiTestEngine* engine) {
       ScopedPanel panel(ctx, "wedge_add_gate");
       panel.OpenOn(gui::DefaultsPanelSection::kPresets);
 
+      // ScrollToItemY before every ItemInfo, the same clip-edge discipline
+      // test_marker_panel.cpp records: the wedge section sits at the bottom of the bounded
+      // presets child, and the feedback line under the inputs is one line taller for a refused
+      // triple than for a valid one — enough to move the Add button across the clip edge between
+      // two assertions, which is the difference between "located, disabled" and "not an item at
+      // all".
       TypeWedgeIndices(ctx, 3, 0, 2);
+      ctx->ScrollToItemY("**/##custom_wedge_l");
       IM_CHECK(!IsDisabled(ctx->ItemInfo("**/###wedge_preset_add")));
 
       // k != 0 is a second-order pyramidal face the crystal model cannot express.
       TypeWedgeIndices(ctx, 3, 1, 2);
+      ctx->ScrollToItemY("**/##custom_wedge_l");
       IM_CHECK(IsDisabled(ctx->ItemInfo("**/###wedge_preset_add")));
 
       // h == 0 is "no cone on this side", whose honest angle is 0 and which the wedge field cannot
       // carry. Refused here for exactly the reason the dropdown refuses it.
       TypeWedgeIndices(ctx, 0, 0, 2);
+      ctx->ScrollToItemY("**/##custom_wedge_l");
       IM_CHECK(IsDisabled(ctx->ItemInfo("**/###wedge_preset_add")));
     };
   }
@@ -3373,6 +3484,81 @@ void RegisterDefaultsPanelTests(ImGuiTestEngine* engine) {
       SaveDefaultsPanel(ctx);
       IM_CHECK(ReadSavedWedgePresets(panel.dir()).empty());
       IM_CHECK(!ctx->ItemExists("**/###wedge_preset_warning_0"));
+    };
+  }
+
+  {
+    // In-place editing of a saved wedge entry: the pen opens a small editor seeded with the row's
+    // indices, a save lands under the SAME row (not appended), and the angle that shows beside the
+    // row is the derived one. The indices are the stored truth — the claim below is that the file
+    // holds the edited triple and nothing was duplicated.
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "defaults_panel", "a_wedge_preset_row_edits_its_indices_in_place");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ScopedPanel panel(ctx, "wedge_edit_in_place");
+      panel.OpenOn(gui::DefaultsPanelSection::kPresets);
+
+      TypeWedgeIndices(ctx, 3, 0, 2);
+      ctx->ItemClick("**/###wedge_preset_add");
+      ctx->Yield(2);
+
+      ctx->ScrollToItemY("**/###wedge_preset_edit_0");
+      ctx->ItemClick("**/###wedge_preset_edit_0");
+      ctx->Yield(2);
+      // The editor's boxes carry unique "###wedge_edit_*" suffixes, and each committed edit ends
+      // with Enter (the commit-on-deactivation contract, the same one every numeric cell of this
+      // panel uses). {5,0,2} is the target: it converts, and it is neither one of the four
+      // built-in (h,l) pairs nor the row's own {3,0,2} — the two refusal verdicts must NOT fire.
+      ctx->ItemInputValue("**/###wedge_edit_h", 5);
+      ctx->Yield(2);
+
+      // Not saved yet (the copy model — the panel's Save is still the one write), and then exactly
+      // one entry under the edited triple.
+      IM_CHECK(ReadSavedWedgePresets(panel.dir()).empty());
+      SaveDefaultsPanel(ctx);
+      const std::vector<std::array<int, 3>> on_disk = ReadSavedWedgePresets(panel.dir());
+      IM_CHECK_EQ(on_disk.size(), (size_t)1);
+      IM_CHECK_EQ(on_disk[0][0], 5);
+      IM_CHECK_EQ(on_disk[0][1], 0);
+      IM_CHECK_EQ(on_disk[0][2], 2);
+    };
+  }
+
+  {
+    // The Settings table's angle rows host the overlay section's own angle editor: adding a preset
+    // ring from the cell lands in the same list the fold edits, and the row joins the set Save
+    // writes (the edit is a statement that this value should be the default). 9° is not in the
+    // factory list ({22°, 46°}), so the preset button is live and the saved list is the default
+    // plus it.
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "defaults_panel", "a_settings_cell_edits_the_sun_circle_angle_list");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ScopedPanel panel(ctx, "angle_list_cell");
+      panel.OpenOn(gui::DefaultsPanelSection::kSettings);
+      FilterTo(ctx, "overlay_sun_circle_angles");
+      ctx->Yield(2);
+
+      ctx->ItemClick("**/###value_overlay_sun_circle_angles");
+      ctx->Yield(2);
+      ctx->ItemClick("**/9\xc2\xb0");
+      ctx->Yield(2);
+      ctx->ItemClick("**/###defaults_close");  // the file gains nothing without Save
+      ctx->Yield(2);
+
+      // The edit DID reach the live list (the cell-hosted editor and the fold edit the same one):
+      // re-open and save, and the file gains it.
+      panel.OpenOn(gui::DefaultsPanelSection::kSettings);
+      FilterTo(ctx, "overlay_sun_circle_angles");
+      ctx->Yield(2);
+      IM_CHECK(ctx->ItemExists("**/###adopt_overlay_sun_circle_angles"));
+      SaveDefaultsPanel(ctx);
+      const json saved = ReadOverlayFile(panel.dir());
+      IM_CHECK(saved.contains("overlay_sun_circle_angles"));
+      const json& list = saved["overlay_sun_circle_angles"];
+      IM_CHECK_EQ(list.size(), (size_t)3);  // {22, 46} factory + the 9 added from the cell
+      bool has_nine = false;
+      for (const auto& v : list) {
+        has_nine = has_nine || v.get<float>() == 9.0f;
+      }
+      IM_CHECK(has_nine);
     };
   }
 

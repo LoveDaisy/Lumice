@@ -32,16 +32,31 @@
 // It cannot, and by construction rather than by a list of forbidden pairs:
 //   1. every entry's `enabled` IS the BeginDisabled(...) expression at the field's main-UI call
 //      site — that call site reads this one — so the set of (field, configuration) pairs this table
-//      will write is the same set the main UI will write. A field that does not apply is greyed
-//      here exactly when it is greyed there;
+//      will WRITE is the same set the main UI will write. A field that does not apply is greyed
+//      here exactly when it is greyed there — with ONE declared exception, the background family
+//      (bg_show, bg_alpha, bg_offset_x/y, bg_scale): their main-UI controls keep the Display
+//      panel's own view rule (greyed with no image), while the registry carries them as stored
+//      settings (enabled everywhere, the sentence as a note) — "act on the live composite" and
+//      "store a default" are two different questions, and both sites saying so in their own
+//      comments is the contract, not a bug to unify. The defaults-panel unlock task split the rest
+//      of the population in two, and that split is by WRITER, not by mood: a field whose value the frame loop or a lens
+//      switch rewrites (view angles under a full-sky lens, fov) stays disabled, because an edit it
+//      erases within one frame is the "saved, then silently reset" wrong state; a field the frame
+//      loop never touches (background/paper tones, overlay colours under print, the background
+//      transform with no image, Rays(M) under infinite, roll under Globe — whose render sites read
+//      EffectiveRollForLens without writing back) became always-editable, and its `enabled` is
+//      true everywhere while `inactive_note` carries the "not consumed right now" sentence.
 //   2. the renderer invariants in app_panels.cpp (RenderPreviewPanel) run every frame, panel open
 //      or not — this is a popup, not a replacement for the frame. Setting roll and THEN switching
 //      to a full-sky lens does not smuggle the pair through: roll is forced back to 0 on the next
 //      frame, before any Save can see it. Pinned directly (not just by this comment) by
 //      `view_display_controls/which_view_sliders_apply_depends_on_the_lens` in
 //      test/gui/functional/test_view_display_controls.cpp, which sets a non-zero roll under every
-//      entry of kFullSkyLensTypes and asserts the next frame zeroes it.
-// Point 1 is the rule; point 2 is why a mistake in point 1 still cannot produce the bad state. What
+//      entry of kFullSkyLensTypes and asserts the next frame zeroes it. That invariant is also why
+//      the frame-forced half of population 1 must stay disabled: the same writer would erase the
+//      Settings panel's edit the frame after Save reported it.
+// Point 1 is the rule; point 2 is why a mistake in point 1 still cannot produce the bad state —
+// and why the fields whose writer IS that invariant stay on the disabled side of the split. What
 // this does NOT do is validate combinations that ARE reachable from the main UI — those need no
 // defending, since a user could have saved them by hand anyway.
 //
@@ -78,6 +93,7 @@ enum class FieldEditorKind {
   kCheckbox,
   kCombo,
   kColor,
+  kListEditor,  // a button hosting an editor popup for a non-scalar leaf (angle lists, file path)
 };
 
 // What the field's editor allows RIGHT NOW. A function of the whole state, never a constant: fov's
@@ -107,6 +123,13 @@ struct FieldEditorConstraint {
   // after this point must therefore also go at the END of the struct.
   const char* fmt = "%.1f";
   SliderScale scale = SliderScale::kLinear;
+  // Why the field is editable but NOT CONSUMED by the current configuration, shown on hover while
+  // the control is live — the "stored choice / currently applied value" split the defaults panel's
+  // unlock task introduced for the conditional fields (a stored default may be set under any
+  // configuration; the render reads it only where it applies). Null when the field either applies
+  // now or is disabled outright (the disabled case explains itself through disabled_reason above).
+  // The Settings panel's value cell is the reader; main-UI call sites keep their own hover copy.
+  const char* inactive_note = nullptr;
 };
 
 struct FieldEditorEntry {
@@ -176,6 +199,17 @@ std::string PanelLabel(const std::string& key_path, const char* id = "");
 // Every registered key path. For coverage assertions ("which of the document's leaves have an
 // editor") — the panel itself never enumerates, it looks up per row.
 std::vector<std::string> RegisteredFieldEditorKeyPaths();
+
+// The bg_path cell's Choose button defers the blocking OS file dialog out of the popup's frame
+// (the established pattern — PerformScreenshotExport in app_panels.cpp): the editor sets this
+// request, and the frame loop consumes it right after RenderDefaultsPanel returns, where a native
+// sheet is as safe as it is behind the Display panel's own Load Bg button. True exactly once per
+// request; call sites that check it own the dialog call itself — and, when the load actually
+// changed the document, the adoption claim: NotifyDefaultsBackgroundAdopted (defaults_panel.hpp)
+// is what checks the row, because a load that lands OUTSIDE the panel's editor Render cannot
+// return true the way every in-cell edit does, and skipping the claim is the "Save reported
+// success but the file holds nothing" wrong state.
+bool TakeBackgroundFileDialogRequest();
 
 }  // namespace lumice::gui
 

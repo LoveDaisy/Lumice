@@ -1,10 +1,14 @@
 #include "gui/field_editor_registry.hpp"
 
 #include <algorithm>
+#include <filesystem>
 #include <unordered_map>
 #include <utility>
 
+#include "IconsFontAwesome6.h"
+#include "gui/angular_dist_picker.hpp"
 #include "gui/app.hpp"
+#include "gui/edit_modals.hpp"
 #include "gui/gui_constants.hpp"
 #include "gui/panels.hpp"
 #include "gui/ray_num_domain.hpp"
@@ -31,11 +35,19 @@ namespace {
 // Whether the field applies at all in the current configuration, and what to tell the user when it
 // does not. This IS the BeginDisabled(...) expression at the field's main-UI call site: that call
 // site passes `!ConstraintFor(key, state).enabled` rather than recomputing the condition.
+//
+// Two outcomes since the defaults-panel unlock task, split by WRITER (see the header's rule 1):
+// `enabled=false` for a field whose value the frame loop or a lens switch rewrites — an edit it
+// erases within one frame is the "saved, then silently reset" wrong state; `note` (enabled stays
+// true) for a field the frame loop never touches, where the stored choice is kept and simply not
+// consumed yet — the sentence is shown on hover while the control is live.
 struct Applicability {
   bool enabled = true;
   // Named to match FieldEditorConstraint::disabled_reason, which this becomes: keeping the two
   // spellings in sync avoids a reader having to hold "these are the same thing" in their head.
   const char* disabled_reason = nullptr;
+  // Named to match FieldEditorConstraint::inactive_note, which this becomes, for the same reason.
+  const char* note = nullptr;
 };
 using ApplicabilityFn = std::function<Applicability(const GuiState&)>;
 using FloatDomainFn = std::function<std::pair<float, float>(const GuiState&)>;
@@ -127,7 +139,7 @@ FieldEditorEntry FloatField(SlotFn<float> access, FloatDomainFn domain, const ch
   entry.Constraint = [domain, applicable, fmt, scale](const GuiState& state) {
     const auto range = domain(state);
     const Applicability a = applicable(state);
-    return FieldEditorConstraint{ a.enabled, a.disabled_reason, true, range.first, range.second, fmt, scale };
+    return FieldEditorConstraint{ a.enabled, a.disabled_reason, true, range.first, range.second, fmt, scale, a.note };
   };
   entry.Render = [access, domain, fmt, scale](GuiState& state, const char* id_base) {
     const auto range = domain(state);
@@ -174,8 +186,17 @@ FieldEditorEntry IntField(SlotFn<int> access, int min_value, int max_value,
   entry.kind = FieldEditorKind::kIntSlider;
   entry.Constraint = [min_value, max_value, applicable](const GuiState& state) {
     const Applicability a = applicable(state);
-    return FieldEditorConstraint{ a.enabled, a.disabled_reason, true, static_cast<double>(min_value),
-                                  static_cast<double>(max_value) };
+    // Named assignment, not a positional aggregate: the aggregate cannot skip fmt/scale to reach
+    // the trailing note, and a literal nullptr would override the "%.1f" default the int fields
+    // rely on (FieldEditorChain asserts a numeric field's format is non-null).
+    FieldEditorConstraint c;
+    c.enabled = a.enabled;
+    c.disabled_reason = a.disabled_reason;
+    c.has_numeric_domain = true;
+    c.min_value = static_cast<double>(min_value);
+    c.max_value = static_cast<double>(max_value);
+    c.inactive_note = a.note;
+    return c;
   };
   entry.Render = [access, min_value, max_value](GuiState& state, const char* id_base) {
     int* slot = access(state);
@@ -210,7 +231,12 @@ FieldEditorEntry BoolField(SlotFn<bool> access, ApplicabilityFn applicable = Alw
   entry.kind = FieldEditorKind::kCheckbox;
   entry.Constraint = [applicable](const GuiState& state) {
     const Applicability a = applicable(state);
-    return FieldEditorConstraint{ a.enabled, a.disabled_reason, false, 0.0, 0.0 };
+    FieldEditorConstraint c;
+    c.enabled = a.enabled;
+    c.disabled_reason = a.disabled_reason;
+    c.has_numeric_domain = false;
+    c.inactive_note = a.note;
+    return c;
   };
   entry.Render = [access, effective](GuiState& state, const char* id_base) {
     bool* slot = access(state);
@@ -253,7 +279,12 @@ FieldEditorEntry ColorField(SlotFn<float> access, ApplicabilityFn applicable = A
   entry.kind = FieldEditorKind::kColor;
   entry.Constraint = [applicable](const GuiState& state) {
     const Applicability a = applicable(state);
-    return FieldEditorConstraint{ a.enabled, a.disabled_reason, false, 0.0, 0.0 };
+    FieldEditorConstraint c;
+    c.enabled = a.enabled;
+    c.disabled_reason = a.disabled_reason;
+    c.has_numeric_domain = false;
+    c.inactive_note = a.note;
+    return c;
   };
   entry.Render = [access](GuiState& state, const char* id_base) {
     float* slot = access(state);
@@ -308,7 +339,12 @@ FieldEditorEntry ComboField(SlotFn<int> access, const char* const* names, int co
   entry.kind = FieldEditorKind::kCombo;
   entry.Constraint = [applicable](const GuiState& state) {
     const Applicability a = applicable(state);
-    return FieldEditorConstraint{ a.enabled, a.disabled_reason, false, 0.0, 0.0 };
+    FieldEditorConstraint c;
+    c.enabled = a.enabled;
+    c.disabled_reason = a.disabled_reason;
+    c.has_numeric_domain = false;
+    c.inactive_note = a.note;
+    return c;
   };
   entry.Render = [access, names, count](GuiState& state, const char* id_base) {
     int* slot = access(state);
@@ -329,6 +365,12 @@ FieldEditorEntry ComboField(SlotFn<int> access, const char* const* names, int co
 // ------------------------------------------------------------------------------------------------
 // Shared applicability gates. Each is written once here and read by every field that shares it —
 // and, through ConstraintFor, by that field's main-UI BeginDisabled(...) as well.
+//
+// Two populations since the defaults-panel unlock task (the header's rule 1, split by writer):
+// DISABLED gates — the frame loop or the lens switch rewrites the value, so an editable control
+// would be erased within a frame; NOTE gates — nothing rewrites the value, the stored choice is
+// simply not consumed by the current configuration, and the note says so while the control stays
+// live.
 // ------------------------------------------------------------------------------------------------
 
 Applicability NotUnderFullSky(const GuiState& state) {
@@ -338,127 +380,149 @@ Applicability NotUnderFullSky(const GuiState& state) {
   return {};
 }
 
-Applicability NotUnderFullSkyOrGlobe(const GuiState& state) {
-  const Applicability full_sky = NotUnderFullSky(state);
-  if (!full_sky.enabled) {
-    return full_sky;
+// roll's own split: full-sky DISABLES (the frame invariant zeroes it every frame), Globe only
+// NOTES (the render sites read EffectiveRollForLens without writing back, so the stored value
+// survives and applies again under a lens that uses roll).
+Applicability NotUnderFullSkyOrGlobeRoll(const GuiState& state) {
+  if (LensIsFullSky(state.renderer.lens_type)) {
+    return { false, "A full-sky lens shows every direction at once, so this view angle does not apply." };
   }
   if (state.renderer.lens_type == kLensTypeGlobe) {
-    return { false, "The Globe lens orbits the observer around the sphere; roll is locked to 0." };
+    return { true, nullptr,
+             "The Globe view keeps roll at 0. Your choice is kept and applies again under a lens "
+             "that uses roll." };
   }
   return {};
 }
 
-// renderer.front's gate: the same lens set as NotUnderFullSkyOrGlobe (reused, not restated), with a
-// reason of its own — that gate's Globe wording is about roll, and the thing worth telling the user
-// here is that the choice is only set aside, not lost (EffectiveFrontForLens, gui_state.hpp).
-Applicability WhenFrontClipApplies(const GuiState& state) {
-  if (!NotUnderFullSkyOrGlobe(state).enabled) {
-    return { false,
-             "This lens has no front or back to clip, so the front-hemisphere clip does not apply. "
-             "Your previous choice is kept and comes back when you switch to a lens that uses it." };
+// A full-sky lens, as a NOTE: the field's stored value survives (no frame writer, no switch reset)
+// and is simply not consumed until a lens that uses it is selected.
+Applicability NotUnderFullSkyNote(const GuiState& state) {
+  if (LensIsFullSky(state.renderer.lens_type)) {
+    return { true, nullptr,
+             "A full-sky lens shows every direction at once, so this choice is not used right "
+             "now. It is kept and applies again under a lens that uses it." };
   }
   return {};
 }
 
-Applicability WhenGlobe(const GuiState& state) {
+// renderer.front's gate: the choice is stored and never rewritten (the clip's consumers read
+// EffectiveFrontForLens), so full-sky and Globe only make it INERT — the note says the choice is
+// set aside, not lost.
+Applicability FrontClipAppliesNote(const GuiState& state) {
+  // The same lens set the effective value forces off (EffectiveFrontForLens): full-sky AND Globe.
+  // Missing one here would apply a clip the note claims is inert, or clip silently with no note.
+  if (!NotUnderFullSky(state).enabled || state.renderer.lens_type == kLensTypeGlobe) {
+    return { true, nullptr,
+             "This lens has no front or back to clip, so the front-hemisphere clip is not used "
+             "right now. Your choice is kept and comes back when you switch to a lens that uses "
+             "it." };
+  }
+  return {};
+}
+
+Applicability GlobeBackFadeNote(const GuiState& state) {
   if (state.renderer.lens_type != kLensTypeGlobe) {
-    return { false, "Only the Globe lens has a far side to show; other lenses look out from inside the sky." };
+    return { true, nullptr,
+             "Only the Globe lens has a far side to show, so this value is not used right now. "
+             "It is kept and applies when you switch to Globe." };
   }
   return {};
 }
 
-// doc/rendering/print-mode-subtractive-ink.md §7 instance 1. Ordered BEFORE the "is an image loaded" check on
-// purpose: when both reasons hold, print is the one the user has to act on — loading an image would
-// not enable the control, and a reason that stops being true when you satisfy it is the wrong
-// reason to show.
+// doc/rendering/print-mode-subtractive-ink.md §7 instance 1. Ordered BEFORE the "is an image
+// loaded" clause on purpose: when both hold, print is the one the user has to act on.
 //
-// The exclusion is physical, not merely a greyed control: a background photograph is a picture of
-// the sky the halo is drawn ON TOP of, which only means anything under an operator that ADDS light.
-// Print multiplies the paper down by a transmittance, so compositing the two would darken the
-// photograph everywhere the halo is bright — the wrong direction, not merely an odd look. The other
-// half of this instance is app_panels.cpp's `pp.bg.enabled`, which is what actually keeps the
-// texture out of the frame.
-Applicability WhenBackgroundLoaded(const GuiState& state) {
+// The exclusion is physical, not merely a note: a background photograph is a picture of the sky
+// the halo is drawn ON TOP of, which only means anything under an operator that ADDS light. Print
+// multiplies the paper down by a transmittance, so compositing the two would darken the
+// photograph everywhere the halo is bright — the wrong direction, not merely an odd look. That
+// half lives in app_panels.cpp's `pp.bg.enabled`, which keeps the texture out of the frame; the
+// stored bg_* choices keep round-tripping under it.
+Applicability BackgroundStoredChoice(const GuiState& state) {
   if (IsPrintTone(state.renderer)) {
-    return { false,
-             "A background photo is additive — the halo is drawn on top of the sky in it. Print lays "
-             "subtractive ink on paper, which can only darken it. Disabled while Mode is Print." };
+    return { true, nullptr,
+             "A background photo is additive — the halo is drawn on top of the sky in it. Print "
+             "lays subtractive ink on paper, so the photo is left out of the frame while Mode is "
+             "Print. These choices are kept and apply again under Screen." };
   }
   // The channel-B-R display mode takes the colour channel over the same way print does (the same
   // rule, applied to a diagnostic rather than an operator): a photo composited over the grey B - R
-  // image would put the photo's own colours into the reading. Second in line after print for the
-  // reason above — while print is on, this mode is inert and so is its exclusion.
+  // image would put the photo's own colours into the reading. Second in line after print.
   if (IsChannelBrDisplay(state.renderer)) {
-    return { false,
-             "The Channel B-R display shows blue minus red of the halo itself; a photo underneath "
-             "would mix its own colours into the reading. Disabled while the preview shows Channel B-R." };
+    return { true, nullptr,
+             "The Channel B-R display shows blue minus red of the halo itself; the photo is left "
+             "out of the frame while it is on. These choices are kept and apply again under "
+             "Normal." };
   }
   if (!g_preview.HasBackground()) {
-    return { false, "No background image is loaded." };
+    return { true, nullptr,
+             "No background image is loaded. These choices are stored and take effect once one "
+             "is loaded (Load Bg under Display)." };
   }
   return {};
 }
 
-// doc/rendering/print-mode-subtractive-ink.md §7 instance 4. Named in the same verb form as NotUnderFullSky
-// above, and gating the same kind of thing: a field that still HAS a value and still round-trips,
-// but that the current configuration gives no way to observe.
-//
-// Unlike instance 1 (the background photo) there is nothing to switch off here — the CLI's print
-// operator already draws every overlay line by density and never reads these colours
-// (test_render_consumer_print_mode.cpp's AnnotationColourDoesNotReachThePaper is that claim), and
-// the preview shader's own overlay branch does the same. So this gate is purely the user-visible
-// half: without it the swatch invites an edit that changes nothing on screen, which is precisely
-// the "quietly not the picture you asked for" failure the notices elsewhere exist to prevent.
-Applicability NotUnderPrintMode(const GuiState& state) {
+// The shown/hidden half, on top of the stored-choice gate: the transform sliders are inert while
+// the image is hidden (and under print/B-R/no-image, via the gate above).
+Applicability BackgroundShownNote(const GuiState& state) {
+  const Applicability loaded = BackgroundStoredChoice(state);
+  if (loaded.note != nullptr) {
+    return loaded;
+  }
+  if (!state.bg_show) {
+    return { true, nullptr,
+             "The background image is hidden (Show under Display). The transform is kept and "
+             "applies again when it is shown." };
+  }
+  return {};
+}
+
+// doc/rendering/print-mode-subtractive-ink.md §7 instance 4. The annotation colours still HAVE a
+// value and still round-trip under print — the CLI's print operator draws every overlay line by
+// density and never reads these colours (test_render_consumer_print_mode.cpp's
+// AnnotationColourDoesNotReachThePaper), and the preview shader's own overlay branch does the
+// same. So the note is purely the "kept, applies again" sentence: the swatch stays live so a
+// personal default can be set while print is up, and the hue is consumed again under Screen.
+Applicability AnnotationColourNote(const GuiState& state) {
   if (IsPrintTone(state.renderer)) {
-    return { false,
+    return { true, nullptr,
              "Print mode draws overlay lines by ink density, not by hue, so this colour has no "
-             "effect. It is kept and applies again when Tone is Screen." };
+             "effect on the frame. It is kept and applies again when Tone is Screen." };
   }
   return {};
 }
 
 // The two GROUND colours, one per operator (doc/rendering/print-mode-subtractive-ink.md: `background` is the
-// sky light is added to, `paper` is the sheet ink is laid on, and the panel shows one swatch or the
-// other — app_panels.cpp's Display group alternates them in place). Written here as a pair of gates
-// so that "which ground applies right now" has one owner: the main UI's if/else reads
-// ConstraintFor("renderer.background").enabled, and the Summary page reads the same bit to decide
-// which of the two rows to print. They are exact complements of each other, and the unit test
-// pins that (test_print_mode_colour_exclusions.cpp).
-Applicability WhenScreenTone(const GuiState& state) {
+// sky light is added to, `paper` is the sheet ink is laid on). Both are stored settings either
+// way; which one the Display panel SHOWS in its single swatch row is that panel's own view rule,
+// now decided by the tone locally instead of by these gates (the gates no longer disable).
+Applicability GroundColourNote(const GuiState& state) {
   if (IsPrintTone(state.renderer)) {
-    return { false, "Print mode lays ink on paper; the sky colour applies again when Mode is Screen." };
+    return { true, nullptr,
+             "Print mode lays ink on paper, so the sky colour is not used on the frame right "
+             "now. It is kept and applies again when Mode is Screen." };
   }
   return {};
 }
 
-Applicability WhenPrintTone(const GuiState& state) {
+Applicability PaperColourNote(const GuiState& state) {
   if (!IsPrintTone(state.renderer)) {
-    return { false, "Screen mode adds light to the sky colour; the paper colour applies when Mode is Print." };
+    return { true, nullptr,
+             "Screen mode adds light to the sky colour, so the paper colour is not used on the "
+             "frame right now. It applies when Mode is Print." };
   }
   return {};
 }
 
 // The display-mode combo's gate. The field is kept and round-trips under print, but print never
-// computes R and B separately, so there is no B - R to show — the same "kept, applies again" shape
-// as the gates above.
-Applicability DisplayModeUnderScreenTone(const GuiState& state) {
+// computes R and B separately, so there is no B - R to show — the same "kept, applies again"
+// shape as the gates above.
+Applicability DisplayModeNote(const GuiState& state) {
   if (IsPrintTone(state.renderer)) {
-    return { false,
-             "Print lays one neutral ink and has no separate red and blue to subtract, so the display "
-             "mode has no effect. It is kept and applies again when Mode is Screen." };
-  }
-  return {};
-}
-
-Applicability WhenBackgroundShown(const GuiState& state) {
-  const Applicability loaded = WhenBackgroundLoaded(state);
-  if (!loaded.enabled) {
-    return loaded;
-  }
-  if (!state.bg_show) {
-    return { false, "The background image is hidden." };
+    return { true, nullptr,
+             "Print lays one neutral ink and has no separate red and blue to subtract, so the "
+             "display mode has no effect. It is kept and applies again when Mode is Screen." };
   }
   return {};
 }
@@ -539,18 +603,48 @@ FieldEditorEntry SimResolutionField() {
                     kSimResolutionCount);
 }
 
+// The bg_path cell's deferred file dialog, consumed by the frame loop right after
+// RenderDefaultsPanel returns (see TakeBackgroundFileDialogRequest in the header for why the
+// dialog must not open inside the popup's frame).
+bool g_background_file_dialog_request = false;
+
 // The preset illuminants ONLY. The main UI's combo carries a seventh item ("Custom...") that opens
-// a modal editor, and this panel is itself a modal — stacking a second one is the interaction this
-// deliberately avoids. A state already using a custom spectrum therefore renders as a greyed
-// "Custom..." with the reason on hover, rather than being silently downgraded to whichever preset
-// a 6-item combo would land on.
+// a modal editor; a state already using a custom spectrum renders that state here as a button that
+// opens the SAME editor — the same rows, the same validation and cap helpers, the same
+// transactional OK — as a plain (non-modal) popup anchored at this cell. Plain, because this panel
+// is itself a modal and a second modal would stack two input grabs on one field; anchored, so it
+// stacks INSIDE the defaults panel's popup hierarchy and receives input normally (the mechanism
+// every combo in this table already uses).
 //
-// That limitation lives in Render, NOT in the constraint, and the placement is the point: the
-// field APPLIES under a custom spectrum — the Sun panel's own combo is never greyed, it shows
-// "Custom..." beside an edit button — so `enabled` stays true, as the header's rule 1 requires
-// (`enabled` is the main UI's BeginDisabled expression, and the Summary page prints a row exactly
-// when it is true). What cannot be done here is edit it from THIS popup, which is a fact about
-// the popup's control and is drawn by the control.
+// The popup host both spectrum rows share: seed the scratch, open a plain popup anchored at the
+// cell, run the shared body, report whether OK committed. ONE spelling of the host — "one editor,
+// no side door" is about the editor, and this helper keeps it from growing a second host either.
+bool HostSpectrumEditorPopup(GuiState& state, const char* id_base, const char* button_label) {
+  bool committed = false;
+  const std::string open_id = std::string(button_label) + std::string("###") + id_base;
+  if (ImGui::Button(open_id.c_str())) {
+    SeedSpectrumEditor(state);
+    ImGui::OpenPopup(HiddenLabel(id_base).c_str());
+  }
+  if (ImGui::BeginPopup(HiddenLabel(id_base).c_str())) {
+    committed = RenderSpectrumEditorBody(state, SpectrumCommitMode::kOnDeactivation);
+    ImGui::EndPopup();
+  }
+  return committed;
+}
+
+// The custom-spectrum row's editor: the same seeded scratch, body and transactional OK as the
+// spectrum row's — one editor, no side door, and no host spelled twice either.
+FieldEditorEntry CustomSpectrumField() {
+  FieldEditorEntry entry;
+  entry.kind = FieldEditorKind::kListEditor;
+  entry.Constraint = [](const GuiState&) { return FieldEditorConstraint{}; };
+  entry.Render = [](GuiState& state, const char* id_base) {
+    return HostSpectrumEditorPopup(state, id_base, "Edit spectrum...");
+  };
+  return entry;
+}
+
 FieldEditorEntry SpectrumField() {
   FieldEditorEntry entry =
       ComboField([](GuiState& state) { return &state.sun.spectrum_index; }, kSpectrumNames, kSpectrumCount);
@@ -559,13 +653,7 @@ FieldEditorEntry SpectrumField() {
     if (state.sun.spectrum_index != kCustomSpectrumIndex) {
       return preset_render(state, id_base);
     }
-    ImGui::BeginDisabled();
-    ImGui::TextUnformatted("Custom...");
-    ImGui::EndDisabled();
-    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-      ImGui::SetTooltip("A custom spectrum is edited from the Sun panel's spectrum editor.");
-    }
-    return false;
+    return HostSpectrumEditorPopup(state, id_base, "Custom spectrum...");
   };
   return entry;
 }
@@ -590,21 +678,24 @@ FieldEditorEntry AspectPresetField() {
     SetNextComboPopupTopMost();
     if (ImGui::BeginCombo(HiddenLabel(id_base).c_str(), kAspectPresetNames[current])) {
       for (int i = 0; i < kAspectPresetCount; i++) {
+        // Every item is selectable, Match Background included: with no image loaded it falls back
+        // to the same legal no-clamp behavior the main UI's ApplyAspectRatio path already applies
+        // (aspect_clamp is cleared on kMatchBg-with-no-bg), and the stored choice takes effect
+        // once an image arrives — the stored/default layer does not need the picture to hold the
+        // preference. The one thing worth saying is said on hover.
         const bool needs_background = (static_cast<AspectPreset>(i) == AspectPreset::kMatchBg);
-        const bool disabled = needs_background && !g_preview.HasBackground();
-        if (disabled) {
-          ImGui::BeginDisabled();
-        }
         const bool selected = (i == current);
         if (ImGui::Selectable(kAspectPresetNames[i], selected) && i != current) {
           state.aspect_preset = static_cast<AspectPreset>(i);
           changed = true;
         }
+        if (needs_background && !g_preview.HasBackground() && ImGui::IsItemHovered()) {
+          ImGui::SetTooltip(
+              "No background image is loaded yet, so Match Background behaves like "
+              "Free until one is (Load Bg under Display).");
+        }
         if (selected) {
           ImGui::SetItemDefaultFocus();
-        }
-        if (disabled) {
-          ImGui::EndDisabled();
         }
       }
       ImGui::EndCombo();
@@ -614,22 +705,90 @@ FieldEditorEntry AspectPresetField() {
   return entry;
 }
 
+// The two angle lists, as cell-hosted editors. The row set is generated from the document, so
+// these were visible read-only rows until the defaults-panel unlock task; their editors are the
+// overlay section's own angle editor (RenderCircleAngleEditorPopup — same presets, same cap and
+// clamp band, same list), opened as a plain popup anchored at the cell rather than a worse
+// single-widget stand-in for a variable-length list. The crosshair pick is omitted here: it arms
+// the preview picker, which the modal covers.
+FieldEditorEntry CircleAngleListField(AngularDistFamily family) {
+  FieldEditorEntry entry;
+  entry.kind = FieldEditorKind::kListEditor;
+  entry.Constraint = [](const GuiState&) { return FieldEditorConstraint{}; };
+  entry.Render = [family](GuiState& state, const char* id_base) {
+    // Change detection by value: the editor mutates the list in place (and the panel needs the
+    // row re-read + adopted when it did). A bool flag from the body would also fire on a no-op
+    // frame of an open popup.
+    const std::vector<float> before = AngularDistFamilyAngles(state, family);
+    // "###" form, like every id this panel exposes (defaults_panel.cpp): the test ref carries the
+    // short suffix alone instead of the glyph-prefixed label.
+    const std::string edit_id = std::string(ICON_FA_ELLIPSIS) + " Edit angles..." + std::string("###") + id_base;
+    if (ImGui::Button(edit_id.c_str())) {
+      ImGui::OpenPopup(HiddenLabel(id_base).c_str());
+    }
+    if (ImGui::IsItemHovered()) {
+      ImGui::SetTooltip(
+          "Edit the angle list: preset rings, a custom angle, per-entry delete. "
+          "The list has a cap and angles are clamped to the same band as in the "
+          "overlay section.");
+    }
+    if (ImGui::BeginPopup(HiddenLabel(id_base).c_str())) {
+      RenderCircleAngleEditorPopup(family, /*allow_pick=*/false);
+      ImGui::EndPopup();
+    }
+    return AngularDistFamilyAngles(state, family) != before;
+  };
+  return entry;
+}
+
+// The background path. A filesystem path has no honest single-widget form — the main UI sets it
+// through a file dialog, and a free-text path in a table is a way to store a path that does not
+// exist — so the cell hosts the SAME chooser (the Display panel's Load Bg flow, deferred out of
+// the popup's frame; see TakeBackgroundFileDialogRequest), shows the file name beside it, and
+// leaves the success/failure feedback to the loader that owns it.
+FieldEditorEntry BackgroundPathField() {
+  FieldEditorEntry entry;
+  entry.kind = FieldEditorKind::kListEditor;
+  entry.Constraint = [](const GuiState&) { return FieldEditorConstraint{}; };
+  entry.Render = [](GuiState& state, const char* id_base) {
+    const std::string choose_id = std::string(ICON_FA_FOLDER_OPEN) + " Choose file..." + std::string("###") + id_base;
+    if (ImGui::Button(choose_id.c_str())) {
+      g_background_file_dialog_request = true;
+    }
+    if (ImGui::IsItemHovered()) {
+      ImGui::SetTooltip(
+          "Pick an image file. Loading replaces the current background, shows it and "
+          "resets its pan/zoom — the same as the Display panel's Load Bg. Cancelling "
+          "or a failed load changes nothing.");
+    }
+    ImGui::SameLine();
+    // The FILE NAME, not the path: the key column already says which setting this is, and a
+    // home-directory-length path would blow the cell's budget. The full path stays one hover away.
+    const std::string name = std::filesystem::path(state.bg_path).filename().string();
+    ImGui::TextUnformatted(name.empty() ? "(no image)" : name.c_str());
+    if (!name.empty() && ImGui::IsItemHovered()) {
+      ImGui::SetTooltip("%s", state.bg_path.c_str());
+    }
+    return false;  // the load lands after this frame, through the loader that owns the feedback
+  };
+  return entry;
+}
+
 // ------------------------------------------------------------------------------------------------
 // THE REGISTRY.
 //
 // Ordered as the serialized document is, so a reader can hold it against SerializeGuiStateJson and
-// see at a glance which leaves have an editor. Three leaves deliberately have NO entry:
+// see at a glance which leaves have an editor. ONE leaf deliberately has NO entry:
 //
-//   overlay_sun_circle_angles — a variable-length list. Its main UI is a whole add/remove popup
-//                               with a hard cap, not a single control; there is nothing to place in
-//                               a cell that would not be a worse version of it.
-//   overlay_view_dist_angles  — the same list for the axis-referenced ring family, behind the same
-//                               popup, for the same reason.
-//   bg_path                   — a filesystem path. The main UI has no text control for it either
-//                               (it is set by a file dialog), and a free-text path in a table is a
-//                               way to store a path that does not exist.
-// All three stay visible as read-only rows: the panel's row set is generated from the document, so a
-// field with no editor is still SHOWN — the user can see it, see what it holds, and (un)check it.
+//   renderer.ray_color — by owner decision the GUI carries no tint control anywhere, and the
+//                        decision has a mechanism behind it: BuildScene hard-codes the
+//                        "material's own spectral colour" sentinel and never reads the field
+//                        (gui_state.hpp's RenderConfigResimFields note), so an editor here would
+//                        accept values nothing consumes. The row stays visible as grey text with
+//                        its own hover explanation (defaults_panel.cpp).
+//
+// The two angle lists and bg_path — read-only rows for the same generated-row reason until the
+// defaults-panel unlock task — are registered below with cell-hosted editors.
 // ------------------------------------------------------------------------------------------------
 const std::unordered_map<std::string, FieldEditorEntry>& Registry() {
   static const std::unordered_map<std::string, FieldEditorEntry> kRegistry = [] {
@@ -671,6 +830,11 @@ const std::unordered_map<std::string, FieldEditorEntry>& Registry() {
                                            "Diameter"));
     }
     map.emplace("sun.spectrum", Labelled(SpectrumField(), "Spectrum"));
+    // The OPTIONAL companion row, present only while a custom spectrum is in use — its value is
+    // the wavelength/weight array, edited through the SAME entry the spectrum row opens (one
+    // editor, no side door), so the generated row is not left read-only beside an editable
+    // sibling.
+    map.emplace("sun.custom_spectrum", CustomSpectrumField());
 
     // ---- sim ----
     // Domain, format and scale come from gui/ray_num_domain.hpp, which the analysis panel's own
@@ -682,7 +846,9 @@ const std::unordered_map<std::string, FieldEditorEntry>& Registry() {
                             FixedDomain(kRayNumMinMillions, kRayNumMaxMillions), kRayNumSliderFmt, kRayNumSliderScale,
                             [](const GuiState& s) -> Applicability {
                               if (s.sim.infinite) {
-                                return { false, "Infinite rays is on, so no ray total applies." };
+                                return { true, nullptr,
+                                         "Infinite rays is on, so this total is not used right now. "
+                                         "It is kept and applies when Infinite rays is off." };
                               }
                               return {};
                             }),
@@ -724,7 +890,7 @@ const std::unordered_map<std::string, FieldEditorEntry>& Registry() {
                          "Azimuth"));
     map.emplace("renderer.roll",
                 Labelled(FloatField([](GuiState& s) { return &s.renderer.roll; }, FixedDomain(-180.0f, 180.0f), "%.2f",
-                                    SliderScale::kLinear, NotUnderFullSkyOrGlobe),
+                                    SliderScale::kLinear, NotUnderFullSkyOrGlobeRoll),
                          "Roll"));
     map.emplace("renderer.sim_resolution", Labelled(SimResolutionField(), "Resolution"));
     // "Visible" is NOT a word the panel prints: the control is three RadioButtons (Upper / Full /
@@ -733,11 +899,14 @@ const std::unordered_map<std::string, FieldEditorEntry>& Registry() {
     // Summary still needs a word for the row; this is it, chosen here rather than spelled from the
     // key so the choice is visible. test_config_summary_labels.cpp excludes exactly this key from
     // its "every declared label is the panel's literal" scan (kExcludedFromLabelParityCheck).
+    // The stored choice survives a full-sky lens (no frame writer, no switch reset) and applies
+    // again under a lens that consumes it — the NOTE form, per the census split; a full-sky lens
+    // is not one of those lenses.
     map.emplace("renderer.visible", Labelled(ComboField([](GuiState& s) { return &s.renderer.visible; }, kVisibleNames,
-                                                        kVisibleCount, NotUnderFullSky),
+                                                        kVisibleCount, NotUnderFullSkyNote),
                                              "Visible"));
     map.emplace("renderer.front",
-                Labelled(BoolField([](GuiState& s) { return &s.renderer.front; }, WhenFrontClipApplies,
+                Labelled(BoolField([](GuiState& s) { return &s.renderer.front; }, FrontClipAppliesNote,
                                    [](const GuiState& s, bool stored) {
                                      return EffectiveFrontForLens(s.renderer.lens_type, stored);
                                    }),
@@ -751,7 +920,7 @@ const std::unordered_map<std::string, FieldEditorEntry>& Registry() {
     // see. An aesthetic setting (the owner reviews the comparison sheet), not a derived bound.
     map.emplace("renderer.globe_back_fade",
                 Labelled(FloatField([](GuiState& s) { return &s.renderer.globe_back_fade; }, FixedDomain(0.0f, 2.0f),
-                                    "%.2f", SliderScale::kLinear, WhenGlobe),
+                                    "%.2f", SliderScale::kLinear, GlobeBackFadeNote),
                          "Back fade"));
     // `background` now HAS a main-UI control (Display > Rendering, beside EV), so this row is its
     // second editor — the one the defaults panel needs in order to edit a personal default without
@@ -761,12 +930,12 @@ const std::unordered_map<std::string, FieldEditorEntry>& Registry() {
     // other" and the Summary's "print one row or the other" both read the same bit (see the two
     // gates' comment above).
     map.emplace("renderer.background",
-                Labelled(ColorField([](GuiState& s) { return s.renderer.background; }, WhenScreenTone), "Sky Color"));
+                Labelled(ColorField([](GuiState& s) { return s.renderer.background; }, GroundColourNote), "Sky Color"));
     // The print mode's ground colour, registered beside `background` because it is the same kind of
     // field on both counts: a colour, and one whose editor the defaults panel needs in order to set
     // a personal default with no document open.
     map.emplace("renderer.paper",
-                Labelled(ColorField([](GuiState& s) { return s.renderer.paper; }, WhenPrintTone), "Paper Color"));
+                Labelled(ColorField([](GuiState& s) { return s.renderer.paper; }, PaperColourNote), "Paper Color"));
     // No `renderer.ray_color` row: the GUI has no tint control anywhere (owner-decided — see
     // GuiState::RenderConfig::ray_color's own comment), so there is nothing here to register an
     // editor for.
@@ -791,10 +960,9 @@ const std::unordered_map<std::string, FieldEditorEntry>& Registry() {
         Labelled(ComboField([](GuiState& s) { return &s.renderer.ev_mode; }, kEvModeNames, kEvModeCount), "EV Anchor"));
     map.emplace("renderer.tone",
                 Labelled(ComboField([](GuiState& s) { return &s.renderer.tone; }, kToneNames, kToneCount), "Mode"));
-    map.emplace("renderer.display_mode",
-                Labelled(ComboField([](GuiState& s) { return &s.renderer.display_mode; }, kDisplayModeNames,
-                                    kDisplayModeCount, DisplayModeUnderScreenTone),
-                         "Show As"));
+    map.emplace("renderer.display_mode", Labelled(ComboField([](GuiState& s) { return &s.renderer.display_mode; },
+                                                             kDisplayModeNames, kDisplayModeCount, DisplayModeNote),
+                                                  "Show As"));
 
     // ---- aspect ratio ----
     map.emplace("aspect_ratio", AspectPresetField());
@@ -803,28 +971,32 @@ const std::unordered_map<std::string, FieldEditorEntry>& Registry() {
                           [](const GuiState& s) -> Applicability {
                             if (s.aspect_preset == AspectPreset::kFree || s.aspect_preset == AspectPreset::k1x1 ||
                                 s.aspect_preset == AspectPreset::kMatchBg) {
-                              return { false, "This aspect preset has no portrait/landscape orientation." };
+                              return { true, nullptr,
+                                       "This aspect preset has no portrait/landscape orientation, so "
+                                       "the choice is stored but not used right now. It applies under "
+                                       "a flippable preset." };
                             }
                             return {};
                           }));
 
     // ---- background image ----
-    map.emplace("bg_show", BoolField([](GuiState& s) { return &s.bg_show; }, WhenBackgroundLoaded));
+    map.emplace("bg_path", BackgroundPathField());
+    map.emplace("bg_show", BoolField([](GuiState& s) { return &s.bg_show; }, BackgroundStoredChoice));
     map.emplace("bg_alpha", FloatField([](GuiState& s) { return &s.bg_alpha; }, FixedDomain(0.0f, 1.0f), "%.2f",
-                                       SliderScale::kLinear, WhenBackgroundShown));
+                                       SliderScale::kLinear, BackgroundShownNote));
     // Pan is measured in texture widths/heights (see ComputeBgUvTransform), so +-2 lets the user
     // push the image two full frames off-centre in either direction — comfortably past any real
     // crop, while still short enough that the slider's travel is usable at photo-alignment
     // precision. Zoom is multiplicative, hence kLog: a drag from 1.0 to 2.0 should cover the same
     // slider distance as one from 0.5 to 1.0, and kLog additionally requires min_val > 0.
-    // All three share bg_alpha's WhenBackgroundShown gate, so "can I move the background" answers
+    // All three share bg_alpha's BackgroundShownNote gate, so "can I move the background" answers
     // the same in the panel and on the canvas.
     map.emplace("bg_offset_x", FloatField([](GuiState& s) { return &s.bg_offset_x; }, FixedDomain(-2.0f, 2.0f), "%.3f",
-                                          SliderScale::kLinear, WhenBackgroundShown));
+                                          SliderScale::kLinear, BackgroundShownNote));
     map.emplace("bg_offset_y", FloatField([](GuiState& s) { return &s.bg_offset_y; }, FixedDomain(-2.0f, 2.0f), "%.3f",
-                                          SliderScale::kLinear, WhenBackgroundShown));
+                                          SliderScale::kLinear, BackgroundShownNote));
     map.emplace("bg_scale", FloatField([](GuiState& s) { return &s.bg_scale; }, FixedDomain(0.2f, 5.0f), "%.2f",
-                                       SliderScale::kLog, WhenBackgroundShown));
+                                       SliderScale::kLog, BackgroundShownNote));
 
     // ---- auxiliary line overlay ----
     map.emplace("overlay_horizon_line", BoolField([](GuiState& s) { return &s.show_horizon_line; }));
@@ -833,16 +1005,19 @@ const std::unordered_map<std::string, FieldEditorEntry>& Registry() {
     map.emplace("overlay_grid_label", BoolField([](GuiState& s) { return &s.show_grid_label; }));
     map.emplace("overlay_sun_circles_line", BoolField([](GuiState& s) { return &s.show_sun_circles_line; }));
     map.emplace("overlay_sun_circles_label", BoolField([](GuiState& s) { return &s.show_sun_circles_label; }));
-    map.emplace("overlay_horizon_color", ColorField([](GuiState& s) { return s.horizon_color; }, NotUnderPrintMode));
-    map.emplace("overlay_grid_color", ColorField([](GuiState& s) { return s.grid_color; }, NotUnderPrintMode));
+    map.emplace("overlay_horizon_color", ColorField([](GuiState& s) { return s.horizon_color; }, AnnotationColourNote));
+    map.emplace("overlay_grid_color", ColorField([](GuiState& s) { return s.grid_color; }, AnnotationColourNote));
     map.emplace("overlay_sun_circles_color",
-                ColorField([](GuiState& s) { return s.sun_circles_color; }, NotUnderPrintMode));
+                ColorField([](GuiState& s) { return s.sun_circles_color; }, AnnotationColourNote));
     map.emplace("overlay_horizon_alpha",
                 FloatField([](GuiState& s) { return &s.horizon_alpha; }, FixedDomain(0.0f, 1.0f), "%.2f"));
     map.emplace("overlay_grid_alpha",
                 FloatField([](GuiState& s) { return &s.grid_alpha; }, FixedDomain(0.0f, 1.0f), "%.2f"));
     map.emplace("overlay_sun_circles_alpha",
                 FloatField([](GuiState& s) { return &s.sun_circles_alpha; }, FixedDomain(0.0f, 1.0f), "%.2f"));
+    // The sun circles' angle list — the editor is the overlay section's own (see
+    // CircleAngleListField above).
+    map.emplace("overlay_sun_circle_angles", CircleAngleListField(AngularDistFamily::kSun));
     // The axis-referenced ring family: the same four editors the sun circles get, under the same
     // print gate on the colour (doc/rendering/print-mode-subtractive-ink.md §7 instance 4 is the annotation
     // colour fields, and this is one). Its angle list is the third deliberately unregistered leaf
@@ -850,9 +1025,11 @@ const std::unordered_map<std::string, FieldEditorEntry>& Registry() {
     map.emplace("overlay_view_dist_line", BoolField([](GuiState& s) { return &s.show_view_dist_line; }));
     map.emplace("overlay_view_dist_label", BoolField([](GuiState& s) { return &s.show_view_dist_label; }));
     map.emplace("overlay_view_dist_color",
-                ColorField([](GuiState& s) { return s.view_dist_color; }, NotUnderPrintMode));
+                ColorField([](GuiState& s) { return s.view_dist_color; }, AnnotationColourNote));
     map.emplace("overlay_view_dist_alpha",
                 FloatField([](GuiState& s) { return &s.view_dist_alpha; }, FixedDomain(0.0f, 1.0f), "%.2f"));
+    // The axis-referenced ring family's angle list, behind the same editor as the sun circles'.
+    map.emplace("overlay_view_dist_angles", CircleAngleListField(AngularDistFamily::kView));
     // The reference-point markers: three entries per marker, registered in a LOOP rather than
     // written out eighteen times. The accessors capture the marker's index and the key comes from
     // MarkerFieldKey — the same function file_io.cpp writes and reads the document with — so the
@@ -866,7 +1043,7 @@ const std::unordered_map<std::string, FieldEditorEntry>& Registry() {
       map.emplace(MarkerFieldKey(i, MarkerKeyPart::kLabel),
                   BoolField([i](GuiState& s) { return &s.markers[i].label; }));
       map.emplace(MarkerFieldKey(i, MarkerKeyPart::kColor),
-                  ColorField([i](GuiState& s) { return s.markers[i].color; }, NotUnderPrintMode));
+                  ColorField([i](GuiState& s) { return s.markers[i].color; }, AnnotationColourNote));
     }
     // Family-wide, so outside the loop — one alpha and one radius for all six, mirroring both
     // GuiState and LUMICE_RenderParam. Domains unchanged from the pair these generalize.
@@ -887,7 +1064,7 @@ const std::unordered_map<std::string, FieldEditorEntry>& Registry() {
     // stay ungated because print still consumes both — the branch's alpha IS the ink coverage, and the switch
     // above still turns the border off.
     map.emplace("overlay_lens_border_color",
-                ColorField([](GuiState& s) { return s.lens_border_color; }, NotUnderPrintMode));
+                ColorField([](GuiState& s) { return s.lens_border_color; }, AnnotationColourNote));
     map.emplace("overlay_lens_border_alpha",
                 FloatField([](GuiState& s) { return &s.lens_border_alpha; }, FixedDomain(0.0f, 1.0f), "%.2f"));
 
@@ -936,6 +1113,12 @@ std::string PanelLabel(const std::string& key_path, const char* id) {
     out += id;
   }
   return out;
+}
+
+bool TakeBackgroundFileDialogRequest() {
+  const bool requested = g_background_file_dialog_request;
+  g_background_file_dialog_request = false;
+  return requested;
 }
 
 std::vector<std::string> RegisteredFieldEditorKeyPaths() {

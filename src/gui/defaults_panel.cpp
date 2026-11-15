@@ -20,8 +20,10 @@
 #include "gui/destructive_style.hpp"
 #include "gui/edit_modals.hpp"
 #include "gui/field_editor_registry.hpp"
+#include "gui/gui_logger.hpp"
 #include "gui/panels.hpp"
 #include "gui/secondary_window_sizing.hpp"
+#include "gui/semantic_colors.hpp"
 #include "gui/theme.hpp"
 #include "gui/user_defaults.hpp"
 #include "imgui.h"
@@ -143,26 +145,28 @@ std::optional<DefaultsPanelSection> g_pending_initial_section;
 // bake one developer's home directory into a committed reference image.
 std::string g_status_message;
 
-// §1's per-preset warning text, indexed by AxisPreset. The library's own channel, NOT
-// DefaultDiffRow::warnings: BuildDefaultDiffRows walks the serialized GuiState tree, and the
-// presets subtree is not in it — a preset can never produce a DefaultDiffRow to hang a warning on
-// (scrum D1: "presets are not GuiState fields, they do not enter the diff"). Same visual form as
-// the settings list's "!" column, different data source, on purpose.
+// §1's per-preset, per-axis refusal text, indexed [preset slot][AxisSlot]. The library's own
+// channel, NOT DefaultDiffRow::warnings: BuildDefaultDiffRows walks the serialized GuiState tree,
+// and the presets subtree is not in it — a preset can never produce a DefaultDiffRow to hang a
+// warning on (scrum D1: "presets are not GuiState fields, they do not enter the diff"). Same
+// visual form as the settings list's "!" column, different data source, on purpose.
 //
 // Whole-value replacement like every other piece of panel session state here: one array assigned
 // on open, one element assigned per write.
 struct PresetWarnings {
-  std::string slots[static_cast<std::size_t>(AxisPreset::kCustom) + 1];
+  std::string slots[static_cast<std::size_t>(AxisPreset::kCustom) + 1][kAxisSlotCount];
 };
 PresetWarnings g_preset_warnings;
 
-// Live edit buffers for §1's std inputs, so a partially typed number ("0." on the way to "0.3")
-// is not written — and clamped — on every keystroke. Committed on Enter / focus loss
-// (IsItemDeactivatedAfterEdit), which is also when a clamp becomes a fair thing to report.
-struct PresetStdBuffers {
-  float slots[static_cast<std::size_t>(AxisPreset::kCustom) + 1] = {};
+// Live edit buffers for §1's mean/std inputs, so a partially typed number ("0." on the way to
+// "0.3") is not written — and refused — on every keystroke. Committed on Enter / focus loss
+// (IsItemDeactivatedAfterEdit), which is also when a refusal becomes a fair thing to report.
+// Indexed [preset slot][AxisSlot], one mean and one std per axis, mirroring the table's columns.
+struct PresetDistBuffers {
+  float mean[static_cast<std::size_t>(AxisPreset::kCustom) + 1][kAxisSlotCount] = {};
+  float std[static_cast<std::size_t>(AxisPreset::kCustom) + 1][kAxisSlotCount] = {};
 };
-PresetStdBuffers g_preset_std_buffers;
+PresetDistBuffers g_preset_dist_buffers;
 
 // How tall §1's content actually was, MEASURED at the end of the previous frame's layout pass. It
 // is the "how much room does this section want" half of the height split described at the two
@@ -183,6 +187,11 @@ PresetStdBuffers g_preset_std_buffers;
 // or shoots. Zero on the first frame is the same thing: the section opens at its floor for one
 // frame and settles immediately.
 float g_presets_content_height = 0.0f;
+
+// One-frame hand-off for commits that land outside the panel's editor Render (the bg_path file
+// dialog): the frame loop's adoption claim sets this, and the settings table's next pass picks it
+// up as its own rows-are-stale — the same coalescing RefreshRows already gets from in-cell edits.
+bool g_rows_dirty_from_outside = false;
 
 bool IsRowChecked(const std::string& key_path) {
   return g_checked_keys.find(key_path) != g_checked_keys.end();
@@ -301,36 +310,45 @@ bool RowIsVisible(const DefaultDiffRow& row) {
   return g_search_filter.PassFilter(row.key_path.c_str()) && PassesRowFilter(row);
 }
 
-// What §1 shows for a preset: the value in the working copy, if it holds one.
+// What §1 shows for a preset face: the value in the working copy, if it holds one.
 //
-// Reads the copy rather than GetUserAxisPresetZenithStdOverride: that accessor answers from the
-// process-wide cache, which by design does not move until a Save lands, so the panel would show
-// the user their own uncommitted edit as if it had not happened.
-std::optional<float> CopyPresetZenithStd(const AxisPresetEntry& entry) {
-  return ReadAxisPresetZenithStdFromDoc(g_copy_doc, entry.id);
+// Reads the copy rather than the process-wide cache (GetUserAxisPreset*Override): that accessor
+// answers from the cache, which by design does not move until a Save lands, so the panel would
+// show the user their own uncommitted edit as if it had not happened.
+std::optional<float> CopyPresetStd(const AxisPresetEntry& entry, AxisSlot slot) {
+  return ReadAxisPresetStdFromDoc(g_copy_doc, entry.id, slot);
+}
+
+std::optional<float> CopyPresetMean(const AxisPresetEntry& entry, AxisSlot slot) {
+  return ReadAxisPresetMeanFromDoc(g_copy_doc, entry.id, slot);
 }
 
 // The type face of the same question, from the same copy for the same reason. Recognisable-spelling
 // is the only gate: the reader answers nullopt for a spelling the table does not know, and any type
 // it can name is stored and shown verbatim — in or out of what the classifier would keep this
 // preset under — since the axis label went sticky.
-std::optional<AxisDistType> CopyPresetZenithType(const AxisPresetEntry& entry) {
-  return ReadAxisPresetZenithTypeFromDoc(g_copy_doc, entry.id);
+std::optional<AxisDistType> CopyPresetType(const AxisPresetEntry& entry, AxisSlot slot) {
+  return ReadAxisPresetTypeFromDoc(g_copy_doc, entry.id, slot);
 }
 
-// The zenith row §1 renders: the factory row with the copy's std and type substituted verbatim.
+// One axis row §1 renders: the factory row with the copy's stored faces substituted verbatim.
 // No clamp and no accepted-set filter: a hand-edited file can hold a value outside what the
 // classifier would keep, and the sticky-label task made that an ordinary state — the crystal
 // carrying it shows the out-of-domain badge, so showing the raw number here is showing the truth.
-AxisDist EffectiveCopyPresetZenith(const AxisPresetEntry& entry) {
-  AxisDist zenith = entry.zenith;
-  if (const auto stored = CopyPresetZenithStd(entry)) {
-    zenith.std = *stored;
+AxisDist EffectiveCopyPresetDist(const AxisPresetEntry& entry, AxisSlot slot) {
+  // The slot->field selection is FactoryAxisDist's, not a second switch here — the same
+  // index-mistake family its comment closes.
+  AxisDist dist = FactoryAxisDist(entry, slot);
+  if (const auto stored = CopyPresetStd(entry, slot)) {
+    dist.std = *stored;
   }
-  if (const auto stored = CopyPresetZenithType(entry)) {
-    zenith.type = *stored;
+  if (const auto stored = CopyPresetMean(entry, slot)) {
+    dist.mean = *stored;
   }
-  return zenith;
+  if (const auto stored = CopyPresetType(entry, slot)) {
+    dist.type = *stored;
+  }
+  return dist;
 }
 
 // The document Save would write: the working copy with the checkbox set folded in.
@@ -370,16 +388,15 @@ bool CommitCopy(const GuiState& state) {
   //  3. the caller then rebuilds the rows and re-freezes the checkbox baseline against the new
   //     anchor (see the Save button). Leaving the old baseline in place would report every row the
   //     save just committed as still "edited this session".
-  // Adopt BOTH preset faces unconditionally from the document that just landed: after a successful
-  // Save, memory mirrors disk exactly. The old per-face diff against the open-time snapshot (adopt
-  // only what this session changed) existed to avoid re-clamping untouched values and filing
-  // duplicate downgrade notices for each — both hazards died with the clamp, and the diff left a
-  // real gap behind: a hand-edited value already on disk at open time displayed in every cell (and
-  // marked the title "(mine)") while the process-wide cache kept answering with the factory value,
-  // even after the user pressed Save on an untouched form.
+  // Adopt EVERY face of every preset unconditionally from the document that just landed: after a
+  // successful Save, memory mirrors disk exactly. The old per-face diff against the open-time
+  // snapshot (adopt only what this session changed) existed to avoid re-clamping untouched values
+  // and filing duplicate downgrade notices for each — both hazards died with the clamp, and the
+  // diff left a real gap behind: a hand-edited value already on disk at open time displayed in
+  // every cell (and marked the title "(mine)") while the process-wide cache kept answering with
+  // the factory value, even after the user pressed Save on an untouched form.
   for (const auto& entry : kAxisPresets) {
-    AdoptAxisPresetZenithStdOverrideInMemory(entry.id, ReadAxisPresetZenithStdFromDoc(next, entry.id));
-    AdoptAxisPresetZenithTypeOverrideInMemory(entry.id, ReadAxisPresetZenithTypeFromDoc(next, entry.id));
+    AdoptAxisPresetFacesInMemory(entry.id, ReadAxisPresetOverridesFromDoc(next, entry.id));
   }
   // The wedge shortcuts follow the same disk-first rule, as a whole-list adoption rather than a
   // per-entry diff — the same shape the axis loop above now uses.
@@ -593,6 +610,15 @@ void RenderCurrentValueCell(GuiState& state, const DefaultDiffRow& row, bool& ro
   const FieldEditorEntry* editor = FindFieldEditor(row.key_path);
   if (editor == nullptr) {
     ImGui::TextDisabled("%s", FormatDiffValue(row.current_value).c_str());
+    // renderer.ray_color is the ONE deliberately-unregistered leaf (field_editor_registry.cpp):
+    // a keep-locked row whose reason is mechanism, not mood — the GUI's scene build overwrites the
+    // value with the material's own spectral colour, so an editor here would accept input nothing
+    // consumes. AC2's keep-locked condition ② lives here: say why, and where the real writer is.
+    if (row.key_path == "renderer.ray_color" && ImGui::IsItemHovered()) {
+      ImGui::SetTooltip(
+          "This setting has no editor anywhere in the GUI by design: the GUI build always uses "
+          "the material's own spectral colour. The value is set from the CLI or a config JSON.");
+    }
     return;
   }
 
@@ -616,6 +642,13 @@ void RenderCurrentValueCell(GuiState& state, const DefaultDiffRow& row, bool& ro
   ImGui::EndDisabled();
   ImGui::EndGroup();
 
+  if (constraint.enabled && constraint.inactive_note != nullptr && ImGui::IsItemHovered()) {
+    // The stored/effective split (field_editor_registry.hpp): the control is live and Save would
+    // write what it shows, but the current configuration does not consume the value. The note is
+    // the only place the panel says so — a silently-stored-never-used edit is the same
+    // "changed something, nothing happened" family the checkbox rule above closes.
+    ImGui::SetTooltip("%s", constraint.inactive_note);
+  }
   if (!constraint.enabled && constraint.disabled_reason != nullptr &&
       ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
     ImGui::SetTooltip("%s", constraint.disabled_reason);
@@ -694,8 +727,10 @@ void RenderSettingsTable(GuiState& state, float table_height) {
 
   // Deferred to after EndTable, never called inside the loop: RefreshRows REPLACES g_rows, and the
   // loop below holds a reference into it. Deferring also coalesces a burst of edits in one frame
-  // into a single rebuild.
-  bool rows_are_stale = false;
+  // into a single rebuild. Seeded from the outside-commit flag so a bg_path load that landed
+  // between frames counts as this pass's edit.
+  bool rows_are_stale = g_rows_dirty_from_outside;
+  g_rows_dirty_from_outside = false;
 
   for (const auto& row : g_rows) {
     if (!RowIsVisible(row)) {
@@ -725,9 +760,16 @@ void RenderSettingsTable(GuiState& state, float table_height) {
     // the whole point of the column — could otherwise only be asserted against the row struct the
     // panel is supposed to be reading. With "##" (not "###") the item's id hashes the whole label,
     // so a test that addresses it by the value it expects is asserting what was drawn.
-    // Disabled: it is read-only, and greying it says so without adding a control.
+    // Disabled: it is read-only, and greying it says so without adding a control. The hover (kept
+    // working through AllowWhenDisabled) is what makes the greying a statement rather than a
+    // mystery — this column is the factory reference, not a second editor.
     const std::string origin_id = FormatDiffValue(row.factory_value) + "##origin_" + row.key_path;
     ImGui::Selectable(origin_id.c_str(), false, ImGuiSelectableFlags_Disabled);
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+      ImGui::SetTooltip(
+          "The built-in value this build ships. Editing happens in the Current "
+          "value column; un-checking the row on save returns here.");
+    }
 
     ImGui::TableNextColumn();
     // Source is "is this key written in my override file", not "does its value differ from
@@ -779,76 +821,96 @@ void RenderSettingsTable(GuiState& state, float table_height) {
 
 // Display format for a §1 std cell showing `value`, e.g. "%.7g".
 //
-// Built per-value from RoundTripPrecisionForAxisPresetStd rather than a fixed digit count: the
+// Built per-value from RoundTripPrecisionForAxisPresetFloat rather than a fixed digit count: the
 // domains are OPEN, so clamping Column's std lands on nextafter(10, 0) = 9.99999905 (needs 7
 // digits) while clamping Lowitz's lands on nextafter(15, +inf) = 15.000001 (needs 8) — a fixed
 // "%.7g" renders the first correctly but rounds the second to "15", directly under a line that
-// says the value must stay GREATER than 15. Sharing the precision rule with FormatAxisPresetStd
+// says the value must stay GREATER than 15. Sharing the precision rule with FormatAxisPresetFloat
 // (used for the adjacent status/warning text) is what keeps the input box and the prose that
 // explains it from ever disagreeing about what the stored value is.
-std::string PresetStdDisplayFormat(float value) {
+std::string PresetDistDisplayFormat(float value) {
   char format[8];
-  std::snprintf(format, sizeof(format), "%%.%dg", RoundTripPrecisionForAxisPresetStd(value));
+  std::snprintf(format, sizeof(format), "%%.%dg", RoundTripPrecisionForAxisPresetFloat(value));
   return format;
 }
 
-// Reload every §1 std input from the working copy (factory value, or what the copy holds). Called
-// on open and after every committed edit, so the boxes show the value that would be stored rather
-// than whatever the user last typed into them.
-void RefreshPresetStdBuffers() {
-  g_preset_std_buffers = PresetStdBuffers{};
+// Reload every §1 mean/std input from the working copy (factory value, or what the copy holds).
+// Called on open and after every committed edit, so the boxes show the value that would be stored
+// rather than whatever the user last typed into them.
+void RefreshPresetDistBuffers() {
+  g_preset_dist_buffers = PresetDistBuffers{};
   for (const auto& entry : kAxisPresets) {
-    g_preset_std_buffers.slots[static_cast<std::size_t>(entry.id)] = EffectiveCopyPresetZenith(entry).std;
+    for (int axis_index = 0; axis_index < kAxisSlotCount; ++axis_index) {
+      const auto slot = static_cast<AxisSlot>(axis_index);
+      const AxisDist dist = EffectiveCopyPresetDist(entry, slot);
+      g_preset_dist_buffers.mean[static_cast<std::size_t>(entry.id)][axis_index] = dist.mean;
+      g_preset_dist_buffers.std[static_cast<std::size_t>(entry.id)][axis_index] = dist.std;
+    }
   }
 }
 
-// One read-only axis row: Type / Mean / Std as DISABLED typed controls rather than as text.
-// Disabled controls, not plain labels, because the point is to show the shape of the value (a
-// distribution picker, a number) while being honest that it cannot be changed here — a text cell
-// would leave a user wondering where the editor for it is, and an enabled control would be a lie.
-void RenderReadOnlyAxisRow(const char* axis_label, const AxisDist& dist) {
-  ImGui::TableNextRow();
-  ImGui::TableNextColumn();
-  ImGui::TextUnformatted(axis_label);
-
-  ImGui::TableNextColumn();
-  ImGui::BeginDisabled();
-  int type_index = static_cast<int>(dist.type);
-  ImGui::SetNextItemWidth(-FLT_MIN);
-  // SetNextComboPopupTopMost even though a disabled combo cannot open: this panel is a
-  // BeginPopupModal, so the contract in panels.cpp applies to every combo it hosts, and the call
-  // being already in place is what keeps a future decision to enable this cell from regressing
-  // the popup back behind the modal.
-  SetNextComboPopupTopMost();
-  ImGui::Combo("##type", &type_index, kAxisDistTypeComboItems);
-  ImGui::EndDisabled();
-
-  ImGui::TableNextColumn();
-  ImGui::BeginDisabled();
-  float mean = dist.mean;
-  ImGui::SetNextItemWidth(-FLT_MIN);
-  ImGui::InputFloat("##mean", &mean, 0.0f, 0.0f, "%.1f");
-  ImGui::EndDisabled();
-
-  ImGui::TableNextColumn();
-  ImGui::BeginDisabled();
-  float std_value = dist.std;
-  ImGui::SetNextItemWidth(-FLT_MIN);
-  ImGui::InputFloat("##std", &std_value, 0.0f, 0.0f, PresetStdDisplayFormat(std_value).c_str());
-  ImGui::EndDisabled();
-
-  ImGui::TableNextColumn();  // warning cell: read-only rows never carry one
+// The axis word a §1 row and a status message spell the same way. Three callers here; a switch
+// over three enumerators rather than an array indexed by a cast, so a new AxisSlot breaks the
+// build here instead of silently printing "Zenith" over azimuth numbers.
+const char* AxisSlotLabel(AxisSlot slot) {
+  switch (slot) {
+    case AxisSlot::kZenith:
+      return "Zenith";
+    case AxisSlot::kAzimuth:
+      return "Azimuth";
+    case AxisSlot::kRoll:
+      return "Roll";
+  }
+  return "Zenith";
 }
 
-// The Zenith row of a preset that HAS an adjustable face: identical to the read-only row except
-// the Type and Std cells are live and the warning cell can fill.
-void RenderEditableZenithRow(const AxisPresetEntry& entry) {
-  const auto slot = static_cast<std::size_t>(entry.id);
-  const AxisDist zenith = EffectiveCopyPresetZenith(entry);
+const char* AxisSlotWord(AxisSlot slot) {
+  switch (slot) {
+    case AxisSlot::kZenith:
+      return "zenith";
+    case AxisSlot::kAzimuth:
+      return "azimuth";
+    case AxisSlot::kRoll:
+      return "roll";
+  }
+  return "zenith";
+}
+
+// One committed §1 numeric edit. Stored verbatim: since the axis label went sticky, an
+// out-of-usual-range retune is an ordinary state (the crystal shows the out-of-domain badge), so
+// the only refusal left is the non-finite sanity check. The warning cell carries that one refusal;
+// a clean value clears it.
+void CommitPresetFloatFace(const AxisPresetEntry& entry, AxisSlot slot, bool is_mean, float value) {
+  const auto preset_slot = static_cast<std::size_t>(entry.id);
+  const auto axis_index = static_cast<int>(slot);
+  if (!std::isfinite(value)) {
+    g_preset_warnings.slots[preset_slot][axis_index] = "That value is not a number, so nothing was stored.";
+    g_status_message = g_preset_warnings.slots[preset_slot][axis_index];
+    return;
+  }
+  if (is_mean) {
+    WriteAxisPresetMeanToDoc(g_copy_doc, entry.id, slot, value);
+  } else {
+    WriteAxisPresetStdToDoc(g_copy_doc, entry.id, slot, value);
+  }
+  g_preset_warnings.slots[preset_slot][axis_index].clear();
+  g_status_message = std::string("Press Save to store ") + FormatAxisPresetFloat(value) + " as the " + entry.label +
+                     " " + AxisSlotWord(slot) + (is_mean ? " mean." : " std.");
+}
+
+// One EDITABLE axis row: Type / Mean / Std as live typed controls. Every face of every storable
+// preset row is editable since this task opened the library — the former split (an editable
+// zenith row over read-only azimuth/roll rows built from BeginDisabled controls) existed to say
+// "cannot be changed here", which the owner's ruling retired: a locked control would now be the
+// lie, and an enabled one the truth.
+void RenderEditableAxisRow(const AxisPresetEntry& entry, AxisSlot slot) {
+  const auto preset_slot = static_cast<std::size_t>(entry.id);
+  const auto axis_index = static_cast<int>(slot);
+  const AxisDist dist = EffectiveCopyPresetDist(entry, slot);
 
   ImGui::TableNextRow();
   ImGui::TableNextColumn();
-  ImGui::TextUnformatted("Zenith");
+  ImGui::TextUnformatted(AxisSlotLabel(slot));
 
   ImGui::TableNextColumn();
   // A combo over ALL five distribution types. Until the axis label went sticky this listed only
@@ -858,18 +920,19 @@ void RenderEditableZenithRow(const AxisPresetEntry& entry) {
   // no rule behind it.
   //
   // Committed straight into the working copy on pick: a combo choice is atomic, so unlike the
-  // std input there is no "still typing" state to buffer.
+  // numeric inputs there is no "still typing" state to buffer.
   ImGui::SetNextItemWidth(-FLT_MIN);
   SetNextComboPopupTopMost();
-  const std::string type_id = std::string("###preset_type_") + entry.override_json_name;
-  if (ImGui::BeginCombo(type_id.c_str(), AxisDistTypeLabel(zenith.type))) {
+  const std::string type_id =
+      std::string("###preset_type_") + entry.override_json_name + "_" + std::to_string(axis_index);
+  if (ImGui::BeginCombo(type_id.c_str(), AxisDistTypeLabel(dist.type))) {
     for (int i = 0; i < static_cast<int>(AxisDistType::kCount); ++i) {
       const auto type = static_cast<AxisDistType>(i);
-      const bool selected = type == zenith.type;
+      const bool selected = type == dist.type;
       if (ImGui::Selectable(AxisDistTypeLabel(type), selected) && !selected) {
-        WriteAxisPresetZenithTypeToDoc(g_copy_doc, entry.id, type);
-        g_status_message =
-            std::string("Press Save to store ") + AxisDistTypeLabel(type) + " as the " + entry.label + " zenith type.";
+        WriteAxisPresetTypeToDoc(g_copy_doc, entry.id, slot, type);
+        g_status_message = std::string("Press Save to store ") + AxisDistTypeLabel(type) + " as the " + entry.label +
+                           " " + AxisSlotWord(slot) + " type.";
       }
       if (selected) {
         ImGui::SetItemDefaultFocus();
@@ -879,45 +942,41 @@ void RenderEditableZenithRow(const AxisPresetEntry& entry) {
   }
 
   ImGui::TableNextColumn();
-  ImGui::BeginDisabled();
-  float mean = zenith.mean;
   ImGui::SetNextItemWidth(-FLT_MIN);
-  ImGui::InputFloat("##mean", &mean, 0.0f, 0.0f, "%.1f");
-  ImGui::EndDisabled();
-
-  ImGui::TableNextColumn();
-  ImGui::SetNextItemWidth(-FLT_MIN);
-  const std::string std_id = std::string("###preset_std_") + entry.override_json_name;
-  ImGui::InputFloat(std_id.c_str(), &g_preset_std_buffers.slots[slot], 0.0f, 0.0f,
-                    PresetStdDisplayFormat(g_preset_std_buffers.slots[slot]).c_str());
+  const std::string mean_id =
+      std::string("###preset_mean_") + entry.override_json_name + "_" + std::to_string(axis_index);
+  // The mean rides the same round-trip precision rule as the spread: both are stored floats a
+  // hand-edited file can hold at full precision, and showing fewer digits than the value needs
+  // would make a touch of the box commit the DISPLAYED value over the stored one.
+  ImGui::InputFloat(mean_id.c_str(), &g_preset_dist_buffers.mean[preset_slot][axis_index], 0.0f, 0.0f,
+                    PresetDistDisplayFormat(g_preset_dist_buffers.mean[preset_slot][axis_index]).c_str());
   if (ImGui::IsItemDeactivatedAfterEdit()) {
-    // Stored verbatim: since the axis label went sticky, an out-of-usual-range retune is an
-    // ordinary state (the crystal shows the out-of-domain badge), so the only refusal left is the
-    // non-finite sanity check. The warning cell carries that one refusal; a clean value clears it.
-    const float value = g_preset_std_buffers.slots[slot];
-    if (!std::isfinite(value)) {
-      g_preset_warnings.slots[slot] = "That value is not a number, so nothing was stored.";
-      g_status_message = g_preset_warnings.slots[slot];
-    } else {
-      WriteAxisPresetZenithStdToDoc(g_copy_doc, entry.id, value);
-      g_preset_warnings.slots[slot].clear();
-      g_status_message =
-          std::string("Press Save to store ") + FormatAxisPresetStd(value) + " as the " + entry.label + " zenith std.";
-    }
-    RefreshPresetStdBuffers();
+    CommitPresetFloatFace(entry, slot, /*is_mean=*/true, g_preset_dist_buffers.mean[preset_slot][axis_index]);
+    RefreshPresetDistBuffers();
   }
 
   ImGui::TableNextColumn();
-  if (!g_preset_warnings.slots[slot].empty()) {
+  ImGui::SetNextItemWidth(-FLT_MIN);
+  const std::string std_id =
+      std::string("###preset_std_") + entry.override_json_name + "_" + std::to_string(axis_index);
+  ImGui::InputFloat(std_id.c_str(), &g_preset_dist_buffers.std[preset_slot][axis_index], 0.0f, 0.0f,
+                    PresetDistDisplayFormat(g_preset_dist_buffers.std[preset_slot][axis_index]).c_str());
+  if (ImGui::IsItemDeactivatedAfterEdit()) {
+    CommitPresetFloatFace(entry, slot, /*is_mean=*/false, g_preset_dist_buffers.std[preset_slot][axis_index]);
+    RefreshPresetDistBuffers();
+  }
+
+  ImGui::TableNextColumn();
+  if (!g_preset_warnings.slots[preset_slot][axis_index].empty()) {
     // A Selectable rather than plain text, for the same reason the Source cell is one: the icon
     // needs a hover explanation, and text carries no item to hover — nor an id, which is also what
     // lets a test say "this preset is showing a warning" without reading pixels.
     // NoAutoClosePopups: a stray click on a read-only cell must not dismiss the panel.
-    const std::string warning_id =
-        ICON_FA_TRIANGLE_EXCLAMATION "###preset_warning_" + std::string(entry.override_json_name);
+    const std::string warning_id = ICON_FA_TRIANGLE_EXCLAMATION "###preset_warning_" +
+                                   std::string(entry.override_json_name) + "_" + std::to_string(axis_index);
     ImGui::Selectable(warning_id.c_str(), false, ImGuiSelectableFlags_NoAutoClosePopups);
     if (ImGui::IsItemHovered()) {
-      ImGui::SetTooltip("%s", g_preset_warnings.slots[slot].c_str());
+      ImGui::SetTooltip("%s", g_preset_warnings.slots[preset_slot][axis_index].c_str());
     }
   }
 }
@@ -927,10 +986,15 @@ void RenderEditableZenithRow(const AxisPresetEntry& entry) {
 // about ONE preset.
 void RenderPresetEntry(const AxisPresetEntry& entry) {
   const auto slot = static_cast<std::size_t>(entry.id);
-  // Either face counts: a preset with only its type retuned is "mine" too, and its Restore button
-  // has something to restore. The type half reads the same accessor every cell on the row reads,
-  // so "(mine)", the cells and what Save adopts cannot disagree about what the copy holds.
-  const bool has_override = CopyPresetZenithStd(entry).has_value() || CopyPresetZenithType(entry).has_value();
+  // Any face counts: a preset with only its azimuth mean retuned is "mine" too, and its Restore
+  // button has something to restore. The reads are the same ones every cell on the rows reads, so
+  // "(mine)", the cells and what Save adopts cannot disagree about what the copy holds.
+  bool has_override = false;
+  for (int axis_index = 0; axis_index < kAxisSlotCount && !has_override; ++axis_index) {
+    const auto axis = static_cast<AxisSlot>(axis_index);
+    has_override = CopyPresetStd(entry, axis).has_value() || CopyPresetMean(entry, axis).has_value() ||
+                   CopyPresetType(entry, axis).has_value();
+  }
 
   // Label carries "(mine)" for a preset the user has retuned, so the collapsed view already
   // answers "which of these have I changed" without opening all six.
@@ -940,24 +1004,14 @@ void RenderPresetEntry(const AxisPresetEntry& entry) {
     return;
   }
 
-  if (!entry.has_adjustable_zenith_std) {
-    // AC7: no input that would be ignored. Random is three uniform-360 axes — there is no narrow
-    // distribution to retune, and a box that accepted a number and discarded it would be worse
-    // than saying so.
-    ImGui::TextWrapped(
-        "%s has no adjustable value: it is defined as three full-360 uniform axes, so there is no "
-        "spread to tune. The values below are shown for reference.",
-        entry.label);
-  } else {
-    // Sticky semantics: this std is what an axis-tab chip loads for the preset's zenith when the
-    // crystal holds no memory of it (and what the label's Reset button reloads), and a value
-    // outside the preset's usual range is allowed — the crystal carrying it shows the axis
-    // label's out-of-domain badge rather than being bent back here.
-    ImGui::TextWrapped(
-        "This is what the %s chip loads when it has nothing remembered — a value outside the "
-        "usual %s range is allowed and shows a warning badge on the crystal.",
-        entry.label, entry.label);
-  }
+  // Sticky semantics: these are the parameters an axis-tab chip loads for this preset when the
+  // crystal holds no memory of them (and what the label's Reset button reloads), and values
+  // outside the preset's usual range are allowed — the crystal carrying them shows the
+  // axis label's out-of-domain badge rather than being bent back here.
+  ImGui::TextWrapped(
+      "This is what the %s chip loads when it has nothing remembered — a value outside the "
+      "usual %s range is allowed and shows a warning badge on the crystal.",
+      entry.label, entry.label);
 
   constexpr ImGuiTableFlags kFlags =
       ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp;
@@ -970,40 +1024,29 @@ void RenderPresetEntry(const AxisPresetEntry& entry) {
     ImGui::TableSetupColumn("!", ImGuiTableColumnFlags_WidthFixed, UiPx(24.0f));
     ImGui::TableHeadersRow();
 
-    if (entry.has_adjustable_zenith_std) {
-      ImGui::PushID("zenith");
-      RenderEditableZenithRow(entry);
-      ImGui::PopID();
-    } else {
-      ImGui::PushID("zenith");
-      RenderReadOnlyAxisRow("Zenith", entry.zenith);
-      ImGui::PopID();
-    }
-    ImGui::PushID("azimuth");
-    RenderReadOnlyAxisRow("Azimuth", entry.azimuth);
-    ImGui::PopID();
-    ImGui::PushID("roll");
-    RenderReadOnlyAxisRow("Roll", entry.roll);
-    ImGui::PopID();
+    RenderEditableAxisRow(entry, AxisSlot::kZenith);
+    RenderEditableAxisRow(entry, AxisSlot::kAzimuth);
+    RenderEditableAxisRow(entry, AxisSlot::kRoll);
     ImGui::EndTable();
   }
 
-  if (entry.has_adjustable_zenith_std) {
+  {
     const std::string restore_id =
         ICON_FA_ARROW_ROTATE_LEFT " Restore to factory###preset_restore_" + std::string(entry.override_json_name);
     ImGui::BeginDisabled(!has_override);
     if (ImGui::Button(restore_id.c_str())) {
-      // Copy only, like the std edit above. The old code had a failure branch here because it
+      // Copy only, like the numeric edits above. The old code had a failure branch here because it
       // wrote the file; dropping the override from an in-memory document has none, which is also
-      // why the warning is now cleared unconditionally: the value it described is gone from the
-      // copy, so there is no state in which it still applies.
-      // "Restore to factory" means every face this preset exposes, so both erasers run: each
-      // takes only its own key, and the node goes when the second one empties it.
-      EraseAxisPresetZenithStdFromDoc(g_copy_doc, entry.id);
-      EraseAxisPresetZenithTypeFromDoc(g_copy_doc, entry.id);
+      // why the warnings are now cleared unconditionally: the values they described are gone from
+      // the copy, so there is no state in which they still apply.
+      // "Restore to factory" means every face this preset exposes, so the whole node goes at once
+      // and its parents are pruned with it.
+      EraseAxisPresetOverridesFromDoc(g_copy_doc, entry.id);
       g_status_message = std::string(entry.label) + " will go back to its built-in value when you save.";
-      g_preset_warnings.slots[slot].clear();
-      RefreshPresetStdBuffers();
+      for (auto& warning : g_preset_warnings.slots[slot]) {
+        warning.clear();
+      }
+      RefreshPresetDistBuffers();
     }
     ImGui::EndDisabled();
   }
@@ -1038,11 +1081,107 @@ std::vector<WedgeMillerTriple> CopyWedgePresets() {
 // notice, but this panel shows the DOCUMENT, which keeps them verbatim) is shown with a warning
 // and a live delete button, not hidden: hiding it would leave the user a file they cannot fix from
 // the UI that wrote it.
+// The one saved row being edited, and its three scratch inputs. One editor at a time — the same
+// single-scratch shape the angle-list editor uses — because two simultaneous editors of one list
+// would have to agree about which row's commit lands first, and there is no question here that
+// needs two answers at once. Index is -1 when nothing is being edited; a deletion under the editor
+// resets it (the indices shift, so a stale index would edit the wrong row). The POPUP ID is kept
+// separately, captured at open: the close-on-invalid path has to address the popup AFTER the index
+// is gone, and rebuilding the id from a stale index would close (or open) somebody else's.
+int g_wedge_edit_row = -1;
+std::string g_wedge_edit_popup_id;
+WedgeMillerTriple g_wedge_edit_scratch{};
+
+// The editor popup for g_wedge_edit_row, drawn by the library loop (which owns `saved`, the list
+// the commit writes back). Live feedback comes from the same EvaluateCustomWedgeInput verdict the
+// row and the dropdown's Apply button use; the duplicate rule matches the Add button's — a triple
+// that is a built-in or another saved entry (the row under edit excepted) is refused, not saved.
+void RenderWedgeEditPopup(std::vector<WedgeMillerTriple>& saved) {
+  // Begin FIRST, validate second: a delete under the editor resets the index, and an early return
+  // before BeginPopup would leave the open popup unsubmitted this frame — still on ImGui's open
+  // stack but not drawn, so the next click gets eaten closing it. Begun-then-closed, the "row
+  // gone" and "popup gone" happen in the same frame.
+  if (!ImGui::BeginPopup(g_wedge_edit_popup_id.c_str())) {
+    return;
+  }
+  if (g_wedge_edit_row < 0 || g_wedge_edit_row >= static_cast<int>(saved.size())) {
+    g_wedge_edit_row = -1;  // a delete under the editor shifted or emptied the list
+    ImGui::CloseCurrentPopup();
+    ImGui::EndPopup();
+    return;
+  }
+
+  ImGui::TextUnformatted("Edit the Miller indices; the angle follows.");
+  ImGui::Separator();
+  // "###" suffixes so a test can address each box without substring-matching every label in the
+  // panel that happens to contain the letter (ref "**/h" lands in the search box otherwise).
+  //
+  // COMMIT ON DEACTIVATION, like every numeric cell in this panel: an edit that ends (Enter /
+  // focus loss) and reads as a legal, non-duplicate triple lands in the working copy right there;
+  // a refused or duplicate verdict writes nothing, and the graded line below says why. There is
+  // deliberately no Save/Cancel pair here: Cancel would have to un-write a working copy that
+  // every other edit in this panel leaves in place, and Save would be the one button whose click
+  // a user must remember inside a transient popup — the panel's Save stays the only commit.
+  // A committed edit ends here: any of the three boxes deactivating (Enter / focus loss) is the
+  // commit attempt's trigger, evaluated against the verdict below.
+  bool deactivated = false;
+  ImGui::SetNextItemWidth(UiPx(70.0f));
+  ImGui::InputInt("h###wedge_edit_h", &g_wedge_edit_scratch.h);
+  deactivated |= ImGui::IsItemDeactivatedAfterEdit();
+  ImGui::SameLine();
+  ImGui::SetNextItemWidth(UiPx(70.0f));
+  ImGui::InputInt("k###wedge_edit_k", &g_wedge_edit_scratch.k);
+  deactivated |= ImGui::IsItemDeactivatedAfterEdit();
+  ImGui::SameLine();
+  ImGui::SetNextItemWidth(UiPx(70.0f));
+  ImGui::InputInt("l###wedge_edit_l", &g_wedge_edit_scratch.l);
+  deactivated |= ImGui::IsItemDeactivatedAfterEdit();
+
+  const CustomWedgeInputFeedback fb =
+      EvaluateCustomWedgeInput(g_wedge_edit_scratch.h, g_wedge_edit_scratch.k, g_wedge_edit_scratch.l);
+  const WedgeMillerTriple candidate{ g_wedge_edit_scratch.h, g_wedge_edit_scratch.k, g_wedge_edit_scratch.l };
+  bool duplicate = IsBuiltInWedgeMillerIndex(candidate.h, candidate.k, candidate.l);
+  for (size_t i = 0; i < saved.size() && !duplicate; ++i) {
+    if (static_cast<int>(i) != g_wedge_edit_row && saved[i] == candidate) {
+      duplicate = true;
+    }
+  }
+
+  if (!fb.can_apply) {
+    ImGui::TextColored(WarningTextColor(), "%s", fb.message.c_str());
+  } else if (duplicate) {
+    ImGui::TextColored(WarningTextColor(), "That preset is already available.");
+  } else {
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted(FormatWedgePresetLabel(candidate.h, candidate.l, fb.angle_deg).c_str());
+  }
+  // The committed form of the scratch: exactly when an edit ended and the verdict is clean and
+  // the triple is not a duplicate, it lands in the working copy (the row then re-reads it, angle
+  // included). A refused or duplicate verdict writes nothing; the graded line above says why.
+  if (deactivated && fb.can_apply && !duplicate) {
+    saved[static_cast<size_t>(g_wedge_edit_row)] = candidate;
+    WriteWedgePresetsToDoc(g_copy_doc, saved);
+    g_status_message = "Edited a saved wedge preset; press Save to keep the change.";
+  }
+  ImGui::EndPopup();
+}
+
 bool RenderWedgePresetRow(size_t index, const WedgeMillerTriple& triple) {
   const CustomWedgeInputFeedback fb = EvaluateCustomWedgeInput(triple.h, triple.k, triple.l);
 
   const std::string delete_id = ICON_FA_TRASH "###wedge_preset_delete_" + std::to_string(index);
   const bool deleted = ImGui::Button(delete_id.c_str());
+  ImGui::SameLine();
+  // In-place edit of the saved entry: the indices are the stored truth and the angle derives from
+  // them, so editing means editing the indices (the derived angle is not a second input — a
+  // contradictory pair is the exact state the store's shape exists to prevent).
+  const std::string edit_id = ICON_FA_PEN "###wedge_preset_edit_" + std::to_string(index);
+  if (ImGui::Button(edit_id.c_str())) {
+    g_wedge_edit_row = static_cast<int>(index);
+    g_wedge_edit_scratch = triple;
+    g_wedge_edit_popup_id = "###wedge_preset_edit_popup_" + std::to_string(index);
+    ImGui::OpenPopup(g_wedge_edit_popup_id.c_str());
+  }
   ImGui::SameLine();
 
   if (fb.can_apply) {
@@ -1072,9 +1211,10 @@ void RenderWedgePresetLibrary() {
   // range, so it gets Basic Latin plus Latin-1. The degree sign the labels carry is inside it; an
   // em dash is not.
   ImGui::TextWrapped(
-      "Save the crystal faces you use often. Each is stored as its Miller indices, so it keeps "
-      "meaning the same face if the ice constants are ever corrected. The four built-in presets "
-      "are always offered and are not listed here.");
+      "Save the crystal faces you use often. Each is stored as its Miller indices — edit them in "
+      "place (the pen beside a row) and the angle follows — so an entry keeps meaning the same "
+      "face if the ice constants are ever corrected. The four built-in presets are always offered "
+      "and are not listed here.");
 
   std::vector<WedgeMillerTriple> saved = CopyWedgePresets();
   for (size_t i = 0; i < saved.size(); ++i) {
@@ -1083,12 +1223,19 @@ void RenderWedgePresetLibrary() {
       saved.erase(saved.begin() + static_cast<std::ptrdiff_t>(i));
       WriteWedgePresetsToDoc(g_copy_doc, saved);
       g_status_message = "Removed a saved wedge preset; press Save to keep the change.";
+      // The editor keys its popup by row index, which this deletion just shifted — close it rather
+      // than let it follow the wrong row.
+      g_wedge_edit_row = -1;
       // One deletion per frame. Continuing the loop over a list an element shorter would render
       // the rest under ids that have shifted, which is the row-index reuse ImGui warns about; the
       // next frame re-reads the document and draws the remainder correctly.
       break;
     }
   }
+  // The editor popup draws after the rows so it anchors on the row's edit button in the same
+  // frame that button was clicked; the commit writes through `saved`, the same list the delete
+  // path writes through.
+  RenderWedgeEditPopup(saved);
 
   int h = 0;
   int k = 0;
@@ -1118,10 +1265,12 @@ void RenderWedgePresetLibrary() {
 }
 
 void RenderPresetLibrary() {
+  // Sticky semantics, stated where the old clamp-era copy ("adjusted to the nearest one that is")
+  // used to sit: every face of every storable preset is editable and stored verbatim, and the
+  // badge — not this panel — is where an out-of-usual-range retune is reported.
   ImGui::TextWrapped(
-      "Retune a built-in preset so its button writes your value. The allowed range per preset is "
-      "what keeps the preset recognisable as itself; a value outside it is adjusted to the nearest "
-      "one that is, and said so.");
+      "Retune a built-in preset so its button writes your values. A value outside the preset's "
+      "usual range is stored as-is; the crystal carrying it shows a warning badge.");
   for (const auto& entry : kAxisPresets) {
     // Custom is the classifier's "none of the above", not a built-in identity, so there is nothing
     // for a library to hold about it.
@@ -1166,7 +1315,7 @@ void OpenDefaultsPanel(GuiState& state, DefaultsPanelSection initial_section) {
   g_row_filter = DefaultsRowFilter::kAll;
   g_status_message.clear();
   g_preset_warnings = PresetWarnings{};
-  RefreshPresetStdBuffers();
+  RefreshPresetDistBuffers();
   RefreshRows(state);
   // After RefreshRows, never before: the checkbox set is a function of the rows.
   RecomputeCheckedKeys();
@@ -1438,6 +1587,13 @@ void RenderDefaultsPanel(GuiState& state) {
   ImGui::EndPopup();
 }
 
+void NotifyDefaultsBackgroundAdopted() {
+  // The cell's statement is about bg_path (the loader's side effects on bg_show/alpha/transform
+  // are loader behavior, not this cell's claim — those rows stay as the user left them).
+  g_checked_keys.insert("bg_path");
+  g_rows_dirty_from_outside = true;
+}
+
 void ResetDefaultsPanelTestState() {
   g_rows.clear();
   g_snapshot_doc = nlohmann::json::object();
@@ -1450,7 +1606,11 @@ void ResetDefaultsPanelTestState() {
   g_pending_initial_section.reset();
   g_status_message.clear();
   g_preset_warnings = PresetWarnings{};
-  g_preset_std_buffers = PresetStdBuffers{};
+  g_preset_dist_buffers = PresetDistBuffers{};
+  g_wedge_edit_row = -1;
+  g_wedge_edit_popup_id.clear();
+  g_wedge_edit_scratch = WedgeMillerTriple{};
+  g_rows_dirty_from_outside = false;
   // Reset HERE and not in OpenDefaultsPanel: it is a measurement of ImGui's own TreeNode fold
   // state, which ImGui keeps across closes of this panel, so the measurement should outlive a close
   // exactly as the thing it measures does. Test isolation is the one place that state is torn down.

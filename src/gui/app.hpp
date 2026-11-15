@@ -481,7 +481,12 @@ ScenePtr BuildCommitSceneOrWarn(const GuiState& state, bool user_initiated);
 // a refusal here is logged as the surprise it is rather than shown as a modal.
 bool DoAnalyze();
 void DoRevert();
-void DoLoadBackground(GLFWwindow* window);
+// The Display panel's Load Bg flow, and the defaults panel's bg_path cell (deferred). Returns
+// true exactly when the document actually changed: a picked image was loaded and the bg_* /
+// aspect side effects landed. Cancel (no path chosen) and a failed load return false and leave
+// the document untouched — callers that claim the edit into an adoption set gate on this, not on
+// "a dialog happened".
+bool DoLoadBackground(GLFWwindow* window);
 void DoClearBackground();
 void SyncFromPoller();
 void CheckUnsavedAndDo(PendingAction action);
