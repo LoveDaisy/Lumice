@@ -227,12 +227,9 @@ GuiValidationResult ValidateSingleAtomText(const std::string& text) {
   if (trimmed.empty()) {
     return GuiValidationResult{ LUMICE_RAYPATH_VALID, {} };
   }
-  // Use PRISM as a permissive baseline for face-number legality: the color
-  // window's ref carries no crystal-kind info at edit time (it points to a
-  // pool id, and multiple placements of different kinds may share a class).
-  // LUMICE_IsLegalFace guards the physical raypath filter separately at
-  // commit time; here we only need syntactic validation + the single-atom rule.
-  auto base = ValidateSummandText(trimmed, LUMICE_CRYSTAL_PRISM);
+  // With no crystal kind in hand, use the union of legal faces, as documented by
+  // the color-ref import validation in file_io.cpp. Physical filters still validate their actual kind.
+  auto base = ValidateSummandText(trimmed, LUMICE_CRYSTAL_PYRAMID);
   if (base.state != LUMICE_RAYPATH_VALID) {
     return base;
   }
