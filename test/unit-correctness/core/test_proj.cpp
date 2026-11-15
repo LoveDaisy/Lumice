@@ -6,6 +6,7 @@
 #include <thread>
 
 #include "config/config_manager.hpp"
+#include "core/shared/projection_shared.h"
 #include "core/simulator.hpp"
 #include "util/queue.hpp"
 
@@ -151,6 +152,120 @@ TEST_F(V3TestProj, SimpleProj) {
     for (int j = 0; j < 7; j++) {
       EXPECT_NEAR(expect_out[i * 7 + j], output_data[i * 7 + j], 5e-5);
     }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// ProjectionCastBounds — the float→int conversion-domain probe for the single-lens
+// bump path (lm_proj::ProjectExitToPixel's kProjLinear branch, the
+// static_cast<int>(LM_FLOOR(...)) pixel casts).
+//
+// The forward formula is allowed to return pixel expressions far outside any canvas
+// (kProjLinear's dx/dz is unbounded for near-horizontal rays) and the CALLER owns the
+// pixel bounds check, so the only in-function defence is keeping the cast input inside
+// the float→int conversion domain, where the C++ cast is defined. Three leg families:
+//   1. Conversion-domain-out legs (previously UB — float-cast-overflow): the cast must
+//      stay defined — count==1, the pixel lands OFF-canvas (the caller's check rejects
+//      it; no canvas clamp), and two calls agree (same site + same value = fixed
+//      parameters, deterministic).
+//   2. Defined-domain preserved legs: the clamp's identity region must cover every
+//      previously-defined conversion value — NOT just |v| <= 2^24. Every float32 with
+//      |v| >= 2^24 is an integer (ulp >= 2, floor exact), so casts in (2^24, 2^31) were
+//      already defined and must stay bit-identical. The expected pixels below exceed
+//      2^24 in magnitude and are pinned to the derivation (wx/|wz| = ±2^19, scale=64,
+//      img_w/2 = img_h/2 = 32, shift = 0).
+//   3. Negative control: the on-axis ray keeps its in-canvas pixel.
+// ---------------------------------------------------------------------------
+namespace {
+
+lm_proj::ProjParams MakeLinearProjParams() {
+  lm_proj::ProjParams p{};
+  p.proj_type = lm_proj::kProjLinear;
+  p.img_w = 64;
+  p.img_h = 64;
+  p.lens_shift_x = 0;
+  p.lens_shift_y = 0;
+  p.scale = 64.0f;
+  p.r_scale = 1.0f;
+  p.max_abs_dz = 0.0f;
+  p.globe_back_fade = 0.0f;
+  p.rot[0] = 1.0f;
+  p.rot[1] = 0.0f;
+  p.rot[2] = 0.0f;
+  p.rot[3] = 0.0f;
+  p.rot[4] = 1.0f;
+  p.rot[5] = 0.0f;
+  p.rot[6] = 0.0f;
+  p.rot[7] = 0.0f;
+  p.rot[8] = 1.0f;
+  return p;
+}
+
+}  // namespace
+
+TEST(ProjectionCastBounds, OutOfIntRangeLinearHitStaysDefinedAndOffCanvas) {
+  const lm_proj::ProjParams p = MakeLinearProjParams();
+  constexpr int kCanvasW = 64;
+  constexpr int kCanvasH = 64;
+  constexpr float kTinyWz = -(1.0f / 524288.0f);  // -2^-19, exact in float32
+  auto is_off_canvas = [](int v, int bound) { return v < 0 || v >= bound; };
+
+  // --- Family 1: conversion-domain-out inputs (previously UB) ---
+  // scale=64 turns wx/|wz| = ±1e9 into a pixel expression of ±~6.4e10, past
+  // INT_MAX / INT_MIN. Only x is handedness-flipped (xy.x = -xy.x), so wy = +1
+  // yields a NEGATIVE py expression — still far past INT_MIN.
+  {
+    const auto a = lm_proj::ProjectExitToPixel(p, 1.0f, 0.0f, -1e-9f);
+    const auto b = lm_proj::ProjectExitToPixel(p, 1.0f, 0.0f, -1e-9f);
+    EXPECT_EQ(1, a.count);
+    EXPECT_EQ(a.hits[0].px, b.hits[0].px);
+    EXPECT_EQ(a.hits[0].py, b.hits[0].py);
+    EXPECT_TRUE(is_off_canvas(a.hits[0].px, kCanvasW)) << "px = " << a.hits[0].px;
+  }
+  {
+    const auto a = lm_proj::ProjectExitToPixel(p, -1.0f, 0.0f, -1e-9f);
+    const auto b = lm_proj::ProjectExitToPixel(p, -1.0f, 0.0f, -1e-9f);
+    EXPECT_EQ(1, a.count);
+    EXPECT_EQ(a.hits[0].px, b.hits[0].px);
+    EXPECT_EQ(a.hits[0].py, b.hits[0].py);
+    EXPECT_TRUE(is_off_canvas(a.hits[0].px, kCanvasW)) << "px = " << a.hits[0].px;
+  }
+  {
+    const auto a = lm_proj::ProjectExitToPixel(p, 0.0f, 1.0f, -1e-9f);
+    const auto b = lm_proj::ProjectExitToPixel(p, 0.0f, 1.0f, -1e-9f);
+    EXPECT_EQ(1, a.count);
+    EXPECT_EQ(a.hits[0].px, b.hits[0].px);
+    EXPECT_EQ(a.hits[0].py, b.hits[0].py);
+    EXPECT_TRUE(is_off_canvas(a.hits[0].py, kCanvasH)) << "py = " << a.hits[0].py;
+  }
+
+  // --- Family 2: defined-domain preserved legs (bit-identical before/after the clamp) ---
+  {
+    // px = +2^19 * 64 + 32 = 33554464 (> 2^24, in int range; exactly representable).
+    const auto hit = lm_proj::ProjectExitToPixel(p, 1.0f, 0.0f, kTinyWz);
+    EXPECT_EQ(1, hit.count);
+    EXPECT_EQ(33554464, hit.hits[0].px);
+  }
+  {
+    // px = -2^19 * 64 + 32 = -33554400 (negative side of the identity region).
+    const auto hit = lm_proj::ProjectExitToPixel(p, -1.0f, 0.0f, kTinyWz);
+    EXPECT_EQ(1, hit.count);
+    EXPECT_EQ(-33554400, hit.hits[0].px);
+  }
+  {
+    // y axis is not handedness-flipped, so wy = -1 maps to +2^19 on the y expression:
+    // py = +2^19 * 64 + 32 = 33554464.
+    const auto hit = lm_proj::ProjectExitToPixel(p, 0.0f, -1.0f, kTinyWz);
+    EXPECT_EQ(1, hit.count);
+    EXPECT_EQ(33554464, hit.hits[0].py);
+  }
+
+  // --- Family 3: negative control — the on-axis ray stays in-canvas ---
+  {
+    const auto hit = lm_proj::ProjectExitToPixel(p, 0.0f, 0.0f, -0.5f);
+    EXPECT_EQ(1, hit.count);
+    EXPECT_EQ(32, hit.hits[0].px);
+    EXPECT_EQ(32, hit.hits[0].py);
   }
 }
 
