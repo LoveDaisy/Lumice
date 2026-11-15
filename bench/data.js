@@ -1,50 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794746569653,
+  "lastUpdate": 1794752216518,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "cdb4c383c1637dc4de908ea64859de306a7ec22c",
-          "message": "Merge pull request #487 from LoveDaisy/fix/look-at-row-alignment\n\nfix(gui): align the View Look At row to the panel's control grid",
-          "timestamp": "2026-10-12T22:17:52+08:00",
-          "tree_id": "684e0d405dc952e70143ce6cf8d78cd922de7278",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/cdb4c383c1637dc4de908ea64859de306a7ec22c"
-        },
-        "date": 1791815055691,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 344357.2,
-            "unit": "rays/sec",
-            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 503499.9,
-            "unit": "rays/sec",
-            "extra": "CPU: Neoverse-N2\\nCores: 4"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 469007.2,
-            "unit": "rays/sec",
-            "extra": "CPU: INTEL(R) XEON(R) PLATINUM 8573C\\nCores: 4"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -4794,6 +4752,54 @@ window.BENCHMARK_DATA = {
             "value": 511765.4,
             "unit": "rays/sec",
             "extra": "CPU: AMD EPYC 9V45 96-Core Processor                \\nCores: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "distinct": true,
+          "id": "ecca2c50a981551d3f7ace5b811ae02be3440f90",
+          "message": "Merge pull request #591 from LoveDaisy/feat/gui-feedback-1114\n\nfeat(gui-feedback-1114): overlay projection convergence, status bar, curve region rework, 3D reset, globe colormap",
+          "timestamp": "2026-11-15T22:10:19+08:00",
+          "tree_id": "ee20e2bcb9393d8730a0ad997abb40f1350ecc02",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/ecca2c50a981551d3f7ace5b811ae02be3440f90"
+        },
+        "date": 1794752214601,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 328564.5,
+            "unit": "rays/sec",
+            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 505044.9,
+            "unit": "rays/sec",
+            "extra": "CPU: Neoverse-N2\\nCores: 4"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 531835.9,
+            "unit": "rays/sec",
+            "extra": "CPU: Intel(R) Xeon(R) 6975P-C\\nCores: 4"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 287215.8,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 9V74 80-Core Processor                \\nCores: 4"
           }
         ]
       }
