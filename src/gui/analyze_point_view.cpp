@@ -75,10 +75,19 @@ constexpr int kMaxRenderComponents = 64;
 // Text has no ID; the test engine otherwise sees only emitted glyphs (and misses clipped tails).
 void RegisterPointTextItem(const char* label) {
   ImGuiContext& g = *ImGui::GetCurrentContext();
+  // ImGui upgrades must re-check LastItemData restoration and ItemAdd's non-layout side effects.
+  if (!g.TestEngineHookItems) {
+    return;
+  }
   const ImGuiLastItemData saved = g.LastItemData;
   ImGui::ItemAdd(saved.Rect, ImGui::GetID(label), nullptr, ImGuiItemFlags_NoNav);
   IMGUI_TEST_ENGINE_ITEM_INFO(g.LastItemData.ID, label, g.LastItemData.StatusFlags);
   g.LastItemData = saved;
+}
+
+// One policy value drives both the numerical floor and its human-readable tooltip.
+constexpr int CurveRangeDecades(PointCurveRangeMode mode) {
+  return mode == PointCurveRangeMode::kFull ? 8 : 5;
 }
 
 struct CurveArm {
@@ -469,7 +478,7 @@ PointCurveAxisRange PointCurveAxisFit(const PointContributionCurve& curve, Point
   if (!(hi > 0.0)) {
     return {};
   }
-  const double floor_ratio = mode == PointCurveRangeMode::kFull ? 1e-8 : 1e-5;
+  const double floor_ratio = std::pow(10.0, -CurveRangeDecades(mode));
   return { true, std::max(lo, hi * floor_ratio), hi };
 }
 
@@ -632,13 +641,78 @@ void RenderPointCurveRangeControl(PointCurveRangeMode* mode) {
       ImGui::PopStyleColor(4);
     }
     if (ImGui::IsItemHovered()) {
-      ImGui::SetTooltip(segment == 0 ? "Up to 5 decades below the largest positive value." :
-                                       "Up to 8 decades below the largest positive value.");
+      ImGui::SetTooltip("Up to %d decades below the largest positive value.", CurveRangeDecades(candidate));
     }
     if (segment == 0) {
       ImGui::SameLine(0.0f, 0.0f);
     }
   }
+}
+
+void DrawPointCurveLogAxis(ImDrawList* dl, const PointCurveAxisRange& visible, const ImVec2& plot_min,
+                           const ImVec2& plot_max) {
+  if (!visible.valid || plot_max.y <= plot_min.y) {
+    return;
+  }
+  const double v_min = visible.lo, v_max = visible.hi;
+  const float plot_h = plot_max.y - plot_min.y;
+  const float line_h = ImGui::GetTextLineHeight();
+  const int label_step = PointCurveLogLabelStep(v_min, v_max, plot_h, line_h);
+  bool have_labelled_major = false;
+  const auto v_to_py = [&](double value) {
+    return plot_max.y - static_cast<float>(CurveLogY(value, visible) * plot_h);
+  };
+  const bool minors_fit =
+      label_step == 1 && plot_h / std::max(1.0, std::log10(v_max) - std::log10(v_min)) >= UiPx(12.0f);
+  for (const PointCurveLogTick& tick : PointCurveLogTicks(v_min, v_max)) {
+    const int exp10 = static_cast<int>(std::lround(std::log10(tick.value)));
+    const bool labelled = tick.major && exp10 % label_step == 0;
+    if (tick.major && !labelled) {
+      continue;  // an unlabelled decade would only crowd the plot at this density
+    }
+    const float py = v_to_py(tick.value);
+    if (tick.major) {
+      have_labelled_major = true;
+      dl->AddLine(ImVec2(plot_min.x, py), ImVec2(plot_max.x, py), IM_COL32(60, 64, 72, 110), 1.0f);
+      char lab[16];
+      std::snprintf(lab, sizeof(lab), "%.0e", tick.value);
+      const ImVec2 ts = ImGui::CalcTextSize(lab);
+      dl->AddText(ImVec2(plot_min.x - ts.x - UiPx(5.0f), py - ts.y * 0.5f), ImGui::GetColorU32(ImGuiCol_TextDisabled),
+                  lab);
+    } else if (minors_fit) {
+      dl->AddLine(ImVec2(plot_min.x - UiPx(3.0f), py), ImVec2(plot_min.x, py), IM_COL32(90, 94, 102, 140), 1.0f);
+    }
+  }
+  // The boundary labels' drawing (the gutter rule above): the window's own edges at the
+  // plot's top and bottom frame — the top one always fits (its upper half rides pad_t),
+  // the bottom one only while the plot can host both without overlap. A reference that
+  // fits beats none; nothing is squeezed over an existing label (§3.2).
+  if (!have_labelled_major) {
+    const auto boundary_lab = [&](double v, float py) {
+      char lab[24];
+      std::snprintf(lab, sizeof(lab), "%.3g", v);
+      const ImVec2 ts = ImGui::CalcTextSize(lab);
+      dl->AddText(ImVec2(plot_min.x - ts.x - UiPx(5.0f), py - ts.y * 0.5f), ImGui::GetColorU32(ImGuiCol_TextDisabled),
+                  lab);
+    };
+    boundary_lab(v_max, plot_min.y);
+    if (plot_h >= line_h * 2.0f) {
+      boundary_lab(v_min, plot_max.y);
+    }
+  }
+}
+
+void DrawPointCurveSeed(ImDrawList* dl, const PointContributionCurve& curve, const ImVec2& plot_min,
+                        const ImVec2& plot_max) {
+  if (curve.seed_index <= 0 || curve.seed_index >= static_cast<int>(curve.points.size()) ||
+      !(curve.points.back().x_rad > 0.0)) {
+    return;
+  }
+  const float px = plot_min.x + static_cast<float>(curve.points[curve.seed_index].x_rad / curve.points.back().x_rad *
+                                                   (plot_max.x - plot_min.x));
+  dl->AddTriangleFilled(ImVec2(px - UiPx(4), plot_min.y), ImVec2(px + UiPx(4), plot_min.y),
+                        ImVec2(px, plot_min.y + UiPx(5)), ImGui::ColorConvertFloat4ToU32(AccentColor()));
+  dl->AddText(ImVec2(px + UiPx(5), plot_min.y), ImGui::GetColorU32(ImGuiCol_TextDisabled), "seed");
 }
 
 // ---- The u-globe -------------------------------------------------------------------------------------
@@ -2577,43 +2651,7 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
       dl->AddRect(canvas_min, canvas_max, IM_COL32(70, 74, 82, 160));
       const auto v_to_py = [&](double v) { return plot_max.y - static_cast<float>(CurveLogY(v, visible) * plot_h); };
       if (plot_fits && have_range) {
-        const bool minors_fit =
-            label_step == 1 && plot_h / std::max(1.0, std::log10(v_max) - std::log10(v_min)) >= UiPx(12.0f);
-        for (const PointCurveLogTick& tick : PointCurveLogTicks(v_min, v_max)) {
-          const int exp10 = static_cast<int>(std::lround(std::log10(tick.value)));
-          const bool labelled = tick.major && exp10 % label_step == 0;
-          if (tick.major && !labelled) {
-            continue;  // an unlabelled decade would only crowd the plot at this density
-          }
-          const float py = v_to_py(tick.value);
-          if (tick.major) {
-            dl->AddLine(ImVec2(plot_min.x, py), ImVec2(plot_max.x, py), IM_COL32(60, 64, 72, 110), 1.0f);
-            char lab[16];
-            std::snprintf(lab, sizeof(lab), "%.0e", tick.value);
-            const ImVec2 ts = ImGui::CalcTextSize(lab);
-            dl->AddText(ImVec2(plot_min.x - ts.x - UiPx(5.0f), py - ts.y * 0.5f),
-                        ImGui::GetColorU32(ImGuiCol_TextDisabled), lab);
-          } else if (minors_fit) {
-            dl->AddLine(ImVec2(plot_min.x - UiPx(3.0f), py), ImVec2(plot_min.x, py), IM_COL32(90, 94, 102, 140), 1.0f);
-          }
-        }
-        // The boundary labels' drawing (the gutter rule above): the window's own edges at the
-        // plot's top and bottom frame — the top one always fits (its upper half rides pad_t),
-        // the bottom one only while the plot can host both without overlap. A reference that
-        // fits beats none; nothing is squeezed over an existing label (§3.2).
-        if (!have_labelled_major) {
-          const auto boundary_lab = [&](double v, float py) {
-            char lab[24];
-            std::snprintf(lab, sizeof(lab), "%.3g", v);
-            const ImVec2 ts = ImGui::CalcTextSize(lab);
-            dl->AddText(ImVec2(plot_min.x - ts.x - UiPx(5.0f), py - ts.y * 0.5f),
-                        ImGui::GetColorU32(ImGuiCol_TextDisabled), lab);
-          };
-          boundary_lab(v_max, plot_min.y);
-          if (plot_h >= line_h * 2.0f) {
-            boundary_lab(v_min, plot_max.y);
-          }
-        }
+        DrawPointCurveLogAxis(dl, visible, plot_min, plot_max);
       }
       // X labels own their row regardless of the data range.
       const auto x_label = [&](float x, float y, const char* text) {
@@ -2640,15 +2678,7 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
       }
 
       if (plot_fits && have_range) {
-        // The seed mark: the title names its arclength; the canvas shows where it sits (an arc's
-        // seed rides mid-curve — its axis zero is the backward far end, not the seed).
-        if (curve.seed_index > 0 && curve.seed_index < static_cast<int>(n)) {
-          const float seed_px = x_to_px(curve.points[static_cast<size_t>(curve.seed_index)].x_rad);
-          const ImU32 accent = ImGui::ColorConvertFloat4ToU32(AccentColor());
-          dl->AddTriangleFilled(ImVec2(seed_px - UiPx(4.0f), plot_min.y), ImVec2(seed_px + UiPx(4.0f), plot_min.y),
-                                ImVec2(seed_px, plot_min.y + UiPx(5.0f)), accent);
-          dl->AddText(ImVec2(seed_px + UiPx(5.0f), plot_min.y), ImGui::GetColorU32(ImGuiCol_TextDisabled), "seed");
-        }
+        DrawPointCurveSeed(dl, curve, plot_min, plot_max);
         DrawPointCurveArms(dl, curve, visible, plot_min, plot_max);
         // The cursor: the CURRENT sample's arclength — the same selection the slider, the globe
         // marker and the 3D trace follow (AC4's one selection).

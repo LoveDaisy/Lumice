@@ -226,7 +226,8 @@ inline constexpr ImU32 kPointCurveArmColors[] = {
   kPointCurveProductColor,
 };
 
-// Both modes share the finite positive union, preserve exact endpoints, and differ only in floor.
+// Mode-to-visible-window fit: finite positive union, exact endpoints, a 5-decade (Fit) or
+// 8-decade (Full) floor. Single values retain a one-decade display span, without changing the data.
 struct PointCurveAxisRange {
   bool valid = false;
   double lo = 0.0;
@@ -270,6 +271,11 @@ bool PointCurveClipSegment(double x0, double value0, double x1, double value1, c
 // Shared production drawing face: clip segments, not samples; zero/unavailable break runs.
 void DrawPointCurveArms(ImDrawList* draw_list, const PointContributionCurve& curve, const PointCurveAxisRange& range,
                         const ImVec2& plot_min, const ImVec2& plot_max);
+// The production axis/seed drawing faces are shared with controlled real-frame fixtures.
+void DrawPointCurveLogAxis(ImDrawList* draw_list, const PointCurveAxisRange& range, const ImVec2& plot_min,
+                           const ImVec2& plot_max);
+void DrawPointCurveSeed(ImDrawList* draw_list, const PointContributionCurve& curve, const ImVec2& plot_min,
+                        const ImVec2& plot_max);
 // Fixed two-cell control; returns no business effects and never resets the shared pose cursor.
 void RenderPointCurveRangeControl(PointCurveRangeMode* mode);
 

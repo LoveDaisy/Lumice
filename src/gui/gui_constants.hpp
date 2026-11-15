@@ -145,12 +145,10 @@ constexpr float kPoseViewLeftFloor = 300.0f;
 // compress below them. Report content never changes these bounds.
 constexpr float kPoseViewGlobeFloor = 221.0f;
 constexpr float kPoseViewFactorsFloor = 140.0f;
-// D5 — the LEFT column's 3D | curve row floors (§16.4.1 suggested values, calibration
-// candidates until the real-frame pass): the 3D region's full form at its narrowest face
-// (title + frame switch + status + canvas 180 + report viewport + padding) and the curve
-// region's (title + status + canvas 84 + the companion's line quota + the D7 strip). Both
-// fit the narrowest window's left column with ~3pt of drag room — that narrow margin is the
-// calibration obligation, not a claim.
+// D5's stored split floors, not the full-content requirements of either region. The default
+// 144pt report and three-line companion were revalidated at both window sizes and all UI tiers.
+// At the minimum window the fixed footer leaves less than the floor sum: the existing
+// proportional fallback applies, rather than the pre-footer calibration's ~3pt drag room.
 constexpr float kPoseViewLeft3dFloor = 300.0f;
 constexpr float kPoseViewCurveFloor = 330.0f;
 // D7 — the curve region's canvas | companion split: the canvas share's "never dragged" sentinel
