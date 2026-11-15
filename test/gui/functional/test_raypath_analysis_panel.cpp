@@ -16799,36 +16799,39 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       IM_CHECK(SaveWindowPng(ctx, "//Raypath view", GuiTestTempPath("status_map_default.png").string()));
       ctx->WindowFocus("//Pose & trace");
       IM_CHECK(SaveWindowPng(ctx, "//Pose & trace", GuiTestTempPath("status_pose_default.png").string()));
-      struct ScaleRestore {
-        ~ScaleRestore() { gui::SetUiScaleMultiplierImmediate(gui::kFactoryUiScaleMultiplier); }
-      } scale_restore;
-      map_at_minimum = true;
-      const auto check_scale = [&](float scale) -> bool {
-        gui::SetUiScaleMultiplierImmediate(scale);
-        IM_CHECK_RETV(
-            DriveUntil(ctx, [scale] { return !gui::g_ui_scale_dirty && gui::CurrentUiScale() == scale; }, 5), false);
-        ImGui::SetWindowSize(pose_host,
-                             ImVec2(std::min(gui::UiPx(640.0f), ImGui::GetMainViewport()->Size.x),
-                                    std::min(gui::UiPx(680.0f), ImGui::GetMainViewport()->Size.y)),
-                             ImGuiCond_Always);
-        ctx->Yield(3);
-        IM_CHECK_RETV(check_footer("Raypath view", map_text, "No selection"), false);
-        IM_CHECK_RETV(check_footer("Pose & trace", pose_text, "No target"), false);
-        // Freshness is an independent header, not query status; it may consume height but
-        // must leave the fixed footer reachable at each supported scale.
-        probe.analysis_freshness.list = gui::AnalysisListFreshness::kStale;
-        ctx->Yield(2);
-        IM_CHECK_RETV(!probe.analysis.wait_feedback_texts.map_stale_hint.empty(), false);
-        IM_CHECK_RETV(!probe.analysis.wait_feedback_texts.point_stale_hint.empty(), false);
-        IM_CHECK_RETV(check_footer("Raypath view", map_text, "No selection"), false);
-        IM_CHECK_RETV(check_footer("Pose & trace", pose_text, "No target"), false);
-        probe.analysis_freshness.list = gui::AnalysisListFreshness::kFresh;
-        ctx->LogInfo("[footer scale] %.1fx: minimum, visible body/footer separation and freshness coexistence", scale);
-        return true;
-      };
-      IM_CHECK(check_scale(1.0f));
-      IM_CHECK(check_scale(1.5f));
-      IM_CHECK(check_scale(2.0f));
+      {
+        const ScopedUiScaleAndBasisLease scale_restore(ctx);
+        map_at_minimum = true;
+        const auto check_scale = [&](float scale) -> bool {
+          gui::SetUiScaleMultiplierImmediate(scale);
+          IM_CHECK_RETV(
+              DriveUntil(ctx, [scale] { return !gui::g_ui_scale_dirty && gui::CurrentUiScale() == scale; }, 5), false);
+          ImGui::SetWindowSize(pose_host,
+                               ImVec2(std::min(gui::UiPx(640.0f), ImGui::GetMainViewport()->Size.x),
+                                      std::min(gui::UiPx(680.0f), ImGui::GetMainViewport()->Size.y)),
+                               ImGuiCond_Always);
+          ctx->Yield(3);
+          IM_CHECK_RETV(check_footer("Raypath view", map_text, "No selection"), false);
+          IM_CHECK_RETV(check_footer("Pose & trace", pose_text, "No target"), false);
+          // Freshness is an independent header, not query status; it may consume height but
+          // must leave the fixed footer reachable at each supported scale.
+          probe.analysis_freshness.list = gui::AnalysisListFreshness::kStale;
+          ctx->Yield(2);
+          IM_CHECK_RETV(!probe.analysis.wait_feedback_texts.map_stale_hint.empty(), false);
+          IM_CHECK_RETV(!probe.analysis.wait_feedback_texts.point_stale_hint.empty(), false);
+          IM_CHECK_RETV(check_footer("Raypath view", map_text, "No selection"), false);
+          IM_CHECK_RETV(check_footer("Pose & trace", pose_text, "No target"), false);
+          probe.analysis_freshness.list = gui::AnalysisListFreshness::kFresh;
+          ctx->LogInfo("[footer scale] %.1fx: minimum, visible body/footer separation and freshness coexistence",
+                       scale);
+          return true;
+        };
+        IM_CHECK(check_scale(1.0f));
+        IM_CHECK(check_scale(1.5f));
+        IM_CHECK(check_scale(2.0f));
+      }
+      IM_CHECK_EQ(ImGui::GetIO().DisplaySize.x, static_cast<float>(gui::kInitWindowWidth));
+      IM_CHECK_EQ(ImGui::GetIO().DisplaySize.y, static_cast<float>(gui::kInitWindowHeight));
     };
   }
   {
