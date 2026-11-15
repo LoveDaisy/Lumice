@@ -4070,6 +4070,8 @@ bool TraceBuildExpectedLines(const gui::Ray3DFrameInfo& frame, const TraceChainE
   return true;
 }
 
+bool CurrentTraceIsDrawn();
+
 // The compass has no input item. Read complete feedback rectangles AND independently
 // submitted colour vertices; direction expectations below never call OrbitBasis.
 bool TraceAxesFootprints(ImGuiTestContext* ctx, bool direction_anchor = false) {
