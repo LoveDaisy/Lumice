@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794704784466,
+  "lastUpdate": 1794704787073,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9608,50 +9608,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "87a9d3bd2b85c0f0373e5ecf32c77bd163a39cb6",
-          "message": "Merge pull request #484 from LoveDaisy/chore/release-4.7.3\n\nchore(release): cut 4.7.3",
-          "timestamp": "2026-10-12T13:03:05+08:00",
-          "tree_id": "dc8ccddd040a6828e7b0f0bd8e0d347da506521e",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/87a9d3bd2b85c0f0373e5ecf32c77bd163a39cb6"
-        },
-        "date": 1791781595244,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 91.9,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 100,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 99.7,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 95,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "46671819d8f4c160a624710d644cfca2c5892361",
           "message": "Merge pull request #485 from LoveDaisy/chore/migrate-repo-name-lumice\n\ndocs: migrate repo name ice_halo_sim to Lumice",
           "timestamp": "2026-10-12T13:34:20+08:00",
@@ -13986,6 +13942,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 94.4,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "22c8b8d581dac91ed8fdad5009d0dc58e0726d99",
+          "message": "Merge pull request #589 from LoveDaisy/feat/gui-full-suite-env-flake\n\nFix build.sh install starvation and fast-e2e false reds; record full-suite SIGILL evidence",
+          "timestamp": "2026-11-15T09:02:37+08:00",
+          "tree_id": "6d8404db8b58285fb9642b543d05b44054386bb3",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/22c8b8d581dac91ed8fdad5009d0dc58e0726d99"
+        },
+        "date": 1794704786450,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 79.4,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 100,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 99.1,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 94.7,
             "unit": "%"
           }
         ]
