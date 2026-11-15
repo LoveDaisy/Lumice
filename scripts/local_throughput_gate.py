@@ -98,10 +98,16 @@ GUI_BUDGET_ASSERT_FRAGMENT = "max_observe <= 8.0"
 # The case wraps all of its assertions in one IM_CHECK, so that outer expression
 # fires for every failure mode and identifies nothing by itself.
 GUI_TIMING_WRAPPER_EXPR = "MaximumTimingWitness(ctx)"
-# Wall-clock telemetry of an environment timeout, both logged into the failing
-# case's own evidence: the DriveUntil budget line (LogInfo,
-# test_raypath_analysis_panel.cpp) and the real-clock watchdog abort.
-GUI_TIMEOUT_MARKERS = ("[drive-gate] TIMEOUT", "[Watchdog]")
+# The budget exemption names its case: the fragment above only grants the
+# environment verdict on the frozen-map delay contract, never pool-wide.
+GUI_FROZEN_TIMING_CASE = "maximum_frozen_map_input_to_present"
+# Wall-clock telemetry of an environment timeout, logged into the failing case's
+# own evidence. Only the engine's actual aborts count — the watchdog kill reads
+# "..., aborting." and the emergency exit line (imgui_te_engine.cpp UpdateWatchdog);
+# the ">N seconds, may be excessive." warning (LogWarning) fires routinely on a
+# slow case that then fails a real assertion, and must not demote it.
+GUI_TIMEOUT_MARKERS = ("[drive-gate] TIMEOUT", "seconds, aborting.",
+                       "[Watchdog] Emergency process exit")
 # A signal death reaches this script as -N from subprocess.run (SIGILL=4) or as
 # 128+N when a shell renders it. The known full-suite signature's boundary case
 # (test/AGENTS.md) is structurally unreachable from the filtered pool, so any
@@ -452,7 +458,8 @@ def _attribute_gui_case(case: GuiCase, log_text: str) -> Tuple[str, str]:
               if GUI_BUDGET_ASSERT_FRAGMENT not in e and e != GUI_TIMING_WRAPPER_EXPR]
     if others:
         return "functional", others[0][:200]
-    if any(GUI_BUDGET_ASSERT_FRAGMENT in e for e in errors):
+    if (case.name == GUI_FROZEN_TIMING_CASE
+            and any(GUI_BUDGET_ASSERT_FRAGMENT in e for e in errors)):
         return "budget", GUI_BUDGET_ASSERT_FRAGMENT
     return "functional", (case.failure_text.strip().splitlines() or ["<no evidence>"])[-1][:200]
 
@@ -1035,14 +1042,18 @@ def run_gui_realtiming(ctx: Ctx, sha: str) -> dict:
                     ctx.run_dir / "gui-test.log", cwd=repo, env=clean_env({}),
                     timeout=ctx.args.pytest_timeout)
     rec["gui_seconds"] = round(time.monotonic() - t0, 1)
-    rec["idle_after_gui"] = read().to_json()
+    # One reading, taken the moment the child returned and timestamped as
+    # sampling begins: it doubles as the post-run idle record and — on a signal
+    # death — as the crash-moment load snapshot, the first sample after the
+    # exit, before anything else can change the machine.
+    sampled_at = iso(utcnow())
+    r_after = read()
+    rec["idle_after_gui"] = r_after.to_json()
     if ctx.args.dry_run:
         return {**rec, "status": "skipped", "reason": "dry-run"}
-    # A signal death is sampled NOW — the crash-moment load, not the post-run one.
     sigill_load = None
     if rc in SIGILL_EXITS:
-        sigill_load = {"load_snapshot": collect_readings(with_wsl_host=False).to_json(),
-                       "sampled_at": iso(utcnow())}
+        sigill_load = {"load_snapshot": r_after.to_json(), "sampled_at": sampled_at}
     junit_text = junit.read_text() if junit.is_file() else None
     log_text = (ctx.run_dir / "gui-test.log").read_text(errors="replace")
     v = classify_gui_pool(rc, junit_text, log_text, sigill_load=sigill_load)

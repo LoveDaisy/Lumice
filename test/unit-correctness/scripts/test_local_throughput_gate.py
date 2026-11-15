@@ -279,10 +279,30 @@ def test_gui_pool_unattributable_failure_is_functional_by_default():
 
 def test_gui_pool_timeout_telemetry_is_inconclusive():
     for marker in ("[drive-gate] TIMEOUT after 15.0s (budget 15s, 3 polls, avg 5000 ms/poll)",
-                   "[Watchdog] Running time (real clock) for 'some_case' is >60 seconds, aborting."):
+                   "[Watchdog] Running time for 'some_case' is >60 seconds, aborting.",
+                   "[Watchdog] Emergency process exit as the test didn't return."):
         ftext = f"[0001] Info {marker}\n[0842] Error test_raypath_analysis_panel.cpp:16687 'SomeHelper(ctx)'"
         v = run_pool(1, gui_xml(("some_case", "Error", ftext)), f"marker\n{marker}\n")
         assert v.status == "inconclusive" and "timeout" in v.reason, marker
+
+
+def test_gui_pool_watchdog_warning_does_not_demote_a_functional_red():
+    """The engine logs '>N seconds, may be excessive.' routinely before a slow
+    case fails a real assertion (measured in the real pool log); the warning is
+    not an abort and must leave the failure a functional red."""
+    ftext = ("[0001] [Watchdog] Running time for 'some_case' is >30 seconds, may be excessive.\n"
+             "[0842] Error test_raypath_analysis_panel.cpp:16687 'SomeHelper(ctx)'")
+    v = run_pool(1, gui_xml(("some_case", "Error", ftext)), "")
+    assert v.status == "fail" and v.failing_case == "some_case"
+    assert "timeout" not in v.reason
+
+
+def test_gui_pool_budget_fragment_in_another_case_stays_functional():
+    """The ms-budget exemption names its case: the same expression fragment
+    failing in any other case is a functional red, not an environment verdict."""
+    ftext = "[0010] Error other.cpp:10 'p95 <= 33.4 && max_latency <= 100.0 && max_observe <= 8.0'"
+    v = run_pool(1, gui_xml(("some_other_case", "Error", ftext)), "")
+    assert v.status == "fail" and v.failing_case == "some_other_case"
 
 
 def test_gui_pool_functional_red_has_priority_over_timeout():
@@ -606,6 +626,35 @@ def test_gui_leg_skips_fast_when_build_tools_missing(tmp_path, monkeypatch):
     monkeypatch.setattr(g, "run_logged", lambda *a, **kw: calls.append(tuple(a)))
     rec = g.run_gui_realtiming(ctx, "sha")
     assert rec["status"] == "error" and calls == [] and "idle_pre" not in rec
+
+
+def test_gui_leg_sigill_samples_once_and_reuses_the_reading(tmp_path, monkeypatch):
+    """The crash-moment load snapshot IS the first post-exit reading: one
+    collect_readings call serves idle_after_gui and the sigill event both —
+    no second sampling pass after the classification decision."""
+    ctx = make_ctx(tmp_path)
+    calls = []
+    monkeypatch.setattr(g, "metal_build_tools_found",
+                        lambda: {"cmake": "/opt/hb/bin/cmake", "ninja": "/opt/hb/bin/ninja"})
+
+    def fake_readings(with_wsl_host):
+        calls.append("read")
+        return g.Readings(load1=0.7, physical_cores=12)
+
+    monkeypatch.setattr(g, "collect_readings", fake_readings)
+
+    def fake_run_logged(ctx_, cmd, log_path, **kw):
+        Path(log_path).touch()
+        return -4 if str(cmd[0]).endswith("gui_test") else 0
+
+    monkeypatch.setattr(g, "run_logged", fake_run_logged)
+    rec = g.run_gui_realtiming(ctx, "sha")
+    assert calls.count("read") == 3          # pre-check, re-check, ONE post-exit reading
+    assert rec["status"] == "fail" and rec["gui_exit"] == -4
+    assert rec["sigill_event"]["exit_code"] == -4
+    assert rec["sigill_event"]["load_snapshot"] == rec["idle_after_gui"]
+    assert rec["sigill_event"]["load_snapshot"]["load1"] == 0.7
+    assert "sampled_at" in rec["sigill_event"]
 
 
 def test_gui_leg_reaches_configure_build_and_drive_boundaries(tmp_path, monkeypatch):
