@@ -465,20 +465,25 @@ PointCurveAxisRange PointCurveAxisFit(const PointContributionCurve& curve, Point
 
 std::vector<PointCurveLogTick> PointCurveLogTicks(double lo, double hi) {
   std::vector<PointCurveLogTick> ticks;
-  if (!(lo > 0.0) || !(hi > 0.0) || lo > hi) {
+  if (!(lo > 0.0) || !(hi > 0.0) || lo > hi || !std::isfinite(hi)) {
     return ticks;
   }
-  if (hi <= lo) {
-    hi = lo * 10.0;  // a single value still draws inside one decade, not on an edge
-  }
+  const double log_hi = std::log10(hi) + (hi == lo ? 1.0 : 0.0);
   const int first_exp = static_cast<int>(std::floor(std::log10(lo)));
-  const int last_exp = static_cast<int>(std::ceil(std::log10(hi)));
+  const int last_exp = static_cast<int>(std::ceil(log_hi));
   for (int e = first_exp; e <= last_exp; ++e) {
-    const double decade = std::pow(10.0, static_cast<double>(e));
+    const long double decade = std::pow(10.0L, e);
     for (const double mantissa : { 1.0, 2.0, 5.0 }) {
-      const double value = decade * mantissa;
-      if (value < lo || value > hi) {
+      const long double candidate = decade * mantissa;
+      if (candidate < lo || candidate > std::numeric_limits<double>::max()) {
         continue;
+      }
+      const double value = static_cast<double>(candidate);
+      if ((hi > lo && value > hi) || (hi == lo && std::log10(value) > log_hi)) {
+        continue;
+      }
+      if (!ticks.empty() && ticks.back().value >= value) {
+        continue;  // distinct log ticks can round to the same subnormal value
       }
       ticks.push_back(PointCurveLogTick{ value, mantissa == 1.0 });
     }
@@ -496,29 +501,134 @@ int PointCurveLogLabelStep(double lo, double hi, float plot_h_px, float line_h_p
   return std::max(1, static_cast<int>(std::ceil(static_cast<double>(decades) / static_cast<double>(max_labels))));
 }
 
-std::vector<PointCurveRun> PointCurvePositiveRuns(const PointCurveValueKind* kinds, size_t count, const double* values,
-                                                  double lo, double hi) {
+std::vector<PointCurveRun> PointCurvePositiveRuns(const PointCurveValueKind* kinds, size_t count) {
   std::vector<PointCurveRun> runs;
   if (kinds == nullptr) {
     return runs;
   }
-  const auto drawable = [&](size_t index) {
-    return kinds[index] == PointCurveValueKind::kPositive &&
-           (values == nullptr || (values[index] >= lo && values[index] <= hi));
-  };
   size_t i = 0;
   while (i < count) {
-    if (!drawable(i)) {
+    if (kinds[i] != PointCurveValueKind::kPositive) {
       ++i;
       continue;
     }
     const size_t begin = i;
-    while (i < count && drawable(i)) {
+    while (i < count && kinds[i] == PointCurveValueKind::kPositive) {
       ++i;
     }
     runs.push_back(PointCurveRun{ static_cast<int>(begin), static_cast<int>(i) });
   }
   return runs;
+}
+
+namespace {
+// Avoid log(a)-log(b) cancellation for a narrow band, and ratio overflow/underflow at the tails.
+double CurveLogDistance(double value, double origin) {
+  const double relative = (value - origin) / origin;
+  if (std::abs(relative) < 0.5) {
+    return std::log1p(relative) / std::log(10.0);
+  }
+  return std::log10(value) - std::log10(origin);
+}
+
+double CurveLogY(double value, const PointCurveAxisRange& range) {
+  const double span = CurveLogDistance(range.hi, range.lo);
+  return CurveLogDistance(value, range.lo) / (span > 0.0 ? span : 1.0);
+}
+}  // namespace
+
+bool PointCurveClipSegment(double x0, double value0, double x1, double value1, const PointCurveAxisRange& range,
+                           PointCurveSegment* out) {
+  if (!out || !range.valid || !(range.lo > 0.0) || range.hi < range.lo || !std::isfinite(range.hi) || !(value0 > 0.0) ||
+      !(value1 > 0.0) || !std::isfinite(value0) || !std::isfinite(value1) || !std::isfinite(x0) || !std::isfinite(x1)) {
+    return false;
+  }
+  const double y0 = CurveLogY(value0, range);
+  const double y1 = CurveLogY(value1, range);
+  if ((y0 < 0.0 && y1 < 0.0) || (y0 > 1.0 && y1 > 1.0)) {
+    return false;
+  }
+  double enter = 0.0, leave = 1.0;
+  const double dy = y1 - y0;
+  if (dy != 0.0) {
+    const double at_bottom = -y0 / dy;
+    const double at_top = (1.0 - y0) / dy;
+    enter = std::max(enter, std::min(at_bottom, at_top));
+    leave = std::min(leave, std::max(at_bottom, at_top));
+  }
+  if (enter > leave) {
+    return false;
+  }
+  const double clipped_y0 = enter > 0.0 ? (dy > 0.0 ? 0.0 : 1.0) : std::clamp(y0, 0.0, 1.0);
+  const double clipped_y1 = leave < 1.0 ? (dy > 0.0 ? 1.0 : 0.0) : std::clamp(y1, 0.0, 1.0);
+  *out = { x0 + (x1 - x0) * enter, clipped_y0, x0 + (x1 - x0) * leave, clipped_y1 };
+  return true;
+}
+
+void DrawPointCurveArms(ImDrawList* dl, const PointContributionCurve& curve, const PointCurveAxisRange& range,
+                        const ImVec2& plot_min, const ImVec2& plot_max) {
+  if (!range.valid || curve.points.empty() || !(curve.points.back().x_rad > 0.0) || plot_max.x <= plot_min.x ||
+      plot_max.y <= plot_min.y) {
+    return;
+  }
+  const double x_hi = curve.points.back().x_rad;
+  const auto pixel = [&](double x, double y) {
+    return ImVec2(plot_min.x + static_cast<float>((x / x_hi) * (plot_max.x - plot_min.x)),
+                  plot_max.y - static_cast<float>(y * (plot_max.y - plot_min.y)));
+  };
+  dl->PushClipRect(plot_min, plot_max, true);
+  std::vector<PointCurveValueKind> kinds(curve.points.size());
+  for (size_t arm = 0; arm < std::size(kCurveArmFields); ++arm) {
+    const auto field = kCurveArmFields[arm];
+    for (size_t i = 0; i < curve.points.size(); ++i) {
+      kinds[i] = curve.points[i].*field.kind;
+    }
+    for (const auto& run : PointCurvePositiveRuns(kinds.data(), kinds.size())) {
+      if (run.end - run.begin == 1) {
+        const auto& p = curve.points[run.begin];
+        const double value = p.*field.value;
+        if (value >= range.lo && value <= range.hi) {
+          dl->AddCircleFilled(pixel(p.x_rad, CurveLogY(value, range)), UiPx(2.5f), kPointCurveArmColors[arm]);
+        }
+      } else {
+        for (int i = run.begin + 1; i < run.end; ++i) {
+          const auto& a = curve.points[i - 1];
+          const auto& b = curve.points[i];
+          PointCurveSegment segment{};
+          if (PointCurveClipSegment(a.x_rad, a.*field.value, b.x_rad, b.*field.value, range, &segment)) {
+            dl->AddLine(pixel(segment.x0, segment.y0), pixel(segment.x1, segment.y1), kPointCurveArmColors[arm],
+                        arm == 4 ? 2.0f : 1.5f);
+          }
+        }
+      }
+    }
+  }
+  dl->PopClipRect();
+}
+
+void RenderPointCurveRangeControl(PointCurveRangeMode* mode) {
+  const float cell_w =
+      std::max(ImGui::CalcTextSize("Fit").x, ImGui::CalcTextSize("Full").x) + 2.0f * ImGui::GetStyle().FramePadding.x;
+  for (int segment = 0; segment < 2; ++segment) {
+    const auto candidate = segment == 0 ? PointCurveRangeMode::kFit : PointCurveRangeMode::kFull;
+    const bool current = *mode == candidate;
+    if (current) {
+      PushCurrentSegmentStyle();
+    }
+    if (ImGui::Button(segment == 0 ? "Fit##curve_range" : "Full##curve_range", ImVec2(cell_w, 0)) && !current) {
+      *mode = candidate;
+    }
+    if (current) {
+      ImGui::PopStyleColor(4);
+    }
+    if (ImGui::IsItemHovered()) {
+      ImGui::SetTooltip(segment == 0 ? "Up to 5 decades below the largest positive value." :
+                                       "Up to 8 decades below the largest positive value.");
+    }
+    if (segment == 0) {
+      ImGui::SameLine(0.0f, 0.0f);
+    }
+  }
 }
 
 // ---- The u-globe -------------------------------------------------------------------------------------
@@ -2187,28 +2297,7 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
   ImGui::AlignTextToFramePadding();
   ImGui::TextUnformatted("Contribution curve");
   ImGui::SameLine();
-  const float cell_w =
-      std::max(ImGui::CalcTextSize("Fit").x, ImGui::CalcTextSize("Full").x) + 2.0f * ImGui::GetStyle().FramePadding.x;
-  for (int segment = 0; segment < 2; ++segment) {
-    const auto mode = segment == 0 ? PointCurveRangeMode::kFit : PointCurveRangeMode::kFull;
-    const bool current = view.curve_range_mode == mode;
-    if (current) {
-      PushCurrentSegmentStyle();
-    }
-    if (ImGui::Button(segment == 0 ? "Fit##curve_range" : "Full##curve_range", ImVec2(cell_w, 0)) && !current) {
-      view.curve_range_mode = mode;
-    }
-    if (current) {
-      ImGui::PopStyleColor(4);
-    }
-    if (ImGui::IsItemHovered()) {
-      ImGui::SetTooltip(segment == 0 ? "Up to 5 decades below the largest positive value." :
-                                       "Up to 8 decades below the largest positive value.");
-    }
-    if (segment == 0) {
-      ImGui::SameLine(0.0f, 0.0f);
-    }
-  }
+  RenderPointCurveRangeControl(&view.curve_range_mode);
 
   // ---- D7 — the curve region's canvas | companion split (§16.4): the canvas's share of the
   // span below the fixed head. The sentinel share (never dragged) grants the companion its
@@ -2406,9 +2495,9 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
       char head[64];
       std::snprintf(head, sizeof(head), "sample %d/%d @ %.3f rad", position + 1, valid_count, p.x_rad);
       std::string out = head;
-      const char* names[kCurveArms] = { "axis density", "A/a^2", "T", "K", "product" };
+      const char* const* names = arm_labels;
       for (int arm = 0; arm < kCurveArms; ++arm) {
-        out += " · ";
+        out += "\n";
         out += names[arm];
         out += " ";
         out += arm_readout(arm, static_cast<size_t>(stored));
@@ -2432,7 +2521,7 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
       const double v_min = visible.lo;
       const double v_max = visible.hi;
       const bool have_range = visible.valid && x_hi > 0.0;
-      const float pad_b = std::max(UiPx(28.0f), UiPx(13.0f) + line_h);
+      const float pad_b = UiPx(5.0f) + line_h;
       const float rough_plot_h = std::max(1.0f, canvas_h - UiPx(10.0f) - pad_b);
       const float real_plot_h = canvas_h - UiPx(10.0f) - pad_b;
       const bool plot_fits = real_plot_h >= UiPx(kPoseViewCurveMinPlot);
@@ -2480,15 +2569,7 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
 
       dl->AddRectFilled(canvas_min, canvas_max, IM_COL32(16, 18, 22, 255));
       dl->AddRect(canvas_min, canvas_max, IM_COL32(70, 74, 82, 160));
-      const auto v_to_py = [&](double v) {
-        const double log_lo = have_range ? std::log10(v_min) : 0.0;
-        double log_hi = have_range ? std::log10(v_max) : 0.0;
-        if (log_hi <= log_lo) {
-          log_hi = log_lo + 1.0;  // a single decade, so one value draws inside a range
-        }
-        const double t = (std::log10(v) - log_lo) / (log_hi - log_lo);
-        return plot_min.y + static_cast<float>((1.0 - std::clamp(t, 0.0, 1.0)) * plot_h);
-      };
+      const auto v_to_py = [&](double v) { return plot_max.y - static_cast<float>(CurveLogY(v, visible) * plot_h); };
       if (plot_fits && have_range) {
         const bool minors_fit =
             label_step == 1 && plot_h / std::max(1.0, std::log10(v_max) - std::log10(v_min)) >= UiPx(12.0f);
@@ -2537,7 +2618,7 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
         if (x_hi > 0.0) {
           char lab[24];
           const char* fmt = x_hi < 10.0 ? "%.2f" : (x_hi < 100.0 ? "%.1f" : "%.0f");
-          const float axis_lab_y = plot_max.y + UiPx(13.0f);
+          const float axis_lab_y = plot_max.y + UiPx(5.0f);
           std::snprintf(lab, sizeof(lab), fmt, 0.0);
           x_label(plot_min.x - ImGui::CalcTextSize(lab).x * 0.5f, axis_lab_y, lab);
           std::snprintf(lab, sizeof(lab), fmt, x_hi * 0.5);
@@ -2552,22 +2633,7 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
                     ImGui::GetColorU32(ImGuiCol_TextDisabled), unit);
       }
 
-      // The zero row: the exact zeros sit here, in their arm's colour — never mapped onto the
-      // log axis, never patched with an epsilon (J4). The whole plot body draws only where the
-      // footer's budget leaves a real area; the too-short canvas names its honest form instead.
-      if (plot_fits && x_hi > 0.0) {
-        const float zero_y = plot_max.y + UiPx(5.0f);
-        dl->AddLine(ImVec2(plot_min.x, zero_y), ImVec2(plot_max.x, zero_y), IM_COL32(60, 64, 72, 90), 1.0f);
-        for (int arm = 0; arm < kCurveArms; ++arm) {
-          for (size_t i = 0; i < n; ++i) {
-            if (kind_of(arm, i) != PointCurveValueKind::kExactZero) {
-              continue;
-            }
-            const float px = x_to_px(curve.points[i].x_rad);
-            dl->AddRectFilled(ImVec2(px - UiPx(1.5f), zero_y - UiPx(2.0f)),
-                              ImVec2(px + UiPx(1.5f), zero_y + UiPx(2.0f)), arm_colors[arm]);
-          }
-        }
+      if (plot_fits && have_range) {
         // The seed mark: the title names its arclength; the canvas shows where it sits (an arc's
         // seed rides mid-curve — its axis zero is the backward far end, not the seed).
         if (curve.seed_index > 0 && curve.seed_index < static_cast<int>(n)) {
@@ -2577,34 +2643,7 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
                                 ImVec2(seed_px, plot_min.y + UiPx(5.0f)), accent);
           dl->AddText(ImVec2(seed_px + UiPx(5.0f), plot_min.y), ImGui::GetColorU32(ImGuiCol_TextDisabled), "seed");
         }
-        // The five arms: drawn run by run over PointCurvePositiveRuns — unavailable gaps and
-        // exact-zero stretches break a run and are never bridged (AC3), and a run of ONE point
-        // is an isolated positive contribution drawn as a marker, never dropped (AC6: discrete
-        // data stays visible while the legend keeps claiming the arm).
-        for (int arm = 0; arm < kCurveArms; ++arm) {
-          std::vector<PointCurveValueKind> kinds(static_cast<size_t>(n));
-          std::vector<double> values(n);
-          for (size_t i = 0; i < n; ++i) {
-            kinds[i] = kind_of(arm, i);
-            values[i] = value_of(arm, i);
-          }
-          const float thickness = arm == 4 ? 2.0f : 1.5f;
-          for (const PointCurveRun& run : PointCurvePositiveRuns(kinds.data(), n, values.data(), v_min, v_max)) {
-            if (run.end - run.begin >= 2) {
-              std::vector<ImVec2> line;
-              line.reserve(static_cast<size_t>(run.end - run.begin));
-              for (int i = run.begin; i < run.end; ++i) {
-                line.push_back(ImVec2(x_to_px(curve.points[static_cast<size_t>(i)].x_rad),
-                                      v_to_py(value_of(arm, static_cast<size_t>(i)))));
-              }
-              dl->AddPolyline(line.data(), static_cast<int>(line.size()), arm_colors[arm], 0, thickness);
-            } else {
-              const ImVec2 p(x_to_px(curve.points[static_cast<size_t>(run.begin)].x_rad),
-                             v_to_py(value_of(arm, static_cast<size_t>(run.begin))));
-              dl->AddCircleFilled(p, UiPx(2.5f), arm_colors[arm]);
-            }
-          }
-        }
+        DrawPointCurveArms(dl, curve, visible, plot_min, plot_max);
         // The cursor: the CURRENT sample's arclength — the same selection the slider, the globe
         // marker and the 3D trace follow (AC4's one selection).
         const int cursor_stored = PointCurveStoredAt(curve, std::clamp(view.sample_index, 0, valid_count - 1));
@@ -2639,7 +2678,9 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
       // The Y gestures stay dead there: a pan or a zoom with no visible plot writes state
       // nothing shows (the pan latch is cleared by the degrade above).
       if (x_hi > 0.0) {
-        if (plot_fits && canvas_hovered) {
+        if (plot_fits && have_range && canvas_hovered && ImGui::GetIO().MousePos.x >= plot_min.x &&
+            ImGui::GetIO().MousePos.x <= plot_max.x && ImGui::GetIO().MousePos.y >= plot_min.y &&
+            ImGui::GetIO().MousePos.y <= plot_max.y) {
           hover_position = PointCurveValidPositionNearX(curve, x_at_px(ImGui::GetIO().MousePos.x));
         }
         const auto write_cursor_from_mouse = [&]() {
@@ -2663,6 +2704,18 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
         }
       }
       if (hover_position >= 0) {
+        const int stored = PointCurveStoredAt(curve, hover_position);
+        const float px = x_to_px(curve.points[stored].x_rad);
+        dl->PushClipRect(plot_min, plot_max, true);
+        dl->AddLine(ImVec2(px, plot_min.y), ImVec2(px, plot_max.y), ImGui::GetColorU32(ImGuiCol_TextDisabled, 0.55f),
+                    1.0f);
+        for (int arm = 0; arm < kCurveArms; ++arm) {
+          const double v = value_of(arm, stored);
+          if (kind_of(arm, stored) == PointCurveValueKind::kPositive && v >= v_min && v <= v_max) {
+            dl->AddCircleFilled(ImVec2(px, v_to_py(v)), UiPx(3.5f), arm_colors[arm]);
+          }
+        }
+        dl->PopClipRect();
         ImGui::SetTooltip("%s\nLeft click or drag to select a pose.", sample_readout(hover_position).c_str());
       }
       // ---- The scroll region's tail: the partial note. The measure registration's note and

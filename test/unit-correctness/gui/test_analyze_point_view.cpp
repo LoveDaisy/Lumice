@@ -411,6 +411,39 @@ TEST(AnalyzePointView, CurveModeResetsOnAdoptionButKeepsTheCamera) {
   EXPECT_FLOAT_EQ(view.orbit_zoom, 2.0f);
 }
 
+TEST(AnalyzePointView, CurveClipsInLogSpaceAtBothBoundsAndPreservesCrossings) {
+  const PointCurveAxisRange window{ true, 0.1, 10.0 };  // log [-1,1]
+  PointCurveSegment s{};
+  ASSERT_TRUE(PointCurveClipSegment(0, 0.01, 10, 1000, window, &s));
+  EXPECT_NEAR(s.x0, 2.0, 1e-12);
+  EXPECT_NEAR(s.x1, 6.0, 1e-12);
+  EXPECT_DOUBLE_EQ(s.y0, 0.0);
+  EXPECT_DOUBLE_EQ(s.y1, 1.0);
+  ASSERT_TRUE(PointCurveClipSegment(0, 1000, 10, 0.01, window, &s));
+  EXPECT_NEAR(s.x0, 4.0, 1e-12);
+  EXPECT_NEAR(s.x1, 8.0, 1e-12);
+  EXPECT_DOUBLE_EQ(s.y0, 1.0);
+  EXPECT_DOUBLE_EQ(s.y1, 0.0);
+  ASSERT_TRUE(PointCurveClipSegment(0, 0.1, 10, 10, window, &s));
+  EXPECT_DOUBLE_EQ(s.x0, 0.0);
+  EXPECT_DOUBLE_EQ(s.x1, 10.0);
+  EXPECT_FALSE(PointCurveClipSegment(0, .001, 10, .01, window, &s));
+  EXPECT_FALSE(PointCurveClipSegment(0, 100, 10, 1000, window, &s));
+  EXPECT_FALSE(PointCurveClipSegment(0, 0, 10, 1, window, &s));
+  EXPECT_FALSE(PointCurveClipSegment(0, 1, 10, 1, {}, &s));
+  const double a = 1e300, b = std::nextafter(a, std::numeric_limits<double>::infinity());
+  ASSERT_TRUE(PointCurveClipSegment(0, a, 1, b, { true, a, b }, &s));
+  EXPECT_DOUBLE_EQ(s.y0, 0.0);
+  EXPECT_DOUBLE_EQ(s.y1, 1.0);
+  for (double v : { std::numeric_limits<double>::denorm_min(), std::numeric_limits<double>::max() }) {
+    EXPECT_TRUE(PointCurveClipSegment(0, v, 1, v, { true, v, v }, &s));
+    EXPECT_TRUE(std::isfinite(s.y0) && std::isfinite(s.y1));
+    for (const auto& tick : PointCurveLogTicks(v, v)) {
+      EXPECT_TRUE(std::isfinite(tick.value) && tick.value > 0);
+    }
+  }
+}
+
 TEST(AnalyzePointView, CurveLogTicksSpanDecadesWithSubTicks) {
   const std::vector<PointCurveLogTick> ticks = PointCurveLogTicks(1e-6, 1e-3);
   int majors = 0;
