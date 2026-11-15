@@ -9121,7 +9121,6 @@ bool PoseCurveRegionDrawsAndMovesTheSharedCursor(ImGuiTestContext* ctx) {
   {
     const int selected = gui::g_state.analysis.point_view.sample_index;
     const auto trace_key = gui::g_state.analysis.trace.key;
-    const std::string factors_before = CaptureFrameText(ctx);
     ImRect plot(ImVec2(FLT_MAX, FLT_MAX), ImVec2(-FLT_MAX, -FLT_MAX));
     for (const auto& v : curve->DrawList->VtxBuffer) {
       if (v.col == gui::kPointCurvePlotBorderColor && canvas.RectFull.Contains(v.pos))
@@ -9131,6 +9130,33 @@ bool PoseCurveRegionDrawsAndMovesTheSharedCursor(ImGuiTestContext* ctx) {
     // AddRect uses a half-pixel path inset and textured AA expands 1.5px from it: the
     // submitted full-color bounds are 1px outside the actual plot at each side.
     plot.Expand(-1.0f);
+    // The retained footer contract: three X labels and the rad unit have actual glyph ink.
+    std::vector<ImRect> footer_glyphs, rad_glyphs;
+    const auto& vertices = curve->DrawList->VtxBuffer;
+    const ImU32 muted_text = ImGui::GetColorU32(ImGuiCol_TextDisabled);
+    const ImRect x_row(plot.Min.x - 20, plot.Max.y + gui::UiPx(3), plot.Max.x + 2, canvas.RectFull.Max.y);
+    const ImRect rad_zone(canvas.RectFull.Max.x - ImGui::CalcTextSize("rad").x - gui::UiPx(8), canvas.RectFull.Min.y,
+                          canvas.RectFull.Max.x, canvas.RectFull.Min.y + ImGui::GetTextLineHeight() + gui::UiPx(6));
+    for (int i = 0; i + 3 < vertices.Size;) {
+      if (vertices[i].col != muted_text) {
+        ++i;
+        continue;
+      }
+      ImRect r(vertices[i].pos, vertices[i].pos);
+      for (int k = 1; k < 4; ++k)
+        r.Add(vertices[i + k].pos);
+      i += 4;
+      if (x_row.Overlaps(r))
+        footer_glyphs.push_back(r);
+      if (rad_zone.Overlaps(r))
+        rad_glyphs.push_back(r);
+    }
+    const auto cluster_at = [&](float x) {
+      return std::any_of(footer_glyphs.begin(), footer_glyphs.end(),
+                         [x](const ImRect& r) { return r.Min.x - 2 <= x && x <= r.Max.x + 2; });
+    };
+    IM_CHECK_RETV(cluster_at(plot.Min.x) && cluster_at(plot.GetCenter().x) && cluster_at(plot.Max.x - 1), false);
+    IM_CHECK_RETV(!rad_glyphs.empty(), false);
     const ImU32 hover_color = ImGui::GetColorU32(ImGuiCol_TextDisabled, .55f);
     const auto hover_vertices = [&] {
       return std::count_if(
@@ -13051,7 +13077,7 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
         IM_REGISTER_TEST(engine, "raypath_analysis", "curve_log_segments_meet_the_frame_and_modes_change_ink");
     static gui::PointContributionCurve model;
     static gui::PointCurveRangeMode mode = gui::PointCurveRangeMode::kFit;
-    static bool draw = false, auto_range = false, scroll_test = false;
+    static bool draw = false, auto_range = false, scroll_test = false, short_plot = false;
     static ImRect plot;
     t->GuiFunc = [](ImGuiTestContext*) {
       if (!draw)
@@ -13061,12 +13087,15 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       ImGui::Begin("Curve draw fixture", nullptr, ImGuiWindowFlags_NoSavedSettings);
       gui::RenderPointCurveRangeControl(&mode);
       const ImVec2 origin = ImGui::GetCursorScreenPos();
-      plot = ImRect(origin, ImVec2(origin.x + 600, origin.y + 280));
+      plot =
+          ImRect(ImVec2(origin.x + 60, origin.y + 12), ImVec2(origin.x + 660, origin.y + 12 + (short_plot ? 80 : 280)));
       ImGui::InvisibleButton("##fixture_plot", plot.GetSize());
       auto* dl = ImGui::GetWindowDrawList();
       dl->AddRectFilled(plot.Min, plot.Max, IM_COL32(16, 18, 22, 255));
       const gui::PointCurveAxisRange range =
           auto_range ? gui::PointCurveAxisFit(model, mode) : gui::PointCurveAxisRange{ true, .1, 10 };
+      gui::DrawPointCurveLogAxis(dl, range, plot.Min, plot.Max);
+      gui::DrawPointCurveSeed(dl, model, plot.Min, plot.Max);
       gui::DrawPointCurveArms(dl, model, range, plot.Min, plot.Max);
       if (scroll_test)
         ImGui::Dummy(ImVec2(1, 600));
@@ -13077,8 +13106,10 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       mode = gui::PointCurveRangeMode::kFit;
       auto_range = false;
       scroll_test = false;
+      short_plot = false;
       model = {};
       model.points.resize(7);
+      model.seed_index = 3;
       for (int i = 0; i < 7; ++i)
         model.points[i].x_rad = i;
       using K = gui::PointCurveValueKind;
@@ -13121,6 +13152,15 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       };
       IM_CHECK(!has_arm(2) && !has_arm(3));
       IM_CHECK(has_arm(4));
+      const ImU32 accent = ImGui::ColorConvertFloat4ToU32(gui::AccentColor());
+      int seed_vertices = 0;
+      for (const auto& v : w->DrawList->VtxBuffer) {
+        if (v.col == accent && v.pos.x >= plot.GetCenter().x - gui::UiPx(4) &&
+            v.pos.x <= plot.GetCenter().x + gui::UiPx(4) && v.pos.y >= plot.Min.y &&
+            v.pos.y <= plot.Min.y + gui::UiPx(5))
+          ++seed_vertices;
+      }
+      IM_CHECK(seed_vertices >= 3);
       IM_CHECK(SaveWindowPng(ctx, "//Curve draw fixture", GuiTestTempPath("curve_known_crossings.png").string()));
       // Change to a wide union. An isolated product at 1e-6 is invisible in Fit and visible in Full.
       model.points[0].rho = 1;
@@ -13138,6 +13178,46 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       IM_CHECK(mode == gui::PointCurveRangeMode::kFull);
       IM_CHECK(has_arm(4));
       IM_CHECK(ink_at(4, 5, .25));  // [-8,0], log(1e-6) => y=.25
+      ctx->MouseMoveToPos(ImVec2(2, 2));
+      ctx->Yield(2);  // keep the control tooltip from covering the axis being inspected
+      const auto label_bands = [&] {
+        std::vector<ImRect> glyphs, bands;
+        const auto& vertices = w->DrawList->VtxBuffer;
+        const ImU32 color = ImGui::GetColorU32(ImGuiCol_TextDisabled);
+        for (int i = 0; i + 3 < vertices.Size;) {
+          if (vertices[i].col != color) {
+            ++i;
+            continue;
+          }
+          ImRect r(vertices[i].pos, vertices[i].pos);
+          for (int k = 1; k < 4; ++k)
+            r.Add(vertices[i + k].pos);
+          i += 4;
+          if (r.Max.x < plot.Min.x && r.Min.y >= plot.Min.y - ImGui::GetTextLineHeight() &&
+              r.Max.y <= plot.Max.y + ImGui::GetTextLineHeight())
+            glyphs.push_back(r);
+        }
+        std::sort(glyphs.begin(), glyphs.end(), [](const ImRect& a, const ImRect& b) { return a.Min.y < b.Min.y; });
+        for (const auto& r : glyphs) {
+          if (bands.empty() || r.Min.y > bands.back().Max.y)
+            bands.push_back(r);
+          else
+            bands.back().Add(r);
+        }
+        return bands;
+      };
+      // Full's actual production labels: nine decades on a tall plot, three non-overlapping
+      // labels (-6,-3,0) at 80px. This is emitted glyph ink, not a LabelStep-only assertion.
+      IM_CHECK(label_bands().size() == 9);
+      short_plot = true;
+      ctx->Yield(3);
+      const auto bands = label_bands();
+      IM_CHECK(bands.size() == 3);
+      IM_CHECK(bands[0].Max.y + gui::UiPx(3) < bands[1].Min.y && bands[1].Max.y + gui::UiPx(3) < bands[2].Min.y);
+      IM_CHECK(
+          SaveWindowPng(ctx, "//Curve draw fixture", GuiTestTempPath("curve_full_eight_decades_short.png").string()));
+      short_plot = false;
+      ctx->Yield(2);
       const ImRect after = ctx->ItemInfo("**/##fixture_plot").RectFull;
       IM_CHECK(before.Min.x == after.Min.x && before.Min.y == after.Min.y && before.Max.x == after.Max.x &&
                before.Max.y == after.Max.y);
