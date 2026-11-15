@@ -23,6 +23,7 @@
 #include "gui/defaults_panel.hpp"
 #include "gui/edit_modals.hpp"
 #include "gui/export_fbo_renderer.hpp"
+#include "gui/field_editor_registry.hpp"
 #include "gui/file_io.hpp"
 #include "gui/gl_common.h"
 #include "gui/gl_init.h"
@@ -493,6 +494,12 @@ int main(int argc, char** argv) {
     gui::RenderUnsavedPopup(window);
     gui::RenderSaveModifiedPopup(window);
     gui::RenderDefaultsPanel(gui::g_state);
+    // The defaults panel's bg-path cell defers the blocking file dialog out of the popup's frame
+    // (field_editor_registry.hpp): it opens here, between ImGui UI submissions — the same shape
+    // PerformScreenshotExport's dialog already uses for the screenshot popup.
+    if (gui::TakeBackgroundFileDialogRequest()) {
+      gui::DoLoadBackground(window);
+    }
     gui::RenderLoadNoticePopup();
     gui::RenderExportOverwriteConfirmPopup();
     gui::RenderScreenshotExportOptionsPopup();
