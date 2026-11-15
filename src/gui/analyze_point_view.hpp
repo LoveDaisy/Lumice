@@ -259,9 +259,19 @@ struct PointCurveRun {
   int begin = 0;
   int end = 0;
 };
-// Optional values restrict runs to the inclusive visible window; outside values break runs.
-std::vector<PointCurveRun> PointCurvePositiveRuns(const PointCurveValueKind* kinds, size_t count,
-                                                  const double* values = nullptr, double lo = 0.0, double hi = 0.0);
+std::vector<PointCurveRun> PointCurvePositiveRuns(const PointCurveValueKind* kinds, size_t count);
+
+// Clip a positive segment in arclength/log-value space. Output y is normalized bottom=0/top=1.
+struct PointCurveSegment {
+  double x0, y0, x1, y1;
+};
+bool PointCurveClipSegment(double x0, double value0, double x1, double value1, const PointCurveAxisRange& range,
+                           PointCurveSegment* out);
+// Shared production drawing face: clip segments, not samples; zero/unavailable break runs.
+void DrawPointCurveArms(ImDrawList* draw_list, const PointContributionCurve& curve, const PointCurveAxisRange& range,
+                        const ImVec2& plot_min, const ImVec2& plot_max);
+// Fixed two-cell control; returns no business effects and never resets the shared pose cursor.
+void RenderPointCurveRangeControl(PointCurveRangeMode* mode);
 
 // ---- The u-globe (crystal-frame sun-direction sphere) -----------------------------------------------
 

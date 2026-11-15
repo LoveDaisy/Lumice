@@ -9282,20 +9282,93 @@ bool PoseCurveRegionDrawsAndMovesTheSharedCursor(ImGuiTestContext* ctx) {
                  static_cast<double>(quota));
     IM_CHECK_RETV(fabsf(comp->Size.y - quota) < 2.0f, false);
   }
-  // Hover on the canvas is the curve readout's temporary override only: the selection stands
-  // and the factors region — bound to view.sample_index, which hover never writes — keeps its
-  // geometry.
+  // Hover has its own same-sample ink and tooltip, never another selected pose.
   {
-    const int sample_before_hover = gui::g_state.analysis.point_view.sample_index;
-    const ImVec2 factors_geo_before = PoseRegionWindow("##AnalyzePoseFactors")->Size;
-    ctx->MouseMoveToPos(
-        ImVec2(canvas.RectFull.Min.x + canvas.RectFull.GetWidth() * 0.3f, canvas.RectFull.GetCenter().y));
+    const int selected = gui::g_state.analysis.point_view.sample_index;
+    const auto trace_key = gui::g_state.analysis.trace.key;
+    const std::string factors_before = CaptureFrameText(ctx);
+    ImRect plot(ImVec2(FLT_MAX, FLT_MAX), ImVec2(-FLT_MAX, -FLT_MAX));
+    for (const auto& v : curve->DrawList->VtxBuffer) {
+      if (v.col == gui::kPointCurvePlotBorderColor && canvas.RectFull.Contains(v.pos))
+        plot.Add(v.pos);
+    }
+    IM_CHECK_RETV(plot.Min.x < plot.Max.x && plot.Min.y < plot.Max.y, false);
+    // AddRect uses a half-pixel path inset and textured AA expands 1.5px from it: the
+    // submitted full-color bounds are 1px outside the actual plot at each side.
+    plot.Expand(-1.0f);
+    const ImU32 hover_color = ImGui::GetColorU32(ImGuiCol_TextDisabled, .55f);
+    const auto hover_vertices = [&] {
+      return std::count_if(
+          curve->DrawList->VtxBuffer.begin(), curve->DrawList->VtxBuffer.end(),
+          [&](const ImDrawVert& v) { return v.col == hover_color && canvas.RectFull.Contains(v.pos); });
+    };
+    ctx->MouseMoveToPos(ImVec2(2, 2));
+    ctx->Yield(2);
+    IM_CHECK_RETV(hover_vertices() == 0, false);
+    ctx->MouseMoveToPos(ImVec2(plot.Min.x + plot.GetWidth() * .3f, plot.GetCenter().y));
     ctx->Yield(3);
-    IM_CHECK_RETV(gui::g_state.analysis.point_view.sample_index == sample_before_hover, false);
-    const ImVec2 factors_geo_after = PoseRegionWindow("##AnalyzePoseFactors")->Size;
-    IM_CHECK_RETV(factors_geo_before.x == factors_geo_after.x && factors_geo_before.y == factors_geo_after.y, false);
-    ctx->LogInfo("[pose factors] hover wrote nothing; factors region held %.0fx%.0f",
-                 static_cast<double>(factors_geo_after.x), static_cast<double>(factors_geo_after.y));
+    IM_CHECK_RETV(hover_vertices() >= 4, false);
+    gui::PointContributionCurve model;
+    IM_CHECK_RETV(gui::BuildPointContributionCurve(*gui::g_state.analysis.point.adopted_result, 0, &model), false);
+    const double mouse_x = (ImGui::GetIO().MousePos.x - plot.Min.x) / plot.GetWidth() * model.points.back().x_rad;
+    int nearest = -1;
+    double distance = DBL_MAX;
+    for (int i = 0; i < int(model.valid_positions.size()); ++i) {
+      const int stored = model.valid_positions[i];
+      const double d = std::abs(model.points[stored].x_rad - mouse_x);
+      if (d < distance) {
+        distance = d;
+        nearest = i;
+      }
+    }
+    IM_CHECK_RETV(nearest >= 0 && nearest != selected, false);
+    const auto& p = model.points[model.valid_positions[nearest]];
+    const float expected_x = plot.Min.x + float(p.x_rad / model.points.back().x_rad * plot.GetWidth());
+    float line_left = FLT_MAX, line_right = -FLT_MAX;
+    for (const auto& v : curve->DrawList->VtxBuffer) {
+      if (v.col == hover_color && canvas.RectFull.Contains(v.pos)) {
+        line_left = std::min(line_left, v.pos.x);
+        line_right = std::max(line_right, v.pos.x);
+      }
+    }
+    // AddLine offsets its input by +0.5px; AA changes width, not the centre.
+    IM_CHECK_RETV(std::abs((line_left + line_right) * .5f - (expected_x + .5f)) < .1f, false);
+    // A hover circle adds a radius beyond the 2px curve stroke at the same C-reader sample.
+    const auto axis = gui::PointCurveAxisFit(model);
+    const double vals[] = { p.rho, p.area, p.transmission, p.k_carea, p.product };
+    const gui::PointCurveValueKind kinds[] = { p.rho_kind, p.area_kind, p.transmission_kind, p.k_kind, p.product_kind };
+    bool dots_ok = true;
+    int visible_dots = 0;
+    for (int arm = 0; arm < 5; ++arm) {
+      if (kinds[arm] != gui::PointCurveValueKind::kPositive || vals[arm] < axis.lo || vals[arm] > axis.hi)
+        continue;
+      ++visible_dots;
+      const float py = plot.Max.y - float((std::log10(vals[arm]) - std::log10(axis.lo)) /
+                                          (std::log10(axis.hi) - std::log10(axis.lo)) * plot.GetHeight());
+      int circle_vertices = 0;
+      for (const auto& v : curve->DrawList->VtxBuffer) {
+        if (v.col == gui::kPointCurveArmColors[arm] && std::abs(v.pos.x - expected_x) <= gui::UiPx(4) &&
+            std::abs(v.pos.y - py) <= gui::UiPx(4))
+          ++circle_vertices;
+      }
+      dots_ok &= circle_vertices >= 8;
+    }
+    IM_CHECK_RETV(visible_dots > 0 && dots_ok, false);
+    const std::string hovered = CaptureFrameText(ctx);
+    char sample[80];
+    std::snprintf(sample, sizeof(sample), "sample %d/%d @ %.3f rad", nearest + 1, int(model.valid_positions.size()),
+                  p.x_rad);
+    IM_CHECK_RETV(hovered.find(sample) != std::string::npos &&
+                      hovered.find("Left click or drag to select a pose.") != std::string::npos,
+                  false);
+    IM_CHECK_RETV(gui::g_state.analysis.point_view.sample_index == selected, false);
+    IM_CHECK_RETV(gui::g_state.analysis.trace.key == trace_key, false);
+    IM_CHECK_RETV(SaveWindowPng(ctx, "//Pose & trace", GuiTestTempPath("curve_hover.png").string()), false);
+    ctx->MouseMoveToPos(ImVec2(2, 2));
+    ctx->Yield(2);
+    IM_CHECK_RETV(hover_vertices() == 0, false);
+    const std::string departed = CaptureFrameText(ctx);
+    IM_CHECK_RETV(departed.find("Left click or drag to select a pose.") == std::string::npos, false);
   }
 
   // Wheel zoom owns only the Y window: neither the cursor nor the query changes. Let the
@@ -9314,6 +9387,8 @@ bool PoseCurveRegionDrawsAndMovesTheSharedCursor(ImGuiTestContext* ctx) {
   // Independent render oracle: read submitted product and frame vertices, then predict the
   // product's top from C-reader data and the current log window (not renderer helpers).
   const auto product_tracks_axis = [&]() -> bool {
+    ctx->MouseMoveToPos(ImVec2(2, 2));
+    ctx->Yield(2);  // measure the curve stroke without the larger transient hover circle
     float product_top = FLT_MAX;
     float plot_top = FLT_MAX;
     float plot_bottom = -FLT_MAX;
@@ -12994,6 +13069,105 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
   {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "pose_curve_modes_have_session_lifetime");
     t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(PoseCurveModesHaveSessionLifetime(ctx)); };
+  }
+
+  // A controlled curve drives the same control and drawing face used by the real point window.
+  {
+    ImGuiTest* t =
+        IM_REGISTER_TEST(engine, "raypath_analysis", "curve_log_segments_meet_the_frame_and_modes_change_ink");
+    static gui::PointContributionCurve model;
+    static gui::PointCurveRangeMode mode = gui::PointCurveRangeMode::kFit;
+    static bool draw = false, auto_range = false;
+    static ImRect plot;
+    t->GuiFunc = [](ImGuiTestContext*) {
+      if (!draw)
+        return;
+      ImGui::SetNextWindowPos(ImVec2(40, 80), ImGuiCond_Always);
+      ImGui::SetNextWindowSize(ImVec2(700, 400), ImGuiCond_Always);
+      ImGui::Begin("Curve draw fixture", nullptr, ImGuiWindowFlags_NoSavedSettings);
+      gui::RenderPointCurveRangeControl(&mode);
+      const ImVec2 origin = ImGui::GetCursorScreenPos();
+      plot = ImRect(origin, ImVec2(origin.x + 600, origin.y + 280));
+      ImGui::InvisibleButton("##fixture_plot", plot.GetSize());
+      auto* dl = ImGui::GetWindowDrawList();
+      dl->AddRectFilled(plot.Min, plot.Max, IM_COL32(16, 18, 22, 255));
+      const gui::PointCurveAxisRange range =
+          auto_range ? gui::PointCurveAxisFit(model, mode) : gui::PointCurveAxisRange{ true, .1, 10 };
+      gui::DrawPointCurveArms(dl, model, range, plot.Min, plot.Max);
+      ImGui::End();
+    };
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      mode = gui::PointCurveRangeMode::kFit;
+      auto_range = false;
+      model = {};
+      model.points.resize(7);
+      for (int i = 0; i < 7; ++i)
+        model.points[i].x_rad = i;
+      using K = gui::PointCurveValueKind;
+      model.points[0].rho = .01;
+      model.points[1].rho = 1000;
+      model.points[0].area = 1000;
+      model.points[1].area = .01;
+      model.points[0].rho_kind = model.points[1].rho_kind = K::kPositive;
+      model.points[0].area_kind = model.points[1].area_kind = K::kPositive;
+      model.points[0].transmission = 100;
+      model.points[1].transmission = 1000;
+      model.points[0].transmission_kind = model.points[1].transmission_kind = K::kPositive;
+      model.points[3].k_carea = .01;
+      model.points[3].k_kind = K::kPositive;  // outside singleton: no marker
+      model.points[4].rho_kind = K::kExactZero;
+      model.points[5].product = 1;
+      model.points[5].product_kind = K::kPositive;  // visible singleton: marker
+      draw = true;
+      struct Lease {
+        ~Lease() { draw = false; }
+      } lease;
+      ctx->Yield(3);
+      ImGuiWindow* w = ctx->GetWindowByRef("//Curve draw fixture");
+      IM_CHECK(w != nullptr);
+      const auto ink_at = [&](int arm, double x, double y) {
+        const ImVec2 target(plot.Min.x + float(x / 6 * plot.GetWidth()), plot.Max.y - float(y * plot.GetHeight()));
+        return std::any_of(w->DrawList->VtxBuffer.begin(), w->DrawList->VtxBuffer.end(), [&](const ImDrawVert& v) {
+          return v.col == gui::kPointCurveArmColors[arm] &&
+                 (v.pos.x - target.x) * (v.pos.x - target.x) + (v.pos.y - target.y) * (v.pos.y - target.y) < 9.0f;
+        });  // 3px = 2px stroke plus 1px AA fringe, in ImGui coordinates
+      };
+      IM_CHECK(ink_at(0, .2, 0));
+      IM_CHECK(ink_at(0, .6, 1));
+      IM_CHECK(ink_at(1, .4, 1));
+      IM_CHECK(ink_at(1, .8, 0));
+      IM_CHECK(!ink_at(0, 0, 0) && !ink_at(0, 1, 1));  // not endpoint-Y clamping
+      const auto has_arm = [&](int arm) {
+        return std::any_of(w->DrawList->VtxBuffer.begin(), w->DrawList->VtxBuffer.end(),
+                           [&](const ImDrawVert& v) { return v.col == gui::kPointCurveArmColors[arm]; });
+      };
+      IM_CHECK(!has_arm(2) && !has_arm(3));
+      IM_CHECK(has_arm(4));
+      IM_CHECK(SaveWindowPng(ctx, "//Curve draw fixture", GuiTestTempPath("curve_known_crossings.png").string()));
+      // Change to a wide union. An isolated product at 1e-6 is invisible in Fit and visible in Full.
+      model.points[0].rho = 1;
+      model.points[1].rho = 1e-12;
+      model.points[0].area_kind = model.points[1].area_kind = K::kUnavailable;
+      model.points[0].transmission_kind = model.points[1].transmission_kind = K::kUnavailable;
+      model.points[3].k_kind = K::kUnavailable;
+      model.points[5].product = 1e-6;
+      auto_range = true;
+      ctx->Yield(3);
+      IM_CHECK(!has_arm(4));
+      const ImRect before = ctx->ItemInfo("**/##fixture_plot").RectFull;
+      ctx->ItemClick("**/Full##curve_range");
+      ctx->Yield(2);
+      IM_CHECK(mode == gui::PointCurveRangeMode::kFull);
+      IM_CHECK(has_arm(4));
+      IM_CHECK(ink_at(4, 5, .25));  // [-8,0], log(1e-6) => y=.25
+      const ImRect after = ctx->ItemInfo("**/##fixture_plot").RectFull;
+      IM_CHECK(before.Min.x == after.Min.x && before.Min.y == after.Min.y && before.Max.x == after.Max.x &&
+               before.Max.y == after.Max.y);
+      ctx->ItemClick("**/Fit##curve_range");
+      ctx->Yield(2);
+      IM_CHECK(!has_arm(4));
+    };
   }
 
   // AC2's narrowest-window face: at 480x360 the floors hold and the info rows wrap, not clip
