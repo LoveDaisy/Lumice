@@ -264,6 +264,10 @@ LM_FN bool NeedsFarXyzShadow(int proj_type, float globe_back_fade, int visible, 
 using lumice::projection_domain::kFisheyeEqualAreaMinCz;
 using lumice::projection_domain::kFisheyeEquidistantMinCz;
 using lumice::projection_domain::kFisheyeStereographicMinCz;
+// Cast-input conversion-domain bounds for the single-lens pixel casts below (cast safety
+// only — pixel bounds culling stays with the caller).
+using lumice::projection_domain::kPixelCoordCastSafeMax;
+using lumice::projection_domain::kPixelCoordCastSafeMin;
 
 // Apply the transpose of a row-major 3x3 matrix (equivalent to Rotation::ApplyInverse
 // in src/core/geo3d.cpp:79). Splits out of the switch so both fisheye and linear
@@ -364,10 +368,22 @@ LM_FN ProjResult ProjectExitToPixel(LM_THREAD const ProjParams& p, float wx, flo
     // reuses *Forward directly and is intentionally unaffected. Do NOT move this
     // negation into the *Forward pure functions — they are shared with dual/globe.
     xy.x = -xy.x;
+    // The forward formula legitimately returns pixel expressions far outside any canvas
+    // (kProjLinear's dx/dz is unbounded for near-horizontal rays), and bounds culling is the
+    // caller's job (the header contract above) — so the cast INPUT is clamped into the
+    // float→int conversion domain (projection_domain.h kPixelCoordCastSafe*) purely to keep
+    // the C++ cast defined; the off-canvas integer pixel that results is still handed to the
+    // caller to reject, exactly as before. The clamp is a no-op for every value the cast
+    // already defined (its identity region is the whole conversion domain — every float32
+    // with |v| >= 2^24 is an integer, so the UB region starts only past ±2^31), and clamping
+    // before vs after LM_FLOOR is equivalent (floor is monotone and both bounds are
+    // integer-valued floats); clamped here so the clamped quantity is the cast input itself.
     int px = static_cast<int>(
-        LM_FLOOR(xy.x * p.scale + static_cast<float>(p.img_w) / 2.0f + static_cast<float>(p.lens_shift_x)));
+        LM_FLOOR(LM_CLAMP(xy.x * p.scale + static_cast<float>(p.img_w) / 2.0f + static_cast<float>(p.lens_shift_x),
+                          kPixelCoordCastSafeMin, kPixelCoordCastSafeMax)));
     int py = static_cast<int>(
-        LM_FLOOR(xy.y * p.scale + static_cast<float>(p.img_h) / 2.0f + static_cast<float>(p.lens_shift_y)));
+        LM_FLOOR(LM_CLAMP(xy.y * p.scale + static_cast<float>(p.img_h) / 2.0f + static_cast<float>(p.lens_shift_y),
+                          kPixelCoordCastSafeMin, kPixelCoordCastSafeMax)));
     r.hits[0].px = px;
     r.hits[0].py = py;
     r.hits[0].bump_landed = true;
