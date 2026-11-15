@@ -19,6 +19,15 @@
 #include "include/lumice_base.h"
 #include "test_screenshot.hpp"
 
+// The gui/* include chain above can drag <windows.h> in on Windows, whose function-like
+// `Yield` macro erases ImGuiTestContext::Yield calls (MSVC C4002/C2059). imgui_te_context.h
+// undoes it, but only when it is included AFTER that chain — include order decides, and a
+// header every suite includes is the wrong place to rely on order. Mirror its undo here so
+// every consumer is order-independent (the fixed-dt clock contract TU hit exactly this).
+#ifdef Yield
+#undef Yield
+#endif
+
 namespace gui = lumice::gui;
 
 // Optional observation of the native test frame. Empty in ordinary cases; timing cases use
