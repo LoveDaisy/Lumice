@@ -1759,6 +1759,12 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
   }
   ImGui::RadioButton("Crystal##r3d", &frame, 1);
   view.crystal_frame = frame == 1;
+  if (fits_on_line(ImGui::CalcTextSize("Reset View").x + ImGui::GetStyle().FramePadding.x * 2.0f)) {
+    ImGui::SameLine();
+  }
+  if (ImGui::Button("Reset View##r3d_reset")) {
+    view.ResetOrbitOrientation();
+  }
   const ImVec2 remaining = ImGui::GetContentRegionAvail();
   const float graph_h =
       CanvasHeightBeforeReport(remaining.y, 0.0f, UiPx(kPoseView3dReportQuota), ImGui::GetStyle().ItemSpacing.y);
