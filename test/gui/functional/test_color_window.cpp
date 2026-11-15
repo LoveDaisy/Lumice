@@ -258,10 +258,9 @@ struct ScreenRect {
 // Filled quads of one exact colour. AddRectFilled emits one quad (two triangles over four shared
 // vertices) whose vertices all carry the primitive's exact colour, so triangles bucketed by
 // colour and deduplicated by bounding box reconstruct the primitives. Rounded fills decompose
-// into per-slice triangles, but neither watched colour (Separator / Header) is drawn rounded in
-// this window, and at rest nothing else in it draws either: the unframed tree node paints a
-// Header-family background only while hovered (as HeaderHovered, a different slot), so an empty
-// Header bucket is a trustworthy "nothing is lit" answer.
+// into per-slice triangles, but neither watched colour (Separator / half-strength Header) is drawn
+// rounded in this window. No widget consumes the half-strength Header colour: even the unframed
+// tree node's hover fill uses the stronger HeaderHovered, keeping the wash bucket exclusive.
 std::vector<ScreenRect> CollectColorQuads(ImGuiTestContext* ctx, ImU32 color) {
   ImGuiWindow* win = ctx->GetWindowByRef(kColorsWindowRef);
   IM_CHECK_RETV(win != nullptr, {});
@@ -293,7 +292,7 @@ std::vector<ScreenRect> CollectColorQuads(ImGuiTestContext* ctx, ImU32 color) {
 }
 
 ImU32 RowWashColour() {
-  return ImGui::GetColorU32(ImGuiCol_Header);
+  return ImGui::GetColorU32(ImGuiCol_Header, 0.5f);
 }
 
 ImU32 SeparatorLineColour() {
@@ -402,64 +401,6 @@ void EndRealServerScene() {
 }  // namespace
 
 void RegisterColorWindowTests(ImGuiTestEngine* engine) {
-  {
-    ImGuiTest* t = IM_REGISTER_TEST(engine, "color_window_evidence", "row_wash_evidence");
-    t->TestFunc = [](ImGuiTestContext* ctx) {
-      ResetTestState();
-      ctx->Yield(2);
-      auto cls = MakeMatchAllClass(1.0f, 0.0f, 0.0f, 0);
-      cls.match[0].match_all = false;
-      cls.match[0].predicate_text = "13-25";
-      cls.match.push_back(MakeRef(0, gui::g_state.layers[0].entries[0].crystal_id, true));
-      gui::g_state.raypath_color.push_back(cls);
-      gui::g_state.raypath_color.push_back(MakeMatchAllClass(0.0f, 1.0f, 0.0f, 1));
-      OpenColorsWindow(ctx);
-      ctx->ItemOpenAll(kColorsWindowRef);
-      ctx->Yield(3);
-      for (const char* ref :
-           { "$$0/##body/$$0/##pred", "$$0/##body/$$0/##layer", "$$0/##body/$$0/" ICON_FA_XMARK "##ref_del",
-             "**/" ICON_FA_PLUS " Add Ref", "$$0/##body" }) {
-        const auto info = ctx->ItemInfo(ref);
-        ctx->LogInfo("RECT %s: %.1f %.1f %.1f %.1f", ref, info.RectFull.Min.x, info.RectFull.Min.y, info.RectFull.Max.x,
-                     info.RectFull.Max.y);
-      }
-      const auto capture = [&](const char* name) {
-        g_fullframe_capture.Reset();
-        g_fullframe_capture.requested.store(true);
-        for (int i = 0; i < 10 && !g_fullframe_capture.done.load(); ++i) {
-          ctx->Yield();
-        }
-        IM_CHECK(g_fullframe_capture.done.load());
-        IM_CHECK_GT(g_fullframe_capture.width, 0);
-        IM_CHECK_GT(g_fullframe_capture.height, 0);
-        const auto rgb = lumice::test::StripAlpha(g_fullframe_capture.pixels.data(), g_fullframe_capture.width,
-                                                  g_fullframe_capture.height);
-        const auto path = GuiTestTempPath(std::string(name) + ".png").string();
-        IM_CHECK(
-            lumice::test::SavePng(path.c_str(), rgb.data(), g_fullframe_capture.width, g_fullframe_capture.height, 3));
-      };
-      ctx->SetRef("");
-      ctx->MouseMoveToPos(ImVec2(5, 5));
-      ctx->Yield(3);
-      capture("rest");
-      ctx->SetRef(kColorsWindowRef);
-      const auto ref_rect = ctx->ItemInfo("$$0/##body/$$0/##layer").RectFull;
-      float x_min = 0.0f;
-      float x_max = 0.0f;
-      IM_CHECK(ColorsLineSpan(ctx, x_min, x_max));
-      ctx->SetRef("");
-      ctx->MouseMoveToPos(ImVec2(x_max - 20, (ref_rect.Min.y + ref_rect.Max.y) * 0.5f));
-      ctx->Yield(3);
-      capture("hover_ref_space");
-      HoverItemCentre(ctx, "$$0/##body/$$0/##layer");
-      capture("hover_combo");
-      HoverItemCentre(ctx, "$$0/##body");
-      capture("hover_title");
-      HoverItemCentre(ctx, "**/" ICON_FA_PLUS " Add Ref");
-      capture("hover_add");
-      CloseColorsWindow(ctx);
-    };
-  }
   // ---------------------------------------------------------------------------------------------
   // Top-bar surface: the two controls that live in ##TopBar but belong to this window's story.
   // ---------------------------------------------------------------------------------------------
