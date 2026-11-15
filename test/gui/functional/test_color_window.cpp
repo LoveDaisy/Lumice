@@ -142,6 +142,40 @@ void CloseColorsWindow(ImGuiTestContext* ctx) {
   ctx->Yield(2);
 }
 
+// Exercise the production InputText write gate one character per frame, not by assigning the
+// whole expression. Inspect its live text, then blur and reactivate so a stale committed prefix
+// cannot hide behind ImGui's active editing buffer. Also used for an invalid final character:
+// the expected committed text is the most recent valid prefix, not the value before editing.
+bool TypePredicateAndCheckAfterBlur(ImGuiTestContext* ctx, const char* typed, const char* committed) {
+  ctx->LogInfo("Typing ref '%s', expecting '%s' after blur", typed, committed);
+  ctx->ItemClick("**/##pred");
+  ctx->KeyPress(ImGuiMod_Shortcut | ImGuiKey_A);
+  ctx->KeyPress(ImGuiKey_Backspace);
+  for (const char* p = typed; *p != '\0'; ++p) {
+    const char key[] = { *p, '\0' };
+    ctx->KeyChars(key);
+    ctx->Yield();
+  }
+  const ImGuiID id = ctx->ItemInfo("**/##pred").ID;
+  IM_CHECK_RETV(id != 0 && ImGui::GetActiveID() == id, false);
+  const ImGuiInputTextState* active = ImGui::GetInputTextState(id);
+  IM_CHECK_RETV(active != nullptr, false);
+  IM_CHECK_RETV(std::string(active->TextA.Data, static_cast<size_t>(active->TextLen)) == typed, false);
+  IM_CHECK_RETV(gui::g_state.raypath_color[0].match[0].predicate_text == committed, false);
+
+  ctx->KeyPress(ImGuiKey_Tab);
+  ctx->Yield(4);
+  IM_CHECK_RETV(ImGui::GetActiveID() != id, false);
+  IM_CHECK_RETV(gui::g_state.raypath_color[0].match[0].predicate_text == committed, false);
+  ctx->ItemClick("**/##pred");
+  ctx->Yield(2);
+  IM_CHECK_RETV(ImGui::GetActiveID() == id, false);
+  const ImGuiInputTextState* reactivated = ImGui::GetInputTextState(id);
+  IM_CHECK_RETV(reactivated != nullptr, false);
+  IM_CHECK_RETV(std::string(reactivated->TextA.Data, static_cast<size_t>(reactivated->TextLen)) == committed, false);
+  return true;
+}
+
 // Pin the reconciler's diff base to "a finished run with nothing pending", so that the very next
 // edit is the only difference it can observe and therefore the only thing that can flip
 // sim_state to kModified. Callers seed the classes they want treated as already-committed BEFORE
@@ -1058,6 +1092,37 @@ void RegisterColorWindowTests(ImGuiTestEngine* engine) {
       IM_CHECK(!IsDisabled(ctx->ItemInfo("**/##pred")));
       IM_CHECK_STR_EQ(gui::g_state.raypath_color[0].match[0].predicate_text.c_str(), "3-5");
 
+      CloseColorsWindow(ctx);
+    };
+  }
+
+  // Legal pyramid face numbers must survive real typing and focus loss, even though the
+  // default scene's placement is a prism: color refs use a kind-independent face union.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "color_window", "pyramid_predicate_typing_survives_focus_loss");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      ctx->Yield(2);
+      gui::ColorClassConfig cls;
+      cls.visible = true;
+      auto ref = MakeRef(0, gui::g_state.layers[0].entries[0].crystal_id, /*match_all=*/false);
+      ref.predicate_text = "3-5";
+      cls.match.push_back(ref);
+      gui::g_state.raypath_color.push_back(cls);
+      OpenColorsWindow(ctx);
+      ctx->ItemOpenAll(kColorsWindowRef);
+      ctx->Yield(2);
+
+      for (const char* text : { "13-25", "13", "entry:13", "entry:18", "exit:23", "exit:28", "entry:13 & exit:25" }) {
+        if (!TypePredicateAndCheckAfterBlur(ctx, text, text)) {
+          return;
+        }
+      }
+      // A mistyped digit must not overwrite the last legal expression. The active buffer
+      // still shows the user's input, but blurring returns to the most recent valid prefix.
+      if (!TypePredicateAndCheckAfterBlur(ctx, "13-259", "13-25")) {
+        return;
+      }
       CloseColorsWindow(ctx);
     };
   }
