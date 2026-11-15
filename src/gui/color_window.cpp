@@ -402,6 +402,47 @@ void RenderImportFromFilterUI(GuiState& state) {
   }
 }
 
+// -------------------- class-list row chrome (boundary line + row wash) --------------------
+
+// One logical row of the class list (title / combine / ref / add-ref) that can carry a hover
+// wash. Begin() records the row's top off the layout cursor; End() derives the row's bottom from
+// the same cursor after the row's last widget has been ItemSize'd — ImGui has by then already
+// advanced the cursor past the line, so CursorPos.y - ItemSpacing.y is exactly the line bottom,
+// computed from this frame's real layout (never a prediction from one control's height, never a
+// cached rectangle). The wash itself is a pure draw-list fill on the background channel of the
+// splitter the caller opened around the class list, so it lands behind every widget pixel: it
+// cannot tint text, take an item id, or move the layout. Its horizontal span is the caller's
+// class-level content span — the exact span a class-level ImGui::Separator() draws — so the
+// boundary lines and the wash bands share one horizontal grid; it is captured once per frame,
+// not per row, because body rows run under the tree indent and must not inherit it. The
+// IsWindowHovered() gate scopes the signal to genuinely seeing this window — a combo popup, an
+// occluding floating window or a modal leaves the rows unlit — and rows scrolled out of the
+// window's clip rect fail IsMouseHoveringRect's clip check for the same reason.
+struct ClassRowWash {
+  float x_min = 0.0f;
+  float x_max = 0.0f;
+  float top = 0.0f;
+
+  ClassRowWash(float span_x_min, float span_x_max) : x_min(span_x_min), x_max(span_x_max) {}
+
+  void Begin() { top = ImGui::GetCursorScreenPos().y; }
+
+  void End() {
+    const float bottom = ImGui::GetCursorScreenPos().y - ImGui::GetStyle().ItemSpacing.y;
+    if (bottom <= top) {
+      return;
+    }
+    const ImVec2 wash_min(x_min, top);
+    const ImVec2 wash_max(x_max, bottom);
+    if (ImGui::IsWindowHovered() && ImGui::IsMouseHoveringRect(wash_min, wash_max)) {
+      ImDrawList* draw_list = ImGui::GetWindowDrawList();
+      draw_list->ChannelsSetCurrent(0);
+      draw_list->AddRectFilled(wash_min, wash_max, ImGui::GetColorU32(ImGuiCol_Header));
+      draw_list->ChannelsSetCurrent(1);
+    }
+  }
+};
+
 // Render one member ref (structural edits go through MarkStructHardDirty).
 void RenderRefRow(GuiState& state, ColorClassConfig& cls, size_t ref_idx, bool& delete_this_ref) {
   ImGui::PushID(static_cast<int>(ref_idx));
@@ -925,6 +966,20 @@ void RenderColorWindow(GuiState& state, LUMICE_Server* server) {
 
   ImGui::Separator();
 
+  // Two-channel layering for the class list: channel 0 collects the row hover washes so they
+  // render behind the widgets, channel 1 carries the rows themselves (washes flip channels only
+  // inside ClassRowWash::End). Merged right after the loop, before End() — an unmerged splitter
+  // would leave everything on the non-current channel unrendered.
+  ImDrawList* const class_list_draw_list = ImGui::GetWindowDrawList();
+  class_list_draw_list->ChannelsSplit(2);
+  class_list_draw_list->ChannelsSetCurrent(1);
+
+  // The washes' horizontal span, captured once per frame at this cursor: a class-level line
+  // start (no tree indent yet) through WorkRect.Max.x — the exact span ImGui::Separator() draws
+  // at class level, so the boundary lines and the wash bands share one horizontal grid.
+  const float wash_span_min_x = ImGui::GetCursorScreenPos().x;
+  const float wash_span_max_x = wash_span_min_x + ImGui::GetContentRegionAvail().x;
+
   // Sort classes by z_order for display (physical vector order stays put).
   const size_t n = state.raypath_color.size();
   std::vector<size_t> phys_by_rank(n);
@@ -948,9 +1003,18 @@ void RenderColorWindow(GuiState& state, LUMICE_Server* server) {
                           row_style.FramePadding.x * 2.0f;
 
   for (size_t rank = 0; rank < phys_by_rank.size(); rank++) {
+    // Class boundary: a themed 1px line between adjacent classes — none before the first, none
+    // after the last, so zero or one class shows no class-boundary line at all. The toolbar
+    // separator above the list is a different line and is not this signal's evidence.
+    if (rank > 0) {
+      ImGui::Separator();
+    }
     const size_t phys = phys_by_rank[rank];
     auto& cls = state.raypath_color[phys];
     ImGui::PushID(static_cast<int>(phys));
+
+    ClassRowWash wash(wash_span_min_x, wash_span_max_x);
+    wash.Begin();  // title row: z-order arrows, swatch, eye, warning, delete, summary tree node
 
     // z_order up/down (plan §292: v1 fallback for drag-reorder). Swap z_order
     // values with the neighbor at rank±1 (NOT the neighbor in physical order).
@@ -1035,8 +1099,11 @@ void RenderColorWindow(GuiState& state, LUMICE_Server* server) {
     ImGui::SameLine();
     const std::string summary = BuildClassSummary(state, cls);
     const bool open = ImGui::TreeNodeEx("##body", ImGuiTreeNodeFlags_SpanAvailWidth, "%s", summary.c_str());
+    wash.End();
+
     if (open) {
       // combine any/all
+      wash.Begin();  // combine row
       static const char* const kCombineNames[] = { "any", "all" };
       int combine_val = std::clamp(cls.combine, 0, 1);
       ImGui::TextUnformatted("Combine:");
@@ -1052,16 +1119,20 @@ void RenderColorWindow(GuiState& state, LUMICE_Server* server) {
             "all -- a ray belongs to this class only if it matches EVERY ref below (AND)");
       }
       ImGui::PopItemWidth();
+      wash.End();
 
       // Refs.
       std::optional<size_t> ref_to_delete;
       for (size_t ri = 0; ri < cls.match.size(); ri++) {
         bool del = false;
+        wash.Begin();  // ref row: layer/crystal/whole/predicate/symmetry/delete
         RenderRefRow(state, cls, ri, del);
+        wash.End();
         if (del) {
           ref_to_delete = ri;
         }
       }
+      wash.Begin();  // add-ref row
       if (ImGui::SmallButton(ICON_FA_PLUS " Add Ref")) {
         ColorClassRefConfig r;
         // Default to layer 0's first crystal placement so the row is
@@ -1077,6 +1148,7 @@ void RenderColorWindow(GuiState& state, LUMICE_Server* server) {
         cls.match.push_back(r);
         // T1: structural (match[] append) → reconciler routes to hard-reset lane.
       }
+      wash.End();
       if (ref_to_delete.has_value()) {
         cls.match.erase(cls.match.begin() + static_cast<std::ptrdiff_t>(*ref_to_delete));
         // T1: structural → reconciler.
@@ -1087,6 +1159,7 @@ void RenderColorWindow(GuiState& state, LUMICE_Server* server) {
 
     ImGui::PopID();
   }
+  class_list_draw_list->ChannelsMerge();
 
   if (pending_zswap.has_value()) {
     SwapZOrder(state, pending_zswap->first, pending_zswap->second);
