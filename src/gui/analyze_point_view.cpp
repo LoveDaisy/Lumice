@@ -776,14 +776,118 @@ void SunGlobeProject(const SunGlobeProjector& projector, const double u[3], doub
   *out_y = 0.5 - 0.5 * rho * std::sin(azimuth);
 }
 
-uint32_t SunGridCellColorRgba(double deviation_rad, uint8_t valid) {
-  if (valid == 0 || !(deviation_rad >= 0.0) || !(deviation_rad <= 3.15)) {
-    return IM_COL32(0, 0, 0, 0);  // invalid (or non-finite) cells paint nothing
+namespace {
+
+bool SunGridCellDrawable(double deviation_rad, uint8_t valid) {
+  return valid != 0 && deviation_rad >= 0.0 && deviation_rad <= 3.15;
+}
+
+size_t SunGridDrawCount(const LUMICE_PathSunGrid& grid) {
+  if (!grid.valid || !grid.deviation_rad || grid.lat_count <= 0 || grid.lon_count <= 0) {
+    return 0;
   }
-  const double t = std::min(1.0, deviation_rad / 3.14159265358979323846);
-  // The map's dark-to-light ramp family, re-anchored on angles: dark at delta 0, light at pi.
-  const int v = static_cast<int>(38.0 + 200.0 * t);
-  return IM_COL32(v, v, std::min(255, v + 12), 235);
+  return std::min(grid.cell_count, static_cast<size_t>(grid.lat_count) * static_cast<size_t>(grid.lon_count));
+}
+
+constexpr const char* kSunGridLegendTitle = "Deviation δ (deg) · auto range";
+
+}  // namespace
+
+SunGridRange SunGridDisplayRange(const LUMICE_PathSunGrid& grid) {
+  SunGridRange range;
+  const size_t count = SunGridDrawCount(grid);
+  for (size_t cell = 0; cell < count; ++cell) {
+    const double delta = grid.deviation_rad[cell];
+    if (!SunGridCellDrawable(delta, grid.valid[cell])) {
+      continue;
+    }
+    if (!range.available) {
+      range = { true, delta, delta };
+    } else {
+      range.min_rad = std::min(range.min_rad, delta);
+      range.max_rad = std::max(range.max_rad, delta);
+    }
+  }
+  return range;
+}
+
+uint32_t SunGridCellColorRgba(double deviation_rad, uint8_t valid, const SunGridRange& range) {
+  if (!SunGridCellDrawable(deviation_rad, valid) || !range.available || !SunGridCellDrawable(range.min_rad, 1) ||
+      !SunGridCellDrawable(range.max_rad, 1) || range.max_rad < range.min_rad) {
+    return 0;
+  }
+  const double t = range.min_rad == range.max_rad ?
+                       0.5 :
+                       std::clamp((deviation_rad - range.min_rad) / (range.max_rad - range.min_rad), 0.0, 1.0);
+  // Sequential violet: all three channels increase, hence luminance is strictly ordered.
+  // The existing violet data family, not the solar gold or any health/status colour.
+  return IM_COL32(static_cast<int>(92 + 127 * t), static_cast<int>(55 + 129 * t), static_cast<int>(135 + 115 * t), 235);
+}
+
+std::string SunGridRangeText(const SunGridRange& range) {
+  if (!range.available) {
+    return "No valid deviation data";
+  }
+  constexpr double kRadToDeg = 180.0 / 3.14159265358979323846;
+  char lo[64], hi[64];
+  for (int precision = 6; precision <= 17; ++precision) {
+    std::snprintf(lo, sizeof(lo), "%.*g", precision, range.min_rad * kRadToDeg);
+    std::snprintf(hi, sizeof(hi), "%.*g", precision, range.max_rad * kRadToDeg);
+    if (range.min_rad == range.max_rad || std::strcmp(lo, hi) != 0) {
+      break;
+    }
+  }
+  return range.min_rad == range.max_rad ? std::string(lo) + " deg (constant)" : std::string(lo) + " – " + hi + " deg";
+}
+
+void DrawSunGridBackdrop(ImDrawList* dl, const LUMICE_PathSunGrid& grid, const SunGlobeProjector& projector,
+                         const SunGridRange& range, const ImVec2& centre, float radius) {
+  const size_t count = SunGridDrawCount(grid);
+  constexpr double kDegToRad = 3.14159265358979323846 / 180.0;
+  for (size_t cell = 0; cell < count; ++cell) {
+    const ImU32 color = SunGridCellColorRgba(grid.deviation_rad[cell], grid.valid[cell], range);
+    if (color == 0) {
+      continue;
+    }
+    const double lat = (-90.0 + (cell / grid.lon_count + 0.5) * 180.0 / grid.lat_count) * kDegToRad;
+    const double lon = (-180.0 + (cell % grid.lon_count + 0.5) * 360.0 / grid.lon_count) * kDegToRad;
+    const double u[3] = { std::cos(lat) * std::cos(lon), std::cos(lat) * std::sin(lon), std::sin(lat) };
+    double x, y;
+    SunGlobeProject(projector, u, &x, &y);
+    const ImVec2 p(static_cast<float>(centre.x + (x - .5) * 2 * radius),
+                   static_cast<float>(centre.y + (y - .5) * 2 * radius));
+    const float half = std::max(1.5f, radius / 48.0f);
+    dl->AddRectFilled(ImVec2(p.x - half, p.y - half), ImVec2(p.x + half, p.y + half), color);
+  }
+}
+
+float SunGridLegendHeight(const SunGridRange& range, float width) {
+  const float spacing = ImGui::GetStyle().ItemSpacing.y;
+  const float wrap = std::max(1.0f, width);
+  return ImGui::CalcTextSize(kSunGridLegendTitle, nullptr, false, wrap).y + spacing +
+         ImGui::CalcTextSize(SunGridRangeText(range).c_str(), nullptr, false, wrap).y + spacing +
+         (range.available ? UiPx(8) + spacing : 0.0f);
+}
+
+void RenderSunGridLegend(const SunGridRange& range) {
+  DisabledWrappedText("%s", kSunGridLegendTitle);
+  RegisterPointTextItem("##sun_grid_title");
+  if (range.available) {
+    const ImVec2 start = ImGui::GetCursorScreenPos();
+    const float width = std::max(1.0f, ImGui::GetContentRegionAvail().x);
+    ImGui::InvisibleButton("##sun_grid_band", ImVec2(width, UiPx(8)));
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const bool constant = range.min_rad == range.max_rad;
+    const int steps = constant ? 1 : 64;
+    for (int i = 0; i < steps; ++i) {
+      const double delta = constant ? range.min_rad : range.min_rad + (range.max_rad - range.min_rad) * i / (steps - 1);
+      dl->AddRectFilled(ImVec2(start.x + width * i / steps, start.y),
+                        ImVec2(start.x + width * (i + 1) / steps, start.y + UiPx(8)),
+                        SunGridCellColorRgba(delta, 1, range));
+    }
+  }
+  DisabledWrappedText("%s", SunGridRangeText(range).c_str());
+  RegisterPointTextItem("##sun_grid_range");
 }
 
 // ---- The representative-ray display -----------------------------------------------------------------
@@ -1548,11 +1652,21 @@ void RenderAnalyzeSunGlobeRegion(GuiState& state, const ImVec2& size) {
   if (valid_count > 0) {
     AdvancePointPlayback(&view, valid_count, ImGui::GetTime());
   }
+  // Read once, before allocating the canvas: the complete legend footprint has first claim.
+  // Only the discovered arm displays terrain; waiting/withdrawn/mass documents show no old scale.
+  LUMICE_PathSunGrid grid{};
+  grid.struct_size = sizeof(grid);
+  const bool have_grid =
+      view.show_deviation_grid && valid_count > 0 && info && info->outcome != LUMICE_PATH_POINT_MASS &&
+      PointQueryStateFor(point) == PointQueryState::kCompleted &&
+      LUMICE_PathPointGetSunGrid(point.adopted_result.get(), &grid) == LUMICE_PATH_READ_OK && grid.cell_count > 0;
+  const SunGridRange grid_range = have_grid ? SunGridDisplayRange(grid) : SunGridRange{};
   const float play_w =
       std::max(ImGui::CalcTextSize("Stop").x, ImGui::CalcTextSize("Play").x) + ImGui::GetStyle().FramePadding.x * 2.0f;
   const ImVec2 available = ImGui::GetContentRegionAvail();
   const bool shared_line = available.x - play_w - ImGui::GetStyle().ItemSpacing.x >= UiPx(80.0f);
-  const float controls_h = ImGui::GetFrameHeightWithSpacing() * (shared_line ? 1.0f : 2.0f);
+  const float controls_h = ImGui::GetFrameHeightWithSpacing() * (shared_line ? 1.0f : 2.0f) +
+                           (have_grid ? SunGridLegendHeight(grid_range, available.x) : 0.0f);
   const float graph_side = std::min(
       available.x, CanvasHeightBeforeReport(available.y, controls_h, UiPx(64.0f), ImGui::GetStyle().ItemSpacing.y));
   const ImVec2 graph_min = ImGui::GetCursorScreenPos();
@@ -1561,6 +1675,9 @@ void RenderAnalyzeSunGlobeRegion(GuiState& state, const ImVec2& size) {
     ImGui::InvisibleButton("##globe_canvas", ImVec2(graph_side, graph_side));
     graph_draw_list->AddCircle(ImVec2(graph_min.x + graph_side * 0.5f, graph_min.y + graph_side * 0.5f),
                                std::max(1.0f, graph_side * 0.5f - UiPx(4.0f)), ImGui::GetColorU32(ImGuiCol_Border));
+  }
+  if (have_grid) {
+    RenderSunGridLegend(grid_range);
   }
   int pos = valid_count > 0 ? std::clamp(view.sample_index, 0, valid_count - 1) : 0;
   ImGui::BeginDisabled(valid_count == 0);
@@ -1666,14 +1783,6 @@ void RenderAnalyzeSunGlobeRegion(GuiState& state, const ImVec2& size) {
       });
       return;
     }
-    // The backdrop's eligibility is the toggle plus the payload alone: the toggle is a
-    // user-facing control (not a dev diagnostic), so no env rides this — the draw site reads
-    // the toggle's session value and the document's grid, nothing else.
-    LUMICE_PathSunGrid grid{};
-    grid.struct_size = sizeof(grid);
-    const bool have_grid = view.show_deviation_grid &&
-                           LUMICE_PathPointGetSunGrid(point.adopted_result.get(), &grid) == LUMICE_PATH_READ_OK &&
-                           grid.cell_count > 0;
     if (graph_side > 0.0f) {
       SunGlobeProjector projector;
       const bool have_projector = MakeSunGlobeProjector(*point.adopted_result, component, &projector);
@@ -1694,25 +1803,7 @@ void RenderAnalyzeSunGlobeRegion(GuiState& state, const ImVec2& size) {
       // The deviation backdrop: only when the document carries a grid (AC2's named-absence rule) and
       // the toggle stands.
       if (have_grid) {
-        const double deg_to_rad = 3.14159265358979323846 / 180.0;
-        for (int i = 0; i < grid.lat_count; ++i) {
-          const double lat = (-90.0 + (i + 0.5) * 180.0 / grid.lat_count) * deg_to_rad;
-          for (int j = 0; j < grid.lon_count; ++j) {
-            const double lon = (-180.0 + (j + 0.5) * 360.0 / grid.lon_count) * deg_to_rad;
-            const size_t cell = static_cast<size_t>(i) * static_cast<size_t>(grid.lon_count) + static_cast<size_t>(j);
-            if (cell >= grid.cell_count || grid.valid[cell] == 0) {
-              continue;
-            }
-            const double u[3] = { std::cos(lat) * std::cos(lon), std::cos(lat) * std::sin(lon), std::sin(lat) };
-            double gx = 0.0;
-            double gy = 0.0;
-            SunGlobeProject(projector, u, &gx, &gy);
-            const ImVec2 p = to_screen(gx, gy);
-            const float half = std::max(1.5f, radius_px / 48.0f);
-            dl->AddRectFilled(ImVec2(p.x - half, p.y - half), ImVec2(p.x + half, p.y + half),
-                              SunGridCellColorRgba(grid.deviation_rad[cell], grid.valid[cell]));
-          }
-        }
+        DrawSunGridBackdrop(dl, grid, projector, grid_range, centre_px, radius_px);
       }
 
       // The fiber: the selected component's VALID samples, in arclength order, as contiguous runs —

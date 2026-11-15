@@ -300,10 +300,22 @@ bool MakeSunGlobeProjector(const LUMICE_SinglePathResult& result, int component,
 // sphere is in bounds; the antipode collapses to the rim).
 void SunGlobeProject(const SunGlobeProjector& projector, const double u[3], double* out_x, double* out_y);
 
-// One sun grid cell's backdrop colour, RGBA8, from the grid's own deviation (t = delta/pi into
-// the map's dark-to-light ramp family); cells the grid marks invalid get alpha 0 — the globe
-// shows data, never a painted zero (the map's rule).
-uint32_t SunGridCellColorRgba(double deviation_rad, uint8_t valid);
+// Current drawable cells only: finite deviations in the existing [0,3.15] rounding band.
+// Empty has no numeric meaning; an exactly constant field uses the ramp's middle colour.
+struct SunGridRange {
+  bool available = false;
+  double min_rad = 0.0;
+  double max_rad = 0.0;
+};
+SunGridRange SunGridDisplayRange(const LUMICE_PathSunGrid& grid);
+uint32_t SunGridCellColorRgba(double deviation_rad, uint8_t valid, const SunGridRange& range);
+std::string SunGridRangeText(const SunGridRange& range);
+// Shared production faces, also exercised by controlled real-frame fixtures. No borrowed data
+// escapes the frame; legend and backdrop consume the same range and colour authority.
+void DrawSunGridBackdrop(ImDrawList* dl, const LUMICE_PathSunGrid& grid, const SunGlobeProjector& projector,
+                         const SunGridRange& range, const ImVec2& centre, float radius);
+float SunGridLegendHeight(const SunGridRange& range, float width);
+void RenderSunGridLegend(const SunGridRange& range);
 
 // ---- The representative-ray display -----------------------------------------------------------------
 
