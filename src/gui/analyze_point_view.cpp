@@ -2267,6 +2267,32 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
                   break;
                 }
               }
+              if (!placed && rendered.axes_drawn) {
+                // The corner reservation can collapse multiple near-segment candidates to
+                // one slot. Search the remaining visible canvas before accepting overlap.
+                const ImVec2 clip_min = dl->GetClipRectMin();
+                const ImVec2 clip_max = dl->GetClipRectMax();
+                const float inset = UiPx(2.0f);
+                float nearest = std::numeric_limits<float>::max();
+                for (float y = std::max(canvas_min.y, clip_min.y) + inset;
+                     y + text_size.y + inset <= std::min(canvas_max.y, clip_max.y); y += text_size.y + inset) {
+                  for (float x = std::max(canvas_min.x, clip_min.x) + inset;
+                       x + text_size.x + inset <= std::min(canvas_max.x, clip_max.x); x += text_size.x + inset) {
+                    const ImRect rect(ImVec2(x, y), ImVec2(x + text_size.x, y + text_size.y));
+                    if (rect.Overlaps(ImRect(rendered.axes_min, rendered.axes_max)) ||
+                        std::any_of(placed_label_rects.begin(), placed_label_rects.end(),
+                                    [&](const ImRect& other) { return other.Overlaps(rect); })) {
+                      continue;
+                    }
+                    const float distance = std::hypot(x - mid.x, y - mid.y);
+                    if (distance < nearest) {
+                      nearest = distance;
+                      anchor = ImVec2(x, y);
+                      placed = true;
+                    }
+                  }
+                }
+              }
               if (!placed) {
                 anchor = best_anchor;  // the leader fallback — the least-colliding slot plus a leader
               }

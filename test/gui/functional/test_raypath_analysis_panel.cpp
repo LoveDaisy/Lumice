@@ -4070,6 +4070,174 @@ bool TraceBuildExpectedLines(const gui::Ray3DFrameInfo& frame, const TraceChainE
   return true;
 }
 
+// The compass has no input item. Read complete feedback rectangles AND independently
+// submitted colour vertices; direction expectations below never call OrbitBasis.
+bool TraceAxesFootprints(ImGuiTestContext* ctx, bool direction_anchor = false) {
+  const gui::Ray3DFrameInfo frame = gui::LastRay3DFrameInfo();
+  IM_CHECK_RETV(frame.valid && frame.axes_drawn && frame.frame_count == ImGui::GetFrameCount(), false);
+  auto* region = PoseRegionWindow("##AnalyzeRaypath3D");
+  IM_CHECK_RETV(region != nullptr, false);
+  const ImRect reserved(frame.axes_min, frame.axes_max);
+  const ImRect canvas(frame.canvas_min,
+                      ImVec2(frame.canvas_min.x + frame.canvas_size.x, frame.canvas_min.y + frame.canvas_size.y));
+  IM_CHECK_RETV(canvas.Contains(reserved) && region->InnerClipRect.Contains(reserved), false);
+  const double expected[3][2] = { { 1, 0 }, { 0, .5 }, { 0, -std::sqrt(3.0) / 2 } };
+  for (int axis = 0; axis < 3; ++axis) {
+    const bool axis_ok = [&]() -> bool {
+      const ImRect letter(frame.axes_label_min[axis], frame.axes_label_max[axis]);
+      IM_CHECK_RETV(reserved.Contains(letter), false);
+      const auto ink = TraceCanvasVertices(gui::kRay3DAxisColors[axis]);
+      IM_CHECK_RETV(!ink.empty(), false);
+      const bool letter_ink = std::any_of(ink.begin(), ink.end(), [&](const ImVec2& p) { return letter.Contains(p); });
+      IM_CHECK_RETV(letter_ink, false);
+      bool letters_apart = true;
+      for (int other = 0; other < axis; ++other) {
+        letters_apart &= !letter.Overlaps(ImRect(frame.axes_label_min[other], frame.axes_label_max[other]));
+      }
+      IM_CHECK_RETV(letters_apart, false);
+      if (direction_anchor) {
+        const float length = gui::UiPx(gui::kRay3DAxisLengthUi);
+        const ImVec2 want(frame.axes_origin.x + length * static_cast<float>(expected[axis][0]),
+                          frame.axes_origin.y + length * static_cast<float>(expected[axis][1]));
+        IM_CHECK_RETV(std::hypot(frame.axes_tips[axis].x - want.x, frame.axes_tips[axis].y - want.y) < .01f, false);
+        // The line and arrowhead must actually submit ink at BOTH independently predicted
+        // ends. Letter vertices are excluded: a glyph or fabricated feedback cannot pass.
+        const auto ink_near = [&](const ImVec2& expected_point) {
+          return std::any_of(ink.begin(), ink.end(), [&](const ImVec2& p) {
+            return !letter.Contains(p) && std::hypot(p.x - expected_point.x, p.y - expected_point.y) < gui::UiPx(2.0f);
+          });
+        };
+        IM_CHECK_RETV(ink_near(frame.axes_origin) && ink_near(want), false);
+      }
+      return true;
+    }();
+    if (!axis_ok)
+      return false;
+  }
+  const auto& rects = gui::g_state.analysis.ray3d_fresnel_label_rects;
+  const auto& labels = gui::g_state.analysis.ray3d_fresnel_labels;
+  IM_CHECK_RETV(rects.size() == labels.size() * 5, false);
+  bool labels_apart = true;
+  for (size_t i = 0; i < labels.size(); ++i) {
+    if (!labels[i].empty()) {
+      labels_apart &= !reserved.Overlaps(ImRect(rects[i * 5], rects[i * 5 + 1], rects[i * 5 + 2], rects[i * 5 + 3]));
+    }
+  }
+  IM_CHECK_RETV(labels_apart, false);
+  auto* report = TraceReportWindow();
+  IM_CHECK_RETV(report != nullptr && !reserved.Overlaps(report->InnerClipRect), false);
+  const auto reset = ctx->ItemInfo("**/Reset View##r3d_reset", ImGuiTestOpFlags_NoError);
+  IM_CHECK_RETV(reset.ID != 0 && region->InnerClipRect.Contains(reset.RectFull), false);
+  ctx->LogInfo("[ray3d axes] canvas %.1fx%.1f compass %.1fx%.1f anchor=%d", frame.canvas_size.x, frame.canvas_size.y,
+               reserved.GetWidth(), reserved.GetHeight(), direction_anchor);
+  return true;
+}
+
+bool TraceResetAndAxesTakeRealInput(ImGuiTestContext* ctx) {
+  struct Restore {
+    gui::PointViewState saved = gui::g_state.analysis.point_view;
+    ~Restore() { gui::g_state.analysis.point_view = saved; }
+  } restore;
+  auto& view = gui::g_state.analysis.point_view;
+  ctx->SetRef("//Pose & trace");
+  view.orbit_yaw_deg = 90;
+  view.orbit_pitch_deg = 30;
+  view.orbit_zoom = 2;
+  view.show_fresnel_labels = true;
+  ctx->Yield(2);
+  IM_CHECK_RETV(TraceAxesFootprints(ctx, true), false);
+  const gui::Ray3DFrameInfo world = gui::LastRay3DFrameInfo();
+  view.orbit_zoom = .25f;
+  ctx->Yield(2);
+  IM_CHECK_RETV(TraceAxesFootprints(ctx, true), false);
+  const ImVec2 small_zoom_tip = gui::LastRay3DFrameInfo().axes_tips[0];
+  view.orbit_zoom = 8;
+  ctx->Yield(2);
+  IM_CHECK_RETV(TraceAxesFootprints(ctx, true), false);
+  IM_CHECK_RETV(gui::LastRay3DFrameInfo().axes_tips[0].x == small_zoom_tip.x &&
+                    gui::LastRay3DFrameInfo().axes_tips[0].y == small_zoom_tip.y,
+                false);
+  view.orbit_zoom = 2;
+  view.crystal_frame = !view.crystal_frame;
+  ctx->Yield(2);
+  IM_CHECK_RETV(TraceAxesFootprints(ctx, true), false);  // axes name the selected frame, not physical pose
+  const gui::Ray3DFrameInfo before = gui::LastRay3DFrameInfo();
+  IM_CHECK_RETV(before.crystal_frame != world.crystal_frame, false);
+  const ImVec2 origin = before.axes_origin;
+  auto* report = TraceReportWindow();
+  IM_CHECK_RETV(report != nullptr, false);
+  const float scroll = report->Scroll.y;
+  ctx->MouseMoveToPos(origin);
+  ctx->Yield(2);
+  ctx->MouseDown(ImGuiMouseButton_Left);
+  ctx->MouseMoveToPos(ImVec2(origin.x + gui::UiPx(12), origin.y + gui::UiPx(8)));
+  ctx->MouseUp(ImGuiMouseButton_Left);
+  ctx->Yield(2);
+  IM_CHECK_RETV(view.orbit_yaw_deg < 90 && view.orbit_pitch_deg < 30, false);
+  const gui::Ray3DFrameInfo after = gui::LastRay3DFrameInfo();
+  IM_CHECK_RETV(
+      after.frame_count > before.frame_count &&
+          std::hypot(after.axes_tips[0].x - after.axes_origin.x - (before.axes_tips[0].x - before.axes_origin.x),
+                     after.axes_tips[0].y - after.axes_origin.y - (before.axes_tips[0].y - before.axes_origin.y)) > .1f,
+      false);
+  ctx->MouseMoveToPos(after.axes_origin);
+  ctx->Yield(2);
+  const float zoom = view.orbit_zoom;
+  ctx->MouseWheelY(1);
+  ctx->Yield(2);
+  IM_CHECK_RETV(view.orbit_zoom == zoom * 1.12f && report->Scroll.y == scroll, false);
+  const auto state_before = view;
+  const auto point_id = gui::g_state.analysis.point.intent_id;
+  const auto ray_id = gui::g_state.analysis.trace.intent_id;
+  const auto point_result = gui::g_state.analysis.point.adopted_result;
+  const auto ray_result = gui::g_state.analysis.trace.adopted_result;
+  const auto sky = gui::g_state.analysis.sky_point;
+  const bool dirty = gui::g_state.dirty;
+  const auto sim = gui::g_state.sim_state;
+  const float ratios[] = { gui::g_state.analyze_pose_view_right_ratio, gui::g_state.analyze_pose_view_left_row_ratio,
+                           gui::g_state.analyze_pose_view_globe_ratio,
+                           gui::g_state.analyze_pose_view_curve_canvas_ratio };
+  ctx->ItemClick("**/Reset View##r3d_reset");
+  ctx->Yield(2);
+  IM_CHECK_RETV(view.orbit_yaw_deg == 35 && view.orbit_pitch_deg == 22, false);
+  IM_CHECK_RETV(view.orbit_zoom == state_before.orbit_zoom && view.crystal_frame == state_before.crystal_frame &&
+                    view.show_fresnel_labels == state_before.show_fresnel_labels &&
+                    view.show_deviation_grid == state_before.show_deviation_grid &&
+                    view.component_index == state_before.component_index &&
+                    view.sample_index == state_before.sample_index && view.playing == state_before.playing &&
+                    view.curve_range_mode == state_before.curve_range_mode,
+                false);
+  IM_CHECK_RETV(gui::g_state.analysis.point.intent_id == point_id && gui::g_state.analysis.trace.intent_id == ray_id &&
+                    gui::g_state.analysis.point.adopted_result == point_result &&
+                    gui::g_state.analysis.trace.adopted_result == ray_result,
+                false);
+  IM_CHECK_RETV(gui::g_state.dirty == dirty && gui::g_state.sim_state == sim &&
+                    std::equal(sky.dir, sky.dir + 3, gui::g_state.analysis.sky_point.dir),
+                false);
+  IM_CHECK_RETV(gui::g_state.analyze_pose_view_right_ratio == ratios[0] &&
+                    gui::g_state.analyze_pose_view_left_row_ratio == ratios[1] &&
+                    gui::g_state.analyze_pose_view_globe_ratio == ratios[2] &&
+                    gui::g_state.analyze_pose_view_curve_canvas_ratio == ratios[3],
+                false);
+  // Camera survives adoption and close/reopen; Reset remains explicit and repeatable.
+  view.orbit_yaw_deg = 121;
+  view.orbit_pitch_deg = -41;
+  gui::ResetPointViewStateForNewAdoption(&view);
+  ctx->WindowClose("//Pose & trace");
+  ctx->Yield(2);
+  gui::g_state.analyze_pose_view_open = true;
+  PinPoseViewOnScreen(ctx);
+  ctx->Yield(2);
+  IM_CHECK_RETV(view.orbit_yaw_deg == 121 && view.orbit_pitch_deg == -41, false);
+  ctx->SetRef("//Pose & trace");
+  ctx->ItemClick("**/Reset View##r3d_reset");
+  ctx->ItemClick("**/Reset View##r3d_reset");
+  ctx->Yield(2);
+  IM_CHECK_RETV(view.orbit_yaw_deg == 35 && view.orbit_pitch_deg == 22, false);
+  IM_CHECK_RETV(SaveWindowPng(ctx, "//Pose & trace", GuiTestTempPath("ray3d_reset_axes.png").string()), false);
+  return true;
+}
+
 // AC2's primitive leg: each drawn line's stroke span, measured off its exact-color vertices,
 // must track the shared mapping's width — the span-minus-thickness offset (the vendored AA
 // path's own constant, read off the draw list's flags) stays ONE value across every measured
@@ -5141,6 +5309,7 @@ bool InternalReflectionTraceFromTheRealConsumer(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(TraceFramingIsMeshAnchoredAcrossStates(ctx, /*crystal_view=*/true), false);
   IM_CHECK_RETV(TraceWidthsFollowCumulativeEnergy(ctx), false);
   IM_CHECK_RETV(TraceLabelsFollowTheToggle(ctx), false);
+  IM_CHECK_RETV(TraceResetAndAxesTakeRealInput(ctx), false);
   IM_CHECK_RETV(SplitterStripsCarryTheDragHintGlyph(ctx), false);
   IM_CHECK_RETV(TraceContactShapesFollowTheRealFacing(ctx), false);
   IM_CHECK_RETV(TraceSunArrowFollowsTheCrystalSun(ctx), false);
@@ -9606,6 +9775,10 @@ bool PoseCurveReportQuotasTrackContent(ImGuiTestContext* ctx) {
   gui::g_state.analyze_pose_view_open = true;
   PinPoseViewOnScreen(ctx);
   IM_CHECK_RETV(DriveUntil(ctx, [] { return CurrentTraceIsDrawn(); }, 60), false);
+  struct RestoreView {
+    gui::PointViewState saved = gui::g_state.analysis.point_view;
+    ~RestoreView() { gui::g_state.analysis.point_view = saved; }
+  } restore_view;
   {
     ScopedUiScaleAndBasisLease geometry(ctx);
     const auto tier = [&](float scale) -> bool {
@@ -9676,6 +9849,11 @@ bool PoseCurveReportQuotasTrackContent(ImGuiTestContext* ctx) {
           IM_CHECK_RETV(contains_ink(owner, rect), false);
           return true;
         };
+        gui::g_state.analysis.point_view.orbit_yaw_deg = 90;
+        gui::g_state.analysis.point_view.orbit_pitch_deg = 30;
+        gui::g_state.analysis.point_view.show_fresnel_labels = true;
+        ctx->Yield(3);
+        IM_CHECK_RETV(TraceAxesFootprints(ctx, true), false);
         // Full default rectangles, not the bbox of only those glyphs clipping happened to emit.
         if (!narrow) {
           IM_CHECK_RETV(full_item("**/##r3d_description", report), false);
