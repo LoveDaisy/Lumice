@@ -491,7 +491,10 @@ no idle readings because none were taken. The CUDA leg pushes the commit into a 
 the remote (so the remote build
 stays incremental), tops up the remote's CPM source cache from this machine's, and runs the build
 and the test there under `nohup`, each writing its log, exit code and a done-marker to the
-**remote disk** (`~/Codes/lumice-throughput-gate/results/<run_id>/`); this machine polls the marker
+**remote disk** (`~/Codes/lumice-throughput-gate/results/<run_id>/` — one directory per attempt: a
+retried attempt works in `<run_id>-a2` and reads nothing from the first attempt's markers; the
+record's `remote_run_dir` names the directory its result actually came from); this machine polls
+the marker
 with short independent ssh sessions and copies the directory back when it appears. A dropped ssh
 session costs one poll, not the result, and `--collect-remote <run_id>` re-attaches to a run whose
 local driver died — that recovery path has no retry loop and no deadline wall, it only collects.
@@ -546,10 +549,17 @@ no `terminal`, its status already says what happened.
 night could otherwise hold the gate for hours past morning. launchd runs therefore have a hard
 wall, `--nightly-deadline` (default `06:30` local): every wait face ends at it — the idle windows,
 the remote phase polls and the backoff sleep all stop at the wall instead of running out their
-configured budget — no attempt starts past it, and an attempt still in flight is voided: its long
-phases run under the remaining time as their timeout, nothing they did enters the record, and the
+configured budget, and no poll, reading or transfer is even issued past it — no attempt starts
+past it, and an attempt still in flight is voided: its long phases run under the remaining time
+as their timeout **and their work is actually stopped** — local phases run in their own process
+group and are killed whole (build.sh's ninja and compilers, pytest's render processes included),
+the cuda leg's detached remote phases record their pid and are killed by group through that stop
+interface, and a stop that could not be issued is logged, never swallowed — nothing the voided
+attempt did enters the record, and the
 leg's outcome is a single `skipped` line whose reason names the deadline, never a timeout `error`
-(an aborted attempt is not a failed one). Legs the wall reached before they started fall the same
+(an aborted attempt is not a failed one). The same precedence holds at the run's entry: a nightly
+run that launched past the wall skips its source prep entirely, and a source failure never
+outranks the wall — unstarted legs fall deadline skips, not source errors. Legs the wall reached before they started fall the same
 single skip line, with no `idle_retry` payload: zero attempts is not a retry history. The wall
 binds launchd runs whenever they started: a nightly run that launched late (a machine that slept
 past 06:30) ends immediately as deadline skips for every leg — re-admitting it would re-open the

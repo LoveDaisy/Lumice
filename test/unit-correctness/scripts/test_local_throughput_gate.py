@@ -11,8 +11,10 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -751,10 +753,10 @@ def touch_zero_run_logged(ctx_, cmd, log_path, **kw):
     return 0
 
 
-def at(hour, minute):
+def at(hour, minute, second=0):
     """A local wall-clock time on today's date — the same date
     resolve_nightly_deadline picks, so test clocks and the code compare like with like."""
-    return dt.datetime.combine(dt.date.today(), dt.time(hour, minute))
+    return dt.datetime.combine(dt.date.today(), dt.time(hour, minute, second))
 
 
 class FakeClock:
@@ -778,7 +780,8 @@ class FakeClock:
 
 
 def retry_ctx(tmp_path, clock, deadline=None, max_backoffs=2, backoff_seconds=3600.0,
-              cooldown_timeout=0.0, cooldown_poll=0.0):
+              cooldown_timeout=0.0, cooldown_poll=0.0, remote_poll=0.0,
+              remote_build_timeout=99.0):
     """A Ctx for retry-loop tests: fake clock/sleep seams, deadline opt-in,
     zero-length idle windows (the window's own timing has its own tests)."""
     args = argparse.Namespace(dry_run=False, cooldown_timeout=cooldown_timeout,
@@ -787,7 +790,7 @@ def retry_ctx(tmp_path, clock, deadline=None, max_backoffs=2, backoff_seconds=36
                               idle_retry_backoff_seconds=backoff_seconds,
                               idle_retry_max_backoffs=max_backoffs,
                               remote="remote-host", remote_dir="gate", ssh_connect_timeout=5,
-                              remote_build_timeout=99.0, remote_poll=0.0,
+                              remote_build_timeout=remote_build_timeout, remote_poll=remote_poll,
                               cpm_cache=str(tmp_path / "cpm"), work_dir=str(tmp_path / "work"))
     return g.Ctx(args=args, run_id="t", run_dir=tmp_path, log=lambda msg: None,
                  thresholds=g.IdleThresholds(), synthetic=False,
@@ -969,13 +972,13 @@ def test_cuda_leg_marks_both_busy_windows_for_retry(tmp_path, monkeypatch):
     ctx = make_ctx(tmp_path)
     monkeypatch.setattr(g, "_run",
                         lambda c, **kw: subprocess.CompletedProcess(c, 0, stdout="", stderr=""))
-    monkeypatch.setattr(g, "remote_readings", lambda ctx_: busy_r())
+    monkeypatch.setattr(g, "remote_readings", lambda ctx_, *a: busy_r())
     rec = g.run_cuda(ctx, "sha")
     assert rec["env_rejected"] is True and rec["reason"] == BUSY_REASON
     seq = iter([idle_r(), busy_r()])
-    monkeypatch.setattr(g, "remote_readings", lambda ctx_: next(seq))
+    monkeypatch.setattr(g, "remote_readings", lambda ctx_, *a: next(seq))
     monkeypatch.setattr(g, "run_logged", touch_zero_run_logged)
-    monkeypatch.setattr(g, "remote_wait_phase", lambda ctx_, phase, rdir, budget: 0)
+    monkeypatch.setattr(g, "remote_wait_phase", lambda ctx_, phase, rdir, budget, **kw: 0)
     rec = g.run_cuda(ctx, "sha")
     assert rec["env_rejected"] is True and rec["reason"] == RECHECK_BUSY_REASON
 
@@ -1063,10 +1066,17 @@ def test_long_phase_stops_at_the_deadline_and_never_becomes_a_timeout_error(tmp_
 # --- main-level wiring: per-leg budgets, the wall across legs, applicability ----
 
 def main_env(tmp_path, monkeypatch):
-    """Common main() doubles: macOS platform, no open issues, checkout faked."""
+    """Common main() doubles: macOS platform, no open issues, checkout faked,
+    and — the belt this file earned the hard way — notifications recorded
+    instead of applied, so no main-level test can ever reach gh. (2026-11-17:
+    the source-error test drove the real notification path with a doubled
+    query face only; every run filed fresh ``error`` issues on the real repo.)"""
     monkeypatch.setattr(g.platform, "system", lambda: "Darwin")
     monkeypatch.setattr(g, "open_issues", lambda ctx, leg, namespace: {})
     monkeypatch.setattr(g, "prepare_checkout", lambda ctx: "fakesha")
+    monkeypatch.setattr(g, "apply_action",
+                        lambda ctx, leg, namespace, action:
+                        ctx.log(f"notify (test double): {action.op} {action.kind} for {leg}"))
     return tmp_path / "state"
 
 
@@ -1224,3 +1234,216 @@ def test_retry_parameters_carry_the_owner_pinned_defaults():
     assert a.nightly_deadline == dt.time(6, 30)
     with pytest.raises(SystemExit):
         g.parse_args(["--nightly-deadline", "6:30pm"])
+
+
+# --- work actually stops, waits end at the wall ---------------------------------
+# The deadline's promise is not "the record says skip" but "the machine stops":
+# these probes drive the real execution paths (subprocess tree, remote poll
+# loop) — a mocked run_logged/wait would only prove the return value, not that
+# the work stopped or the wait ended.
+
+def test_run_logged_timeout_stops_the_whole_work_tree(tmp_path):
+    """A real two-level process tree: the timed-out phase's grandchild is dead
+    too — its 2s of work never completes in the background after the 124."""
+    marker = tmp_path / "gc-done.txt"
+    gc_pid_file = tmp_path / "gc-pid.txt"
+    grandchild = f"import time; time.sleep(2); open({str(marker)!r}, 'w').write('done')"
+    child = (f"import subprocess, time; "
+             f"p = subprocess.Popen([{sys.executable!r}, '-c', {grandchild!r}]); "
+             f"open({str(gc_pid_file)!r}, 'w').write(str(p.pid)); time.sleep(30)")
+    rc = g.run_logged(make_ctx(tmp_path), [sys.executable, "-c", child],
+                      tmp_path / "phase.log", timeout=0.5)
+    assert rc == 124
+    time.sleep(2.5)                    # longer than the grandchild's whole work
+    assert not marker.exists()         # the work did not complete in the background
+    gc_pid = int(gc_pid_file.read_text())
+    with pytest.raises(ProcessLookupError):
+        os.kill(gc_pid, 0)             # the worker is gone, not orphaned
+
+
+def test_remote_wait_phase_ends_at_the_wall_without_oversleeping(tmp_path, monkeypatch):
+    """The wall governs the real poll loop: no poll past it, the poll sleep is
+    cut to it (10s left, 30s poll -> one ssh, wake exactly at the wall), and
+    each ssh is bounded by the remaining wall time, not the fixed 60s."""
+    clock = FakeClock(at(6, 29, 50))
+    ctx = retry_ctx(tmp_path, clock, deadline=at(6, 30), remote_poll=30.0)
+    ssh_timeouts = []
+
+    def fake_run(cmd, **kw):
+        ssh_timeouts.append(kw.get("timeout"))
+        return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="")   # never done
+
+    monkeypatch.setattr(g, "_run", fake_run)
+    rc = g.remote_wait_phase(ctx, "build", "t", budget_s=3600.0, wall=at(6, 30))
+    assert rc is None
+    assert clock.now == at(6, 30)          # ended AT the wall, not a poll later
+    assert len(ssh_timeouts) == 1          # no poll issued past the wall
+    assert ssh_timeouts[0] == pytest.approx(10.0, abs=0.01)   # ssh bounded by the remaining wall
+    assert clock.slept == [10.0]
+
+
+def test_remote_wait_phase_still_reads_one_final_state_on_plain_budget(tmp_path, monkeypatch):
+    """Without a wall (recovery path / plain budget), the budget check stays
+    after the poll: a phase that completed inside the last window is still read
+    — the pre-existing behavior, untouched by the wall mechanics."""
+    ctx = retry_ctx(tmp_path, FakeClock(at(3, 30)))
+    calls = []
+
+    def fake_run(cmd, **kw):
+        calls.append(1)
+        if len(calls) >= 3:
+            return subprocess.CompletedProcess(cmd, 0, stdout="0\n", stderr="")
+        return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="")
+
+    monkeypatch.setattr(g, "_run", fake_run)
+    rc = g.remote_wait_phase(ctx, "build", "t", budget_s=0.05, wall=None)
+    assert rc == 0                         # the completion was read, not lost
+
+
+def test_remote_phase_script_records_its_pid_for_the_stop_interface(tmp_path):
+    ctx = make_ctx(tmp_path)
+    script = g.remote_phase_script(ctx, "build", "sha", "r")
+    assert "echo $$" in script and "results/r/build.pid" in script
+    script2 = g.remote_phase_script(ctx, "pytest", "sha", "r")
+    assert "results/r/pytest.pid" in script2
+    assert "timeout 10" in script2         # the remote pytest budget is the configured one
+
+
+def cuda_remote_doubles(monkeypatch, run_logged_cmds, marker_state, readings):
+    """Real run_cuda IO: fake the ssh capture layer (_run) with per-directory
+    done-marker state, capture every run_logged command, idle readings."""
+    monkeypatch.setattr(g, "remote_readings", lambda ctx_, *a: next(readings))
+
+    def fake_run_logged(ctx_, cmd, log_path, **kw):
+        run_logged_cmds.append(" ".join(str(c) for c in cmd))
+        Path(log_path).touch()
+        return 0
+
+    monkeypatch.setattr(g, "run_logged", fake_run_logged)
+
+    def fake_run(cmd, **kw):
+        if cmd[-1] == "true":
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        query = cmd[-1]
+        for rdir, exit_code in marker_state.items():
+            if f"results/{rdir}/build.done" in query:
+                return subprocess.CompletedProcess(cmd, 0, stdout=f"{exit_code}\n", stderr="")
+        return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="")
+
+    monkeypatch.setattr(g, "_run", fake_run)
+
+
+def test_retried_cuda_attempt_gets_its_own_remote_dir(tmp_path, monkeypatch):
+    """A retried cuda attempt starts its remote phases in a fresh results
+    directory: the first attempt's successful build.done can never be read as
+    the second attempt's build result, and an unfinished second build does not
+    open the measurement phase."""
+    clock = FakeClock(at(3, 30))
+    ctx = retry_ctx(tmp_path, clock, remote_build_timeout=0.05)
+    run_logged_cmds = []
+    marker_state = {ctx.run_id: 0}         # attempt 1: build succeeds in ITS directory
+    readings = iter([idle_r(), busy_r(),   # attempt 1: pre idle, re-check busy
+                     idle_r(), idle_r(), idle_r(), idle_r()])
+    cuda_remote_doubles(monkeypatch, run_logged_cmds, marker_state, readings)
+    rec = g.run_leg_with_retry(ctx, "cuda", g.run_cuda, "sha")
+    assert rec["status"] == "error"        # the retried build is unfinished -> error, never pass
+    assert "remote build failed" in rec["reason"]
+    assert rec["idle_retry"]["attempts"] == 2
+    assert any(f"results/{ctx.run_id}-a2/build.sh" in c for c in run_logged_cmds)
+    assert not any(f"-a2" in c and "pytest.sh" in c for c in run_logged_cmds)
+
+
+def test_retried_cuda_attempt_does_not_inherit_a_pass_from_a_failed_build(tmp_path, monkeypatch):
+    """Second build FAILS (exit 2 in its own directory): the leg ends error —
+    the first attempt's successful marker must not launder it into a pass."""
+    clock = FakeClock(at(3, 30))
+    ctx = retry_ctx(tmp_path, clock)
+    run_logged_cmds = []
+    marker_state = {ctx.run_id: 0, f"{ctx.run_id}-a2": 2}
+    readings = iter([idle_r(), busy_r(),   # attempt 1: pre idle, re-check busy
+                     idle_r(), idle_r(), idle_r(), idle_r()])
+    cuda_remote_doubles(monkeypatch, run_logged_cmds, marker_state, readings)
+    rec = g.run_leg_with_retry(ctx, "cuda", g.run_cuda, "sha")
+    assert rec["status"] == "error"
+    assert "remote build failed (exit 2)" in rec["reason"]
+    assert not any(f"-a2" in c and "pytest.sh" in c for c in run_logged_cmds)
+
+
+def test_cuda_deadline_reaches_the_remote_stop_interface(tmp_path, monkeypatch):
+    """D2b's cuda half: the wall's void reaches the remote stop interface — the
+    kill command names the phase's recorded pid file — the wait itself ended at
+    the wall with no poll past it, and the leg lands a deadline skip, not an
+    error."""
+    clock = FakeClock(at(6, 29, 50))
+    ctx = retry_ctx(tmp_path, clock, deadline=at(6, 30), remote_poll=30.0)
+    run_logged_cmds = []
+    marker_state = {}
+    ssh_timeouts = []
+    readings = iter([idle_r(), idle_r()])
+
+    def fake_run_logged(ctx_, cmd, log_path, **kw):
+        run_logged_cmds.append(" ".join(str(c) for c in cmd))
+        Path(log_path).touch()
+        return 0
+
+    monkeypatch.setattr(g, "run_logged", fake_run_logged)
+    monkeypatch.setattr(g, "remote_readings", lambda ctx_, *a: next(readings))
+
+    def fake_run(cmd, **kw):
+        if cmd[-1] == "true":
+            ssh_timeouts.append(kw.get("timeout"))
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        ssh_timeouts.append(kw.get("timeout"))
+        return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="")   # build never done
+
+    monkeypatch.setattr(g, "_run", fake_run)
+    rec = g.run_leg_with_retry(ctx, "cuda", g.run_cuda, "sha")
+    assert clock.now == at(6, 30)          # the wait ended at the wall
+    kill_cmds = [c for c in run_logged_cmds if "kill -- -" in c]
+    assert len(kill_cmds) == 1 and f"results/{ctx.run_id}/build.pid" in kill_cmds[0]
+    assert ssh_timeouts[-1] == pytest.approx(10.0, abs=0.01)  # last ssh bounded by the wall
+    assert rec["status"] == "skipped" and "deadline" in rec["reason"]
+    assert rec["idle_retry"]["terminal"] == "deadline"
+    assert not any("pytest.sh" in c for c in run_logged_cmds)  # never reached the measurement phase
+
+
+def test_late_nightly_run_skips_source_prep_and_reports_deadline_skips(tmp_path, monkeypatch):
+    """Past the wall, the run never touches the network for source prep, and a
+    failing source can no longer outrank the wall: three zero-attempt deadline
+    skips, rc 0."""
+    state_dir = main_env(tmp_path, monkeypatch)
+
+    def forbidden_checkout(ctx):
+        raise AssertionError("prepare_checkout must not run past the wall")
+
+    monkeypatch.setattr(g, "prepare_checkout", forbidden_checkout)
+    inject_clock(monkeypatch, FakeClock(at(6, 31)))
+    calls = []
+    install_busy_legs(monkeypatch, calls)
+    rc = g.main(["--leg", "all", "--state-dir", str(state_dir),
+                 "--work-dir", str(tmp_path / "work"), "--trigger", "launchd"])
+    assert rc == 0
+    recs = read_records(state_dir)
+    assert [r["reason"] for r in recs] == ["nightly deadline 06:30 reached before this leg started"] * 3
+    assert calls == []
+
+
+def test_source_error_still_stands_without_a_deadline(tmp_path, monkeypatch):
+    """The red side: with no wall, a failing source prep still produces the
+    run's per-leg source errors — the wall's precedence is wall-scoped."""
+    state_dir = main_env(tmp_path, monkeypatch)
+
+    def broken_checkout(ctx):
+        raise RuntimeError("git fetch failed: network down")
+
+    monkeypatch.setattr(g, "prepare_checkout", broken_checkout)
+    calls = []
+    install_busy_legs(monkeypatch, calls)
+    rc = g.main(["--leg", "all", "--state-dir", str(state_dir),
+                 "--work-dir", str(tmp_path / "work"), "--trigger", "manual"])
+    assert rc == 1
+    recs = read_records(state_dir)
+    assert all(r["status"] == "error"
+               and r["reason"] == "source: RuntimeError: git fetch failed: network down"
+               for r in recs)
+    assert calls == []
