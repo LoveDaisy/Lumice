@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794828029481,
+  "lastUpdate": 1794828031594,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9620,50 +9620,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "e24525033315c4fa88cce6199342f7f62cee94d3",
-          "message": "Merge pull request #495 from LoveDaisy/feat/axis-sticky-label\n\nfeat(gui): sticky user-chosen axis label, decoupled from preset apply",
-          "timestamp": "2026-10-16T09:27:12+08:00",
-          "tree_id": "839d54c4e434bf7ae6b44932a72e5fcd24c3bdac",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/e24525033315c4fa88cce6199342f7f62cee94d3"
-        },
-        "date": 1792114225259,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 89.7,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 100.3,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 99,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 94.1,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "d3b5b77505182ea5e0fff0873d106cc506c38f0c",
           "message": "Merge pull request #496 from LoveDaisy/feat/axis-apply-decouple\n\nfeat(gui): Apply preset is a pure parameter shortcut, label and view untouched",
           "timestamp": "2026-10-16T21:21:19+08:00",
@@ -14003,6 +13959,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 95.9,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "f1a4ee0693e882f9731c1bb18fd73b97231f8ca6",
+          "message": "Merge pull request #602 from LoveDaisy/port/476-user-fixes\n\nPort the 788 user-fix wave from release/4.7.6 to main (from #592)",
+          "timestamp": "2026-11-16T19:16:24+08:00",
+          "tree_id": "eccda5ef6ecd72f7e60c4a49d05573366185d167",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/f1a4ee0693e882f9731c1bb18fd73b97231f8ca6"
+        },
+        "date": 1794828030983,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 88.5,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 99.9,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 98.6,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 94.2,
             "unit": "%"
           }
         ]
