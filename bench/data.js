@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794828024298,
+  "lastUpdate": 1794828029481,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -4818,54 +4818,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "e24525033315c4fa88cce6199342f7f62cee94d3",
-          "message": "Merge pull request #495 from LoveDaisy/feat/axis-sticky-label\n\nfeat(gui): sticky user-chosen axis label, decoupled from preset apply",
-          "timestamp": "2026-10-16T09:27:12+08:00",
-          "tree_id": "839d54c4e434bf7ae6b44932a72e5fcd24c3bdac",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/e24525033315c4fa88cce6199342f7f62cee94d3"
-        },
-        "date": 1792114223216,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 919481.8,
-            "unit": "rays/sec",
-            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 1014445.6,
-            "unit": "rays/sec",
-            "extra": "CPU: Neoverse-N2\\nCores: 4"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 845728.4,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 9V74 80-Core Processor\\nCores: 4"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 697867.9,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 9V74 80-Core Processor                \\nCores: 4"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "d3b5b77505182ea5e0fff0873d106cc506c38f0c",
           "message": "Merge pull request #496 from LoveDaisy/feat/axis-apply-decouple\n\nfeat(gui): Apply preset is a pure parameter shortcut, label and view untouched",
           "timestamp": "2026-10-16T21:21:19+08:00",
@@ -9602,6 +9554,54 @@ window.BENCHMARK_DATA = {
             "value": 694379,
             "unit": "rays/sec",
             "extra": "CPU: AMD EPYC 9V74 80-Core Processor                \\nCores: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "f1a4ee0693e882f9731c1bb18fd73b97231f8ca6",
+          "message": "Merge pull request #602 from LoveDaisy/port/476-user-fixes\n\nPort the 788 user-fix wave from release/4.7.6 to main (from #592)",
+          "timestamp": "2026-11-16T19:16:24+08:00",
+          "tree_id": "eccda5ef6ecd72f7e60c4a49d05573366185d167",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/f1a4ee0693e882f9731c1bb18fd73b97231f8ca6"
+        },
+        "date": 1794828028964,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 948104.1,
+            "unit": "rays/sec",
+            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 1006274.7,
+            "unit": "rays/sec",
+            "extra": "CPU: Neoverse-N2\\nCores: 4"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 841928.6,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 9V74 80-Core Processor\\nCores: 4"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 581686,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
           }
         ]
       }
