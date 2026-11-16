@@ -1340,10 +1340,10 @@ def remote_wait_phase(ctx: Ctx, phase: str, rdir: str, budget_s: float,
 
     ``wall`` (a fresh attempt's nightly deadline) governs this wait for real: no
     poll is issued past it, the poll sleep never crosses it, and each ssh is
-    bounded by the nearer of the two budgets — so the wait ends at the wall
-    instead of sleeping a configured interval past it. The budget check stays
-    after the poll: a phase that completed inside the last window is still read
-    (the pre-existing behavior, kept for the recovery path's plain budget)."""
+    bounded by the wall's remaining time. The plain budget stays soft, exactly
+    as before the wall existed: the poll runs first, the budget is checked
+    after, and the ssh keeps its full 60s — a phase completing inside the last
+    window is still read instead of dying on a zero-second timeout."""
     out = f"{ctx.args.remote_dir}/results/{rdir}"
     budget_deadline = time.monotonic() + budget_s
     while True:
@@ -1355,7 +1355,6 @@ def remote_wait_phase(ctx: Ctx, phase: str, rdir: str, budget_s: float,
         ssh_timeout = 60.0
         if wall is not None:
             ssh_timeout = min(ssh_timeout, max(0.0, (wall - ctx.clock()).total_seconds()))
-        ssh_timeout = min(ssh_timeout, max(0.0, budget_deadline - time.monotonic()))
         try:
             p = _run(ssh_argv(ctx, f"test -f {out}/{phase}.done && cat {out}/{phase}.exit"),
                      timeout=ssh_timeout)
@@ -1378,9 +1377,12 @@ def remote_stop_phase(ctx: Ctx, phase: str, rdir: str) -> bool:
     """Terminate a detached remote attempt's work — every group it recorded,
     not just its entry shell.
 
-    The pid files (the phase script's session leader, plus a worker group the
-    pytest phase records because GNU ``timeout`` makes its own process group)
-    cover everything the attempt runs. The stop is graded and verified per
+    The pid files of the phase itself (the phase script's session leader, plus
+    a worker group the pytest phase records because GNU ``timeout`` makes its
+    own process group) cover everything the attempt runs for THAT phase —
+    another phase's pid file is not evidence about this one: a pytest stop in
+    a directory whose build already finished reports unverifiable, never a
+    borrowed "stopped". The stop is graded and verified per
     group: TERM, a bounded wait, KILL for anything still alive — and a
     non-zero exit when termination cannot be verified, so "stopped" means the
     work ended, not that a signal was sent. No pid file and no done marker
@@ -1392,7 +1394,7 @@ def remote_stop_phase(ctx: Ctx, phase: str, rdir: str) -> bool:
         f"if [ -f {done_file} ]; then "
         f"echo '{phase}: already done; nothing to stop'; "
         f"else found=0; "
-        f"for f in {out}/*.pid; do "
+        f"for f in {out}/{phase}.pid {out}/{phase}-worker.pid; do "
         f'[ -e "$f" ] || continue; found=1; '
         f'pgid=$(cat "$f"); '
         f'kill -- -"$pgid" 2>/dev/null; '
@@ -1457,9 +1459,13 @@ def run_cuda(ctx: Ctx, sha: str, resume_rdir: Optional[str] = None) -> dict:
     # so no deadline checkpoint covers it.
     wall = ctx.nightly_deadline if resume_rdir is None else None
     if not ctx.args.dry_run:
+        # The probe's budget follows the wall that governs THIS call: a fresh
+        # attempt gets the remaining wall time, the recovery path keeps its
+        # plain connect budget (no wall applies to it — not even a passed one).
+        probe_timeout = (timeout_before_deadline(ctx, ctx.args.ssh_connect_timeout + 15)
+                         if wall is not None else ctx.args.ssh_connect_timeout + 15)
         try:
-            p = _run(ssh_argv(ctx, "true"),
-                     timeout=timeout_before_deadline(ctx, ctx.args.ssh_connect_timeout + 15))
+            p = _run(ssh_argv(ctx, "true"), timeout=probe_timeout)
         except (subprocess.TimeoutExpired, OSError) as e:
             guard_deadline(ctx, rec, wall)   # a probe cut by the wall is a void, not unreachable
             return {**rec, "status": "skipped", "reason": f"unreachable ({type(e).__name__})"}
@@ -1586,6 +1592,18 @@ def idle_retry_payload(ctx: Ctx, attempts: int, backoffs: int, history: List[dic
     return payload
 
 
+def _deadline_void_result(ctx: Ctx, attempts: int, backoffs: int, history: List[dict],
+                          ended: dt.datetime, why: str) -> dict:
+    """The one constructor for both void shapes (a stage guard raising
+    mid-flight, and an attempt that returned past the wall): a deadline skip
+    with the controller's cause and the attempt in history — never a
+    measurement."""
+    return {"status": "skipped",
+            "reason": f"nightly deadline {ctx.nightly_deadline:%H:%M} reached at "
+                      f"{iso(ended)}; {why}",
+            "idle_retry": idle_retry_payload(ctx, attempts, backoffs, history, "deadline")}
+
+
 def run_leg_with_retry(ctx: Ctx, leg: str, runner: Callable[[Ctx, str], dict], sha: str) -> dict:
     """Wrap one leg's runner in the structured idle-retry loop.
 
@@ -1622,12 +1640,24 @@ def run_leg_with_retry(ctx: Ctx, leg: str, runner: Callable[[Ctx, str], dict], s
                             "seconds": round((ended - t0).total_seconds(), 1), "voided": True,
                             **e.readings})
             ctx.log(f"{leg}: attempt {attempts} voided by the nightly deadline")
-            return {"status": "skipped",
-                    "reason": f"nightly deadline {ctx.nightly_deadline:%H:%M} reached at "
-                              f"{iso(ended)}; in-flight attempt {attempts} voided before measurement",
-                    "idle_retry": idle_retry_payload(ctx, attempts, backoffs, history, "deadline")}
+            return _deadline_void_result(ctx, attempts, backoffs, history, ended,
+                                         f"in-flight attempt {attempts} voided before measurement")
         ended = ctx.clock()
         if not is_env_busy_skip(rec):
+            if deadline_reached(ctx):
+                # The wrapper owns the terminal adjudication: an attempt that
+                # returns past the wall is not recorded, whatever it says — its
+                # last blocking IO (a diagnostic fetch, a classification) may
+                # have crossed the wall after the leg's stage guards passed.
+                # The owner accepted voiding a measurement that barely missed
+                # the wall (the risk-1 residue of the M0.2 ruling).
+                history.append({"attempt": attempts, "ended_at": iso(ended),
+                                "seconds": round((ended - t0).total_seconds(), 1), "voided": True,
+                                **{k: rec[k] for k in ("idle_pre", "idle_post") if k in rec}})
+                ctx.log(f"{leg}: attempt {attempts} returned past the nightly deadline; voided")
+                return _deadline_void_result(ctx, attempts, backoffs, history, ended,
+                                             f"attempt {attempts} returned past the wall; "
+                                             f"not recorded")
             if backoffs > 0:
                 rec["idle_retry"] = idle_retry_payload(ctx, attempts, backoffs, history, None)
             return rec
