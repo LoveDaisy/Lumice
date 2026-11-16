@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794838034646,
+  "lastUpdate": 1794838036808,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9620,50 +9620,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "c3372ae22b354c4456f0c52e19980930451b511a",
-          "message": "Merge pull request #497 from LoveDaisy/feat/entry-edit-weight-toggle\n\nfeat(gui): entry bar in Edit Entry — weight and participation toggle in the modal",
-          "timestamp": "2026-10-16T22:18:44+08:00",
-          "tree_id": "1b15038814229189d3747ad68a70aad46c55ed88",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/c3372ae22b354c4456f0c52e19980930451b511a"
-        },
-        "date": 1792160498429,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 84.3,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 100,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 98.9,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 94.8,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "661f6814adafc3ae410096f9f67ed0cbcfe37403",
           "message": "Merge pull request #498 from LoveDaisy/chore/doc-topic-organization\n\ndocs: organize documentation into topic directories",
           "timestamp": "2026-10-17T01:50:13+08:00",
@@ -14003,6 +13959,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 95.1,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "5150ba87256070aa13503b417e35208ec7ad7214",
+          "message": "Merge pull request #604 from LoveDaisy/port/476-release-doc-amendment\n\ndocs(release): retire release branches via cherry-pick ports, not forward-merge",
+          "timestamp": "2026-11-16T22:03:08+08:00",
+          "tree_id": "30c74249e200d758d9dc20737846c06868c889f2",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/5150ba87256070aa13503b417e35208ec7ad7214"
+        },
+        "date": 1794838036226,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 86.1,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 100,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 97.4,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 90,
             "unit": "%"
           }
         ]
