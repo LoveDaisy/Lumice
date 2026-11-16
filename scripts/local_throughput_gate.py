@@ -1303,7 +1303,11 @@ touch "$OUT/build.done"
         # $OUT must expand on the remote: quote everything except that variable.
         argv_s = " ".join(a if "$OUT" in a else shlex.quote(a) for a in argv)
         argv_s = argv_s.replace("--junitxml=$OUT/junit.xml", '--junitxml="$OUT/junit.xml"')
-        remote_budget = max(1, int(timeout_before_deadline(ctx, ctx.args.pytest_timeout)))
+        # GNU timeout takes fractional durations: the remaining wall time keeps
+        # full precision. An int() truncation here would kill the worker before
+        # the wall and let the 124 read as a plain test error; the 1ms floor
+        # never produces the timeout-disabling exact 0.
+        remote_budget = f"{max(0.001, timeout_before_deadline(ctx, ctx.args.pytest_timeout)):.3f}"
         # The worker runs under GNU timeout backgrounded and recorded: timeout
         # makes its own process group (the phase bash's group does not contain
         # it), so the stop interface needs that group's id too — and the budget

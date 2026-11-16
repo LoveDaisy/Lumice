@@ -1321,7 +1321,7 @@ def test_remote_phase_script_records_its_pid_for_the_stop_interface(tmp_path):
     # GNU timeout makes its own process group: the worker group's id is
     # recorded too, so the stop interface can reach the measurement work.
     assert "$OUT/pytest-worker.pid" in script2
-    assert "timeout 10" in script2         # the remote pytest budget is the configured one
+    assert "timeout 10.000" in script2     # the configured budget, at full precision
 
 
 def cuda_remote_doubles(monkeypatch, run_logged_cmds, marker_state, readings):
@@ -1728,4 +1728,102 @@ def test_build_error_before_the_wall_still_stands(tmp_path, monkeypatch):
     monkeypatch.setattr(g, "_run", fake_run)
     rec = g.run_leg_with_retry(ctx, "cuda", g.run_cuda, "sha")
     assert rec["status"] == "error" and "remote build failed (exit 2)" in rec["reason"]
+    assert "idle_retry" not in rec
+
+
+# --- the remote pytest budget keeps the wall's fractional precision --------------
+
+def test_remote_pytest_budget_keeps_fractional_wall_precision(tmp_path):
+    """The remaining wall time reaches the remote worker at full precision: an
+    int() truncation would kill it before the wall and let the 124 read as a
+    plain test error; a sub-millisecond remainder never becomes the
+    timeout-disabling exact 0."""
+    ctx = make_ctx(tmp_path)
+    ctx.args.pytest_timeout = 10.0
+    clock = FakeClock(at(6, 29, 57))
+    ctx.nightly_deadline = clock.now + dt.timedelta(seconds=2.8)
+    ctx.clock, ctx.sleep = clock.clock, clock.sleep
+    assert "timeout 2.800" in g.remote_phase_script(ctx, "pytest", "sha", "r")
+    ctx2 = make_ctx(tmp_path)
+    ctx2.args.pytest_timeout = 1.0        # the worker's own budget is the smaller one
+    assert "timeout 1.000" in g.remote_phase_script(ctx2, "pytest", "sha", "r")
+    clock3 = FakeClock(at(7, 0))
+    ctx3 = make_ctx(tmp_path)
+    ctx3.nightly_deadline = at(6, 30)
+    ctx3.clock, ctx3.sleep = clock3.clock, clock3.sleep
+    assert "timeout 0.001" in g.remote_phase_script(ctx3, "pytest", "sha", "r")
+    assert "timeout 0 " not in g.remote_phase_script(ctx3, "pytest", "sha", "r")
+
+
+def test_remote_worker_killed_at_the_wall_is_voided_not_error(tmp_path, monkeypatch):
+    """The fractional budget kills the worker exactly at the wall: the wait
+    ends there, the stop runs, and the attempt is voided with history — the
+    124 never becomes 'pytest-did-not-finish'."""
+    clock = FakeClock(at(6, 29, 57))
+    deadline = clock.now + dt.timedelta(seconds=2.8)
+    ctx = retry_ctx(tmp_path, clock, deadline=deadline, remote_poll=1.0)
+    readings = iter([idle_r(), idle_r()])
+    run_logged_cmds = []
+
+    def fake_run_logged(ctx_, cmd, log_path, **kw):
+        run_logged_cmds.append(" ".join(str(c) for c in cmd))
+        Path(log_path).touch()
+        return 0
+
+    monkeypatch.setattr(g, "run_logged", fake_run_logged)
+    monkeypatch.setattr(g, "remote_readings", lambda ctx_, *a: next(readings))
+
+    def fake_run(cmd, **kw):
+        if cmd[-1] == "true":
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        if "build.done" in cmd[-1]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="0\n", stderr="")
+        if "pytest.done" in cmd[-1]:
+            # the worker dies exactly at the wall (the fractional budget), not before
+            if clock.now >= deadline:
+                return subprocess.CompletedProcess(cmd, 0, stdout="124\n", stderr="")
+            return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="")
+        return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="")
+
+    monkeypatch.setattr(g, "_run", fake_run)
+    rec = g.run_leg_with_retry(ctx, "cuda", g.run_cuda, "sha")
+    assert clock.now >= deadline            # the wait ended at the wall
+    assert rec["status"] == "skipped" and "deadline" in rec["reason"]
+    assert "did-not-finish" not in rec["reason"] and "pytest_exit" not in rec
+    assert rec["idle_retry"]["terminal"] == "deadline"
+    assert any("kill -- -" in c for c in run_logged_cmds)   # the stop ran
+
+
+def test_remote_pytest_own_budget_expiry_still_classifies_error(tmp_path, monkeypatch):
+    """The red control: when the worker's own budget expires first (the wall is
+    far), the plain timeout error stands — the void is wall-scoped."""
+    clock = FakeClock(at(3, 30))
+    ctx = retry_ctx(tmp_path, clock, deadline=at(6, 30))
+    ctx.args.pytest_timeout = 1.0
+    readings = iter([idle_r(), idle_r(), idle_r(), idle_r()])
+
+    def fake_run_logged(ctx_, cmd, log_path, **kw):
+        Path(log_path).touch()
+        return 0
+
+    monkeypatch.setattr(g, "run_logged", fake_run_logged)
+    monkeypatch.setattr(g, "remote_readings", lambda ctx_, *a: next(readings))
+    pytest_done_fired = [False]
+
+    def fake_run(cmd, **kw):
+        if cmd[-1] == "true":
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        if "build.done" in cmd[-1]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="0\n", stderr="")
+        if "pytest.done" in cmd[-1]:
+            if not pytest_done_fired[0]:
+                pytest_done_fired[0] = True
+                clock.advance(1.5)          # the worker dies of its own 1s budget
+            return subprocess.CompletedProcess(cmd, 0, stdout="124\n", stderr="")
+        return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="")
+
+    monkeypatch.setattr(g, "_run", fake_run)
+    rec = g.run_leg_with_retry(ctx, "cuda", g.run_cuda, "sha")
+    assert clock.now < at(6, 30)            # the wall never came near
+    assert rec["status"] == "error" and "pytest-did-not-finish" in rec["reason"]
     assert "idle_retry" not in rec
