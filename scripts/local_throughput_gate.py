@@ -17,8 +17,9 @@ described below):
       metal: idle pre-check (600 s window) -> build -> cool-down -> idle re-check -> pytest
       gui-real-timing: idle pre-check (600 s window) -> build gui_test (own tree) -> cool-down
              -> idle re-check -> gui_test (real-timing pool, junit export)
-      ubsan : idle pre-check (600 s window) -> configure + build the two probe binaries
-             (own tree, UBSan flags, IPO off) -> instrumentation reference check -> cool-down
+      ubsan : idle pre-check (600 s window) -> own source checkout (linked worktree)
+             -> configure + build the two probe binaries (own tree, UBSan flags, IPO off)
+             -> instrumentation reference check -> cool-down
              -> idle re-check -> drive the two probes' gtest filters directly
       cuda : probe remote -> remote idle pre-check (600 s window) -> sync + build (on remote disk)
              -> cool-down -> idle re-check -> pytest (on remote disk) -> collect
@@ -1396,21 +1397,48 @@ def run_gui_realtiming(ctx: Ctx, sha: str) -> dict:
 
 
 # ---- ubsan leg (local) ------------------------------------------------------
-# The UB-regression leg. Its own tree (like the gui leg's) keeps the sanitizer
-# flags out of every other tree's configuration; the configure-time flags are
-# the whole mechanism — zero tracked build-system diff. The two probe binaries
-# land in the source-anchored output directory, whose file names no other gate
-# leg writes (metal: Lumice; gui: gui_test), and their dependency closure's
-# archives (gtest, glad) overlap only with the gui tree's — same-name archives
-# whose contents differ only in instrumentation, tolerated by both consumers
-# (see the leg's doc section for the audited write-set).
-def ubsan_probe_binary(repo: Path, bin_name: str) -> Path:
+# The UB-regression leg. Its flags are configure-time only — zero tracked
+# build-system diff — and its SOURCE is a linked worktree of the gate clone,
+# because the build's output directories anchor on CMAKE_SOURCE_DIR: building
+# the sanitizer variant from the gate's main checkout would write its
+# instrumented dependency archives (GLFW, nfd — the composition probe's
+# transitive GUI dependencies) into the very build/<type>/<flavor>/lib the
+# gui leg links from, and the next night's gui build would read those fresher
+# archives as its own up-to-date inputs and fail to link plain. A second
+# checkout root gives the whole anchored namespace its own directory tree —
+# every artifact lands where no other leg reads — without a per-file
+# enumeration that rots when a dependency joins the closure.
+
+
+def ubsan_source_checkout(ctx: Ctx, sha: str) -> Optional[str]:
+    """Create or refresh the leg's own source checkout; None, or the failure.
+
+    The checkout is a linked worktree of the gate clone (shared object store,
+    so a new sha costs only a checkout). A detached worktree is force-checked
+    out to the commit under test every night — the same operation
+    prepare_checkout runs on the main clone."""
+    repo = local_repo(ctx)
+    checkout = Path(ctx.args.work_dir).expanduser() / "repo-ubsan"
+    if (checkout / ".git").exists():
+        p = _run(["git", "-C", str(checkout), "checkout", "--quiet", "--detach",
+                  "--force", sha], env=clean_env({}))
+        if p.returncode != 0:
+            return f"git checkout {sha} in {checkout.name} failed: {p.stderr[-300:]}"
+        return None
+    p = _run(["git", "-C", str(repo), "worktree", "add", "--detach",
+              str(checkout), sha], env=clean_env({}))
+    if p.returncode != 0:
+        return f"git worktree add for the ubsan checkout failed: {p.stderr[-300:]}"
+    return None
+
+
+def ubsan_probe_binary(checkout: Path, bin_name: str) -> Path:
     # Same source-anchored output directory as gui_test_binary: the binary
     # lands here regardless of the -B tree.
-    return repo / "build" / "release" / "static" / "bin" / bin_name
+    return checkout / "build" / "release" / "static" / "bin" / bin_name
 
 
-def ubsan_probe_instrumentation(ctx: Ctx, repo: Path) -> Dict[str, str]:
+def ubsan_probe_instrumentation(ctx: Ctx, checkout: Path) -> Dict[str, str]:
     """Per-probe failure detail (empty dict = every probe instrumented).
 
     Plain ``nm``, undefined symbols included: the macOS shape is an undefined
@@ -1422,7 +1450,7 @@ def ubsan_probe_instrumentation(ctx: Ctx, repo: Path) -> Dict[str, str]:
     """
     out: Dict[str, str] = {}
     for bin_name in UBSAN_PROBE_FILTERS:
-        path = ubsan_probe_binary(repo, bin_name)
+        path = ubsan_probe_binary(checkout, bin_name)
         ctx.log(f"$ nm {path}")
         if ctx.args.dry_run:
             continue
@@ -1446,28 +1474,36 @@ def run_ubsan(ctx: Ctx, sha: str) -> dict:
     if not ok:
         return {**rec, **busy_skip("pre-check", reasons)}
     repo = local_repo(ctx)
-    build_dir = repo / UBSAN_BUILD_TREE
+    if not (ctx.args.dry_run and not (repo / ".git").is_dir()):
+        # Source prep that failed at the run level never reaches a leg; the
+        # one shape that reaches this line without a clone is the dry-run
+        # that skipped source prep, which fakes every build stage anyway.
+        err = ubsan_source_checkout(ctx, sha)
+        if err:
+            return {**rec, "status": "error", "reason": f"source: {err}"}
+    checkout = Path(ctx.args.work_dir).expanduser() / "repo-ubsan"
+    build_dir = checkout / UBSAN_BUILD_TREE
     t0 = time.monotonic()
-    rc = run_logged(ctx, ["cmake", "-S", str(repo), "-B", str(build_dir), "-G", "Ninja",
+    rc = run_logged(ctx, ["cmake", "-S", str(checkout), "-B", str(build_dir), "-G", "Ninja",
                           "-DCMAKE_BUILD_TYPE=Release", "-DBUILD_TEST=ON", "-DBUILD_GUI=ON",
                           "-DBUILD_BENCH=OFF", "-DBUILD_SHARED_LIBS=OFF",
                           "-DLUMICE_IPO=OFF",
                           f"-DCMAKE_C_FLAGS={UBSAN_C_FLAGS}",
                           f"-DCMAKE_CXX_FLAGS={UBSAN_C_FLAGS}",
                           f"-DCMAKE_EXE_LINKER_FLAGS={UBSAN_LINK_FLAGS}"],
-                    ctx.run_dir / "ubsan-configure.log", cwd=repo, env=clean_env({}),
+                    ctx.run_dir / "ubsan-configure.log", cwd=checkout, env=clean_env({}),
                     timeout=timeout_before_deadline(ctx, None))
     if rc == 0:
         rc = run_logged(ctx, ["cmake", "--build", str(build_dir), "--target",
                               *UBSAN_PROBE_FILTERS],
-                        ctx.run_dir / "ubsan-build.log", cwd=repo, env=clean_env({}),
+                        ctx.run_dir / "ubsan-build.log", cwd=checkout, env=clean_env({}),
                         timeout=timeout_before_deadline(ctx, None))
     rec["build_seconds"] = round(time.monotonic() - t0, 1)
     guard_deadline(ctx, rec, ctx.nightly_deadline)
     if rc != 0:
         return {**rec, "status": "error",
                 "reason": f"ubsan build failed (exit {rc}), see ubsan-build.log"}
-    inst = ubsan_probe_instrumentation(ctx, repo)
+    inst = ubsan_probe_instrumentation(ctx, checkout)
     if inst:
         detail = "; ".join(f"{b}: {d}" for b, d in inst.items())
         return {**rec, "status": "error", "reason": f"instrumentation missing ({detail})"}
@@ -1479,19 +1515,23 @@ def run_ubsan(ctx: Ctx, sha: str) -> dict:
     probe_results: Dict[str, dict] = {}
     for bin_name, spec in UBSAN_PROBE_FILTERS.items():
         probe_log = ctx.run_dir / f"ubsan-{bin_name}.log"
-        rc = run_logged(ctx, [str(ubsan_probe_binary(repo, bin_name)),
+        rc = run_logged(ctx, [str(ubsan_probe_binary(checkout, bin_name)),
                               f"--gtest_filter={spec['filter']}"],
-                        probe_log, cwd=repo,
+                        probe_log, cwd=checkout,
                         env=clean_env({"UBSAN_OPTIONS": UBSAN_OPTIONS}),
                         timeout=timeout_before_deadline(ctx, ctx.args.pytest_timeout))
         guard_deadline(ctx, rec, ctx.nightly_deadline)
         log_text = probe_log.read_text(errors="replace") if probe_log.is_file() else ""
         status, reason = classify_ubsan_probe(rc, log_text, spec["expected"])
         diagnostics, first_line, first_location = ubsan_diagnostic_stats(log_text)
-        if first_location.startswith(str(repo) + "/"):
+        if first_location.startswith(str(checkout) + "/"):
             # UBSan prints the compile-time path; the issue body shows repo
-            # symbols only, so the local clone prefix comes off here.
-            first_location = first_location[len(str(repo)) + 1:]
+            # symbols only. Out-of-repo locations (a dependency cache header)
+            # cannot be named without publishing a local path, so they stay in
+            # the local record — the line below keeps the full evidence.
+            first_location = first_location[len(str(checkout)) + 1:]
+        else:
+            first_location = ""
         probe_results[bin_name] = {
             "status": status, "reason": reason, "exit": rc, "diagnostics": diagnostics,
             "first_diagnostic_line": first_line,

@@ -619,8 +619,13 @@ pool, so any marker here is a new sample by definition. `ISSUE_KINDS` gains that
 titles `[throughput-gate] gui-real-timing sigill`; a fail-with-sigill comments the sigill thread,
 not the fail thread, and a real `pass` closes all four kinds.
 
-**Classifying the ubsan leg.** The UB-regression leg builds a UBSan variant of the engine in its
-own tree of the gate clone (`build/cmake_build/static-gate-ubsan`): sanitizer flags on every TU
+**Classifying the ubsan leg.** The UB-regression leg builds a UBSan variant of the engine from
+its **own source checkout** — a linked worktree of the gate clone — so the build's
+source-anchored output directories (including the dependency archives the gui leg links from)
+are never written by this leg: a sanitizer build from the shared checkout would leave
+instrumented copies of those archives where the next night's gui build reads them as its own
+up-to-date inputs, and the gui leg would fail to link plain. In that checkout it configures its
+own tree (`build/cmake_build/static-gate-ubsan`): sanitizer flags on every TU
 (`-fsanitize=undefined -fno-omit-frame-pointer -gline-tables-only`, linker
 `-fsanitize=undefined`) plus `LUMICE_IPO=OFF` — the 2026-11-16 sanitizer campaign's as-built
 recipe, applied as configure-time flags so the tracked build system carries zero diff, and IPO

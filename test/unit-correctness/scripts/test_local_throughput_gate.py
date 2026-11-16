@@ -852,14 +852,21 @@ def test_ubsan_leg_skips_fast_when_build_tools_missing(tmp_path, monkeypatch):
 
 
 def test_ubsan_leg_reaches_configure_build_and_probe_boundaries(tmp_path, monkeypatch):
-    """Tools present: the leg runs configure -> build both probe targets ->
+    """Tools present: the leg preps its own source checkout (a linked worktree
+    of the gate clone), then runs configure -> build both probe targets ->
     instrumentation reference check -> drive both probes with their filters,
     to the boundaries where the doubles stop it."""
     ctx = make_ctx(tmp_path)
-    calls, envs = [], []
+    calls, envs, run_cmds = [], [], []
+    checkout = Path(ctx.args.work_dir) / "repo-ubsan"
     metal_tools(monkeypatch)
     monkeypatch.setattr(g, "collect_readings", lambda with_wsl_host: idle_r())
-    monkeypatch.setattr(g, "_run", instrumented_nm)
+
+    def fake_run(cmd, **kw):
+        run_cmds.append(list(cmd))
+        return instrumented_nm(cmd, **kw)
+
+    monkeypatch.setattr(g, "_run", fake_run)
 
     def fake_run_logged(ctx_, cmd, log_path, **kw):
         calls.append(list(cmd))
@@ -873,20 +880,24 @@ def test_ubsan_leg_reaches_configure_build_and_probe_boundaries(tmp_path, monkey
 
     monkeypatch.setattr(g, "run_logged", fake_run_logged)
     rec = g.run_ubsan(ctx, "sha")
+    worktrees = [c for c in run_cmds if c[:3] == ["git", "-C", str(Path(ctx.args.work_dir) / "repo")]]
+    assert len(worktrees) == 1 and worktrees[0][3:5] == ["worktree", "add"] \
+        and worktrees[0][6] == str(checkout)
     conf = [c for c in calls if c[:2] == ["cmake", "-S"]]
     builds = [c for c in calls if c[:2] == ["cmake", "--build"]]
     probes = [c for c in calls if Path(c[0]).name in g.UBSAN_PROBE_FILTERS]
-    assert len(conf) == 1
+    assert len(conf) == 1 and conf[0][2] == str(checkout)
     assert "-DLUMICE_IPO=OFF" in conf[0] and "-DBUILD_GUI=ON" in conf[0]
     assert any(a.startswith("-DCMAKE_C_FLAGS=") and "-fsanitize=undefined" in a
                and "-gline-tables-only" in a for a in conf[0])
     assert any(a.startswith("-DCMAKE_CXX_FLAGS=") and "-fsanitize=undefined" in a for a in conf[0])
     assert any(a.startswith("-DCMAKE_EXE_LINKER_FLAGS=") and "-fsanitize=undefined" in a
                for a in conf[0])
-    assert len(builds) == 1 and builds[0][2].endswith("build/cmake_build/static-gate-ubsan")
+    assert len(builds) == 1 and builds[0][2] == str(checkout / g.UBSAN_BUILD_TREE)
     assert "--target" in builds[0] and "unit_correctness_test" in builds[0] \
         and "composition_correctness_test" in builds[0]
     assert len(probes) == 2
+    assert all(str(checkout / "build" / "release" / "static" / "bin") in p[0] for p in probes)
     probe_envs = [e for e, c in zip(envs, calls) if Path(c[0]).name in g.UBSAN_PROBE_FILTERS]
     assert all(e.get("UBSAN_OPTIONS") == "print_stacktrace=1" for e in probe_envs)
     assert all(any(a.startswith("--gtest_filter=") for a in p) for p in probes)
@@ -898,10 +909,34 @@ def test_ubsan_leg_reaches_configure_build_and_probe_boundaries(tmp_path, monkey
     assert (tmp_path / "ubsan-configure.log").exists() and (tmp_path / "ubsan-build.log").exists()
 
 
+def test_ubsan_leg_prep_failure_is_a_source_error(tmp_path, monkeypatch):
+    """The checkout is the leg's own source prep: a failed worktree add is the
+    run-level source-error shape, terminal for the leg (not a busy skip)."""
+    ctx = make_ctx(tmp_path)
+    metal_tools(monkeypatch)
+    monkeypatch.setattr(g, "collect_readings", lambda with_wsl_host: idle_r())
+
+    def failing_git(cmd, **kw):
+        if cmd[0] == "git":
+            return subprocess.CompletedProcess(cmd, 128, stdout="", stderr="fatal: not a git repo")
+        return subprocess.CompletedProcess(cmd, 0,
+                                           stdout="                 U ___ubsan_handle_add_overflow\n",
+                                           stderr="")
+
+    monkeypatch.setattr(g, "_run", failing_git)
+    monkeypatch.setattr(g, "run_logged", touch_zero_run_logged)
+    rec = g.run_ubsan(ctx, "sha")
+    assert rec["status"] == "error"
+    assert rec["reason"].startswith("source: git worktree add for the ubsan checkout failed")
+    assert g.public_reason(rec["reason"]) == "source"
+    assert "env_rejected" not in rec and "probe_results" not in rec
+
+
 def test_ubsan_leg_build_failure_is_an_error(tmp_path, monkeypatch):
     ctx = make_ctx(tmp_path)
     metal_tools(monkeypatch)
     monkeypatch.setattr(g, "collect_readings", lambda with_wsl_host: idle_r())
+    monkeypatch.setattr(g, "_run", instrumented_nm)   # the checkout prep must succeed
 
     def fake_run_logged(ctx_, cmd, log_path, **kw):
         Path(log_path).touch()
@@ -925,6 +960,8 @@ def test_ubsan_leg_instrumentation_missing_is_an_error(tmp_path, monkeypatch):
     monkeypatch.setattr(g, "run_logged", touch_zero_run_logged)
 
     def plain_nm(cmd, **kw):
+        if cmd[0] == "git":
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
         return subprocess.CompletedProcess(cmd, 0, stdout="0000000000000000 T _main\n", stderr="")
 
     monkeypatch.setattr(g, "_run", plain_nm)
@@ -935,6 +972,8 @@ def test_ubsan_leg_instrumentation_missing_is_an_error(tmp_path, monkeypatch):
     assert "probe_results" not in rec
 
     def broken_nm(cmd, **kw):
+        if cmd[0] == "git":
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
         return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="no such file")
 
     monkeypatch.setattr(g, "_run", broken_nm)
@@ -981,20 +1020,21 @@ def test_ubsan_leg_dry_run_skips_before_classification(tmp_path, monkeypatch):
 
 
 def test_ubsan_leg_strips_the_repo_prefix_from_the_diagnostic_location(tmp_path, monkeypatch):
-    """UBSan prints the compile-time path (the clone's absolute location); the
-    record's location is repo-relative so the issue body names a repo symbol,
-    never a local path. The full line stays in the local record unchanged."""
+    """UBSan prints the compile-time path (the checkout's absolute location);
+    the record's location is repo-relative so the issue body names a repo
+    symbol, never a local path. The full line stays in the local record
+    unchanged."""
     ctx = make_ctx(tmp_path)
     metal_tools(monkeypatch)
     monkeypatch.setattr(g, "collect_readings", lambda with_wsl_host: idle_r())
     monkeypatch.setattr(g, "_run", instrumented_nm)
-    clone = Path(ctx.args.work_dir) / "repo"
+    checkout = Path(ctx.args.work_dir) / "repo-ubsan"
 
     def fake_run_logged(ctx_, cmd, log_path, **kw):
         exe = Path(cmd[0]).name
         if exe == "unit_correctness_test":
             Path(log_path).write_text(
-                ubsan_log(UBSAN_UNIT_CASE, diagnostic=f"{clone}/src/core/shared/projection_shared.h:382:17: "
+                ubsan_log(UBSAN_UNIT_CASE, diagnostic=f"{checkout}/src/core/shared/projection_shared.h:382:17: "
                                                           "runtime error: value 6.4e+10 outside int range\n"))
         elif exe in g.UBSAN_PROBE_FILTERS:
             Path(log_path).write_text(ubsan_log(*g.UBSAN_PROBE_FILTERS[exe]["expected"]))
@@ -1007,10 +1047,44 @@ def test_ubsan_leg_strips_the_repo_prefix_from_the_diagnostic_location(tmp_path,
     pr = rec["probe_results"]["unit_correctness_test"]
     assert pr["first_diagnostic_location"] == "src/core/shared/projection_shared.h:382"
     assert "/private/var" not in pr["first_diagnostic_location"]
-    assert pr["first_diagnostic_line"].startswith(str(clone))   # full text stays local
+    assert pr["first_diagnostic_line"].startswith(str(checkout))   # full text stays local
     body = g.issue_body("ubsan", rec, None)
     assert "src/core/shared/projection_shared.h:382" in body
     assert "/private/var" not in body
+
+
+def test_ubsan_leg_out_of_repo_diagnostic_location_stays_local(tmp_path, monkeypatch):
+    """A diagnostic in a dependency cache header (CPM fetches outside the
+    checkout) has no repo-relative name: publishing it would put a local path
+    in the automatic issue, so the location is withheld from the public body
+    and only the full local record keeps it."""
+    ctx = make_ctx(tmp_path)
+    metal_tools(monkeypatch)
+    monkeypatch.setattr(g, "collect_readings", lambda with_wsl_host: idle_r())
+    monkeypatch.setattr(g, "_run", instrumented_nm)
+
+    def fake_run_logged(ctx_, cmd, log_path, **kw):
+        exe = Path(cmd[0]).name
+        if exe == "unit_correctness_test":
+            Path(log_path).write_text(
+                ubsan_log(UBSAN_UNIT_CASE, diagnostic="/Users/example/.cache/lumice-cpm/imgui/"
+                                                     "hash/imgui.h:321:9: runtime error: "
+                                                     "signed integer overflow\n"))
+        elif exe in g.UBSAN_PROBE_FILTERS:
+            Path(log_path).write_text(ubsan_log(*g.UBSAN_PROBE_FILTERS[exe]["expected"]))
+        else:
+            Path(log_path).touch()
+        return 0
+
+    monkeypatch.setattr(g, "run_logged", fake_run_logged)
+    rec = g.run_ubsan(ctx, "sha")
+    pr = rec["probe_results"]["unit_correctness_test"]
+    assert pr["status"] == "fail" and pr["diagnostics"] == 1
+    assert pr["first_diagnostic_location"] == ""
+    assert pr["first_diagnostic_line"].startswith("/Users/")    # full text stays local
+    body = g.issue_body("ubsan", rec, None)
+    assert "/Users/" not in body and "First diagnostic at:" not in body
+    assert "lumice-cpm" not in body
 
 
 @pytest.mark.parametrize("reason,category", [
