@@ -266,6 +266,42 @@ void FilterTo(ImGuiTestContext* ctx, const char* text) {
   ctx->Yield(3);
 }
 
+// Read the live tooltip rather than an item label: TextV submits an id-zero item, but ImGui's
+// rendered-text log retains its full formatted text. The log is stopped before any assertion.
+ImGuiWindow* ActiveTooltip() {
+  for (ImGuiWindow* window : GImGui->Windows) {
+    if ((window->Flags & ImGuiWindowFlags_Tooltip) && window->Active && !window->Hidden &&
+        window->LastFrameActive == GImGui->FrameCount) {
+      return window;
+    }
+  }
+  return nullptr;
+}
+
+bool ObserveSettingsTooltip(ImGuiTestContext* ctx, ImGuiTestRef ref, const char* expected) {
+  ImGuiWindow* settings = ImGui::FindWindowByName(gui::kDefaultsPanelTitle);
+  IM_CHECK_RETV(settings != nullptr, false);
+  ctx->MouseMoveToPos(ImVec2(settings->Pos.x + gui::UiPx(20.0f), settings->Pos.y + gui::UiPx(10.0f)));
+  ctx->Yield(3);
+  IM_CHECK_RETV(ActiveTooltip() == nullptr, false);
+  ctx->MouseMove(ref);
+  ctx->Yield(3);
+  ImGui::LogToBuffer(0);
+  // Between-frame logging would otherwise finish at End() of the implicit fallback window,
+  // clearing the buffer before the test coroutine can read it.
+  GImGui->LogWindow = nullptr;
+  ctx->Yield();
+  const std::string rendered = GImGui->LogBuffer.c_str();
+  ImGui::LogFinish();
+  ImGuiWindow* tooltip = ActiveTooltip();
+  IM_CHECK_RETV(tooltip != nullptr, false);
+  IM_CHECK_RETV(rendered.find(expected) != std::string::npos, false);
+  ctx->LogInfo("Settings tooltip: scale=%.2f window=%.1fx%.1f content=%.1fx%.1f font=%.1f text=%s",
+               gui::CurrentUiScale(), tooltip->Size.x, tooltip->Size.y, tooltip->ContentSize.x, tooltip->ContentSize.y,
+               ImGui::GetFontSize(), expected);
+  return true;
+}
+
 // Whether a row's checkbox is ticked, asked of the REAL widget rather than of the panel's internal
 // set (which is TU-private, and which a panel could keep correct while rendering something else).
 // The row must be on screen — narrow with FilterTo first.
@@ -1493,6 +1529,27 @@ void RegisterDefaultsPanelTests(ImGuiTestEngine* engine) {
       // on close, while the process-wide visual language is already back at the reference basis.
       // The guard hands the shared GLFW window back to the next case, so later pool cases
       // inherit neither this preset nor its ratio-resized geometry.
+    };
+  }
+
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "defaults_panel", "long_tooltips_wrap_without_changing_their_text");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ScopedPanel panel(ctx, "panel_tooltip_wrap");
+      panel.OpenOn(gui::DefaultsPanelSection::kSettings);
+      IM_CHECK(ObserveSettingsTooltip(
+          ctx, "**/###defaults_app_use_gpu",
+          "Whether a NEW document starts with GPU simulation selected. This is the stored preference, "
+          "not the Use GPU switch in the main window — changing it here does not touch the current "
+          "document, and it takes effect on the next new document. The GPU falls back to the CPU on a "
+          "machine that has none."));
+      const std::string scale_ref = std::string(gui::kDefaultsPanelTitle) + "/###defaults_app_ui_scale";
+      IM_CHECK(ObserveSettingsTooltip(
+          ctx, scale_ref.c_str(),
+          "How much larger than the display's own scaling the whole interface is drawn — text, "
+          "controls and panels alike. Applies to this window immediately; Save keeps it for every "
+          "later start. The display's scaling (Windows 125%, Retina) is detected on its own and is "
+          "not part of this number."));
     };
   }
 
