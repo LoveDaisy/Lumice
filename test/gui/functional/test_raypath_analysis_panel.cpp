@@ -11021,7 +11021,11 @@ bool CheckMapQualityText(ImGuiTestContext* ctx, const std::string& stem) {
   ctx->MouseMove("**/Retry###map_quality");
   ctx->Yield(3);
   const std::string retry_text = CaptureMapFrameText(ctx);
-  IM_CHECK_RETV(retry_text.find("Retry the current full-sky request") != std::string::npos, false);
+  // The disposition ledger's Cancel/Retry row: the idle tier draws the disabled button alone
+  // and carries its explanation in the tooltip — "Observation never recomputes…". The retry
+  // tier's own sentence is the cancelled/errored state's, unreachable in this freshly adopted
+  // map; the two tiers' sentences share their tail, so the head is the discriminating pin.
+  IM_CHECK_RETV(retry_text.find("Observation never recomputes") != std::string::npos, false);
   IM_CHECK_RETV(save_tooltip("_retry.png"), false);
   IM_CHECK_RETV(map.adopted_result == reference, false);
   // Leave the fold as we found it: the report child's storage outlives this helper, and a
