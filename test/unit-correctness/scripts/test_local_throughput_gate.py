@@ -543,9 +543,16 @@ def test_metal_build_tools_found_resolves_from_path(monkeypatch):
 
 
 def make_ctx(tmp_path):
-    """A minimal Ctx for run_metal tests: a quiet machine lives behind the doubles."""
+    """A minimal Ctx for leg tests: a quiet machine lives behind the doubles.
+    Carries the full argparse surface the three legs may read (retry params
+    included) so any leg can run under it; no deadline is set, so the
+    deadline guards stay inert."""
     args = argparse.Namespace(dry_run=False, cooldown_timeout=0.0, cooldown_poll=0.0,
                               threshold_override=None, pytest_timeout=10,
+                              idle_retry_backoff_seconds=3600.0, idle_retry_max_backoffs=2,
+                              remote="remote-host", remote_dir="gate", ssh_connect_timeout=5,
+                              remote_build_timeout=99.0, remote_poll=0.0,
+                              cpm_cache=str(tmp_path / "cpm"),
                               work_dir=str(tmp_path / "work"))
     return g.Ctx(args=args, run_id="t", run_dir=tmp_path, log=lambda msg: None,
                  thresholds=g.IdleThresholds(), synthetic=False)
@@ -715,3 +722,505 @@ def test_gui_leg_reaches_configure_build_and_drive_boundaries(tmp_path, monkeypa
     assert rec["status"] == "error" and "no-junit" in rec["reason"]
     assert (tmp_path / "gui-configure.log").exists() and (tmp_path / "gui-build.log").exists() \
         and (tmp_path / "gui-test.log").exists()
+
+
+# --- leg-level retry loop (busy -> backoff -> retry; the deadline wall) ---------
+# The loop runs on injectable clock/sleep seams, so no test here ever really
+# sleeps. The idle windows keep their real implementation: the window-timing
+# tests below drive the actual wait_idle loop with tiny real budgets.
+
+BUSY_REASON = "busy (pre-check): load 9.00/8 cores = 1.125 >= 0.5"
+RECHECK_BUSY_REASON = "busy (post-build re-check): load 9.00/8 cores = 1.125 >= 0.5"
+
+
+def busy_r():
+    return g.Readings(load1=9.0, physical_cores=8)
+
+
+def idle_r():
+    return g.Readings(load1=0.0, physical_cores=8)
+
+
+def metal_tools(monkeypatch):
+    monkeypatch.setattr(g, "metal_build_tools_found",
+                        lambda: {"cmake": "/opt/hb/bin/cmake", "ninja": "/opt/hb/bin/ninja"})
+
+
+def touch_zero_run_logged(ctx_, cmd, log_path, **kw):
+    Path(log_path).touch()               # run_logged always creates the log file
+    return 0
+
+
+def at(hour, minute):
+    """A local wall-clock time on today's date — the same date
+    resolve_nightly_deadline picks, so test clocks and the code compare like with like."""
+    return dt.datetime.combine(dt.date.today(), dt.time(hour, minute))
+
+
+class FakeClock:
+    """The clock/sleep seam the retry loop and the deadline wall run on.
+    sleep() advances the clock and records every nonzero sleep."""
+
+    def __init__(self, start):
+        self.now = start
+        self.slept = []
+
+    def clock(self):
+        return self.now
+
+    def sleep(self, seconds):
+        if seconds:
+            self.slept.append(seconds)
+            self.now += dt.timedelta(seconds=seconds)
+
+    def advance(self, seconds):
+        self.now += dt.timedelta(seconds=seconds)
+
+
+def retry_ctx(tmp_path, clock, deadline=None, max_backoffs=2, backoff_seconds=3600.0,
+              cooldown_timeout=0.0, cooldown_poll=0.0):
+    """A Ctx for retry-loop tests: fake clock/sleep seams, deadline opt-in,
+    zero-length idle windows (the window's own timing has its own tests)."""
+    args = argparse.Namespace(dry_run=False, cooldown_timeout=cooldown_timeout,
+                              cooldown_poll=cooldown_poll,
+                              threshold_override=None, pytest_timeout=10,
+                              idle_retry_backoff_seconds=backoff_seconds,
+                              idle_retry_max_backoffs=max_backoffs,
+                              remote="remote-host", remote_dir="gate", ssh_connect_timeout=5,
+                              remote_build_timeout=99.0, remote_poll=0.0,
+                              cpm_cache=str(tmp_path / "cpm"), work_dir=str(tmp_path / "work"))
+    return g.Ctx(args=args, run_id="t", run_dir=tmp_path, log=lambda msg: None,
+                 thresholds=g.IdleThresholds(), synthetic=False,
+                 nightly_deadline=deadline, clock=clock.clock, sleep=clock.sleep)
+
+
+def test_retry_budget_exhaustion_payload(tmp_path, monkeypatch):
+    """AC1/AC3: busy through every window -> terminal skip with the full spent
+    budget, the configured backoffs actually slept, and the rejected attempts
+    in history (the terminal attempt itself is the record, not a history row)."""
+    clock = FakeClock(at(3, 30))
+    ctx = retry_ctx(tmp_path, clock)
+    metal_tools(monkeypatch)
+    monkeypatch.setattr(g, "collect_readings", lambda with_wsl_host: busy_r())
+    rec = g.run_leg_with_retry(ctx, "metal", g.run_metal, "sha")
+    assert rec["status"] == "skipped"
+    assert rec["reason"] == BUSY_REASON
+    assert rec["env_rejected"] is True
+    ir = rec["idle_retry"]
+    assert ir["attempts"] == 3 and ir["backoffs"] == 2
+    assert ir["backoff_seconds"] == 3600.0 and ir["terminal"] == "max_backoffs"
+    assert clock.slept == [3600.0, 3600.0]
+    assert [h["attempt"] for h in ir["history"]] == [1, 2]
+    assert all(h["reason"].startswith("busy (pre-check):") for h in ir["history"])
+    # staleness semantics untouched: the terminal state is still a skip
+    assert not g.refreshes_last_real_run(rec["status"], False)
+
+
+def test_zero_backoff_budget_exhausts_on_the_first_busy_attempt(tmp_path, monkeypatch):
+    """max_backoffs=0: one busy attempt IS the budget — attempts=1, backoffs=0,
+    terminal=max_backoffs, empty history; the controller forced the end even
+    though nothing was slept."""
+    ctx = retry_ctx(tmp_path, FakeClock(at(3, 30)), max_backoffs=0)
+    metal_tools(monkeypatch)
+    monkeypatch.setattr(g, "collect_readings", lambda with_wsl_host: busy_r())
+    rec = g.run_leg_with_retry(ctx, "metal", g.run_metal, "sha")
+    assert rec["idle_retry"] == {"attempts": 1, "backoffs": 0, "backoff_seconds": 3600.0,
+                                 "terminal": "max_backoffs", "history": []}
+
+
+def test_recovery_within_budget_carries_history_without_terminal(tmp_path, monkeypatch):
+    """busy twice, then the machine frees up: the third attempt measures. The
+    pass record carries the retry history ('busy at 03:30, measured at 04:31'
+    stays visible) but no terminal — its status already says what happened."""
+    ctx = retry_ctx(tmp_path, FakeClock(at(3, 30)))
+    metal_tools(monkeypatch)
+    (ctx.run_dir / "metal-junit.xml").write_text(junit("passed"))
+    seq = iter([busy_r(), busy_r(), idle_r(), idle_r(), idle_r()])
+    monkeypatch.setattr(g, "collect_readings", lambda with_wsl_host: next(seq))
+    monkeypatch.setattr(g, "run_logged", touch_zero_run_logged)
+    rec = g.run_leg_with_retry(ctx, "metal", g.run_metal, "sha")
+    assert rec["status"] == "pass"
+    ir = rec["idle_retry"]
+    assert ir["attempts"] == 3 and ir["backoffs"] == 2
+    assert "terminal" not in ir
+    assert [h["attempt"] for h in ir["history"]] == [1, 2]
+
+
+def test_busy_then_fail_keeps_the_verdict_and_the_history(tmp_path, monkeypatch):
+    """One backoff, then a functional red: the fail verdict stands (a red is a
+    measurement, not an environment state) and the history rides along, still
+    without a terminal."""
+    ctx = retry_ctx(tmp_path, FakeClock(at(3, 30)))
+    metal_tools(monkeypatch)
+    (ctx.run_dir / "metal-junit.xml").write_text(junit("failure", message="dual-renderer throughput 0.80x"))
+    seq = iter([busy_r(), idle_r(), idle_r(), idle_r()])
+    monkeypatch.setattr(g, "collect_readings", lambda with_wsl_host: next(seq))
+
+    def pytest_exit_one(ctx_, cmd, log_path, **kw):
+        Path(log_path).touch()
+        return 0 if cmd[0] == "./scripts/build.sh" else 1   # build ok, gate red
+
+    monkeypatch.setattr(g, "run_logged", pytest_exit_one)
+    rec = g.run_leg_with_retry(ctx, "metal", g.run_metal, "sha")
+    assert rec["status"] == "fail"
+    ir = rec["idle_retry"]
+    assert ir["attempts"] == 2 and ir["backoffs"] == 1 and "terminal" not in ir
+
+
+@pytest.mark.parametrize("attempt", [
+    {"status": "fail", "reason": "functional red: some_case"},
+    {"status": "error", "reason": "build failed (exit 1), see metal-build.log"},
+    {"status": "inconclusive", "reason": "budget red: maximum_frozen_map_input_to_present"},
+    {"status": "skipped", "reason": "unreachable (ssh exit 255)"},
+])
+def test_only_environment_busy_triggers_a_retry(attempt, tmp_path):
+    """AC2: a red is a measurement, not an environment state — none of the four
+    shapes retries, and a first-attempt return carries no idle_retry at all."""
+    calls = []
+
+    def runner(ctx, sha):
+        calls.append(1)
+        return dict(attempt)
+
+    out = g.run_leg_with_retry(retry_ctx(tmp_path, FakeClock(at(3, 30))), "metal", runner, "sha")
+    assert len(calls) == 1 and out == attempt
+    assert "idle_retry" not in out
+
+
+def test_history_entries_carry_per_attempt_snapshots(tmp_path, monkeypatch):
+    """AC3 payload shape: a re-check busy attempt keeps pre+post readings, a
+    pre-check busy attempt only pre; every entry carries its index, end time
+    and duration."""
+    ctx = retry_ctx(tmp_path, FakeClock(at(3, 30)))
+    metal_tools(monkeypatch)
+    # attempt 1: pre idle, build, re-check busy; attempts 2-3: pre-check busy
+    seq = iter([idle_r(), busy_r(), busy_r(), busy_r()])
+    monkeypatch.setattr(g, "collect_readings", lambda with_wsl_host: next(seq))
+    monkeypatch.setattr(g, "run_logged", touch_zero_run_logged)
+    rec = g.run_leg_with_retry(ctx, "metal", g.run_metal, "sha")
+    ir = rec["idle_retry"]
+    assert ir["attempts"] == 3 and ir["backoffs"] == 2 and ir["terminal"] == "max_backoffs"
+    h1, h2 = ir["history"]
+    assert h1["attempt"] == 1 and h1["reason"].startswith("busy (post-build re-check):")
+    assert "idle_pre" in h1 and "idle_post" in h1
+    assert h2["attempt"] == 2 and h2["reason"].startswith("busy (pre-check):")
+    assert "idle_pre" in h2 and "idle_post" not in h2
+    for h in (h1, h2):
+        assert {"attempt", "ended_at", "seconds", "reason"} <= set(h)
+
+
+def test_window_recovery_continues_the_attempt_without_a_backoff(tmp_path, monkeypatch):
+    """The real wait_idle window on a tiny real budget: busy readings inside
+    the window do not consume the attempt — the machine freeing up mid-window
+    goes straight on to build and measure, with zero backoff calls."""
+    clock = FakeClock(at(3, 30))
+    ctx = retry_ctx(tmp_path, clock, cooldown_timeout=5.0, cooldown_poll=0.0)
+    metal_tools(monkeypatch)
+    (ctx.run_dir / "metal-junit.xml").write_text(junit("passed"))
+    seq = iter([busy_r(), busy_r(), idle_r(), idle_r(), idle_r()])
+    monkeypatch.setattr(g, "collect_readings", lambda with_wsl_host: next(seq))
+    monkeypatch.setattr(g, "run_logged", touch_zero_run_logged)
+    rec = g.run_leg_with_retry(ctx, "metal", g.run_metal, "sha")
+    assert rec["status"] == "pass"
+    assert "idle_retry" not in rec      # zero backoffs -> no payload at all
+    assert clock.slept == []
+
+
+def test_window_exhaustion_costs_one_configured_backoff(tmp_path, monkeypatch):
+    """Busy through the whole window: the attempt ends busy only when the
+    window budget is out, and the backoff that follows is the configured one."""
+    clock = FakeClock(at(3, 30))
+    ctx = retry_ctx(tmp_path, clock, cooldown_timeout=0.1, cooldown_poll=0.0, max_backoffs=1)
+    metal_tools(monkeypatch)
+    monkeypatch.setattr(g, "collect_readings", lambda with_wsl_host: busy_r())
+    rec = g.run_leg_with_retry(ctx, "metal", g.run_metal, "sha")
+    assert rec["env_rejected"] is True and rec["status"] == "skipped"
+    assert clock.slept[0] == 3600.0
+    assert rec["idle_retry"]["attempts"] == 2 and rec["idle_retry"]["terminal"] == "max_backoffs"
+
+
+def test_metal_leg_marks_both_busy_windows_for_retry(tmp_path, monkeypatch):
+    ctx = make_ctx(tmp_path)
+    metal_tools(monkeypatch)
+    monkeypatch.setattr(g, "collect_readings", lambda with_wsl_host: busy_r())
+    rec = g.run_metal(ctx, "sha")
+    assert rec["env_rejected"] is True and rec["reason"] == BUSY_REASON
+    seq = iter([idle_r(), busy_r()])
+    monkeypatch.setattr(g, "collect_readings", lambda with_wsl_host: next(seq))
+    monkeypatch.setattr(g, "run_logged", touch_zero_run_logged)
+    rec = g.run_metal(ctx, "sha")
+    assert rec["env_rejected"] is True and rec["reason"] == RECHECK_BUSY_REASON
+
+
+def test_gui_leg_marks_both_busy_windows_for_retry(tmp_path, monkeypatch):
+    ctx = make_ctx(tmp_path)
+    metal_tools(monkeypatch)
+    monkeypatch.setattr(g, "collect_readings", lambda with_wsl_host: busy_r())
+    rec = g.run_gui_realtiming(ctx, "sha")
+    assert rec["env_rejected"] is True and rec["reason"] == BUSY_REASON
+    seq = iter([idle_r(), busy_r()])
+    monkeypatch.setattr(g, "collect_readings", lambda with_wsl_host: next(seq))
+    monkeypatch.setattr(g, "run_logged", touch_zero_run_logged)
+    rec = g.run_gui_realtiming(ctx, "sha")
+    assert rec["env_rejected"] is True and rec["reason"] == RECHECK_BUSY_REASON
+
+
+def test_cuda_leg_marks_both_busy_windows_for_retry(tmp_path, monkeypatch):
+    ctx = make_ctx(tmp_path)
+    monkeypatch.setattr(g, "_run",
+                        lambda c, **kw: subprocess.CompletedProcess(c, 0, stdout="", stderr=""))
+    monkeypatch.setattr(g, "remote_readings", lambda ctx_: busy_r())
+    rec = g.run_cuda(ctx, "sha")
+    assert rec["env_rejected"] is True and rec["reason"] == BUSY_REASON
+    seq = iter([idle_r(), busy_r()])
+    monkeypatch.setattr(g, "remote_readings", lambda ctx_: next(seq))
+    monkeypatch.setattr(g, "run_logged", touch_zero_run_logged)
+    monkeypatch.setattr(g, "remote_wait_phase", lambda ctx_, phase, rdir, budget: 0)
+    rec = g.run_cuda(ctx, "sha")
+    assert rec["env_rejected"] is True and rec["reason"] == RECHECK_BUSY_REASON
+
+
+def test_cuda_unreachable_is_not_marked_for_retry(tmp_path, monkeypatch):
+    """The red side of the marker rule: cuda's unreachable skip carries no
+    env_rejected — a dead remote is not an environment the wall can wait out."""
+    ctx = make_ctx(tmp_path)
+    monkeypatch.setattr(g, "_run",
+                        lambda c, **kw: subprocess.CompletedProcess(c, 255, stdout="", stderr="no route"))
+    rec = g.run_cuda(ctx, "sha")
+    assert rec["reason"] == "unreachable (ssh exit 255)"
+    assert "env_rejected" not in rec
+
+
+def test_backoff_sleep_ends_at_the_deadline_not_a_duration_later(tmp_path, monkeypatch):
+    """D1: a backoff in progress across 06:30 ends AT the wall — the clock
+    shows 06:30, not 07:20 — and the leg ends deadline-blocked with the busy
+    record byte-identical and no further attempt."""
+    clock = FakeClock(at(6, 20))
+    ctx = retry_ctx(tmp_path, clock, deadline=at(6, 30))
+    metal_tools(monkeypatch)
+    monkeypatch.setattr(g, "collect_readings", lambda with_wsl_host: busy_r())
+    rec = g.run_leg_with_retry(ctx, "metal", g.run_metal, "sha")
+    assert clock.now == at(6, 30) and clock.slept == [600.0]
+    assert rec["reason"] == BUSY_REASON
+    assert rec["env_rejected"] is True
+    ir = rec["idle_retry"]
+    assert ir["terminal"] == "deadline" and ir["attempts"] == 1 and ir["backoffs"] == 1
+    assert ir["history"] == []          # attempt 1 IS the terminal record
+
+
+def test_in_flight_attempt_is_voided_at_a_stage_boundary(tmp_path, monkeypatch):
+    """D2: attempt past pre-check (idle), the build runs across the wall -> the
+    stage guard voids it: deadline skip, no measurement fields, the voided
+    attempt in history with the readings it had actually taken."""
+    clock = FakeClock(at(6, 25))
+    ctx = retry_ctx(tmp_path, clock, deadline=at(6, 30))
+    metal_tools(monkeypatch)
+    monkeypatch.setattr(g, "collect_readings", lambda with_wsl_host: idle_r())
+
+    def fake_run_logged(ctx_, cmd, log_path, **kw):
+        Path(log_path).touch()
+        clock.advance(600)              # the build runs ten minutes, across 06:30
+        return 0
+
+    monkeypatch.setattr(g, "run_logged", fake_run_logged)
+    rec = g.run_leg_with_retry(ctx, "metal", g.run_metal, "sha")
+    assert rec["status"] == "skipped"
+    assert rec["reason"].startswith("nightly deadline 06:30 reached at ")
+    assert "voided before measurement" in rec["reason"]
+    assert "env_rejected" not in rec
+    ir = rec["idle_retry"]
+    assert ir["attempts"] == 1 and ir["backoffs"] == 0 and ir["terminal"] == "deadline"
+    (entry,) = ir["history"]
+    assert entry["attempt"] == 1 and entry["voided"] is True
+    assert "idle_pre" in entry and "idle_post" not in entry
+    assert "reason" not in entry        # never busy -> no busy snapshot is faked
+    assert "idle_pre" not in rec and "build_seconds" not in rec
+
+
+def test_long_phase_stops_at_the_deadline_and_never_becomes_a_timeout_error(tmp_path, monkeypatch):
+    """D2b: the build is sent out under the remaining time as its timeout, is
+    killed at the wall (rc 124) — and the leg's outcome is a deadline skip,
+    not 'build failed (exit 124)'."""
+    clock = FakeClock(at(6, 25))
+    ctx = retry_ctx(tmp_path, clock, deadline=at(6, 30))
+    metal_tools(monkeypatch)
+    monkeypatch.setattr(g, "collect_readings", lambda with_wsl_host: idle_r())
+    seen = {}
+
+    def fake_run_logged(ctx_, cmd, log_path, **kw):
+        seen["timeout"] = kw.get("timeout")
+        Path(log_path).touch()
+        clock.advance(600)              # overruns the wall, killed by the timeout
+        return 124
+
+    monkeypatch.setattr(g, "run_logged", fake_run_logged)
+    rec = g.run_leg_with_retry(ctx, "metal", g.run_metal, "sha")
+    assert seen["timeout"] == 300.0     # 06:30 minus 06:25: the remaining time, not None
+    assert rec["status"] == "skipped" and "deadline" in rec["reason"]
+    assert "build failed" not in rec["reason"]
+
+
+# --- main-level wiring: per-leg budgets, the wall across legs, applicability ----
+
+def main_env(tmp_path, monkeypatch):
+    """Common main() doubles: macOS platform, no open issues, checkout faked."""
+    monkeypatch.setattr(g.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(g, "open_issues", lambda ctx, leg, namespace: {})
+    monkeypatch.setattr(g, "prepare_checkout", lambda ctx: "fakesha")
+    return tmp_path / "state"
+
+
+_REAL_GATE_CTX = g.Ctx   # captured at import: inject_clock must never chain through itself
+
+
+def inject_clock(monkeypatch, clock):
+    """Route every Ctx main() builds through the fake clock's seams. Always
+    delegates to the class captured at import, so a second injection in the
+    same test replaces the first instead of wrapping it."""
+    monkeypatch.setattr(g, "Ctx",
+                        lambda *a, **kw: _REAL_GATE_CTX(*a, clock=clock.clock, sleep=clock.sleep, **kw))
+
+
+def busy_fab(calls, name):
+    def fab(ctx, sha):
+        calls.append(name)
+        return {**g.busy_skip("pre-check", ["load 9.00/8 cores = 1.125 >= 0.5"]),
+                "idle_pre": busy_r().to_json()}
+    return fab
+
+
+def install_busy_legs(monkeypatch, calls):
+    monkeypatch.setattr(g, "run_metal", busy_fab(calls, "metal"))
+    monkeypatch.setattr(g, "run_gui_realtiming", busy_fab(calls, "gui-real-timing"))
+    monkeypatch.setattr(g, "run_cuda", busy_fab(calls, "cuda"))
+
+
+def read_records(state_dir):
+    return [json.loads(line) for line in (state_dir / "results.jsonl").read_text().splitlines()]
+
+
+def test_main_wiring_gives_each_leg_its_own_budget(tmp_path, monkeypatch):
+    """AC4: the retry loop wraps all three dispatch branches; dry-run forces
+    the backoff to zero so the loop runs to its budget without sleeping, and
+    the three legs each spend their own budget serially."""
+    state_dir = main_env(tmp_path, monkeypatch)
+    calls = []
+    install_busy_legs(monkeypatch, calls)
+    backoff_calls = []
+    real_backoff = g.backoff_sleep
+
+    def counting_backoff(ctx_, seconds):
+        backoff_calls.append(seconds)
+        return real_backoff(ctx_, seconds)
+
+    monkeypatch.setattr(g, "backoff_sleep", counting_backoff)
+    rc = g.main(["--leg", "all", "--state-dir", str(state_dir),
+                 "--work-dir", str(tmp_path / "work"), "--dry-run"])
+    assert rc == 0
+    recs = read_records(state_dir)
+    assert [r["leg"] for r in recs] == ["metal", "gui-real-timing", "cuda"]
+    for r in recs:
+        assert r["dry_run"] is True
+        assert r["idle_retry"]["attempts"] == 3
+        assert r["idle_retry"]["terminal"] == "max_backoffs"
+    assert len(calls) == 9              # 3 attempts per leg: budgets are per-leg
+    assert backoff_calls == [0.0] * 6   # dry-run: the loop runs, nothing sleeps
+
+
+def test_deadline_wall_cuts_the_serial_budget_sum(tmp_path, monkeypatch):
+    """Three fully busy legs: per-leg budgets sum to 6 h of backoffs
+    (03:30 -> 09:30); the wall ends the run at 06:30 — metal exhausts its own
+    budget before the wall, the gui leg's backoff is cut by it, cuda never
+    starts (AC-D1/D3, combined with the per-leg budget shape)."""
+    state_dir = main_env(tmp_path, monkeypatch)
+    clock = FakeClock(at(3, 30))
+    inject_clock(monkeypatch, clock)
+    calls = []
+    install_busy_legs(monkeypatch, calls)
+    rc = g.main(["--leg", "all", "--state-dir", str(state_dir),
+                 "--work-dir", str(tmp_path / "work"), "--trigger", "launchd"])
+    assert rc == 0
+    metal, gui, cuda = read_records(state_dir)
+    assert metal["idle_retry"]["terminal"] == "max_backoffs"
+    assert metal["idle_retry"]["attempts"] == 3 and metal["idle_retry"]["backoffs"] == 2
+    assert metal["reason"] == BUSY_REASON
+    assert gui["idle_retry"]["terminal"] == "deadline"
+    assert gui["idle_retry"]["attempts"] == 1 and gui["idle_retry"]["backoffs"] == 1
+    assert gui["reason"] == BUSY_REASON and gui["env_rejected"] is True
+    assert cuda["reason"] == "nightly deadline 06:30 reached before this leg started"
+    assert "idle_retry" not in cuda and calls.count("cuda") == 0
+    assert clock.now == at(6, 30)       # the wall, not the 09:30 budget sum
+
+
+def test_late_nightly_run_skips_every_leg_without_attempts(tmp_path, monkeypatch):
+    """AC-D2: a launchd run that started past the wall ends immediately —
+    every leg one deadline skip, zero attempts, no idle_retry payload."""
+    state_dir = main_env(tmp_path, monkeypatch)
+    inject_clock(monkeypatch, FakeClock(at(6, 31)))
+    calls = []
+    install_busy_legs(monkeypatch, calls)
+    rc = g.main(["--leg", "all", "--state-dir", str(state_dir),
+                 "--work-dir", str(tmp_path / "work"), "--trigger", "launchd"])
+    assert rc == 0
+    recs = read_records(state_dir)
+    assert [r["leg"] for r in recs] == ["metal", "gui-real-timing", "cuda"]
+    for r in recs:
+        assert r["status"] == "skipped"
+        assert r["reason"] == "nightly deadline 06:30 reached before this leg started"
+        assert "idle_retry" not in r and "env_rejected" not in r
+    assert calls == []                  # the wall precedes every attempt
+
+
+def test_manual_runs_are_not_bounded_by_the_nightly_deadline(tmp_path, monkeypatch):
+    """AC-D2's negative control: a manual run started past the wall runs its
+    full retry budget — the wall governs launchd runs only, never the
+    operator's explicit daytime run."""
+    state_dir = main_env(tmp_path, monkeypatch)
+    inject_clock(monkeypatch, FakeClock(at(6, 31)))
+    calls = []
+    install_busy_legs(monkeypatch, calls)
+    rc = g.main(["--leg", "all", "--state-dir", str(state_dir),
+                 "--work-dir", str(tmp_path / "work"), "--trigger", "manual"])
+    assert rc == 0
+    recs = read_records(state_dir)
+    for r in recs:
+        assert r["idle_retry"]["terminal"] == "max_backoffs"
+        assert r["idle_retry"]["attempts"] == 3
+        assert "deadline" not in r["reason"]
+    assert len(calls) == 9
+
+
+def test_far_future_deadline_is_inert(tmp_path, monkeypatch):
+    """D5: a wall far outside the run's span leaves the records identical to a
+    run with no wall at all (projected to the fields a deadline could touch;
+    the trigger field is the one legitimate difference)."""
+    main_env(tmp_path, monkeypatch)
+
+    def run(state_dir, trigger, deadline):
+        inject_clock(monkeypatch, FakeClock(at(3, 30)))
+        calls = []
+        install_busy_legs(monkeypatch, calls)
+        argv = ["--leg", "all", "--state-dir", str(state_dir),
+                "--work-dir", str(tmp_path / "work"), "--trigger", trigger]
+        if deadline:
+            argv += ["--nightly-deadline", deadline]
+        assert g.main(argv) == 0
+        return read_records(state_dir)
+
+    bounded = run(tmp_path / "s1", "launchd", "23:59")
+    unbounded = run(tmp_path / "s2", "manual", None)
+
+    def project(recs):
+        return [{k: r[k] for k in ("leg", "status", "reason", "idle_retry")} for r in recs]
+
+    assert project(bounded) == project(unbounded)
+    assert all(r["idle_retry"]["terminal"] == "max_backoffs" for r in bounded)
+
+
+def test_retry_parameters_carry_the_owner_pinned_defaults():
+    a = g.parse_args([])
+    assert a.idle_retry_backoff_seconds == 3600.0
+    assert a.idle_retry_max_backoffs == 2
+    assert a.nightly_deadline == dt.time(6, 30)
+    with pytest.raises(SystemExit):
+        g.parse_args(["--nightly-deadline", "6:30pm"])
