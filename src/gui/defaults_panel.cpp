@@ -25,6 +25,7 @@
 #include "gui/secondary_window_sizing.hpp"
 #include "gui/semantic_colors.hpp"
 #include "gui/theme.hpp"
+#include "gui/tooltip.hpp"
 #include "gui/user_defaults.hpp"
 #include "imgui.h"
 // imgui_internal.h for ResetDefaultsPanelTestState only: ImGuiWindow::Size / SizeFull and
@@ -438,7 +439,7 @@ void RenderAppPreferences(const GuiState& state) {
     WriteUseGpuBackendToDoc(g_copy_doc, checked);
   }
   if (ImGui::IsItemHovered()) {
-    ImGui::SetTooltip(
+    SetWrappedTooltip(
         "Whether a NEW document starts with GPU simulation selected. This is the stored preference, "
         "not the Use GPU switch in the main window — changing it here does not touch the current "
         "document, and it takes effect on the next new document. The GPU falls back to the CPU on a "
@@ -475,7 +476,7 @@ void RenderAppPreferences(const GuiState& state) {
     WriteWorkerCountToDoc(g_copy_doc, workers);
   }
   if (ImGui::IsItemHovered()) {
-    ImGui::SetTooltip(
+    SetWrappedTooltip(
         "How many CPU worker threads a NEW document's simulation runs on. 0 means automatic: one "
         "per physical core on Linux/macOS, one per logical core (hardware thread) on Windows, up to "
         "a measured per-platform ceiling. A number you type here is used as-is, ceiling included. "
@@ -519,7 +520,7 @@ void RenderAppPreferences(const GuiState& state) {
     SetUiScaleMultiplierImmediate(chosen);
   }
   if (ImGui::IsItemHovered()) {
-    ImGui::SetTooltip(
+    SetWrappedTooltip(
         "How much larger than the display's own scaling the whole interface is drawn — text, "
         "controls and panels alike. Applies to this window immediately; Save keeps it for every "
         "later start. The display's scaling (Windows 125%%, Retina) is detected on its own and is "
@@ -555,13 +556,13 @@ void RenderListControls() {
   ImGui::RadioButton("Differs from factory###filter_differs", &filter,
                      static_cast<int>(DefaultsRowFilter::kDiffersFromFactory));
   if (ImGui::IsItemHovered()) {
-    ImGui::SetTooltip("Rows whose current value is not the built-in one — whether or not you saved it.");
+    SetWrappedTooltip("Rows whose current value is not the built-in one — whether or not you saved it.");
   }
   ImGui::SameLine();
   ImGui::RadioButton("Edited this session###filter_edited", &filter,
                      static_cast<int>(DefaultsRowFilter::kEditedThisSession));
   if (ImGui::IsItemHovered()) {
-    ImGui::SetTooltip("Rows whose checkbox you changed since this panel opened.");
+    SetWrappedTooltip("Rows whose checkbox you changed since this panel opened.");
   }
   g_row_filter = static_cast<DefaultsRowFilter>(filter);
 }
@@ -615,7 +616,7 @@ void RenderCurrentValueCell(GuiState& state, const DefaultDiffRow& row, bool& ro
     // value with the material's own spectral colour, so an editor here would accept input nothing
     // consumes. AC2's keep-locked condition ② lives here: say why, and where the real writer is.
     if (row.key_path == "renderer.ray_color" && ImGui::IsItemHovered()) {
-      ImGui::SetTooltip(
+      SetWrappedTooltip(
           "This setting has no editor anywhere in the GUI by design: the GUI build always uses "
           "the material's own spectral colour. The value is set from the CLI or a config JSON.");
     }
@@ -647,11 +648,11 @@ void RenderCurrentValueCell(GuiState& state, const DefaultDiffRow& row, bool& ro
     // write what it shows, but the current configuration does not consume the value. The note is
     // the only place the panel says so — a silently-stored-never-used edit is the same
     // "changed something, nothing happened" family the checkbox rule above closes.
-    ImGui::SetTooltip("%s", constraint.inactive_note);
+    SetWrappedTooltip("%s", constraint.inactive_note);
   }
   if (!constraint.enabled && constraint.disabled_reason != nullptr &&
       ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-    ImGui::SetTooltip("%s", constraint.disabled_reason);
+    SetWrappedTooltip("%s", constraint.disabled_reason);
   }
 }
 
@@ -669,7 +670,7 @@ void RenderNoteCell(const DefaultDiffRow& row) {
     ImGui::Selectable(edited_id.c_str(), false, ImGuiSelectableFlags_NoAutoClosePopups,
                       ImVec2(ImGui::CalcTextSize(ICON_FA_PEN).x, 0.0f));
     if (ImGui::IsItemHovered()) {
-      ImGui::SetTooltip("You changed this value in this panel. It is not saved until you press Save.");
+      SetWrappedTooltip("You changed this value in this panel. It is not saved until you press Save.");
     }
   }
   if (!row.warnings.empty()) {
@@ -680,7 +681,7 @@ void RenderNoteCell(const DefaultDiffRow& row) {
     ImGui::Selectable(warning_id.c_str(), false, ImGuiSelectableFlags_NoAutoClosePopups,
                       ImVec2(ImGui::CalcTextSize(ICON_FA_TRIANGLE_EXCLAMATION).x, 0.0f));
     if (ImGui::IsItemHovered()) {
-      ImGui::SetTooltip("%s", row.warnings.front().c_str());
+      SetWrappedTooltip("%s", row.warnings.front().c_str());
     }
   }
 }
@@ -766,7 +767,7 @@ void RenderSettingsTable(GuiState& state, float table_height) {
     const std::string origin_id = FormatDiffValue(row.factory_value) + "##origin_" + row.key_path;
     ImGui::Selectable(origin_id.c_str(), false, ImGuiSelectableFlags_Disabled);
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-      ImGui::SetTooltip(
+      SetWrappedTooltip(
           "The built-in value this build ships. Editing happens in the Current "
           "value column; un-checking the row on save returns here.");
     }
@@ -786,7 +787,7 @@ void RenderSettingsTable(GuiState& state, float table_height) {
         std::string(row.has_saved_override ? "Mine" : "Factory") + "###source_" + row.key_path;
     ImGui::Selectable(source_id.c_str(), false, ImGuiSelectableFlags_NoAutoClosePopups);
     if (ImGui::IsItemHovered()) {
-      ImGui::SetTooltip("%s", row.has_saved_override ?
+      SetWrappedTooltip("%s", row.has_saved_override ?
                                   "Saved in your personal defaults file. Un-check it to remove it on save." :
                                   "The built-in value. Nothing is saved for this setting.");
     }
@@ -809,7 +810,7 @@ void RenderSettingsTable(GuiState& state, float table_height) {
       }
     }
     if (ImGui::IsItemHovered()) {
-      ImGui::SetTooltip("Checked: this setting is part of your personal defaults after you save.");
+      SetWrappedTooltip("Checked: this setting is part of your personal defaults after you save.");
     }
   }
   ImGui::EndTable();
@@ -976,7 +977,7 @@ void RenderEditableAxisRow(const AxisPresetEntry& entry, AxisSlot slot) {
                                    std::string(entry.override_json_name) + "_" + std::to_string(axis_index);
     ImGui::Selectable(warning_id.c_str(), false, ImGuiSelectableFlags_NoAutoClosePopups);
     if (ImGui::IsItemHovered()) {
-      ImGui::SetTooltip("%s", g_preset_warnings.slots[preset_slot][axis_index].c_str());
+      SetWrappedTooltip("%s", g_preset_warnings.slots[preset_slot][axis_index].c_str());
     }
   }
 }
@@ -1194,7 +1195,7 @@ bool RenderWedgePresetRow(size_t index, const WedgeMillerTriple& triple) {
     const std::string warning_id = ICON_FA_TRIANGLE_EXCLAMATION "###wedge_preset_warning_" + std::to_string(index);
     ImGui::Selectable(warning_id.c_str(), false, ImGuiSelectableFlags_NoAutoClosePopups, ImVec2(UiPx(24.0f), 0.0f));
     if (ImGui::IsItemHovered()) {
-      ImGui::SetTooltip("%s", fb.message.c_str());
+      SetWrappedTooltip("%s", fb.message.c_str());
     }
     ImGui::SameLine();
     ImGui::AlignTextToFramePadding();
