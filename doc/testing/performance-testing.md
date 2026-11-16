@@ -553,13 +553,20 @@ configured budget, and no poll, reading or transfer is even issued past it — n
 past it, and an attempt still in flight is voided: its long phases run under the remaining time
 as their timeout **and their work is actually stopped** — local phases run in their own process
 group and are killed whole (build.sh's ninja and compilers, pytest's render processes included),
-the cuda leg's detached remote phases record their pid and are killed by group through that stop
-interface, and a stop that could not be issued is logged, never swallowed — nothing the voided
+and the cuda leg's detached remote phases record every group they run (the entry shell's, plus
+the worker group GNU `timeout` creates for the measurement, which the entry shell's group does
+not contain); the stop terminates them graded — TERM, a bounded wait, KILL for anything still
+alive — and reports success only on **verified** termination, with an unverifiable stop (or a
+phase whose state cannot be confirmed) logged and visible, never swallowed. A stop runs even
+when a phase's start receipt was lost at the wall: the ssh may have landed even though the
+acknowledgment did not — nothing the voided
 attempt did enters the record, and the
 leg's outcome is a single `skipped` line whose reason names the deadline, never a timeout `error`
 (an aborted attempt is not a failed one). The same precedence holds at the run's entry: a nightly
-run that launched past the wall skips its source prep entirely, and a source failure never
-outranks the wall — unstarted legs fall deadline skips, not source errors. Legs the wall reached before they started fall the same
+run that launched past the wall skips its source prep entirely, a source failure never
+outranks the wall, and the cuda leg's connectivity probe itself takes the remaining time as its
+timeout — a probe cut by the wall voids the attempt, it does not read as `unreachable` —
+unstarted legs fall deadline skips, not source errors. Legs the wall reached before they started fall the same
 single skip line, with no `idle_retry` payload: zero attempts is not a retry history. The wall
 binds launchd runs whenever they started: a nightly run that launched late (a machine that slept
 past 06:30) ends immediately as deadline skips for every leg — re-admitting it would re-open the

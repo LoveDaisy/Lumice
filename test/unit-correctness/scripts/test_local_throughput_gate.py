@@ -1306,6 +1306,9 @@ def test_remote_phase_script_records_its_pid_for_the_stop_interface(tmp_path):
     assert "echo $$" in script and "results/r/build.pid" in script
     script2 = g.remote_phase_script(ctx, "pytest", "sha", "r")
     assert "results/r/pytest.pid" in script2
+    # GNU timeout makes its own process group: the worker group's id is
+    # recorded too, so the stop interface can reach the measurement work.
+    assert "$OUT/pytest-worker.pid" in script2
     assert "timeout 10" in script2         # the remote pytest budget is the configured one
 
 
@@ -1400,7 +1403,7 @@ def test_cuda_deadline_reaches_the_remote_stop_interface(tmp_path, monkeypatch):
     rec = g.run_leg_with_retry(ctx, "cuda", g.run_cuda, "sha")
     assert clock.now == at(6, 30)          # the wait ended at the wall
     kill_cmds = [c for c in run_logged_cmds if "kill -- -" in c]
-    assert len(kill_cmds) == 1 and f"results/{ctx.run_id}/build.pid" in kill_cmds[0]
+    assert len(kill_cmds) == 1 and f"results/{ctx.run_id}/*.pid" in kill_cmds[0]
     assert ssh_timeouts[-1] == pytest.approx(10.0, abs=0.01)  # last ssh bounded by the wall
     assert rec["status"] == "skipped" and "deadline" in rec["reason"]
     assert rec["idle_retry"]["terminal"] == "deadline"
@@ -1447,3 +1450,148 @@ def test_source_error_still_stands_without_a_deadline(tmp_path, monkeypatch):
                and r["reason"] == "source: RuntimeError: git fetch failed: network down"
                for r in recs)
     assert calls == []
+
+
+# --- the wall reaches the cuda entry, and the stop is verified -------------------
+
+def test_entry_probe_is_bounded_by_the_wall_and_voids_past_it(tmp_path, monkeypatch):
+    """The connectivity probe is the cuda attempt's first blocking call: it
+    takes the remaining wall time as its timeout, and a probe cut by the wall
+    is a voided attempt with history — never a plain unreachable skip."""
+    clock = FakeClock(at(6, 29, 59))
+    ctx = retry_ctx(tmp_path, clock, deadline=at(6, 30))
+    seen = {}
+
+    def fake_run(cmd, **kw):
+        seen["timeout"] = kw.get("timeout")
+        clock.advance(10)                   # the ssh hung until the wall cut it
+        raise subprocess.TimeoutExpired(cmd, 10)
+
+    monkeypatch.setattr(g, "_run", fake_run)
+    rec = g.run_leg_with_retry(ctx, "cuda", g.run_cuda, "sha")
+    assert seen["timeout"] == pytest.approx(1.0, abs=0.01)   # bounded by the wall, not 20
+    assert rec["status"] == "skipped" and "deadline" in rec["reason"]
+    assert "unreachable" not in rec["reason"]
+    ir = rec["idle_retry"]
+    assert ir["terminal"] == "deadline" and ir["attempts"] == 1
+    assert "reason" not in ir["history"][0]  # no readings yet: nothing is faked
+
+
+def test_start_receipt_lost_at_the_wall_still_cleans_up(tmp_path, monkeypatch):
+    """A lost start receipt does not mean the phase never started: when the
+    wall cut the start ssh, the stop interface still runs against the attempt
+    directory before the void — the request may have landed."""
+    clock = FakeClock(at(6, 29, 55))
+    ctx = retry_ctx(tmp_path, clock, deadline=at(6, 30))
+    run_logged_cmds = []
+    readings = iter([idle_r(), idle_r()])
+
+    def fake_run_logged(ctx_, cmd, log_path, **kw):
+        joined = " ".join(str(c) for c in cmd)
+        run_logged_cmds.append(joined)
+        Path(log_path).touch()
+        if "build.sh" in joined:
+            clock.advance(10)               # the start ssh hangs until the wall cuts it
+            return 124
+        return 0                            # the sync steps are quick and succeed
+
+    monkeypatch.setattr(g, "run_logged", fake_run_logged)
+    monkeypatch.setattr(g, "_run",
+                        lambda c, **kw: subprocess.CompletedProcess(c, 0, stdout="", stderr=""))
+    monkeypatch.setattr(g, "remote_readings", lambda ctx_, *a: next(readings))
+    rec = g.run_leg_with_retry(ctx, "cuda", g.run_cuda, "sha")
+    stop_cmds = [c for c in run_logged_cmds if "kill -- -" in c]
+    assert stop_cmds and f"results/{ctx.run_id}/*.pid" in stop_cmds[0]
+    assert rec["status"] == "skipped" and "deadline" in rec["reason"]
+    assert "could not start" not in rec["reason"]
+
+
+def route_stop_locally(monkeypatch, ctx, cwd):
+    """Run remote_stop_phase's ssh text through a local bash — the same command,
+    the real kill semantics, no network."""
+    def local_bash(ctx_, cmd, log_path, **kw):
+        with open(log_path, "a") as out:
+            p = subprocess.run(["bash", "-c", cmd[-1]], cwd=str(cwd), stdout=out,
+                               stderr=subprocess.STDOUT, timeout=kw.get("timeout"))
+        return p.returncode
+
+    monkeypatch.setattr(g, "run_logged", local_bash)
+
+
+IGNORING_WORKER = ("import signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+                   "time.sleep({sleep}); open({marker!r}, 'w').write('done')")
+
+
+def test_stop_kills_the_recorded_worker_group_and_verifies(tmp_path, monkeypatch):
+    """The real generated pytest script runs in a local sandbox: a SIGTERM-
+    ignoring worker under real GNU timeout, in its own recorded group, is dead
+    after the graded stop and its work never completes — "stopped" means the
+    work ended, not that a signal was sent."""
+    home = tmp_path / "home"
+    (home / "Codes" / "gate" / "repo").mkdir(parents=True)
+    (home / "lumice-env.sh").write_text("")
+    marker = tmp_path / "worker-done.txt"
+    monkeypatch.setattr(g, "pytest_argv",
+                        lambda *a, **k: [sys.executable, "-c", IGNORING_WORKER.format(
+                            sleep=6, marker=str(marker))])
+    ctx = make_ctx(tmp_path)
+    ctx.args.remote_dir = "Codes/gate"
+    script = g.remote_phase_script(ctx, "pytest", "sha", "t")
+    out_dir = home / "Codes" / "gate" / "results" / "t"
+    out_dir.mkdir(parents=True)
+    script_file = out_dir / "pytest.sh"
+    script_file.write_text(script)
+    subprocess.Popen(["bash", str(script_file)], start_new_session=True, cwd=str(home),
+                     env={"HOME": str(home), "PATH": os.environ["PATH"]})
+    route_stop_locally(monkeypatch, ctx, home)
+    worker_pid_file = out_dir / "pytest-worker.pid"
+    for _ in range(100):
+        if worker_pid_file.exists():
+            break
+        time.sleep(0.05)
+    assert worker_pid_file.exists()
+    assert g.remote_stop_phase(ctx, "pytest", "t") is True
+    worker_pid = int(worker_pid_file.read_text())
+    time.sleep(2.5)                # crosses the worker's original completion deadline
+    assert not marker.exists()     # the work did not complete in the background
+    with pytest.raises(ProcessLookupError):
+        os.kill(worker_pid, 0)      # the measurement group is gone
+
+
+def test_stop_cannot_reach_a_worker_group_it_was_never_given(tmp_path, monkeypatch):
+    """The red side of the worker-group record: a timeout-spawned worker in an
+    unrecorded group survives a stop that only knows the entry shell's — the
+    stop reports success over what it can see while the work completes."""
+    work = tmp_path / "results" / "t"
+    work.mkdir(parents=True)
+    marker = tmp_path / "red-worker-done.txt"
+    worker = IGNORING_WORKER.format(sleep=3, marker=str(marker))
+    prog = (f'echo $$ > {work}/pytest.pid; '
+            f'timeout 30 {sys.executable} -c {worker!r} > /dev/null 2>&1')
+    subprocess.Popen(["bash", "-c", prog], start_new_session=True,
+                     cwd=str(tmp_path), env={"HOME": str(tmp_path), "PATH": os.environ["PATH"]})
+    ctx = make_ctx(tmp_path)
+    ctx.args.remote_dir = str(tmp_path)
+    route_stop_locally(monkeypatch, ctx, tmp_path)
+    pid_file = work / "pytest.pid"
+    for _ in range(100):
+        if pid_file.exists():
+            break
+        time.sleep(0.05)
+    assert pid_file.exists()
+    assert g.remote_stop_phase(ctx, "pytest", "t") is True   # the stop saw only the shell
+    time.sleep(3.5)
+    assert marker.exists()                  # the work completed: it was out of the stop's reach
+
+
+def test_stop_reports_unverifiable_state_instead_of_success(tmp_path, monkeypatch):
+    """No pid file and no done marker: the phase's state cannot be confirmed —
+    non-zero exit and False, never a silent success; a done marker is the one
+    clean nothing-to-stop."""
+    ctx = make_ctx(tmp_path)
+    ctx.args.remote_dir = str(tmp_path)
+    route_stop_locally(monkeypatch, ctx, tmp_path)
+    assert g.remote_stop_phase(ctx, "pytest", "empty") is False
+    (tmp_path / "results" / "done-case").mkdir(parents=True)
+    (tmp_path / "results" / "done-case" / "pytest.done").write_text("")
+    assert g.remote_stop_phase(ctx, "pytest", "done-case") is True

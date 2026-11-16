@@ -56,8 +56,9 @@ at the wall instead of running out its configured budget, no attempt starts
 past it, and an attempt still in flight is voided — its long phases run under
 the remaining time as their timeout and their work is actually stopped (local
 phases run in their own process group and are killed whole; the cuda leg's
-detached remote phases record their pid and are killed by group, a failed
-stop logged, never swallowed), nothing they did is recorded, and the leg's
+detached remote phases record every group they spawn and the stop kills them
+graded — TERM, KILL, then verified — an unverifiable stop logged, never
+swallowed), nothing they did is recorded, and the leg's
 outcome is a ``skipped`` line, never a timeout ``error``. Each cuda attempt
 gets its own remote results directory, so a retried attempt can never read a
 previous attempt's done markers. A leg the wall
@@ -1302,13 +1303,20 @@ touch "$OUT/build.done"
         # $OUT must expand on the remote: quote everything except that variable.
         argv_s = " ".join(a if "$OUT" in a else shlex.quote(a) for a in argv)
         argv_s = argv_s.replace("--junitxml=$OUT/junit.xml", '--junitxml="$OUT/junit.xml"')
-        remote_budget = int(timeout_before_deadline(ctx, ctx.args.pytest_timeout))
+        remote_budget = max(1, int(timeout_before_deadline(ctx, ctx.args.pytest_timeout)))
+        # The worker runs under GNU timeout backgrounded and recorded: timeout
+        # makes its own process group (the phase bash's group does not contain
+        # it), so the stop interface needs that group's id too — and the budget
+        # expiry keeps killing the whole measurement group as before.
         body = f"""
 for v in $(env | sed -n 's/^\\(LUMICE_[A-Za-z0-9_]*\\)=.*/\\1/p'); do unset "$v"; done
 LUMICE_HAS_CUDA=1 LUMICE_BIN="$REPO/build/cmake_install/static/Lumice" {plugin_env}\\
-  timeout {remote_budget} {argv_s} > "$OUT/pytest.log" 2>&1
-echo $? > "$OUT/pytest.exit"
-touch "$OUT/pytest.done"
+  timeout {remote_budget} {argv_s} > "$OUT/pytest.log" 2>&1 &
+tpid=$!
+echo $tpid > "$OUT/{phase}-worker.pid"
+wait $tpid
+echo $? > "$OUT/{phase}.exit"
+touch "$OUT/{phase}.done"
 """
     return common + body
 
@@ -1367,20 +1375,46 @@ def remote_wait_phase(ctx: Ctx, phase: str, rdir: str, budget_s: float,
 
 
 def remote_stop_phase(ctx: Ctx, phase: str, rdir: str) -> bool:
-    """Kill a detached remote phase's whole process group via the pid file its
-    script wrote — the wall's stop interface for the cuda leg: an attempt
-    voided by the deadline must not keep building or measuring on the remote.
-    A phase that already completed needs no stop; a stop that could not be
-    issued is logged and stays visible, never swallowed."""
+    """Terminate a detached remote attempt's work — every group it recorded,
+    not just its entry shell.
+
+    The pid files (the phase script's session leader, plus a worker group the
+    pytest phase records because GNU ``timeout`` makes its own process group)
+    cover everything the attempt runs. The stop is graded and verified per
+    group: TERM, a bounded wait, KILL for anything still alive — and a
+    non-zero exit when termination cannot be verified, so "stopped" means the
+    work ended, not that a signal was sent. No pid file and no done marker
+    means the phase's state cannot be confirmed: reported as unverifiable,
+    never as success."""
     out = f"{ctx.args.remote_dir}/results/{rdir}"
-    cmd = (f"if [ -f {out}/{phase}.done ]; then :; "
-           f"elif [ -f {out}/{phase}.pid ]; then kill -- -\"$(cat {out}/{phase}.pid)\"; fi")
-    rc = run_logged(ctx, ssh_argv(ctx, cmd), ctx.run_dir / "cuda-ssh.log", timeout=60)
+    done_file = f"{out}/{phase}.done"
+    cmd = (
+        f"if [ -f {done_file} ]; then "
+        f"echo '{phase}: already done; nothing to stop'; "
+        f"else found=0; "
+        f"for f in {out}/*.pid; do "
+        f'[ -e "$f" ] || continue; found=1; '
+        f'pgid=$(cat "$f"); '
+        f'kill -- -"$pgid" 2>/dev/null; '
+        f'for i in 1 2 3; do kill -0 -- -"$pgid" 2>/dev/null || break; sleep 1; done; '
+        f'if kill -0 -- -"$pgid" 2>/dev/null; then '
+        f'kill -9 -- -"$pgid" 2>/dev/null; sleep 1; fi; '
+        f'if kill -0 -- -"$pgid" 2>/dev/null; then '
+        f"echo '{phase}: could not verify termination' >&2; exit 3; fi; "
+        f"done; "
+        f'if [ "$found" -eq 1 ]; then '
+        f"echo '{phase}: stopped (all recorded groups terminated)'; "
+        f"else "
+        f"echo '{phase}: no pid file and no done marker; state unverifiable' >&2; exit 4; fi; "
+        f"fi"
+    )
+    rc = run_logged(ctx, ssh_argv(ctx, cmd), ctx.run_dir / "cuda-ssh.log", timeout=120)
     ok = rc == 0
     if not ok:
-        ctx.log(f"remote {phase} stop failed (exit {rc}); the phase may still be running")
+        ctx.log(f"remote {phase} stop could not verify termination (exit {rc}); "
+                f"the phase may still be running")
     else:
-        ctx.log(f"remote {phase} stopped (pid file kill), or already done")
+        ctx.log(f"remote {phase} stop: groups terminated or already done")
     return ok
 
 
@@ -1418,12 +1452,19 @@ def remote_sync_source(ctx: Ctx, sha: str) -> Optional[str]:
 
 def run_cuda(ctx: Ctx, sha: str, resume_rdir: Optional[str] = None) -> dict:
     rec: dict = {"remote": ctx.args.remote}
+    # The wall governs fresh attempts and is fixed before the first blocking
+    # operation; the --collect-remote recovery path has no attempt structure,
+    # so no deadline checkpoint covers it.
+    wall = ctx.nightly_deadline if resume_rdir is None else None
     if not ctx.args.dry_run:
         try:
-            p = _run(ssh_argv(ctx, "true"), timeout=ctx.args.ssh_connect_timeout + 15)
+            p = _run(ssh_argv(ctx, "true"),
+                     timeout=timeout_before_deadline(ctx, ctx.args.ssh_connect_timeout + 15))
         except (subprocess.TimeoutExpired, OSError) as e:
+            guard_deadline(ctx, rec, wall)   # a probe cut by the wall is a void, not unreachable
             return {**rec, "status": "skipped", "reason": f"unreachable ({type(e).__name__})"}
         if p.returncode != 0:
+            guard_deadline(ctx, rec, wall)
             return {**rec, "status": "skipped", "reason": f"unreachable (ssh exit {p.returncode})"}
     # One remote results directory per attempt: a retried attempt starts its
     # phases in a fresh directory and can never read a previous attempt's done
@@ -1431,9 +1472,6 @@ def run_cuda(ctx: Ctx, sha: str, resume_rdir: Optional[str] = None) -> dict:
     rdir = resume_rdir or (ctx.run_id if ctx.attempt_no == 1
                            else f"{ctx.run_id}-a{ctx.attempt_no}")
     rec["remote_run_dir"] = rdir
-    # The wall governs fresh attempts; the --collect-remote recovery path has no
-    # attempt structure, so no deadline checkpoint covers it.
-    wall = ctx.nightly_deadline if resume_rdir is None else None
     if resume_rdir is None:
         ok, r, reasons = wait_idle(ctx, lambda: remote_readings(ctx, wall), "cuda pre-check")
         rec["idle_pre"] = r.to_json()
@@ -1446,7 +1484,12 @@ def run_cuda(ctx: Ctx, sha: str, resume_rdir: Optional[str] = None) -> dict:
             return {**rec, "status": "error", "reason": err}
         t0 = time.monotonic()
         if not remote_start_phase(ctx, "build", sha, rdir):
-            guard_deadline(ctx, rec, wall)   # a start killed by the wall is a void, not an error
+            # The ssh receipt is lost, not necessarily the phase: the setsid
+            # nohup may have landed. At the wall, clean up what may have
+            # started — the stop reports what it could actually verify.
+            if wall is not None and ctx.clock() >= wall:
+                remote_stop_phase(ctx, "build", rdir)
+            guard_deadline(ctx, rec, wall)   # a start cut by the wall is a void, not an error
             return {**rec, "status": "error", "reason": "could not start remote build"}
         brc = remote_wait_phase(ctx, "build", rdir,
                                 timeout_before_deadline(ctx, ctx.args.remote_build_timeout),
@@ -1467,8 +1510,11 @@ def run_cuda(ctx: Ctx, sha: str, resume_rdir: Optional[str] = None) -> dict:
         if ctx.synthetic and not ctx.args.dry_run:
             out = f"{ctx.args.remote_dir}/results/{rdir}"
             run_logged(ctx, ssh_argv(ctx, f"cat > {out}/{OVERRIDE_PLUGIN_NAME}.py"),
-                       ctx.run_dir / "cuda-ssh.log", timeout=60, stdin_text=OVERRIDE_PLUGIN_SOURCE)
+                       ctx.run_dir / "cuda-ssh.log",
+                       timeout=timeout_before_deadline(ctx, 60), stdin_text=OVERRIDE_PLUGIN_SOURCE)
         if not remote_start_phase(ctx, "pytest", sha, rdir):
+            if wall is not None and ctx.clock() >= wall:
+                remote_stop_phase(ctx, "pytest", rdir)
             guard_deadline(ctx, rec, wall)
             return {**rec, "status": "error", "reason": "could not start remote pytest"}
     t0 = time.monotonic()
