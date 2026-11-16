@@ -26,8 +26,12 @@ float g_crystal_rotation[16] = {
   1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1,
 };
 float g_crystal_zoom = kDefaultCrystalZoom;
-int g_crystal_style = 1;      // Default: Hidden Line (index into kCrystalStyleNames)
+int g_crystal_style = GuiState{}.entry_edit_preview_style;
 int g_crystal_mesh_hash = 0;  // Hash of crystal params for change detection
+
+void InitializeCrystalPreviewSession(const GuiState& startup_state) {
+  g_crystal_style = startup_state.entry_edit_preview_style;
+}
 
 // Cached mesh copy consumed by face-number overlay.
 // vertices/edge_face_normals are already Y-Z swapped + AABB normalized
