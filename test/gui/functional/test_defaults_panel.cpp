@@ -266,6 +266,66 @@ void FilterTo(ImGuiTestContext* ctx, const char* text) {
   ctx->Yield(3);
 }
 
+// Read the live tooltip rather than an item label: TextV submits an id-zero item, but ImGui's
+// rendered-text log retains its full formatted text. The log is stopped before any assertion.
+ImGuiWindow* ActiveTooltip() {
+  for (ImGuiWindow* window : GImGui->Windows) {
+    if ((window->Flags & ImGuiWindowFlags_Tooltip) && window->Active && !window->Hidden &&
+        window->LastFrameActive == GImGui->FrameCount) {
+      return window;
+    }
+  }
+  return nullptr;
+}
+
+bool ObserveSettingsTooltip(ImGuiTestContext* ctx, const ImVec2& target, const char* expected) {
+  ImGuiWindow* settings = ImGui::FindWindowByName(gui::kDefaultsPanelTitle);
+  IM_CHECK_RETV(settings != nullptr, false);
+  ctx->MouseMoveToPos(ImVec2(settings->Pos.x + gui::UiPx(20.0f), settings->Pos.y + gui::UiPx(10.0f)));
+  ctx->Yield(3);
+  IM_CHECK_RETV(ActiveTooltip() == nullptr, false);
+  ctx->MouseMoveToPos(target);
+  ctx->Yield(3);
+  ImGui::LogToBuffer(0);
+  // Between-frame logging would otherwise finish at End() of the implicit fallback window,
+  // clearing the buffer before the test coroutine can read it.
+  GImGui->LogWindow = nullptr;
+  ctx->Yield();
+  const std::string rendered = GImGui->LogBuffer.c_str();
+  ImGui::LogFinish();
+  ImGuiWindow* tooltip = ActiveTooltip();
+  IM_CHECK_RETV(tooltip != nullptr, false);
+  IM_CHECK_RETV(rendered.find(expected) != std::string::npos, false);
+  ctx->LogInfo("Settings tooltip: scale=%.2f window=%.1fx%.1f content=%.1fx%.1f font=%.1f text=%s",
+               gui::CurrentUiScale(), tooltip->Size.x, tooltip->Size.y, tooltip->ContentSize.x, tooltip->ContentSize.y,
+               ImGui::GetFontSize(), expected);
+  // Independent design anchor: do not get the expected bound from the tooltip implementation.
+  const float text_limit = gui::UiPx(400.0f);
+  IM_CHECK_RETV(tooltip->Size.x <= text_limit + 2.0f * tooltip->WindowPadding.x + 1.0f, false);
+  IM_CHECK_RETV(tooltip->ContentSize.x <= text_limit + 1.0f, false);
+  IM_CHECK_RETV(tooltip->ContentSize.y >= 2.0f * ImGui::GetFontSize(), false);
+  return true;
+}
+
+bool ObserveSettingsTooltip(ImGuiTestContext* ctx, ImGuiTestRef ref, const char* expected) {
+  return ObserveSettingsTooltip(ctx, ctx->ItemInfo(ref).RectFull.GetCenter(), expected);
+}
+
+// Restore the dial before restoring the window basis, including on a fatal assertion's return.
+class ScopedTooltipScale {
+ public:
+  explicit ScopedTooltipScale(ImGuiTestContext* ctx) : ctx_(ctx), previous_(gui::g_ui_scale_multiplier), basis_(ctx) {}
+  ~ScopedTooltipScale() {
+    gui::SetUiScaleMultiplierImmediate(previous_);
+    ctx_->Yield(4);
+  }
+
+ private:
+  ImGuiTestContext* ctx_;
+  float previous_;
+  ScopedWindowBasis basis_;
+};
+
 // Whether a row's checkbox is ticked, asked of the REAL widget rather than of the panel's internal
 // set (which is TU-private, and which a panel could keep correct while rendering something else).
 // The row must be on screen — narrow with FilterTo first.
@@ -1493,6 +1553,232 @@ void RegisterDefaultsPanelTests(ImGuiTestEngine* engine) {
       // on close, while the process-wide visual language is already back at the reference basis.
       // The guard hands the shared GLFW window back to the next case, so later pool cases
       // inherit neither this preset nor its ratio-resized geometry.
+    };
+  }
+
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "defaults_panel", "preview_startup_default_and_live_modal_are_independent");
+    t->GuiFunc = [](ImGuiTestContext*) {
+      if (g_capture.capture_requested && !g_capture.capture_done) {
+        g_capture.width = gui::g_crystal_renderer.Width();
+        g_capture.height = gui::g_crystal_renderer.Height();
+        g_capture.pixels = lumice::test::ReadTexturePixels(
+            static_cast<unsigned int>(gui::g_crystal_renderer.GetTextureId()), g_capture.width, g_capture.height);
+        g_capture.capture_done = true;
+      }
+    };
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ScopedPanel panel(ctx, "panel_preview_startup");
+      const int old_style = gui::g_crystal_style;
+      struct SessionGuard {
+        int old_style;
+        ~SessionGuard() {
+          gui::CloseEditModalOnDocumentReset();
+          gui::g_crystal_style = old_style;
+          g_capture.Reset();
+        }
+      } session_guard{ old_style };
+      // A malformed app parent is tolerated on read and must also remain editable through Save.
+      WriteRawOverlay(panel.dir(), R"({"app":[]})");
+      const auto pick = [&](ImGuiTestRef ref, const char* entry) {
+        ctx->ItemClick(ref);
+        ctx->Yield(2);
+        ctx->SetRef("//$FOCUSED");
+        ctx->ItemClick((std::string("**/") + entry).c_str());
+        ctx->SetRef("");
+        ctx->Yield(3);
+      };
+      panel.OpenOn(gui::DefaultsPanelSection::kSettings);
+      const char* combo = "Settings/###defaults_app_preview_style";
+      pick(combo, "Hidden Line");
+      SaveDefaultsPanel(ctx);
+      IM_CHECK_EQ(gui::ReadEntryEditPreviewStyleFromDoc(ReadOverlayFile(panel.dir())).value_or(-1), 1);
+      // All four choices are real selectable items, including explicit factory-valued storage.
+      for (int style = 0; style < gui::kCrystalStyleCount; ++style) {
+        pick(combo, gui::kCrystalStyleNames[style]);
+        if (ctx->IsError()) {
+          break;
+        }
+        SaveDefaultsPanel(ctx);
+        if (gui::ReadEntryEditPreviewStyleFromDoc(ReadOverlayFile(panel.dir())).value_or(-1) != style ||
+            gui::g_crystal_style != old_style) {
+          IM_ERRORF("Saved preview style %d did not stay independent from the live session", style);
+          break;
+        }
+      }
+      IM_CHECK(!ctx->IsError());
+      ctx->ItemClick("**/###defaults_app_preview_factory");
+      panel.Close();
+      IM_CHECK_EQ(gui::ReadEntryEditPreviewStyleFromDoc(ReadOverlayFile(panel.dir())).value_or(-1), 3);
+      // The same startup path as main: disk -> parsed state -> seed once -> first real modal.
+      ResetTestState();
+      IM_CHECK_EQ(gui::g_crystal_style, 3);
+      OpenCardEditor(ctx, 0, kCrystalTabRef);
+      g_capture.Reset();
+      g_capture.capture_requested = true;
+      ctx->Yield(3);
+      IM_CHECK(g_capture.capture_done);
+      IM_CHECK(!g_capture.pixels.empty());
+      const auto shaded = g_capture.pixels;
+      ImGuiID modal_style_id = 0;
+      for (auto* child : ctx->GetWindowByRef("Edit Entry")->DC.ChildWindows) {
+        if (std::strstr(child->Name, "/##modal_top_pane_") != nullptr) {
+          modal_style_id = child->GetID("##ModalCrystalStyle");
+        }
+      }
+      IM_CHECK(modal_style_id != 0);
+      pick(modal_style_id, "Wireframe");
+      IM_CHECK_EQ(gui::g_crystal_style, 0);
+      IM_CHECK(!gui::g_state.dirty);
+      g_capture.Reset();
+      g_capture.capture_requested = true;
+      ctx->Yield(3);
+      IM_CHECK(g_capture.capture_done);
+      IM_CHECK(shaded != g_capture.pixels);  // Actual modal FBO, not a second test renderer.
+      ctx->ItemClick("**/Reset View##modal");
+      IM_CHECK_EQ(gui::g_crystal_style, 0);
+      ctx->ItemClick("**/" ICON_FA_XMARK " Cancel##edit_modal");
+      OpenCardEditor(ctx, 0, kCrystalTabRef);
+      IM_CHECK_EQ(gui::g_crystal_style, 0);
+      ctx->ItemClick("**/" ICON_FA_XMARK " Cancel##edit_modal");
+      gui::DoNew();
+      IM_CHECK_EQ(gui::g_crystal_style, 0);
+      const auto lmc_path = panel.dir() / "preview_session.lmc";
+      IM_CHECK(gui::SaveLmcFile(lmc_path, gui::g_state, gui::g_preview, false));
+      gui::DoOpen(lmc_path);
+      IM_CHECK_EQ(gui::g_crystal_style, 0);
+      gui::g_state.last_committed_state = gui::GuiState::ConfigSnapshot::From(gui::g_state);
+      gui::g_state.sun.altitude = 22.0f;
+      gui::DoRevert();
+      IM_CHECK_EQ(gui::g_crystal_style, 0);
+      gui::DoOpen(panel.dir() / "missing.lmc");
+      IM_CHECK_EQ(gui::g_crystal_style, 0);
+      gui::ClearGuiWarning();
+      ctx->Yield(2);
+      panel.OpenOn(gui::DefaultsPanelSection::kSettings);
+      // Saving an unrelated preference must not copy the live Wireframe into the startup default.
+      ctx->ItemClick("**/###defaults_app_use_gpu");
+      SaveDefaultsPanel(ctx);
+      IM_CHECK_EQ(gui::ReadEntryEditPreviewStyleFromDoc(ReadOverlayFile(panel.dir())).value_or(-1), 3);
+      ctx->ItemClick("**/###defaults_reset_all");
+      SaveDefaultsPanel(ctx);
+      IM_CHECK_EQ(gui::ReadEntryEditPreviewStyleFromDoc(ReadOverlayFile(panel.dir())).value_or(-1), 3);
+      ctx->ItemClick("**/###defaults_app_preview_factory");
+      SaveDefaultsPanel(ctx);
+      const auto saved = ReadOverlayFile(panel.dir());
+      IM_CHECK(!gui::ReadEntryEditPreviewStyleFromDoc(saved).has_value());
+      IM_CHECK(gui::ReadUseGpuBackendFromDoc(saved).value_or(false));
+      IM_CHECK_EQ(gui::g_crystal_style, 0);
+      panel.Close();
+      ResetTestState();
+      IM_CHECK_EQ(gui::g_crystal_style, 1);
+    };
+  }
+
+  {
+    ImGuiTest* t =
+        IM_REGISTER_TEST(engine, "defaults_panel", "preview_preference_fits_at_both_scales_and_minimum_height");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ScopedPanel panel(ctx, "panel_preview_geometry");
+      const ScopedTooltipScale scale_guard(ctx);
+      panel.OpenOn(gui::DefaultsPanelSection::kSettings);
+      ctx->ItemClick("**/###defaults_presets");
+      ctx->Yield(3);
+      for (float scale : { 1.0f, 1.5f }) {
+        gui::SetUiScaleMultiplierImmediate(scale);
+        ctx->Yield(5);
+        ctx->WindowResize(gui::kDefaultsPanelTitle,
+                          ImVec2(gui::UiPx(gui::kDefaultsPanelWidth), gui::UiPx(gui::kDefaultsPanelMinHeight)));
+        ctx->Yield(3);
+        const auto* win = ctx->GetWindowByRef(gui::kDefaultsPanelTitle);
+        if (win == nullptr || win->ScrollMax.y != 0.0f) {
+          IM_ERRORF("Settings overflow at scale %.1f: height %.1f scroll %.1f", scale, win ? win->Size.y : -1.0f,
+                    win ? win->ScrollMax.y : -1.0f);
+          break;
+        }
+        for (const char* ref : { "Settings/###defaults_app_preview_style", "**/###defaults_app_preview_factory",
+                                 "**/###defaults_save", "**/###defaults_close" }) {
+          const auto item = ctx->ItemInfo(ref);
+          if (item.ID == 0 || !win->InnerRect.Contains(item.RectFull) ||
+              item.RectFull.GetHeight() != item.RectClipped.GetHeight()) {
+            IM_ERRORF("Clipped preference/action %s at scale %.1f", ref, scale);
+            break;
+          }
+        }
+        if (ctx->IsError()) {
+          break;
+        }
+        ctx->ItemClick("**/###defaults_app_preview_factory");
+        SaveDefaultsPanel(ctx);
+      }
+      IM_CHECK(!ctx->IsError());
+    };
+  }
+
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "defaults_panel", "long_tooltips_wrap_without_changing_their_text");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ScopedPanel panel(ctx, "panel_tooltip_wrap");
+      const ScopedTooltipScale scale_guard(ctx);
+      panel.OpenOn(gui::DefaultsPanelSection::kSettings);
+      constexpr const char* kGpuText =
+          "Whether a NEW document starts with GPU simulation selected. This is the stored preference, "
+          "not the Use GPU switch in the main window — changing it here does not touch the current "
+          "document, and it takes effect on the next new document. The GPU falls back to the CPU on a "
+          "machine that has none.";
+      constexpr const char* kScaleText =
+          "How much larger than the display's own scaling the whole interface is drawn — text, "
+          "controls and panels alike. Applies to this window immediately; Save keeps it for every "
+          "later start. The display's scaling (Windows 125%, Retina) is detected on its own and is "
+          "not part of this number.";
+      const std::string scale_ref = std::string(gui::kDefaultsPanelTitle) + "/###defaults_app_ui_scale";
+      IM_CHECK(ObserveSettingsTooltip(ctx, "**/###defaults_app_use_gpu", kGpuText));
+      if (g_keep_export_png) {
+        g_fullframe_capture.Reset();
+        g_fullframe_capture.requested.store(true);
+        for (int i = 0; i < 10 && !g_fullframe_capture.done.load(); ++i) {
+          ctx->Yield();
+        }
+        IM_CHECK(g_fullframe_capture.done.load());
+        const auto rgb = lumice::test::StripAlpha(g_fullframe_capture.pixels.data(), g_fullframe_capture.width,
+                                                  g_fullframe_capture.height);
+        const auto path = GuiTestTempPath("settings-tooltip-gpu-1x.png").string();
+        IM_CHECK(
+            lumice::test::SavePng(path.c_str(), rgb.data(), g_fullframe_capture.width, g_fullframe_capture.height, 3));
+      }
+      IM_CHECK(ObserveSettingsTooltip(ctx, scale_ref.c_str(), kScaleText));
+      IM_CHECK(ObserveSettingsTooltip(
+          ctx, "**/###defaults_app_worker_count",
+          "How many CPU worker threads a NEW document's simulation runs on. 0 means automatic: one "
+          "per physical core on Linux/macOS, one per logical core (hardware thread) on Windows, up to "
+          "a measured per-platform ceiling. A number you type here is used as-is, ceiling included. "
+          "This is the stored preference — changing it here does not touch the current document, "
+          "and it takes effect on the next new document. The GPU route is a single engine and "
+          "ignores it."));
+      FilterTo(ctx, "renderer.ray_color");
+      const auto source = ctx->ItemInfo(SourceCellRef("renderer.ray_color").c_str());
+      ImGuiTable* table = SettingsTable(ctx);
+      IM_CHECK(table != nullptr);
+      // This deliberately unregistered value is id-zero text. Hover its first text cell directly,
+      // using the real table column and row geometry rather than adding a production test id.
+      const ImVec2 no_editor(table->Columns[1].WorkMinX + 2.0f, source.RectFull.GetCenter().y);
+      IM_CHECK(ObserveSettingsTooltip(
+          ctx, no_editor,
+          "This setting has no editor anywhere in the GUI by design: the GUI build always uses "
+          "the material's own spectral colour. The value is set from the CLI or a config JSON."));
+      const auto rows = CurrentRows();
+      const auto row =
+          std::find_if(rows.begin(), rows.end(), [](const auto& r) { return r.key_path == "renderer.ray_color"; });
+      IM_CHECK(row != rows.end());
+      IM_CHECK(ObserveSettingsTooltip(ctx,
+                                      OriginCellRef(row->key_path, gui::FormatDiffValue(row->factory_value)).c_str(),
+                                      "The built-in value this build ships. Editing happens in the Current "
+                                      "value column; un-checking the row on save returns here."));
+      gui::SetUiScaleMultiplierImmediate(1.5f);
+      ctx->Yield(4);
+      IM_CHECK_FLOAT_EQ_EPS(gui::CurrentUiScale(), 1.5f);
+      IM_CHECK(ObserveSettingsTooltip(ctx, "**/###defaults_app_use_gpu", kGpuText));
+      IM_CHECK(ObserveSettingsTooltip(ctx, scale_ref.c_str(), kScaleText));
     };
   }
 

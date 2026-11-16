@@ -99,6 +99,7 @@ void ResetIneligibleScalarFields(GuiState& state) {
   const GuiState factory{};
   state.use_gpu_backend = factory.use_gpu_backend;
   state.worker_count = factory.worker_count;
+  state.entry_edit_preview_style = factory.entry_edit_preview_style;
 }
 
 // "Does this document say anything the user chose?" — the provenance stamp does not count.
@@ -933,7 +934,21 @@ namespace {
 constexpr const char* kAppRootKey = "app";
 constexpr const char* kUseGpuBackendKey = "use_gpu_backend";
 constexpr const char* kWorkerCountKey = "worker_count";
+constexpr const char* kEntryEditPreviewStyleKey = "entry_edit_preview_style";
 constexpr const char* kUiScaleMultiplierKey = "ui_scale_multiplier";
+
+// Settings edits a copy of a user-editable file, not necessarily a well-formed app object.
+// Repair only this namespace on write; leave document defaults and presets untouched.
+nlohmann::json& AppObjectForWrite(nlohmann::json& doc) {
+  if (!doc.is_object()) {
+    doc = nlohmann::json::object();
+  }
+  auto& app = doc[kAppRootKey];
+  if (!app.is_object()) {
+    app = nlohmann::json::object();
+  }
+  return app;
+}
 }  // namespace
 
 std::optional<bool> ReadUseGpuBackendFromDoc(const nlohmann::json& doc) {
@@ -954,13 +969,7 @@ std::optional<bool> ReadUseGpuBackendFromDoc(const nlohmann::json& doc) {
 }
 
 void WriteUseGpuBackendToDoc(nlohmann::json& doc, bool value) {
-  if (!doc.is_object()) {
-    doc = nlohmann::json::object();
-  }
-  // Surgical: ONE key is touched, so the GuiState half and `presets` survive by construction.
-  // operator[] is fine on the write path — it starts from a document this process controls, not
-  // from whatever a user may have typed into the file.
-  doc[kAppRootKey][kUseGpuBackendKey] = value;
+  AppObjectForWrite(doc)[kUseGpuBackendKey] = value;
 }
 
 void EraseUseGpuBackendFromDoc(nlohmann::json& doc) {
@@ -1004,10 +1013,7 @@ std::optional<int> ReadWorkerCountFromDoc(const nlohmann::json& doc) {
 }
 
 void WriteWorkerCountToDoc(nlohmann::json& doc, int value) {
-  if (!doc.is_object()) {
-    doc = nlohmann::json::object();
-  }
-  doc[kAppRootKey][kWorkerCountKey] = value;
+  AppObjectForWrite(doc)[kWorkerCountKey] = value;
 }
 
 void EraseWorkerCountFromDoc(nlohmann::json& doc) {
@@ -1021,6 +1027,40 @@ void EraseWorkerCountFromDoc(nlohmann::json& doc) {
   app_it->erase(kWorkerCountKey);
   if (app_it->empty()) {
     doc.erase(kAppRootKey);
+  }
+}
+
+std::optional<int> ReadEntryEditPreviewStyleFromDoc(const nlohmann::json& doc) {
+  if (!doc.is_object()) {
+    return std::nullopt;
+  }
+  const auto app = doc.find(kAppRootKey);
+  if (app == doc.end() || !app->is_object()) {
+    return std::nullopt;
+  }
+  const auto value = app->find(kEntryEditPreviewStyleKey);
+  // Compare in JSON's wide domain before conversion: even UINT64_MAX must not wrap into a style.
+  if (value == app->end() || !value->is_number_integer() || *value < 0 || *value >= kCrystalStyleCount) {
+    return std::nullopt;
+  }
+  return value->get<int>();
+}
+
+void WriteEntryEditPreviewStyleToDoc(nlohmann::json& doc, int value) {
+  AppObjectForWrite(doc)[kEntryEditPreviewStyleKey] = value;
+}
+
+void EraseEntryEditPreviewStyleFromDoc(nlohmann::json& doc) {
+  if (!doc.is_object()) {
+    return;
+  }
+  const auto app = doc.find(kAppRootKey);
+  if (app == doc.end() || !app->is_object()) {
+    return;
+  }
+  app->erase(kEntryEditPreviewStyleKey);
+  if (app->empty()) {
+    doc.erase(app);
   }
 }
 
@@ -1051,10 +1091,7 @@ std::optional<float> ReadUiScaleMultiplierFromDoc(const nlohmann::json& doc) {
 }
 
 void WriteUiScaleMultiplierToDoc(nlohmann::json& doc, float value) {
-  if (!doc.is_object()) {
-    doc = nlohmann::json::object();
-  }
-  doc[kAppRootKey][kUiScaleMultiplierKey] = value;
+  AppObjectForWrite(doc)[kUiScaleMultiplierKey] = value;
 }
 
 void EraseUiScaleMultiplierFromDoc(nlohmann::json& doc) {
@@ -1089,6 +1126,9 @@ void ApplyAppPreferencesOverride(GuiState& state, const nlohmann::json& doc) {
   }
   if (const std::optional<int> workers = ReadWorkerCountFromDoc(doc); workers.has_value()) {
     state.worker_count = *workers;
+  }
+  if (const auto style = ReadEntryEditPreviewStyleFromDoc(doc); style.has_value()) {
+    state.entry_edit_preview_style = *style;
   }
 }
 

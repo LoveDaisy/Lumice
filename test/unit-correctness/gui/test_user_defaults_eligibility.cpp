@@ -76,7 +76,8 @@ namespace {
 // Not serialized, so no row can reach the panel.
 // 89 with look_at, the named camera target and follow intent. It is session-only: files persist the
 // resulting pose, not an instruction to keep changing it when the sun moves.
-constexpr std::size_t kExpectedGovernedFieldCount = 89;
+// 90 with the app-only startup preview style, a pure client view default.
+constexpr std::size_t kExpectedGovernedFieldCount = 90;
 
 std::vector<std::string> AllGovernedFieldNames() {
   std::vector<std::string> names;
@@ -180,6 +181,7 @@ TEST(UserDefaultsEligibility, RepresentativeFieldsMapToTheDesignedVerdicts) {
     // nowhere to be stored.
     { "use_gpu_backend", DefaultEligibility::kEligible, IneligibleReason::kNone },
     { "worker_count", DefaultEligibility::kEligible, IneligibleReason::kNone },
+    { "entry_edit_preview_style", DefaultEligibility::kEligible, IneligibleReason::kNone },
     { "gui_log_level", DefaultEligibility::kIneligible, IneligibleReason::kAppPreference },
     { "core_log_level", DefaultEligibility::kIneligible, IneligibleReason::kAppPreference },
     { "log_to_file", DefaultEligibility::kIneligible, IneligibleReason::kAppPreference },

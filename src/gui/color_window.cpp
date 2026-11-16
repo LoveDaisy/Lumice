@@ -226,12 +226,11 @@ GuiValidationResult ValidateSingleAtomText(const std::string& text) {
   if (trimmed.empty()) {
     return GuiValidationResult{ LUMICE_RAYPATH_VALID, {} };
   }
-  // Use PRISM as a permissive baseline for face-number legality: the color
-  // window's ref carries no crystal-kind info at edit time (it points to a
-  // pool id, and multiple placements of different kinds may share a class).
-  // LUMICE_IsLegalFace guards the physical raypath filter separately at
-  // commit time; here we only need syntactic validation + the single-atom rule.
-  auto base = ValidateSummandText(trimmed, LUMICE_CRYSTAL_PRISM);
+  // A ref names a pool id, and placements of different kinds may share a class; this editor
+  // therefore uses the union of legal faces, not a bound crystal's kind. Follow the no-kind
+  // baseline documented by ParseFilterFromGuiJson in file_io.cpp. Physical filters still
+  // validate their actual kind separately.
+  auto base = ValidateSummandText(trimmed, LUMICE_CRYSTAL_PYRAMID);
   if (base.state != LUMICE_RAYPATH_VALID) {
     return base;
   }
@@ -436,7 +435,9 @@ struct ClassRowWash {
     if (ImGui::IsWindowHovered() && ImGui::IsMouseHoveringRect(wash_min, wash_max)) {
       ImDrawList* draw_list = ImGui::GetWindowDrawList();
       draw_list->ChannelsSetCurrent(0);
-      draw_list->AddRectFilled(wash_min, wash_max, ImGui::GetColorU32(ImGuiCol_Header));
+      // Full Header tint blends almost exactly to FrameBg in the Ice palette. Keep the row
+      // hint below the controls' fill brightness instead, without changing other Header consumers.
+      draw_list->AddRectFilled(wash_min, wash_max, ImGui::GetColorU32(ImGuiCol_Header, 0.5f));
       draw_list->ChannelsSetCurrent(1);
     }
   }

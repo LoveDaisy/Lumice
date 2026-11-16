@@ -84,10 +84,18 @@ From left to right, the Top Bar exposes:
   (75% – 200%) applied on top of the display's own scaling to every piece of the interface —
   text, controls and panels alike. The display's scaling (Windows 125% / 150%, a Retina screen)
   is detected on its own and needs no setting; the multiplier is for making everything larger or
-  smaller than that. Unlike its two neighbours it takes effect in the running window the moment it
+  smaller than that. Unlike the server-property neighbours it takes effect in the running window the moment it
   is changed; **Save as my defaults** keeps it for every later start (`app.ui_scale_multiplier` in
   `user_defaults.json`), and a value tried but not saved stays in force until the program exits —
   the `(this window: N%)` note beside the control shows what the window is actually using.
+
+  **Entry Edit startup style** chooses Wireframe / Hidden Line / X-Ray / Shaded for the next
+  application start. **Save as my defaults** persists it; neither editing nor saving changes the
+  current session. **Factory** removes only this preference on Save (Hidden Line on the next
+  start); closing without saving discards that edit. The `Custom/Factory` and `session` note
+  distinguish the working default from the live preview. The style combo inside Entry Edit remains
+  temporary across modal reopen, New/Open/Revert and Reset View; it never writes defaults.
+  **Reset all my defaults** affects the document-default checkboxes, not application preferences.
 
   Nearly every listed setting is editable in place: a field the current configuration does not
   consume (a ground colour under the other tone, the background transform with no image, `Rays(M)`

@@ -81,7 +81,8 @@ inline constexpr const char* kCollectionFields[] = {
 // probing for each kView field's expected root key, so a future change that starts (or stops)
 // serializing one of these turns the test red instead of silently widening eligibility.
 inline constexpr const char* kUnserializedViewFields[] = {
-  "left_panel_collapsed", "gui_log_level", "core_log_level", "log_to_file", "log_panel_open",
+  "left_panel_collapsed", "gui_log_level",  "core_log_level",
+  "log_to_file",          "log_panel_open", "entry_edit_preview_style",
 };
 
 struct EligibilityVerdict {
@@ -139,7 +140,7 @@ inline EligibilityVerdict ResolveDefaultEligibility(std::string_view field_name)
         // format itself to persist it — an orthogonal, larger decision.
         return { DefaultEligibility::kIneligible, IneligibleReason::kNotSerialized };
       case FieldTier::kView:
-        if (user_defaults_detail::Contains(kUnserializedViewFields, field_name)) {
+        if (!entry.app_preference_eligible && user_defaults_detail::Contains(kUnserializedViewFields, field_name)) {
           return { DefaultEligibility::kIneligible, IneligibleReason::kAppPreference };
         }
         return { DefaultEligibility::kEligible, IneligibleReason::kNone };
@@ -177,7 +178,7 @@ inline const char* IneligibleReasonLabel(IneligibleReason reason) {
 // The predicate used to be `tier == kStructSoft && auto_diff_excluded`, which named the same one
 // field for a reason unrelated to defaults; a second app preference registered under any other
 // tier would have slipped straight past it.
-inline constexpr std::size_t kIneligibleScalarResetFieldCount = 2;
+inline constexpr std::size_t kIneligibleScalarResetFieldCount = 3;
 
 // --------------------------------------------------------------------------------------------------
 // Where a process reads personal defaults from — the CLI surface (pure, header-only)
@@ -687,14 +688,11 @@ void NoteUserDefaultsDowngrade(std::string notice);
 // what makes "the document half must never decide use_gpu_backend" a structural fact rather than a
 // rule someone has to keep.
 //
-// Two fields, each with its own read/write/erase trio: `use_gpu_backend` and `worker_count`. The
-// other namespace-3 members (kUnserializedViewFields) stay excluded. Two members did NOT turn this
-// into a general per-field registry, and that was the point of the original shape — a second member
-// cost three named functions, which is still less to read than a mechanism that would have had to
-// be designed before anyone knew what a second member looked like. What the two have in common is
-// worth naming, because it is the eligibility criterion rather than a coincidence: both are
-// CONSTRUCTION-TIME server properties (backend topology, worker count) that describe the machine
-// the program runs on, not the halo the document describes.
+// Three GuiState-backed preferences have named read/write/erase trios: use_gpu_backend,
+// worker_count and entry_edit_preview_style. The first two are server construction properties;
+// the third is a startup-only client view input. Reconsidered at the third member: retain named
+// readers rather than hiding these different application times behind a generic registry.
+// UI scale has no GuiState field. All four describe the application/person, not the halo.
 //
 // The read is tolerant because the file is user-editable: a missing key, a non-object `app`, or a
 // value of the wrong JSON type all read as nullopt, i.e. "nothing stored", and NO downgrade is
@@ -729,13 +727,19 @@ std::optional<int> ReadWorkerCountFromDoc(const nlohmann::json& doc);
 void WriteWorkerCountToDoc(nlohmann::json& doc, int value);
 void EraseWorkerCountFromDoc(nlohmann::json& doc);
 
+// Discrete CrystalStyle index, validated before narrowing. Explicit Hidden Line is a stored
+// preference; erasing it restores the factory default on the next application startup.
+std::optional<int> ReadEntryEditPreviewStyleFromDoc(const nlohmann::json& doc);
+void WriteEntryEditPreviewStyleToDoc(nlohmann::json& doc, int value);
+void EraseEntryEditPreviewStyleFromDoc(nlohmann::json& doc);
+
 // The third member of the `app` namespace, and the first that is NOT a construction-time server
 // property: the UI scale multiplier the user chose on top of the monitor's own content scale
 // (doc/gui/gui-visual-language.md §4.1). It qualifies for this namespace on the same criterion as the
 // other two — it describes the machine and the person at it, not the halo — and unlike them it
 // has NO GuiState field at all: it is read here at startup, held by app.cpp's
 // g_ui_scale_multiplier, and applied by theme.cpp; it never enters a document, and it is not
-// registered in gui_state_tiers.hpp, because that table classifies document fields.
+// registered in gui_state_tiers.hpp, because that table classifies GuiState fields.
 //
 // Discrete steps rather than a free float: five multipliers a user can name ("125%"), and a
 // stored value that is not one of them (a hand-edited 1.3, a string, a bool) reads as nothing

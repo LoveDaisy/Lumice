@@ -7,6 +7,11 @@
 namespace lumice::gui {
 
 struct CrystalConfig;
+struct GuiState;
+
+// Seed the session selection once, after startup defaults resolve. Never call from document IO
+// or ResetCrystalView; modal Combo edits remain live across New/Open/Revert.
+void InitializeCrystalPreviewSession(const GuiState& startup_state);
 
 // Crystal preview trackball state
 extern float g_crystal_rotation[16];

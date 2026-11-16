@@ -26,10 +26,8 @@
 // with this bit set is stored under the override file's `app` root key — a sibling of `presets`
 // that neither SerializeGuiStateJson nor DeserializeGuiStateJson ever touches — and must therefore
 // be reset out of anything the document half applied (ResetIneligibleScalarFields,
-// user_defaults.cpp) before that channel is read. Used by `use_gpu_backend` and `worker_count`.
-// Reading `auto_diff_excluded` for this instead is a proxy quantity: the two populations coincide
-// today by accident, and the reconciler's question has nothing to do with where a default is
-// stored.
+// user_defaults.cpp) before that channel is read. Used by the server properties and the startup
+// preview preference. The reconciler's question is independent of where a default is stored.
 //
 // `kDerivedFieldsExcludeList` is a separate registry for fields that are outputs / runtime-derived
 // state (sim_state, epoch bookkeeping, stats readbacks, auto-EV runtime, etc.) — they are NOT
@@ -63,8 +61,9 @@ struct FieldTierEntry {
   // member of this namespace means three edits, not one: this bit, a line in each of those two
   // functions. That is the deliberate cost of not building a general registry for a set this small;
   // the coverage test is what makes forgetting the other two edits go red rather than silent. It
-  // held for the second member (`worker_count`) — reconsider a registry when a THIRD arrives, not
-  // before, since two hand-written pairs are still cheaper to read than a mechanism.
+  // remains deliberate with three GuiState-backed members: the preview preference is a startup
+  // view input, unlike the server construction properties. A generic registry would obscure their
+  // different application times; named readers plus coverage/chain tests keep this boundary explicit.
   bool app_preference_eligible = false;
   // Whether the field has ANY control on the main panel (the Sun / Simulation / View / Display
   // panels and the first-class tool windows — Colors, Raypath Analysis), as opposed to being
@@ -113,9 +112,8 @@ inline constexpr FieldTierEntry kFieldTierTable[] = {
     { "use_gpu_backend",            FieldTier::kStructSoft, true, true },
     // worker_count: the same two bits for the same two reasons as the row above — it is outside
     // ConfigSnapshot (no Revert baseline to diff against), and its only legitimate default channel
-    // is the `app` root key. The pair is no longer a coincidence of one field: both members of this
-    // namespace are CONSTRUCTION-TIME server properties that describe the machine rather than the
-    // document, which is what "app preference" means here.
+    // is the `app` root key. These two are server construction properties; the startup preview
+    // input below is a separate client-only preference in the same storage namespace.
     //
     // has_main_panel_surface=false: the fifth column, and the only row that spells it out. It is
     // not a document key today (SerializeGuiStateJson never writes it — it lives under the
@@ -142,6 +140,8 @@ inline constexpr FieldTierEntry kFieldTierTable[] = {
     { "raypath_color_mode",         FieldTier::kDisplay,    false },
 
     // ==== T-view: pure client-side view preference ==============================================
+    // Parsed startup default, not a mirror of the current preview selection; app channel only.
+    { "entry_edit_preview_style",    FieldTier::kView, false, true, false },
     // Aspect ratio
     { "aspect_preset",              FieldTier::kView,       false },
     { "aspect_portrait",            FieldTier::kView,       false },
