@@ -203,7 +203,7 @@ void ResetTestState() {
   // UI view state: unlike a document command, a case boundary starts a fresh workspace choice.
   gui::g_state.workspace.mode = gui::GuiState::WorkspaceMode::kRender;
   gui::ResetCrystalView();
-  gui::g_crystal_style = 1;
+  gui::InitializeCrystalPreviewSession(gui::g_state);
   gui::g_state.left_panel_collapsed = false;
   gui::g_state.right_panel_collapsed = false;
   // Modal view preferences: pin to Compact + Staged for test determinism. Compact is the layout
