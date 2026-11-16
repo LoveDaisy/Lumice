@@ -1247,18 +1247,17 @@ def test_run_logged_timeout_stops_the_whole_work_tree(tmp_path):
     too — its 2s of work never completes in the background after the 124."""
     marker = tmp_path / "gc-done.txt"
     gc_pid_file = tmp_path / "gc-pid.txt"
-    grandchild = f"import time; time.sleep(2); open({str(marker)!r}, 'w').write('done')"
+    grandchild = f"import time; time.sleep(30); open({str(marker)!r}, 'w').write('done')"
     child = (f"import subprocess, time; "
              f"p = subprocess.Popen([{sys.executable!r}, '-c', {grandchild!r}]); "
              f"open({str(gc_pid_file)!r}, 'w').write(str(p.pid)); time.sleep(30)")
     rc = g.run_logged(make_ctx(tmp_path), [sys.executable, "-c", child],
                       tmp_path / "phase.log", timeout=0.5)
     assert rc == 124
-    time.sleep(2.5)                    # longer than the grandchild's whole work
-    assert not marker.exists()         # the work did not complete in the background
     gc_pid = int(gc_pid_file.read_text())
-    with pytest.raises(ProcessLookupError):
-        os.kill(gc_pid, 0)             # the worker is gone, not orphaned
+    assert wait_until(lambda: _pid_gone(gc_pid), 10.0)   # the timeout ended the whole tree
+    assert not marker.exists()     # a dead grandchild cannot write; its 30s lifetime
+    # makes any racing completion structurally impossible, on any runner speed
 
 
 def test_remote_wait_phase_ends_at_the_wall_without_oversleeping(tmp_path, monkeypatch):
@@ -1530,6 +1529,27 @@ def route_stop_locally(monkeypatch, ctx, cwd):
     monkeypatch.setattr(g, "run_logged", local_bash)
 
 
+def wait_until(predicate, timeout_s, interval=0.05):
+    """Bounded poll for a condition. CI runners run an order of magnitude
+    slower than a dev Mac, so an assertion here must never depend on a fixed
+    sleep racing a worker's real lifetime — poll until the mechanism's
+    observable effect lands, or fail on the deadline."""
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(interval)
+    return predicate()
+
+
+def _pid_gone(pid):
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return True
+    return False
+
+
 IGNORING_WORKER = ("import signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); "
                    "time.sleep({sleep}); open({marker!r}, 'w').write('done')")
 
@@ -1545,7 +1565,7 @@ def test_stop_kills_the_recorded_worker_group_and_verifies(tmp_path, monkeypatch
     marker = tmp_path / "worker-done.txt"
     monkeypatch.setattr(g, "pytest_argv",
                         lambda *a, **k: [sys.executable, "-c", IGNORING_WORKER.format(
-                            sleep=6, marker=str(marker))])
+                            sleep=30, marker=str(marker))])
     ctx = make_ctx(tmp_path)
     ctx.args.remote_dir = "Codes/gate"
     script = g.remote_phase_script(ctx, "pytest", "sha", "t")
@@ -1557,17 +1577,12 @@ def test_stop_kills_the_recorded_worker_group_and_verifies(tmp_path, monkeypatch
                      env={"HOME": str(home), "PATH": os.environ["PATH"]})
     route_stop_locally(monkeypatch, ctx, home)
     worker_pid_file = out_dir / "pytest-worker.pid"
-    for _ in range(100):
-        if worker_pid_file.exists():
-            break
-        time.sleep(0.05)
-    assert worker_pid_file.exists()
+    assert wait_until(worker_pid_file.exists, 15.0)
     assert g.remote_stop_phase(ctx, "pytest", "t") is True
     worker_pid = int(worker_pid_file.read_text())
-    time.sleep(2.5)                # crosses the worker's original completion deadline
-    assert not marker.exists()     # the work did not complete in the background
-    with pytest.raises(ProcessLookupError):
-        os.kill(worker_pid, 0)      # the measurement group is gone
+    assert wait_until(lambda: _pid_gone(worker_pid), 10.0)   # the stop ended the work
+    assert not marker.exists()     # a dead worker cannot write; its 30s lifetime makes
+    # any racing completion structurally impossible, on any runner speed
 
 
 def test_stop_cannot_reach_a_worker_group_it_was_never_given(tmp_path, monkeypatch):
@@ -1586,14 +1601,11 @@ def test_stop_cannot_reach_a_worker_group_it_was_never_given(tmp_path, monkeypat
     ctx.args.remote_dir = str(tmp_path)
     route_stop_locally(monkeypatch, ctx, tmp_path)
     pid_file = work / "pytest.pid"
-    for _ in range(100):
-        if pid_file.exists():
-            break
-        time.sleep(0.05)
-    assert pid_file.exists()
+    assert wait_until(pid_file.exists, 15.0)
     assert g.remote_stop_phase(ctx, "pytest", "t") is True   # the stop saw only the shell
-    time.sleep(3.5)
-    assert marker.exists()                  # the work completed: it was out of the stop's reach
+    assert wait_until(marker.exists, 30.0)
+    # the work completed: it was out of the stop's reach (deadline = the worker's
+    # own timeout budget; a slow runner only delays the same observable outcome)
 
 
 def test_stop_reports_unverifiable_state_instead_of_success(tmp_path, monkeypatch):
