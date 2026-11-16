@@ -27,6 +27,7 @@
 #include <optional>
 #include <string>
 #include <system_error>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -56,6 +57,7 @@
 #include "include/lumice_base.h"
 #include "include/lumice_editor.h"
 #include "include/lumice_engine.h"
+#include "include/lumice_raypath.h"  // the acquisition's workspace survey face + budget constants
 #include "include/lumice_render.h"
 #include "support/env_var.hpp"  // SetEnvVar / UnsetEnvVar — the LUMICE_ANALYZE_DEBUG_DETAILS legs
 #include "support/gui_server_lifetime.hpp"
@@ -3026,8 +3028,71 @@ bool RowRectsIntersect(const ImRect& a, const ImRect& b) {
 // probe readings, the azimuth availability, the sun echo) are the FIRST suspects — the survey's
 // quantification legs complete in seconds of an unseeded whole-sky analysis, so a red premise is
 // a data/ranking or budget-truncation event, not an interaction-chain defect.
+// The subject legs' complete-document acquisition: the panel's adopted survey can be a legal
+// deadline cut (the engine names it; the document keeps its arm and produced legs), and the
+// subject legs read the probe — a reading a cut need not carry. Rather than re-rolling the
+// same wall-clock budget, the test issues the survey itself through the engine-tier workspace
+// face (the same face the GUI executor wraps), where the budget is the caller's contract:
+// LUMICE_PATH_SURVEY_MAX_BUDGET_MS, four times the GUI path's default, so a load-slowed query
+// still lands. The scene comes from the ONE builder the executor's own scene came from —
+// BuildScene on the standing state (a LUMICE_SceneFromJson re-parse would carry the DECLARED
+// crystal ids, while LUMICE_SceneAddCrystal assigns positional ids, and the identity's
+// crystal_id is a positional one). The request comes from the ONE builder, the GUI's own,
+// with only the budget overridden. The query blocks its worker, so it runs on a thread of its
+// own while DriveUntil keeps the frames pumping (the executor's own shape, test side).
+std::shared_ptr<const LUMICE_PathSurvey> AcquireCompleteSurveyDocument(ImGuiTestContext* ctx,
+                                                                       const gui::SelectedClassIdentity& identity) {
+  gui::FilterOverflowInfo filter_overflow;
+  gui::ColorClassOverflowInfo color_overflow;
+  gui::ScenePtr scene = gui::BuildScene(gui::g_state, gui::SceneIntent::kSimCommit, &filter_overflow, &color_overflow);
+  if (scene == nullptr) {
+    ctx->LogError(
+        "[survey-acquire] the standing state would not build a scene (filter layer %d entry %d, color class %d)",
+        filter_overflow.layer_index, filter_overflow.entry_index, color_overflow.class_index);
+    return nullptr;
+  }
+  char err[512] = {};
+  LUMICE_PathWorkspace* raw_workspace = nullptr;
+  if (LUMICE_PathWorkspaceCreate(scene.get(), &raw_workspace, err, sizeof(err)) != LUMICE_OK) {
+    ctx->LogError("[survey-acquire] workspace create failed: %s", err);
+    return nullptr;
+  }
+  std::shared_ptr<LUMICE_PathWorkspace> workspace(raw_workspace, &LUMICE_PathWorkspaceDestroy);
+  std::vector<int> faces;
+  std::vector<int> counts;
+  LUMICE_PathSurveyRequest request = gui::MakeSurveyRequestForIdentity(identity, &faces, &counts);
+  request.budget_ms = LUMICE_PATH_SURVEY_MAX_BUDGET_MS;
+  LUMICE_PathQueryOptions options{};
+  options.struct_size = sizeof(options);
+  options.deadline_ms = LUMICE_PATH_SURVEY_MAX_BUDGET_MS;
+  auto mailbox = std::make_shared<std::shared_ptr<const LUMICE_PathSurvey>>();
+  std::atomic<bool> done{ false };
+  std::thread worker([&] {
+    LUMICE_PathSurvey* raw = nullptr;
+    if (LUMICE_PathWorkspaceQuerySurvey(workspace.get(), &request, &options, &raw, err, sizeof(err)) == LUMICE_OK &&
+        raw != nullptr) {
+      *mailbox = std::shared_ptr<const LUMICE_PathSurvey>(raw, gui::SurveyDeleter{});
+    }
+    done.store(true);
+  });
+  const bool landed = DriveUntil(ctx, [&] { return done.load(); }, 150);
+  worker.join();
+  if (!landed || *mailbox == nullptr) {
+    ctx->LogError("[survey-acquire] the test-issued query produced no document (landed=%d, engine says: %s)",
+                  landed ? 1 : 0, err);
+    return nullptr;
+  }
+  return *mailbox;
+}
+
 bool ProfileRowsHighlightAndDrawOnTheMap(ImGuiTestContext* ctx) {
   ScopedServerGuard guard;
+  // The case's legal wait chain (the GUI survey up to its deadline, then up to two acquisition
+  // attempts at a 120s budget each, then the map's queued adoption) exceeds the engine
+  // watchdog's default kill threshold — a healthy truncation round would be killed mid-acquire
+  // before this case's own gates could say anything. The whole-case budget rides the same guard
+  // the suite's other long-chain cases use; RAII restores it on every exit.
+  ScopedWatchdogGuard watchdog(ctx->EngineIO);
   IM_CHECK_RETV(BringUpScene(ctx, kNarrowPlateJson, /*infinite=*/false, /*gpu=*/false), false);
   OpenWindow(ctx);
   IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
@@ -3054,8 +3119,76 @@ bool ProfileRowsHighlightAndDrawOnTheMap(ImGuiTestContext* ctx) {
                     },
                     60),
                 false);
-  const gui::SurveyOverviewModel model = gui::BuildSurveyOverviewModel(*gui::g_state.analysis.survey.adopted_result);
+  // The contract check reads the panel's own adopted document and dispatches on what the
+  // engine named: COMPLETED goes straight to the subject legs; a deadline cut is a legal form
+  // (the document keeps its arm and produced legs) — recorded as an environmental event, then
+  // replaced for the subject legs by a test-issued survey (the acquisition above: the budget
+  // is the caller's contract at that face), because the legs read the probe, which a cut need
+  // not carry; CANCELLED or a refused probe names a product/data event and is red without
+  // retry — a retry cannot repair a deterministic state.
+  const auto log_survey_doc = [&](const gui::SurveyOverviewModel& m) {
+    ctx->LogInfo(
+        "[survey-doc] valid=%d execution=%d(%s) probe_count=%zu probe_state=%d probe_mode='%s' arm=%d "
+        "tint_available=%d tint_state=%d budget_ms=%d early_stopped=%d",
+        m.valid ? 1 : 0, m.execution, gui::SurveyOutcomeName(m.execution), m.probe_count, m.probe.state,
+        m.probe.mode.c_str(), static_cast<int>(m.arm), m.tint.available ? 1 : 0, m.tint.state, m.budget_ms,
+        m.early_stopped ? 1 : 0);
+  };
+  gui::SurveyOverviewModel model = gui::BuildSurveyOverviewModel(*gui::g_state.analysis.survey.adopted_result);
+  log_survey_doc(model);
   IM_CHECK_RETV(model.valid && model.arm == gui::SurveyArm::kFamily, false);
+  if (model.execution == LUMICE_PATH_OUTCOME_CANCELLED) {
+    ctx->LogError("[survey-doc] %s: the adopted document names %s — a product or data event, not retried",
+                  target.c_str(), gui::SurveyOutcomeName(model.execution));
+    return false;
+  }
+  if (model.execution == LUMICE_PATH_OUTCOME_COMPLETED) {
+    // On a COMPLETED document a refused probe is the engine naming a structural refusal — a
+    // product/data event, deterministic, not retried.
+    if (model.probe.available && model.probe.state == LUMICE_PATH_STATE_REFUSED) {
+      ctx->LogError(
+          "[survey-doc] %s: the completed document's probe refused (mode '%s') — a product or data "
+          "event, not retried",
+          target.c_str(), model.probe.mode.c_str());
+      return false;
+    }
+  } else {
+    // Legal deadline cut. Whatever the probe block carries is part of the cut: the engine itself
+    // names a probe the deadline ran out on as refused/stop_requested (survey_probe.cpp appends
+    // the refused probe on a truncated line; the family arm passes the query's stop into the
+    // probe), so a refused probe here is NOT a structural refusal — the document is just not
+    // complete, and the subject legs read the probe: acquire.
+    ctx->LogInfo(
+        "[survey-doc] %s: legal deadline cut (probe_count=%zu probe_state=%d probe_mode='%s') — acquiring "
+        "a complete document for the subject legs",
+        target.c_str(), model.probe_count, model.probe.state, model.probe.mode.c_str());
+    // The selection is standing and does not change inside this case — one read, before the
+    // attempts (the checker's loop rule: no fatal assert inside a repeatedly-executing body).
+    const std::optional<gui::SelectedClassIdentity> identity = gui::SelectedClassIdentityFor(gui::g_state);
+    IM_CHECK_RETV(identity.has_value(), false);
+    gui::SurveyOverviewModel acquired_model;
+    bool complete = false;
+    for (int attempt = 1; attempt <= 2 && !complete; ++attempt) {
+      ctx->LogInfo("[survey-acquire] attempt %d begins (budget %d ms)", attempt, LUMICE_PATH_SURVEY_MAX_BUDGET_MS);
+      std::shared_ptr<const LUMICE_PathSurvey> acquired = AcquireCompleteSurveyDocument(ctx, *identity);
+      if (acquired != nullptr) {
+        gui::g_state.analysis.survey.adopted_result = std::move(acquired);
+        acquired_model = gui::BuildSurveyOverviewModel(*gui::g_state.analysis.survey.adopted_result);
+        log_survey_doc(acquired_model);
+        complete = acquired_model.valid && acquired_model.execution == LUMICE_PATH_OUTCOME_COMPLETED &&
+                   acquired_model.probe.available;
+      }
+    }
+    if (!complete) {
+      ctx->LogError(
+          "[survey-acquire] subject precondition not met: both attempts ended legally truncated or produced no "
+          "document (each attempt's [survey-doc] line above carries its execution) — subject validation not "
+          "executed, this round does not count as green");
+      return false;
+    }
+    model = acquired_model;
+  }
+  // The subject legs: the strong probe readings, on a complete document, unchanged.
   IM_CHECK_RETV(model.probe.available && model.probe.edge_available && model.probe.peak_available &&
                     model.probe.separation_available,
                 false);
@@ -3154,11 +3287,29 @@ bool ProfileRowsHighlightAndDrawOnTheMap(ImGuiTestContext* ctx) {
   ctx->Yield(3);
   // The legend icons (AC4): scroll the report to its legend, then assert the icons' colour
   // buckets — the frame anchors drew (full sky), so the sun's gold and the zenith/horizon greys
-  // stand; the anchor's icon rides its toggle.
+  // stand; the anchor's icon rides its toggle. The anchors draw from the adopted map's own sun
+  // echo, and the map query queues BEHIND the survey on the executor's one worker — the
+  // survey's completion gates nothing about the map's adoption. Gated here, at the point of
+  // use (the map-ink legs above read the survey model's device, not the map); a deadline-cut
+  // map still carries the echo (written before the budget window), so adoption — completed or
+  // cut — is what this waits on.
+  IM_CHECK_RETV(
+      DriveUntil(
+          ctx, [] { return gui::MapQueryStateFor(gui::g_state.analysis.map) == gui::MapQueryState::kCompleted; }, 60),
+      false);
   if (ImGuiWindow* report = MapReportWindow()) {
     report->Scroll.y = report->ScrollMax.y;
   }
   ctx->Yield(2);
+  // The state before the ink — two independent assertions, each localizing its own mechanism:
+  // the state bit false names the anchor draw (the adopted map's echo and its projection),
+  // ink absent under a true state names the report side. The readout line carries the anchor
+  // bits for the round log.
+  const gui::OverlayLegendState legend_at_assert = gui::LastMapOverlayLegend();
+  ctx->LogInfo("[map-legend] sun=%d zenith=%d horizon=%d verdict=%d sky_point=%d", legend_at_assert.anchor_sun ? 1 : 0,
+               legend_at_assert.anchor_zenith ? 1 : 0, legend_at_assert.anchor_horizon ? 1 : 0,
+               legend_at_assert.verdict_anchor ? 1 : 0, legend_at_assert.sky_point ? 1 : 0);
+  IM_CHECK_RETV(legend_at_assert.anchor_sun, false);
   IM_CHECK_RETV(MapReportIndexCountForColour(IM_COL32(255, 231, 168, 255)) > 0, false);
   IM_CHECK_RETV(MapReportIndexCountForColour(IM_COL32(200, 205, 215, 110)) > 0, false);
   ctx->ItemClick("**/Verdict anchors##map");
