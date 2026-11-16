@@ -59,8 +59,7 @@
 #include "include/lumice_engine.h"
 #include "include/lumice_raypath.h"  // the acquisition's workspace survey face + budget constants
 #include "include/lumice_render.h"
-#include "include/lumice_scene.h"  // LUMICE_SceneFromJson / LUMICE_SceneDestroy — the acquisition's scene
-#include "support/env_var.hpp"     // SetEnvVar / UnsetEnvVar — the LUMICE_ANALYZE_DEBUG_DETAILS legs
+#include "support/env_var.hpp"  // SetEnvVar / UnsetEnvVar — the LUMICE_ANALYZE_DEBUG_DETAILS legs
 #include "support/gui_server_lifetime.hpp"
 #include "test_gui_shared.hpp"
 #include "util/raypath_analysis_display.hpp"
@@ -3035,19 +3034,24 @@ bool RowRectsIntersect(const ImRect& a, const ImRect& b) {
 // same wall-clock budget, the test issues the survey itself through the engine-tier workspace
 // face (the same face the GUI executor wraps), where the budget is the caller's contract:
 // LUMICE_PATH_SURVEY_MAX_BUDGET_MS, four times the GUI path's default, so a load-slowed query
-// still lands. The scene is rebuilt from the same fixture json — the identity's crystal/faces
-// spelling is the config's own — and the request comes from the ONE builder, the GUI's own,
+// still lands. The scene comes from the ONE builder the executor's own scene came from —
+// BuildScene on the standing state (a LUMICE_SceneFromJson re-parse would carry the DECLARED
+// crystal ids, while LUMICE_SceneAddCrystal assigns positional ids, and the identity's
+// crystal_id is a positional one). The request comes from the ONE builder, the GUI's own,
 // with only the budget overridden. The query blocks its worker, so it runs on a thread of its
 // own while DriveUntil keeps the frames pumping (the executor's own shape, test side).
 std::shared_ptr<const LUMICE_PathSurvey> AcquireCompleteSurveyDocument(ImGuiTestContext* ctx,
                                                                        const gui::SelectedClassIdentity& identity) {
-  LUMICE_Scene* raw_scene = nullptr;
-  char err[512] = {};
-  if (LUMICE_SceneFromJson(kNarrowPlateJson, &raw_scene) != LUMICE_OK || raw_scene == nullptr) {
-    ctx->LogError("[survey-acquire] the fixture scene json would not parse");
+  gui::FilterOverflowInfo filter_overflow;
+  gui::ColorClassOverflowInfo color_overflow;
+  gui::ScenePtr scene = gui::BuildScene(gui::g_state, gui::SceneIntent::kSimCommit, &filter_overflow, &color_overflow);
+  if (scene == nullptr) {
+    ctx->LogError(
+        "[survey-acquire] the standing state would not build a scene (filter layer %d entry %d, color class %d)",
+        filter_overflow.layer_index, filter_overflow.entry_index, color_overflow.class_index);
     return nullptr;
   }
-  std::shared_ptr<LUMICE_Scene> scene(raw_scene, &LUMICE_SceneDestroy);
+  char err[512] = {};
   LUMICE_PathWorkspace* raw_workspace = nullptr;
   if (LUMICE_PathWorkspaceCreate(scene.get(), &raw_workspace, err, sizeof(err)) != LUMICE_OK) {
     ctx->LogError("[survey-acquire] workspace create failed: %s", err);
@@ -3074,7 +3078,8 @@ std::shared_ptr<const LUMICE_PathSurvey> AcquireCompleteSurveyDocument(ImGuiTest
   const bool landed = DriveUntil(ctx, [&] { return done.load(); }, 150);
   worker.join();
   if (!landed || *mailbox == nullptr) {
-    ctx->LogError("[survey-acquire] the test-issued query produced no document (landed=%d)", landed ? 1 : 0);
+    ctx->LogError("[survey-acquire] the test-issued query produced no document (landed=%d, engine says: %s)",
+                  landed ? 1 : 0, err);
     return nullptr;
   }
   return *mailbox;
