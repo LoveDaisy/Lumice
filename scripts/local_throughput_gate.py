@@ -1394,7 +1394,15 @@ def remote_stop_phase(ctx: Ctx, phase: str, rdir: str) -> bool:
     never as success."""
     out = f"{ctx.args.remote_dir}/results/{rdir}"
     done_file = f"{out}/{phase}.done"
+    # Group liveness is zombie-aware: a killed-but-unreaped member is terminated
+    # work. Linux's kill(-pgid, 0) still counts a zombie, so the plain probe
+    # would report "could not verify termination" for a group whose leader the
+    # caller has not reaped (a macOS kill does not count zombies, so the same
+    # stop passes there). "Stopped means the work ended" — ended-but-unreaped
+    # is ended. (Not an f-string: the awk braces are shell syntax.)
     cmd = (
+        "group_alive() { ps -eo pgid=,stat= 2>/dev/null | "
+        "awk -v g=\"$1\" '$1 == g && $2 !~ /^Z/ {found=1} END {exit !found}'; }; "
         f"if [ -f {done_file} ]; then "
         f"echo '{phase}: already done; nothing to stop'; "
         f"else found=0; "
@@ -1402,10 +1410,10 @@ def remote_stop_phase(ctx: Ctx, phase: str, rdir: str) -> bool:
         f'[ -e "$f" ] || continue; found=1; '
         f'pgid=$(cat "$f"); '
         f'kill -- -"$pgid" 2>/dev/null; '
-        f'for i in 1 2 3; do kill -0 -- -"$pgid" 2>/dev/null || break; sleep 1; done; '
-        f'if kill -0 -- -"$pgid" 2>/dev/null; then '
+        f'for i in 1 2 3; do group_alive "$pgid" || break; sleep 1; done; '
+        f'if group_alive "$pgid"; then '
         f'kill -9 -- -"$pgid" 2>/dev/null; sleep 1; fi; '
-        f'if kill -0 -- -"$pgid" 2>/dev/null; then '
+        f'if group_alive "$pgid"; then '
         f"echo '{phase}: could not verify termination' >&2; exit 3; fi; "
         f"done; "
         f'if [ "$found" -eq 1 ]; then '

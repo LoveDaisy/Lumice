@@ -1573,17 +1573,11 @@ def test_stop_kills_the_recorded_worker_group_and_verifies(tmp_path, monkeypatch
     out_dir.mkdir(parents=True)
     script_file = out_dir / "pytest.sh"
     script_file.write_text(script)
-    # Production launches the phase via `setsid nohup bash phase.sh &` from an
-    # ssh shell that exits immediately: the script is an orphan whose zombie
-    # init reaps. The sandbox mirrors that reaping shape — launching the script
-    # as a pytest child would leave a session-leader zombie that Linux's
-    # kill(-pgid, 0) group check counts as alive (macOS does not), and the
-    # graded stop would report "could not verify termination".
-    subprocess.run(["bash", "-c",
-                    f"setsid bash {script_file} </dev/null "
-                    f">{out_dir / 'pytest.nohup'} 2>&1 &"],
-                   cwd=str(home), env={"HOME": str(home), "PATH": os.environ["PATH"]},
-                   check=True)
+    # The reviewed sandbox shape: the script is a pytest child and its killed
+    # session leader stays an unreaped zombie. The stop's verification is
+    # zombie-aware, so that reads as terminated work on both platforms.
+    subprocess.Popen(["bash", str(script_file)], start_new_session=True, cwd=str(home),
+                     env={"HOME": str(home), "PATH": os.environ["PATH"]})
     route_stop_locally(monkeypatch, ctx, home)
     worker_pid_file = out_dir / "pytest-worker.pid"
     assert wait_until(worker_pid_file.exists, 15.0)
@@ -1604,15 +1598,10 @@ def test_stop_cannot_reach_a_worker_group_it_was_never_given(tmp_path, monkeypat
     worker = IGNORING_WORKER.format(sleep=3, marker=str(marker))
     prog = (f'echo $$ > {work}/pytest.pid; '
             f'timeout 30 {sys.executable} -c {worker!r} > /dev/null 2>&1')
-    prog_file = work / "pytest.sh"
-    prog_file.write_text(prog)
-    # Same orphan-reaping shape as the stop-kills sandbox above (see its
-    # comment): a pytest-child session leader would stay a zombie and make
-    # Linux's graded stop report "could not verify termination".
-    subprocess.run(["bash", "-c",
-                    f"setsid bash {prog_file} </dev/null >/dev/null 2>&1 &"],
-                   cwd=str(tmp_path), env={"HOME": str(tmp_path), "PATH": os.environ["PATH"]},
-                   check=True)
+    # Same reviewed Popen shape as the stop-kills sandbox above; the stop's
+    # zombie-aware verification reads the unreaped session leader as ended work.
+    subprocess.Popen(["bash", "-c", prog], start_new_session=True,
+                     cwd=str(tmp_path), env={"HOME": str(tmp_path), "PATH": os.environ["PATH"]})
     ctx = make_ctx(tmp_path)
     ctx.args.remote_dir = str(tmp_path)
     route_stop_locally(monkeypatch, ctx, tmp_path)
