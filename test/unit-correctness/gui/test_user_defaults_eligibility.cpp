@@ -98,7 +98,8 @@ namespace {
 // 98 with `analysis_freshness` (the analysis staleness facts' unified derivation),
 // kDerivedFieldsExcludeList: a per-frame re-derivation owns no state between frames — nothing
 // to pre-set, so ineligible as every derived row is.
-constexpr std::size_t kExpectedGovernedFieldCount = 98;
+// 99 with the app-only startup preview style, a pure client view default.
+constexpr std::size_t kExpectedGovernedFieldCount = 99;
 
 std::vector<std::string> AllGovernedFieldNames() {
   std::vector<std::string> names;
@@ -202,6 +203,7 @@ TEST(UserDefaultsEligibility, RepresentativeFieldsMapToTheDesignedVerdicts) {
     // nowhere to be stored.
     { "use_gpu_backend", DefaultEligibility::kEligible, IneligibleReason::kNone },
     { "worker_count", DefaultEligibility::kEligible, IneligibleReason::kNone },
+    { "entry_edit_preview_style", DefaultEligibility::kEligible, IneligibleReason::kNone },
     { "gui_log_level", DefaultEligibility::kIneligible, IneligibleReason::kAppPreference },
     { "core_log_level", DefaultEligibility::kIneligible, IneligibleReason::kAppPreference },
     { "log_to_file", DefaultEligibility::kIneligible, IneligibleReason::kAppPreference },

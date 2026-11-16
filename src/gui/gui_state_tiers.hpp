@@ -63,8 +63,9 @@ struct FieldTierEntry {
   // member of this namespace means three edits, not one: this bit, a line in each of those two
   // functions. That is the deliberate cost of not building a general registry for a set this small;
   // the coverage test is what makes forgetting the other two edits go red rather than silent. It
-  // held for the second member (`worker_count`) — reconsider a registry when a THIRD arrives, not
-  // before, since two hand-written pairs are still cheaper to read than a mechanism.
+  // remains deliberate with three GuiState-backed members: the preview preference is a startup
+  // view input, unlike the server construction properties. A generic registry would obscure their
+  // different application times; named readers plus coverage/chain tests keep this boundary explicit.
   bool app_preference_eligible = false;
   // Whether the field has ANY control on the main panel (the Sun / Simulation / View / Display
   // panels and the first-class tool windows — Colors, Raypath Analysis), as opposed to being
@@ -142,6 +143,8 @@ inline constexpr FieldTierEntry kFieldTierTable[] = {
     { "raypath_color_mode",         FieldTier::kDisplay,    false },
 
     // ==== T-view: pure client-side view preference ==============================================
+    // Parsed startup default, not a mirror of the current preview selection; app channel only.
+    { "entry_edit_preview_style",    FieldTier::kView, false, true, false },
     // Aspect ratio
     { "aspect_preset",              FieldTier::kView,       false },
     { "aspect_portrait",            FieldTier::kView,       false },
