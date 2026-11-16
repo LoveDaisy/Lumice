@@ -3055,6 +3055,16 @@ bool ProfileRowsHighlightAndDrawOnTheMap(ImGuiTestContext* ctx) {
                     60),
                 false);
   const gui::SurveyOverviewModel model = gui::BuildSurveyOverviewModel(*gui::g_state.analysis.survey.adopted_result);
+  // TEMPORARY STEP-1 PROBE: per-round document-state telemetry for this case's flake forensics
+  // — green rounds give the baseline, red rounds carry the AC1 facts (execution / probe_count)
+  // the assertion text alone cannot. Removed when the Step 2 contract-check logging lands. A
+  // log line, not an assertion: it never fails anything.
+  ctx->LogInfo(
+      "[survey-doc] valid=%d execution=%d(%s) probe_count=%zu probe_state=%d probe_mode='%s' arm=%d "
+      "tint_available=%d tint_state=%d budget_ms=%d early_stopped=%d",
+      model.valid ? 1 : 0, model.execution, gui::SurveyOutcomeName(model.execution), model.probe_count,
+      model.probe.state, model.probe.mode.c_str(), static_cast<int>(model.arm), model.tint.available ? 1 : 0,
+      model.tint.state, model.budget_ms, model.early_stopped ? 1 : 0);
   IM_CHECK_RETV(model.valid && model.arm == gui::SurveyArm::kFamily, false);
   IM_CHECK_RETV(model.probe.available && model.probe.edge_available && model.probe.peak_available &&
                     model.probe.separation_available,
@@ -3159,6 +3169,20 @@ bool ProfileRowsHighlightAndDrawOnTheMap(ImGuiTestContext* ctx) {
     report->Scroll.y = report->ScrollMax.y;
   }
   ctx->Yield(2);
+  // TEMPORARY STEP-1 PROBE: the legend state of the same frame the report's draw list is read
+  // from, plus a red-frame PNG when the gold ink is absent — the AC1 facts the bare colour
+  // count cannot carry (state false ⇒ anchor-draw mechanism, state true with no ink ⇒
+  // report-side mechanism). Removed when the Step 3 status assertion lands.
+  {
+    const gui::OverlayLegendState legend_now = gui::LastMapOverlayLegend();
+    const bool map_adopted = gui::g_state.analysis.map.adopted_result != nullptr;
+    ctx->LogInfo("[map-legend] sun=%d zenith=%d horizon=%d verdict=%d sky_point=%d map_adopted=%d",
+                 legend_now.anchor_sun ? 1 : 0, legend_now.anchor_zenith ? 1 : 0, legend_now.anchor_horizon ? 1 : 0,
+                 legend_now.verdict_anchor ? 1 : 0, legend_now.sky_point ? 1 : 0, map_adopted ? 1 : 0);
+    if (MapReportIndexCountForColour(IM_COL32(255, 231, 168, 255)) == 0) {
+      SaveWindowPng(ctx, "//Raypath view", GuiTestTempPath("analysis_redframe_gold0.png").string());
+    }
+  }
   IM_CHECK_RETV(MapReportIndexCountForColour(IM_COL32(255, 231, 168, 255)) > 0, false);
   IM_CHECK_RETV(MapReportIndexCountForColour(IM_COL32(200, 205, 215, 110)) > 0, false);
   ctx->ItemClick("**/Verdict anchors##map");
