@@ -980,6 +980,39 @@ def test_ubsan_leg_dry_run_skips_before_classification(tmp_path, monkeypatch):
     assert nm_cmds == []              # the nm check runs nothing in dry-run
 
 
+def test_ubsan_leg_strips_the_repo_prefix_from_the_diagnostic_location(tmp_path, monkeypatch):
+    """UBSan prints the compile-time path (the clone's absolute location); the
+    record's location is repo-relative so the issue body names a repo symbol,
+    never a local path. The full line stays in the local record unchanged."""
+    ctx = make_ctx(tmp_path)
+    metal_tools(monkeypatch)
+    monkeypatch.setattr(g, "collect_readings", lambda with_wsl_host: idle_r())
+    monkeypatch.setattr(g, "_run", instrumented_nm)
+    clone = Path(ctx.args.work_dir) / "repo"
+
+    def fake_run_logged(ctx_, cmd, log_path, **kw):
+        exe = Path(cmd[0]).name
+        if exe == "unit_correctness_test":
+            Path(log_path).write_text(
+                ubsan_log(UBSAN_UNIT_CASE, diagnostic=f"{clone}/src/core/shared/projection_shared.h:382:17: "
+                                                          "runtime error: value 6.4e+10 outside int range\n"))
+        elif exe in g.UBSAN_PROBE_FILTERS:
+            Path(log_path).write_text(ubsan_log(*g.UBSAN_PROBE_FILTERS[exe]["expected"]))
+        else:
+            Path(log_path).touch()
+        return 0
+
+    monkeypatch.setattr(g, "run_logged", fake_run_logged)
+    rec = g.run_ubsan(ctx, "sha")
+    pr = rec["probe_results"]["unit_correctness_test"]
+    assert pr["first_diagnostic_location"] == "src/core/shared/projection_shared.h:382"
+    assert "/private/var" not in pr["first_diagnostic_location"]
+    assert pr["first_diagnostic_line"].startswith(str(clone))   # full text stays local
+    body = g.issue_body("ubsan", rec, None)
+    assert "src/core/shared/projection_shared.h:382" in body
+    assert "/private/var" not in body
+
+
 @pytest.mark.parametrize("reason,category", [
     ("sanitizer diagnostics: 2 diagnostic(s); first: a.h:12", "sanitizer diagnostics"),
     ("instrumentation missing (unit_correctness_test: no __ubsan_handle reference)",

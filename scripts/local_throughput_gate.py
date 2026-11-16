@@ -1488,6 +1488,10 @@ def run_ubsan(ctx: Ctx, sha: str) -> dict:
         log_text = probe_log.read_text(errors="replace") if probe_log.is_file() else ""
         status, reason = classify_ubsan_probe(rc, log_text, spec["expected"])
         diagnostics, first_line, first_location = ubsan_diagnostic_stats(log_text)
+        if first_location.startswith(str(repo) + "/"):
+            # UBSan prints the compile-time path; the issue body shows repo
+            # symbols only, so the local clone prefix comes off here.
+            first_location = first_location[len(str(repo)) + 1:]
         probe_results[bin_name] = {
             "status": status, "reason": reason, "exit": rc, "diagnostics": diagnostics,
             "first_diagnostic_line": first_line,
