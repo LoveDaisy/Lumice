@@ -739,7 +739,7 @@ void EraseEntryEditPreviewStyleFromDoc(nlohmann::json& doc);
 // other two — it describes the machine and the person at it, not the halo — and unlike them it
 // has NO GuiState field at all: it is read here at startup, held by app.cpp's
 // g_ui_scale_multiplier, and applied by theme.cpp; it never enters a document, and it is not
-// registered in gui_state_tiers.hpp, because that table classifies document fields.
+// registered in gui_state_tiers.hpp, because that table classifies GuiState fields.
 //
 // Discrete steps rather than a free float: five multipliers a user can name ("125%"), and a
 // stored value that is not one of them (a hand-edited 1.3, a string, a bool) reads as nothing

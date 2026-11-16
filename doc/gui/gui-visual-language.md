@@ -308,7 +308,7 @@ Settings 每次打开都重置到默认尺寸（`ImGuiCond_Appearing`），Summa
 | Log 面板 | `app_panels.cpp` | 固定（250px） | owner：本来与主窗口同宽，暂不动 |
 | Edit Entry | `edit_modals.cpp` | 半可变（宽固定、高可拉） | Compact / Expanded 两档，宽按各自形态钉死（min == max）；高度与 Summary 共用 `secondary_window_sizing.hpp` 的「跟随内容直到用户拖动」状态机。与 Settings/Summary 不同的一点：窗口里**有一个可伸缩 pane**（Compact 的 tab 区、Expanded 的两列）吸收高度差，其余部分（预览、共享行、底栏）不变 ⇒ 任意高度下操作行都在窗口内、窗口自身不滚；工作区矮于内容时（如 1366×768）pane 自动让出溢出量，不拖也不滚。高度上限取窗口**所在显示器**的工作区（不用只认主 viewport 的 `ClampedSecondaryWindowMaxHeight`）；UI scale 变化那一帧回到跟随内容 |
 | Custom Spectrum / 5 个确认对话框 | `edit_modals.cpp` / `app_panels.cpp` | 自动贴合 | `AlwaysAutoResize`，不动 |
-| Settings | `defaults_panel.cpp` | 半可变 | 宽钉 760；默认 760×584 不变，故 `defaults_panel_layout` 参考图不重拍 |
+| Settings | `defaults_panel.cpp` | 半可变 | 宽钉 760；默认 760×632，最小高度 416，新增启动预览样式行自带 24px 高度预算；参考图按现有规程同步 |
 | Summary | `config_summary_window.cpp` | 半可变 | 宽钉 1200；出现时贴合内容、上限 min(900, 工作区)，之后高可拉到工作区 |
 | Colors | `color_window.cpp` | 自由 | `ImGuiCond_FirstUseEver` 给默认尺寸，之后 ImGui 自己记 |
 | Raypath view | `analyze_map_view.cpp`（`RenderAnalyzeRaypathViewWindow`） | 自由 | `ImGuiCond_FirstUseEver` 给默认 900×560（钳到视口内），双轴可拉，窗级最小 480×360（`SetNextWindowSizeConstraints` 逐帧钳制——§11 R3 的最窄合同是用户可达边界），之后 ImGui 自己记；窗内 D3 分隔（图 | 信息）存会话比例（`GuiState::analyze_raypath_view_info_ratio`），两下限钳制；容器与开窗合同见 [`analyze-interaction-contract.md`](analyze-interaction-contract.md) §6/§8 |

@@ -24,7 +24,7 @@
 | **T-struct·hard** | 拓扑变，抬 epoch floor 栅栏旧世代的迟到帧；**不清屏**，屏上画面保持到新世代替换（`gui-preview-lifecycle-architecture.md` §7.1） | `MarkStructHardDirty()`（`gui_state.hpp`；前名 `MarkFilterDirty`，被 S4 正名）= MarkDirty + display_epoch_floor=committed_epoch（2026-09-28 前还当场清零 snapshot_intensity / p99_raw_y，已去掉） | 编辑谓词/combine/增删类/增删 ref、filter 结构变、staged filter commit |
 | **T-struct·soft** | 配置脏但保留 carry-forward 纹理，旧世代迟到帧不设栅栏 | `MarkDirty()`（gui_state.hpp:693）只置 dirty | 晶体几何/朝向、光谱、layer/prob、sim_resolution |
 | **T-display** | 纯显示，即时下发 server，**不 dirty / 不 epoch** | `PushDisplayState`→`LUMICE_SetRaypathColors` | color rgb / visible / solo / z_order / composite mode |
-| **T-view** | 纯客户端，仅 preview shader 实时重投影 / 合成 | 无 server 下发（仿真投影固定全天空 dual-fisheye） | lens / fov / view / exposure / background |
+| **T-view** | 纯客户端显示或应用启动偏好 | 无 server 下发；启动输入仅播种一次 | lens / fov / view / exposure / background / `entry_edit_preview_style` |
 | **T-session** | 会话偏好，不持久、不 dirty、不进 ConfigSnapshot | 直接改字段 | show_composite_preview / color_window_open / trackball / look_at |
 
 **顶栏表达是几何派生，不是状态档位**：New/Open/Save/Colors/Summary/Settings 的图文/纯图标档位仅由实际窗宽、
@@ -149,7 +149,7 @@ Render/Analyze 的纯文字双格是 T-session 工作区选择：当前格实填
 |---|----------|------|------|
 | ① 单例文档默认 | `FieldTier::kStructSoft` 中的单例字段（`sun` / `sim` / `renderer`） | 进覆盖文件的 GuiState 半区 |
 | ② 预设库 | 内置 axis 预设表每个可存储行的全三轴 × type/mean/std 九个面（2026-11-15 起含 Random；都不是 `GuiState` 的顶层字段，落地时机与运行时形态见 8.7） | 进覆盖文件独立的 `presets` 子树，不占用 GuiState 半区的键名空间 |
-| ③ app 偏好 | `FieldTier::kView` 中未被 `SerializeGuiStateJson` 序列化的那批（日志级别三件套 / 日志面板展开态 / 左侧面板折叠态），以及 `use_gpu_backend`（渲染后端选择）/ `worker_count`（CPU 路线 worker 数） | **部分解禁**：`use_gpu_backend` 与 `worker_count` 各经覆盖文件独立的第三个根键 `app` 落地为个人默认（形态与 ② 同构，面板里是第二个注册式区，见 8.3），在 `kFieldTierTable` 上**各自**由自己的 `app_preference_eligible` 位登记、各自有一套 `Read/Write/Erase*FromDoc`；其余成员仍然排除——它们没有存储通道，`ResolveDefaultEligibility` 对它们仍返回 `kAppPreference`。工厂默认不变（`use_gpu_backend = false` / `worker_count = 0`，理由见 `gui_state.hpp` 两个字段处的注释）。⭐**这两个成员的共同点就是这个命名空间的资格判据本身，不是巧合**：二者都是**服务器构造期属性**（后端拓扑 / worker 数），描述的是**程序跑在哪台机器上**，而不是文档描述的那个晕。放进文档半区就意味着它跟着文件旅行到另一台机器——正是 `doc/env-var-policy.md` 拒绝环境变量承载用户可见行为的那条「静默逐机器漂移」换了个载体。二者也都因此**不在 `SerializeGuiStateJson` 的输出里**，`.lmc` 结构性地装不下它们。|
+| ③ app 偏好 | `use_gpu_backend` / `worker_count`（服务器构造属性）、`entry_edit_preview_style`（纯客户端启动输入）；另有不在 GuiState 的 `ui_scale_multiplier` | 均存于覆盖文件独立的 `app` 根键，不进文档；三个 GuiState 字段各由 tier 行的 `app_preference_eligible` 登记资格，经具名读写函数加载。日志和面板折叠等其他未序列化 view 字段仍不解禁。后端/worker 在新建文档时生效，UI scale 即时应用，预览样式只在进程启动时播种一次；共同点是用户的应用偏好而不是晕的场景数据，不要求共同的应用时机。 |
 | ④ 集合区 | `FieldTier::kStructHard` 的成员，以及 `kStructSoft` 里被 `kCollectionFields`（`user_defaults.hpp:64`）标记的容器：晶体 / layer / filter / 染色规则 | 排除。这些容器在序列化后的 key path 里携带文档局部下标（如某个数组的第几项），脱离具体文档后这个下标没有意义 |
 
 ### 8.2 资格判定：从档位表派生，不手写第二份清单
@@ -171,7 +171,9 @@ Render/Analyze 的纯文字双格是 T-session 工作区选择：当前格实填
 
 - **注册式的区域现在有两个，`presets` 与 `app`，两者对生成式 walk 都是隐形的。** 面板里除了 §2 那张生成式的设置列表，还有两块**不由 walk 产出**的区域：§1 预设库（`presets` 根键，命名空间 ②）与 §app 应用偏好（`app` 根键，命名空间 ③）。它们隐形的机制是同一条，且是结构性的而非约定：`SerializeGuiStateJson` 从不产出这两个根键，`BuildDefaultDiffRows` 遍历的正是那份序列化输出的键集合，因此这两棵子树没有机会成为一行。反过来说，**存在这两个根键下的字段，只能经它们各自的 `ReadXFromDoc` / `WriteXToDoc` / `EraseXFromDoc` 原语读写**——这也是"文档半区绝不能决定 `use_gpu_backend`（以及后来的 `worker_count`）"从一条纪律变成一条机制的地方。
 
-  ⚠️ **`app` 至今没有、也不需要一份通用的 per-field registry。** 加入第二个成员的代价是三个具名函数 + `ResetIneligibleScalarFields` 一行 + `ApplyAppPreferencesOverride` 一行，仍然比"先设计一套没人知道第二个成员长什么样的机制"便宜；漏掉后两行不会静默——`kIneligibleScalarResetFieldCount` 那道覆盖闸会红。⇒ 重新评估 registry 的时机是**第三个成员**出现时，不是现在。
+  **第三个 GuiState-backed app 成员加入后的重评估**：保留具名 `Read/Write/Erase*FromDoc`、reset/apply 显式接线与覆盖测试，不引入通用 registry。预览样式是启动 view 输入，后端/worker 是服务器构造输入，UI scale 则不在 GuiState；统一成泛型 apply 容易掩盖应用时机边界。`kIneligibleScalarResetFieldCount = 3` 与逐成员 composition 链一起约束登记、重置及解析，不把改计数本身当作接线证据。
+
+  **Entry Edit 启动样式**：`app.entry_edit_preview_style` 存四值索引（Wireframe / Hidden Line / X-Ray / Shaded）；缺键、错类型或越界回 Hidden Line，拒绝发生在整数窄化之前，且不影响其他覆盖。Settings 编辑 `g_copy_doc`，Save 才落盘，Close/X 不保存；显式选择 Hidden Line 仍存键，`Factory` 只在副本删除该键，Save 后下次启动回工厂。`Custom/Factory` 显示工作副本来源，`session` 显示当前样式，两个值可不同。既有 `Reset all my defaults` 仅清文档默认勾选，不影响 app 偏好或预设库。
 
   这张注册表也是主 UI 与面板收敛到"同一份权威"的落地方式：主 UI 里所有绑定到已注册字段的滑条调用点（`app_panels.cpp` 的 View / Display / Overlay 与 `panels.cpp` 的 Sun / Simulation，共 16 处）都改读同一个 `ConstraintFor()`（`field_editor_registry.hpp:137`），不再各自持有一份边界字面量——改一处，主 UI 与面板同时移动（`main-ui-constraint-registry` / 408.8 落地；其 AC3 的红态探针证明了这一点：故意改错某个约束的边界，主 UI 与表格单元格在同一次改动、同一帧一起偏移）。
 
@@ -193,7 +195,7 @@ Render/Analyze 的纯文字双格是 T-session 工作区选择：当前格实填
 面板打开时只读一次覆盖文件（`OpenDefaultsPanel()`，`defaults_panel.cpp:856`），产出两份文档：
 
 - `g_snapshot_doc`——打开那一刻磁盘上的样子，整个会话内**冻结不变**。面板对"这个 key 来自哪里"（Source 列）、"它的生效默认是什么"、"复选框的起始状态"这些判断，全部锚定在这一份上，不随会话内的编辑而移动。
-- `g_copy_doc`——按下 Save 此刻会写盘的内容。只有 §1 预设的 std 编辑直接改写它；主表的复选框把意图表达成一个选中集合，只在 Save 时一次性折进这份副本（`CommitCopy()`，`defaults_panel.cpp:323`，经 `WriteActiveOverlayDoc()` 写盘，`defaults_diff.hpp:98`）。
+- `g_copy_doc`——按下 Save 此刻会写盘的内容。预设与 app 偏好的控件直接改它；主表的复选框把意图表达成一个选中集合，只在 Save 时一次性折进这份副本（`CommitCopy()`，经 `WriteActiveOverlayDoc()` 写盘）。
 
 一切编辑——勾选/取消勾选、单元格内改值、Reset all——都只改这份工作副本；覆盖文件本身在按下 Save 之前**不会被写入一个字节**；关闭面板（Close / 标题栏 X / Esc）不写盘，直接丢弃这份副本。这是**单一提交点**：405.x 时代 Revert / Reset 曾经点击即写盘、Save 另外再提交一次，导致"点了 Reset all，面板看起来什么都没变——那 Save 现在到底会不会带上这次 Reset"从屏幕上根本看不出答案；副本模型把提交点收成一个，这个问题不复存在。
 
@@ -527,6 +529,13 @@ Raypath view 的 map 状态、Pose & trace 的 point 状态各由自己的会话
 > `src/gui/` 里跨帧持有模型内容的 `static` 前先读；**新增一个即在 §11.4 的表里追加一行并给出裁定**。
 
 ### 11.1 规则（可迁移判据，逐字）
+
+**启动输入不是 live 镜像**：`GuiState::entry_edit_preview_style` 只是默认加载的解析结果，
+`main.cpp` 在 `MakeNewDocumentState` 之后调用 `InitializeCrystalPreviewSession`，首次 modal 绘制之前
+给 `g_crystal_style` 播种一次。后者是 Combo、FBO 渲染和面号覆盖共享的唯一会话权威；Settings
+副本、启动输入与当前会话不是同一语义的三份缓存，不做逐帧同步。New/Open/Revert/Reset View、
+弹窗关闭重开及 Settings Save 均不重新播种，也不把临时选择反写个人默认或文档。
+
 
 > **视图持有的任何模型副本，必须有一条声明的重同步规则；只在打开时同步的副本隐含依赖一把锁，而这把锁必须是
 > 显式的、对所有写者生效的。**

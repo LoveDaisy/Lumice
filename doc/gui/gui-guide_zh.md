@@ -75,9 +75,15 @@ GUI 需要 display server 和支持 OpenGL 3.2 Core Profile 的 GPU。
   几行，它们描述的是这台机器而不是任何文档：新文档起步用的 GPU 后端与 worker 数，以及 **UI scale**——
   一个叠在显示器自身缩放之上的倍率（75% – 200%），作用于整套界面：文字、控件、面板一起放大缩小。
   显示器自身的缩放（Windows 125% / 150%、Retina 屏）会自动检测，不需要设置；这个倍率是在那之上再调。
-  与它的两个邻居不同，它一改就立刻作用于当前窗口；**Save as my defaults** 会把它保存下来供以后每次启动
+  与服务器属性不同，倍率一改就立刻作用于当前窗口；**Save as my defaults** 会把它保存下来供以后每次启动
   使用（`user_defaults.json` 里的 `app.ui_scale_multiplier`），试过但没保存的值会一直生效到程序退出——
   控件旁的 `(this window: N%)` 标注显示的就是当前窗口实际在用的值。
+
+  **Entry Edit startup style** 可选 Wireframe / Hidden Line / X-Ray / Shaded，供下一次应用启动使用。
+  **Save as my defaults** 才持久化，编辑和保存都不改变当前会话样式。**Factory** 仅在副本移除这项覆盖，
+  Save 后下次启动回 Hidden Line；不保存就关闭则丢弃该编辑。旁边的 `Custom/Factory` 与 `session`
+  分别显示工作默认来源和当前预览。Entry Edit 内的样式 Combo 仍是临时会话选择，关闭重开、New/Open/Revert
+  及 Reset View 都不重置，也不会反写默认。**Reset all my defaults** 只清文档默认勾选，不清应用偏好。
 
   几乎所有列出的设置都可就地编辑：当前配置用不到的字段（另一色调下的地面色、无图时的背景变换、
   Infinite rays 开启时的 `Rays(M)`、Globe 下的 `Roll`）保持可编辑，悬停说明取值被保留、待其生效
