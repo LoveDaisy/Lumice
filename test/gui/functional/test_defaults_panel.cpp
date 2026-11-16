@@ -1557,6 +1557,163 @@ void RegisterDefaultsPanelTests(ImGuiTestEngine* engine) {
   }
 
   {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "defaults_panel", "preview_startup_default_and_live_modal_are_independent");
+    t->GuiFunc = [](ImGuiTestContext*) {
+      if (g_capture.capture_requested && !g_capture.capture_done) {
+        g_capture.width = gui::g_crystal_renderer.Width();
+        g_capture.height = gui::g_crystal_renderer.Height();
+        g_capture.pixels = lumice::test::ReadTexturePixels(
+            static_cast<unsigned int>(gui::g_crystal_renderer.GetTextureId()), g_capture.width, g_capture.height);
+        g_capture.capture_done = true;
+      }
+    };
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ScopedPanel panel(ctx, "panel_preview_startup");
+      const int old_style = gui::g_crystal_style;
+      struct SessionGuard {
+        int old_style;
+        ~SessionGuard() {
+          gui::CloseEditModalOnDocumentReset();
+          gui::g_crystal_style = old_style;
+          g_capture.Reset();
+        }
+      } session_guard{ old_style };
+      const auto pick = [&](ImGuiTestRef ref, const char* entry) {
+        ctx->ItemClick(ref);
+        ctx->Yield(2);
+        ctx->SetRef("//$FOCUSED");
+        ctx->ItemClick((std::string("**/") + entry).c_str());
+        ctx->SetRef("");
+        ctx->Yield(3);
+      };
+      panel.OpenOn(gui::DefaultsPanelSection::kSettings);
+      const char* combo = "Settings/###defaults_app_preview_style";
+      pick(combo, "Hidden Line");
+      SaveDefaultsPanel(ctx);
+      IM_CHECK_EQ(gui::ReadEntryEditPreviewStyleFromDoc(ReadOverlayFile(panel.dir())).value_or(-1), 1);
+      // All four choices are real selectable items, including explicit factory-valued storage.
+      for (int style = 0; style < gui::kCrystalStyleCount; ++style) {
+        pick(combo, gui::kCrystalStyleNames[style]);
+        if (ctx->IsError()) {
+          break;
+        }
+        SaveDefaultsPanel(ctx);
+        if (gui::ReadEntryEditPreviewStyleFromDoc(ReadOverlayFile(panel.dir())).value_or(-1) != style ||
+            gui::g_crystal_style != old_style) {
+          IM_ERRORF("Saved preview style %d did not stay independent from the live session", style);
+          break;
+        }
+      }
+      IM_CHECK(!ctx->IsError());
+      ctx->ItemClick("**/###defaults_app_preview_factory");
+      panel.Close();
+      IM_CHECK_EQ(gui::ReadEntryEditPreviewStyleFromDoc(ReadOverlayFile(panel.dir())).value_or(-1), 3);
+      // The same startup path as main: disk -> parsed state -> seed once -> first real modal.
+      ResetTestState();
+      IM_CHECK_EQ(gui::g_crystal_style, 3);
+      OpenCardEditor(ctx, 0, kCrystalTabRef);
+      g_capture.Reset();
+      g_capture.capture_requested = true;
+      ctx->Yield(3);
+      IM_CHECK(g_capture.capture_done);
+      IM_CHECK(!g_capture.pixels.empty());
+      const auto shaded = g_capture.pixels;
+      ImGuiID modal_style_id = 0;
+      for (auto* child : ctx->GetWindowByRef("Edit Entry")->DC.ChildWindows) {
+        if (std::strstr(child->Name, "/##modal_top_pane_") != nullptr) {
+          modal_style_id = child->GetID("##ModalCrystalStyle");
+        }
+      }
+      IM_CHECK(modal_style_id != 0);
+      pick(modal_style_id, "Wireframe");
+      IM_CHECK_EQ(gui::g_crystal_style, 0);
+      IM_CHECK(!gui::g_state.dirty);
+      g_capture.Reset();
+      g_capture.capture_requested = true;
+      ctx->Yield(3);
+      IM_CHECK(g_capture.capture_done);
+      IM_CHECK(shaded != g_capture.pixels);  // Actual modal FBO, not a second test renderer.
+      ctx->ItemClick("**/Reset View##modal");
+      IM_CHECK_EQ(gui::g_crystal_style, 0);
+      ctx->ItemClick("**/" ICON_FA_XMARK " Cancel##edit_modal");
+      OpenCardEditor(ctx, 0, kCrystalTabRef);
+      IM_CHECK_EQ(gui::g_crystal_style, 0);
+      ctx->ItemClick("**/" ICON_FA_XMARK " Cancel##edit_modal");
+      gui::DoNew();
+      IM_CHECK_EQ(gui::g_crystal_style, 0);
+      const auto lmc_path = panel.dir() / "preview_session.lmc";
+      IM_CHECK(gui::SaveLmcFile(lmc_path, gui::g_state, gui::g_preview, false));
+      gui::DoOpen(lmc_path);
+      IM_CHECK_EQ(gui::g_crystal_style, 0);
+      gui::g_state.last_committed_state = gui::GuiState::ConfigSnapshot::From(gui::g_state);
+      gui::g_state.sun.altitude = 22.0f;
+      gui::DoRevert();
+      IM_CHECK_EQ(gui::g_crystal_style, 0);
+      gui::DoOpen(panel.dir() / "missing.lmc");
+      IM_CHECK_EQ(gui::g_crystal_style, 0);
+      gui::ClearGuiWarning();
+      ctx->Yield(2);
+      panel.OpenOn(gui::DefaultsPanelSection::kSettings);
+      // Saving an unrelated preference must not copy the live Wireframe into the startup default.
+      ctx->ItemClick("**/###defaults_app_use_gpu");
+      SaveDefaultsPanel(ctx);
+      IM_CHECK_EQ(gui::ReadEntryEditPreviewStyleFromDoc(ReadOverlayFile(panel.dir())).value_or(-1), 3);
+      ctx->ItemClick("**/###defaults_reset_all");
+      SaveDefaultsPanel(ctx);
+      IM_CHECK_EQ(gui::ReadEntryEditPreviewStyleFromDoc(ReadOverlayFile(panel.dir())).value_or(-1), 3);
+      ctx->ItemClick("**/###defaults_app_preview_factory");
+      SaveDefaultsPanel(ctx);
+      const auto saved = ReadOverlayFile(panel.dir());
+      IM_CHECK(!gui::ReadEntryEditPreviewStyleFromDoc(saved).has_value());
+      IM_CHECK(gui::ReadUseGpuBackendFromDoc(saved).value_or(false));
+      IM_CHECK_EQ(gui::g_crystal_style, 0);
+      panel.Close();
+      ResetTestState();
+      IM_CHECK_EQ(gui::g_crystal_style, 1);
+    };
+  }
+
+  {
+    ImGuiTest* t =
+        IM_REGISTER_TEST(engine, "defaults_panel", "preview_preference_fits_at_both_scales_and_minimum_height");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ScopedPanel panel(ctx, "panel_preview_geometry");
+      const ScopedTooltipScale scale_guard(ctx);
+      panel.OpenOn(gui::DefaultsPanelSection::kSettings);
+      ctx->ItemClick("**/###defaults_presets");
+      ctx->Yield(3);
+      for (float scale : { 1.0f, 1.5f }) {
+        gui::SetUiScaleMultiplierImmediate(scale);
+        ctx->Yield(5);
+        ctx->WindowResize(gui::kDefaultsPanelTitle,
+                          ImVec2(gui::UiPx(gui::kDefaultsPanelWidth), gui::UiPx(gui::kDefaultsPanelMinHeight)));
+        ctx->Yield(3);
+        const auto* win = ctx->GetWindowByRef(gui::kDefaultsPanelTitle);
+        if (win == nullptr || win->ScrollMax.y != 0.0f) {
+          IM_ERRORF("Settings overflow at scale %.1f: height %.1f scroll %.1f", scale, win ? win->Size.y : -1.0f,
+                    win ? win->ScrollMax.y : -1.0f);
+          break;
+        }
+        for (const char* ref : { "Settings/###defaults_app_preview_style", "**/###defaults_app_preview_factory",
+                                 "**/###defaults_save", "**/###defaults_close" }) {
+          const auto item = ctx->ItemInfo(ref);
+          if (item.ID == 0 || !win->InnerRect.Contains(item.RectFull) ||
+              item.RectFull.GetHeight() != item.RectClipped.GetHeight()) {
+            IM_ERRORF("Clipped preference/action %s at scale %.1f", ref, scale);
+            break;
+          }
+        }
+        if (ctx->IsError()) {
+          break;
+        }
+        ctx->ItemClick("**/###defaults_app_preview_factory");
+        SaveDefaultsPanel(ctx);
+      }
+      IM_CHECK(!ctx->IsError());
+    };
+  }
+
+  {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "defaults_panel", "long_tooltips_wrap_without_changing_their_text");
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ScopedPanel panel(ctx, "panel_tooltip_wrap");

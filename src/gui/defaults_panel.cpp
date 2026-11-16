@@ -16,6 +16,7 @@
 #include "IconsFontAwesome6.h"
 #include "gui/app.hpp"
 #include "gui/axis_presets.hpp"
+#include "gui/crystal_preview.hpp"
 #include "gui/defaults_diff.hpp"
 #include "gui/destructive_style.hpp"
 #include "gui/edit_modals.hpp"
@@ -410,10 +411,10 @@ bool CommitCopy(const GuiState& state) {
 // §app — application preferences (namespace 3), the one region of this panel that is neither a
 // generated row nor a preset.
 //
-// Fixed lines rather than a third CollapsingHeader: it holds three controls, and a section that is
-// taller folded than unfolded is a fold nobody would use. Drawn ABOVE both collapsible sections on
-// purpose — every height budget below reads GetContentRegionAvail() after this point, so the rows
-// need no arithmetic of their own.
+// Fixed lines rather than a third CollapsingHeader: four controls remain reachable regardless
+// of the document/preset section folds. Each new row consumes their shared height budget.
+// Drawn ABOVE both collapsible sections on purpose — every height budget below reads
+// GetContentRegionAvail() after this point, so the rows need no arithmetic of their own.
 //
 // What they DO need is for the window to grow with them. What is left after this point is not
 // slack: the second control cost the preset library one row and put an already-expanded preset's
@@ -424,10 +425,9 @@ bool CommitCopy(const GuiState& state) {
 // There is deliberately no TU-local mirror of it to keep in step with the copy, to freeze at open
 // time, or to clear in ResetDefaultsPanelTestState.
 //
-// Every control here means WHAT NEW DOCUMENTS START WITH — not "this key is in my defaults", which
-// is what every checkbox in §2 means. That is why each is labelled as a sentence about new
-// documents, sits outside the settings table, and says the current window's value beside it: a bare
-// "Use GPU" here would be the same widget shape as §2's rows carrying a different meaning.
+// These controls edit application defaults, not the current document. The server properties
+// apply to new documents; UI scale applies immediately; preview style applies only at startup.
+// Each control states its application time and shows the current session value.
 void RenderAppPreferences(const GuiState& state) {
   ImGui::TextUnformatted("Application preferences");
 
@@ -528,6 +528,37 @@ void RenderAppPreferences(const GuiState& state) {
   }
   ImGui::SameLine();
   ImGui::TextDisabled("(this window: %d%%)", static_cast<int>(std::lround(g_ui_scale_multiplier * 100.0f)));
+
+  const auto stored_style = ReadEntryEditPreviewStyleFromDoc(g_copy_doc);
+  const int preview_style = stored_style.value_or(GuiState{}.entry_edit_preview_style);
+  ImGui::SetNextItemWidth(UiPx(120.0f));
+  if (ImGui::BeginCombo("Entry Edit startup style###defaults_app_preview_style", kCrystalStyleNames[preview_style])) {
+    for (int style = 0; style < kCrystalStyleCount; ++style) {
+      const bool selected = style == preview_style;
+      // Selecting even the displayed factory value is an explicit stored answer, not an erase.
+      if (ImGui::Selectable(kCrystalStyleNames[style], selected)) {
+        WriteEntryEditPreviewStyleToDoc(g_copy_doc, style);
+      }
+      if (selected) {
+        ImGui::SetItemDefaultFocus();
+      }
+    }
+    ImGui::EndCombo();
+  }
+  if (ImGui::IsItemHovered()) {
+    SetWrappedTooltip(
+        "The crystal preview style for the NEXT application start. Save keeps this default; "
+        "neither editing nor saving it changes the current session. The Entry Edit style combo "
+        "remains a temporary session choice. Restore factory removes only this preference on Save; "
+        "Reset all my defaults below does not affect application preferences.");
+  }
+  ImGui::SameLine();
+  if (ImGui::SmallButton("Factory###defaults_app_preview_factory")) {
+    EraseEntryEditPreviewStyleFromDoc(g_copy_doc);
+  }
+  ImGui::SameLine();
+  ImGui::TextDisabled("(%s; session: %s)", stored_style.has_value() ? "Custom" : "Factory",
+                      kCrystalStyleNames[g_crystal_style]);
 }
 
 // Section header whose open state is forced only on the frame an entry point requested it.
@@ -1422,8 +1453,9 @@ void RenderDefaultsPanel(GuiState& state) {
   // The reserved footer height is constant (one status line is budgeted whether or not there is a
   // message) so the body does not resize as the panel reports what it just did.
   const ImGuiStyle& style = ImGui::GetStyle();
+  // Include spacing consumed by both the footer separator and the optional slack Dummy.
   const float footer_height =
-      ImGui::GetFrameHeightWithSpacing() + ImGui::GetTextLineHeightWithSpacing() + style.ItemSpacing.y;
+      ImGui::GetFrameHeightWithSpacing() + ImGui::GetTextLineHeightWithSpacing() + 2.0f * style.ItemSpacing.y;
 
   // HOW THE TWO SECTIONS SHARE THE HEIGHT. One decision, made in one place, because the two halves
   // of it (§1's child, §2's table) would otherwise each pick a number and only agree by luck.
