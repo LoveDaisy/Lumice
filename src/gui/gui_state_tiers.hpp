@@ -26,10 +26,8 @@
 // with this bit set is stored under the override file's `app` root key — a sibling of `presets`
 // that neither SerializeGuiStateJson nor DeserializeGuiStateJson ever touches — and must therefore
 // be reset out of anything the document half applied (ResetIneligibleScalarFields,
-// user_defaults.cpp) before that channel is read. Used by `use_gpu_backend` and `worker_count`.
-// Reading `auto_diff_excluded` for this instead is a proxy quantity: the two populations coincide
-// today by accident, and the reconciler's question has nothing to do with where a default is
-// stored.
+// user_defaults.cpp) before that channel is read. Used by the server properties and the startup
+// preview preference. The reconciler's question is independent of where a default is stored.
 //
 // `kDerivedFieldsExcludeList` is a separate registry for fields that are outputs / runtime-derived
 // state (sim_state, epoch bookkeeping, stats readbacks, auto-EV runtime, etc.) — they are NOT
@@ -114,9 +112,8 @@ inline constexpr FieldTierEntry kFieldTierTable[] = {
     { "use_gpu_backend",            FieldTier::kStructSoft, true, true },
     // worker_count: the same two bits for the same two reasons as the row above — it is outside
     // ConfigSnapshot (no Revert baseline to diff against), and its only legitimate default channel
-    // is the `app` root key. The pair is no longer a coincidence of one field: both members of this
-    // namespace are CONSTRUCTION-TIME server properties that describe the machine rather than the
-    // document, which is what "app preference" means here.
+    // is the `app` root key. These two are server construction properties; the startup preview
+    // input below is a separate client-only preference in the same storage namespace.
     //
     // has_main_panel_surface=false: the fifth column, and the only row that spells it out. It is
     // not a document key today (SerializeGuiStateJson never writes it — it lives under the
