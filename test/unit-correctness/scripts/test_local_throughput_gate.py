@@ -726,6 +726,558 @@ def test_gui_leg_reaches_configure_build_and_drive_boundaries(tmp_path, monkeypa
         and (tmp_path / "gui-test.log").exists()
 
 
+# --- ubsan leg -------------------------------------------------------------------
+# The UB-regression leg: a UBSan engine variant drives the two probe tests that
+# encode the fixed UB families (the projection float->int cast, the
+# CrystalParamHash signed overflow). The matrix pins the recoverable-diagnostic
+# shape (UBSan prints and exits 0 — exit 0 with a diagnostic is THE fail) and
+# the silent-green shape (exit 0 without the expected cases' [ RUN ] markers),
+# the instrumentation reference check's two symbol-table shapes, and the
+# runner's boundaries (configure flags, build targets, probe env and filter).
+
+UBSAN_UNIT_CASE = "ProjectionCastBounds.OutOfIntRangeLinearHitStaysDefinedAndOffCanvas"
+UBSAN_COMP_CASES = ("EditModalChain.TheCrystalParamHashMovesOnEveryEditAndOnNothingElse",
+                    "SceneCommitChain.EveryGroupableSlotChangesThePreviewParamHash")
+UBSAN_DIAG = ("src/core/shared/projection_shared.h:368:17: runtime error: "
+              "value 6.4e+10 is outside the range of representable values of type 'int'")
+
+
+def ubsan_log(*cases, diagnostic=""):
+    lines = [f"[ RUN      ] {c}" for c in cases] + [f"[       OK ] {c}" for c in cases]
+    if diagnostic:
+        lines.insert(1, diagnostic)
+    return "\n".join(lines) + "\n"
+
+
+def instrumented_nm(cmd, **kw):
+    return subprocess.CompletedProcess(cmd, 0,
+                                       stdout="                 U ___ubsan_handle_add_overflow\n",
+                                       stderr="")
+
+
+def test_classify_ubsan_probe_matrix():
+    all_ran = ubsan_log(UBSAN_UNIT_CASE)
+    cases = (UBSAN_UNIT_CASE,)
+    # green: exit 0, every expected case ran, zero diagnostics
+    assert g.classify_ubsan_probe(0, all_ran, cases) == ("pass", "")
+    # THE red: a recoverable diagnostic — UBSan printed and continued, exit 0
+    status, reason = g.classify_ubsan_probe(0, all_ran + UBSAN_DIAG + "\n", cases)
+    assert status == "fail" and reason.startswith("sanitizer diagnostics")
+    # silent green: exit 0 but the expected case never ran
+    status, reason = g.classify_ubsan_probe(0, "[ RUN      ] Some.Other\n", cases)
+    assert status == "error" and reason.startswith("probe not executed")
+    assert UBSAN_UNIT_CASE in reason
+    # a diagnostic outranks the missing execution: the runtime ran, fail
+    status, _ = g.classify_ubsan_probe(0, "[ RUN      ] Some.Other\n" + UBSAN_DIAG + "\n", cases)
+    assert status == "fail"
+    # exit 1: assertion red (the probes encode fixed behavior)
+    assert g.classify_ubsan_probe(1, all_ran, cases)[0] == "fail"
+    assert g.classify_ubsan_probe(1, all_ran + UBSAN_DIAG + "\n", cases)[0] == "fail"
+    # signal death under instrumentation is a defect signal, not an environment state
+    status, reason = g.classify_ubsan_probe(-4, all_ran, cases)
+    assert status == "fail" and reason.startswith("probe crashed")
+    # infrastructure shapes: nothing ran to a verdict
+    assert g.classify_ubsan_probe(124, all_ran, cases) == ("error", "probe-timeout (budget exhausted)")
+    assert g.classify_ubsan_probe(None, all_ran, cases) == ("error", "probe-did-not-finish")
+    status, reason = g.classify_ubsan_probe(2, all_ran, cases)
+    assert status == "error" and reason.startswith("probe-exit-")
+
+
+def test_ubsan_diagnostic_stats_counts_and_locates():
+    log = ("before\n"
+           "src/core/shared/projection_shared.h:368:17: runtime error: first one\n"
+           "  #0 0x108a stack frame line\n"
+           "src/gui/crystal_preview.cpp:65:12: runtime error: second one\n"
+           "src/gui/crystal_preview.cpp:78:12: runtime error: third one\n")
+    count, first, location = g.ubsan_diagnostic_stats(log)
+    assert count == 3
+    assert location == "src/core/shared/projection_shared.h:368"
+    assert first.startswith("src/core/shared/projection_shared.h:368")
+    # fail-safe: a SUMMARY without per-line diagnostics still counts one
+    count, first, location = g.ubsan_diagnostic_stats("SUMMARY: UndefinedBehaviorSanitizer\n")
+    assert count == 1 and "SUMMARY" in first and location == ""
+    assert g.ubsan_diagnostic_stats("nothing here\n") == (0, "", "")
+
+
+def test_fold_ubsan_probe_results_fail_first():
+    unit_fail = {"status": "fail", "reason": "sanitizer diagnostics: 1 diagnostic(s); first: a.h:12"}
+    comp_error = {"status": "error", "reason": "probe not executed (X)"}
+    comp_pass = {"status": "pass", "reason": ""}
+    status, reason = g.fold_ubsan_probe_results({"unit_correctness_test": unit_fail,
+                                                 "composition_correctness_test": comp_error})
+    assert status == "fail" and reason.startswith("sanitizer diagnostics")
+    assert "; also composition_correctness_test: probe not executed (X)" in reason
+    status, reason = g.fold_ubsan_probe_results({"unit_correctness_test": comp_pass,
+                                                 "composition_correctness_test": comp_pass})
+    assert status == "pass" and reason == ""
+    status, reason = g.fold_ubsan_probe_results({"unit_correctness_test": comp_error,
+                                                 "composition_correctness_test": comp_error})
+    assert status == "error" and reason.startswith("probe not executed")
+    # a fail on the second probe leads with its own reason
+    status, reason = g.fold_ubsan_probe_results({"unit_correctness_test": comp_pass,
+                                                 "composition_correctness_test": unit_fail})
+    assert status == "fail" and reason.startswith("sanitizer diagnostics")
+
+
+def test_ubsan_probe_filters_pin_the_expected_cases():
+    assert list(g.UBSAN_PROBE_FILTERS) == ["unit_correctness_test", "composition_correctness_test"]
+    for spec in g.UBSAN_PROBE_FILTERS.values():
+        assert list(spec["filter"].split(":")) == list(spec["expected"])
+    assert g.UBSAN_PROBE_FILTERS["unit_correctness_test"]["filter"] == UBSAN_UNIT_CASE
+    assert list(g.UBSAN_PROBE_FILTERS["composition_correctness_test"]["expected"]) \
+        == list(UBSAN_COMP_CASES)
+
+
+def test_ubsan_instrumentation_reference_accepts_both_shapes():
+    # macOS: the runtime is linked dynamically, the handler is an UNDEFINED
+    # import (nm's Mach-O spelling has one extra leading underscore)
+    mach_o = "                 U ___ubsan_handle_add_overflow\n0000000000000000 T _main\n"
+    assert not g.ubsan_instrumentation_missing(mach_o)
+    # Linux/static: the handler is a defined symbol
+    elf = "0000000000000000 T __ubsan_handle_add_overflow\n0000000000000010 W __ubsan_handle_out_of_bounds\n"
+    assert not g.ubsan_instrumentation_missing(elf)
+    # a plain binary carries no handler reference at all
+    assert g.ubsan_instrumentation_missing("0000000000000000 T _main\n")
+    assert g.ubsan_instrumentation_missing("")
+
+
+def test_ubsan_leg_skips_fast_when_build_tools_missing(tmp_path, monkeypatch):
+    ctx = make_ctx(tmp_path)
+    calls = []
+    monkeypatch.setattr(g, "metal_build_tools_found", lambda: {"cmake": None, "ninja": None})
+    monkeypatch.setattr(g, "collect_readings", lambda with_wsl_host: calls.append("readings"))
+    monkeypatch.setattr(g, "run_logged", lambda *a, **kw: calls.append(tuple(a)))
+    rec = g.run_ubsan(ctx, "sha")
+    assert rec["status"] == "error" and calls == [] and "idle_pre" not in rec
+
+
+def test_ubsan_leg_reaches_configure_build_and_probe_boundaries(tmp_path, monkeypatch):
+    """Tools present: the leg preps its own source checkout (a linked worktree
+    of the gate clone), then runs configure -> build both probe targets ->
+    instrumentation reference check -> drive both probes with their filters,
+    to the boundaries where the doubles stop it."""
+    ctx = make_ctx(tmp_path)
+    calls, envs, run_cmds = [], [], []
+    checkout = Path(ctx.args.work_dir) / "repo-ubsan"
+    metal_tools(monkeypatch)
+    monkeypatch.setattr(g, "collect_readings", lambda with_wsl_host: idle_r())
+
+    def fake_run(cmd, **kw):
+        run_cmds.append(list(cmd))
+        return instrumented_nm(cmd, **kw)
+
+    monkeypatch.setattr(g, "_run", fake_run)
+
+    def fake_run_logged(ctx_, cmd, log_path, **kw):
+        calls.append(list(cmd))
+        envs.append(kw.get("env") or {})
+        exe = Path(cmd[0]).name
+        if exe in g.UBSAN_PROBE_FILTERS:
+            Path(log_path).write_text(ubsan_log(*g.UBSAN_PROBE_FILTERS[exe]["expected"]))
+        else:
+            Path(log_path).touch()
+        return 0
+
+    monkeypatch.setattr(g, "run_logged", fake_run_logged)
+    rec = g.run_ubsan(ctx, "sha")
+    worktrees = [c for c in run_cmds if c[:3] == ["git", "-C", str(Path(ctx.args.work_dir) / "repo")]]
+    assert len(worktrees) == 1 and worktrees[0][3:5] == ["worktree", "add"] \
+        and worktrees[0][6] == str(checkout)
+    conf = [c for c in calls if c[:2] == ["cmake", "-S"]]
+    builds = [c for c in calls if c[:2] == ["cmake", "--build"]]
+    probes = [c for c in calls if Path(c[0]).name in g.UBSAN_PROBE_FILTERS]
+    assert len(conf) == 1 and conf[0][2] == str(checkout)
+    assert "-DLUMICE_IPO=OFF" in conf[0] and "-DBUILD_GUI=ON" in conf[0]
+    assert any(a.startswith("-DCMAKE_C_FLAGS=") and "-fsanitize=undefined" in a
+               and "-gline-tables-only" in a for a in conf[0])
+    assert any(a.startswith("-DCMAKE_CXX_FLAGS=") and "-fsanitize=undefined" in a for a in conf[0])
+    assert any(a.startswith("-DCMAKE_EXE_LINKER_FLAGS=") and "-fsanitize=undefined" in a
+               for a in conf[0])
+    assert len(builds) == 1 and builds[0][2] == str(checkout / g.UBSAN_BUILD_TREE)
+    assert "--target" in builds[0] and "unit_correctness_test" in builds[0] \
+        and "composition_correctness_test" in builds[0]
+    assert len(probes) == 2
+    assert all(str(checkout / "build" / "release" / "static" / "bin") in p[0] for p in probes)
+    probe_envs = [e for e, c in zip(envs, calls) if Path(c[0]).name in g.UBSAN_PROBE_FILTERS]
+    assert all(e.get("UBSAN_OPTIONS") == "print_stacktrace=1" for e in probe_envs)
+    assert all(any(a.startswith("--gtest_filter=") for a in p) for p in probes)
+    assert "idle_pre" in rec and "idle_post" in rec
+    assert rec["status"] == "pass" and rec["reason"] == ""
+    assert rec["probe_results"]["unit_correctness_test"]["status"] == "pass"
+    assert rec["probe_results"]["unit_correctness_test"]["diagnostics"] == 0
+    assert rec["probe_results"]["composition_correctness_test"]["exit"] == 0
+    assert (tmp_path / "ubsan-configure.log").exists() and (tmp_path / "ubsan-build.log").exists()
+
+
+def test_ubsan_leg_prep_failure_is_a_source_error(tmp_path, monkeypatch):
+    """The checkout is the leg's own source prep: a failed worktree add is the
+    run-level source-error shape, terminal for the leg (not a busy skip)."""
+    ctx = make_ctx(tmp_path)
+    metal_tools(monkeypatch)
+    monkeypatch.setattr(g, "collect_readings", lambda with_wsl_host: idle_r())
+
+    def failing_git(cmd, **kw):
+        if cmd[0] == "git":
+            return subprocess.CompletedProcess(cmd, 128, stdout="", stderr="fatal: not a git repo")
+        return subprocess.CompletedProcess(cmd, 0,
+                                           stdout="                 U ___ubsan_handle_add_overflow\n",
+                                           stderr="")
+
+    monkeypatch.setattr(g, "_run", failing_git)
+    monkeypatch.setattr(g, "run_logged", touch_zero_run_logged)
+    rec = g.run_ubsan(ctx, "sha")
+    assert rec["status"] == "error"
+    assert rec["reason"].startswith("source: git worktree add for the ubsan checkout failed")
+    assert g.public_reason(rec["reason"]) == "source"
+    assert "env_rejected" not in rec and "probe_results" not in rec
+
+
+def test_ubsan_leg_prep_reuses_the_skip_smudge_contract(tmp_path, monkeypatch):
+    """Both prep branches run under git()'s env contract: the checkout must not
+    grow an LFS download dependency — prepare_checkout sets the same skip for
+    the main clone, and the smudged fixtures are ones the probes never read."""
+    ctx = make_ctx(tmp_path)
+    metal_tools(monkeypatch)
+    monkeypatch.setattr(g, "collect_readings", lambda with_wsl_host: idle_r())
+    seen = []
+
+    def fake_run(cmd, **kw):
+        seen.append((list(cmd), dict(kw)))
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(g, "_run", fake_run)
+    monkeypatch.setattr(g, "run_logged", touch_zero_run_logged)
+    g.run_ubsan(ctx, "sha")                 # fresh checkout: the worktree add branch
+    adds = [(c, kw) for c, kw in seen if c[:1] == ["git"] and "worktree" in c]
+    assert adds and adds[0][1].get("env", {}).get("GIT_LFS_SKIP_SMUDGE") == "1"
+    checkout_dir = Path(ctx.args.work_dir) / "repo-ubsan"
+    checkout_dir.mkdir(parents=True, exist_ok=True)
+    (checkout_dir / ".git").write_text("gitdir: elsewhere\n")
+    seen.clear()
+    g.run_ubsan(ctx, "sha")                 # existing checkout: the refresh branch
+    refreshes = [(c, kw) for c, kw in seen if c[:1] == ["git"] and "checkout" in c]
+    assert refreshes and refreshes[0][1].get("env", {}).get("GIT_LFS_SKIP_SMUDGE") == "1"
+
+
+def test_ubsan_leg_prep_is_bounded_by_the_wall(tmp_path, monkeypatch):
+    """The prep's git calls take the remaining wall time as their timeout, and
+    a prep that crosses the wall voids the attempt — deadline skip, no build
+    started past it, the same shape as every other stage guard."""
+    clock = FakeClock(at(6, 25))
+    ctx = retry_ctx(tmp_path, clock, deadline=at(6, 30))
+    metal_tools(monkeypatch)
+    monkeypatch.setattr(g, "collect_readings", lambda with_wsl_host: idle_r())
+    seen_timeouts, build_calls = [], []
+
+    def fake_run(cmd, **kw):
+        seen_timeouts.append(kw.get("timeout"))
+        clock.advance(600)                  # the prep runs ten minutes, across 06:30
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(g, "_run", fake_run)
+
+    def no_build(ctx_, cmd, log_path, **kw):
+        build_calls.append(list(cmd))
+        Path(log_path).touch()
+        return 0
+
+    monkeypatch.setattr(g, "run_logged", no_build)
+    rec = g.run_leg_with_retry(ctx, "ubsan", g.run_ubsan, "sha")
+    assert seen_timeouts == [300.0]         # 06:30 minus 06:25, not GIT_TIMEOUT_S
+    assert build_calls == []                # the void fires before the build
+    assert rec["status"] == "skipped" and "nightly deadline" in rec["reason"]
+    ir = rec["idle_retry"]
+    assert ir["attempts"] == 1 and ir["terminal"] == "deadline"
+
+
+def test_classify_ubsan_probe_diagnostics_outrank_the_timeout():
+    """UBSan is recoverable: it can print real diagnostics and then outgrow the
+    drive budget. The captured UB is already confirmed evidence — it must not
+    be demoted to an infrastructure error by how the run ended."""
+    log = ubsan_log(UBSAN_UNIT_CASE, diagnostic=UBSAN_DIAG)
+    status, reason = g.classify_ubsan_probe(124, log, (UBSAN_UNIT_CASE,))
+    assert status == "fail" and reason.startswith("sanitizer diagnostics")
+    # the leg fold keeps it a fail next to a passing sibling
+    status, reason = g.fold_ubsan_probe_results({
+        "unit_correctness_test": {"status": "fail", "reason": reason},
+        "composition_correctness_test": {"status": "pass", "reason": ""}})
+    assert status == "fail"
+    # a timeout with no diagnostics is still infrastructure
+    assert g.classify_ubsan_probe(124, ubsan_log(UBSAN_UNIT_CASE), (UBSAN_UNIT_CASE,)) \
+        == ("error", "probe-timeout (budget exhausted)")
+
+
+def test_classify_ubsan_probe_dyld_load_failure_is_startup_error():
+    """dyld aborts before main when the sanitizer runtime cannot load (exit -6,
+    'Library not loaded', no probe case ran): a startup error — never a
+    measurement, so a persistently broken runtime ages into the stale alarm
+    instead of refreshing the staleness clock as a fake nightly fail."""
+    dyld_log = ("dyld[49184]: Library not loaded: @rpath/libclang_rt.ubsan_osx_dynamic.dylib\n"
+                "dyld[49184]: referenced from .../unit_correctness_test\n")
+    status, reason = g.classify_ubsan_probe(-6, dyld_log, (UBSAN_UNIT_CASE,))
+    assert status == "error" and reason.startswith("runtime load failed")
+    assert g.public_reason(reason) == "runtime load failed"
+    # a probe that crashed by itself is still a product defect signal
+    status, reason = g.classify_ubsan_probe(-4, ubsan_log(UBSAN_UNIT_CASE), (UBSAN_UNIT_CASE,))
+    assert status == "fail" and reason.startswith("probe crashed")
+
+
+def test_ubsan_leg_prep_timeout_past_the_wall_is_a_void(tmp_path, monkeypatch):
+    """git's real timeout contract is an exception, not a return code: a prep
+    cut by the wall must void the attempt (deadline skip), on both the
+    worktree-add and the refresh branch — never an internal error."""
+    for prep_existing in (False, True):
+        clock = FakeClock(at(6, 25))
+        ctx = retry_ctx(tmp_path / f"{'existing' if prep_existing else 'fresh'}",
+                        clock, deadline=at(6, 30))
+        metal_tools(monkeypatch)
+        monkeypatch.setattr(g, "collect_readings", lambda with_wsl_host: idle_r())
+        if prep_existing:
+            d = Path(ctx.args.work_dir) / "repo-ubsan"
+            d.mkdir(parents=True, exist_ok=True)
+            (d / ".git").write_text("gitdir: elsewhere\n")
+
+        def timing_out_git(cmd, **kw):
+            clock.advance(600)              # the git call runs past 06:30
+            raise subprocess.TimeoutExpired(cmd, 300)
+
+        monkeypatch.setattr(g, "_run", timing_out_git)
+        rec = g.run_leg_with_retry(ctx, "ubsan", g.run_ubsan, "sha")
+        assert rec["status"] == "skipped" and "nightly deadline" in rec["reason"]
+        assert rec["idle_retry"]["terminal"] == "deadline"
+
+
+def test_ubsan_leg_prep_timeout_before_the_wall_is_a_source_error(tmp_path, monkeypatch):
+    """A git that outgrew its own budget short of the wall is the source-error
+    shape, terminal for the leg — not a busy skip, not a void."""
+    clock = FakeClock(at(3, 30))
+    ctx = retry_ctx(tmp_path, clock)
+    metal_tools(monkeypatch)
+    monkeypatch.setattr(g, "collect_readings", lambda with_wsl_host: idle_r())
+
+    def timing_out_git(cmd, **kw):
+        raise subprocess.TimeoutExpired(cmd, 600)
+
+    monkeypatch.setattr(g, "_run", timing_out_git)
+    rec = g.run_ubsan(ctx, "sha")
+    assert rec["status"] == "error"
+    assert rec["reason"] == "source: git source prep timed out"
+    assert g.public_reason(rec["reason"]) == "source"
+
+
+def test_ubsan_leg_build_failure_is_an_error(tmp_path, monkeypatch):
+    ctx = make_ctx(tmp_path)
+    metal_tools(monkeypatch)
+    monkeypatch.setattr(g, "collect_readings", lambda with_wsl_host: idle_r())
+    monkeypatch.setattr(g, "_run", instrumented_nm)   # the checkout prep must succeed
+
+    def fake_run_logged(ctx_, cmd, log_path, **kw):
+        Path(log_path).touch()
+        return 1 if cmd[:2] == ["cmake", "--build"] else 0
+
+    monkeypatch.setattr(g, "run_logged", fake_run_logged)
+    rec = g.run_ubsan(ctx, "sha")
+    assert rec["status"] == "error"
+    assert rec["reason"].startswith("ubsan build failed")
+    assert g.public_reason(rec["reason"]) == "ubsan build failed"
+    assert "probe_results" not in rec
+
+
+def test_ubsan_leg_instrumentation_missing_is_an_error(tmp_path, monkeypatch):
+    """The backstop against a silently un-instrumented binary: no __ubsan_handle
+    reference in the symbol table, or a binary nm cannot read at all, is an
+    error before any probe runs."""
+    ctx = make_ctx(tmp_path)
+    metal_tools(monkeypatch)
+    monkeypatch.setattr(g, "collect_readings", lambda with_wsl_host: idle_r())
+    monkeypatch.setattr(g, "run_logged", touch_zero_run_logged)
+
+    def plain_nm(cmd, **kw):
+        if cmd[0] == "git":
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        return subprocess.CompletedProcess(cmd, 0, stdout="0000000000000000 T _main\n", stderr="")
+
+    monkeypatch.setattr(g, "_run", plain_nm)
+    rec = g.run_ubsan(ctx, "sha")
+    assert rec["status"] == "error"
+    assert rec["reason"].startswith("instrumentation missing (")
+    assert g.public_reason(rec["reason"]) == "instrumentation missing"
+    assert "probe_results" not in rec
+
+    def broken_nm(cmd, **kw):
+        if cmd[0] == "git":
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="no such file")
+
+    monkeypatch.setattr(g, "_run", broken_nm)
+    rec = g.run_ubsan(ctx, "sha")
+    assert rec["status"] == "error" and rec["reason"].startswith("instrumentation missing")
+
+
+def test_ubsan_leg_marks_both_busy_windows_for_retry(tmp_path, monkeypatch):
+    ctx = make_ctx(tmp_path)
+    metal_tools(monkeypatch)
+    monkeypatch.setattr(g, "collect_readings", lambda with_wsl_host: busy_r())
+    rec = g.run_ubsan(ctx, "sha")
+    assert rec["env_rejected"] is True and rec["reason"] == BUSY_REASON
+    seq = iter([idle_r(), busy_r()])
+    monkeypatch.setattr(g, "collect_readings", lambda with_wsl_host: next(seq))
+    monkeypatch.setattr(g, "run_logged", touch_zero_run_logged)
+    monkeypatch.setattr(g, "_run", instrumented_nm)
+    rec = g.run_ubsan(ctx, "sha")
+    assert rec["env_rejected"] is True and rec["reason"] == RECHECK_BUSY_REASON
+
+
+def test_ubsan_leg_dry_run_skips_before_classification(tmp_path, monkeypatch):
+    """Dry-run mirrors the stage list (configure, build, the nm check logged,
+    both probes) but classifies nothing and runs no real subprocess."""
+    ctx = make_ctx(tmp_path)
+    ctx.args.dry_run = True
+    metal_tools(monkeypatch)
+    monkeypatch.setattr(g, "collect_readings", lambda with_wsl_host: idle_r())
+    nm_cmds = []
+
+    def recording_nm(cmd, **kw):
+        nm_cmds.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0,
+                                           stdout="                 U ___ubsan_handle_add_overflow\n",
+                                           stderr="")
+
+    monkeypatch.setattr(g, "_run", recording_nm)
+    monkeypatch.setattr(g, "run_logged", touch_zero_run_logged)
+    rec = g.run_ubsan(ctx, "sha")
+    assert rec["status"] == "skipped" and rec["reason"] == "dry-run"
+    assert "probe_results" not in rec
+    assert "idle_pre" in rec and "idle_post" in rec
+    assert nm_cmds == []              # the nm check runs nothing in dry-run
+
+
+def test_ubsan_leg_strips_the_repo_prefix_from_the_diagnostic_location(tmp_path, monkeypatch):
+    """UBSan prints the compile-time path (the checkout's absolute location);
+    the record's location is repo-relative so the issue body names a repo
+    symbol, never a local path. The full line stays in the local record
+    unchanged."""
+    ctx = make_ctx(tmp_path)
+    metal_tools(monkeypatch)
+    monkeypatch.setattr(g, "collect_readings", lambda with_wsl_host: idle_r())
+    monkeypatch.setattr(g, "_run", instrumented_nm)
+    checkout = Path(ctx.args.work_dir) / "repo-ubsan"
+
+    def fake_run_logged(ctx_, cmd, log_path, **kw):
+        exe = Path(cmd[0]).name
+        if exe == "unit_correctness_test":
+            Path(log_path).write_text(
+                ubsan_log(UBSAN_UNIT_CASE, diagnostic=f"{checkout}/src/core/shared/projection_shared.h:382:17: "
+                                                          "runtime error: value 6.4e+10 outside int range\n"))
+        elif exe in g.UBSAN_PROBE_FILTERS:
+            Path(log_path).write_text(ubsan_log(*g.UBSAN_PROBE_FILTERS[exe]["expected"]))
+        else:
+            Path(log_path).touch()
+        return 0
+
+    monkeypatch.setattr(g, "run_logged", fake_run_logged)
+    rec = g.run_ubsan(ctx, "sha")
+    pr = rec["probe_results"]["unit_correctness_test"]
+    assert pr["first_diagnostic_location"] == "src/core/shared/projection_shared.h:382"
+    assert "/private/var" not in pr["first_diagnostic_location"]
+    assert pr["first_diagnostic_line"].startswith(str(checkout))   # full text stays local
+    body = g.issue_body("ubsan", rec, None)
+    assert "src/core/shared/projection_shared.h:382" in body
+    assert "/private/var" not in body
+
+
+def test_ubsan_leg_out_of_repo_diagnostic_location_stays_local(tmp_path, monkeypatch):
+    """A diagnostic in a dependency cache header (CPM fetches outside the
+    checkout) has no repo-relative name: publishing it would put a local path
+    in the automatic issue, so the location is withheld from the public body
+    and only the full local record keeps it."""
+    ctx = make_ctx(tmp_path)
+    metal_tools(monkeypatch)
+    monkeypatch.setattr(g, "collect_readings", lambda with_wsl_host: idle_r())
+    monkeypatch.setattr(g, "_run", instrumented_nm)
+
+    def fake_run_logged(ctx_, cmd, log_path, **kw):
+        exe = Path(cmd[0]).name
+        if exe == "unit_correctness_test":
+            Path(log_path).write_text(
+                ubsan_log(UBSAN_UNIT_CASE, diagnostic="/Users/example/.cache/lumice-cpm/imgui/"
+                                                     "hash/imgui.h:321:9: runtime error: "
+                                                     "signed integer overflow\n"))
+        elif exe in g.UBSAN_PROBE_FILTERS:
+            Path(log_path).write_text(ubsan_log(*g.UBSAN_PROBE_FILTERS[exe]["expected"]))
+        else:
+            Path(log_path).touch()
+        return 0
+
+    monkeypatch.setattr(g, "run_logged", fake_run_logged)
+    rec = g.run_ubsan(ctx, "sha")
+    pr = rec["probe_results"]["unit_correctness_test"]
+    assert pr["status"] == "fail" and pr["diagnostics"] == 1
+    assert pr["first_diagnostic_location"] == ""
+    assert pr["first_diagnostic_line"].startswith("/Users/")    # full text stays local
+    body = g.issue_body("ubsan", rec, None)
+    assert "/Users/" not in body and "First diagnostic at:" not in body
+    assert "lumice-cpm" not in body
+
+
+@pytest.mark.parametrize("reason,category", [
+    ("sanitizer diagnostics: 2 diagnostic(s); first: a.h:12", "sanitizer diagnostics"),
+    ("instrumentation missing (unit_correctness_test: no __ubsan_handle reference)",
+     "instrumentation missing"),
+    ("probe not executed (ProjectionCastBounds.X)", "probe not executed"),
+    ("ubsan build failed (exit 2), see ubsan-build.log", "ubsan build failed"),
+    ("probe crashed (exit -4)", "probe crashed"),
+    ("probe assertion failed (exit 1)", "probe assertion failed"),
+    ("probe-timeout (budget exhausted)", "probe-timeout"),
+    ("probe-did-not-finish", "probe-did-not-finish"),
+    ("probe-exit-2", "probe-exit"),
+    ("ubsan leg needs macOS", "ubsan leg needs macOS"),
+])
+def test_ubsan_reason_categories_are_public(reason, category):
+    assert g.public_reason(reason) == category
+
+
+def test_ubsan_issue_body_names_probes_and_locations_but_no_diagnostic_text():
+    rec = {"status": "fail", "run_id": "r", "sha": "abc",
+           "reason": "sanitizer diagnostics: 2 diagnostic(s); first: projection_shared.h:368",
+           "probe_results": {
+               "unit_correctness_test": {
+                   "status": "fail",
+                   "reason": "sanitizer diagnostics: 2 diagnostic(s); first: projection_shared.h:368",
+                   "exit": 0, "diagnostics": 2,
+                   "first_diagnostic_line": "src/core/shared/projection_shared.h:368:17: "
+                                            "runtime error: value 6.4e+10 outside int range "
+                                            "/Users/zhang/secret",
+                   "first_diagnostic_location": "src/core/shared/projection_shared.h:368"},
+               "composition_correctness_test": {
+                   "status": "pass", "reason": "", "exit": 0, "diagnostics": 0,
+                   "first_diagnostic_line": "", "first_diagnostic_location": ""}}}
+    body = g.issue_body("ubsan", rec, None)
+    assert "UBSan probe leg" in body
+    assert "Probe `unit_correctness_test`: **fail**" in body
+    assert "Probe `composition_correctness_test`: **pass**" in body
+    assert "`src/core/shared/projection_shared.h:368`" in body
+    # the diagnostic's free text and any local path stay in the local record
+    assert "/Users/" not in body and "runtime error:" not in body
+
+
+def test_ubsan_issue_titles_are_distinct_per_namespace():
+    titles = {g.issue_title(leg, kind, ns)
+              for leg in ("metal", "gui-real-timing", "ubsan", "cuda")
+              for kind in g.ISSUE_KINDS
+              for ns in ("real", "test")}
+    assert len(titles) == len(g.ISSUE_KINDS) * 4 * 2
+    assert "[throughput-gate] ubsan fail" in titles
+    assert "[TEST][throughput-gate] ubsan fail" in titles
+
+
+def test_ubsan_leg_registration_and_sequence():
+    assert g.LEGS == ("metal", "gui-real-timing", "ubsan", "cuda")
+    assert g.parse_args(["--leg", "ubsan"]).leg == "ubsan"
+    assert g.parse_args([]).leg == "all"
+    assert g.LEG_ROLES["ubsan"]
+
+
 # --- leg-level retry loop (busy -> backoff -> retry; the deadline wall) ---------
 # The loop runs on injectable clock/sleep seams, so no test here ever really
 # sleeps. The idle windows keep their real implementation: the window-timing
@@ -1102,6 +1654,7 @@ def busy_fab(calls, name):
 def install_busy_legs(monkeypatch, calls):
     monkeypatch.setattr(g, "run_metal", busy_fab(calls, "metal"))
     monkeypatch.setattr(g, "run_gui_realtiming", busy_fab(calls, "gui-real-timing"))
+    monkeypatch.setattr(g, "run_ubsan", busy_fab(calls, "ubsan"))
     monkeypatch.setattr(g, "run_cuda", busy_fab(calls, "cuda"))
 
 
@@ -1110,9 +1663,9 @@ def read_records(state_dir):
 
 
 def test_main_wiring_gives_each_leg_its_own_budget(tmp_path, monkeypatch):
-    """AC4: the retry loop wraps all three dispatch branches; dry-run forces
+    """AC4: the retry loop wraps all four dispatch branches; dry-run forces
     the backoff to zero so the loop runs to its budget without sleeping, and
-    the three legs each spend their own budget serially."""
+    the four legs each spend their own budget serially."""
     state_dir = main_env(tmp_path, monkeypatch)
     calls = []
     install_busy_legs(monkeypatch, calls)
@@ -1128,20 +1681,20 @@ def test_main_wiring_gives_each_leg_its_own_budget(tmp_path, monkeypatch):
                  "--work-dir", str(tmp_path / "work"), "--dry-run"])
     assert rc == 0
     recs = read_records(state_dir)
-    assert [r["leg"] for r in recs] == ["metal", "gui-real-timing", "cuda"]
+    assert [r["leg"] for r in recs] == ["metal", "gui-real-timing", "ubsan", "cuda"]
     for r in recs:
         assert r["dry_run"] is True
         assert r["idle_retry"]["attempts"] == 3
         assert r["idle_retry"]["terminal"] == "max_backoffs"
-    assert len(calls) == 9              # 3 attempts per leg: budgets are per-leg
-    assert backoff_calls == [0.0] * 6   # dry-run: the loop runs, nothing sleeps
+    assert len(calls) == 12             # 3 attempts per leg: budgets are per-leg
+    assert backoff_calls == [0.0] * 8   # dry-run: the loop runs, nothing sleeps
 
 
 def test_deadline_wall_cuts_the_serial_budget_sum(tmp_path, monkeypatch):
-    """Three fully busy legs: per-leg budgets sum to 6 h of backoffs
-    (03:30 -> 09:30); the wall ends the run at 06:30 — metal exhausts its own
-    budget before the wall, the gui leg's backoff is cut by it, cuda never
-    starts (AC-D1/D3, combined with the per-leg budget shape)."""
+    """Four fully busy legs: per-leg budgets sum to 8 h of backoffs
+    (03:30 -> 11:30); the wall ends the run at 06:30 — metal exhausts its own
+    budget before the wall, the gui leg's backoff is cut by it, ubsan and cuda
+    never start (AC-D1/D3, combined with the per-leg budget shape)."""
     state_dir = main_env(tmp_path, monkeypatch)
     clock = FakeClock(at(3, 30))
     inject_clock(monkeypatch, clock)
@@ -1150,7 +1703,7 @@ def test_deadline_wall_cuts_the_serial_budget_sum(tmp_path, monkeypatch):
     rc = g.main(["--leg", "all", "--state-dir", str(state_dir),
                  "--work-dir", str(tmp_path / "work"), "--trigger", "launchd"])
     assert rc == 0
-    metal, gui, cuda = read_records(state_dir)
+    metal, gui, ubsan, cuda = read_records(state_dir)
     assert metal["idle_retry"]["terminal"] == "max_backoffs"
     assert metal["idle_retry"]["attempts"] == 3 and metal["idle_retry"]["backoffs"] == 2
     assert metal["reason"] == BUSY_REASON
@@ -1158,8 +1711,10 @@ def test_deadline_wall_cuts_the_serial_budget_sum(tmp_path, monkeypatch):
     assert gui["idle_retry"]["attempts"] == 1 and gui["idle_retry"]["backoffs"] == 1
     assert gui["reason"] == BUSY_REASON and gui["env_rejected"] is True
     assert cuda["reason"] == "nightly deadline 06:30 reached before this leg started"
-    assert "idle_retry" not in cuda and calls.count("cuda") == 0
-    assert clock.now == at(6, 30)       # the wall, not the 09:30 budget sum
+    assert ubsan["reason"] == "nightly deadline 06:30 reached before this leg started"
+    assert "idle_retry" not in cuda and "idle_retry" not in ubsan
+    assert calls.count("cuda") == 0 and calls.count("ubsan") == 0
+    assert clock.now == at(6, 30)       # the wall, not the 11:30 budget sum
 
 
 def test_late_nightly_run_skips_every_leg_without_attempts(tmp_path, monkeypatch):
@@ -1173,7 +1728,7 @@ def test_late_nightly_run_skips_every_leg_without_attempts(tmp_path, monkeypatch
                  "--work-dir", str(tmp_path / "work"), "--trigger", "launchd"])
     assert rc == 0
     recs = read_records(state_dir)
-    assert [r["leg"] for r in recs] == ["metal", "gui-real-timing", "cuda"]
+    assert [r["leg"] for r in recs] == ["metal", "gui-real-timing", "ubsan", "cuda"]
     for r in recs:
         assert r["status"] == "skipped"
         assert r["reason"] == "nightly deadline 06:30 reached before this leg started"
@@ -1197,7 +1752,7 @@ def test_manual_runs_are_not_bounded_by_the_nightly_deadline(tmp_path, monkeypat
         assert r["idle_retry"]["terminal"] == "max_backoffs"
         assert r["idle_retry"]["attempts"] == 3
         assert "deadline" not in r["reason"]
-    assert len(calls) == 9
+    assert len(calls) == 12
 
 
 def test_far_future_deadline_is_inert(tmp_path, monkeypatch):
@@ -1423,7 +1978,7 @@ def test_cuda_deadline_reaches_the_remote_stop_interface(tmp_path, monkeypatch):
 
 def test_late_nightly_run_skips_source_prep_and_reports_deadline_skips(tmp_path, monkeypatch):
     """Past the wall, the run never touches the network for source prep, and a
-    failing source can no longer outrank the wall: three zero-attempt deadline
+    failing source can no longer outrank the wall: four zero-attempt deadline
     skips, rc 0."""
     state_dir = main_env(tmp_path, monkeypatch)
 
@@ -1438,7 +1993,7 @@ def test_late_nightly_run_skips_source_prep_and_reports_deadline_skips(tmp_path,
                  "--work-dir", str(tmp_path / "work"), "--trigger", "launchd"])
     assert rc == 0
     recs = read_records(state_dir)
-    assert [r["reason"] for r in recs] == ["nightly deadline 06:30 reached before this leg started"] * 3
+    assert [r["reason"] for r in recs] == ["nightly deadline 06:30 reached before this leg started"] * 4
     assert calls == []
 
 
