@@ -3087,6 +3087,12 @@ std::shared_ptr<const LUMICE_PathSurvey> AcquireCompleteSurveyDocument(ImGuiTest
 
 bool ProfileRowsHighlightAndDrawOnTheMap(ImGuiTestContext* ctx) {
   ScopedServerGuard guard;
+  // The case's legal wait chain (the GUI survey up to its deadline, then up to two acquisition
+  // attempts at a 120s budget each, then the map's queued adoption) exceeds the engine
+  // watchdog's default kill threshold — a healthy truncation round would be killed mid-acquire
+  // before this case's own gates could say anything. The whole-case budget rides the same guard
+  // the suite's other long-chain cases use; RAII restores it on every exit.
+  ScopedWatchdogGuard watchdog(ctx->EngineIO);
   IM_CHECK_RETV(BringUpScene(ctx, kNarrowPlateJson, /*infinite=*/false, /*gpu=*/false), false);
   OpenWindow(ctx);
   IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
@@ -3131,17 +3137,31 @@ bool ProfileRowsHighlightAndDrawOnTheMap(ImGuiTestContext* ctx) {
   gui::SurveyOverviewModel model = gui::BuildSurveyOverviewModel(*gui::g_state.analysis.survey.adopted_result);
   log_survey_doc(model);
   IM_CHECK_RETV(model.valid && model.arm == gui::SurveyArm::kFamily, false);
-  if (model.execution == LUMICE_PATH_OUTCOME_CANCELLED ||
-      (model.probe.available && model.probe.state == LUMICE_PATH_STATE_REFUSED)) {
-    ctx->LogError(
-        "[survey-doc] %s: the adopted document names %s with probe state %d — a product or data "
-        "event, not retried",
-        target.c_str(), gui::SurveyOutcomeName(model.execution), model.probe.state);
+  if (model.execution == LUMICE_PATH_OUTCOME_CANCELLED) {
+    ctx->LogError("[survey-doc] %s: the adopted document names %s — a product or data event, not retried",
+                  target.c_str(), gui::SurveyOutcomeName(model.execution));
     return false;
   }
-  if (model.execution != LUMICE_PATH_OUTCOME_COMPLETED) {
-    ctx->LogInfo("[survey-doc] %s: legal deadline cut — acquiring a complete document for the subject legs",
-                 target.c_str());
+  if (model.execution == LUMICE_PATH_OUTCOME_COMPLETED) {
+    // On a COMPLETED document a refused probe is the engine naming a structural refusal — a
+    // product/data event, deterministic, not retried.
+    if (model.probe.available && model.probe.state == LUMICE_PATH_STATE_REFUSED) {
+      ctx->LogError(
+          "[survey-doc] %s: the completed document's probe refused (mode '%s') — a product or data "
+          "event, not retried",
+          target.c_str(), model.probe.mode.c_str());
+      return false;
+    }
+  } else {
+    // Legal deadline cut. Whatever the probe block carries is part of the cut: the engine itself
+    // names a probe the deadline ran out on as refused/stop_requested (survey_probe.cpp appends
+    // the refused probe on a truncated line; the family arm passes the query's stop into the
+    // probe), so a refused probe here is NOT a structural refusal — the document is just not
+    // complete, and the subject legs read the probe: acquire.
+    ctx->LogInfo(
+        "[survey-doc] %s: legal deadline cut (probe_count=%zu probe_state=%d probe_mode='%s') — acquiring "
+        "a complete document for the subject legs",
+        target.c_str(), model.probe_count, model.probe.state, model.probe.mode.c_str());
     // The selection is standing and does not change inside this case — one read, before the
     // attempts (the checker's loop rule: no fatal assert inside a repeatedly-executing body).
     const std::optional<gui::SelectedClassIdentity> identity = gui::SelectedClassIdentityFor(gui::g_state);
