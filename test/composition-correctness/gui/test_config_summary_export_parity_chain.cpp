@@ -27,10 +27,12 @@
 //
 // A third thing the page does that the export does not: it prints only the fields the panel
 // currently shows or enables. So a settings rule is conditional on the registry's own gate — a
-// field whose ConstraintFor(...).enabled is false (Sky Color under Print, Roll under a full-sky
-// lens, Rays(M) with Infinite rays on) is asserted ABSENT from the page while the export still
-// writes it, and ExpectPageMatchesExport closes the loop in both directions over every registered
-// leaf: enabled <=> on the page. The three documents at the bottom each take one of those gates.
+// field whose ConstraintFor(...).enabled is false (FOV/Elevation/Azimuth/Roll under a full-sky
+// lens — the frame-writer half of the unlock split) is asserted ABSENT from the page while the
+// export still writes it, and ExpectPageMatchesExport closes the loop in both directions over
+// every registered leaf: enabled <=> on the page. The unlock task moved the other gates (the
+// grounds, Show As, Rays(M) under infinite, Visible/Front) onto the always-enabled side, so the
+// documents below now pin their PRESENCE where they used to pin their absence.
 
 #include <gtest/gtest.h>
 
@@ -505,12 +507,12 @@ std::vector<RuleEntry> BuildRules(const GuiState& state, const ConfigSummary& pa
     EXPECT_FALSE(HasRow(page, "Simulation", "Ray allocation"));
   });
   add(R"(^scene\.ray_num$)", [&](const std::smatch&, const json& v) {
-    // The page shows the slider's unit (millions); the export the count — or the word "infinite",
-    // in which case the panel greys the slider and the page carries Infinite rays = true and no
-    // Rays(M) row.
+    // The page shows the slider's unit (millions); the export the count. Under "infinite" the
+    // unlock task made Rays(M) a stored choice — live and LISTED while inert (the grey-out the
+    // page used to mirror retired), so the row stays next to Infinite rays = true.
     if (v.is_string()) {
       EXPECT_EQ(v.get<std::string>(), "infinite");
-      EXPECT_FALSE(HasRow(page, "Simulation", "Rays(M)"));
+      EXPECT_TRUE(HasRow(page, "Simulation", "Rays(M)"));
       ExpectPageText(page, "Simulation", "Infinite rays", "true");
       return;
     }
@@ -574,7 +576,7 @@ std::vector<RuleEntry> BuildRules(const GuiState& state, const ConfigSummary& pa
   add(R"(^render\[0\]\.front$)", [&](const std::smatch&, const json& v) {
     ExpectGatedText(state, page, "renderer.front", "Render", "Front", v.get<bool>() ? "true" : "false");
   });
-  // Globe only: the far side's fade range, behind the registry's WhenGlobe gate.
+  // Globe only: the far side's fade range, behind the registry's GlobeBackFadeNote note.
   add(R"(^render\[0\]\.globe_back_fade$)", [&](const std::smatch&, const json& v) {
     ExpectGatedNumber(state, page, "renderer.globe_back_fade", "Render", "Back fade", v);
   });
@@ -1034,7 +1036,7 @@ void SeedRichDocument() {
 }
 
 // The default document under a full-sky lens: fov, the pose angles, visible and front all stop
-// applying on the panel (NotUnderFullSky / NotUnderFullSkyOrGlobe), while the export keeps
+// applying on the panel (the full-sky disabled gates / FrontClipAppliesNote), while the export keeps
 // writing each of them.
 void SeedFullSkyDocument() {
   DoNew();
@@ -1060,8 +1062,10 @@ TEST(ConfigSummaryExportParityChain, DefaultDocument) {
   // Screen tone: the sky's row, not the paper's — spelled out beside the gated rule so the two
   // grounds' exclusivity is a stated fact of this document and not only a consequence of the gate.
   const ConfigSummary page = BuildConfigSummary(g_state);
+  // Both grounds are stored settings listed under every tone now (the unlock task retired the
+  // page's tone-following); the panel's swatch still alternates, but the page is a listing.
   EXPECT_TRUE(HasRow(page, "Render", "Sky Color"));
-  EXPECT_FALSE(HasRow(page, "Render", "Paper Color"));
+  EXPECT_TRUE(HasRow(page, "Render", "Paper Color"));
   // Rays(M) on, Ray allocation under its own heading and nowhere else.
   EXPECT_TRUE(HasRow(page, "Simulation", "Rays(M)"));
   EXPECT_TRUE(HasRow(page, kSettingsPopupOnlyGroupTitle, "Ray allocation"));
@@ -1072,8 +1076,14 @@ TEST(ConfigSummaryExportParityChain, FullSkyLensHidesTheViewFieldsThePanelGreys)
   SeedFullSkyDocument();
   ExpectPageMatchesExport(g_state, "full_sky");
   const ConfigSummary page = BuildConfigSummary(g_state);
-  for (const char* label : { "FOV", "Elevation", "Azimuth", "Roll", "Visible", "Front" }) {
+  // The frame-writer half stays gated under a full-sky lens, so the page still hides the four
+  // view angles; Visible and Front are stored choices with no writer — live under every lens,
+  // and on the page.
+  for (const char* label : { "FOV", "Elevation", "Azimuth", "Roll" }) {
     EXPECT_FALSE(HasRow(page, "Render", label)) << label;
+  }
+  for (const char* label : { "Visible", "Front" }) {
+    EXPECT_TRUE(HasRow(page, "Render", label)) << label;
   }
   EXPECT_EQ(PageValue(page, "Render", "Lens Type").value_or(""), "dual_fisheye_equal_area");
   // The export still carries them: the page is what differs, not the document.
@@ -1089,7 +1099,9 @@ TEST(ConfigSummaryExportParityChain, InfiniteRaysHidesTheRayTotalThePanelGreys) 
   SeedInfiniteRaysDocument();
   ExpectPageMatchesExport(g_state, "infinite");
   const ConfigSummary page = BuildConfigSummary(g_state);
-  EXPECT_FALSE(HasRow(page, "Simulation", "Rays(M)"));
+  // The unlock task made Rays(M) a stored choice — live (and listed) under infinite too; the
+  // "not used right now" half is the registry's inactive_note, not a missing row.
+  EXPECT_TRUE(HasRow(page, "Simulation", "Rays(M)"));
   EXPECT_EQ(PageValue(page, "Simulation", "Infinite rays").value_or(""), "true");
   std::string out;
   std::string warning;
@@ -1110,11 +1122,12 @@ TEST(ConfigSummaryExportParityChain, LinearFrontDocumentPrintsTheUsersLens) {
   EXPECT_EQ(PageValue(page, "Render", "Front").value_or(""), "true");
   EXPECT_EQ(PageValue(page, "Render", "EV").value_or(""), "1.5");
   EXPECT_EQ(PageValue(page, "Render", "Resolution").value_or(""), "2048");
-  // This document is under Print (tone = 1): the paper's row, not the sky's — the mirror image of
-  // DefaultDocument's pair, so the two cases together are the exclusivity in both tones.
+  // This document is under Print (tone = 1): the page lists both grounds under every tone now —
+  // the exclusivity the two documents used to pin belonged to the grey-out, retired by the
+  // unlock task.
   EXPECT_EQ(PageValue(page, "Render", "Mode").value_or(""), "print");
   EXPECT_TRUE(HasRow(page, "Render", "Paper Color"));
-  EXPECT_FALSE(HasRow(page, "Render", "Sky Color"));
+  EXPECT_TRUE(HasRow(page, "Render", "Sky Color"));
 }
 
 TEST(ConfigSummaryExportParityChain, GlobeDocumentPrintsTheBackFade) {

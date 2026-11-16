@@ -388,11 +388,11 @@ void RegisterConfigSummaryWindowTests(ImGuiTestEngine* engine) {
   }
 
   {
-    // The page follows the panel's own gate live: switching Mode to Print takes the Sky Color row
-    // off the page and puts Paper Color on it (the panel's swatch does the same swap), and the
-    // window redraws with the new line set on the next frame. Driven through the state rather
-    // than the combo so the case is about the page, not about finding a combo; the swatch swap
-    // itself is test_view_display_controls.cpp's.
+    // The unlock task retired this page's tone-following: the two ground colours and Show As are
+    // stored settings with no applicability gate, so the page lists BOTH grounds and Show As under
+    // every tone (the panel's swatch keeps its own view rule — one at a time, decided locally by
+    // the tone — and that swap is test_view_display_controls.cpp's). Driven through the state
+    // rather than the combo so the case is about the page, not about finding a combo.
     ImGuiTest* t = IM_REGISTER_TEST(engine, "config_summary", "print_mode_swaps_sky_color_for_paper_color");
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
@@ -402,7 +402,7 @@ void RegisterConfigSummaryWindowTests(ImGuiTestEngine* engine) {
 
       gui::ConfigSummary page = gui::BuildConfigSummary(gui::g_state);
       IM_CHECK(HasRow(page, "Render", "Sky Color"));
-      IM_CHECK(!HasRow(page, "Render", "Paper Color"));
+      IM_CHECK(HasRow(page, "Render", "Paper Color"));
       IM_CHECK(HasRow(page, "Render", "Show As"));
       const int groups_before = static_cast<int>(page.settings.size());
       const int lines_screen = RenderedSettingsLineCount(ctx, groups_before);
@@ -411,19 +411,19 @@ void RegisterConfigSummaryWindowTests(ImGuiTestEngine* engine) {
       gui::g_state.renderer.tone = LUMICE_TONE_PRINT;
       ctx->Yield(3);
       page = gui::BuildConfigSummary(gui::g_state);
-      IM_CHECK(!HasRow(page, "Render", "Sky Color"));
+      IM_CHECK(HasRow(page, "Render", "Sky Color"));
       IM_CHECK(HasRow(page, "Render", "Paper Color"));
-      // One row swapped for one row, and one row gone: Show As is greyed under Print (the
-      // channel-B-R display has no separate R and B to subtract there), so the page drops it the
-      // way it drops every greyed field. What is on screen is that count.
-      IM_CHECK(!HasRow(page, "Render", "Show As"));
-      IM_CHECK_EQ(RenderedSettingsLineCount(ctx, static_cast<int>(page.settings.size())), lines_screen - 1);
+      // Nothing swapped and nothing dropped under Print: the rows are stored settings, listed
+      // whether or not the current operator consumes them — the page used to drop the inert half,
+      // which was the grey-out's page half, retired with it. What is on screen is that count.
+      IM_CHECK(HasRow(page, "Render", "Show As"));
+      IM_CHECK_EQ(RenderedSettingsLineCount(ctx, static_cast<int>(page.settings.size())), lines_screen);
 
       gui::g_state.renderer.tone = LUMICE_TONE_SCREEN;
       ctx->Yield(3);
       page = gui::BuildConfigSummary(gui::g_state);
       IM_CHECK(HasRow(page, "Render", "Sky Color"));
-      IM_CHECK(!HasRow(page, "Render", "Paper Color"));
+      IM_CHECK(HasRow(page, "Render", "Paper Color"));
 
       // And the popup-only heading is on screen as its own group, after the three panel groups.
       IM_CHECK(HasRow(page, gui::kSettingsPopupOnlyGroupTitle, "Ray allocation"));

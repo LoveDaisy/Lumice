@@ -764,13 +764,18 @@ bool SliderIntWithInput(const char* label, int* value, int min_val, int max_val,
 
 // ---- Shared combo-popup fix (see panels.hpp) ----
 //
-// Mark the next combo's popup viewport as TopMost so it shares NSWindow level
-// with the modal when the modal is detached into its own OS viewport. Without
-// this, combo popups default to normal level (0) while the detached modal sits
-// at NSFloatingWindowLevel (3, set via the modal's own SetNextWindowClass /
+// Mark the next popup's viewport as TopMost so it shares NSWindow level with the
+// modal when the modal is detached into its own OS viewport. Without this,
+// popups default to normal level (0) while the detached modal sits at
+// NSFloatingWindowLevel (3, set via the modal's own SetNextWindowClass /
 // ImGuiViewportFlags_TopMost in RenderEditModals), causing the popup to render
 // behind the modal — invisible and click-throughable. Must be called before
-// every modal-internal `BeginCombo` / `Combo` / `RenderAxisDist` call site.
+// every modal-internal `BeginCombo` / `Combo` / `RenderAxisDist` call site, and
+// before every modal-internal `BeginPopup` whose window can outgrow its host
+// (currently the wedge preset dropdown in SliderWithPresetEdit, edit_modals.cpp,
+// and the sync-group picker in RenderSyncCell, panels.cpp below) — Begin
+// late-creates such a popup's own OS viewport without
+// TopMost (imgui.cpp:7794-7806 of v1.91.8-docking), the same level inversion.
 //
 // MAINTAINER: any new Combo / BeginCombo inside modal rendering functions
 // (RenderCrystalPreviewPane / RenderCrystalModal / RenderAxisModal /
@@ -785,12 +790,23 @@ bool SliderIntWithInput(const char* label, int* value, int min_val, int max_val,
 // macOS GLFW backend (CGWindowListCopyWindowInfo reports popup layer=3 after
 // applying this; without it layer=0). See ocornut/imgui#6216.
 //
+// For a direct `BeginPopup` call site the propagation is simpler: Begin itself
+// consumes g.NextWindowData, and the WindowClass override is applied when the
+// split-off viewport's flags are recomputed in WindowSyncOwnedViewport
+// (imgui.cpp:16352-16353). Queue the class after OpenPopup and immediately
+// before BeginPopup — both of BeginPopup's early-out paths clear NextWindowData
+// (imgui.cpp:12362 and BeginPopupEx's IsPopupOpen early-out), so the queued
+// class is consumed or dropped within the pair and never leaks to another
+// window. Pinned by the edit_modal wedge_preset_popup_* and
+// sync_group_popup_topmost_arm gui_test cases.
+//
 // UPGRADE NOTE: re-verify the NextWindowData backup/restore path in
 // imgui_widgets.cpp::BeginCombo when upgrading ImGui past v1.91.8-docking.
 // `ImGuiWindowClass.ViewportFlagsOverrideSet` is alpha API (per ocornut in
 // #7105) and the backup/restore pair (lines 1837/1906 above) may shift across
 // versions; if combo popups regress to layer=0 after an upgrade, audit those
-// two sites first.
+// two sites first. For the BeginPopup leg, re-verify imgui.cpp:7794-7806 and
+// WindowSyncOwnedViewport instead.
 void SetNextComboPopupTopMost() {
   ImGuiWindowClass wc;
   wc.ViewportFlagsOverrideSet = ImGuiViewportFlags_TopMost;
@@ -1232,6 +1248,15 @@ bool RenderSyncCell(const char* label, CrystalConfig& cr, int slot) {
   if (clicked) {
     ImGui::OpenPopup(popup_id);
   }
+  // Same detached-modal contract as the wedge preset dropdown (see SetNextComboPopupTopMost and
+  // the wedge arming in SliderWithPresetEdit): this popup's width grows with the membership text
+  // and its height with the group count, so once the editor is detached into its own OS viewport
+  // a popup opened near an edge can outgrow that viewport — Begin then late-creates the popup's
+  // own OS viewport without TopMost, and it lands behind the editor's TopMost window. Queued here,
+  // between OpenPopup and BeginPopup: both of BeginPopup's early-out paths clear NextWindowData,
+  // so the class is consumed or dropped within this statement pair and cannot leak into an
+  // unrelated window on frames where the popup stays closed.
+  SetNextComboPopupTopMost();
   bool changed = false;
   if (ImGui::BeginPopup(popup_id)) {
     changed = RenderSyncPopupItems(cr, slot);

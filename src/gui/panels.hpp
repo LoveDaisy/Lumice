@@ -331,6 +331,13 @@ void ResetPendingDeleteState();
 // "Sharing" predicate = both ids equal (filter_id compared including nullopt).
 int CountEntriesSharing(const GuiState& state, int crystal_id, const std::optional<int>& filter_id);
 
+// The angle-list editor the overlay section's fold hosts (presets, a custom-angle input, the
+// per-entry delete list), opened by the defaults panel's two angle rows as a plain popup anchored
+// at their cell. Same editor body, same cap and clamp band, editing the same list;
+// `allow_pick=false` drops the crosshair button — it arms the preview picker, which cannot be
+// clicked while the defaults modal covers the picture.
+void RenderCircleAngleEditorPopup(AngularDistFamily family, bool allow_pick);
+
 // Unlink the given entry from any shared crystal/filter pool slot: clone the
 // current pool content into a fresh slot so the entry becomes independent.
 // Returns true if the entry actually became disjoint from any other entry.

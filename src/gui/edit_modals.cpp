@@ -574,6 +574,18 @@ bool SliderWithPresetEdit(const char* label, float* value, float min_val, float 
   if (ImGui::ArrowButton(arrow_id, ImGuiDir_Down)) {
     ImGui::OpenPopup(popup_id);
   }
+  // Same detached-modal contract as the native combos (see SetNextComboPopupTopMost): whenever
+  // this popup does not fit its host window's viewport, Begin late-creates its own OS viewport
+  // (imgui.cpp:7794-7806 of v1.91.8-docking) — which happens when the editor is dragged
+  // partly outside the main window (it stops being merged into the main viewport at the same
+  // containment test, imgui.cpp:15709) and this dropdown opens near an edge. Without the
+  // WindowClass that new viewport carries no TopMost, so the popup's OS window lands at
+  // NSNormalWindowLevel behind the detached editor's own TopMost window (RenderEditModals
+  // arms it for Immediate mode) and the dropdown becomes invisible and unselectable.
+  // Queued here, between OpenPopup and BeginPopup: both of BeginPopup's early-out paths clear
+  // NextWindowData, so the class is consumed or dropped within this statement pair and cannot
+  // leak into an unrelated window on frames where the popup stays closed.
+  SetNextComboPopupTopMost();
   if (ImGui::BeginPopup(popup_id)) {
     for (int i = 0; i < preset_count; i++) {
       bool selected = std::abs(*value - presets[i].value) < 0.05f;
@@ -1672,7 +1684,9 @@ static void RenderAxisModal(GuiState& state) {
           const AxisTriple leaving = { g_axis_buf[0], g_axis_buf[1], g_axis_buf[2] };
           std::optional<AxisTriple> definition;
           if (entry.id != AxisPreset::kCustom) {
-            definition = AxisTriple{ EffectiveAxisPresetZenith(entry), entry.azimuth, entry.roll };
+            definition = AxisTriple{ EffectiveAxisPresetDist(entry, AxisSlot::kZenith),
+                                     EffectiveAxisPresetDist(entry, AxisSlot::kAzimuth),
+                                     EffectiveAxisPresetDist(entry, AxisSlot::kRoll) };
           }
           AxisPresetMemorySlots& slots = g_axis_preset_memory[crystal_id];
           const AxisChipSwitch press = SwitchAxisChip(slots, active, leaving, entry.id, definition);
@@ -1718,8 +1732,8 @@ static void RenderAxisModal(GuiState& state) {
   RenderAxisDist("Roll", g_axis_buf[2], 0.0f, 360.0f, g_pull_adopted.axis[2]);
 
   // -- Reset All (Axis tab) --
-  // Reloads the CURRENT label's definition into the three rows above, the zenith through
-  // EffectiveAxisPresetZenith (the user's retuned value from the preset library when one is
+  // Reloads the CURRENT label's definition into the three rows above, every axis through
+  // EffectiveAxisPresetDist (the user's retuned values from the preset library where one is
   // stored). It is "pull this label's parameters back", nothing more: the label is not touched
   // (the chips are its only writer), the memory is not cleared (a slot is rewritten by the next
   // leave anyway), and neither is the preview pose (the modal preview is pixel-identical across
@@ -1740,14 +1754,14 @@ static void RenderAxisModal(GuiState& state) {
   }
   if (ImGui::Button("Reset All##axis_reset", ImVec2(UiPx(120.0f), 0.0f))) {
     const auto& entry = AxisPresetEntryFor(active);
-    g_axis_buf[0] = EffectiveAxisPresetZenith(entry);
-    g_axis_buf[1] = entry.azimuth;
-    g_axis_buf[2] = entry.roll;
+    g_axis_buf[0] = EffectiveAxisPresetDist(entry, AxisSlot::kZenith);
+    g_axis_buf[1] = EffectiveAxisPresetDist(entry, AxisSlot::kAzimuth);
+    g_axis_buf[2] = EffectiveAxisPresetDist(entry, AxisSlot::kRoll);
   }
   // AllowWhenDisabled so the Custom case can still say why its button is inert.
   if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip | ImGuiHoveredFlags_AllowWhenDisabled)) {
     ImGui::SetTooltip("%s", custom_label ? "Custom has no definition to reset to." :
-                                           "Resets this label's parameters to its definition (zenith as retuned in the "
+                                           "Resets this label's parameters to its definition (as retuned in the "
                                            "preset library). The label, the memory and the view are unchanged.");
   }
   if (custom_label) {
@@ -3379,14 +3393,18 @@ void ResetSpectrumModalStateGlobals() {
 
 }  // namespace
 
-void OpenSpectrumModal(GuiState& state) {
-  g_spectrum_modal_open_pending = true;
+void SeedSpectrumEditor(GuiState& state) {
   // Seed the edit buffer with the current custom spectrum, if any; otherwise the preset seed.
   if (!state.sun.custom_spectrum.empty()) {
     g_spectrum_edit_buf = state.sun.custom_spectrum;
   } else {
     g_spectrum_edit_buf = BuildPresetSeed();
   }
+}
+
+void OpenSpectrumModal(GuiState& state) {
+  g_spectrum_modal_open_pending = true;
+  SeedSpectrumEditor(state);
 }
 
 void RenderSpectrumModal(GuiState& state) {
@@ -3409,22 +3427,53 @@ void RenderSpectrumModal(GuiState& state) {
 
   ImGui::TextUnformatted("Discrete wavelength/weight list");
   ImGui::Separator();
+  RenderSpectrumEditorBody(state);
 
+  // Title-bar × = Cancel-equivalent: discard the edit buffer without committing. spectrum_index was
+  // never mutated on open, so there is nothing to restore — same exit path as Cancel/Escape.
+  if (!title_x_open) {
+    ImGui::CloseCurrentPopup();
+  }
+
+  ImGui::EndPopup();
+}
+
+bool RenderSpectrumEditorBody(GuiState& state, SpectrumCommitMode mode) {
   // No in-modal "import preset": this editor does discrete wavelength editing only. Preset spectra
   // (D65 etc.) are chosen from the Sun-panel Spectrum combo, not here — that avoids a misleading
   // in-modal preset picker that couldn't reproduce a real illuminant SPD anyway (GUI can't include
   // core SPD headers per the API boundary). A fresh custom spectrum still opens seeded with a uniform
-  // grid (BuildPresetSeed in OpenSpectrumModal) as an editable starting point.
+  // grid (BuildPresetSeed) as an editable starting point.
+
+  // The one transactional write, shared by both callers that need to land the buffer now: the
+  // modal's OK, and the cell popup's per-edit deactivation. Sanitize first, then write the state —
+  // index rides along only from the modal (the popup is only ever REACHED while index is already
+  // custom, so it has nothing to change).
+  auto commit_buffer = [&]() {
+    for (auto& e : g_spectrum_edit_buf) {
+      e.wavelength = ClampSpectrumWavelengthNm(e.wavelength);
+      e.weight = ClampSpectrumWeight(e.weight);
+    }
+    if (g_spectrum_edit_buf.empty()) {
+      return false;
+    }
+    state.sun.custom_spectrum = g_spectrum_edit_buf;
+    state.sun.spectrum_index = kCustomSpectrumIndex;
+    return true;
+  };
 
   // Editable rows.
+  bool committed = false;
   int remove_idx = -1;
   for (int i = 0; i < static_cast<int>(g_spectrum_edit_buf.size()); i++) {
     ImGui::PushID(i);
     ImGui::SetNextItemWidth(UiPx(80.0f));
     ImGui::InputFloat("wl(nm)##wl", &g_spectrum_edit_buf[i].wavelength, 0.0f, 0.0f, "%.1f");
+    const bool wl_ended = ImGui::IsItemDeactivatedAfterEdit();
     ImGui::SameLine();
     ImGui::SetNextItemWidth(UiPx(80.0f));
     ImGui::InputFloat("weight##wt", &g_spectrum_edit_buf[i].weight, 0.0f, 0.0f, "%.3f");
+    const bool weight_ended = ImGui::IsItemDeactivatedAfterEdit();
     ImGui::SameLine();
     PushDestructiveStyle();
     const bool remove_clicked = ImGui::SmallButton(ICON_FA_XMARK "##rm");
@@ -3433,9 +3482,17 @@ void RenderSpectrumModal(GuiState& state) {
       remove_idx = i;
     }
     ImGui::PopID();
+    // The cell popup's commit shape: each ended edit lands the whole (sanitized) buffer — the
+    // panel's Save stays the one write to disk, same as every other cell in that panel.
+    if (mode == SpectrumCommitMode::kOnDeactivation && (wl_ended || weight_ended)) {
+      committed = commit_buffer() || committed;
+    }
   }
   if (remove_idx >= 0) {
     g_spectrum_edit_buf.erase(g_spectrum_edit_buf.begin() + remove_idx);
+    if (mode == SpectrumCommitMode::kOnDeactivation) {
+      committed = commit_buffer() || committed;
+    }
   }
 
   // Add row.
@@ -3448,6 +3505,9 @@ void RenderSpectrumModal(GuiState& state) {
       next_wl = ClampSpectrumWavelengthNm(g_spectrum_edit_buf.back().wavelength + 40.0f);
     }
     g_spectrum_edit_buf.push_back({ next_wl, 1.0f });
+    if (mode == SpectrumCommitMode::kOnDeactivation) {
+      committed = commit_buffer() || committed;
+    }
   }
   ImGui::EndDisabled();
   ImGui::SameLine();
@@ -3460,26 +3520,32 @@ void RenderSpectrumModal(GuiState& state) {
 
   ImGui::Separator();
 
+  if (mode == SpectrumCommitMode::kOnDeactivation) {
+    // No OK/Cancel here: the edits already landed in the document as they ended, so Cancel would
+    // be a lie, and the panel's Save is the only write to disk. This line is the whole action
+    // row — plus the refusal sentence, because an empty buffer is the one edit this shape
+    // silently drops (the modal says it under its OK; the popup needs it where the OK would be).
+    ImGui::TextWrapped("Edits apply as you leave each box. Press Save in the panel to keep them.");
+    if (g_spectrum_edit_buf.empty()) {
+      ImGui::TextColored(WarningTextColor(),
+                         "At least one wavelength row is needed — nothing was applied while the list is empty.");
+    }
+    return committed;
+  }
+
   // Action row: OK / Cancel (dialog-terminating) on the left; Reset (a non-terminating edit action)
   // right-aligned on the same row so it reads as a distinct class and resists being mis-clicked as a
   // third confirm button.
   const bool ok_disabled = SpectrumCommitBlocked(g_spectrum_edit_buf.size());
   ImGui::BeginDisabled(ok_disabled);
   if (ImGui::Button(ICON_FA_CHECK " OK##spec_ok", ImVec2(UiPx(80.0f), 0.0f))) {
-    // Sanitize obviously-invalid manual input before it reaches the sim: clamp wavelength to the
-    // visible band and weight to non-negative.
-    for (auto& e : g_spectrum_edit_buf) {
-      e.wavelength = ClampSpectrumWavelengthNm(e.wavelength);
-      e.weight = ClampSpectrumWeight(e.weight);
-    }
     // Single transactional commit of the custom-spectrum state: this is the ONLY site that sets
     // spectrum_index to kCustomSpectrumIndex, keeping the invariant (index==custom ⟹ buf non-empty)
     // — OK is gated on a non-empty buffer (ok_disabled) above.
-    state.sun.custom_spectrum = g_spectrum_edit_buf;
-    state.sun.spectrum_index = kCustomSpectrumIndex;
-    // No manual MarkDirty: both fields belong to `sun`, which participates in the
-    // reconciler auto-diff (kFieldTierTable → kStructSoft).
-    ImGui::CloseCurrentPopup();
+    if (commit_buffer()) {
+      committed = true;
+      ImGui::CloseCurrentPopup();
+    }
   }
   ImGui::EndDisabled();
   if (ok_disabled && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
@@ -3506,14 +3572,7 @@ void RenderSpectrumModal(GuiState& state) {
   if (ImGui::Button("Reset##spec_reset", ImVec2(UiPx(kResetBtnW), 0))) {
     g_spectrum_edit_buf = BuildPresetSeed();
   }
-
-  // Title-bar × = Cancel-equivalent: discard the edit buffer without committing. spectrum_index was
-  // never mutated on open, so there is nothing to restore — same exit path as Cancel/Escape.
-  if (!title_x_open) {
-    ImGui::CloseCurrentPopup();
-  }
-
-  ImGui::EndPopup();
+  return committed;
 }
 
 }  // namespace lumice::gui

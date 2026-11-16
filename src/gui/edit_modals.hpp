@@ -165,6 +165,22 @@ void ClearAxisPresetMemory();
 void OpenSpectrumModal(GuiState& state);
 void RenderSpectrumModal(GuiState& state);
 
+// The editor body the modal hosts, shared with the defaults panel's spectrum cell (which opens
+// the same rows as a plain, non-modal popup anchored at its cell — the settings panel is itself
+// a modal, so a second modal would stack two input grabs on one field). Seeds the scratch buffer
+// from `state` (existing custom spectrum, else the uniform seed). `RenderSpectrumModal` calls it
+// through its own open path; OpenSpectrumModal's seeding is this function plus the pending flag.
+void SeedSpectrumEditor(GuiState& state);
+// Rows, add/remove, the soft-cap warning and the commit row. Returns true exactly when something
+// committed to `state` this frame. Two commit shapes, one body (the rows, the cap and the
+// validation are shared): the MODAL commits transactionally on its OK button (the one write of
+// custom_spectrum + spectrum_index — the invariant "index == custom implies non-empty buffer"
+// holds through it); the defaults panel's cell-hosted popup commits ON DEACTIVATION instead,
+// because a plain popup's buttons are what the engine's click cannot reliably reach (the wedge
+// editor hit the same wall) and because the panel's numeric cells already commit per edit.
+enum class SpectrumCommitMode { kTransactionalOk, kOnDeactivation };
+bool RenderSpectrumEditorBody(GuiState& state, SpectrumCommitMode mode = SpectrumCommitMode::kTransactionalOk);
+
 // Screen y of the top edge of the Expanded layout's section header titled `title` ("Crystal",
 // "Axis" or "Filter") as last drawn; -1 for an unknown title or one not drawn yet.
 // Intended for GUI test assertions; production code should not call this.

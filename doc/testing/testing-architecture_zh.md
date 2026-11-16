@@ -731,7 +731,7 @@ commit `00fb12fc` 修的正是其中**一处**——一个已经与真实默认�
 
 | 站点 | 结果 |
 |---|---|
-| `src/gui/app_panels.cpp` 可见性单选按钮（`renderer.visible`、`renderer.front`） | 已落地。两个字段其实**早已注册了谓词**（`NotUnderFullSky` / `NotUnderFullSkyOrGlobe`，`src/gui/field_editor_registry.cpp:432-433`）——正是上方十五行的 FOV 滑块已在用的那套；单选按钮只是没接上。`app_panels.cpp:697` 与 `:708` 现在按同样方式读 `ConstraintFor(...)`。一条 `gui_unit_test` 语义不变量 + 一条 `gui_test` 调用点矩阵（11 镜头 × 4 widget）替代了 9 个实例用例。 |
+| `src/gui/app_panels.cpp` 可见性单选按钮（`renderer.visible`、`renderer.front`） | 已落地。两个字段其实**早已注册了谓词**（`NotUnderFullSky` / front 控件的闸——defaults 面板放开任务后为 `FrontClipAppliesNote`——`src/gui/field_editor_registry.cpp`）——正是上方十五行的 FOV 滑块已在用的那套；单选按钮只是没接上。`app_panels.cpp:697` 与 `:708` 现在按同样方式读 `ConstraintFor(...)`。一条 `gui_unit_test` 语义不变量 + 一条 `gui_test` 调用点矩阵（11 镜头 × 4 widget）替代了 9 个实例用例。 |
 | `src/gui/file_io.cpp` 的硬编码 `.value(key, default)` 回退 | 已落地。硬编码字面量占比 88% → 21.2%；一条全称「缺键→结构体默认值」不变量现覆盖 80 个字段，能重现 `00fb12fc` 那类漂移——此前 721 个用例对它零捕获。附带发现：legacy core-JSON 加载路径的对照物其实是 **core** 结构体的默认值，不是 GUI 结构体的——core 的解析器对每个字段一律走 `if (contains) get_to`，缺键落在 core 的 seed 上，不是 GUI 侧的字面量。据此原本看似 6 处的 GUI/core 默认值真分歧收窄为 2 处，均留作 core 侧的政策裁定。 |
 | 投影数学抽 GLSL/C++ 共享头 | **未立项——是对理由的 NO-GO，不是对可行性的 NO-GO。** 见下。 |
 
