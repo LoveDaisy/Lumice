@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794858546939,
+  "lastUpdate": 1794858548923,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9620,50 +9620,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "661f6814adafc3ae410096f9f67ed0cbcfe37403",
-          "message": "Merge pull request #498 from LoveDaisy/chore/doc-topic-organization\n\ndocs: organize documentation into topic directories",
-          "timestamp": "2026-10-17T01:50:13+08:00",
-          "tree_id": "c1cf0a07d8d95b945e5279c062b26efaf6c926b0",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/661f6814adafc3ae410096f9f67ed0cbcfe37403"
-        },
-        "date": 1792173206116,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 100.1,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 100.3,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 98.7,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 94.1,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "a8a3d13f7e30f924bc710a8e6693a2e9a3cfc20c",
           "message": "Merge pull request #500 from LoveDaisy/docs/doc-code-consistency\n\ndocs: reconcile guides and architecture with current implementation",
           "timestamp": "2026-10-17T12:16:41+08:00",
@@ -14003,6 +13959,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 90,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "78e6839c6629dff1eb07098252abc53f23228c3f",
+          "message": "Merge pull request #614 from LoveDaisy/feat/gate-per-leg-idle-retry\n\nfeat(gate): per-leg idle retry with 06:30 nightly deadline wall",
+          "timestamp": "2026-11-17T03:43:31+08:00",
+          "tree_id": "a45e11ee656596171d7a83a357d1840524c9260a",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/78e6839c6629dff1eb07098252abc53f23228c3f"
+        },
+        "date": 1794858548484,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 79.2,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 99.9,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 98.8,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 95,
             "unit": "%"
           }
         ]
