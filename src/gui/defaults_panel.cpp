@@ -16,6 +16,7 @@
 #include "IconsFontAwesome6.h"
 #include "gui/app.hpp"
 #include "gui/axis_presets.hpp"
+#include "gui/crystal_preview.hpp"
 #include "gui/defaults_diff.hpp"
 #include "gui/destructive_style.hpp"
 #include "gui/edit_modals.hpp"
@@ -25,6 +26,7 @@
 #include "gui/secondary_window_sizing.hpp"
 #include "gui/semantic_colors.hpp"
 #include "gui/theme.hpp"
+#include "gui/tooltip.hpp"
 #include "gui/user_defaults.hpp"
 #include "imgui.h"
 // imgui_internal.h for ResetDefaultsPanelTestState only: ImGuiWindow::Size / SizeFull and
@@ -409,10 +411,10 @@ bool CommitCopy(const GuiState& state) {
 // §app — application preferences (namespace 3), the one region of this panel that is neither a
 // generated row nor a preset.
 //
-// Fixed lines rather than a third CollapsingHeader: it holds three controls, and a section that is
-// taller folded than unfolded is a fold nobody would use. Drawn ABOVE both collapsible sections on
-// purpose — every height budget below reads GetContentRegionAvail() after this point, so the rows
-// need no arithmetic of their own.
+// Fixed lines rather than a third CollapsingHeader: four controls remain reachable regardless
+// of the document/preset section folds. Each new row consumes their shared height budget.
+// Drawn ABOVE both collapsible sections on purpose — every height budget below reads
+// GetContentRegionAvail() after this point, so the rows need no arithmetic of their own.
 //
 // What they DO need is for the window to grow with them. What is left after this point is not
 // slack: the second control cost the preset library one row and put an already-expanded preset's
@@ -423,10 +425,9 @@ bool CommitCopy(const GuiState& state) {
 // There is deliberately no TU-local mirror of it to keep in step with the copy, to freeze at open
 // time, or to clear in ResetDefaultsPanelTestState.
 //
-// Every control here means WHAT NEW DOCUMENTS START WITH — not "this key is in my defaults", which
-// is what every checkbox in §2 means. That is why each is labelled as a sentence about new
-// documents, sits outside the settings table, and says the current window's value beside it: a bare
-// "Use GPU" here would be the same widget shape as §2's rows carrying a different meaning.
+// These controls edit application defaults, not the current document. The server properties
+// apply to new documents; UI scale applies immediately; preview style applies only at startup.
+// Each control states its application time and shows the current session value.
 void RenderAppPreferences(const GuiState& state) {
   ImGui::TextUnformatted("Application preferences");
 
@@ -438,7 +439,7 @@ void RenderAppPreferences(const GuiState& state) {
     WriteUseGpuBackendToDoc(g_copy_doc, checked);
   }
   if (ImGui::IsItemHovered()) {
-    ImGui::SetTooltip(
+    SetWrappedTooltip(
         "Whether a NEW document starts with GPU simulation selected. This is the stored preference, "
         "not the Use GPU switch in the main window — changing it here does not touch the current "
         "document, and it takes effect on the next new document. The GPU falls back to the CPU on a "
@@ -475,7 +476,7 @@ void RenderAppPreferences(const GuiState& state) {
     WriteWorkerCountToDoc(g_copy_doc, workers);
   }
   if (ImGui::IsItemHovered()) {
-    ImGui::SetTooltip(
+    SetWrappedTooltip(
         "How many CPU worker threads a NEW document's simulation runs on. 0 means automatic: one "
         "per physical core on Linux/macOS, one per logical core (hardware thread) on Windows, up to "
         "a measured per-platform ceiling. A number you type here is used as-is, ceiling included. "
@@ -519,7 +520,7 @@ void RenderAppPreferences(const GuiState& state) {
     SetUiScaleMultiplierImmediate(chosen);
   }
   if (ImGui::IsItemHovered()) {
-    ImGui::SetTooltip(
+    SetWrappedTooltip(
         "How much larger than the display's own scaling the whole interface is drawn — text, "
         "controls and panels alike. Applies to this window immediately; Save keeps it for every "
         "later start. The display's scaling (Windows 125%%, Retina) is detected on its own and is "
@@ -527,6 +528,38 @@ void RenderAppPreferences(const GuiState& state) {
   }
   ImGui::SameLine();
   ImGui::TextDisabled("(this window: %d%%)", static_cast<int>(std::lround(g_ui_scale_multiplier * 100.0f)));
+
+  const auto stored_style = ReadEntryEditPreviewStyleFromDoc(g_copy_doc);
+  const int preview_style = stored_style.value_or(GuiState{}.entry_edit_preview_style);
+  ImGui::SetNextItemWidth(UiPx(120.0f));
+  if (ImGui::BeginCombo("Entry Edit startup style###defaults_app_preview_style", kCrystalStyleNames[preview_style])) {
+    for (int style = 0; style < kCrystalStyleCount; ++style) {
+      const bool selected = style == preview_style;
+      // Selecting even the displayed factory value is an explicit stored answer, not an erase.
+      if (ImGui::Selectable(kCrystalStyleNames[style], selected)) {
+        WriteEntryEditPreviewStyleToDoc(g_copy_doc, style);
+      }
+      if (selected) {
+        ImGui::SetItemDefaultFocus();
+      }
+    }
+    ImGui::EndCombo();
+  }
+  if (ImGui::IsItemHovered()) {
+    SetWrappedTooltip(
+        "The crystal preview style for the NEXT application start. Save keeps this default; "
+        "neither editing nor saving it changes the current session. The Entry Edit style combo "
+        "remains a temporary session choice. Restore factory removes only this preference on Save; "
+        "Reset all my defaults below does not affect application preferences.");
+  }
+  ImGui::SameLine();
+  if (ImGui::SmallButton("Factory###defaults_app_preview_factory")) {
+    EraseEntryEditPreviewStyleFromDoc(g_copy_doc);
+  }
+  ImGui::SameLine();
+  // The state field is a startup input; only this global owns the current session selection.
+  ImGui::TextDisabled("(%s; session: %s)", stored_style.has_value() ? "Custom" : "Factory",
+                      kCrystalStyleNames[g_crystal_style]);
 }
 
 // Section header whose open state is forced only on the frame an entry point requested it.
@@ -555,13 +588,13 @@ void RenderListControls() {
   ImGui::RadioButton("Differs from factory###filter_differs", &filter,
                      static_cast<int>(DefaultsRowFilter::kDiffersFromFactory));
   if (ImGui::IsItemHovered()) {
-    ImGui::SetTooltip("Rows whose current value is not the built-in one — whether or not you saved it.");
+    SetWrappedTooltip("Rows whose current value is not the built-in one — whether or not you saved it.");
   }
   ImGui::SameLine();
   ImGui::RadioButton("Edited this session###filter_edited", &filter,
                      static_cast<int>(DefaultsRowFilter::kEditedThisSession));
   if (ImGui::IsItemHovered()) {
-    ImGui::SetTooltip("Rows whose checkbox you changed since this panel opened.");
+    SetWrappedTooltip("Rows whose checkbox you changed since this panel opened.");
   }
   g_row_filter = static_cast<DefaultsRowFilter>(filter);
 }
@@ -615,7 +648,7 @@ void RenderCurrentValueCell(GuiState& state, const DefaultDiffRow& row, bool& ro
     // value with the material's own spectral colour, so an editor here would accept input nothing
     // consumes. AC2's keep-locked condition ② lives here: say why, and where the real writer is.
     if (row.key_path == "renderer.ray_color" && ImGui::IsItemHovered()) {
-      ImGui::SetTooltip(
+      SetWrappedTooltip(
           "This setting has no editor anywhere in the GUI by design: the GUI build always uses "
           "the material's own spectral colour. The value is set from the CLI or a config JSON.");
     }
@@ -647,11 +680,11 @@ void RenderCurrentValueCell(GuiState& state, const DefaultDiffRow& row, bool& ro
     // write what it shows, but the current configuration does not consume the value. The note is
     // the only place the panel says so — a silently-stored-never-used edit is the same
     // "changed something, nothing happened" family the checkbox rule above closes.
-    ImGui::SetTooltip("%s", constraint.inactive_note);
+    SetWrappedTooltip("%s", constraint.inactive_note);
   }
   if (!constraint.enabled && constraint.disabled_reason != nullptr &&
       ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-    ImGui::SetTooltip("%s", constraint.disabled_reason);
+    SetWrappedTooltip("%s", constraint.disabled_reason);
   }
 }
 
@@ -669,7 +702,7 @@ void RenderNoteCell(const DefaultDiffRow& row) {
     ImGui::Selectable(edited_id.c_str(), false, ImGuiSelectableFlags_NoAutoClosePopups,
                       ImVec2(ImGui::CalcTextSize(ICON_FA_PEN).x, 0.0f));
     if (ImGui::IsItemHovered()) {
-      ImGui::SetTooltip("You changed this value in this panel. It is not saved until you press Save.");
+      SetWrappedTooltip("You changed this value in this panel. It is not saved until you press Save.");
     }
   }
   if (!row.warnings.empty()) {
@@ -680,7 +713,7 @@ void RenderNoteCell(const DefaultDiffRow& row) {
     ImGui::Selectable(warning_id.c_str(), false, ImGuiSelectableFlags_NoAutoClosePopups,
                       ImVec2(ImGui::CalcTextSize(ICON_FA_TRIANGLE_EXCLAMATION).x, 0.0f));
     if (ImGui::IsItemHovered()) {
-      ImGui::SetTooltip("%s", row.warnings.front().c_str());
+      SetWrappedTooltip("%s", row.warnings.front().c_str());
     }
   }
 }
@@ -766,7 +799,7 @@ void RenderSettingsTable(GuiState& state, float table_height) {
     const std::string origin_id = FormatDiffValue(row.factory_value) + "##origin_" + row.key_path;
     ImGui::Selectable(origin_id.c_str(), false, ImGuiSelectableFlags_Disabled);
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-      ImGui::SetTooltip(
+      SetWrappedTooltip(
           "The built-in value this build ships. Editing happens in the Current "
           "value column; un-checking the row on save returns here.");
     }
@@ -786,7 +819,7 @@ void RenderSettingsTable(GuiState& state, float table_height) {
         std::string(row.has_saved_override ? "Mine" : "Factory") + "###source_" + row.key_path;
     ImGui::Selectable(source_id.c_str(), false, ImGuiSelectableFlags_NoAutoClosePopups);
     if (ImGui::IsItemHovered()) {
-      ImGui::SetTooltip("%s", row.has_saved_override ?
+      SetWrappedTooltip("%s", row.has_saved_override ?
                                   "Saved in your personal defaults file. Un-check it to remove it on save." :
                                   "The built-in value. Nothing is saved for this setting.");
     }
@@ -809,7 +842,7 @@ void RenderSettingsTable(GuiState& state, float table_height) {
       }
     }
     if (ImGui::IsItemHovered()) {
-      ImGui::SetTooltip("Checked: this setting is part of your personal defaults after you save.");
+      SetWrappedTooltip("Checked: this setting is part of your personal defaults after you save.");
     }
   }
   ImGui::EndTable();
@@ -976,7 +1009,7 @@ void RenderEditableAxisRow(const AxisPresetEntry& entry, AxisSlot slot) {
                                    std::string(entry.override_json_name) + "_" + std::to_string(axis_index);
     ImGui::Selectable(warning_id.c_str(), false, ImGuiSelectableFlags_NoAutoClosePopups);
     if (ImGui::IsItemHovered()) {
-      ImGui::SetTooltip("%s", g_preset_warnings.slots[preset_slot][axis_index].c_str());
+      SetWrappedTooltip("%s", g_preset_warnings.slots[preset_slot][axis_index].c_str());
     }
   }
 }
@@ -1194,7 +1227,7 @@ bool RenderWedgePresetRow(size_t index, const WedgeMillerTriple& triple) {
     const std::string warning_id = ICON_FA_TRIANGLE_EXCLAMATION "###wedge_preset_warning_" + std::to_string(index);
     ImGui::Selectable(warning_id.c_str(), false, ImGuiSelectableFlags_NoAutoClosePopups, ImVec2(UiPx(24.0f), 0.0f));
     if (ImGui::IsItemHovered()) {
-      ImGui::SetTooltip("%s", fb.message.c_str());
+      SetWrappedTooltip("%s", fb.message.c_str());
     }
     ImGui::SameLine();
     ImGui::AlignTextToFramePadding();
@@ -1421,8 +1454,9 @@ void RenderDefaultsPanel(GuiState& state) {
   // The reserved footer height is constant (one status line is budgeted whether or not there is a
   // message) so the body does not resize as the panel reports what it just did.
   const ImGuiStyle& style = ImGui::GetStyle();
+  // Include spacing consumed by both the footer separator and the optional slack Dummy.
   const float footer_height =
-      ImGui::GetFrameHeightWithSpacing() + ImGui::GetTextLineHeightWithSpacing() + style.ItemSpacing.y;
+      ImGui::GetFrameHeightWithSpacing() + ImGui::GetTextLineHeightWithSpacing() + 2.0f * style.ItemSpacing.y;
 
   // HOW THE TWO SECTIONS SHARE THE HEIGHT. One decision, made in one place, because the two halves
   // of it (§1's child, §2's table) would otherwise each pick a number and only agree by luck.

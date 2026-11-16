@@ -570,5 +570,35 @@ TEST_F(UserDefaultsChain, BothAppPreferencesReachTheSameNewDocumentIndependently
   EXPECT_EQ(TakeUserDefaultsDowngradeCount(), 0);
 }
 
+TEST_F(UserDefaultsChain, PreviewStyleReadsOnlyAppAndNeverTravelsWithDocuments) {
+  const auto& dir = UseFreshConfigDir("app_preview_style");
+  nlohmann::json doc = { { "entry_edit_preview_style", 3 }, { "bg_alpha", 0.7 } };
+  WriteWorkerCountToDoc(doc, 6);
+  for (int style = 0; style < kCrystalStyleCount; ++style) {
+    WriteEntryEditPreviewStyleToDoc(doc, style);
+    EXPECT_TRUE(WriteUserDefaultsFile(dir, doc));
+    const auto state = MakeNewDocumentState(dir);
+    EXPECT_EQ(state.entry_edit_preview_style, style);
+    EXPECT_EQ(state.worker_count, 6);
+    EXPECT_FLOAT_EQ(state.bg_alpha, 0.7f);
+    const auto serialized = nlohmann::json::parse(SerializeGuiStateJson(state));
+    EXPECT_FALSE(serialized.contains("entry_edit_preview_style"));
+    EXPECT_FALSE(serialized.contains("app"));
+    const auto rows = BuildDefaultDiffRows(state, doc);
+    EXPECT_EQ(FindRow(rows, "entry_edit_preview_style"), nullptr);
+  }
+  EraseEntryEditPreviewStyleFromDoc(doc);
+  ASSERT_TRUE(WriteUserDefaultsFile(dir, doc));
+  EXPECT_EQ(MakeNewDocumentState(dir).entry_edit_preview_style, 1);
+  for (const auto& bad : std::vector<nlohmann::json>{ true, 1.5, "2", -1, 4, 4294967297ULL }) {
+    doc["app"]["entry_edit_preview_style"] = bad;
+    EXPECT_TRUE(WriteUserDefaultsFile(dir, doc));
+    const auto state = MakeNewDocumentState(dir);
+    EXPECT_EQ(state.entry_edit_preview_style, 1);
+    EXPECT_EQ(state.worker_count, 6);
+    EXPECT_FLOAT_EQ(state.bg_alpha, 0.7f);
+  }
+}
+
 }  // namespace
 }  // namespace lumice::gui

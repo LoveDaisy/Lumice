@@ -270,6 +270,7 @@ TEST_F(UserDefaults, ac2_kview_difference_set_recomputed) {
     { "lens_border_alpha", "overlay_lens_border_alpha" },
     { "right_panel_collapsed", "right_panel_collapsed" },
     { "modal_layout_compact", "modal_layout_vertical" },
+    { "entry_edit_preview_style", nullptr },
     { "left_panel_collapsed", nullptr },
     { "gui_log_level", nullptr },
     { "core_log_level", nullptr },
@@ -312,7 +313,7 @@ TEST_F(UserDefaults, ac2_kview_difference_set_recomputed) {
     constant_difference.insert(name);
   }
   EXPECT_TRUE(recomputed_difference == constant_difference);
-  EXPECT_EQ(recomputed_difference.size(), static_cast<size_t>(5));
+  EXPECT_EQ(recomputed_difference.size(), static_cast<size_t>(6));
 }
 
 // ================================================================================
@@ -406,6 +407,66 @@ TEST_F(UserDefaults, ac3_ineligible_keys_cannot_be_smuggled_in) {
 // is a DIFFERENT place in the file from the top-level key of the same name. The pair of assertions
 // about those two locations is the point of the case: an implementation that wrote the top-level
 // key would pass a naive round-trip through its own reader and fail here.
+TEST_F(UserDefaults, EntryEditPreviewStyleHasADiscreteAppOnlyDomain) {
+  json doc = { { "bg_alpha", 0.7 }, { "app", { { "worker_count", 6 } } } };
+  const json siblings = doc;
+  EXPECT_FALSE(gui::ReadEntryEditPreviewStyleFromDoc(doc).has_value());
+  for (int style = 0; style < gui::kCrystalStyleCount; ++style) {
+    gui::WriteEntryEditPreviewStyleToDoc(doc, style);
+    EXPECT_EQ(gui::ReadEntryEditPreviewStyleFromDoc(json::parse(doc.dump())), style);
+    EXPECT_FALSE(doc.contains("entry_edit_preview_style"));
+  }
+  gui::WriteEntryEditPreviewStyleToDoc(doc, 1);
+  EXPECT_EQ(gui::ReadEntryEditPreviewStyleFromDoc(doc), 1);
+  gui::EraseEntryEditPreviewStyleFromDoc(doc);
+  EXPECT_EQ(doc, siblings);
+  for (const auto& bad :
+       std::vector<json>{ true, 1.5, "2", nullptr, -1, 4, std::numeric_limits<std::uint64_t>::max(), 4294967297ULL }) {
+    doc["app"]["entry_edit_preview_style"] = bad;
+    EXPECT_FALSE(gui::ReadEntryEditPreviewStyleFromDoc(doc).has_value()) << bad;
+  }
+  for (const auto& bad : std::vector<json>{ nullptr, true, 3, "app", json::array() }) {
+    EXPECT_FALSE(gui::ReadEntryEditPreviewStyleFromDoc(bad).has_value());
+    EXPECT_FALSE(gui::ReadEntryEditPreviewStyleFromDoc(json{ { "app", bad } }).has_value());
+  }
+  doc = json::object();
+  gui::WriteEntryEditPreviewStyleToDoc(doc, 0);
+  gui::EraseEntryEditPreviewStyleFromDoc(doc);
+  EXPECT_TRUE(doc.empty());
+}
+
+TEST_F(UserDefaults, AppWritersRepairMalformedParentsWithoutLosingOtherNamespaces) {
+  struct Writer {
+    const char* key;
+    void (*write)(json&);
+    json value;
+  };
+  const Writer writers[] = {
+    { "use_gpu_backend", [](json& doc) { gui::WriteUseGpuBackendToDoc(doc, true); }, true },
+    { "worker_count", [](json& doc) { gui::WriteWorkerCountToDoc(doc, 6); }, 6 },
+    { "entry_edit_preview_style", [](json& doc) { gui::WriteEntryEditPreviewStyleToDoc(doc, 3); }, 3 },
+    { "ui_scale_multiplier", [](json& doc) { gui::WriteUiScaleMultiplierToDoc(doc, 1.5f); }, 1.5 },
+  };
+  for (const auto& bad : std::vector<json>{ json::array(), true, 42, "invalid", nullptr }) {
+    for (const auto& writer : writers) {
+      SCOPED_TRACE(writer.key);
+      json doc = { { "app", bad }, { "bg_alpha", 0.7 }, { "presets", { { "keep", 12 } } } };
+      const json before = doc;
+      EXPECT_NO_THROW(writer.write(doc));
+      EXPECT_EQ(doc["bg_alpha"], before["bg_alpha"]);
+      EXPECT_EQ(doc["presets"], before["presets"]);
+      if (!doc["app"].is_object()) {
+        ADD_FAILURE() << "app was not repaired: " << bad;
+        continue;
+      }
+      EXPECT_EQ(doc["app"][writer.key], writer.value);
+      doc = bad;
+      EXPECT_NO_THROW(writer.write(doc));
+      EXPECT_EQ(doc["app"][writer.key], writer.value);
+    }
+  }
+}
+
 TEST_F(UserDefaults, AppPreferencesRoundTripThroughTheAppRootKey) {
   json doc = json::object();
   EXPECT_FALSE(gui::ReadUseGpuBackendFromDoc(doc).has_value()) << "an empty document stores nothing";

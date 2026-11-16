@@ -115,6 +115,8 @@ ScrollbarRounding 3  WindowRounding 4  PopupRounding 4
 
 实测收益：同一面板在字号更大的前提下，可见内容反而**多于**现状（现状 Overlay 组被截断，量化后连末尾的半径行都可见）。
 
+**Settings tooltip 行长** —— `gui/tooltip.hpp` 的 `SetWrappedTooltip` 保留 ImGui tooltip 的格式化、定位与覆盖语义，正文最多 `UiPx(400)`，外框另加实际 `WindowPadding`；短句仍自适应宽度。400 是排版设计选值，不代表已经通过用户观感终裁。当前仅 Settings 采用，不改变其他窗口的 tooltip。
+
 **4.3 调色板** —— 见 §3 定案列。核心两条规则：**强调色不做大面积常驻填充，且滑条静止态不上色**；分组标题是**染色**不是实心条。
 
 ⚠️ 这条规则曾被写成"强调色只在**交互进行中**出现"，那个措辞是错的，且会主动否掉正确答案。`src/gui/theme.cpp` 的 `ApplyPalette` 自己就把 accent 给了**静止的**勾选态（`c[ImGuiCol_CheckMark] = p.accent`），而紧随其后那段注释解释的其实是**滑条**——"Grab neutral at rest, accent only while dragging"，理由是滑条是面板里重复次数最多的控件，它的静止色调定全局基调。所以规则真正管的是**面积**与**滑条**，不是"任何交互态都不许常驻上色"：勾选态本身就是内容（"这一项被选中"），涂色是内容的一部分，不是装饰性强调。同理，卡片的关联边框（`src/gui/panels.cpp` 的 active / co-shared 两态）、状态栏的 `Simulating...`、LINK 徽标都用 accent 而不违反这条——它们都是细线或短文本，且都在陈述"此刻是这个"。
@@ -306,7 +308,7 @@ Settings 每次打开都重置到默认尺寸（`ImGuiCond_Appearing`），Summa
 | Log 面板 | `app_panels.cpp` | 固定（250px） | owner：本来与主窗口同宽，暂不动 |
 | Edit Entry | `edit_modals.cpp` | 半可变（宽固定、高可拉） | Compact / Expanded 两档，宽按各自形态钉死（min == max）；高度与 Summary 共用 `secondary_window_sizing.hpp` 的「跟随内容直到用户拖动」状态机。与 Settings/Summary 不同的一点：窗口里**有一个可伸缩 pane**（Compact 的 tab 区、Expanded 的两列）吸收高度差，其余部分（预览、共享行、底栏）不变 ⇒ 任意高度下操作行都在窗口内、窗口自身不滚；工作区矮于内容时（如 1366×768）pane 自动让出溢出量，不拖也不滚。高度上限取窗口**所在显示器**的工作区（不用只认主 viewport 的 `ClampedSecondaryWindowMaxHeight`）；UI scale 变化那一帧回到跟随内容 |
 | Custom Spectrum / 5 个确认对话框 | `edit_modals.cpp` / `app_panels.cpp` | 自动贴合 | `AlwaysAutoResize`，不动 |
-| Settings | `defaults_panel.cpp` | 半可变 | 宽钉 760；默认 760×584 不变，故 `defaults_panel_layout` 参考图不重拍 |
+| Settings | `defaults_panel.cpp` | 半可变 | 宽钉 760；默认 760×632，最小高度 416，新增启动预览样式行自带 24px 高度预算；参考图按现有规程同步 |
 | Summary | `config_summary_window.cpp` | 半可变 | 宽钉 1200；出现时贴合内容、上限 min(900, 工作区)，之后高可拉到工作区 |
 | Colors | `color_window.cpp` | 自由 | `ImGuiCond_FirstUseEver` 给默认尺寸，之后 ImGui 自己记 |
 | Raypath view | `analyze_map_view.cpp`（`RenderAnalyzeRaypathViewWindow`） | 自由 | `ImGuiCond_FirstUseEver` 给默认 900×560（钳到视口内），双轴可拉，窗级最小 480×360（`SetNextWindowSizeConstraints` 逐帧钳制——§11 R3 的最窄合同是用户可达边界），之后 ImGui 自己记；窗内 D3 分隔（图 | 信息）存会话比例（`GuiState::analyze_raypath_view_info_ratio`），两下限钳制；容器与开窗合同见 [`analyze-interaction-contract.md`](analyze-interaction-contract.md) §6/§8 |
