@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "gui/analysis_result.hpp"
+#include "gui/crystal_renderer.hpp"
 #include "gui/gui_constants.hpp"
 #include "gui/view_look_at_types.hpp"
 #include "include/lumice_base.h"    // LUMICE_RayCount (64-bit ray-count type)
@@ -1619,6 +1620,11 @@ struct GuiState {
   // somebody saying. Clamping it here would also put a second copy of that cap in a second file, where the
   // two would drift. Oversubscribing threads is slow, not unsafe.
   int worker_count = 0;
+
+  // Startup input only: the preview's live session selection is g_crystal_style. Stored under
+  // user_defaults' app root, never in a document or ConfigSnapshot. New/Open/Revert must not
+  // re-seed the live selection from this field.
+  int entry_edit_preview_style = static_cast<int>(CrystalStyle::kHiddenLine);
 
   // Edit modal mode (UI-only, session-only, not in ConfigSnapshot).
   // Staged mode: BeginPopupModal + OK/Cancel + dirty-mark on tabs.
