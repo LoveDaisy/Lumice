@@ -85,6 +85,32 @@ def test_unreadable_remote_is_busy_not_idle():
     assert not g.idle_verdict(r, TH)[0]
 
 
+# --- busy-skip constructor (the retry loop's trigger) -------------------------
+
+def test_busy_skip_constructs_the_exact_legacy_shape():
+    """Reason text byte-identical to the pre-retry shape (the public issue
+    categories parse it), plus the explicit marker the retry loop keys on."""
+    r = g.busy_skip("pre-check", ["load 9.00/8 cores = 1.125 >= 0.5", "busy processes: 123 ninja: ninja -C build"])
+    assert r == {"status": "skipped",
+                 "reason": "busy (pre-check): load 9.00/8 cores = 1.125 >= 0.5"
+                           " | busy processes: 123 ninja: ninja -C build",
+                 "env_rejected": True}
+    r2 = g.busy_skip("post-build re-check", ["GPU util 40% >= 10%"])
+    assert r2["reason"] == "busy (post-build re-check): GPU util 40% >= 10%"
+    assert r2["env_rejected"] is True and r2["status"] == "skipped"
+
+
+def test_is_env_busy_skip_reads_only_the_marker():
+    assert g.is_env_busy_skip(g.busy_skip("pre-check", ["x"]))
+    # the legacy shape without the marker (a hand-built record) is not a trigger
+    assert not g.is_env_busy_skip({"status": "skipped", "reason": "busy (pre-check): x"})
+    # cuda's unreachable and the run-level locked skip carry no marker
+    assert not g.is_env_busy_skip({"status": "skipped", "reason": "unreachable (ssh exit 255)"})
+    assert not g.is_env_busy_skip({"status": "skipped", "reason": "locked"})
+    assert not g.is_env_busy_skip({"status": "fail", "reason": "functional red: some_case"})
+    assert not g.is_env_busy_skip({})
+
+
 def P(pid, ppid, exe, args=None):
     return g.Proc(pid, ppid, exe, args or exe)
 

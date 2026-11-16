@@ -657,6 +657,27 @@ def missing_build_tools_reason(found: Dict[str, Optional[str]]) -> Optional[str]
     return None
 
 
+def busy_skip(phase: str, reasons: List[str]) -> dict:
+    """The one constructor for every leg's busy-skip return point (both idle
+    windows of all three legs). It carries the explicit ``env_rejected`` marker
+    the leg-level retry loop keys on — matching the reason's wording would rot
+    silently with any rewording — while the reason text itself stays
+    byte-identical to the shape the public issue categories already parse.
+    ``phase`` is the stage name the legacy reasons already carry.
+    """
+    return {"status": "skipped",
+            "reason": f"busy ({phase}): " + " | ".join(reasons),
+            "env_rejected": True}
+
+
+def is_env_busy_skip(rec: dict) -> bool:
+    """The retry loop's only trigger: the leg ended busy because the environment
+    said so. Reads the constructor's marker, never the reason text; cuda's
+    ``unreachable`` and the run-level ``locked`` skips carry no marker and are
+    terminal states, not environment rejections."""
+    return bool(rec.get("env_rejected"))
+
+
 # =============================================================================
 # IO: readings
 # =============================================================================
@@ -951,7 +972,7 @@ def run_metal(ctx: Ctx, sha: str) -> dict:
     ok, r, reasons = wait_idle_once(ctx, read, "metal pre-check")
     rec["idle_pre"] = r.to_json()
     if not ok:
-        return {**rec, "status": "skipped", "reason": "busy (pre-check): " + " | ".join(reasons)}
+        return {**rec, **busy_skip("pre-check", reasons)}
     repo = local_repo(ctx)
     t0 = time.monotonic()
     rc = run_logged(ctx, ["./scripts/build.sh", "-j", "release"], ctx.run_dir / "metal-build.log",
@@ -962,7 +983,7 @@ def run_metal(ctx: Ctx, sha: str) -> dict:
     ok, r, reasons = wait_idle(ctx, read, "metal re-check")
     rec["idle_post"] = r.to_json()
     if not ok:
-        return {**rec, "status": "skipped", "reason": "busy (post-build re-check): " + " | ".join(reasons)}
+        return {**rec, **busy_skip("post-build re-check", reasons)}
     junit = ctx.run_dir / "metal-junit.xml"
     pyenv = {"LUMICE_BIN": str(repo / "build" / "cmake_install" / "static" / "Lumice")}
     if ctx.synthetic:
@@ -1017,7 +1038,7 @@ def run_gui_realtiming(ctx: Ctx, sha: str) -> dict:
     ok, r, reasons = wait_idle_once(ctx, read, "gui-real-timing pre-check")
     rec["idle_pre"] = r.to_json()
     if not ok:
-        return {**rec, "status": "skipped", "reason": "busy (pre-check): " + " | ".join(reasons)}
+        return {**rec, **busy_skip("pre-check", reasons)}
     repo = local_repo(ctx)
     build_dir = repo / GUI_BUILD_TREE
     t0 = time.monotonic()
@@ -1034,7 +1055,7 @@ def run_gui_realtiming(ctx: Ctx, sha: str) -> dict:
     ok, r, reasons = wait_idle(ctx, read, "gui re-check")
     rec["idle_post"] = r.to_json()
     if not ok:
-        return {**rec, "status": "skipped", "reason": "busy (post-build re-check): " + " | ".join(reasons)}
+        return {**rec, **busy_skip("post-build re-check", reasons)}
     junit = ctx.run_dir / "gui-junit.xml"
     t0 = time.monotonic()
     rc = run_logged(ctx, [str(gui_test_binary(repo)), "--filter", GUI_REALTIMING_FILTER,
@@ -1213,7 +1234,7 @@ def run_cuda(ctx: Ctx, sha: str, resume_rdir: Optional[str] = None) -> dict:
         ok, r, reasons = wait_idle_once(ctx, lambda: remote_readings(ctx), "cuda pre-check")
         rec["idle_pre"] = r.to_json()
         if not ok:
-            return {**rec, "status": "skipped", "reason": "busy (pre-check): " + " | ".join(reasons)}
+            return {**rec, **busy_skip("pre-check", reasons)}
         err = remote_sync_source(ctx, sha)
         if err:
             return {**rec, "status": "error", "reason": err}
@@ -1229,7 +1250,7 @@ def run_cuda(ctx: Ctx, sha: str, resume_rdir: Optional[str] = None) -> dict:
         ok, r, reasons = wait_idle(ctx, lambda: remote_readings(ctx), "cuda re-check")
         rec["idle_post"] = r.to_json()
         if not ok:
-            return {**rec, "status": "skipped", "reason": "busy (post-build re-check): " + " | ".join(reasons)}
+            return {**rec, **busy_skip("post-build re-check", reasons)}
         if ctx.synthetic and not ctx.args.dry_run:
             out = f"{ctx.args.remote_dir}/results/{rdir}"
             run_logged(ctx, ssh_argv(ctx, f"cat > {out}/{OVERRIDE_PLUGIN_NAME}.py"),
