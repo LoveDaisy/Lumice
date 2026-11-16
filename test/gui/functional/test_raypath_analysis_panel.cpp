@@ -2775,7 +2775,13 @@ bool SurveyOverviewShowsDispersionAndProfile(ImGuiTestContext* ctx) {
     // default line is shared across arms.
     IM_CHECK_RETV(frame_text.find("Blue/red ratio") != std::string::npos, false);
     IM_CHECK_RETV(frame_text.find("Weight colour:") != std::string::npos, false);
-    IM_CHECK_RETV(frame_text.find("All-TIR share") != std::string::npos, false);
+    // The top chain "3-5" is the two-face slab (entry + exit): the TIR leg structurally refuses
+    // the class — a two-face chain leaves the leg no internal interface to ask about — so the
+    // default layer carries the refusal state, not a share reading (§16.2's TIR row: the reading
+    // AND its refusal state are both default).
+    IM_CHECK_RETV(!model.tir.value_available && model.tir.mode == "no_internal_interfaces", false);
+    IM_CHECK_RETV(frame_text.find("Internal-reflection share refused (no_internal_interfaces).") != std::string::npos,
+                  false);
     IM_CHECK_RETV(frame_text.find("The complete answer is in the Raypath view.") != std::string::npos, false);
     IM_CHECK_RETV(frame_text.find("member(s)") == std::string::npos, false);
     IM_CHECK_RETV(frame_text.find("kept lattice events") == std::string::npos, false);
