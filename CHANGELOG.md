@@ -147,6 +147,27 @@ it was thinking of and false of the C struct beside it.
 
 </details>
 
+## [4.7.6] - 2026-11-16
+
+### CLI
+
+- **Fixed: a warm document can no longer seed a reading under a mismatched sun scope, azimuth or wavelength** (#545). Warm reuse used to accept absent solar coordinates as a real zero-degree producer and to reuse a non-uniform profile under a default 0° azimuth when the typed survey had no producer direction — the `raypath survey` / `point` / `probe` outputs stayed silent while the seeded answer was wrong. The reuse gate now requires the typed sun scope to be explicit, preserves an unknown probe azimuth instead of substituting 0°, and validates the warm document's numeric facts at each consumer scope (matching wavelengths for chromatic support, matching solar and line scope for weighted profiles).
+
+### GUI
+
+- **Added: the startup preview style is a stored preference, editable in Settings** (#599). The Entry Edit preview style seeds the preview once at startup instead of every session reopening in the factory default, and a preferences file whose app section is malformed is repaired before editing instead of breaking the editor — document defaults and presets are preserved.
+- **Added: the Colors window shows class boundary lines and a per-row hover wash** (#592, #599). A themed 1px separator runs between adjacent classes, and hovering lights up the row you are on (title / combine / ref / add-ref rows) at a strength dimmed below the controls' own backgrounds so the controls keep their contrast.
+- **Changed: the Settings panel's listed-but-locked rows are editable** (#592). Everything the frame loop never touches — ground colours, overlay colours under print, the background transform, Rays(M) under an infinite medium, visible under full-sky, roll under Globe, front, globe_back_fade and the rest — is now always editable, with a hover note naming the constraint that used to lock it; the frame-writer and switch-reset fields stay disabled.
+- **Changed: preset editing covers every axis face of every storable preset** (#592). The defaults panel's preset tables now render all nine faces (per-axis type / mean / std) as live controls instead of only the two zenith faces, Random joins the storable set, and old preset files load unchanged — a file without the Random key resolves to the factory definition.
+- **Fixed: popups opened near the edge of a detached Entry Edit window were invisible and unselectable** (#592). With the editor dragged partly outside the main window, a wedge preset dropdown or sync-group picker that no longer fits got its own OS window late and without the TopMost class — on macOS it landed behind the editor. Both popup sites now arm the same window class the native combo paths already use.
+- **Fixed: color references no longer reject pyramid face numbers** (#599). The ref editor validated face numbers against the prism set, so a ref naming a pyramid face was flagged illegal at edit time; validation now accepts the documented union of legal faces (the physical raypath filter still validates against its crystal's actual kind).
+- **Fixed: Settings tooltips wrap at a scaled width** (#599). Long tooltips no longer run past the window edge; the wrap width follows the UI scale.
+- **Fixed: the crystal card's icon rail answers clicks under overlapping text** (#548). A value wider than its column left the row probe's unclipped hit rect claiming hover, deadening the Duplicate button under the part the text ran into; row text is now measured without taking the pointer.
+
+### Engine C API
+
+- **Added: `LUMICE_API_VERSION` 457 → 458 — the typed raypath result surface** (#547). Adds the `LUMICE_PathWorkspace` family (create/destroy plus `QueryPoint` / `QueryProbe` / `QuerySurvey` / `QueryReport` taking an absolute deadline), the one-way `LUMICE_PathCancelToken` trio, warm-data import (`LUMICE_PathWarmDataFromSurvey` / `FromPoint` / `FromJson`), and typed readers over the result objects — per-record quantities, evidence, dark regions, chromatic features, shape/mass/orbit/discovery/reach and context getters — that borrow the immutable result storage directly instead of JSON round-trips. Existing symbols, request layouts and JSON schemas are unchanged. The library is still not part of the download packages.
+
 ## [4.7.5] - 2026-10-23
 
 ### ⚠️ Breaking Changes
@@ -2943,6 +2964,7 @@ it was thinking of and false of the C struct beside it.
 - Basic ice crystal halo simulation
 - Support for common crystal types (hexagonal prism, plate, column)
 
+[4.7.6]: https://github.com/LoveDaisy/Lumice/compare/v4.7.5...v4.7.6
 [4.7.5]: https://github.com/LoveDaisy/Lumice/compare/v4.7.4...v4.7.5
 [4.7.4]: https://github.com/LoveDaisy/Lumice/compare/v4.7.3...v4.7.4
 [4.7.3]: https://github.com/LoveDaisy/Lumice/compare/v4.7.2...v4.7.3
