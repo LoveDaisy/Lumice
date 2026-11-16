@@ -2775,7 +2775,13 @@ bool SurveyOverviewShowsDispersionAndProfile(ImGuiTestContext* ctx) {
     // default line is shared across arms.
     IM_CHECK_RETV(frame_text.find("Blue/red ratio") != std::string::npos, false);
     IM_CHECK_RETV(frame_text.find("Weight colour:") != std::string::npos, false);
-    IM_CHECK_RETV(frame_text.find("All-TIR share") != std::string::npos, false);
+    // The top chain "3-5" is the two-face slab (entry + exit): the TIR leg structurally refuses
+    // the class — a two-face chain leaves the leg no internal interface to ask about — so the
+    // default layer carries the refusal state, not a share reading (§16.2's TIR row: the reading
+    // AND its refusal state are both default).
+    IM_CHECK_RETV(!model.tir.value_available && model.tir.mode == "no_internal_interfaces", false);
+    IM_CHECK_RETV(frame_text.find("Internal-reflection share refused (no_internal_interfaces).") != std::string::npos,
+                  false);
     IM_CHECK_RETV(frame_text.find("The complete answer is in the Raypath view.") != std::string::npos, false);
     IM_CHECK_RETV(frame_text.find("member(s)") == std::string::npos, false);
     IM_CHECK_RETV(frame_text.find("kept lattice events") == std::string::npos, false);
@@ -6069,14 +6075,39 @@ bool RefusedClassBlockadesNothing(ImGuiTestContext* ctx) {
   {
     ImGuiWindow* report = MapReportWindow();
     IM_CHECK_RETV(report != nullptr, false);
-    const std::string report_text = CaptureMapFrameText(ctx);
+    // The capture keeps normal item clipping, and the refused arm's class answer alone can
+    // fill the report's visible slice — culling the sky-point answer block below the fold.
+    // Walk the report's scroll (the user's own wheel, bounded) until BOTH markers are inside
+    // the clip: the block's head and its last submitted item. Under the shipped-default env
+    // the diagnostics fold submits nothing, so the closed evidence fold's header is the tail.
+    // The step stays under the block's height, so no step jumps across the whole block.
+    const auto walk_report_to = [ctx, report](const char* head_marker, const char* tail_marker) -> std::string {
+      for (int step = 0; step < 24; ++step) {
+        const std::string text = CaptureMapFrameText(ctx);
+        if (text.find(head_marker) != std::string::npos && text.find(tail_marker) != std::string::npos) {
+          return text;
+        }
+        report->Scroll.y =
+            std::min(report->Scroll.y + 2.0f * ImGui::GetTextLineHeightWithSpacing(), report->ScrollMax.y);
+        ctx->Yield(2);
+      }
+      ctx->LogError("[v1 c17] report walk exhausted: '%s' and '%s' never shared a capture", head_marker, tail_marker);
+      return {};
+    };
+    report->Scroll.y = 0.0f;
+    ctx->Yield(2);
+    const std::string report_text = walk_report_to("Sky point answer", "### Point evidence ###");
+    IM_CHECK_RETV(!report_text.empty(), false);
     IM_CHECK_RETV(report_text.find("Sky point answer") != std::string::npos, false);
     IM_CHECK_RETV(report_text.find("wavelength 550.00 nm") != std::string::npos, false);
     IM_CHECK_RETV(report_text.find("Selected component") == std::string::npos, false);
     IM_CHECK_RETV(report_text.find("discovery sample_count") == std::string::npos, false);
     report->StateStorage.SetInt(report->GetID("Point evidence##pt_answer"), 1);
     ctx->Yield(2);
-    const std::string opened_text = CaptureMapFrameText(ctx);
+    // The opened evidence rows extend the block downward; the same walk brings its ends into
+    // the clip (the fold's first premise row and the integral rows at its bottom).
+    const std::string opened_text = walk_report_to("member faces", "Selected component");
+    IM_CHECK_RETV(!opened_text.empty(), false);
     IM_CHECK_RETV(opened_text.find("Selected component") != std::string::npos, false);
     IM_CHECK_RETV(opened_text.find("member faces") != std::string::npos, false);
     report->StateStorage.SetInt(report->GetID("Point evidence##pt_answer"), 0);
@@ -6091,7 +6122,11 @@ bool RefusedClassBlockadesNothing(ImGuiTestContext* ctx) {
     IM_CHECK_RETV(frame_text.find("component(s):") != std::string::npos, false);
     IM_CHECK_RETV(frame_text.find("target: alt 38.000°") != std::string::npos, false);
     IM_CHECK_RETV(frame_text.find("The complete answer is in the Raypath view.") != std::string::npos, false);
-    IM_CHECK_RETV(frame_text.find("1: ") == std::string::npos, false);
+    // The per-component evidence rows ("1: arc, 12 pts, ends …") are the Raypath view's fold
+    // content — the summary arm carries the count and kinds only. Their " pts, ends " span is
+    // the unique marker here: the bare row head "1: " also matches the workspace's crystal
+    // rows ("entry 1: Crystal").
+    IM_CHECK_RETV(frame_text.find(" pts, ends ") == std::string::npos, false);
   }
   return true;
 }
@@ -11015,7 +11050,11 @@ bool CheckMapQualityText(ImGuiTestContext* ctx, const std::string& stem) {
   ctx->MouseMove("**/Retry###map_quality");
   ctx->Yield(3);
   const std::string retry_text = CaptureMapFrameText(ctx);
-  IM_CHECK_RETV(retry_text.find("Retry the current full-sky request") != std::string::npos, false);
+  // The disposition ledger's Cancel/Retry row: the idle tier draws the disabled button alone
+  // and carries its explanation in the tooltip — "Observation never recomputes…". The retry
+  // tier's own sentence is the cancelled/errored state's, unreachable in this freshly adopted
+  // map; the two tiers' sentences share their tail, so the head is the discriminating pin.
+  IM_CHECK_RETV(retry_text.find("Observation never recomputes") != std::string::npos, false);
   IM_CHECK_RETV(save_tooltip("_retry.png"), false);
   IM_CHECK_RETV(map.adopted_result == reference, false);
   // Leave the fold as we found it: the report child's storage outlives this helper, and a
