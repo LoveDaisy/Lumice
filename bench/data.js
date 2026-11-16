@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794835973139,
+  "lastUpdate": 1794835975431,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9620,50 +9620,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "d3b5b77505182ea5e0fff0873d106cc506c38f0c",
-          "message": "Merge pull request #496 from LoveDaisy/feat/axis-apply-decouple\n\nfeat(gui): Apply preset is a pure parameter shortcut, label and view untouched",
-          "timestamp": "2026-10-16T21:21:19+08:00",
-          "tree_id": "4d4ba181a95d82bf92b42afdd4e29619e4d7710c",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/d3b5b77505182ea5e0fff0873d106cc506c38f0c"
-        },
-        "date": 1792157055844,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 95.3,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 100.3,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 99.1,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 92.8,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "c3372ae22b354c4456f0c52e19980930451b511a",
           "message": "Merge pull request #497 from LoveDaisy/feat/entry-edit-weight-toggle\n\nfeat(gui): entry bar in Edit Entry — weight and participation toggle in the modal",
           "timestamp": "2026-10-16T22:18:44+08:00",
@@ -14003,6 +13959,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 94.2,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "0d50cb0d867067018388289b90ba011d7f842853",
+          "message": "Merge pull request #603 from LoveDaisy/port/476-feedback-1115\n\nfix(gui): port the 11-15 feedback wave to main — raypath baseline, row wash, tooltips, preview style default",
+          "timestamp": "2026-11-16T21:27:17+08:00",
+          "tree_id": "43578551cc6f0737a662e1b9d123abea33965b33",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/0d50cb0d867067018388289b90ba011d7f842853"
+        },
+        "date": 1794835974674,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 95.6,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 100.4,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 99,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 95.1,
             "unit": "%"
           }
         ]
