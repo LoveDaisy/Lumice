@@ -10,13 +10,14 @@ The precise gate therefore runs here, on a schedule (``launchd``, installed by
 floor. Where it runs, how often, where results land and how to install it:
 ``doc/testing/performance-testing.md``, "Precise throughput gate (local schedule)".
 
-What one run does, per leg, in a fixed order:
+What one run does, per leg, in a fixed order (one attempt of the retry loop
+described below):
 
     lock -> resolve the commit (origin/main tip) ->
-      metal: local idle pre-check -> build -> cool-down -> idle re-check -> pytest
-      gui-real-timing: idle pre-check -> build gui_test (own tree) -> cool-down
+      metal: idle pre-check (600 s window) -> build -> cool-down -> idle re-check -> pytest
+      gui-real-timing: idle pre-check (600 s window) -> build gui_test (own tree) -> cool-down
              -> idle re-check -> gui_test (real-timing pool, junit export)
-      cuda : probe remote -> remote idle pre-check -> sync + build (on remote disk)
+      cuda : probe remote -> remote idle pre-check (600 s window) -> sync + build (on remote disk)
              -> cool-down -> idle re-check -> pytest (on remote disk) -> collect
     -> append one record per leg to results.jsonl -> notify -> staleness check
 
@@ -33,6 +34,38 @@ the environment had no verdict (a gate timeout, a DriveUntil/watchdog
 environment timeout, or the frozen-map ms-budget reading red on a personal
 machine) — it is a real measurement of the environment, issues nothing of its
 own, and still does not refresh the staleness clock.
+
+A busy attempt is not the end: each leg runs inside a structured retry loop.
+One attempt is one full leg execution (both idle windows belong to it); a
+busy attempt — only an ``idle_verdict`` rejection: a functional red, a build
+failure or an ``inconclusive`` pool is a measurement, not an environment
+state — is followed by a backoff (``--idle-retry-backoff-seconds``, 1 h) and
+a full re-run, at most ``--idle-retry-max-backoffs`` times (2), each leg
+counting its own budget and never re-running a leg that measured. When the
+budget runs out, the leg's single ``skipped`` record carries an ``idle_retry``
+payload (attempt count, backoffs, per-attempt snapshots) and the staleness
+alarm covers the blind night as before; a leg that backed off before
+eventually measuring carries the same history on its final record. When the
+retry controller itself ends the loop — budget exhausted, or the nightly
+deadline (``--nightly-deadline``, 06:30 local, launchd runs only) reached —
+the payload also names the cause in ``terminal`` (``"max_backoffs"`` /
+``"deadline"``); a leg that returned normally carries no ``terminal``, its
+status already says what happened. The deadline is a hard wall for launchd
+runs: every wait face (idle windows, remote phase polls, backoff sleeps) ends
+at the wall instead of running out its configured budget, no attempt starts
+past it, and an attempt still in flight is voided — its long phases run under
+the remaining time as their timeout and their work is actually stopped (local
+phases run in their own process group and are killed whole; the cuda leg's
+detached remote phases record every group they spawn and the stop kills them
+graded — TERM, KILL, then verified — an unverifiable stop logged, never
+swallowed), nothing they did is recorded, and the leg's
+outcome is a ``skipped`` line, never a timeout ``error``. Each cuda attempt
+gets its own remote results directory, so a retried attempt can never read a
+previous attempt's done markers. A leg the wall
+reached before it started falls a single ``skipped`` line with no
+``idle_retry`` payload, and a nightly run that launched after the wall skips
+its source prep and ends the same way for every leg: the wall binds launchd
+runs whenever they started. Manual runs are unbounded.
 
 The judgement itself is not re-implemented here: the script runs the two
 existing pytest files and classifies their exit code + junit XML. The ratios it
@@ -54,6 +87,7 @@ import platform
 import re
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -657,6 +691,27 @@ def missing_build_tools_reason(found: Dict[str, Optional[str]]) -> Optional[str]
     return None
 
 
+def busy_skip(phase: str, reasons: List[str]) -> dict:
+    """The one constructor for every leg's busy-skip return point (both idle
+    windows of all three legs). It carries the explicit ``env_rejected`` marker
+    the leg-level retry loop keys on — matching the reason's wording would rot
+    silently with any rewording — while the reason text itself stays
+    byte-identical to the shape the public issue categories already parse.
+    ``phase`` is the stage name the legacy reasons already carry.
+    """
+    return {"status": "skipped",
+            "reason": f"busy ({phase}): " + " | ".join(reasons),
+            "env_rejected": True}
+
+
+def is_env_busy_skip(rec: dict) -> bool:
+    """The retry loop's only trigger: the leg ended busy because the environment
+    said so. Reads the constructor's marker, never the reason text; cuda's
+    ``unreachable`` and the run-level ``locked`` skips carry no marker and are
+    terminal states, not environment rejections."""
+    return bool(rec.get("env_rejected"))
+
+
 # =============================================================================
 # IO: readings
 # =============================================================================
@@ -847,6 +902,35 @@ class Ctx:
     log: Log
     thresholds: IdleThresholds
     synthetic: bool
+    # Retry/deadline seams. ``nightly_deadline`` is the run's wall as local
+    # wall-clock time (None when it does not apply — manual runs, decided once
+    # per run in main); ``clock``/``sleep`` are injectable so the retry and
+    # deadline paths are unit-tested without real sleeps.
+    nightly_deadline: Optional[dt.datetime] = None
+    clock: Callable[[], dt.datetime] = field(default_factory=lambda: dt.datetime.now)
+    sleep: Callable[[float], None] = field(default_factory=lambda: time.sleep)
+    # Which retry attempt is executing (1-based). The cuda leg derives its
+    # remote results directory from it: one directory per attempt, so a
+    # retried attempt can never read the previous attempt's done markers.
+    attempt_no: int = 1
+
+
+def _kill_work_tree(p: subprocess.Popen) -> None:
+    """Stop a timed-out phase's whole work tree. A phase runs in its own POSIX
+    process group: build.sh spawns ninja and compilers, pytest spawns render
+    processes — killing only the entry process would leave the work running
+    past the wall (or past the budget) while the record already says it ended."""
+    if os.name == "posix":
+        try:
+            os.killpg(os.getpgid(p.pid), signal.SIGKILL)
+        except (ProcessLookupError, PermissionError, OSError):
+            pass
+    else:
+        p.kill()
+    try:
+        p.wait(timeout=10)
+    except (subprocess.TimeoutExpired, OSError):
+        pass
 
 
 def run_logged(ctx: Ctx, cmd: Sequence[str], log_path: Path, cwd: Optional[Path] = None,
@@ -856,17 +940,31 @@ def run_logged(ctx: Ctx, cmd: Sequence[str], log_path: Path, cwd: Optional[Path]
     if ctx.args.dry_run:
         return 0
     with open(log_path, "a") as out:
+        # POSIX: the phase gets its own process group, so a timeout stops the
+        # whole tree it spawned (see _kill_work_tree).
+        kw = {"start_new_session": True} if os.name == "posix" else {}
+        p = subprocess.Popen(list(cmd), cwd=cwd, env=env, stdout=out, stderr=subprocess.STDOUT,
+                             stdin=subprocess.PIPE if stdin_text is not None else None,
+                             text=True, **kw)
+        if stdin_text is not None:
+            p.stdin.write(stdin_text)
+            p.stdin.close()
         try:
-            p = subprocess.run(list(cmd), cwd=cwd, env=env, stdout=out, stderr=subprocess.STDOUT,
-                               timeout=timeout, text=True, input=stdin_text)
+            return p.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
+            _kill_work_tree(p)
             out.write(f"\n[gate] TIMEOUT after {timeout}s\n")
             return 124
-    return p.returncode
 
 
 def wait_idle(ctx: Ctx, read: Callable[[], Readings], label: str) -> Tuple[bool, Readings, List[str]]:
-    """Poll until idle or the cool-down budget runs out. Returns the LAST reading."""
+    """Poll until idle or the cool-down budget runs out. Returns the LAST reading.
+
+    The window budget itself is unchanged; when the run has a nightly deadline,
+    the wait also ends at the wall — the poll sleep never crosses it, and
+    waking at the wall returns the reading already in hand instead of sampling
+    again. A wait interrupted by the wall is not the attempt's own busy
+    verdict; the leg's stage guard voids the attempt."""
     deadline = time.monotonic() + ctx.args.cooldown_timeout
     while True:
         r = read()
@@ -874,35 +972,104 @@ def wait_idle(ctx: Ctx, read: Callable[[], Readings], label: str) -> Tuple[bool,
         if ok or ctx.args.dry_run or time.monotonic() >= deadline:
             ctx.log(f"{label}: {'idle' if ok else 'busy: ' + ' | '.join(reasons)}")
             return ok, r, reasons
-        time.sleep(ctx.args.cooldown_poll)
+        if deadline_reached(ctx):
+            ctx.log(f"{label}: nightly deadline reached; wait ends")
+            return ok, r, reasons
+        sleep_before(ctx, ctx.args.cooldown_poll, ctx.nightly_deadline)
+        if deadline_reached(ctx):
+            ctx.log(f"{label}: nightly deadline reached; wait ends")
+            return ok, r, reasons
+
+
+# ---- nightly deadline wall (M0.2 ruling: launchd runs end at local 06:30) ----
+
+
+def sleep_before(ctx: Ctx, seconds: float, wall: Optional[dt.datetime]) -> None:
+    """One wait sleep, never across ``wall`` (None = no wall applies to this
+    wait: sleep as configured). The wait must be able to end at the wall, not
+    wake a configured interval past it."""
+    if wall is None:
+        ctx.sleep(seconds)
+        return
+    until = (wall - ctx.clock()).total_seconds()
+    ctx.sleep(max(0.0, min(seconds, until)))
+
+
+def deadline_reached(ctx: Ctx) -> bool:
+    dl = ctx.nightly_deadline
+    return dl is not None and ctx.clock() >= dl
+
+
+def timeout_before_deadline(ctx: Ctx, configured: Optional[float]) -> Optional[float]:
+    """A long phase's subprocess timeout, capped by the nightly deadline: the
+    phase must stop at the wall, not at its own (possibly longer) budget.
+    ``configured`` may be None (no timeout of its own); None also comes back
+    when no deadline applies, leaving the phase exactly as it was."""
+    dl = ctx.nightly_deadline
+    if dl is None:
+        return configured
+    remaining = (dl - ctx.clock()).total_seconds()
+    if configured is None:
+        return max(0.0, remaining)
+    return max(0.0, min(configured, remaining))
+
+
+class DeadlineVoid(Exception):
+    """An in-flight attempt cut by the nightly deadline at a stage boundary.
+    Carries the readings the attempt already took; they become the voided
+    attempt's history entry — never a measurement (abort is not fail)."""
+
+    def __init__(self, readings: dict):
+        super().__init__("nightly deadline reached mid-attempt")
+        self.readings = readings
+
+
+def guard_deadline(ctx: Ctx, rec: dict, wall: Optional[dt.datetime]) -> None:
+    """Void the in-flight attempt at a stage boundary once the caller's wall has
+    been reached (``wall`` is the deadline that applies to this call — None for
+    the recovery path, which no wall governs): nothing measured after the
+    deadline enters the record, and the attempt never becomes a timeout error
+    on the way out."""
+    if wall is None or ctx.clock() < wall:
+        return
+    raise DeadlineVoid({k: rec[k] for k in ("idle_pre", "idle_post") if k in rec})
 
 
 # ---- source --------------------------------------------------------------
 
 
-def git(repo: Path, *a: str) -> subprocess.CompletedProcess:
-    return _run(["git", "-C", str(repo), *a], env=clean_env({"GIT_LFS_SKIP_SMUDGE": "1"}), timeout=GIT_TIMEOUT_S)
+def git(repo: Path, *a: str, timeout: float = GIT_TIMEOUT_S) -> subprocess.CompletedProcess:
+    return _run(["git", "-C", str(repo), *a], env=clean_env({"GIT_LFS_SKIP_SMUDGE": "1"}), timeout=timeout)
 
 
 def prepare_checkout(ctx: Ctx) -> str:
-    """Fetch the gate's own clone and check out the commit under test; return its SHA."""
+    """Fetch the gate's own clone and check out the commit under test; return its SHA.
+
+    Every blocking step is bounded by the nightly deadline's remaining time: a
+    run that started live but runs its source prep into the wall stops waiting
+    for the network there (the legs then fall deadline skips — a source error
+    never outranks the wall)."""
     repo = Path(ctx.args.work_dir).expanduser() / "repo"
     if not (repo / ".git").is_dir():
         ctx.log(f"cloning {ctx.args.repo_url} into {repo}")
         repo.parent.mkdir(parents=True, exist_ok=True)
         p = _run(["git", "clone", "--no-checkout", ctx.args.repo_url, str(repo)],
-                 env=clean_env({"GIT_LFS_SKIP_SMUDGE": "1"}), timeout=GIT_CLONE_TIMEOUT_S)
+                 env=clean_env({"GIT_LFS_SKIP_SMUDGE": "1"}),
+                 timeout=timeout_before_deadline(ctx, GIT_CLONE_TIMEOUT_S))
         if p.returncode != 0:
             raise RuntimeError(f"git clone failed: {p.stderr[-500:]}")
-    p = git(repo, "fetch", "--quiet", "origin", "main")
+    p = git(repo, "fetch", "--quiet", "origin", "main",
+            timeout=timeout_before_deadline(ctx, GIT_TIMEOUT_S))
     if p.returncode != 0:
         raise RuntimeError(f"git fetch failed: {p.stderr[-500:]}")
     target = ctx.args.sha or "origin/main"
-    p = git(repo, "rev-parse", "--verify", target + "^{commit}")
+    p = git(repo, "rev-parse", "--verify", target + "^{commit}",
+            timeout=timeout_before_deadline(ctx, GIT_TIMEOUT_S))
     if p.returncode != 0:
         raise RuntimeError(f"cannot resolve {target}: {p.stderr[-300:]}")
     sha = p.stdout.strip()
-    p = git(repo, "checkout", "--quiet", "--detach", "--force", sha)
+    p = git(repo, "checkout", "--quiet", "--detach", "--force", sha,
+            timeout=timeout_before_deadline(ctx, GIT_TIMEOUT_S))
     if p.returncode != 0:
         raise RuntimeError(f"git checkout {sha} failed: {p.stderr[-500:]}")
     return sha
@@ -948,21 +1115,24 @@ def run_metal(ctx: Ctx, sha: str) -> dict:
         return {"status": "error", "reason": reason}
     th = ctx.thresholds
     read = lambda: collect_readings(with_wsl_host=False)  # noqa: E731
-    ok, r, reasons = wait_idle_once(ctx, read, "metal pre-check")
+    ok, r, reasons = wait_idle(ctx, read, "metal pre-check")
     rec["idle_pre"] = r.to_json()
+    guard_deadline(ctx, rec, ctx.nightly_deadline)
     if not ok:
-        return {**rec, "status": "skipped", "reason": "busy (pre-check): " + " | ".join(reasons)}
+        return {**rec, **busy_skip("pre-check", reasons)}
     repo = local_repo(ctx)
     t0 = time.monotonic()
     rc = run_logged(ctx, ["./scripts/build.sh", "-j", "release"], ctx.run_dir / "metal-build.log",
-                    cwd=repo, env=clean_env({}))
+                    cwd=repo, env=clean_env({}), timeout=timeout_before_deadline(ctx, None))
     rec["build_seconds"] = round(time.monotonic() - t0, 1)
+    guard_deadline(ctx, rec, ctx.nightly_deadline)
     if rc != 0:
         return {**rec, "status": "error", "reason": f"build failed (exit {rc}), see metal-build.log"}
     ok, r, reasons = wait_idle(ctx, read, "metal re-check")
     rec["idle_post"] = r.to_json()
+    guard_deadline(ctx, rec, ctx.nightly_deadline)
     if not ok:
-        return {**rec, "status": "skipped", "reason": "busy (post-build re-check): " + " | ".join(reasons)}
+        return {**rec, **busy_skip("post-build re-check", reasons)}
     junit = ctx.run_dir / "metal-junit.xml"
     pyenv = {"LUMICE_BIN": str(repo / "build" / "cmake_install" / "static" / "Lumice")}
     if ctx.synthetic:
@@ -972,8 +1142,9 @@ def run_metal(ctx: Ctx, sha: str) -> dict:
     rc = run_logged(ctx, pytest_argv(sys.executable, "metal", str(junit), str(ctx.run_dir),
                                      ctx.args.threshold_override),
                     ctx.run_dir / "metal-pytest.log", cwd=repo, env=clean_env(pyenv),
-                    timeout=ctx.args.pytest_timeout)
+                    timeout=timeout_before_deadline(ctx, ctx.args.pytest_timeout))
     rec["pytest_seconds"] = round(time.monotonic() - t0, 1)
+    guard_deadline(ctx, rec, ctx.nightly_deadline)
     rec["idle_after_pytest"] = read().to_json()
     if ctx.args.dry_run:
         return {**rec, "status": "skipped", "reason": "dry-run"}
@@ -981,13 +1152,6 @@ def run_metal(ctx: Ctx, sha: str) -> dict:
     status, reason = classify_pytest(None if rc == 124 else rc, junit_text, GATE_TESTS["metal"][1])
     log_text = (ctx.run_dir / "metal-pytest.log").read_text(errors="replace")
     return {**rec, "status": status, "reason": reason, "pytest_exit": rc, **extract_ratios(log_text)}
-
-
-def wait_idle_once(ctx: Ctx, read: Callable[[], Readings], label: str):
-    r = read()
-    ok, reasons = idle_verdict(r, ctx.thresholds)
-    ctx.log(f"{label}: {'idle' if ok else 'busy: ' + ' | '.join(reasons)}")
-    return ok, r, reasons
 
 
 # ---- gui real-timing leg (local) --------------------------------------------
@@ -1014,34 +1178,40 @@ def run_gui_realtiming(ctx: Ctx, sha: str) -> dict:
     if reason:
         return {"status": "error", "reason": reason}
     read = lambda: collect_readings(with_wsl_host=False)  # noqa: E731
-    ok, r, reasons = wait_idle_once(ctx, read, "gui-real-timing pre-check")
+    ok, r, reasons = wait_idle(ctx, read, "gui-real-timing pre-check")
     rec["idle_pre"] = r.to_json()
+    guard_deadline(ctx, rec, ctx.nightly_deadline)
     if not ok:
-        return {**rec, "status": "skipped", "reason": "busy (pre-check): " + " | ".join(reasons)}
+        return {**rec, **busy_skip("pre-check", reasons)}
     repo = local_repo(ctx)
     build_dir = repo / GUI_BUILD_TREE
     t0 = time.monotonic()
     rc = run_logged(ctx, ["cmake", "-S", str(repo), "-B", str(build_dir), "-G", "Ninja",
                           "-DCMAKE_BUILD_TYPE=Release", "-DBUILD_TEST=ON", "-DBUILD_GUI=ON",
                           "-DBUILD_BENCH=OFF", "-DBUILD_SHARED_LIBS=OFF"],
-                    ctx.run_dir / "gui-configure.log", cwd=repo, env=clean_env({}))
+                    ctx.run_dir / "gui-configure.log", cwd=repo, env=clean_env({}),
+                    timeout=timeout_before_deadline(ctx, None))
     if rc == 0:
         rc = run_logged(ctx, ["cmake", "--build", str(build_dir), "--target", "gui_test"],
-                        ctx.run_dir / "gui-build.log", cwd=repo, env=clean_env({}))
+                        ctx.run_dir / "gui-build.log", cwd=repo, env=clean_env({}),
+                        timeout=timeout_before_deadline(ctx, None))
     rec["build_seconds"] = round(time.monotonic() - t0, 1)
+    guard_deadline(ctx, rec, ctx.nightly_deadline)
     if rc != 0:
         return {**rec, "status": "error", "reason": f"build failed (exit {rc}), see gui-build.log"}
     ok, r, reasons = wait_idle(ctx, read, "gui re-check")
     rec["idle_post"] = r.to_json()
+    guard_deadline(ctx, rec, ctx.nightly_deadline)
     if not ok:
-        return {**rec, "status": "skipped", "reason": "busy (post-build re-check): " + " | ".join(reasons)}
+        return {**rec, **busy_skip("post-build re-check", reasons)}
     junit = ctx.run_dir / "gui-junit.xml"
     t0 = time.monotonic()
     rc = run_logged(ctx, [str(gui_test_binary(repo)), "--filter", GUI_REALTIMING_FILTER,
                           "--export-junit", str(junit), "--no-user-config"],
                     ctx.run_dir / "gui-test.log", cwd=repo, env=clean_env({}),
-                    timeout=ctx.args.pytest_timeout)
+                    timeout=timeout_before_deadline(ctx, ctx.args.pytest_timeout))
     rec["gui_seconds"] = round(time.monotonic() - t0, 1)
+    guard_deadline(ctx, rec, ctx.nightly_deadline)
     # One reading, taken the moment the child returned and timestamped as
     # sampling begins: it doubles as the post-run idle record and — on a signal
     # death — as the crash-moment load snapshot, the first sample after the
@@ -1075,13 +1245,16 @@ def ssh_argv(ctx: Ctx, *remote: str) -> List[str]:
             "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3", ctx.args.remote, *remote]
 
 
-def remote_readings(ctx: Ctx) -> Readings:
-    """Run this very file's collect_readings on the remote via `python3 -`."""
+def remote_readings(ctx: Ctx, wall: Optional[dt.datetime] = None) -> Readings:
+    """Run this very file's collect_readings on the remote via `python3 -`.
+    ``wall`` bounds the read when one applies (fresh attempts); the recovery
+    path keeps the plain timeout."""
+    timeout = 180.0 if wall is None else max(0.0, min(180.0, (wall - ctx.clock()).total_seconds()))
     try:
         # Through the common _run entry, so remote output follows the same
         # replace-decode rule as every other captured text.
         p = _run(ssh_argv(ctx, "python3", "-", "--collect-readings", "--wsl-host"),
-                 input=Path(__file__).read_text(), timeout=180)
+                 input=Path(__file__).read_text(), timeout=timeout)
         if p.returncode != 0:
             raise RuntimeError(f"exit {p.returncode}: {p.stderr[-300:]}")
         return Readings.from_json(json.loads(p.stdout.strip().splitlines()[-1]))
@@ -1090,10 +1263,16 @@ def remote_readings(ctx: Ctx) -> Readings:
 
 
 def remote_phase_script(ctx: Ctx, phase: str, sha: str, rdir: str) -> str:
-    """A self-contained bash script that runs on the remote and leaves its result on remote disk."""
+    """A self-contained bash script that runs on the remote and leaves its result on remote disk.
+
+    The script records its own pid (the session leader that `setsid nohup`
+    created): that file is the wall's stop interface — the whole phase process
+    group can be killed by it when an attempt is voided. The pytest phase's own
+    timeout is bounded by the deadline's remaining time at start."""
     base = ctx.args.remote_dir
     common = f"""set -u
 mkdir -p "$HOME/{base}/results/{rdir}"
+echo $$ > "$HOME/{base}/results/{rdir}/{phase}.pid"
 trap 'rc=$?; [ -f "$HOME/{base}/results/{rdir}/{phase}.done" ] || {{ echo "$rc" > "$HOME/{base}/results/{rdir}/{phase}.exit"; touch "$HOME/{base}/results/{rdir}/{phase}.done"; }}' EXIT
 source "$HOME/lumice-env.sh" >/dev/null
 REPO="$HOME/{base}/repo"
@@ -1124,12 +1303,24 @@ touch "$OUT/build.done"
         # $OUT must expand on the remote: quote everything except that variable.
         argv_s = " ".join(a if "$OUT" in a else shlex.quote(a) for a in argv)
         argv_s = argv_s.replace("--junitxml=$OUT/junit.xml", '--junitxml="$OUT/junit.xml"')
+        # GNU timeout takes fractional durations: the remaining wall time keeps
+        # full precision. An int() truncation here would kill the worker before
+        # the wall and let the 124 read as a plain test error; the 1ms floor
+        # never produces the timeout-disabling exact 0.
+        remote_budget = f"{max(0.001, timeout_before_deadline(ctx, ctx.args.pytest_timeout)):.3f}"
+        # The worker runs under GNU timeout backgrounded and recorded: timeout
+        # makes its own process group (the phase bash's group does not contain
+        # it), so the stop interface needs that group's id too — and the budget
+        # expiry keeps killing the whole measurement group as before.
         body = f"""
 for v in $(env | sed -n 's/^\\(LUMICE_[A-Za-z0-9_]*\\)=.*/\\1/p'); do unset "$v"; done
 LUMICE_HAS_CUDA=1 LUMICE_BIN="$REPO/build/cmake_install/static/Lumice" {plugin_env}\\
-  timeout {int(ctx.args.pytest_timeout)} {argv_s} > "$OUT/pytest.log" 2>&1
-echo $? > "$OUT/pytest.exit"
-touch "$OUT/pytest.done"
+  timeout {remote_budget} {argv_s} > "$OUT/pytest.log" 2>&1 &
+tpid=$!
+echo $tpid > "$OUT/{phase}-worker.pid"
+wait $tpid
+echo $? > "$OUT/{phase}.exit"
+touch "$OUT/{phase}.done"
 """
     return common + body
 
@@ -1142,20 +1333,35 @@ def remote_start_phase(ctx: Ctx, phase: str, sha: str, rdir: str) -> bool:
     remote_cmd = (f"mkdir -p {out} && cat > {out}/{phase}.sh && "
                   f"{{ setsid nohup bash {out}/{phase}.sh > {out}/{phase}.nohup 2>&1 < /dev/null & }}")
     rc = run_logged(ctx, ssh_argv(ctx, remote_cmd), ctx.run_dir / "cuda-ssh.log",
-                    timeout=120, stdin_text=script)
+                    timeout=timeout_before_deadline(ctx, 120), stdin_text=script)
     return rc == 0
 
 
-def remote_wait_phase(ctx: Ctx, phase: str, rdir: str, budget_s: float) -> Optional[int]:
+def remote_wait_phase(ctx: Ctx, phase: str, rdir: str, budget_s: float,
+                      wall: Optional[dt.datetime] = None) -> Optional[int]:
     """Poll the remote done-marker with short, independent ssh sessions; a dropped
-    session costs one poll, not the run. Returns the phase's exit code or None."""
+    session costs one poll, not the run. Returns the phase's exit code or None.
+
+    ``wall`` (a fresh attempt's nightly deadline) governs this wait for real: no
+    poll is issued past it, the poll sleep never crosses it, and each ssh is
+    bounded by the wall's remaining time. The plain budget stays soft, exactly
+    as before the wall existed: the poll runs first, the budget is checked
+    after, and the ssh keeps its full 60s — a phase completing inside the last
+    window is still read instead of dying on a zero-second timeout."""
     out = f"{ctx.args.remote_dir}/results/{rdir}"
-    deadline = time.monotonic() + budget_s
+    budget_deadline = time.monotonic() + budget_s
     while True:
         if ctx.args.dry_run:
             return 0
+        if wall is not None and ctx.clock() >= wall:
+            ctx.log(f"remote {phase}: nightly deadline reached; wait ends")
+            return None
+        ssh_timeout = 60.0
+        if wall is not None:
+            ssh_timeout = min(ssh_timeout, max(0.0, (wall - ctx.clock()).total_seconds()))
         try:
-            p = _run(ssh_argv(ctx, f"test -f {out}/{phase}.done && cat {out}/{phase}.exit"), timeout=60)
+            p = _run(ssh_argv(ctx, f"test -f {out}/{phase}.done && cat {out}/{phase}.exit"),
+                     timeout=ssh_timeout)
         except subprocess.TimeoutExpired:
             p = None
         if p is not None and p.returncode == 0 and p.stdout.strip():
@@ -1163,16 +1369,75 @@ def remote_wait_phase(ctx: Ctx, phase: str, rdir: str, budget_s: float) -> Optio
                 return int(p.stdout.strip())
             except ValueError:
                 return None
-        if time.monotonic() >= deadline:
+        if time.monotonic() >= budget_deadline:
             return None
-        time.sleep(ctx.args.remote_poll)
+        if wall is not None and ctx.clock() >= wall:
+            ctx.log(f"remote {phase}: nightly deadline reached; wait ends")
+            return None
+        sleep_before(ctx, ctx.args.remote_poll, wall)
 
 
-def remote_fetch(ctx: Ctx, rdir: str) -> None:
+def remote_stop_phase(ctx: Ctx, phase: str, rdir: str) -> bool:
+    """Terminate a detached remote attempt's work — every group it recorded,
+    not just its entry shell.
+
+    The pid files of the phase itself (the phase script's session leader, plus
+    a worker group the pytest phase records because GNU ``timeout`` makes its
+    own process group) cover everything the attempt runs for THAT phase —
+    another phase's pid file is not evidence about this one: a pytest stop in
+    a directory whose build already finished reports unverifiable, never a
+    borrowed "stopped". The stop is graded and verified per
+    group: TERM, a bounded wait, KILL for anything still alive — and a
+    non-zero exit when termination cannot be verified, so "stopped" means the
+    work ended, not that a signal was sent. No pid file and no done marker
+    means the phase's state cannot be confirmed: reported as unverifiable,
+    never as success."""
+    out = f"{ctx.args.remote_dir}/results/{rdir}"
+    done_file = f"{out}/{phase}.done"
+    # Group liveness is zombie-aware: a killed-but-unreaped member is terminated
+    # work. Linux's kill(-pgid, 0) still counts a zombie, so the plain probe
+    # would report "could not verify termination" for a group whose leader the
+    # caller has not reaped (a macOS kill does not count zombies, so the same
+    # stop passes there). "Stopped means the work ended" — ended-but-unreaped
+    # is ended. (Not an f-string: the awk braces are shell syntax.)
+    cmd = (
+        "group_alive() { ps -eo pgid=,stat= 2>/dev/null | "
+        "awk -v g=\"$1\" '$1 == g && $2 !~ /^Z/ {found=1} END {exit !found}'; }; "
+        f"if [ -f {done_file} ]; then "
+        f"echo '{phase}: already done; nothing to stop'; "
+        f"else found=0; "
+        f"for f in {out}/{phase}.pid {out}/{phase}-worker.pid; do "
+        f'[ -e "$f" ] || continue; found=1; '
+        f'pgid=$(cat "$f"); '
+        f'kill -- -"$pgid" 2>/dev/null; '
+        f'for i in 1 2 3; do group_alive "$pgid" || break; sleep 1; done; '
+        f'if group_alive "$pgid"; then '
+        f'kill -9 -- -"$pgid" 2>/dev/null; sleep 1; fi; '
+        f'if group_alive "$pgid"; then '
+        f"echo '{phase}: could not verify termination' >&2; exit 3; fi; "
+        f"done; "
+        f'if [ "$found" -eq 1 ]; then '
+        f"echo '{phase}: stopped (all recorded groups terminated)'; "
+        f"else "
+        f"echo '{phase}: no pid file and no done marker; state unverifiable' >&2; exit 4; fi; "
+        f"fi"
+    )
+    rc = run_logged(ctx, ssh_argv(ctx, cmd), ctx.run_dir / "cuda-ssh.log", timeout=120)
+    ok = rc == 0
+    if not ok:
+        ctx.log(f"remote {phase} stop could not verify termination (exit {rc}); "
+                f"the phase may still be running")
+    else:
+        ctx.log(f"remote {phase} stop: groups terminated or already done")
+    return ok
+
+
+def remote_fetch(ctx: Ctx, rdir: str, wall: Optional[dt.datetime] = None) -> None:
     dst = ctx.run_dir / "remote"
     dst.mkdir(exist_ok=True)
+    timeout = 300.0 if wall is None else max(0.0, min(300.0, (wall - ctx.clock()).total_seconds()))
     run_logged(ctx, ["rsync", "-az", f"{ctx.args.remote}:{ctx.args.remote_dir}/results/{rdir}/", f"{dst}/"],
-               ctx.run_dir / "cuda-ssh.log", timeout=300)
+               ctx.run_dir / "cuda-ssh.log", timeout=timeout)
 
 
 def remote_sync_source(ctx: Ctx, sha: str) -> Optional[str]:
@@ -1181,18 +1446,19 @@ def remote_sync_source(ctx: Ctx, sha: str) -> Optional[str]:
     rrepo = f"{ctx.args.remote_dir}/repo"
     rc = run_logged(ctx, ssh_argv(ctx, f"mkdir -p {rrepo} && cd {rrepo} && "
                                   f"(test -d .git || git init -q) && git config receive.denyCurrentBranch ignore"),
-                    ctx.run_dir / "cuda-ssh.log", timeout=120)
+                    ctx.run_dir / "cuda-ssh.log", timeout=timeout_before_deadline(ctx, 120))
     if rc != 0:
         return f"remote repo init failed (exit {rc})"
     rc = run_logged(ctx, ["git", "-C", str(local_repo(ctx)), "-c", "core.hooksPath=/dev/null", "push",
                           "--quiet", "--force", f"{ctx.args.remote}:{rrepo}", f"{sha}:refs/heads/gate-target"],
-                    ctx.run_dir / "cuda-ssh.log", env=clean_env({"GIT_LFS_SKIP_PUSH": "1"}), timeout=1800)
+                    ctx.run_dir / "cuda-ssh.log", env=clean_env({"GIT_LFS_SKIP_PUSH": "1"}),
+                    timeout=timeout_before_deadline(ctx, 1800))
     if rc != 0:
         return f"git push to remote failed (exit {rc})"
     cpm = Path(ctx.args.cpm_cache).expanduser()
     if cpm.is_dir():
         rc = run_logged(ctx, ["rsync", "-az", f"{cpm}/", f"{ctx.args.remote}:.cache/lumice-cpm/"],
-                        ctx.run_dir / "cuda-ssh.log", timeout=3600)
+                        ctx.run_dir / "cuda-ssh.log", timeout=timeout_before_deadline(ctx, 3600))
         if rc != 0:
             return f"CPM cache rsync failed (exit {rc})"
     return None
@@ -1200,49 +1466,89 @@ def remote_sync_source(ctx: Ctx, sha: str) -> Optional[str]:
 
 def run_cuda(ctx: Ctx, sha: str, resume_rdir: Optional[str] = None) -> dict:
     rec: dict = {"remote": ctx.args.remote}
+    # The wall governs fresh attempts and is fixed before the first blocking
+    # operation; the --collect-remote recovery path has no attempt structure,
+    # so no deadline checkpoint covers it.
+    wall = ctx.nightly_deadline if resume_rdir is None else None
     if not ctx.args.dry_run:
+        # The probe's budget follows the wall that governs THIS call: a fresh
+        # attempt gets the remaining wall time, the recovery path keeps its
+        # plain connect budget (no wall applies to it — not even a passed one).
+        probe_timeout = (timeout_before_deadline(ctx, ctx.args.ssh_connect_timeout + 15)
+                         if wall is not None else ctx.args.ssh_connect_timeout + 15)
         try:
-            p = _run(ssh_argv(ctx, "true"), timeout=ctx.args.ssh_connect_timeout + 15)
+            p = _run(ssh_argv(ctx, "true"), timeout=probe_timeout)
         except (subprocess.TimeoutExpired, OSError) as e:
+            guard_deadline(ctx, rec, wall)   # a probe cut by the wall is a void, not unreachable
             return {**rec, "status": "skipped", "reason": f"unreachable ({type(e).__name__})"}
         if p.returncode != 0:
+            guard_deadline(ctx, rec, wall)
             return {**rec, "status": "skipped", "reason": f"unreachable (ssh exit {p.returncode})"}
-    rdir = resume_rdir or ctx.run_id
+    # One remote results directory per attempt: a retried attempt starts its
+    # phases in a fresh directory and can never read a previous attempt's done
+    # markers. The recovery path keeps the recorded directory it re-attaches to.
+    rdir = resume_rdir or (ctx.run_id if ctx.attempt_no == 1
+                           else f"{ctx.run_id}-a{ctx.attempt_no}")
     rec["remote_run_dir"] = rdir
     if resume_rdir is None:
-        ok, r, reasons = wait_idle_once(ctx, lambda: remote_readings(ctx), "cuda pre-check")
+        ok, r, reasons = wait_idle(ctx, lambda: remote_readings(ctx, wall), "cuda pre-check")
         rec["idle_pre"] = r.to_json()
+        guard_deadline(ctx, rec, wall)
         if not ok:
-            return {**rec, "status": "skipped", "reason": "busy (pre-check): " + " | ".join(reasons)}
+            return {**rec, **busy_skip("pre-check", reasons)}
         err = remote_sync_source(ctx, sha)
+        guard_deadline(ctx, rec, wall)
         if err:
             return {**rec, "status": "error", "reason": err}
         t0 = time.monotonic()
         if not remote_start_phase(ctx, "build", sha, rdir):
+            # The ssh receipt is lost, not necessarily the phase: the setsid
+            # nohup may have landed. At the wall, clean up what may have
+            # started — the stop reports what it could actually verify.
+            if wall is not None and ctx.clock() >= wall:
+                remote_stop_phase(ctx, "build", rdir)
+            guard_deadline(ctx, rec, wall)   # a start cut by the wall is a void, not an error
             return {**rec, "status": "error", "reason": "could not start remote build"}
-        brc = remote_wait_phase(ctx, "build", rdir, ctx.args.remote_build_timeout)
+        brc = remote_wait_phase(ctx, "build", rdir,
+                                timeout_before_deadline(ctx, ctx.args.remote_build_timeout),
+                                wall=wall)
         rec["build_seconds"] = round(time.monotonic() - t0, 1)
+        if wall is not None and ctx.clock() >= wall:
+            remote_stop_phase(ctx, "build", rdir)
+        guard_deadline(ctx, rec, wall)
         if brc != 0:
-            remote_fetch(ctx, rdir)
+            remote_fetch(ctx, rdir, wall=wall)
             return {**rec, "status": "error",
                     "reason": f"remote build failed (exit {brc}), see remote/build.log"}
-        ok, r, reasons = wait_idle(ctx, lambda: remote_readings(ctx), "cuda re-check")
+        ok, r, reasons = wait_idle(ctx, lambda: remote_readings(ctx, wall), "cuda re-check")
         rec["idle_post"] = r.to_json()
+        guard_deadline(ctx, rec, wall)
         if not ok:
-            return {**rec, "status": "skipped", "reason": "busy (post-build re-check): " + " | ".join(reasons)}
+            return {**rec, **busy_skip("post-build re-check", reasons)}
         if ctx.synthetic and not ctx.args.dry_run:
             out = f"{ctx.args.remote_dir}/results/{rdir}"
             run_logged(ctx, ssh_argv(ctx, f"cat > {out}/{OVERRIDE_PLUGIN_NAME}.py"),
-                       ctx.run_dir / "cuda-ssh.log", timeout=60, stdin_text=OVERRIDE_PLUGIN_SOURCE)
+                       ctx.run_dir / "cuda-ssh.log",
+                       timeout=timeout_before_deadline(ctx, 60), stdin_text=OVERRIDE_PLUGIN_SOURCE)
         if not remote_start_phase(ctx, "pytest", sha, rdir):
+            if wall is not None and ctx.clock() >= wall:
+                remote_stop_phase(ctx, "pytest", rdir)
+            guard_deadline(ctx, rec, wall)
             return {**rec, "status": "error", "reason": "could not start remote pytest"}
     t0 = time.monotonic()
-    prc = remote_wait_phase(ctx, "pytest", rdir, ctx.args.pytest_timeout + 600)
+    wait_budget = ctx.args.pytest_timeout + 600
+    if resume_rdir is None:
+        wait_budget = timeout_before_deadline(ctx, wait_budget)
+    prc = remote_wait_phase(ctx, "pytest", rdir, wait_budget, wall=wall)
     rec["pytest_wait_seconds"] = round(time.monotonic() - t0, 1)
-    rec["idle_after_pytest"] = remote_readings(ctx).to_json()
+    if wall is not None and ctx.clock() >= wall:
+        remote_stop_phase(ctx, "pytest", rdir)
+    guard_deadline(ctx, rec, wall)
+    rec["idle_after_pytest"] = remote_readings(ctx, wall).to_json()
     if ctx.args.dry_run:
         return {**rec, "status": "skipped", "reason": "dry-run"}
-    remote_fetch(ctx, rdir)
+    remote_fetch(ctx, rdir, wall=wall)
+    guard_deadline(ctx, rec, wall)
     got = ctx.run_dir / "remote"
     junit = got / "junit.xml"
     exit_file = got / "pytest.exit"
@@ -1258,6 +1564,131 @@ def run_cuda(ctx: Ctx, sha: str, resume_rdir: Optional[str] = None) -> dict:
     log = got / "pytest.log"
     ratios = extract_ratios(log.read_text(errors="replace")) if log.is_file() else {}
     return {**rec, "status": status, "reason": reason, "pytest_exit": rc, **ratios}
+
+
+# ---- leg-level retry loop (only idle_verdict rejections retry) ---------------
+
+
+def backoff_sleep(ctx: Ctx, seconds: float) -> None:
+    """Sleep one backoff off, never across the nightly deadline: the wait ends
+    at the wall, not a configured duration later (the loop-top deadline gate
+    then decides the leg's end)."""
+    dl = ctx.nightly_deadline
+    remaining = seconds
+    while remaining > 0:
+        now = ctx.clock()
+        if dl is not None and now >= dl:
+            return
+        if dl is None:
+            ctx.sleep(remaining)
+            return
+        until_dl = (dl - now).total_seconds()
+        if until_dl <= 0:
+            return
+        chunk = min(remaining, until_dl)
+        ctx.sleep(chunk)
+        remaining -= chunk
+
+
+def idle_retry_payload(ctx: Ctx, attempts: int, backoffs: int, history: List[dict],
+                       terminal: Optional[str]) -> dict:
+    """The record's ``idle_retry`` payload: the budget actually spent, one
+    history entry per attempt that did not become the final record, and — only
+    when the retry controller itself forced this end — the cause (budget
+    exhaustion or the wall). A leg that returned normally carries no
+    ``terminal``: its status already says what happened."""
+    payload = {"attempts": attempts, "backoffs": backoffs,
+               "backoff_seconds": ctx.args.idle_retry_backoff_seconds, "history": history}
+    if terminal is not None:
+        payload["terminal"] = terminal
+    return payload
+
+
+def _deadline_void_result(ctx: Ctx, attempts: int, backoffs: int, history: List[dict],
+                          ended: dt.datetime, why: str) -> dict:
+    """The one constructor for both void shapes (a stage guard raising
+    mid-flight, and an attempt that returned past the wall): a deadline skip
+    with the controller's cause and the attempt in history — never a
+    measurement."""
+    return {"status": "skipped",
+            "reason": f"nightly deadline {ctx.nightly_deadline:%H:%M} reached at "
+                      f"{iso(ended)}; {why}",
+            "idle_retry": idle_retry_payload(ctx, attempts, backoffs, history, "deadline")}
+
+
+def run_leg_with_retry(ctx: Ctx, leg: str, runner: Callable[[Ctx, str], dict], sha: str) -> dict:
+    """Wrap one leg's runner in the structured idle-retry loop.
+
+    One attempt = one full leg execution (both idle windows belong to it). Only
+    an ``is_env_busy_skip`` attempt costs the attempt and is followed by a
+    backoff; fail / error / inconclusive / unreachable / locked are terminal
+    states on their first appearance, and the leg's own exceptions propagate
+    unchanged (one error record, no retry budget spent). The loop ends with the
+    controller's cause in ``idle_retry.terminal`` when the backoff budget is
+    exhausted or the nightly deadline is reached; a leg whose first attempt
+    never ran (the wall passed before its turn) falls a single skip line with
+    no ``idle_retry`` payload — zero attempts is not a retry history.
+    """
+    max_backoffs = ctx.args.idle_retry_max_backoffs
+    attempts = 0
+    backoffs = 0
+    history: List[dict] = []
+    last_busy: Optional[dict] = None
+    while True:
+        if attempts == 0 and deadline_reached(ctx):
+            ctx.log(f"{leg}: nightly deadline reached before this leg started")
+            return {"status": "skipped",
+                    "reason": f"nightly deadline {ctx.nightly_deadline:%H:%M} reached "
+                              f"before this leg started"}
+        ctx.log(f"{leg}: attempt {attempts + 1}")
+        ctx.attempt_no = attempts + 1
+        t0 = ctx.clock()
+        attempts += 1
+        try:
+            rec = runner(ctx, sha)
+        except DeadlineVoid as e:
+            ended = ctx.clock()
+            history.append({"attempt": attempts, "ended_at": iso(ended),
+                            "seconds": round((ended - t0).total_seconds(), 1), "voided": True,
+                            **e.readings})
+            ctx.log(f"{leg}: attempt {attempts} voided by the nightly deadline")
+            return _deadline_void_result(ctx, attempts, backoffs, history, ended,
+                                         f"in-flight attempt {attempts} voided before measurement")
+        ended = ctx.clock()
+        if not is_env_busy_skip(rec):
+            if deadline_reached(ctx):
+                # The wrapper owns the terminal adjudication: an attempt that
+                # returns past the wall is not recorded, whatever it says — its
+                # last blocking IO (a diagnostic fetch, a classification) may
+                # have crossed the wall after the leg's stage guards passed.
+                # The owner accepted voiding a measurement that barely missed
+                # the wall (the risk-1 residue of the M0.2 ruling).
+                history.append({"attempt": attempts, "ended_at": iso(ended),
+                                "seconds": round((ended - t0).total_seconds(), 1), "voided": True,
+                                **{k: rec[k] for k in ("idle_pre", "idle_post") if k in rec}})
+                ctx.log(f"{leg}: attempt {attempts} returned past the nightly deadline; voided")
+                return _deadline_void_result(ctx, attempts, backoffs, history, ended,
+                                             f"attempt {attempts} returned past the wall; "
+                                             f"not recorded")
+            if backoffs > 0:
+                rec["idle_retry"] = idle_retry_payload(ctx, attempts, backoffs, history, None)
+            return rec
+        history.append({"attempt": attempts, "ended_at": iso(ended),
+                        "seconds": round((ended - t0).total_seconds(), 1), "reason": rec["reason"],
+                        **{k: rec[k] for k in ("idle_pre", "idle_post") if k in rec}})
+        last_busy = rec
+        if backoffs >= max_backoffs:
+            ctx.log(f"{leg}: idle-retry budget exhausted after {attempts} attempts")
+            return {**rec, "idle_retry": idle_retry_payload(ctx, attempts, backoffs,
+                                                            history[:-1], "max_backoffs")}
+        backoffs += 1
+        ctx.log(f"{leg}: busy; backoff {backoffs}/{max_backoffs} "
+                f"({ctx.args.idle_retry_backoff_seconds:.0f}s)")
+        backoff_sleep(ctx, ctx.args.idle_retry_backoff_seconds)
+        if deadline_reached(ctx):
+            ctx.log(f"{leg}: nightly deadline reached; no further attempt")
+            return {**rec, "idle_retry": idle_retry_payload(ctx, attempts, backoffs,
+                                                            history[:-1], "deadline")}
 
 
 # ---- notifications --------------------------------------------------------
@@ -1398,6 +1829,10 @@ def replay_pending(ctx: Ctx, state: dict) -> None:
 # =============================================================================
 
 
+def parse_hhmm(s: str) -> dt.time:
+    return dt.datetime.strptime(s, "%H:%M").time()
+
+
 def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0],
                                 formatter_class=argparse.ArgumentDefaultsHelpFormatter)
@@ -1423,6 +1858,13 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     p.add_argument("--remote-build-timeout", type=float, default=3 * 3600.0)
     p.add_argument("--pytest-timeout", type=float, default=3600.0)
     p.add_argument("--ssh-connect-timeout", type=int, default=5)
+    p.add_argument("--idle-retry-backoff-seconds", type=float, default=3600.0,
+                   help="busy attempt: sleep this long before the next attempt")
+    p.add_argument("--idle-retry-max-backoffs", type=int, default=2,
+                   help="max backoff sleeps per leg (attempts = max-backoffs + 1)")
+    p.add_argument("--nightly-deadline", type=parse_hhmm, default=dt.time(6, 30),
+                   help="local-time wall bounding launchd runs: no attempt starts or continues "
+                        "past it; manual runs are unbounded")
     p.add_argument("--stale-days", type=float, default=DEFAULT_STALE_DAYS)
     p.add_argument("--issue-namespace", choices=("real", "test"), default="real",
                    help="'test' prefixes issue titles with [TEST] so a drill never touches real issues")
@@ -1443,6 +1885,20 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     return a
 
 
+def resolve_nightly_deadline(args: argparse.Namespace, log: Log) -> Optional[dt.datetime]:
+    """The run's nightly deadline as today's local wall-clock time, or None when
+    it does not apply. Applicability is decided once per run from the run's
+    trigger (a launchd run is bounded whenever it started — a run that began
+    past the wall is ended by the legs' zero-attempt skips; a manual run is the
+    operator's explicit choice and unbounded) and logged to gate.log."""
+    if args.trigger != "launchd":
+        log(f"nightly deadline not applicable (trigger {args.trigger})")
+        return None
+    dl = dt.datetime.combine(dt.datetime.now().date(), args.nightly_deadline)
+    log(f"nightly deadline {dl:%H:%M} applies (trigger launchd)")
+    return dl
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     args = parse_args(argv)
     if args.collect_readings:
@@ -1457,9 +1913,23 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     run_dir = runs_dir / run_id
     run_dir.mkdir()
     log = Log(run_dir / "gate.log", args.dry_run)
+    if args.dry_run:
+        # Dry-run only forces the backoff to zero (the loop still runs, nothing
+        # sleeps); it does not change the deadline's applicability, which the
+        # trigger decides.
+        args.idle_retry_backoff_seconds = 0.0
+    nightly_deadline = resolve_nightly_deadline(args, log)
     ctx = Ctx(args, run_id, run_dir, log,
               IdleThresholds(args.load_per_core, args.host_cpu_percent, args.gpu_util_percent),
-              synthetic=args.threshold_override is not None)
+              synthetic=args.threshold_override is not None,
+              nightly_deadline=nightly_deadline)
+    run_dead_at_start = deadline_reached(ctx)
+    if run_dead_at_start:
+        # A nightly run that launched past the wall ends before it starts: skip
+        # the source prep it can no longer use and let every leg fall its
+        # zero-attempt deadline skip. A source error never outranks the wall.
+        log("nightly deadline already passed; no attempt will start, "
+            "every leg falls a deadline skip")
     legs = LEGS if args.leg == "all" else (args.leg,)
     if args.collect_remote:
         legs = ("cuda",)
@@ -1482,37 +1952,46 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     sha = args.sha or "?"
     source_error = None
-    try:
-        if args.collect_remote:
-            # Recovery only fetches an earlier remote run's results; that run measured a
-            # commit this checkout may no longer be at, so do not stamp the record with it.
-            sha = args.sha or "unknown (collect-remote)"
-        elif args.dry_run and not (local_repo(ctx) / ".git").is_dir():
-            log("dry-run: gate clone absent; would clone and check out origin/main")
-        else:
-            sha = prepare_checkout(ctx)
-    except (RuntimeError, subprocess.TimeoutExpired, OSError) as e:
-        source_error = f"{type(e).__name__}: {e}"
+    if not run_dead_at_start:
+        try:
+            if args.collect_remote:
+                # Recovery only fetches an earlier remote run's results; that run measured a
+                # commit this checkout may no longer be at, so do not stamp the record with it.
+                sha = args.sha or "unknown (collect-remote)"
+            elif args.dry_run and not (local_repo(ctx) / ".git").is_dir():
+                log("dry-run: gate clone absent; would clone and check out origin/main")
+            else:
+                sha = prepare_checkout(ctx)
+        except (RuntimeError, subprocess.TimeoutExpired, OSError) as e:
+            source_error = f"{type(e).__name__}: {e}"
     log(f"commit under test: {sha}")
 
     worst = 0
     for leg in legs:
         t0 = time.monotonic()
         try:
-            if source_error:
+            if source_error and not deadline_reached(ctx):
+                # A source failure is the leg's story only while the run could
+                # still attempt something; past the wall, the zero-attempt
+                # deadline skip outranks it (M0.2: the wall forces terminal).
                 rec = {"status": "error", "reason": f"source: {source_error}"}
             elif leg == "metal":
                 if platform.system() != "Darwin":
                     rec = {"status": "error", "reason": "metal leg needs macOS"}
                 else:
-                    rec = run_metal(ctx, sha)
+                    rec = run_leg_with_retry(ctx, leg, run_metal, sha)
             elif leg == "gui-real-timing":
                 if platform.system() != "Darwin":
                     rec = {"status": "error", "reason": "gui-real-timing leg needs macOS"}
                 else:
-                    rec = run_gui_realtiming(ctx, sha)
-            else:
+                    rec = run_leg_with_retry(ctx, leg, run_gui_realtiming, sha)
+            elif args.collect_remote:
+                # Recovery only re-attaches to an earlier remote run: no busy
+                # branch, no attempt structure — the retry loop and the deadline
+                # checkpoints do not cover it.
                 rec = run_cuda(ctx, sha, resume_rdir=args.collect_remote)
+            else:
+                rec = run_leg_with_retry(ctx, leg, run_cuda, sha)
         except Exception as e:  # noqa: BLE001 - one leg must not take the other, or the state, down with it
             log(f"{leg}: unexpected {type(e).__name__}: {e}")
             rec = {"status": "error", "reason": f"internal: {type(e).__name__}: {e}"}

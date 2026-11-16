@@ -480,7 +480,10 @@ it measures (see "idle" below), because the two roles are one physical machine.
 **What one run does** — `scripts/local_throughput_gate.py`, one entry point, fixed order per leg:
 check out `origin/main`'s tip in the gate's **own clone** (`~/.cache/lumice-throughput-gate/repo`,
 never a developer worktree) → idle pre-check → build → cool-down → idle re-check → pytest → record
-→ notify. Before any of that, the metal leg resolves its build tools (`cmake`, `ninja`) from PATH —
+→ notify. Each leg runs inside the retry loop described under **Idle retry** below: every attempt
+is the full sequence shown here, the pre-check is the same 600 s window as the re-check, and
+launchd runs are bounded by the 06:30 wall. Before any of that, the metal leg resolves its build
+tools (`cmake`, `ninja`) from PATH —
 a missing tool is a deterministic configuration error, not a busy-machine signal, so the leg ends
 as `error` with the public category `build tools missing from PATH` (the issue body shows only that
 category; which tool is missing is in the local reason in `results.jsonl`), and its record carries
@@ -488,10 +491,13 @@ no idle readings because none were taken. The CUDA leg pushes the commit into a 
 the remote (so the remote build
 stays incremental), tops up the remote's CPM source cache from this machine's, and runs the build
 and the test there under `nohup`, each writing its log, exit code and a done-marker to the
-**remote disk** (`~/Codes/lumice-throughput-gate/results/<run_id>/`); this machine polls the marker
+**remote disk** (`~/Codes/lumice-throughput-gate/results/<run_id>/` — one directory per attempt: a
+retried attempt works in `<run_id>-a2` and reads nothing from the first attempt's markers; the
+record's `remote_run_dir` names the directory its result actually came from); this machine polls
+the marker
 with short independent ssh sessions and copies the directory back when it appears. A dropped ssh
 session costs one poll, not the result, and `--collect-remote <run_id>` re-attaches to a run whose
-local driver died.
+local driver died — that recovery path has no retry loop and no deadline wall, it only collects.
 
 **Four outcomes per leg, and only two of them are measurements.** `pass` and `fail` come from the
 test's own verdict (exit code + junit XML, target test actually executed). `skipped` (busy /
@@ -520,6 +526,59 @@ and run are not atomic, so each record also keeps a reading taken right after th
 `gui-real-timing` leg this is not overhead but the gate itself: its pool is wall-clock sensitive,
 and a run under residual load manufactures functional reds (measured: the analysis-chain cases
 fail on not-yet-rendered report text under a synthetic 10-core load, without any timeout line).
+
+**Idle retry.** A busy night no longer costs the leg its day: each leg runs inside a structured
+retry loop. One **attempt** is one full leg execution — both idle windows belong to it (the
+pre-check is the same 600 s window as the re-check, so a machine that frees up within ten minutes
+is still measured) — and a busy attempt is followed by a 1 h backoff
+(`--idle-retry-backoff-seconds`) and a full re-run, at most twice
+(`--idle-retry-max-backoffs`), each leg counting its own budget, never re-running a leg that
+measured. Only `idle_verdict` rejections retry: a functional red, a build failure or an
+`inconclusive` pool is a measurement, not an environment state, and re-running it would be rolling
+dice on the verdict (cuda `unreachable` and the run-level `locked` skip are terminal too). When
+the budget is exhausted, the leg ends as a single `skipped` line whose `idle_retry` payload
+carries the attempt count, the backoffs taken and each rejected attempt's snapshot; the staleness
+alarm covers the blind night as before. A leg that backed off before eventually measuring carries
+the same `idle_retry` history on its final record — "busy at 03:30, measured at 04:31" stays
+visible — while a leg that returned on its first attempt carries none. The retry controller's own
+verdict is explicit: `terminal: "max_backoffs"` (budget exhausted) or `terminal: "deadline"` (the
+wall below) appears only when the controller forced the end; a leg that returned normally carries
+no `terminal`, its status already says what happened.
+
+**Nightly deadline.** The retry budgets are per-leg, but the legs run in serial, so a fully busy
+night could otherwise hold the gate for hours past morning. launchd runs therefore have a hard
+wall, `--nightly-deadline` (default `06:30` local): every wait face ends at it — the idle windows,
+the remote phase polls and the backoff sleep all stop at the wall instead of running out their
+configured budget, and no poll, reading or transfer is even issued past it — no attempt starts
+past it, and an attempt still in flight is voided: its long phases run under the remaining time
+as their timeout **and their work is actually stopped** — local phases run in their own process
+group and are killed whole (build.sh's ninja and compilers, pytest's render processes included),
+and the cuda leg's detached remote phases record every group they run (the entry shell's, plus
+the worker group GNU `timeout` creates for the measurement, which the entry shell's group does
+not contain); the stop terminates them graded — TERM, a bounded wait, KILL for anything still
+alive — and reports success only on **verified** termination, with an unverifiable stop (or a
+phase whose state cannot be confirmed) logged and visible, never swallowed. A stop runs even
+when a phase's start receipt was lost at the wall: the ssh may have landed even though the
+acknowledgment did not — nothing the voided
+attempt did enters the record, and the
+leg's outcome is a single `skipped` line whose reason names the deadline, never a timeout `error`
+(an aborted attempt is not a failed one). The same precedence holds at the run's entry: a nightly
+run that launched past the wall skips its source prep entirely, a source failure never
+outranks the wall, and the cuda leg's connectivity probe itself takes the remaining time as its
+timeout — a probe cut by the wall voids the attempt, it does not read as `unreachable` —
+unstarted legs fall deadline skips, not source errors. Legs the wall reached before they started fall the same
+single skip line, with no `idle_retry` payload: zero attempts is not a retry history. The wall
+binds launchd runs whenever they started: a nightly run that launched late (a machine that slept
+past 06:30) ends immediately as deadline skips for every leg — re-admitting it would re-open the
+multi-hour serial stay the wall exists to bound. Manual runs (`--trigger manual`, the default)
+are unbounded: running the gate by hand is an explicit choice, and exempting it is what keeps
+daytime drills possible. Worst case on a fully busy night the gate now ends at the wall (~3 h
+after the 03:30 start) instead of drifting into the workday. The retry loop wraps every dispatch
+branch and the deadline checkpoints live in the shared wait faces, so a new leg inherits both by
+construction: adding it to the leg list and `main`'s dispatch is the whole registration. The
+retry loop and the wall land with the script itself — after they do, re-run
+`scripts/install_throughput_gate.sh` on the reference machine so the installed copy retries and
+stops at the wall too (same verification shape as the gui leg's deployment above).
 
 **Classifying the gui-real-timing pool.** The build is the leg's own tree of the gate clone
 (`build/cmake_build/static-gate-gui`, configure `BUILD_TEST=ON BUILD_GUI=ON`, build only the
@@ -584,7 +643,13 @@ sample; every run's ratios are in the record.
   `gui-real-timing` leg's lines carry its own payload instead of ratios: the `timing_*` trend
   fields when the frozen-map value line was printed, the failing case on a functional red, and
   the full SIGILL sample event (exit code, marker, log tail, crash-moment load) — evidence free
-  text lives only here, the public issue shows identifiers and categories.
+  text lives only here, the public issue shows identifiers and categories. A leg that retried or
+  met the wall carries more: `env_rejected: true` on a busy-skip line (the marker the retry loop
+  keys on), and an `idle_retry` payload — `attempts`, `backoffs`, `backoff_seconds`, `history`
+  (one entry per attempt that did not become the final record: its index, local end time,
+  duration, busy reason or a `voided` marker for an attempt cut by the wall, and the readings it
+  had taken) — plus `terminal` only when the retry controller forced the end (`"max_backoffs"`
+  budget exhausted, `"deadline"` wall).
 - `~/.local/state/lumice-throughput-gate/runs/<run_id>/` — the run's log, build and pytest logs,
   junit XML, and the collected remote directory (last 30 runs kept).
 - **GitHub issues**, the channel you are expected to see: titles
