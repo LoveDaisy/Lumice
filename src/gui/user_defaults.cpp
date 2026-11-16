@@ -936,6 +936,19 @@ constexpr const char* kUseGpuBackendKey = "use_gpu_backend";
 constexpr const char* kWorkerCountKey = "worker_count";
 constexpr const char* kEntryEditPreviewStyleKey = "entry_edit_preview_style";
 constexpr const char* kUiScaleMultiplierKey = "ui_scale_multiplier";
+
+// Settings edits a copy of a user-editable file, not necessarily a well-formed app object.
+// Repair only this namespace on write; leave document defaults and presets untouched.
+nlohmann::json& AppObjectForWrite(nlohmann::json& doc) {
+  if (!doc.is_object()) {
+    doc = nlohmann::json::object();
+  }
+  auto& app = doc[kAppRootKey];
+  if (!app.is_object()) {
+    app = nlohmann::json::object();
+  }
+  return app;
+}
 }  // namespace
 
 std::optional<bool> ReadUseGpuBackendFromDoc(const nlohmann::json& doc) {
@@ -956,13 +969,7 @@ std::optional<bool> ReadUseGpuBackendFromDoc(const nlohmann::json& doc) {
 }
 
 void WriteUseGpuBackendToDoc(nlohmann::json& doc, bool value) {
-  if (!doc.is_object()) {
-    doc = nlohmann::json::object();
-  }
-  // Surgical: ONE key is touched, so the GuiState half and `presets` survive by construction.
-  // operator[] is fine on the write path — it starts from a document this process controls, not
-  // from whatever a user may have typed into the file.
-  doc[kAppRootKey][kUseGpuBackendKey] = value;
+  AppObjectForWrite(doc)[kUseGpuBackendKey] = value;
 }
 
 void EraseUseGpuBackendFromDoc(nlohmann::json& doc) {
@@ -1006,10 +1013,7 @@ std::optional<int> ReadWorkerCountFromDoc(const nlohmann::json& doc) {
 }
 
 void WriteWorkerCountToDoc(nlohmann::json& doc, int value) {
-  if (!doc.is_object()) {
-    doc = nlohmann::json::object();
-  }
-  doc[kAppRootKey][kWorkerCountKey] = value;
+  AppObjectForWrite(doc)[kWorkerCountKey] = value;
 }
 
 void EraseWorkerCountFromDoc(nlohmann::json& doc) {
@@ -1043,10 +1047,7 @@ std::optional<int> ReadEntryEditPreviewStyleFromDoc(const nlohmann::json& doc) {
 }
 
 void WriteEntryEditPreviewStyleToDoc(nlohmann::json& doc, int value) {
-  if (!doc.is_object()) {
-    doc = nlohmann::json::object();
-  }
-  doc[kAppRootKey][kEntryEditPreviewStyleKey] = value;
+  AppObjectForWrite(doc)[kEntryEditPreviewStyleKey] = value;
 }
 
 void EraseEntryEditPreviewStyleFromDoc(nlohmann::json& doc) {
@@ -1090,10 +1091,7 @@ std::optional<float> ReadUiScaleMultiplierFromDoc(const nlohmann::json& doc) {
 }
 
 void WriteUiScaleMultiplierToDoc(nlohmann::json& doc, float value) {
-  if (!doc.is_object()) {
-    doc = nlohmann::json::object();
-  }
-  doc[kAppRootKey][kUiScaleMultiplierKey] = value;
+  AppObjectForWrite(doc)[kUiScaleMultiplierKey] = value;
 }
 
 void EraseUiScaleMultiplierFromDoc(nlohmann::json& doc) {

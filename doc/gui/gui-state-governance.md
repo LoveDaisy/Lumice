@@ -153,6 +153,8 @@
 
   **第三个 GuiState-backed app 成员加入后的重评估**：保留具名 `Read/Write/Erase*FromDoc`、reset/apply 显式接线与覆盖测试，不引入通用 registry。预览样式是启动 view 输入，后端/worker 是服务器构造输入，UI scale 则不在 GuiState；统一成泛型 apply 容易掩盖应用时机边界。`kIneligibleScalarResetFieldCount = 3` 与逐成员 composition 链一起约束登记、重置及解析，不把改计数本身当作接线证据。
 
+  **准入边界**：非场景数据只是必要条件，不是自动解禁依据。每个新增成员仍须有明确的用户配置诉求，单独确认应用时机并在 tier 行显式授权；日志与折叠等未授权字段不会因为同属应用状态而自动获得存储资格。
+
   **Entry Edit 启动样式**：`app.entry_edit_preview_style` 存四值索引（Wireframe / Hidden Line / X-Ray / Shaded）；缺键、错类型或越界回 Hidden Line，拒绝发生在整数窄化之前，且不影响其他覆盖。Settings 编辑 `g_copy_doc`，Save 才落盘，Close/X 不保存；显式选择 Hidden Line 仍存键，`Factory` 只在副本删除该键，Save 后下次启动回工厂。`Custom/Factory` 显示工作副本来源，`session` 显示当前样式，两个值可不同。既有 `Reset all my defaults` 仅清文档默认勾选，不影响 app 偏好或预设库。
 
   这张注册表也是主 UI 与面板收敛到"同一份权威"的落地方式：主 UI 里所有绑定到已注册字段的滑条调用点（`app_panels.cpp` 的 View / Display / Overlay 与 `panels.cpp` 的 Sun / Simulation，共 16 处）都改读同一个 `ConstraintFor()`（`field_editor_registry.hpp:137`），不再各自持有一份边界字面量——改一处，主 UI 与面板同时移动（`main-ui-constraint-registry` / 408.8 落地；其 AC3 的红态探针证明了这一点：故意改错某个约束的边界，主 UI 与表格单元格在同一次改动、同一帧一起偏移）。

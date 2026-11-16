@@ -1578,6 +1578,8 @@ void RegisterDefaultsPanelTests(ImGuiTestEngine* engine) {
           g_capture.Reset();
         }
       } session_guard{ old_style };
+      // A malformed app parent is tolerated on read and must also remain editable through Save.
+      WriteRawOverlay(panel.dir(), R"({"app":[]})");
       const auto pick = [&](ImGuiTestRef ref, const char* entry) {
         ctx->ItemClick(ref);
         ctx->Yield(2);

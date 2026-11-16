@@ -557,6 +557,7 @@ void RenderAppPreferences(const GuiState& state) {
     EraseEntryEditPreviewStyleFromDoc(g_copy_doc);
   }
   ImGui::SameLine();
+  // The state field is a startup input; only this global owns the current session selection.
   ImGui::TextDisabled("(%s; session: %s)", stored_style.has_value() ? "Custom" : "Factory",
                       kCrystalStyleNames[g_crystal_style]);
 }
