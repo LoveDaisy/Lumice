@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794814795179,
+  "lastUpdate": 1794814800654,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -4818,54 +4818,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "92c54af058536b731f3f2a7bc50a444704146b7f",
-          "message": "Merge pull request #494 from LoveDaisy/feat/analysis-crystal-id-mismatch\n\nfix(gui): align analysis list crystal numbers with card IDs",
-          "timestamp": "2026-10-15T01:51:21+08:00",
-          "tree_id": "d43c91f95f5daa0bd5c9b3c56b99635d451c6af2",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/92c54af058536b731f3f2a7bc50a444704146b7f"
-        },
-        "date": 1792000474666,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 898248.8,
-            "unit": "rays/sec",
-            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 1006245.2,
-            "unit": "rays/sec",
-            "extra": "CPU: Neoverse-N2\\nCores: 4"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 845490,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 9V74 80-Core Processor\\nCores: 4"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 544494.6,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 9V74 80-Core Processor                \\nCores: 4"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "e24525033315c4fa88cce6199342f7f62cee94d3",
           "message": "Merge pull request #495 from LoveDaisy/feat/axis-sticky-label\n\nfeat(gui): sticky user-chosen axis label, decoupled from preset apply",
           "timestamp": "2026-10-16T09:27:12+08:00",
@@ -9600,6 +9552,54 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 686314.3,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 9V74 80-Core Processor                \\nCores: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "29ce75c3d157f08d2b306aa99c3643c57102c5f6",
+          "message": "Merge pull request #601 from LoveDaisy/feat/profile-rows-unstable-red\n\ntest(task-profile-rows-unstable-red): stabilize the profile_rows real-timing case's two flake shapes",
+          "timestamp": "2026-11-16T15:35:55+08:00",
+          "tree_id": "f72d4b690c2de7bacd14b8fe44ecd7950334e852",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/29ce75c3d157f08d2b306aa99c3643c57102c5f6"
+        },
+        "date": 1794814800130,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 1135439.8,
+            "unit": "rays/sec",
+            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 1007882.8,
+            "unit": "rays/sec",
+            "extra": "CPU: Neoverse-N2\\nCores: 4"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 1126981.6,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 9V45 96-Core Processor\\nCores: 4"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 694379,
             "unit": "rays/sec",
             "extra": "CPU: AMD EPYC 9V74 80-Core Processor                \\nCores: 4"
           }
