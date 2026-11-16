@@ -17,6 +17,9 @@ described below):
       metal: idle pre-check (600 s window) -> build -> cool-down -> idle re-check -> pytest
       gui-real-timing: idle pre-check (600 s window) -> build gui_test (own tree) -> cool-down
              -> idle re-check -> gui_test (real-timing pool, junit export)
+      ubsan : idle pre-check (600 s window) -> configure + build the two probe binaries
+             (own tree, UBSan flags, IPO off) -> instrumentation reference check -> cool-down
+             -> idle re-check -> drive the two probes' gtest filters directly
       cuda : probe remote -> remote idle pre-check (600 s window) -> sync + build (on remote disk)
              -> cool-down -> idle re-check -> pytest (on remote disk) -> collect
     -> append one record per leg to results.jsonl -> notify -> staleness check
@@ -34,6 +37,12 @@ the environment had no verdict (a gate timeout, a DriveUntil/watchdog
 environment timeout, or the frozen-map ms-budget reading red on a personal
 machine) — it is a real measurement of the environment, issues nothing of its
 own, and still does not refresh the staleness clock.
+The ubsan leg stays with the four states: a sanitizer diagnostic is a ``fail``
+even at exit 0 (UBSan is recoverable by default — it prints ``runtime error:``
+and continues, exit code unchanged), a probe assertion red or a signal death
+under instrumentation is a ``fail`` (a crash is a defect signal here, not the
+gui leg's ``sigill`` sample event), and an exit 0 whose expected probe cases
+never executed is an ``error`` — the silent-green shape.
 
 A busy attempt is not the end: each leg runs inside a structured retry loop.
 One attempt is one full leg execution (both idle windows belong to it); a
@@ -68,8 +77,10 @@ its source prep and ends the same way for every leg: the wall binds launchd
 runs whenever they started. Manual runs are unbounded.
 
 The judgement itself is not re-implemented here: the script runs the two
-existing pytest files and classifies their exit code + junit XML. The ratios it
-records are copied out of the test's own printed summary line for humans.
+existing pytest files and classifies their exit code + junit XML (the ubsan
+leg instead drives its two gtest probe binaries directly and classifies the
+exit code plus the merged log). The ratios it records are copied out of the
+test's own printed summary line for humans.
 
 The file is split into a pure-logic section (no network, no processes; unit
 tested by ``test/unit-correctness/scripts/test_local_throughput_gate.py``) and an
@@ -100,7 +111,7 @@ from typing import Callable, Dict, List, Optional, Sequence, Tuple
 # Constants
 # =============================================================================
 
-LEGS = ("metal", "gui-real-timing", "cuda")
+LEGS = ("metal", "gui-real-timing", "ubsan", "cuda")
 
 # The gui-real-timing leg drives gui_test directly with the real-timing pool's
 # filter. Byte-for-byte copy of the literal on scripts/build.sh's real-timing
@@ -148,6 +159,44 @@ GUI_TIMEOUT_MARKERS = ("[drive-gate] TIMEOUT", "seconds, aborting.",
 # marker here is a new sample; the label below only records that fact.
 SIGILL_EXITS = (-4, 132)
 GUI_SIGILL_KNOWN_MARKER = "workspace_panorama_publishes_after_a_render"
+
+# The ubsan leg: a UBSan variant of the engine drives the two probe tests that
+# encode the UB families the 2026-11-16 sanitizer campaign confirmed in the
+# product and #596/#597 fixed (CrystalParamHash signed overflow on float bit
+# patterns; the single-lens projection's float->int cast overflow on
+# far-off-sensor rays). The gate is "exit 0, every expected probe case
+# executed, zero UBSan diagnostics" — see the ubsan leg section below. Flags
+# are the campaign's as-built recipe: sanitizer on every TU, IPO off (LTO
+# consumes the line tables the diagnostics' stack traces need), own build tree.
+UBSAN_BUILD_TREE = "build/cmake_build/static-gate-ubsan"
+UBSAN_C_FLAGS = "-fsanitize=undefined -fno-omit-frame-pointer -gline-tables-only"
+UBSAN_LINK_FLAGS = "-fsanitize=undefined"
+UBSAN_OPTIONS = "print_stacktrace=1"
+# The probe drivers: per binary, its gtest filter and the cases that must show
+# a ``[ RUN      ]`` marker for a pass. The filter spells each expected case in
+# full (no wildcards), so the two stay one literal: adding a case means adding
+# it here, or the leg files an error for the case it was not told to expect.
+UBSAN_PROBE_FILTERS: Dict[str, dict] = {
+    "unit_correctness_test": {
+        "filter": "ProjectionCastBounds.OutOfIntRangeLinearHitStaysDefinedAndOffCanvas",
+        "expected": ("ProjectionCastBounds.OutOfIntRangeLinearHitStaysDefinedAndOffCanvas",),
+    },
+    "composition_correctness_test": {
+        "filter": ("EditModalChain.TheCrystalParamHashMovesOnEveryEditAndOnNothingElse"
+                   ":SceneCommitChain.EveryGroupableSlotChangesThePreviewParamHash"),
+        "expected": ("EditModalChain.TheCrystalParamHashMovesOnEveryEditAndOnNothingElse",
+                     "SceneCommitChain.EveryGroupableSlotChangesThePreviewParamHash"),
+    },
+}
+# The stable per-diagnostic prefix of a UBSan report
+# (``<file>:<line>:<col>: runtime error: ...``); the run's SUMMARY line is the
+# fail-safe auxiliary marker for a shape that somehow prints only the summary.
+UBSAN_DIAGNOSTIC_MARKER = "runtime error:"
+UBSAN_SUMMARY_MARKER = "SUMMARY: UndefinedBehaviorSanitizer"
+# Any symbol-table reference to a UBSan handler — a defined symbol (statically
+# linked runtime) or an undefined import (macOS links the runtime dynamically)
+# — proves the instrumentation was compiled in; see ubsan_instrumentation_missing.
+UBSAN_HANDLER_SYMBOL = "__ubsan_handle"
 
 # The metal leg builds with scripts/build.sh, which needs these on PATH. Resolved
 # before anything expensive — even before the idle pre-check — because a missing
@@ -580,6 +629,115 @@ def classify_gui_pool(exit_code: Optional[int], junit_xml: Optional[str], log_te
     parts = ([f"timeout: {a[0].name} ({a[2]})" for a in timeouts]
              + [f"budget red: {a[0].name}" for a in budgets])
     return GuiPoolVerdict("inconclusive", "; ".join(parts), timing=timing)
+
+
+# ---- ubsan probe classifiers -------------------------------------------------
+# Evidence shapes pinned against real UBSan output: one diagnostic is one line
+# carrying ``runtime error:`` (``<file>:<line>:<col>: runtime error: ...``);
+# ``UBSAN_OPTIONS=print_stacktrace=1`` adds the stack trace on its own lines,
+# which never carry the marker. GoogleTest prints each executed case's
+# ``[ RUN      ] Suite.Name`` before its ``[       OK ]`` / ``[  FAILED  ]``.
+
+_UBSAN_DIAG_LOCATION_RE = re.compile(r"^([^:\s]+\.\w+):(\d+):\d+:")
+
+
+def ubsan_diagnostic_stats(log_text: str) -> Tuple[int, str, str]:
+    """(diagnostic count, first diagnostic line trimmed, its file:line location).
+
+    The SUMMARY line is the fail-safe auxiliary: a run that printed a UBSan
+    summary but no parseable per-diagnostic line still counts as one diagnostic
+    — an unknown diagnostic shape must fail toward the gate's purpose, never
+    toward green. A missing location degrades to the raw first line.
+    """
+    lines = [ln for ln in log_text.splitlines() if UBSAN_DIAGNOSTIC_MARKER in ln]
+    if not lines:
+        if UBSAN_SUMMARY_MARKER in log_text:
+            return 1, UBSAN_SUMMARY_MARKER, ""
+        return 0, "", ""
+    first = lines[0].strip()
+    location = ""
+    m = _UBSAN_DIAG_LOCATION_RE.match(first)
+    if m:
+        location = f"{m.group(1)}:{m.group(2)}"
+    return len(lines), first[:200], location
+
+
+def classify_ubsan_probe(exit_code: Optional[int], log_text: str,
+                         expected_cases: Sequence[str]) -> Tuple[str, str]:
+    """Map one probe-binary run to (status, reason); status in pass/fail/error.
+
+    pass  = exit 0 AND every expected case has its ``[ RUN      ]`` marker in
+            the merged log AND zero UBSan diagnostics (the merged log is a
+            superset of stderr — zero there means zero on stderr).
+    fail  = a sanitizer diagnostic — including the recoverable kind: UBSan
+            prints and continues with the exit code unchanged, so exit 0 with
+            a diagnostic is THE red this leg exists to catch — or a probe
+            assertion (exit 1: the probes encode fixed behavior, a red is a
+            behavior regression), or a signal death (under instrumentation a
+            crash is a defect signal, not an environment state).
+    error = the silent-green shapes (exit 0 but an expected case never ran) and
+            everything that did not run to a verdict: the gate timeout (124),
+            killed before finishing, other exit codes.
+    """
+    if exit_code is None:
+        return "error", "probe-did-not-finish"
+    if exit_code == 124:
+        return "error", "probe-timeout (budget exhausted)"
+    if exit_code < 0:
+        return "fail", f"probe crashed (exit {exit_code})"
+    diagnostics, first, _ = ubsan_diagnostic_stats(log_text)
+    if diagnostics:
+        return "fail", (f"sanitizer diagnostics: {diagnostics} diagnostic(s); "
+                        f"first: {first}")
+    missing = [c for c in expected_cases if f"[ RUN      ] {c}" not in log_text]
+    if exit_code == 0:
+        if missing:
+            return "error", f"probe not executed ({', '.join(missing)})"
+        return "pass", ""
+    if exit_code == 1:
+        return "fail", "probe assertion failed (exit 1)"
+    return "error", f"probe-exit-{exit_code}"
+
+
+def fold_ubsan_probe_results(results: Dict[str, dict]) -> Tuple[str, str]:
+    """The leg verdict from the per-probe verdicts (``{binary: {status, reason}}``).
+
+    A real defect signal is not downgraded by a sibling probe's infrastructure
+    error in the same run — the rule the gui pool applies to a functional red
+    next to an environment red: any ``fail`` folds the leg to ``fail`` (its
+    reason leads, every other non-pass probe rides along as ``also ...``),
+    otherwise one ``error`` stands, otherwise ``pass``. The first fail in
+    ``UBSAN_PROBE_FILTERS`` order leads, so the fold is deterministic.
+    """
+    non_pass = [(b, r) for b, r in results.items() if r["status"] != "pass"]
+    if not non_pass:
+        return "pass", ""
+    fail_idx = next((i for i, (_, r) in enumerate(non_pass) if r["status"] == "fail"), None)
+    if fail_idx is None:
+        lead, rest = non_pass[0], non_pass[1:]
+        return "error", lead[1]["reason"] + "".join(
+            f"; also {b}: {r['reason']}" for b, r in rest)
+    lead, rest = non_pass[fail_idx], [x for i, x in enumerate(non_pass) if i != fail_idx]
+    return "fail", lead[1]["reason"] + "".join(
+        f"; also {b}: {r['reason']}" for b, r in rest)
+
+
+def ubsan_instrumentation_missing(sym_text: str) -> bool:
+    """True when the symbol table shows no ``__ubsan_handle`` reference at all.
+
+    Both instrumented shapes count: a DEFINED handler (the statically linked
+    runtime, Linux) and an UNDEFINED import reference (macOS links the UBSan
+    runtime dynamically, ``libclang_rt.ubsan_osx_dynamic.dylib``, so the
+    handler shows as ``U ___ubsan_handle_*``; nm's Mach-O spelling has one
+    extra leading underscore, the substring matches both). This check must NOT
+    filter undefined symbols — ``nm -U`` is exactly the spelling that hides the
+    healthy macOS import and would call every instrumented build
+    uninstrumented. What it proves is that the instrumentation was compiled in
+    and referenced; that the runtime actually LOADS is proven by the probe run
+    itself (a dylib load failure is a startup error, classified as error —
+    never a silent green).
+    """
+    return UBSAN_HANDLER_SYMBOL not in sym_text
 
 
 def extract_ratios(log_text: str) -> dict:
@@ -1237,6 +1395,110 @@ def run_gui_realtiming(ctx: Ctx, sha: str) -> dict:
     return out
 
 
+# ---- ubsan leg (local) ------------------------------------------------------
+# The UB-regression leg. Its own tree (like the gui leg's) keeps the sanitizer
+# flags out of every other tree's configuration; the configure-time flags are
+# the whole mechanism — zero tracked build-system diff. The two probe binaries
+# land in the source-anchored output directory, whose file names no other gate
+# leg writes (metal: Lumice; gui: gui_test), and their dependency closure's
+# archives (gtest, glad) overlap only with the gui tree's — same-name archives
+# whose contents differ only in instrumentation, tolerated by both consumers
+# (see the leg's doc section for the audited write-set).
+def ubsan_probe_binary(repo: Path, bin_name: str) -> Path:
+    # Same source-anchored output directory as gui_test_binary: the binary
+    # lands here regardless of the -B tree.
+    return repo / "build" / "release" / "static" / "bin" / bin_name
+
+
+def ubsan_probe_instrumentation(ctx: Ctx, repo: Path) -> Dict[str, str]:
+    """Per-probe failure detail (empty dict = every probe instrumented).
+
+    Plain ``nm``, undefined symbols included: the macOS shape is an undefined
+    import (see ubsan_instrumentation_missing). A missing or unreadable binary
+    is the same failure — the gate cannot have built what it cannot read. This
+    is the nightly backstop against the silent loss of instrumentation: a
+    same-name artifact overwritten by a non-instrumented build, or a relink
+    ninja skipped on mtime.
+    """
+    out: Dict[str, str] = {}
+    for bin_name in UBSAN_PROBE_FILTERS:
+        path = ubsan_probe_binary(repo, bin_name)
+        ctx.log(f"$ nm {path}")
+        if ctx.args.dry_run:
+            continue
+        p = _run(["nm", str(path)])
+        if p.returncode != 0:
+            out[bin_name] = f"nm exit {p.returncode} ({p.stderr.strip()[-120:]})"
+        elif ubsan_instrumentation_missing(p.stdout):
+            out[bin_name] = f"no __ubsan_handle reference in {bin_name}'s symbol table"
+    return out
+
+
+def run_ubsan(ctx: Ctx, sha: str) -> dict:
+    rec: dict = {}
+    reason = missing_build_tools_reason(metal_build_tools_found())
+    if reason:
+        return {"status": "error", "reason": reason}
+    read = lambda: collect_readings(with_wsl_host=False)  # noqa: E731
+    ok, r, reasons = wait_idle(ctx, read, "ubsan pre-check")
+    rec["idle_pre"] = r.to_json()
+    guard_deadline(ctx, rec, ctx.nightly_deadline)
+    if not ok:
+        return {**rec, **busy_skip("pre-check", reasons)}
+    repo = local_repo(ctx)
+    build_dir = repo / UBSAN_BUILD_TREE
+    t0 = time.monotonic()
+    rc = run_logged(ctx, ["cmake", "-S", str(repo), "-B", str(build_dir), "-G", "Ninja",
+                          "-DCMAKE_BUILD_TYPE=Release", "-DBUILD_TEST=ON", "-DBUILD_GUI=ON",
+                          "-DBUILD_BENCH=OFF", "-DBUILD_SHARED_LIBS=OFF",
+                          "-DLUMICE_IPO=OFF",
+                          f"-DCMAKE_C_FLAGS={UBSAN_C_FLAGS}",
+                          f"-DCMAKE_CXX_FLAGS={UBSAN_C_FLAGS}",
+                          f"-DCMAKE_EXE_LINKER_FLAGS={UBSAN_LINK_FLAGS}"],
+                    ctx.run_dir / "ubsan-configure.log", cwd=repo, env=clean_env({}),
+                    timeout=timeout_before_deadline(ctx, None))
+    if rc == 0:
+        rc = run_logged(ctx, ["cmake", "--build", str(build_dir), "--target",
+                              *UBSAN_PROBE_FILTERS],
+                        ctx.run_dir / "ubsan-build.log", cwd=repo, env=clean_env({}),
+                        timeout=timeout_before_deadline(ctx, None))
+    rec["build_seconds"] = round(time.monotonic() - t0, 1)
+    guard_deadline(ctx, rec, ctx.nightly_deadline)
+    if rc != 0:
+        return {**rec, "status": "error",
+                "reason": f"ubsan build failed (exit {rc}), see ubsan-build.log"}
+    inst = ubsan_probe_instrumentation(ctx, repo)
+    if inst:
+        detail = "; ".join(f"{b}: {d}" for b, d in inst.items())
+        return {**rec, "status": "error", "reason": f"instrumentation missing ({detail})"}
+    ok, r, reasons = wait_idle(ctx, read, "ubsan re-check")
+    rec["idle_post"] = r.to_json()
+    guard_deadline(ctx, rec, ctx.nightly_deadline)
+    if not ok:
+        return {**rec, **busy_skip("post-build re-check", reasons)}
+    probe_results: Dict[str, dict] = {}
+    for bin_name, spec in UBSAN_PROBE_FILTERS.items():
+        probe_log = ctx.run_dir / f"ubsan-{bin_name}.log"
+        rc = run_logged(ctx, [str(ubsan_probe_binary(repo, bin_name)),
+                              f"--gtest_filter={spec['filter']}"],
+                        probe_log, cwd=repo,
+                        env=clean_env({"UBSAN_OPTIONS": UBSAN_OPTIONS}),
+                        timeout=timeout_before_deadline(ctx, ctx.args.pytest_timeout))
+        guard_deadline(ctx, rec, ctx.nightly_deadline)
+        log_text = probe_log.read_text(errors="replace") if probe_log.is_file() else ""
+        status, reason = classify_ubsan_probe(rc, log_text, spec["expected"])
+        diagnostics, first_line, first_location = ubsan_diagnostic_stats(log_text)
+        probe_results[bin_name] = {
+            "status": status, "reason": reason, "exit": rc, "diagnostics": diagnostics,
+            "first_diagnostic_line": first_line,
+            "first_diagnostic_location": first_location,
+        }
+    if ctx.args.dry_run:
+        return {**rec, "status": "skipped", "reason": "dry-run"}
+    status, reason = fold_ubsan_probe_results(probe_results)
+    return {**rec, "status": status, "reason": reason, "probe_results": probe_results}
+
+
 # ---- cuda leg (remote) ------------------------------------------------------
 
 
@@ -1738,7 +2000,12 @@ PUBLIC_REASON_CATEGORIES = (
     # gui-real-timing leg verdict categories: the case names and evidence stay in
     # the local record; the public issue shows only which class of red it was.
     "functional red", "timeout", "budget red", "sigill", "gate-timeout", "gui-test junit mismatch",
-    "gui-test-did-not-finish", "gui-test-exit")
+    "gui-test-did-not-finish", "gui-test-exit",
+    # ubsan leg verdict categories: probe statuses and the first diagnostic's
+    # file:line are repo symbols; the diagnostic text stays in the local record.
+    "sanitizer diagnostics", "instrumentation missing", "probe not executed",
+    "ubsan build failed", "probe crashed", "probe assertion failed",
+    "probe-timeout", "probe-did-not-finish", "probe-exit", "ubsan leg needs macOS")
 
 
 def public_reason(reason: str) -> str:
@@ -1754,6 +2021,7 @@ LEG_ROLES = {
     "metal": "Metal reference machine",
     "cuda": "CUDA reference machine (Linux)",
     "gui-real-timing": "GUI real-timing pool, on the Metal reference machine",
+    "ubsan": "UBSan probe leg (unit + composition correctness), on the Metal reference machine",
 }
 
 
@@ -1777,6 +2045,20 @@ def issue_body(leg: str, rec: dict, stale_since: Optional[str]) -> str:
         if event:
             lines.append(f"SIGILL sample: exit `{event.get('exit_code', '?')}`, "
                          f"last case marker: `{event.get('last_case_marker', '?')}`")
+    if leg == "ubsan":
+        # Probe statuses and the first diagnostic's file:line are repo symbols
+        # a reader can grep; the diagnostic's full text stays in the local record.
+        for bin_name, pr in (rec.get("probe_results") or {}).items():
+            entry = f"Probe `{bin_name}`: **{pr.get('status', '?')}**"
+            if pr.get("exit") is not None:
+                entry += f" — exit `{pr['exit']}`, {pr.get('diagnostics', 0)} diagnostic(s)"
+            lines.append(entry)
+        locations = [pr["first_diagnostic_location"]
+                     for pr in (rec.get("probe_results") or {}).values()
+                     if pr.get("first_diagnostic_location")]
+        if locations:
+            lines.append("First diagnostic at: "
+                         + ", ".join(f"`{loc}`" for loc in locations))
     if stale_since:
         lines.append(f"Last real measurement (pass or fail): {stale_since}")
     lines.append("")
@@ -1836,7 +2118,8 @@ def parse_hhmm(s: str) -> dt.time:
 def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0],
                                 formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    p.add_argument("--leg", choices=("metal", "gui-real-timing", "cuda", "all"), default="all")
+    p.add_argument("--leg", choices=("metal", "gui-real-timing", "cuda", "ubsan", "all"),
+                   default="all")
     p.add_argument("--remote", default="home-wsl", help="ssh alias of the CUDA reference machine (Linux role)")
     p.add_argument("--remote-dir", default="Codes/lumice-throughput-gate",
                    help="remote directory, relative to the remote $HOME")
@@ -1985,6 +2268,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     rec = {"status": "error", "reason": "gui-real-timing leg needs macOS"}
                 else:
                     rec = run_leg_with_retry(ctx, leg, run_gui_realtiming, sha)
+            elif leg == "ubsan":
+                if platform.system() != "Darwin":
+                    rec = {"status": "error", "reason": "ubsan leg needs macOS"}
+                else:
+                    rec = run_leg_with_retry(ctx, leg, run_ubsan, sha)
             elif args.collect_remote:
                 # Recovery only re-attaches to an earlier remote run: no busy
                 # branch, no attempt structure — the retry loop and the deadline
