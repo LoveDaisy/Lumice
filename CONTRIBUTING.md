@@ -162,10 +162,18 @@ there and must not gate them). This subsection is the single authority for that 
    (`v<prev_tag>..release/X.Y.Z`), not `main`: PRs below the branch point are outside the
    window even if `main` has since merged them, and PRs on the branch are inside it even if
    `main` has not.
-3. **The branch retires by construction**: after the tag, forward-merge `release/X.Y.Z` back
-   into `main` via a PR — the version's `CHANGELOG.md` section and the fixes return to the
-   main line — then delete `release/X.Y.Z`. Nothing else lingers: the fixes' and the release
-   chore's own branches die with their PR merges, as any PR branch does.
+3. **The branch retires by construction; its fixes return by cherry-pick**: the release line
+   never merges back into `main`. After the tag, each fix that shipped on `release/X.Y.Z`
+   returns to the main line with its side-branch structure preserved: every original fix
+   branch (one PR's commit set) is cherry-picked onto its own `port/<name>` branch cut fresh
+   from `origin/main`; conflict resolutions keep the minimal consensus of both sides' intent
+   (the fix as shipped on the branch vs. what `main` has grown since the branch point); each
+   port opens its own PR into `main`, passes CI, and the ports merge serially. The shape is
+   not stylistic: `main` is branch-protected, so a direct push cannot carry the fixes across,
+   and per-PR ports are what let CI judge each carried change on `main`'s current base. The
+   version's `CHANGELOG.md` section returns the same way, as its own port. When the ports
+   have landed, delete `release/X.Y.Z`; nothing else lingers: the fixes', the ports', and the
+   release chore's own branches die with their PR merges, as any PR branch does.
 
 While a release branch is active, `main` receives no release and the branch receives merges
 only; it is an escape hatch for one version, not a parallel track.
