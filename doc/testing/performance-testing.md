@@ -470,6 +470,7 @@ The precise gate's legs:
 |---|---|---|
 | `metal` | Metal reference machine, locally | `test_metal_dual_renderer_throughput` |
 | `gui-real-timing` | Metal reference machine, locally | gui_test's real-timing pool, driven as one `gui_test` invocation with junit export |
+| `ubsan` | Metal reference machine, locally | two gtest probe binaries under a UBSan engine variant, driven directly by filter |
 | `cuda` | CUDA reference machine (Linux role), dispatched over ssh; only when reachable | `test_cuda_dual_renderer_throughput` |
 
 The CUDA reference machine's **Windows** role is **not covered**: dispatching there means
@@ -618,13 +619,61 @@ pool, so any marker here is a new sample by definition. `ISSUE_KINDS` gains that
 titles `[throughput-gate] gui-real-timing sigill`; a fail-with-sigill comments the sigill thread,
 not the fail thread, and a real `pass` closes all four kinds.
 
+**Classifying the ubsan leg.** The UB-regression leg builds a UBSan variant of the engine in its
+own tree of the gate clone (`build/cmake_build/static-gate-ubsan`): sanitizer flags on every TU
+(`-fsanitize=undefined -fno-omit-frame-pointer -gline-tables-only`, linker
+`-fsanitize=undefined`) plus `LUMICE_IPO=OFF` — the 2026-11-16 sanitizer campaign's as-built
+recipe, applied as configure-time flags so the tracked build system carries zero diff, and IPO
+off because LTO consumes the line tables the diagnostics' stack traces map against. It builds
+only the two probe targets and drives them directly (a ctest-class wrapper swallows the
+diagnostics of passing cases, and the gate must see them): `unit_correctness_test` for
+`ProjectionCastBounds.OutOfIntRangeLinearHitStaysDefinedAndOffCanvas` (the single-lens
+float→int cast overflow, PR #597) and `composition_correctness_test` for the CrystalParamHash
+family's two cases (`EditModalChain.TheCrystalParamHashMovesOnEveryEditAndOnNothingElse`,
+`SceneCommitChain.EveryGroupableSlotChangesThePreviewParamHash`, PR #596), each under
+`UBSAN_OPTIONS=print_stacktrace=1`. The filters spell their expected cases in full, and a case
+only counts as run if its `[ RUN      ]` marker is in the log — an exit 0 whose expected cases
+never ran is an `error` (the silent-green shape), not a pass.
+
+The gate is **exit 0 + every expected case executed + zero `runtime error:` diagnostics on the
+merged log**. A diagnostic is a `fail` even at exit 0: UBSan is recoverable by default (it
+prints and continues, exit code unchanged), so the recoverable diagnostic — exactly the shape
+the campaign caught at `projection_shared.h:368/370` and `crystal_preview.cpp:65..79` — is the
+red this leg exists to turn into an issue. A probe assertion red (exit 1) and a signal death
+are `fail` too: the probes encode fixed behavior, and under instrumentation a crash is a defect
+signal, not the gui leg's `sigill` sample event (this leg has no sample-accumulation boundary
+war, so `ISSUE_KINDS` stays as it is). `error` covers the infrastructure shapes: build failure,
+`instrumentation missing`, a probe that did not execute its expected cases, the drive timeout.
+`inconclusive` is unreachable here — the probes are deterministic small paths with no
+environment-dependent budget, so nothing in this leg is ran-but-undecidable.
+
+Two checks keep the green honest. After every build, `nm` must show a `__ubsan_handle`
+reference in each probe's symbol table — a defined handler or an undefined import both count
+(macOS links the UBSan runtime dynamically, so the healthy shape is an import; the check
+deliberately does not filter undefined symbols, which `nm -U` would). A binary that lost its
+instrumentation — a same-name artifact overwritten by a non-instrumented build, a relink ninja
+skipped on mtime — becomes a classified `error` instead of a nightly green that proves nothing;
+that the runtime actually loads is proven by the probes starting at all (a dylib load failure
+is a startup `error`, not a pass). And the first diagnostic's `file:line` goes into the issue
+body as a repo symbol; the diagnostic text itself stays in the local record. The leg's issue
+titles are `[throughput-gate] ubsan fail|error`; a real `pass` closes them. Retry and deadline
+semantics are inherited unchanged — both idle windows, the backoff budget and the wall wrap
+this leg like the others, with no new parameters.
+
+**Coverage honesty**: this leg sees only the paths the three selected probe cases walk. It is
+a nightly mechanical re-check of the known UB sites — and of whatever new UB those paths
+acquire — not a whole-product UB net; a UB elsewhere needs a probe added here.
+
 **Deploying the leg.** launchd runs the installed copy of the script
-(`~/.local/share/lumice-throughput-gate/`), so after this leg lands, `scripts/install_throughput_gate.sh`
+(`~/.local/share/lumice-throughput-gate/`), so after a leg lands, `scripts/install_throughput_gate.sh`
 must be re-run on the reference machine — until then the daily schedule cannot see the leg at
 all, and staleness cannot fire for a leg the installed script does not know. Verify both: the
 installed copy contains the leg (`grep -c gui-real-timing
-~/.local/share/lumice-throughput-gate/local_throughput_gate.py`), and a scheduled run's
-`results.jsonl` actually gains a `gui-real-timing` record.
+~/.local/share/lumice-throughput-gate/local_throughput_gate.py`, and `grep -c ubsan` the same
+file for the ubsan leg), and a scheduled run's `results.jsonl` actually gains the leg's record.
+For the ubsan leg the first scheduled run is a cold build of its own tree (a dozen minutes
+scale); running `--leg ubsan` once by hand after installing warms the tree so the first nightly
+run measures instead of falling a deadline skip.
 
 **How often, and what makes noise.** Once a day (launchd, 03:30 by default). CUDA's unlocked boost
 clock makes individual drain-aligned windows noisy even when the host and GPU are idle; interleaving
@@ -643,7 +692,10 @@ sample; every run's ratios are in the record.
   `gui-real-timing` leg's lines carry its own payload instead of ratios: the `timing_*` trend
   fields when the frozen-map value line was printed, the failing case on a functional red, and
   the full SIGILL sample event (exit code, marker, log tail, crash-moment load) — evidence free
-  text lives only here, the public issue shows identifiers and categories. A leg that retried or
+  text lives only here, the public issue shows identifiers and categories. The `ubsan` leg's
+  lines carry `probe_results` instead of ratios — per probe: status, exit code, diagnostic
+  count, and the first diagnostic's `file:line`; the diagnostic text itself stays in the run's
+  `ubsan-<probe>.log`. A leg that retried or
   met the wall carries more: `env_rejected: true` on a busy-skip line (the marker the retry loop
   keys on), and an `idle_retry` payload — `attempts`, `backoffs`, `backoff_seconds`, `history`
   (one entry per attempt that did not become the final record: its index, local end time,
