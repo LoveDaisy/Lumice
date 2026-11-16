@@ -932,6 +932,64 @@ def test_ubsan_leg_prep_failure_is_a_source_error(tmp_path, monkeypatch):
     assert "env_rejected" not in rec and "probe_results" not in rec
 
 
+def test_ubsan_leg_prep_reuses_the_skip_smudge_contract(tmp_path, monkeypatch):
+    """Both prep branches run under git()'s env contract: the checkout must not
+    grow an LFS download dependency — prepare_checkout sets the same skip for
+    the main clone, and the smudged fixtures are ones the probes never read."""
+    ctx = make_ctx(tmp_path)
+    metal_tools(monkeypatch)
+    monkeypatch.setattr(g, "collect_readings", lambda with_wsl_host: idle_r())
+    seen = []
+
+    def fake_run(cmd, **kw):
+        seen.append((list(cmd), dict(kw)))
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(g, "_run", fake_run)
+    monkeypatch.setattr(g, "run_logged", touch_zero_run_logged)
+    g.run_ubsan(ctx, "sha")                 # fresh checkout: the worktree add branch
+    adds = [(c, kw) for c, kw in seen if c[:1] == ["git"] and "worktree" in c]
+    assert adds and adds[0][1].get("env", {}).get("GIT_LFS_SKIP_SMUDGE") == "1"
+    checkout_dir = Path(ctx.args.work_dir) / "repo-ubsan"
+    checkout_dir.mkdir(parents=True, exist_ok=True)
+    (checkout_dir / ".git").write_text("gitdir: elsewhere\n")
+    seen.clear()
+    g.run_ubsan(ctx, "sha")                 # existing checkout: the refresh branch
+    refreshes = [(c, kw) for c, kw in seen if c[:1] == ["git"] and "checkout" in c]
+    assert refreshes and refreshes[0][1].get("env", {}).get("GIT_LFS_SKIP_SMUDGE") == "1"
+
+
+def test_ubsan_leg_prep_is_bounded_by_the_wall(tmp_path, monkeypatch):
+    """The prep's git calls take the remaining wall time as their timeout, and
+    a prep that crosses the wall voids the attempt — deadline skip, no build
+    started past it, the same shape as every other stage guard."""
+    clock = FakeClock(at(6, 25))
+    ctx = retry_ctx(tmp_path, clock, deadline=at(6, 30))
+    metal_tools(monkeypatch)
+    monkeypatch.setattr(g, "collect_readings", lambda with_wsl_host: idle_r())
+    seen_timeouts, build_calls = [], []
+
+    def fake_run(cmd, **kw):
+        seen_timeouts.append(kw.get("timeout"))
+        clock.advance(600)                  # the prep runs ten minutes, across 06:30
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(g, "_run", fake_run)
+
+    def no_build(ctx_, cmd, log_path, **kw):
+        build_calls.append(list(cmd))
+        Path(log_path).touch()
+        return 0
+
+    monkeypatch.setattr(g, "run_logged", no_build)
+    rec = g.run_leg_with_retry(ctx, "ubsan", g.run_ubsan, "sha")
+    assert seen_timeouts == [300.0]         # 06:30 minus 06:25, not GIT_TIMEOUT_S
+    assert build_calls == []                # the void fires before the build
+    assert rec["status"] == "skipped" and "nightly deadline" in rec["reason"]
+    ir = rec["idle_retry"]
+    assert ir["attempts"] == 1 and ir["terminal"] == "deadline"
+
+
 def test_ubsan_leg_build_failure_is_an_error(tmp_path, monkeypatch):
     ctx = make_ctx(tmp_path)
     metal_tools(monkeypatch)

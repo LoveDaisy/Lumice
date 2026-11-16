@@ -1416,17 +1416,19 @@ def ubsan_source_checkout(ctx: Ctx, sha: str) -> Optional[str]:
     The checkout is a linked worktree of the gate clone (shared object store,
     so a new sha costs only a checkout). A detached worktree is force-checked
     out to the commit under test every night — the same operation
-    prepare_checkout runs on the main clone."""
+    prepare_checkout runs on the main clone, under the same contract: git()'s
+    env (GIT_LFS_SKIP_SMUDGE=1 — the checkout must not grow an LFS download
+    dependency; the fixtures it leaves as pointer files are ones the probes
+    never read) and the nightly deadline's remaining time as the timeout."""
     repo = local_repo(ctx)
     checkout = Path(ctx.args.work_dir).expanduser() / "repo-ubsan"
+    budget = timeout_before_deadline(ctx, GIT_TIMEOUT_S)
     if (checkout / ".git").exists():
-        p = _run(["git", "-C", str(checkout), "checkout", "--quiet", "--detach",
-                  "--force", sha], env=clean_env({}))
+        p = git(checkout, "checkout", "--quiet", "--detach", "--force", sha, timeout=budget)
         if p.returncode != 0:
             return f"git checkout {sha} in {checkout.name} failed: {p.stderr[-300:]}"
         return None
-    p = _run(["git", "-C", str(repo), "worktree", "add", "--detach",
-              str(checkout), sha], env=clean_env({}))
+    p = git(repo, "worktree", "add", "--detach", str(checkout), sha, timeout=budget)
     if p.returncode != 0:
         return f"git worktree add for the ubsan checkout failed: {p.stderr[-300:]}"
     return None
@@ -1481,6 +1483,7 @@ def run_ubsan(ctx: Ctx, sha: str) -> dict:
         err = ubsan_source_checkout(ctx, sha)
         if err:
             return {**rec, "status": "error", "reason": f"source: {err}"}
+    guard_deadline(ctx, rec, ctx.nightly_deadline)
     checkout = Path(ctx.args.work_dir).expanduser() / "repo-ubsan"
     build_dir = checkout / UBSAN_BUILD_TREE
     t0 = time.monotonic()
