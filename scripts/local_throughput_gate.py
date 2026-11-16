@@ -663,6 +663,12 @@ def ubsan_diagnostic_stats(log_text: str) -> Tuple[int, str, str]:
     return len(lines), first[:200], location
 
 
+# dyld's startup-failure lines: the sanitizer runtime did not load, the probe
+# never began — a startup error (never a measurement, so the staleness clock
+# keeps aging into the stale alarm), not a product crash.
+UBSAN_RUNTIME_LOAD_MARKERS = ("Library not loaded", "Symbol not found")
+
+
 def classify_ubsan_probe(exit_code: Optional[int], log_text: str,
                          expected_cases: Sequence[str]) -> Tuple[str, str]:
     """Map one probe-binary run to (status, reason); status in pass/fail/error.
@@ -670,27 +676,33 @@ def classify_ubsan_probe(exit_code: Optional[int], log_text: str,
     pass  = exit 0 AND every expected case has its ``[ RUN      ]`` marker in
             the merged log AND zero UBSan diagnostics (the merged log is a
             superset of stderr — zero there means zero on stderr).
-    fail  = a sanitizer diagnostic — including the recoverable kind: UBSan
-            prints and continues with the exit code unchanged, so exit 0 with
-            a diagnostic is THE red this leg exists to catch — or a probe
-            assertion (exit 1: the probes encode fixed behavior, a red is a
-            behavior regression), or a signal death (under instrumentation a
-            crash is a defect signal, not an environment state).
-    error = the silent-green shapes (exit 0 but an expected case never ran) and
-            everything that did not run to a verdict: the gate timeout (124),
-            killed before finishing, other exit codes.
+    fail  = a sanitizer diagnostic — including the recoverable kind (UBSan
+            prints and continues, exit code unchanged) and evidence captured
+            before the run ended badly: diagnostics outrank a probe timeout
+            and a crash, because the UB they report is already confirmed; —
+            or a probe assertion (exit 1: the probes encode fixed behavior,
+            a red is a behavior regression), or a signal death from the probe
+            itself (under instrumentation a crash is a defect signal).
+    error = the silent-green shapes (exit 0 but an expected case never ran),
+            the gate timeout, killed before finishing, other exit codes, and
+            the startup failure: dyld aborts the process before main when the
+            sanitizer runtime cannot load — that never ran, so it is an
+            infrastructure error (never a measurement), not a product crash.
     """
     if exit_code is None:
         return "error", "probe-did-not-finish"
-    if exit_code == 124:
-        return "error", "probe-timeout (budget exhausted)"
-    if exit_code < 0:
-        return "fail", f"probe crashed (exit {exit_code})"
+    missing = [c for c in expected_cases if f"[ RUN      ] {c}" not in log_text]
     diagnostics, first, _ = ubsan_diagnostic_stats(log_text)
     if diagnostics:
         return "fail", (f"sanitizer diagnostics: {diagnostics} diagnostic(s); "
                         f"first: {first}")
-    missing = [c for c in expected_cases if f"[ RUN      ] {c}" not in log_text]
+    if exit_code < 0:
+        if missing and any(m in log_text for m in UBSAN_RUNTIME_LOAD_MARKERS):
+            marker = next(m for m in UBSAN_RUNTIME_LOAD_MARKERS if m in log_text)
+            return "error", f"runtime load failed (exit {exit_code}, {marker})"
+        return "fail", f"probe crashed (exit {exit_code})"
+    if exit_code == 124:
+        return "error", "probe-timeout (budget exhausted)"
     if exit_code == 0:
         if missing:
             return "error", f"probe not executed ({', '.join(missing)})"
@@ -1480,7 +1492,14 @@ def run_ubsan(ctx: Ctx, sha: str) -> dict:
         # Source prep that failed at the run level never reaches a leg; the
         # one shape that reaches this line without a clone is the dry-run
         # that skipped source prep, which fakes every build stage anyway.
-        err = ubsan_source_checkout(ctx, sha)
+        try:
+            err = ubsan_source_checkout(ctx, sha)
+        except subprocess.TimeoutExpired:
+            # git's timeout contract is an exception, not a return code: past
+            # the wall this is the same void as any other stage; before it, a
+            # git that outgrew its own budget is a source error.
+            guard_deadline(ctx, rec, ctx.nightly_deadline)
+            err = "git source prep timed out"
         if err:
             return {**rec, "status": "error", "reason": f"source: {err}"}
     guard_deadline(ctx, rec, ctx.nightly_deadline)
@@ -2052,7 +2071,8 @@ PUBLIC_REASON_CATEGORIES = (
     # file:line are repo symbols; the diagnostic text stays in the local record.
     "sanitizer diagnostics", "instrumentation missing", "probe not executed",
     "ubsan build failed", "probe crashed", "probe assertion failed",
-    "probe-timeout", "probe-did-not-finish", "probe-exit", "ubsan leg needs macOS")
+    "probe-timeout", "probe-did-not-finish", "probe-exit", "ubsan leg needs macOS",
+    "runtime load failed")
 
 
 def public_reason(reason: str) -> str:

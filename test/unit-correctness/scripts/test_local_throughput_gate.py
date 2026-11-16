@@ -990,6 +990,81 @@ def test_ubsan_leg_prep_is_bounded_by_the_wall(tmp_path, monkeypatch):
     assert ir["attempts"] == 1 and ir["terminal"] == "deadline"
 
 
+def test_classify_ubsan_probe_diagnostics_outrank_the_timeout():
+    """UBSan is recoverable: it can print real diagnostics and then outgrow the
+    drive budget. The captured UB is already confirmed evidence — it must not
+    be demoted to an infrastructure error by how the run ended."""
+    log = ubsan_log(UBSAN_UNIT_CASE, diagnostic=UBSAN_DIAG)
+    status, reason = g.classify_ubsan_probe(124, log, (UBSAN_UNIT_CASE,))
+    assert status == "fail" and reason.startswith("sanitizer diagnostics")
+    # the leg fold keeps it a fail next to a passing sibling
+    status, reason = g.fold_ubsan_probe_results({
+        "unit_correctness_test": {"status": "fail", "reason": reason},
+        "composition_correctness_test": {"status": "pass", "reason": ""}})
+    assert status == "fail"
+    # a timeout with no diagnostics is still infrastructure
+    assert g.classify_ubsan_probe(124, ubsan_log(UBSAN_UNIT_CASE), (UBSAN_UNIT_CASE,)) \
+        == ("error", "probe-timeout (budget exhausted)")
+
+
+def test_classify_ubsan_probe_dyld_load_failure_is_startup_error():
+    """dyld aborts before main when the sanitizer runtime cannot load (exit -6,
+    'Library not loaded', no probe case ran): a startup error — never a
+    measurement, so a persistently broken runtime ages into the stale alarm
+    instead of refreshing the staleness clock as a fake nightly fail."""
+    dyld_log = ("dyld[49184]: Library not loaded: @rpath/libclang_rt.ubsan_osx_dynamic.dylib\n"
+                "dyld[49184]: referenced from .../unit_correctness_test\n")
+    status, reason = g.classify_ubsan_probe(-6, dyld_log, (UBSAN_UNIT_CASE,))
+    assert status == "error" and reason.startswith("runtime load failed")
+    assert g.public_reason(reason) == "runtime load failed"
+    # a probe that crashed by itself is still a product defect signal
+    status, reason = g.classify_ubsan_probe(-4, ubsan_log(UBSAN_UNIT_CASE), (UBSAN_UNIT_CASE,))
+    assert status == "fail" and reason.startswith("probe crashed")
+
+
+def test_ubsan_leg_prep_timeout_past_the_wall_is_a_void(tmp_path, monkeypatch):
+    """git's real timeout contract is an exception, not a return code: a prep
+    cut by the wall must void the attempt (deadline skip), on both the
+    worktree-add and the refresh branch — never an internal error."""
+    for prep_existing in (False, True):
+        clock = FakeClock(at(6, 25))
+        ctx = retry_ctx(tmp_path / f"{'existing' if prep_existing else 'fresh'}",
+                        clock, deadline=at(6, 30))
+        metal_tools(monkeypatch)
+        monkeypatch.setattr(g, "collect_readings", lambda with_wsl_host: idle_r())
+        if prep_existing:
+            d = Path(ctx.args.work_dir) / "repo-ubsan"
+            d.mkdir(parents=True, exist_ok=True)
+            (d / ".git").write_text("gitdir: elsewhere\n")
+
+        def timing_out_git(cmd, **kw):
+            clock.advance(600)              # the git call runs past 06:30
+            raise subprocess.TimeoutExpired(cmd, 300)
+
+        monkeypatch.setattr(g, "_run", timing_out_git)
+        rec = g.run_leg_with_retry(ctx, "ubsan", g.run_ubsan, "sha")
+        assert rec["status"] == "skipped" and "nightly deadline" in rec["reason"]
+        assert rec["idle_retry"]["terminal"] == "deadline"
+
+
+def test_ubsan_leg_prep_timeout_before_the_wall_is_a_source_error(tmp_path, monkeypatch):
+    """A git that outgrew its own budget short of the wall is the source-error
+    shape, terminal for the leg — not a busy skip, not a void."""
+    clock = FakeClock(at(3, 30))
+    ctx = retry_ctx(tmp_path, clock)
+    metal_tools(monkeypatch)
+    monkeypatch.setattr(g, "collect_readings", lambda with_wsl_host: idle_r())
+
+    def timing_out_git(cmd, **kw):
+        raise subprocess.TimeoutExpired(cmd, 600)
+
+    monkeypatch.setattr(g, "_run", timing_out_git)
+    rec = g.run_ubsan(ctx, "sha")
+    assert rec["status"] == "error"
+    assert rec["reason"] == "source: git source prep timed out"
+    assert g.public_reason(rec["reason"]) == "source"
+
+
 def test_ubsan_leg_build_failure_is_an_error(tmp_path, monkeypatch):
     ctx = make_ctx(tmp_path)
     metal_tools(monkeypatch)
