@@ -435,6 +435,38 @@ TEST_F(UserDefaults, EntryEditPreviewStyleHasADiscreteAppOnlyDomain) {
   EXPECT_TRUE(doc.empty());
 }
 
+TEST_F(UserDefaults, AppWritersRepairMalformedParentsWithoutLosingOtherNamespaces) {
+  struct Writer {
+    const char* key;
+    void (*write)(json&);
+    json value;
+  };
+  const Writer writers[] = {
+    { "use_gpu_backend", [](json& doc) { gui::WriteUseGpuBackendToDoc(doc, true); }, true },
+    { "worker_count", [](json& doc) { gui::WriteWorkerCountToDoc(doc, 6); }, 6 },
+    { "entry_edit_preview_style", [](json& doc) { gui::WriteEntryEditPreviewStyleToDoc(doc, 3); }, 3 },
+    { "ui_scale_multiplier", [](json& doc) { gui::WriteUiScaleMultiplierToDoc(doc, 1.5f); }, 1.5 },
+  };
+  for (const auto& bad : std::vector<json>{ json::array(), true, 42, "invalid", nullptr }) {
+    for (const auto& writer : writers) {
+      SCOPED_TRACE(writer.key);
+      json doc = { { "app", bad }, { "bg_alpha", 0.7 }, { "presets", { { "keep", 12 } } } };
+      const json before = doc;
+      EXPECT_NO_THROW(writer.write(doc));
+      EXPECT_EQ(doc["bg_alpha"], before["bg_alpha"]);
+      EXPECT_EQ(doc["presets"], before["presets"]);
+      if (!doc["app"].is_object()) {
+        ADD_FAILURE() << "app was not repaired: " << bad;
+        continue;
+      }
+      EXPECT_EQ(doc["app"][writer.key], writer.value);
+      doc = bad;
+      EXPECT_NO_THROW(writer.write(doc));
+      EXPECT_EQ(doc["app"][writer.key], writer.value);
+    }
+  }
+}
+
 TEST_F(UserDefaults, AppPreferencesRoundTripThroughTheAppRootKey) {
   json doc = json::object();
   EXPECT_FALSE(gui::ReadUseGpuBackendFromDoc(doc).has_value()) << "an empty document stores nothing";
