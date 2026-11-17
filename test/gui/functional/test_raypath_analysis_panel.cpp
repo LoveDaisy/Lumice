@@ -11856,34 +11856,41 @@ bool SunGridRealReaderLayoutAndSelection(ImGuiTestContext* ctx) {
       IM_CHECK_RETV(ink, false);
       return true;
     };
-    IM_CHECK_RETV(item_visible("##sun_grid_title") && item_visible("##sun_grid_band") &&
-                      item_visible("##sun_grid_range") && item_visible("##sun_grid_hi_tick") &&
-                      item_visible("##sun_grid_lo_tick") && item_visible("##globe_sample"),
-                  false);
+    // Title, range and slider must be present and inked at every geometry; the band and the
+    // ticks are presence-branch-checked below (a crushed row legitimately withdraws them).
+    IM_CHECK_RETV(
+        item_visible("##sun_grid_title") && item_visible("##sun_grid_range") && item_visible("##globe_sample"), false);
     const auto canvas = ctx->ItemInfo(w->GetID("##globe_canvas"), ImGuiTestOpFlags_NoError);
     IM_CHECK_RETV(canvas.ID != 0, false);
-    // The vertical legend's geometry: the band is a tall narrow column right of the disk, the
-    // high tick reads above it and the low tick below it — the ramp's direction pinned at the
-    // item-rect level (the fixture test's colour legs pin the ramp's own colours).
+    // The vertical legend's geometry: the band (when the row's remainder leaves it any height)
+    // is a narrow column right of the disk. The end ticks ride the band's right edge (high
+    // above low) WHEN the row's remainder can host their stack — a crushed row legitimately
+    // withdraws them (the range text carries the endpoints), and a fully crushed one can
+    // withdraw the band itself; title and numbers stay at every geometry.
     const auto band = ctx->ItemInfo(w->GetID("##sun_grid_band"), ImGuiTestOpFlags_NoError);
     const auto hi_tick = ctx->ItemInfo(w->GetID("##sun_grid_hi_tick"), ImGuiTestOpFlags_NoError);
     const auto lo_tick = ctx->ItemInfo(w->GetID("##sun_grid_lo_tick"), ImGuiTestOpFlags_NoError);
-    IM_CHECK_RETV(band.ID != 0 && hi_tick.ID != 0 && lo_tick.ID != 0, false);
-    IM_CHECK_RETV(band.RectFull.GetHeight() > band.RectFull.GetWidth(), false);
-    IM_CHECK_RETV(band.RectFull.Min.x >= canvas.RectFull.Max.x - 0.5f, false);
-    // The end ticks ride the band's right edge: high top-aligned, low never above the high one.
-    IM_CHECK_RETV(hi_tick.RectFull.Min.x >= band.RectFull.Max.x - 0.5f, false);
-    IM_CHECK_RETV(lo_tick.RectFull.Min.x >= band.RectFull.Max.x - 0.5f, false);
-    IM_CHECK_RETV(hi_tick.RectFull.Min.y >= band.RectFull.Min.y - 1.0f, false);
-    IM_CHECK_RETV(hi_tick.RectFull.Max.y <= lo_tick.RectFull.Min.y + 0.5f, false);
-    // The structural no-overlap contract (the band's height is the row's slack with a 0
-    // floor): the column's tail stays above the slider row at every tier — vertex ink inside
-    // the clip is not visibility; the layout rectangles must not overlap the row below.
+    if (band.ID != 0) {
+      IM_CHECK_RETV(band.RectFull.GetHeight() > 0.0f, false);
+      IM_CHECK_RETV(band.RectFull.Min.x >= canvas.RectFull.Max.x - 0.5f, false);
+    }
+    if (hi_tick.ID != 0) {
+      IM_CHECK_RETV(lo_tick.ID != 0 && band.ID != 0, false);
+      IM_CHECK_RETV(hi_tick.RectFull.Min.x >= band.RectFull.Max.x - 0.5f, false);
+      IM_CHECK_RETV(lo_tick.RectFull.Min.x >= band.RectFull.Max.x - 0.5f, false);
+      IM_CHECK_RETV(hi_tick.RectFull.Min.y >= band.RectFull.Min.y - 1.0f, false);
+      IM_CHECK_RETV(hi_tick.RectFull.Max.y <= lo_tick.RectFull.Min.y + 0.5f, false);
+    } else {
+      IM_CHECK_RETV(lo_tick.ID == 0, false);
+    }
+    // The structural no-overlap contract (the column's tail is bounded by the row): the range
+    // text stays above the slider row at every tier — vertex ink inside the clip is not
+    // visibility; the layout rectangles must not overlap the row below.
     const auto slider_item = ctx->ItemInfo(w->GetID("##globe_sample"), ImGuiTestOpFlags_NoError);
     IM_CHECK_RETV(slider_item.ID != 0, false);
     const auto range_item = ctx->ItemInfo(w->GetID("##sun_grid_range"), ImGuiTestOpFlags_NoError);
     IM_CHECK_RETV(range_item.ID != 0, false);
-    IM_CHECK_RETV(lo_tick.RectFull.Max.y <= slider_item.RectFull.Min.y + 0.5f, false);
+    IM_CHECK_RETV(lo_tick.ID == 0 || lo_tick.RectFull.Max.y <= slider_item.RectFull.Min.y + 0.5f, false);
     IM_CHECK_RETV(range_item.RectFull.Max.y <= slider_item.RectFull.Min.y + 0.5f, false);
     bool terrain_colors = true;
     for (const auto color : { IM_COL32(92, 55, 135, 235), IM_COL32(219, 184, 250, 235) }) {
@@ -11953,6 +11960,12 @@ bool SunGridRealReaderLayoutAndSelection(ImGuiTestContext* ctx) {
       IM_CHECK_RETV(PoseDragStrip(ctx, "**/##PoseViewRowsSplitter", 0, -1800), false);
       auto* globe = PoseRegionWindow("##AnalyzeSunGlobe");
       IM_CHECK_RETV(globe != nullptr && globe->ScrollMax.y >= 0, false);
+      // The crushed floor runs the same check in place: this geometry is where the legend's
+      // column is bounded tightest (the document's own range wraps two lines here) — the
+      // tick-withdrawal branch and the no-overlap contract are exercised exactly here, not
+      // only at the comfortable sizes.
+      ctx->Yield(2);
+      IM_CHECK_RETV(check(), false);
       IM_CHECK_RETV(PoseDragStrip(ctx, "**/##PoseViewRowsSplitter", 0, 1800), false);
       IM_CHECK_RETV(check(), false);
       return true;
@@ -12080,66 +12093,13 @@ struct GlobeOverlayMask {
   int covered = 0;
 };
 
-void BuildGlobeOverlayMask(ImGuiWindow* region, const ImRect& rect, int px_w, int px_h, GlobeOverlayMask* out,
-                           ImGuiTestContext* ctx = nullptr) {
+void BuildGlobeOverlayMask(ImGuiWindow* region, const ImRect& rect, int px_w, int px_h, GlobeOverlayMask* out) {
   const ImGuiIO& io = ImGui::GetIO();
   const float sx = io.DisplayFramebufferScale.x;
   const float sy = io.DisplayFramebufferScale.y;
   const ImVec2 vp = ImGui::GetMainViewport()->Pos;
   const ImU32 accent = ImGui::ColorConvertFloat4ToU32(gui::AccentColor());
   constexpr ImU32 kMarkerRing = IM_COL32(255, 255, 255, 210);
-  if (ctx != nullptr) {
-    int accent_verts = 0;
-    int ring_verts = 0;
-    int opaque_verts = 0;
-    for (const auto& v : region->DrawList->VtxBuffer) {
-      if (v.col == accent) {
-        ++accent_verts;
-      }
-      if (v.col == kMarkerRing) {
-        ++ring_verts;
-      }
-      if ((v.col & IM_COL32_A_MASK) == IM_COL32_A_MASK) {
-        ++opaque_verts;
-      }
-    }
-    ctx->LogInfo("[globe mask] accent %08X verts: accent %d ring %d opaque %d total %d", accent, accent_verts,
-                 ring_verts, opaque_verts, region->DrawList->VtxBuffer.Size);
-    int overlay_tris = 0;
-    int cmds_overlap = 0;
-    ImVec2 tri_min(FLT_MAX, FLT_MAX);
-    ImVec2 tri_max(-FLT_MAX, -FLT_MAX);
-    for (const auto& cmd : region->DrawList->CmdBuffer) {
-      const ImRect clip(cmd.ClipRect.x, cmd.ClipRect.y, cmd.ClipRect.z, cmd.ClipRect.w);
-      if (!clip.Overlaps(rect)) {
-        continue;
-      }
-      ++cmds_overlap;
-      for (unsigned t = 0; t < cmd.ElemCount / 3; ++t) {
-        const auto& va =
-            region->DrawList->VtxBuffer[cmd.VtxOffset + region->DrawList->IdxBuffer[cmd.IdxOffset + t * 3]];
-        const auto& vb =
-            region->DrawList->VtxBuffer[cmd.VtxOffset + region->DrawList->IdxBuffer[cmd.IdxOffset + t * 3 + 1]];
-        const auto& vc =
-            region->DrawList->VtxBuffer[cmd.VtxOffset + region->DrawList->IdxBuffer[cmd.IdxOffset + t * 3 + 2]];
-        if (va.col == accent || va.col == kMarkerRing || vb.col == accent || vb.col == kMarkerRing ||
-            vc.col == accent || vc.col == kMarkerRing) {
-          ++overlay_tris;
-          for (const ImVec2& p : { va.pos, vb.pos, vc.pos }) {
-            tri_min.x = std::min(tri_min.x, p.x);
-            tri_min.y = std::min(tri_min.y, p.y);
-            tri_max.x = std::max(tri_max.x, p.x);
-            tri_max.y = std::max(tri_max.y, p.y);
-          }
-        }
-      }
-    }
-    ctx->LogInfo(
-        "[globe mask] cmds_overlap %d overlay_tris %d tri bbox (%.0f,%.0f)-(%.0f,%.0f) capture rect "
-        "(%.0f,%.0f)-(%.0f,%.0f) px %dx%d",
-        cmds_overlap, overlay_tris, tri_min.x, tri_min.y, tri_max.x, tri_max.y, rect.Min.x, rect.Min.y, rect.Max.x,
-        rect.Max.y, px_w, px_h);
-  }
   out->mask.assign(static_cast<size_t>(px_w) * px_h, 0);
   // Screen -> capture-pixel space: scale, then subtract the capture rect's own origin — the
   // mask indexes pixels RELATIVE to the captured rect, the same space the captured bytes use.
@@ -12642,6 +12602,15 @@ bool SunGlobeViewModeHasTheGlobeSurvivalSet(ImGuiTestContext* ctx) {
   ctx->Yield(2);
   IM_CHECK_RETV(gui::g_state.analysis.point.adopted_result != document, false);
   IM_CHECK_RETV(view.sun_globe_view_mode == gui::SunGlobeViewMode::kFit, false);
+  // Revert keeps it: the committed scene is the same one, the session display preferences ride
+  // (the withdrawal path only latches an OUTSTANDING query — none is out here).
+  gui::DoRevert();
+  ctx->Yield(2);
+  IM_CHECK_RETV(view.sun_globe_view_mode == gui::SunGlobeViewMode::kFit, false);
+  // New writes the factory session back: the whole-document reset restores the Full default.
+  gui::DoNew();
+  ctx->Yield(2);
+  IM_CHECK_RETV(view.sun_globe_view_mode == gui::SunGlobeViewMode::kFull, false);
   gui::g_state.analyze_pose_view_open = false;
   ctx->Yield(2);
   return true;

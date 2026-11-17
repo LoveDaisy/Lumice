@@ -907,41 +907,90 @@ std::string SunGridRangeText(const SunGridRange& range) {
 }
 
 void RenderSunGridLegend(const SunGridRange& range, float row_height) {
-  // The vertical column at the canvas's right edge: header, the band row (the ramp with BOTH
-  // end ticks to its right — the high tick top-aligned to the band's top, the low tick pinned
-  // to the band's bottom, stacking just below the high one when the band is shorter than two
-  // text lines), then the range text. The column manages the cursor EXPLICITLY: a wrapped text
-  // ends ImGui's item flow back at the window's line start, so a SameLine'd column of wrapped
-  // texts would scatter its tail down the window's left edge — every item is placed at the
-  // column's x by hand, wrapped at the column's width. The band's height is the row's remainder
-  // after the header and the range text (a 0 floor, a 120 cap): the structural invariant
-  // column_height <= row_height holds unconditionally — a too-short row loses its ramp, never
-  // slides its numbers under the slider row's later-submitted frame.
+  // The vertical column at the canvas's right edge: header, the band row, the range text. The
+  // end ticks ride the band's right edge (the high one top-aligned, the low one pinned to the
+  // band's bottom) but are SUBMITTED only when the row's remainder can host their stack — the
+  // range text carries both endpoints verbatim, so a short row loses the tick labels, then the
+  // ramp, never its numbers. The column manages the cursor EXPLICITLY: a wrapped text ends
+  // ImGui's item flow back at the window's line start, so a SameLine'd column of wrapped texts
+  // would scatter its tail down the window's left edge — every item is placed at the column's
+  // x by hand, wrapped at the column's width.
+  //
+  // The bound is the mechanism, measured before anything submits: budget = the row's remainder
+  // after the header and the range text. budget >= tick stack submits band + ticks (band =
+  // min(budget, cap), the column bounded by the row); 0 <= budget < stack submits band alone
+  // (band = budget); budget < 0 — even the words exceed the row — yields the whole legend, the
+  // canvas's own short-host rule. Every submitted branch satisfies column_height <= row_height
+  // by construction; nothing can slide under the slider row's later-submitted frame.
   ImDrawList* dl = ImGui::GetWindowDrawList();
   const float wrap = std::max(1.0f, SunGridLegendColumnWidth());
   const float spacing = ImGui::GetStyle().ItemSpacing.y;
   const ImVec2 column = ImGui::GetCursorScreenPos();
   const float wrap_x = ImGui::GetCursorPosX() + wrap;  // window-local
-  ImGui::PushTextWrapPos(wrap_x);
-  float y = column.y;
-  // Place BEFORE each item: ImGui's ItemSize pulls the flow cursor back to the window's line
-  // start after every item (wrapped texts and buttons alike), so the column re-pins its own
-  // cursor ahead of each member — nothing can fall out of the column to the line below.
-  const auto place = [&](float item_h) {
-    ImGui::SetCursorScreenPos(ImVec2(column.x, y));
-    y += item_h + spacing;
-  };
-  const auto text_h = [&](const char* text) { return ImGui::CalcTextSize(text, nullptr, false, wrap).y; };
-  place(text_h(kSunGridLegendTitle));
-  DisabledWrappedText("%s", kSunGridLegendTitle);
-  RegisterPointTextItem("##sun_grid_title");
-  if (!range.available) {
-    const std::string empty_text = SunGridRangeText(range);
-    place(text_h(empty_text.c_str()));
-    DisabledWrappedText("%s", empty_text.c_str());
+  const float band_w = UiPx(12.0f);
+  const float band_gap = ImGui::GetStyle().ItemSpacing.x;
+  // The ticks render at the band's right edge, so their measured width uses the width they
+  // actually have there — measuring from the column origin would undercount the second line a
+  // long endpoint string wraps into and could overlap the two ticks.
+  const float tick_wrap = std::max(1.0f, wrap - band_w - band_gap);
+  const auto text_h = [&](const char* text, float avail) { return ImGui::CalcTextSize(text, nullptr, false, avail).y; };
+  const auto submit_column = [&](float title_h, float band_row_h, float band_h, bool show_ticks, const char* hi,
+                                 const char* lo, const char* range_text, float range_h) {
+    ImGui::PushTextWrapPos(wrap_x);
+    float y = column.y;
+    // Place BEFORE each item: ImGui's ItemSize pulls the flow cursor back to the window's line
+    // start after every item (wrapped texts and buttons alike), so the column re-pins its own
+    // cursor ahead of each member — nothing can fall out of the column to the line below.
+    const auto place = [&](float item_h) {
+      ImGui::SetCursorScreenPos(ImVec2(column.x, y));
+      y += item_h + spacing;
+    };
+    place(title_h);
+    DisabledWrappedText("%s", kSunGridLegendTitle);
+    RegisterPointTextItem("##sun_grid_title");
+    const ImVec2 band_pos(column.x, y);
+    y += band_row_h + spacing;
+    // A zero-height band submits no item at all: an empty hit target would only register as a
+    // phantom "present" widget to the tests and the item registry.
+    if (band_h > 0.0f) {
+      ImGui::SetCursorScreenPos(band_pos);
+      ImGui::InvisibleButton("##sun_grid_band", ImVec2(band_w, band_h));
+      const bool constant = range.min_rad == range.max_rad;
+      const int steps = constant ? 1 : 64;
+      for (int i = 0; i < steps; ++i) {
+        // Segment i counts from the TOP: the last segment (the ramp's high end) sits at the top,
+        // so the delta walk runs high → low as y grows.
+        const double delta =
+            constant ? range.min_rad : range.max_rad - (range.max_rad - range.min_rad) * i / (steps - 1);
+        dl->AddRectFilled(ImVec2(band_pos.x, band_pos.y + band_h * i / steps),
+                          ImVec2(band_pos.x + band_w, band_pos.y + band_h * (i + 1) / steps),
+                          SunGridCellColorRgba(delta, 1, range));
+      }
+    }
+    if (show_ticks) {
+      ImGui::SetCursorScreenPos(ImVec2(band_pos.x + band_w + band_gap, band_pos.y));
+      DisabledWrappedText("%s°", hi);
+      RegisterPointTextItem("##sun_grid_hi_tick");
+      const float lo_y = band_pos.y + std::max(band_h - text_h(lo, tick_wrap), text_h(hi, tick_wrap) + 2.0f);
+      ImGui::SetCursorScreenPos(ImVec2(band_pos.x + band_w + band_gap, lo_y));
+      DisabledWrappedText("%s°", lo);
+      RegisterPointTextItem("##sun_grid_lo_tick");
+    }
+    place(range_h);
+    DisabledWrappedText("%s", range_text);
     RegisterPointTextItem("##sun_grid_range");
     ImGui::PopTextWrapPos();
+    // The column's end: the caller resumes the flow from here (the slider row below the canvas).
     ImGui::SetCursorScreenPos(ImVec2(column.x, y));
+  };
+  const float title_h = text_h(kSunGridLegendTitle, wrap);
+  if (!range.available) {
+    const std::string empty_text = SunGridRangeText(range);
+    const float body_h = text_h(empty_text.c_str(), wrap);
+    if (title_h + spacing + body_h > row_height) {
+      return;  // a row too short for even the words yields the legend (the short-host rule)
+    }
+    submit_column(title_h, 0.0f, 0.0f, false, "", "", empty_text.c_str(), body_h);
     return;
   }
   char lo[64], hi[64];
@@ -950,44 +999,19 @@ void RenderSunGridLegend(const SunGridRange& range, float row_height) {
   std::snprintf(hi_tick, sizeof(hi_tick), "%s°", hi);
   char lo_tick[72];
   std::snprintf(lo_tick, sizeof(lo_tick), "%s°", lo);
-  const float hi_h = text_h(hi_tick);
-  const float lo_h = text_h(lo_tick);
+  const float hi_h = text_h(hi_tick, tick_wrap);
+  const float lo_h = text_h(lo_tick, tick_wrap);
+  const float tick_stack = hi_h + 2.0f + lo_h;
   const std::string range_text = SunGridRangeText(range);
-  const float band_budget = row_height - (y - column.y) - spacing - text_h(range_text.c_str());
-  const float band_h = std::clamp(band_budget, 0.0f, UiPx(120.0f));
-  const float band_w = UiPx(12.0f);
-  const float band_gap = ImGui::GetStyle().ItemSpacing.x;
-  const ImVec2 band_pos(column.x, y);
-  const float band_row_bottom = y + std::max(band_h, hi_h + 2.0f + lo_h);
-  ImGui::SetCursorScreenPos(band_pos);
-  ImGui::InvisibleButton("##sun_grid_band", ImVec2(band_w, band_h));
-  const bool constant = range.min_rad == range.max_rad;
-  const int steps = constant ? 1 : 64;
-  for (int i = 0; i < steps; ++i) {
-    // Segment i counts from the TOP: the last segment (the ramp's high end) sits at the top, so
-    // the delta walk runs high → low as y grows.
-    const double delta = constant ? range.min_rad : range.max_rad - (range.max_rad - range.min_rad) * i / (steps - 1);
-    dl->AddRectFilled(ImVec2(band_pos.x, band_pos.y + band_h * i / steps),
-                      ImVec2(band_pos.x + band_w, band_pos.y + band_h * (i + 1) / steps),
-                      SunGridCellColorRgba(delta, 1, range));
+  const float range_h = text_h(range_text.c_str(), wrap);
+  const float budget = row_height - title_h - spacing - range_h - spacing;
+  if (budget < 0.0f) {
+    return;  // even the header and the numbers exceed the row — yield, never overlap the row below
   }
-  // The end ticks ride the band's right edge: the high one top-aligned, the low one pinned to
-  // the band's bottom — or, when the band is shorter than two text lines, stacked directly
-  // below the high one so the two can never overlap.
-  ImGui::SetCursorScreenPos(ImVec2(band_pos.x + band_w + band_gap, band_pos.y));
-  DisabledWrappedText("%s°", hi);
-  RegisterPointTextItem("##sun_grid_hi_tick");
-  const float lo_y = band_pos.y + std::max(band_h - lo_h, hi_h + 2.0f);
-  ImGui::SetCursorScreenPos(ImVec2(band_pos.x + band_w + band_gap, lo_y));
-  DisabledWrappedText("%s°", lo);
-  RegisterPointTextItem("##sun_grid_lo_tick");
-  y = band_row_bottom + spacing;
-  place(text_h(range_text.c_str()));
-  DisabledWrappedText("%s", range_text.c_str());
-  RegisterPointTextItem("##sun_grid_range");
-  ImGui::PopTextWrapPos();
-  // The column's end: the caller resumes the flow from here (the slider row below the canvas).
-  ImGui::SetCursorScreenPos(ImVec2(column.x, y));
+  const bool show_ticks = budget >= tick_stack;
+  const float band_h = std::clamp(budget, 0.0f, UiPx(120.0f));
+  const float band_row_h = show_ticks ? std::max(band_h, tick_stack) : band_h;
+  submit_column(title_h, band_row_h, band_h, show_ticks, hi, lo, range_text.c_str(), range_h);
 }
 
 // ---- The representative-ray display -----------------------------------------------------------------
