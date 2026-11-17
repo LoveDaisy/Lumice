@@ -12481,6 +12481,24 @@ bool SunGlobeViewModeHasTheGlobeSurvivalSet(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(gui::g_state.analysis.point.key == key && gui::g_state.analysis.point.intent_id == intent, false);
   IM_CHECK_RETV(gui::g_state.analysis.point.adopted_result == document, false);
   IM_CHECK_RETV(gui::g_state.dirty == dirty, false);
+  // AC6: the six per-arm copies of the concept sentence are gone from every state arm's
+  // persistent text; the title band's shared info icon carries the whole explanation on a real
+  // hover (the two-tier rule's carrier — Full/Fit meanings and the auto-scale caveat among
+  // them). The absence leg reads a submitted frame, not an unrendered one.
+  {
+    const std::string region_text = CaptureFrameText(ctx);
+    IM_CHECK_RETV(region_text.find("not the full SO(3)") == std::string::npos, false);
+    ctx->MouseMoveToPos(ctx->ItemInfo("**/" ICON_FA_CIRCLE_INFO "##globe_view_help").RectFull.GetCenter());
+    ctx->Yield(3);
+    ImGuiWindow* tip = ImGui::FindWindowByName("##Tooltip_00");
+    IM_CHECK_RETV(tip != nullptr && tip->Active, false);
+    const std::string tip_text = CaptureFrameText(ctx);
+    IM_CHECK_RETV(tip_text.find("not the full SO(3)") != std::string::npos, false);
+    IM_CHECK_RETV(tip_text.find("fixed crystal-frame basis") != std::string::npos, false);
+    IM_CHECK_RETV(tip_text.find("auto-ranged per document") != std::string::npos, false);
+    ctx->MouseMoveToPos(ImVec2(2.0f, 2.0f));
+    ctx->Yield(2);
+  }
   // A component switch keeps it.
   ctx->ItemClick(PoseRegionWindow("##AnalyzeSunGlobe")->GetID("##globe_component"));
   ctx->KeyPress(ImGuiKey_DownArrow);
