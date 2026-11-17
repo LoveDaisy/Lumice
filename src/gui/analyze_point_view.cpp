@@ -1547,6 +1547,16 @@ float Ray3DReportQuota() {
   return 2.0f * ImGui::GetTextLineHeightWithSpacing() + 2.0f * style.WindowPadding.y + UiPx(6.0f);
 }
 
+// The report's stable source label: the component/sample identity the shown content belongs to
+// (1-based, the component list's and the curve readout's vocabulary). It is the honesty marker
+// that lets the report hold still across a sample switch's transient: the retained line names
+// its own sample, never masquerading as the cursor's.
+std::string Ray3DReportSourceLine(int component, int sample_position, int valid_count) {
+  char buf[64];
+  std::snprintf(buf, sizeof(buf), "Component %d \xc2\xb7 sample %d/%d", component + 1, sample_position, valid_count);
+  return std::string(buf);
+}
+
 }  // namespace
 
 // The point session's one-line state word (the hpp comment carries the contract). The mapping's
@@ -1918,6 +1928,7 @@ void RenderAnalyzeSunGlobeRegion(GuiState& state, const ImVec2& size) {
 void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
   g_ray3d_frame.valid = false;
   g_ray3d_frame.axes_drawn = false;
+  g_ray3d_frame.legend_drawn = false;
   state.analysis.ray3d_fresnel_labels.clear();
   state.analysis.ray3d_fresnel_label_rects.clear();
   // The canvas and frame controls never scroll with result prose. The report scrolls
@@ -2372,6 +2383,17 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
                     candidate = detail::ClampLabelPosToViewport(candidate, text_size, vis_min_x, vis_min_y,
                                                                 rendered.axes_min.x - vis_min_x, vis_max_y - vis_min_y);
                   }
+                  // The legend is the left edge's hard exclusion, the compass's mirror: a
+                  // colliding candidate moves right of the reserved footprint before scoring —
+                  // also before the least-overlap fallback, so the degraded form cannot land
+                  // back on the legend either.
+                  if (rendered.legend_drawn &&
+                      ImRect(candidate, ImVec2(candidate.x + text_size.x, candidate.y + text_size.y))
+                          .Overlaps(ImRect(rendered.legend_min, rendered.legend_max))) {
+                    candidate =
+                        detail::ClampLabelPosToViewport(candidate, text_size, rendered.legend_max.x, vis_min_y,
+                                                        vis_max_x - rendered.legend_max.x, vis_max_y - vis_min_y);
+                  }
                   const ImRect candidate_rect(candidate, ImVec2(candidate.x + text_size.x, candidate.y + text_size.y));
                   float overlap = 0.0f;
                   for (const ImRect& placed_rect : placed_label_rects) {
@@ -2410,6 +2432,7 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
                        x + text_size.x + inset <= std::min(canvas_max.x, clip_max.x); x += text_size.x + inset) {
                     const ImRect rect(ImVec2(x, y), ImVec2(x + text_size.x, y + text_size.y));
                     if (rect.Overlaps(ImRect(rendered.axes_min, rendered.axes_max)) ||
+                        (rendered.legend_drawn && rect.Overlaps(ImRect(rendered.legend_min, rendered.legend_max))) ||
                         std::any_of(placed_label_rects.begin(), placed_label_rects.end(),
                                     [&](const ImRect& other) { return other.Overlaps(rect); })) {
                       continue;
@@ -2508,60 +2531,122 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
             dl->AddLine(pa, pb, ImGui::ColorConvertFloat4ToU32(AccentColor()), 1.5f);
           }
         }
+        // The segment legend, ON the canvas's left edge (2026-11-17 feedback: the colour
+        // vocabulary belongs beside the light it names, not in the report). Only a drawn trace
+        // shows it — a static colour legend over an empty canvas would read as a path being
+        // present. Complete footprints or nothing: a clipped partial legend lies about what it
+        // names (the axes compass's own gate). The whole footprint feeds the Fresnel labels'
+        // avoidance as a hard exclusion (the compass's mirror), fallback grid included.
+        if (display_state == RayTraceDisplayState::kDrawn) {
+          const float swatch_side = UiPx(9.0f);
+          const float swatch_gap_x = UiPx(5.0f);
+          const float unit_gap_y = UiPx(3.0f);
+          const float inset = UiPx(4.0f);
+          const char* legend_labels[] = { "entry", "internal", "exit" };
+          const float line_h = ImGui::GetTextLineHeight();
+          const float legend_h = 3.0f * line_h + 2.0f * unit_gap_y;
+          float legend_w = 0.0f;
+          for (const char* label : legend_labels) {
+            legend_w = std::max(legend_w, swatch_side + swatch_gap_x + ImGui::CalcTextSize(label).x);
+          }
+          rendered.legend_drawn = canvas_size.x >= legend_w + inset * 2.0f && canvas_size.y >= legend_h + inset * 2.0f;
+          if (rendered.legend_drawn) {
+            const ImVec2 legend_min(canvas_min.x + inset, canvas_min.y + inset);
+            rendered.legend_min = legend_min;
+            rendered.legend_max = ImVec2(legend_min.x + legend_w, legend_min.y + legend_h);
+            for (int kind = 0; kind < 3; ++kind) {
+              const ImVec2 unit_min(legend_min.x, legend_min.y + static_cast<float>(kind) * (line_h + unit_gap_y));
+              const float text_w = ImGui::CalcTextSize(legend_labels[kind]).x;
+              rendered.legend_unit_min[kind] = unit_min;
+              rendered.legend_unit_max[kind] =
+                  ImVec2(unit_min.x + swatch_side + swatch_gap_x + text_w, unit_min.y + line_h);
+              const float swatch_y = unit_min.y + (line_h - swatch_side) * 0.5f;
+              dl->AddRectFilled(ImVec2(unit_min.x, swatch_y), ImVec2(unit_min.x + swatch_side, swatch_y + swatch_side),
+                                SegmentColor(kind, 1.0f));
+              dl->AddText(ImVec2(unit_min.x + swatch_side + swatch_gap_x, unit_min.y),
+                          ImGui::GetColorU32(ImGuiCol_TextDisabled), legend_labels[kind]);
+            }
+          }
+        }
         axes_layer.Merge(dl);
         dl->PopClipRect();
       };
       render_canvas();
     }
     // The current pose's crystal remains visible even when its trace has no drawable path.
+    // Transient vs persistent (2026-11-17 feedback): computing and hidden never cycle through
+    // the report — the status bar owns the transient words. Computing shows the RETAINED
+    // record (the identity-checked source line and, for a retained failure, its details) so
+    // the report's content and height hold still while the trace re-arms; without a retained
+    // source in THIS domain, the honest empty line. Hidden means the session itself was
+    // dropped — a reset or a withdrawn intent, exactly the source-invalidating events — so it
+    // shows the honest empty line, never a stale report. Error/refused are the current key's
+    // persistent facts: the live details render here AND are captured into the record, so the
+    // next sample switch's transient retains them as the named previous result. The drawn arm
+    // captures its own source line the same way.
+    const auto capture_record = [&](Ray3DReportRecord::Kind kind, const char* detail_head, std::string detail_body) {
+      Ray3DReportRecord& record = state.analysis.ray3d_report_record;
+      record.valid = true;
+      record.point_id = point.intent_id;
+      record.component = current->component;
+      record.kind = kind;
+      record.source_line = Ray3DReportSourceLine(
+          current->component, std::clamp(view.sample_index, 0, current->valid_count - 1) + 1, current->valid_count);
+      record.detail_head = detail_head == nullptr ? std::string() : std::string(detail_head);
+      record.detail_body = std::move(detail_body);
+    };
+    const auto render_record = [&](const Ray3DReportRecord& record) {
+      ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+      ImGui::TextWrapped("%s", record.source_line.c_str());
+      ImGui::PopStyleColor();
+      RegisterPointTextItem("##r3d_source");
+      if (!record.detail_head.empty()) {
+        ImGui::TextUnformatted(record.detail_head.c_str());
+        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+        ImGui::TextWrapped("%s", record.detail_body.c_str());
+        ImGui::PopStyleColor();
+      }
+    };
     switch (display_state) {
       case RayTraceDisplayState::kHidden:
         DisabledWrappedText("No representative path asked for yet.");
         return;
-      case RayTraceDisplayState::kComputing:
-        DisabledWrappedText("Computing the representative path for this sample…");
+      case RayTraceDisplayState::kComputing: {
+        const Ray3DReportRecord& record = state.analysis.ray3d_report_record;
+        if (record.valid && record.point_id == point.intent_id && record.component == current->component) {
+          render_record(record);  // the retained form — stale-honest, source-named
+        } else {
+          DisabledWrappedText("No representative path shown yet.");
+        }
         return;
-      case RayTraceDisplayState::kError:
-        ImGui::TextUnformatted("Path query failed:");
-        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-        ImGui::TextWrapped("%s", trace.adopted_error.c_str());
-        ImGui::PopStyleColor();
+      }
+      case RayTraceDisplayState::kError: {
+        capture_record(Ray3DReportRecord::Kind::kError, "Path query failed:", trace.adopted_error);
+        render_record(state.analysis.ray3d_report_record);
         return;
+      }
       case RayTraceDisplayState::kRefused: {
         LUMICE_RepresentativeRayInfo rinfo{};
         rinfo.struct_size = sizeof(rinfo);
         LUMICE_RepresentativeRayGetInfo(trace.adopted_result.get(), &rinfo);
-        ImGui::TextUnformatted("No legal path for this pose:");
-        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-        ImGui::TextWrapped("reason: %s | entry status: %s%s%s | corridor area %.3e (threshold %.3e)",
-                           PathTextToString(rinfo.reason).c_str(), PathTextToString(rinfo.entry_status).c_str(),
-                           rinfo.chain_failure.length > 0 ? " | chain: " : "",
-                           rinfo.chain_failure.length > 0 ? PathTextToString(rinfo.chain_failure).c_str() : "",
-                           rinfo.area_perp_internal, rinfo.area_threshold);
-        ImGui::PopStyleColor();
+        std::string refused_detail =
+            "reason: " + PathTextToString(rinfo.reason) + " | entry status: " + PathTextToString(rinfo.entry_status);
+        if (rinfo.chain_failure.length > 0) {
+          refused_detail += " | chain: " + PathTextToString(rinfo.chain_failure);
+        }
+        char area_buf[96];
+        std::snprintf(area_buf, sizeof(area_buf), " | corridor area %.3e (threshold %.3e)", rinfo.area_perp_internal,
+                      rinfo.area_threshold);
+        refused_detail += area_buf;
+        capture_record(Ray3DReportRecord::Kind::kRefused, "No legal path for this pose:", std::move(refused_detail));
+        render_record(state.analysis.ray3d_report_record);
         return;
       }
       case RayTraceDisplayState::kDrawn:
-        break;
+        capture_record(Ray3DReportRecord::Kind::kDrawn, nullptr, std::string());
+        render_record(state.analysis.ray3d_report_record);
+        return;
     }
-
-    // Each legend unit owns a swatch item and its label; test the whole unit before SameLine.
-    const float swatch = UiPx(9.0f);
-    const char* labels[] = { "entry", "internal", "exit" };
-    for (int kind = 0; kind < 3; ++kind) {
-      const float unit_w = swatch + ImGui::GetStyle().ItemSpacing.x + ImGui::CalcTextSize(labels[kind]).x;
-      if (kind > 0 && fits_on_line(unit_w)) {
-        ImGui::SameLine();
-      }
-      DrawLegendIconSlot([&] { DrawSwatchSquare(SegmentColor(kind, 1.0f), swatch); }, swatch,
-                         ImGui::GetTextLineHeight());
-      ImGui::TextDisabled("%s", labels[kind]);
-      RegisterPointTextItem(labels[kind]);
-    }
-    // The display semantics' legend and the face-transmittance readout both moved out of the
-    // report: the semantics live in the title band's help icon (kRay3DHelpText), and the
-    // exact per-interface transmittances stay in the factors region's Interface transmission
-    // fold — the report keeps status/qualifying facts only, within its fixed two-line budget.
   };
   render_content();
   ImGui::EndChild();
@@ -3118,6 +3203,35 @@ void RenderPoseFactorsRegion(GuiState& state, const ImVec2& size) {
   ImGui::EndChild();
 }
 
+// The trace face's display state for the CURRENT selection, read for the status bar's transient
+// segment. nullopt = no valid current point/sample — no trace fact to state, the point's own
+// words own the bar. Otherwise the same named state the 3D region's gate computes: the pump is
+// the session's writer, this is a read over the same public state (the report and the bar never
+// disagree about which state the trace is in).
+std::optional<RayTraceDisplayState> TraceDisplayStateForSelection(const GuiState& state) {
+  const PointQuerySession& point = state.analysis.point;
+  if (!point.adopted_result || PointQueryStateFor(point) != PointQueryState::kCompleted) {
+    return std::nullopt;
+  }
+  const std::optional<LUMICE_PathPointInfo> info = ReadPointInfo(*point.adopted_result);
+  if (!info.has_value() || info->outcome != LUMICE_PATH_POINT_DISCOVERED || info->component_count == 0) {
+    return std::nullopt;
+  }
+  const std::vector<int> valid_indices = CollectValidSampleIndices(
+      *point.adopted_result,
+      std::clamp(state.analysis.point_view.component_index, 0, static_cast<int>(info->component_count) - 1));
+  const std::optional<CurrentSample> current =
+      CurrentSampleOf(*point.adopted_result, state.analysis.point_view, valid_indices);
+  if (!current.has_value()) {
+    return std::nullopt;
+  }
+  RayTraceKey key;
+  key.point_id = point.intent_id;
+  key.component = current->component;
+  key.sample = current->stored;
+  return RayTraceDisplayStateFor(state.analysis.trace, key);
+}
+
 }  // namespace
 
 void RenderAnalyzePoseViewWindow(GuiState& state) {
@@ -3294,6 +3408,19 @@ void RenderAnalyzePoseViewWindow(GuiState& state) {
       break;
     default:
       break;
+  }
+  // The trace's transient words ride the same single-line bar, AFTER the point's own words
+  // (point first; the segment exists only while the point answer is in and the current sample
+  // is valid — the helper's nullopt arms). Computing and not-requested are the transients the
+  // report no longer cycles; drawn/error/refused are answers — the report owns those, and the
+  // bar says nothing about the trace. The point's partial flag and wait field keep their own
+  // writers: this append never overwrites them.
+  if (const std::optional<RayTraceDisplayState> trace_state = TraceDisplayStateForSelection(state)) {
+    if (*trace_state == RayTraceDisplayState::kComputing) {
+      status += " — representative path computing";
+    } else if (*trace_state == RayTraceDisplayState::kHidden) {
+      status += " — representative path not requested";
+    }
   }
   RenderAnalyzeStatusBar(status_layout, status, partial || PointQueryStateFor(point) == PointQueryState::kRefused);
   ImGui::End();

@@ -4023,48 +4023,78 @@ ImGuiWindow* TraceReportWindow() {
 }
 
 bool TraceLegendSwatchesAvoidText(ImGuiTestContext* ctx) {
-  const ImGuiWindow* report = TraceReportWindow();
-  IM_CHECK_RETV(report != nullptr, false);
-  const auto& vertices = report->DrawList->VtxBuffer;
+  // The legend lives ON the canvas now (2026-11-17 rework): its feedback rects name the
+  // complete per-unit footprints, and the ink probe reads the REGION's draw list scoped to
+  // those rects — the report child no longer carries the swatches.
+  const gui::Ray3DFrameInfo frame = gui::LastRay3DFrameInfo();
+  IM_CHECK_RETV(frame.valid && frame.legend_drawn && frame.frame_count == ImGui::GetFrameCount(), false);
+  auto* region = PoseRegionWindow("##AnalyzeRaypath3D");
+  IM_CHECK_RETV(region != nullptr, false);
+  const auto& vertices = region->DrawList->VtxBuffer;
   const ImU32 text_color = ImGui::GetColorU32(ImGuiCol_TextDisabled);
-  std::vector<ImRect> glyphs;
-  for (int i = 0; i + 3 < vertices.Size;) {
-    if (vertices[i].col != text_color) {
-      ++i;
-      continue;
-    }
-    ImRect rect(vertices[i].pos, vertices[i].pos);
-    for (int k = 1; k < 4; ++k) {
-      rect.Add(vertices[i + k].pos);
-    }
-    glyphs.push_back(rect);
-    i += 4;
-  }
-  IM_CHECK_RETV(!glyphs.empty(), false);
-  const auto check_swatch = [&](ImU32 color) -> bool {
-    ImRect rect(ImVec2(FLT_MAX, FLT_MAX), ImVec2(-FLT_MAX, -FLT_MAX));
-    int count = 0;
-    for (const ImDrawVert& vertex : vertices) {
-      if (vertex.col == color) {
-        rect.Add(vertex.pos);
+  const float side = gui::UiPx(9.0f);
+  const auto check_unit = [&](int kind) -> bool {
+    // One unit's checks run inside an immediate lambda (the loop-fatal-assert rule).
+    const bool unit_ok = [&](int k) {
+      const ImRect unit(frame.legend_unit_min[k], frame.legend_unit_max[k]);
+      IM_CHECK_RETV(region->InnerClipRect.Contains(unit), false);
+      // The swatch: the exact-colour filled quad at the unit's left edge, vertically centred.
+      const ImVec2 sw_min(unit.Min.x, (unit.Min.y + unit.Max.y) * 0.5f - side * 0.5f);
+      const ImRect swatch_box(sw_min, ImVec2(sw_min.x + side, sw_min.y + side));
+      ImRect gather = swatch_box;
+      gather.Expand(0.6f);
+      ImRect ink(ImVec2(FLT_MAX, FLT_MAX), ImVec2(-FLT_MAX, -FLT_MAX));
+      int count = 0;
+      for (const ImDrawVert& vertex : vertices) {
+        if (vertex.col != gui::kRayTraceSegmentColors[k] || !gather.Contains(vertex.pos)) {
+          continue;
+        }
+        ink.Add(vertex.pos);
         ++count;
       }
+      IM_CHECK_RETV(count >= 4, false);  // the swatch's own quad; path ink stays out of the box
+      IM_CHECK_RETV(std::abs(ink.Min.x - swatch_box.Min.x) < 0.2f && std::abs(ink.Min.y - swatch_box.Min.y) < 0.2f &&
+                        std::abs(ink.Max.x - swatch_box.Max.x) < 0.2f && std::abs(ink.Max.y - swatch_box.Max.y) < 0.2f,
+                    false);
+      // The label: TextDisabled ink inside the unit, right of the swatch.
+      bool label_ink = false;
+      for (const ImDrawVert& vertex : vertices) {
+        if (vertex.col != text_color) {
+          continue;
+        }
+        if (vertex.pos.x >= swatch_box.Max.x && unit.Contains(vertex.pos)) {
+          label_ink = true;
+          break;
+        }
+      }
+      IM_CHECK_RETV(label_ink, false);
+      return true;
+    }(kind);
+    if (!unit_ok) {
+      return false;
     }
-    // AddRectFilled emits a real four-vertex swatch, unlike the old diagonal AA line.
-    IM_CHECK_RETV(count == 4, false);
-    IM_CHECK_RETV(std::abs(rect.GetWidth() - gui::UiPx(9.0f)) < 0.1f, false);
-    IM_CHECK_RETV(std::abs(rect.GetHeight() - gui::UiPx(9.0f)) < 0.1f, false);
-    const bool overlaps =
-        std::any_of(glyphs.begin(), glyphs.end(), [&](const ImRect& glyph) { return rect.Overlaps(glyph); });
-    IM_CHECK_RETV(!overlaps, false);
     return true;
   };
-  for (ImU32 color : gui::kRayTraceSegmentColors) {
-    if (!check_swatch(color)) {
+  for (int kind = 0; kind < 3; ++kind) {
+    if (!check_unit(kind)) {
       return false;
     }
   }
-  ctx->LogInfo("[trace legend] three 9px swatches, no overlap with %zu text glyphs", glyphs.size());
+  // The units sit pairwise apart (the reserved footprint is the completeness evidence).
+  const auto units_pairwise_apart = [&](int a, int b) -> bool {
+    IM_CHECK_RETV(!ImRect(frame.legend_unit_min[a], frame.legend_unit_max[a])
+                       .Overlaps(ImRect(frame.legend_unit_min[b], frame.legend_unit_max[b])),
+                  false);
+    return true;
+  };
+  for (int a = 0; a < 3; ++a) {
+    for (int b = a + 1; b < 3; ++b) {
+      if (!units_pairwise_apart(a, b)) {
+        return false;  // the row's own IM_CHECK named the failure
+      }
+    }
+  }
+  ctx->LogInfo("[trace legend] three 9px canvas swatches at the left edge, labels inked beside them");
   return true;
 }
 
@@ -4293,6 +4323,20 @@ bool TraceAxesFootprints(ImGuiTestContext* ctx, bool direction_anchor = false) {
     }
   }
   IM_CHECK_RETV(labels_apart, false);
+  // The canvas legend (when drawn) is the left edge's reserved footprint: inside the canvas,
+  // and every placed label stays out of it (the ladder's hard exclusion, fallback included).
+  if (frame.legend_drawn) {
+    const ImRect legend(frame.legend_min, frame.legend_max);
+    IM_CHECK_RETV(canvas.Contains(legend), false);
+    bool legend_apart = true;
+    for (size_t i = 0; i < labels.size(); ++i) {
+      if (!labels[i].empty()) {
+        legend_apart &= !legend.Overlaps(ImRect(rects[i * 5], rects[i * 5 + 1], rects[i * 5 + 2], rects[i * 5 + 3]));
+      }
+    }
+    IM_CHECK_RETV(legend_apart, false);
+    ctx->LogInfo("[ray3d legend] reserved %.1fx%.1f at the canvas's left edge", legend.GetWidth(), legend.GetHeight());
+  }
   auto* report = TraceReportWindow();
   IM_CHECK_RETV(report != nullptr && !reserved.Overlaps(report->InnerClipRect), false);
   const auto reset = ctx->ItemInfo("**/Reset View##r3d_reset", ImGuiTestOpFlags_NoError);
@@ -5358,6 +5402,30 @@ bool RefusedTraceKeepsCrystalVisible(ImGuiTestContext* ctx, const gui::SelectedC
   const std::string text = CaptureWindowFrameText(ctx, "Pose & trace");
   IM_CHECK_RETV(text.find("No legal path for this pose:") != std::string::npos, false);
   IM_CHECK_RETV(text.find(reason) != std::string::npos, false);
+  // The retention discipline's capture half: the refusal is a persistent fact, so the report
+  // captured its formatted details (head + body) — the next sample switch's transient retains
+  // exactly these as its source-named previous result.
+  const gui::Ray3DReportRecord refused_record = gui::g_state.analysis.ray3d_report_record;
+  IM_CHECK_RETV(refused_record.valid && refused_record.kind == gui::Ray3DReportRecord::Kind::kRefused, false);
+  IM_CHECK_RETV(refused_record.detail_head == "No legal path for this pose:", false);
+  IM_CHECK_RETV(refused_record.detail_body.find(reason) != std::string::npos, false);
+  IM_CHECK_RETV(!refused_record.source_line.empty(), false);
+  // The domain leg on this two-component document (the switch_leg pair above proved both exist):
+  // the retained refusal is the OLD component's source — the other component's transient must
+  // not show it (the honest empty line instead).
+  {
+    ScopedPointPickupHold hold_ray(gui::QueryFace::kRay);
+    gui::g_state.analysis.point_view.component_index = 1;
+    ctx->Yield(2);
+    IM_CHECK_RETV(!hold_ray.Voided(), false);
+    const gui::Ray3DReportRecord stale = gui::g_state.analysis.ray3d_report_record;
+    IM_CHECK_RETV(stale.valid && stale.kind == gui::Ray3DReportRecord::Kind::kRefused && stale.component == 0, false);
+    const std::string domain_text = CaptureWindowFrameText(ctx, "Pose & trace");
+    IM_CHECK_RETV(domain_text.find(stale.source_line) == std::string::npos, false);
+    IM_CHECK_RETV(domain_text.find("No legal path for this pose:") == std::string::npos, false);
+    ctx->LogInfo("[trace refusal] domain switch: the retained refusal does not follow into component 1");
+  }
+  ctx->Yield(2);
   IM_CHECK_RETV(SaveWindowPng(ctx, "//Pose & trace", GuiTestTempPath("analyze_c03_trace_refused.png").string()), false);
   ctx->LogInfo("[trace refusal] %s: mesh visible, no segments or markers, named refusal text", reason.c_str());
   return true;
@@ -6763,6 +6831,149 @@ bool Ray3DTitleBandAndCanvasGainHold(ImGuiTestContext* ctx) {
   // Leave the standing geometry as the pin set it (the resize legs restore their own splits).
   PinPoseViewOnScreen(ctx);
   gui::g_state.analyze_pose_view_open = false;
+  ctx->Yield(2);
+  return true;
+}
+
+// The 2026-11-17 rework's transient legs (AC4): a real sample-slider click moves the cursor,
+// the trace re-keys and its computing frames are HELD deterministic (the pickup hold), and
+// across drawn→computing→drawn the report's content height stays put — the retained source
+// line names the sample it belongs to, the status bar reads the transient, and the canvas
+// rectangle never moves. A component switch is a domain change: the retained record must NOT
+// show across it (the honest empty line instead).
+bool Ray3DTransientHoldsTheReportAndReadsTheBar(ImGuiTestContext* ctx) {
+  ScopedServerGuard guard;
+  IM_CHECK_RETV(BringUpHaloScene(ctx, /*infinite=*/false), false);
+  OpenWindow(ctx);
+  IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
+  IM_CHECK_RETV(SelectRowByDisplay(ctx, TopChainDisplay().c_str()) != std::nullopt, false);
+  gui::g_state.analyze_pose_view_open = true;
+  PinPoseViewOnScreen(ctx);
+  SetSkyPointTarget(42.0, 0.0);
+  IM_CHECK_RETV(
+      DriveUntil(
+          ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCompleted; },
+          60),
+      false);
+  IM_CHECK_RETV(DriveUntil(ctx, [] { return CurrentTraceIsDrawn(); }, 30), false);
+  ctx->Yield(2);
+  auto& view = gui::g_state.analysis.point_view;
+  const int valid_count = gui::PointValidSampleCount(*gui::g_state.analysis.point.adopted_result, view.component_index);
+  IM_CHECK_RETV(valid_count >= 2, false);
+
+  ImGuiWindow* report = TraceReportWindow();
+  IM_CHECK_RETV(report != nullptr, false);
+  ImGuiWindow* region = PoseRegionWindow("##AnalyzeRaypath3D");
+  IM_CHECK_RETV(region != nullptr, false);
+  // By-value snapshots: the record and the frame info are mutable globals the renderer updates
+  // in place — two references would alias (the learnings' state-transition trap).
+  const float drawn_content_h = report->ContentSize.y;
+  const gui::Ray3DFrameInfo drawn_frame = gui::LastRay3DFrameInfo();
+  const gui::Ray3DReportRecord drawn_record = gui::g_state.analysis.ray3d_report_record;
+  IM_CHECK_RETV(drawn_record.valid && !drawn_record.source_line.empty(), false);
+  IM_CHECK_RETV(drawn_frame.legend_drawn, false);
+
+  // REAL input: the globe sample slider's track clicks move the shared cursor (the slider's
+  // own input contract; the probe position round-trips through the widget, so the assertions
+  // read back the ACTUAL sample the slider set). The hold is armed FIRST so the superseded
+  // query parks at the pickup — the computing frames are held, not a microsecond luck.
+  const int saved_sample = view.sample_index;
+  ScopedPointPickupHold hold(gui::QueryFace::kRay);
+  int actual = saved_sample;
+  {
+    const ImGuiTestItemInfo slider = ctx->ItemInfo("**/##globe_sample", ImGuiTestOpFlags_NoError);
+    IM_CHECK_RETV(slider.ID != 0, false);
+    for (const float probe : { 0.5f, 0.9f, 0.1f }) {
+      if (actual != saved_sample) {
+        break;  // the cursor moved — this probe's click is the re-keying one
+      }
+      const ImVec2 at(slider.RectFull.Min.x + slider.RectFull.GetWidth() * probe, slider.RectFull.GetCenter().y);
+      ctx->MouseMoveToPos(at);
+      ctx->Yield(1);
+      ctx->MouseClick(0);
+      ctx->Yield(1);
+      actual = view.sample_index;
+    }
+  }
+  IM_CHECK_RETV(actual != saved_sample, false);  // the slider really moved the shared cursor
+  const int target_stored =
+      gui::PointValidSampleIndexAt(*gui::g_state.analysis.point.adopted_result, view.component_index, actual);
+  ctx->Yield(2);  // the pump re-keys and issues; the worker parks at the pickup — computing held
+  IM_CHECK_RETV(!hold.Voided(), false);
+  IM_CHECK_RETV(gui::RayTraceDisplayStateFor(gui::g_state.analysis.trace, { gui::g_state.analysis.point.intent_id,
+                                                                            view.component_index, target_stored }) ==
+                    gui::RayTraceDisplayState::kComputing,
+                false);
+
+  // The transient's two faces: the bar reads computing; the report holds the retained source
+  // line at the SAME content height, and the canvas rectangle does not move.
+  const std::string bar_text = CaptureWindowFrameText(ctx, "Pose & trace");
+  IM_CHECK_RETV(bar_text.find("representative path computing") != std::string::npos, false);
+  const gui::Ray3DReportRecord computing_record = gui::g_state.analysis.ray3d_report_record;
+  IM_CHECK_RETV(computing_record.valid && computing_record.source_line == drawn_record.source_line, false);
+  IM_CHECK_RETV(computing_record.point_id == gui::g_state.analysis.point.intent_id, false);
+  IM_CHECK_RETV(computing_record.component == drawn_record.component, false);
+  const float computing_content_h = report->ContentSize.y;
+  ctx->LogInfo("[r3d transient] report content drawn %.1f -> computing %.1f", drawn_content_h, computing_content_h);
+  IM_CHECK_RETV(std::fabs(computing_content_h - drawn_content_h) <= 1.0f, false);
+  const gui::Ray3DFrameInfo computing_frame = gui::LastRay3DFrameInfo();
+  IM_CHECK_RETV(computing_frame.valid && computing_frame.canvas_min.x == drawn_frame.canvas_min.x &&
+                    computing_frame.canvas_min.y == drawn_frame.canvas_min.y &&
+                    computing_frame.canvas_size.x == drawn_frame.canvas_size.x &&
+                    computing_frame.canvas_size.y == drawn_frame.canvas_size.y,
+                false);
+  IM_CHECK_RETV(!computing_frame.legend_drawn, false);  // no colour vocabulary over an empty canvas
+  ctx->LogInfo("[r3d transient] bar: '%s'", bar_text.substr(0, 160).c_str());
+
+  // Release; the same key's answer adopts and the drawn frame names the NEW sample.
+  hold.Release();
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [&] {
+                      const auto& t = gui::g_state.analysis.trace;
+                      return t.adopted_result != nullptr && t.key.sample == target_stored &&
+                             gui::RayTraceDisplayStateFor(t, { t.key.point_id, t.key.component, t.key.sample }) ==
+                                 gui::RayTraceDisplayState::kDrawn;
+                    },
+                    60),
+                false);
+  ctx->Yield(2);
+  const gui::Ray3DReportRecord drawn2_record = gui::g_state.analysis.ray3d_report_record;
+  IM_CHECK_RETV(drawn2_record.valid && drawn2_record.source_line != drawn_record.source_line, false);
+  const float drawn2_content_h = report->ContentSize.y;
+  ctx->LogInfo("[r3d transient] report content computing %.1f -> drawn %.1f ('%s' -> '%s')", computing_content_h,
+               drawn2_content_h, drawn_record.source_line.c_str(), drawn2_record.source_line.c_str());
+  IM_CHECK_RETV(std::fabs(drawn2_content_h - drawn_content_h) <= 1.0f, false);  // AC4's bounded flip
+  const std::string bar_after = CaptureWindowFrameText(ctx, "Pose & trace");
+  IM_CHECK_RETV(bar_after.find("representative path computing") == std::string::npos, false);  // the transient left
+  IM_CHECK_RETV(bar_after.find(drawn2_record.source_line) != std::string::npos, false);        // the report shows it
+
+  // DOMAIN leg: a component switch invalidates the retained record — the computing report
+  // must not carry the old domain's source line (the honest empty line instead). The write is
+  // the same one the answer rows make; the display gate is what is under test. The leg needs
+  // a document with two discovered components; on a single-component one the C03 flow's own
+  // scene covers the two-domain shape, and the leg says so instead of asserting nothing.
+  {
+    LUMICE_PathPointInfo domain_info{};
+    domain_info.struct_size = sizeof(domain_info);
+    IM_CHECK_RETV(
+        LUMICE_PathPointGetInfo(gui::g_state.analysis.point.adopted_result.get(), &domain_info) == LUMICE_PATH_READ_OK,
+        false);
+    if (domain_info.component_count >= 2) {
+      ScopedPointPickupHold hold2(gui::QueryFace::kRay);
+      view.component_index = view.component_index == 0 ? 1 : 0;
+      ctx->Yield(2);
+      IM_CHECK_RETV(!hold2.Voided(), false);
+      const gui::Ray3DReportRecord stale = gui::g_state.analysis.ray3d_report_record;  // the old record persists
+      IM_CHECK_RETV(stale.valid && stale.component != view.component_index, false);
+      const std::string domain_text = CaptureWindowFrameText(ctx, "Pose & trace");
+      IM_CHECK_RETV(domain_text.find(stale.source_line) == std::string::npos, false);
+      ctx->LogInfo("[r3d transient] component switch: stale '%s' not shown", stale.source_line.c_str());
+    } else {
+      ctx->LogInfo("[r3d transient] single-component document (%d): two-domain leg covered by the C03 flow",
+                   domain_info.component_count);
+    }
+  }
   ctx->Yield(2);
   return true;
 }
@@ -10248,10 +10459,28 @@ bool PoseCurveReportQuotasTrackContent(ImGuiTestContext* ctx) {
           IM_CHECK_RETV(full_item("**/Show Fresnel ratios##r3d_fresnel", region_3d), false);
           IM_CHECK_RETV(full_item("**/" ICON_FA_CIRCLE_INFO "##r3d_help", region_3d), false);
           IM_CHECK_RETV(full_item("**/Reset View##r3d_reset", region_3d), false);
-          IM_CHECK_RETV(full_item("**/entry", report), false);
-          IM_CHECK_RETV(full_item("**/internal", report), false);
-          IM_CHECK_RETV(full_item("**/exit", report), false);
+          IM_CHECK_RETV(full_item("**/##r3d_source", report), false);
           IM_CHECK_RETV(report->ScrollMax.y == 0, false);
+          // The colour legend is canvas ink now: its three complete unit footprints sit inside
+          // the canvas (the report child carries the source line only).
+          {
+            const gui::Ray3DFrameInfo frame_now = gui::LastRay3DFrameInfo();
+            IM_CHECK_RETV(frame_now.valid && frame_now.legend_drawn, false);
+            const ImRect canvas_now(frame_now.canvas_min, ImVec2(frame_now.canvas_min.x + frame_now.canvas_size.x,
+                                                                 frame_now.canvas_min.y + frame_now.canvas_size.y));
+            const auto legend_unit_inside = [&](int kind) -> bool {
+              const ImRect unit(frame_now.legend_unit_min[kind], frame_now.legend_unit_max[kind]);
+              ctx->LogInfo("[quota item] legend unit %d x=%.1f..%.1f y=%.1f..%.1f canvas=%.1f..%.1f", kind, unit.Min.x,
+                           unit.Max.x, unit.Min.y, unit.Max.y, canvas_now.Min.x, canvas_now.Max.x);
+              IM_CHECK_RETV(canvas_now.Contains(unit), false);
+              return true;
+            };
+            for (int kind = 0; kind < 3; ++kind) {
+              if (!legend_unit_inside(kind)) {
+                return false;  // the row's own IM_CHECK named the failure
+              }
+            }
+          }
           IM_CHECK_RETV(full_item("**/##curve_identity", companion), false);
           IM_CHECK_RETV(full_item("**/##curve_caliber", companion), false);
           IM_CHECK_RETV(full_item("**/##curve_legend_0", companion), false);
@@ -14024,6 +14253,11 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
   {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "r3d_title_band_and_canvas_gain_hold");
     t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(Ray3DTitleBandAndCanvasGainHold(ctx)); };
+  }
+
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "r3d_transient_holds_the_report_and_reads_the_bar");
+    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(Ray3DTransientHoldsTheReportAndReadsTheBar(ctx)); };
   }
 
   {

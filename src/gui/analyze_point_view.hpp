@@ -465,6 +465,14 @@ struct Ray3DFrameInfo {
   ImVec2 axes_tips[3];
   ImVec2 axes_label_min[3];
   ImVec2 axes_label_max[3];
+  // Render feedback only: the canvas legend's complete reserved footprint and per-unit rects
+  // when it drew this frame (a drawn trace only, at the canvas's left edge). `legend_drawn`
+  // answers presence — an undrawn frame leaves the rects stale, the flag is the gate.
+  bool legend_drawn = false;
+  ImVec2 legend_min;
+  ImVec2 legend_max;
+  ImVec2 legend_unit_min[3];
+  ImVec2 legend_unit_max[3];
 };
 const Ray3DFrameInfo& LastRay3DFrameInfo();
 
