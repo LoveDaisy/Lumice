@@ -4375,6 +4375,14 @@ bool TraceAxesFootprints(ImGuiTestContext* ctx, bool direction_anchor = false) {
   IM_CHECK_RETV(labels_apart, false);
   // The canvas legend (when drawn) is the left edge's reserved footprint: inside the canvas,
   // and every placed label stays out of it (the ladder's hard exclusion, fallback included).
+  // Reachability note (review r1's collision-frame request): the exclusion is structural
+  // insurance — the path is mesh-anchored at the canvas centre, so a segment's visible
+  // midpoint reaches at most ~0.45 short-side px from the centre (1.1 scene units at the
+  // zoom-8 pixel scale), while both reserved zones sit in corners (~240 px away on the default
+  // 608x207 canvas, still beyond reach on the narrowest) — no legal geometry produces a
+  // natural collision frame, so this overlap assertion is defense in depth, never the
+  // mechanism's sole evidence (the liveness contract lives in the production code: the
+  // footprint is computed before the ladder reads it).
   if (frame.legend_drawn) {
     const ImRect legend(frame.legend_min, frame.legend_max);
     IM_CHECK_RETV(canvas.Contains(legend), false);

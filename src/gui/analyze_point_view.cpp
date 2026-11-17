@@ -1330,6 +1330,19 @@ std::optional<CurrentSample> CurrentSampleOf(const LUMICE_SinglePathResult& resu
   return out;
 }
 
+// The trace key for the sample the display currently points at — the ONE constructor for the
+// identity both the 3D region's gate and the status bar's transient read consume (a56: the
+// key's field semantics have one implementation, so the two readers cannot drift apart; the
+// guard SEQUENCES around it stay each site's own, because the region renders per-arm facts
+// while the bar only needs the no-valid-sample vs state split).
+RayTraceKey RayTraceKeyFor(const SurveyQueryId& point_id, const CurrentSample& current) {
+  RayTraceKey key;
+  key.point_id = point_id;
+  key.component = current.component;
+  key.sample = current.stored;
+  return key;
+}
+
 // The mesh cache: one crystal's wireframe, rebuilt when the pool slot or the config's param hash
 // moves. LUMICE_CrystalMesh owns its storage by value (lumice_editor.h: fixed-size caller
 // arrays, no destroy) — the by-value cache is the whole ownership story; overwriting sheds the
@@ -1973,12 +1986,13 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
   // window reopen; reset only by the whole-state new-document paths; never persisted, never
   // in a query key); default on — the ratio numbers are the trace's exact-value face. It sits
   // in the fixed control band, so toggling it moves no canvas geometry.
+  const char* fresnel_item = "Show Fresnel ratios##r3d_fresnel";
   const float fresnel_w =
-      ImGui::GetFrameHeight() + ImGui::GetStyle().ItemInnerSpacing.x + ImGui::CalcTextSize("Show Fresnel ratios").x;
+      ImGui::GetFrameHeight() + ImGui::GetStyle().ItemInnerSpacing.x + ImGui::CalcTextSize(fresnel_item).x;
   if (fits_on_line(fresnel_w)) {
     ImGui::SameLine();
   }
-  ImGui::Checkbox("Show Fresnel ratios##r3d_fresnel", &view.show_fresnel_labels);
+  ImGui::Checkbox(fresnel_item, &view.show_fresnel_labels);
   // The region's one help carrier: usage note + display semantics (kRay3DHelpText). The shared
   // icon joins this line when it fits and takes its own fresh line at the wrap boundary — the
   // same complete-footprint rule as every control above, no compressed hit target.
@@ -2046,10 +2060,7 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
       DisabledWrappedText("No valid sample on show — nothing to draw.");
       return;
     }
-    RayTraceKey current_key;
-    current_key.point_id = point.intent_id;
-    current_key.component = current->component;
-    current_key.sample = current->stored;
+    const RayTraceKey current_key = RayTraceKeyFor(point.intent_id, *current);
     const RayTraceDisplayState display_state = RayTraceDisplayStateFor(trace, current_key);
 
     // The crystal's mesh: the FROZEN binding's config (captured at DoAnalyze), in the analysis
@@ -2298,6 +2309,42 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
           point_to_display(p, d);
           return ToRay3DScene(d, rendered);
         };
+        // The canvas legend's reserved footprint: computed and decided BEFORE the per-segment
+        // label ladder runs — the ladder's hard exclusion reads it live (the compass's mirror;
+        // the compass is live for the same structural reason, DrawRay3DAxes runs on channel 1
+        // ahead of this loop). Only a drawn trace wants it — a static colour legend over an
+        // empty canvas would read as a path being present. Complete footprints or nothing: a
+        // clipped partial legend lies about what it names (the compass's own gate). The ink
+        // emission itself stays after the contacts and sun arrow; the rects ride the frame.
+        const bool legend_wanted = display_state == RayTraceDisplayState::kDrawn;
+        if (legend_wanted) {
+          const float swatch_side = UiPx(9.0f);
+          const float swatch_gap_x = UiPx(5.0f);
+          const float unit_gap_y = UiPx(3.0f);
+          const float legend_inset = UiPx(4.0f);
+          const char* legend_labels[] = { "entry", "internal", "exit" };
+          const float legend_line_h = ImGui::GetTextLineHeight();
+          const float legend_h = 3.0f * legend_line_h + 2.0f * unit_gap_y;
+          float legend_w = 0.0f;
+          for (const char* label : legend_labels) {
+            legend_w = std::max(legend_w, swatch_side + swatch_gap_x + ImGui::CalcTextSize(label).x);
+          }
+          rendered.legend_drawn =
+              canvas_size.x >= legend_w + legend_inset * 2.0f && canvas_size.y >= legend_h + legend_inset * 2.0f;
+          if (rendered.legend_drawn) {
+            const ImVec2 legend_min(canvas_min.x + legend_inset, canvas_min.y + legend_inset);
+            rendered.legend_min = legend_min;
+            rendered.legend_max = ImVec2(legend_min.x + legend_w, legend_min.y + legend_h);
+            for (int kind = 0; kind < 3; ++kind) {
+              const ImVec2 unit_min(legend_min.x,
+                                    legend_min.y + static_cast<float>(kind) * (legend_line_h + unit_gap_y));
+              const float text_w = ImGui::CalcTextSize(legend_labels[kind]).x;
+              rendered.legend_unit_min[kind] = unit_min;
+              rendered.legend_unit_max[kind] =
+                  ImVec2(unit_min.x + swatch_side + swatch_gap_x + text_w, unit_min.y + legend_line_h);
+            }
+          }
+        }
         std::vector<ImRect> placed_label_rects;  // the labels' placed text rects, in order
         for (size_t s = 0; s < line.seg_kinds.size(); ++s) {
           const float* p0 = &line.points[s * 6];
@@ -2389,13 +2436,18 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
                   // The legend is the left edge's hard exclusion, the compass's mirror: a
                   // colliding candidate moves right of the reserved footprint before scoring —
                   // also before the least-overlap fallback, so the degraded form cannot land
-                  // back on the legend either.
+                  // back on the legend either. The band's right edge yields to the compass's
+                  // bound too, so the two hard exclusions COMMUTE: whichever runs first, the
+                  // candidate can never land in the other's footprint (a double collision is
+                  // then impossible by construction, not by the shortness of label words).
                   if (rendered.legend_drawn &&
                       ImRect(candidate, ImVec2(candidate.x + text_size.x, candidate.y + text_size.y))
                           .Overlaps(ImRect(rendered.legend_min, rendered.legend_max))) {
-                    candidate =
-                        detail::ClampLabelPosToViewport(candidate, text_size, rendered.legend_max.x, vis_min_y,
-                                                        vis_max_x - rendered.legend_max.x, vis_max_y - vis_min_y);
+                    const float legend_band_right =
+                        rendered.axes_drawn ? std::min(vis_max_x, rendered.axes_min.x - text_size.x) : vis_max_x;
+                    candidate = detail::ClampLabelPosToViewport(candidate, text_size, rendered.legend_max.x, vis_min_y,
+                                                                legend_band_right - rendered.legend_max.x,
+                                                                vis_max_y - vis_min_y);
                   }
                   const ImRect candidate_rect(candidate, ImVec2(candidate.x + text_size.x, candidate.y + text_size.y));
                   float overlap = 0.0f;
@@ -2534,41 +2586,22 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
             dl->AddLine(pa, pb, ImGui::ColorConvertFloat4ToU32(AccentColor()), 1.5f);
           }
         }
-        // The segment legend, ON the canvas's left edge (2026-11-17 feedback: the colour
-        // vocabulary belongs beside the light it names, not in the report). Only a drawn trace
-        // shows it — a static colour legend over an empty canvas would read as a path being
-        // present. Complete footprints or nothing: a clipped partial legend lies about what it
-        // names (the axes compass's own gate). The whole footprint feeds the Fresnel labels'
-        // avoidance as a hard exclusion (the compass's mirror), fallback grid included.
-        if (display_state == RayTraceDisplayState::kDrawn) {
+        // The segment legend's INK: emitted at the reserved rects computed before the label
+        // ladder ran (the footprint itself decided there, kDrawn-gated — see the hoisted block
+        // above the per-segment loop). The colour vocabulary lives beside the light it names
+        // (2026-11-17 feedback), not in the report.
+        if (rendered.legend_drawn) {
           const float swatch_side = UiPx(9.0f);
           const float swatch_gap_x = UiPx(5.0f);
-          const float unit_gap_y = UiPx(3.0f);
-          const float inset = UiPx(4.0f);
           const char* legend_labels[] = { "entry", "internal", "exit" };
-          const float line_h = ImGui::GetTextLineHeight();
-          const float legend_h = 3.0f * line_h + 2.0f * unit_gap_y;
-          float legend_w = 0.0f;
-          for (const char* label : legend_labels) {
-            legend_w = std::max(legend_w, swatch_side + swatch_gap_x + ImGui::CalcTextSize(label).x);
-          }
-          rendered.legend_drawn = canvas_size.x >= legend_w + inset * 2.0f && canvas_size.y >= legend_h + inset * 2.0f;
-          if (rendered.legend_drawn) {
-            const ImVec2 legend_min(canvas_min.x + inset, canvas_min.y + inset);
-            rendered.legend_min = legend_min;
-            rendered.legend_max = ImVec2(legend_min.x + legend_w, legend_min.y + legend_h);
-            for (int kind = 0; kind < 3; ++kind) {
-              const ImVec2 unit_min(legend_min.x, legend_min.y + static_cast<float>(kind) * (line_h + unit_gap_y));
-              const float text_w = ImGui::CalcTextSize(legend_labels[kind]).x;
-              rendered.legend_unit_min[kind] = unit_min;
-              rendered.legend_unit_max[kind] =
-                  ImVec2(unit_min.x + swatch_side + swatch_gap_x + text_w, unit_min.y + line_h);
-              const float swatch_y = unit_min.y + (line_h - swatch_side) * 0.5f;
-              dl->AddRectFilled(ImVec2(unit_min.x, swatch_y), ImVec2(unit_min.x + swatch_side, swatch_y + swatch_side),
-                                SegmentColor(kind, 1.0f));
-              dl->AddText(ImVec2(unit_min.x + swatch_side + swatch_gap_x, unit_min.y),
-                          ImGui::GetColorU32(ImGuiCol_TextDisabled), legend_labels[kind]);
-            }
+          for (int kind = 0; kind < 3; ++kind) {
+            const ImVec2 unit_min = rendered.legend_unit_min[kind];
+            const float unit_h = rendered.legend_unit_max[kind].y - unit_min.y;
+            const float swatch_y = unit_min.y + (unit_h - swatch_side) * 0.5f;
+            dl->AddRectFilled(ImVec2(unit_min.x, swatch_y), ImVec2(unit_min.x + swatch_side, swatch_y + swatch_side),
+                              SegmentColor(kind, 1.0f));
+            dl->AddText(ImVec2(unit_min.x + swatch_side + swatch_gap_x, unit_min.y),
+                        ImGui::GetColorU32(ImGuiCol_TextDisabled), legend_labels[kind]);
           }
         }
         axes_layer.Merge(dl);
@@ -3209,8 +3242,9 @@ void RenderPoseFactorsRegion(GuiState& state, const ImVec2& size) {
 // The trace face's display state for the CURRENT selection, read for the status bar's transient
 // segment. nullopt = no valid current point/sample — no trace fact to state, the point's own
 // words own the bar. Otherwise the same named state the 3D region's gate computes: the pump is
-// the session's writer, this is a read over the same public state (the report and the bar never
-// disagree about which state the trace is in).
+// the session's writer, this is a read over the same public state, and the key comes from the
+// ONE shared constructor (RayTraceKeyFor) the region's gate uses — the report and the bar
+// cannot disagree about which state the trace is in.
 std::optional<RayTraceDisplayState> TraceDisplayStateForSelection(const GuiState& state) {
   const PointQuerySession& point = state.analysis.point;
   if (!point.adopted_result || PointQueryStateFor(point) != PointQueryState::kCompleted) {
@@ -3228,11 +3262,7 @@ std::optional<RayTraceDisplayState> TraceDisplayStateForSelection(const GuiState
   if (!current.has_value()) {
     return std::nullopt;
   }
-  RayTraceKey key;
-  key.point_id = point.intent_id;
-  key.component = current->component;
-  key.sample = current->stored;
-  return RayTraceDisplayStateFor(state.analysis.trace, key);
+  return RayTraceDisplayStateFor(state.analysis.trace, RayTraceKeyFor(point.intent_id, *current));
 }
 
 }  // namespace
