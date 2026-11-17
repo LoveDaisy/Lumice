@@ -10623,6 +10623,23 @@ bool FiveOperationsChainInOneSession(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(PanoramaPictureWindow() != nullptr, false);
 
   ctx->SetRef(PanoramaRegionRef());
+  // The panorama host of the display-mode control now has a picture, so the control (and its
+  // help icon) submits: the icon must sit inside the clip — the control's layout reserves the
+  // icon's advance — and its hover must really draw.
+  {
+    ctx->SetRef("");
+    const auto mode_icon = ctx->ItemInfo("**/" ICON_FA_CIRCLE_INFO "##preview_display_mode_help");
+    IM_CHECK_RETV(mode_icon.ID != 0, false);
+    IM_CHECK_RETV(mode_icon.Window != nullptr, false);
+    IM_CHECK_RETV(mode_icon.RectFull.Max.x <= mode_icon.Window->InnerClipRect.Max.x + 0.5f, false);
+    ctx->MouseMoveToPos(mode_icon.RectFull.GetCenter());
+    ctx->Yield(3);
+    ImGuiWindow* mode_tooltip = ImGui::FindWindowByName("##Tooltip_00");
+    IM_CHECK_RETV(mode_tooltip != nullptr && mode_tooltip->Active, false);
+    ctx->MouseMoveToPos(ImVec2(2.0f, 2.0f));
+    ctx->Yield(2);
+    ctx->SetRef(PanoramaRegionRef());
+  }
   IM_CHECK_RETV(!IsDisabled(ctx->ItemInfo(kAnalyzeButton)), false);
   ctx->ItemClick(kAnalyzeButton);  // click 3
   ctx->SetRef("");

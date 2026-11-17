@@ -1657,13 +1657,17 @@ static void RenderAxisModal(GuiState& state) {
 
   // One note, two hover homes: the caption and every chip below. The chips are the high-frequency
   // path, so the switch contract belongs where the pointer actually lands, not only on the small
-  // print.
+  // print. This row stays tooltip-carried (not an info icon): the axis modal's width is pinned
+  // (compact min == max) and the chip chain has no wrap path, so the icon's advance would clip
+  // the trailing chip — the width-exact class the two-tier rule carves out.
   constexpr const char* kChipSwitchNote =
       "Switches to this label: remembers the current parameters under the one you leave, then "
       "loads this label's memory — or its definition when nothing is remembered. The preview "
       "pose follows, re-seating on this label's typical view.";
   ImGui::Text("Label:");
-  InfoIcon("axis_label_switch_help", "%s", kChipSwitchNote);
+  if (ImGui::IsItemHovered()) {
+    ImGui::SetTooltip("%s", kChipSwitchNote);
+  }
   for (const auto& entry : kAxisPresets) {
     ImGui::SameLine();
     bool highlighted = entry.id == active;
@@ -1701,6 +1705,9 @@ static void RenderAxisModal(GuiState& state) {
     }
     if (highlighted) {
       ImGui::PopStyleColor(4);
+    }
+    if (ImGui::IsItemHovered()) {
+      ImGui::SetTooltip("%s", kChipSwitchNote);
     }
   }
 

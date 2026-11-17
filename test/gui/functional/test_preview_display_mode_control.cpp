@@ -21,6 +21,7 @@
 
 #include <string>
 
+#include "IconsFontAwesome6.h"
 #include "gui/field_editor_registry.hpp"
 #include "gui/gui_state.hpp"
 #include "test_gui_shared.hpp"
@@ -87,6 +88,21 @@ void RegisterPreviewDisplayModeControlTests(ImGuiTestEngine* engine) {
       }
       IM_CHECK_EQ(gui::g_state.renderer.display_mode, LUMICE_DISPLAY_MODE_NORMAL);
       IM_CHECK(!gui::g_state.dirty);
+
+      // The help icon rides the control's reserved advance: it must sit inside the clip and its
+      // hover must really draw (the B-R concept moved here off the control's own hover).
+      const auto icon_item =
+          ctx->ItemInfo((std::string("**/") + ICON_FA_CIRCLE_INFO + "##preview_display_mode_help").c_str());
+      IM_CHECK(icon_item.ID != 0);
+      ImGuiWindow* host = icon_item.Window;
+      IM_CHECK(host != nullptr);
+      IM_CHECK(icon_item.RectFull.Max.x <= host->InnerClipRect.Max.x + 0.5f);
+      ctx->MouseMoveToPos(icon_item.RectFull.GetCenter());
+      ctx->Yield(3);
+      ImGuiWindow* icon_tooltip = ImGui::FindWindowByName("##Tooltip_00");
+      IM_CHECK(icon_tooltip != nullptr && icon_tooltip->Active);
+      ctx->MouseMoveToPos(ImVec2(2.0f, 2.0f));
+      ctx->Yield(2);
 
       ctx->ItemClick(SegmentRef(LUMICE_DISPLAY_MODE_CHANNEL_BR).c_str());
       ctx->Yield(2);

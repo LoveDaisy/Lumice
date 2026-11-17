@@ -3,6 +3,7 @@
 #include <cstdarg>
 #include <cstdio>
 
+#include "IconsFontAwesome6.h"  // ICON_FA_CIRCLE_INFO: the glyph lives here, not in the header
 #include "gui/theme.hpp"
 #include "imgui_internal.h"
 
@@ -28,7 +29,8 @@ void WrappedTooltipBody(const char* fmt, va_list args) {
 // The one icon body behind both placement entry points.
 void DrawInfoIcon(const char* id_suffix, const char* fmt, va_list args, bool join_previous) {
   // Icon glyph + "##" + suffix + NUL. 96 bytes cap the suffix at ~90 chars; a truncated label
-  // would silently collide two items' ids, so truncation asserts instead.
+  // would silently collide two items' ids, so truncation asserts instead. Debug-period guard
+  // only: under NDEBUG the truncation stays silent, as before.
   char label[96];
   const int needed = std::snprintf(label, sizeof(label), ICON_FA_CIRCLE_INFO "##%s", id_suffix);
   IM_ASSERT(needed > 0 && needed < static_cast<int>(sizeof(label)));
@@ -43,7 +45,10 @@ void DrawInfoIcon(const char* id_suffix, const char* fmt, va_list args, bool joi
   ImGui::SmallButton(label);
   ImGui::PopStyleVar();
   ImGui::PopStyleColor(4);
-  if (ImGui::IsItemHovered()) {
+  // AllowWhenDisabled: the icon has no activation semantics and no click effect, so hover works
+  // uniformly whether or not a parent BeginDisabled scope surrounds it — callers never need to
+  // reason about scope ownership for the hover to work.
+  if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
     WrappedTooltipBody(fmt, args);
   }
 }

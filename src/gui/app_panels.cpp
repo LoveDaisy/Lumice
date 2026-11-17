@@ -2368,9 +2368,13 @@ bool RenderDisplayModeControl() {
   for (int i = 0; i < kDisplayModeCount; i++) {
     text_w.push_back(ImGui::CalcTextSize(kDisplayModeNames[i]).x);
   }
-  const SegmentedControlLayout layout =
-      LayoutSegmentedControl(avail.x, UiPx(kDisplayModeControlMarginPt), UiPx(kDisplayModeControlPadXPt),
-                             UiPx(kDisplayModeControlPadYPt), ImGui::GetTextLineHeight(), text_w);
+  // The layout's region reserves the help icon's advance: the control right-anchors at
+  // margin from the region edge, so without this the SameLine icon after the group starts past
+  // the content edge and clips entirely. With it, the icon's right edge lands exactly on the
+  // margin line, inside the clip, at both hosts.
+  const SegmentedControlLayout layout = LayoutSegmentedControl(
+      avail.x - InfoIconAdvance(), UiPx(kDisplayModeControlMarginPt), UiPx(kDisplayModeControlPadXPt),
+      UiPx(kDisplayModeControlPadYPt), ImGui::GetTextLineHeight(), text_w);
   const ImVec2 frame_min(origin.x + layout.frame.x0, origin.y + layout.frame.y0);
   const ImVec2 frame_max(origin.x + layout.frame.x1, origin.y + layout.frame.y1);
   const bool over_control = ImGui::IsMouseHoveringRect(frame_min, frame_max);

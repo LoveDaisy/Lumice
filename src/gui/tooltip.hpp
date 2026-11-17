@@ -1,6 +1,5 @@
 #pragma once
 
-#include "IconsFontAwesome6.h"
 #include "imgui.h"
 
 namespace lumice::gui {
@@ -13,8 +12,8 @@ void SetWrappedTooltip(const char* fmt, ...) IM_FMTARGS(1);
 // two-tier tooltip rule in doc/gui/gui-visual-language.md): a transparent, borderless FontAwesome
 // circle-info SmallButton in TextDisabled that joins the previous item (SameLine) and shows its
 // explanation through SetWrappedTooltip on hover. `id_suffix` is the stable item id after "##";
-// callers own its uniqueness across the window. No click side effect, no value change, and the
-// text is only formatted on hover.
+// callers own its uniqueness across the window. No click side effect, no value change, the text
+// is only formatted on hover, and the hover works inside or outside a parent disabled scope.
 void InfoIcon(const char* id_suffix, const char* fmt, ...) IM_FMTARGS(2);
 
 // InfoIcon drawn at the current fresh line instead of joining the previous item — the standalone
