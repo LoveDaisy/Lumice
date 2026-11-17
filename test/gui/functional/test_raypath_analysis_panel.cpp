@@ -14867,7 +14867,12 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       ctx->Yield(3);
       ctx->SetRef("//Compressed grid probe");
       IM_CHECK(!ctx->ItemExists("**/##globe_canvas"));
-      IM_CHECK(grid_report.find("Crystal-frame sun directions") != std::string::npos);
+      // The probe's canary pair: the region's fixed stack rendered (title) and the state area's
+      // honest discovered-arm text is present (the sample readout — the six per-arm concept
+      // sentences retired into the title band's info icon, so the readout is what the arm says
+      // now). The factors region's no-grid note stays absent: the copied document carries a grid.
+      IM_CHECK(grid_report.find("Sun direction globe") != std::string::npos);
+      IM_CHECK(grid_report.find("sample ") != std::string::npos && grid_report.find("zenith") != std::string::npos);
       IM_CHECK(grid_report.find("no sun grid in this document") == std::string::npos);
       ctx->SetRef("");
       // The backdrop is the toggle's DISPLAY EFFECT, gated at the draw site by the toggle and
