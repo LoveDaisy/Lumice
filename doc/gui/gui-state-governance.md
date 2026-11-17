@@ -38,6 +38,13 @@ Render/Analyze 的纯文字双格是 T-session 工作区选择：当前格实填
 新点采纳/文档重置回 Fit、关开窗口保留、分量切换按当前档重算范围。切档不写共享样本游标、播放或
 查询身份；hover 线/点/tooltip 每帧由鼠标和当前曲线派生，不储存第二 selection，不进快照/配置/默认值。
 
+**u-globe 的 Fit/Full** 是与曲线档同词汇、不同寿命的独立 T-session 显示属性
+（`PointViewState::sun_globe_view_mode`，2026-11-17 反馈片）：Full（默认）以固定晶体系基投影
+（中心 +x、up +z，c 轴屏幕竖直），Fit 以分量首个有效样本定心。寿命分叉是刻意设计：新点采纳
+**保留** globe 档（姿态窗是浏览面，新点不得悄悄重定心用户钉住的视角），曲线档则重置回 Fit。
+分量/样本切换与关开窗口保留；New/成功 Open 随整体文档重置回 Full；Revert 沿既有保留规则。
+切档不写共享样本游标、播放或查询身份，不进快照/配置/默认值，不 dirty、不发显示推送。
+
 **Look At 跟随（as-built）**：`GuiState::look_at` 只保存所选具名目标与跟随意图，是 T-session，不是相机姿态的第二份副本。具名方向、约束与状态转换由 `view_look_at` 单一 owner 解析；`RenderPreviewPanel` 在装配本帧 view 输入之前调用 `UpdateLockedLookAt`，且不受 View 折叠、是否已有纹理或 Run 状态影响。被接受的 `Elevation` / `Azimuth` 编辑与 preview camera drag 先解除 Lock，再保留本次输入；`Roll` / `FOV` / zoom 不解除。切到不同 lens 或进入 full-sky 禁用态会解除而不暂停旧锁；`Reset` 解除 Lock 但保留目标。`ResetFrontendState` 对 New / 成功 Open / Revert 都恢复 `Sun + unlocked`，失败或取消的 Open 不调用它，因而不清现有意图。该块不进 `.lmc`、用户默认值或 `ConfigSnapshot`，也不产生 dirty、epoch、display push 或额外 re-sim；太阳高度本身原有的 sim effect 不变。
 
 > **Raypath view 的共享相机机制**：唯一合同见 [raypath-view-camera.md](raypath-view-camera.md) §6–8，验证边界见§10。
