@@ -720,22 +720,13 @@ void DrawPointCurveSeed(ImDrawList* dl, const PointContributionCurve& curve, con
 
 // ---- The u-globe -------------------------------------------------------------------------------------
 
-bool MakeSunGlobeProjector(const LUMICE_SinglePathResult& result, int component, SunGlobeProjector* out) {
-  const int stored = PointValidSampleIndexAt(result, component, 0);
-  if (stored < 0) {
-    return false;
-  }
-  LUMICE_PathPointSample sample{};
-  sample.struct_size = sizeof(sample);
-  if (LUMICE_PathPointGetSample(&result, static_cast<size_t>(component), static_cast<size_t>(stored), &sample) !=
-      LUMICE_PATH_READ_OK) {
-    return false;
-  }
-  // The projector's basis: the centre is the component's first valid u; the reference up picks the
-  // world +z when the centre is not parallel to it (the map's own fallback rule), else +x. The
-  // centre/up/right triple is orthonormal by construction (Gram-Schmidt, then a re-cross).
+// The projector's basis rule, shared by both view modes so they cannot drift: `centre` as given;
+// the reference up picks the world +z when the centre is not parallel to it (the map's own
+// fallback rule), else +x; then up is orthogonalized against the centre and right = up × centre
+// re-crosses the triple orthonormal.
+void BuildSunGlobeBasis(const double centre[3], SunGlobeProjector* out) {
   for (int k = 0; k < 3; ++k) {
-    out->centre[k] = sample.sun_in_crystal[k];
+    out->centre[k] = centre[k];
   }
   static constexpr double kRefZ[3] = { 0.0, 0.0, 1.0 };
   static constexpr double kRefX[3] = { 1.0, 0.0, 0.0 };
@@ -753,7 +744,34 @@ bool MakeSunGlobeProjector(const LUMICE_SinglePathResult& result, int component,
   out->right[0] = up[1] * out->centre[2] - up[2] * out->centre[1];
   out->right[1] = up[2] * out->centre[0] - up[0] * out->centre[2];
   out->right[2] = up[0] * out->centre[1] - up[1] * out->centre[0];
+}
+
+bool MakeSunGlobeProjector(const LUMICE_SinglePathResult& result, int component, SunGlobeProjector* out) {
+  const int stored = PointValidSampleIndexAt(result, component, 0);
+  if (stored < 0) {
+    return false;
+  }
+  LUMICE_PathPointSample sample{};
+  sample.struct_size = sizeof(sample);
+  if (LUMICE_PathPointGetSample(&result, static_cast<size_t>(component), static_cast<size_t>(stored), &sample) !=
+      LUMICE_PATH_READ_OK) {
+    return false;
+  }
+  // The Fit view's centre is the component's first valid u.
+  BuildSunGlobeBasis(sample.sun_in_crystal, out);
   return true;
+}
+
+SunGlobeProjector MakeSunGlobeFullProjector() {
+  // The Full view's centre: the crystal +x, an equatorial fixed direction (owner-picked within
+  // the "fixed equatorial direction" budget — the same latitude band the common refraction /
+  // reflection fibres sweep, so the band stays off the rim). The shared basis rule puts +z (the
+  // c-axis) on screen-up from it: |centre.z| = 0 < 0.999 references +z, up orthogonalizes to
+  // exactly +z, right = up × centre = +y.
+  static constexpr double kFixedCentre[3] = { 1.0, 0.0, 0.0 };
+  SunGlobeProjector out;
+  BuildSunGlobeBasis(kFixedCentre, &out);
+  return out;
 }
 
 void SunGlobeProject(const SunGlobeProjector& projector, const double u[3], double* out_x, double* out_y) {
@@ -792,7 +810,7 @@ size_t SunGridDrawCount(const LUMICE_PathSunGrid& grid) {
   return std::min(grid.cell_count, static_cast<size_t>(grid.lat_count) * static_cast<size_t>(grid.lon_count));
 }
 
-constexpr const char* kSunGridLegendTitle = "Deviation δ (deg) · auto range";
+constexpr const char* kSunGridLegendTitle = "Deviation δ · auto";
 
 }  // namespace
 
@@ -827,29 +845,6 @@ uint32_t SunGridCellColorRgba(double deviation_rad, uint8_t valid, const SunGrid
   return IM_COL32(static_cast<int>(92 + 127 * t), static_cast<int>(55 + 129 * t), static_cast<int>(135 + 115 * t), 235);
 }
 
-std::string SunGridRangeText(const SunGridRange& range) {
-  if (!range.available) {
-    return "No valid deviation data";
-  }
-  constexpr double kRadToDeg = 180.0 / 3.14159265358979323846;
-  char lo[64], hi[64];
-  for (int precision = 6; precision <= 17; ++precision) {
-    std::snprintf(lo, sizeof(lo), "%.*g", precision, range.min_rad * kRadToDeg);
-    std::snprintf(hi, sizeof(hi), "%.*g", precision, range.max_rad * kRadToDeg);
-    if (range.min_rad == range.max_rad || std::strcmp(lo, hi) != 0) {
-      break;
-    }
-  }
-  if (range.min_rad != range.max_rad && std::strcmp(lo, hi) == 0) {
-    // Adjacent doubles can collide in the degree conversion itself, not just in formatting.
-    // Keep a nonzero interval honest with an origin + offsets, rather than inventing extrema.
-    char span[64];
-    std::snprintf(span, sizeof(span), "%.17g", (range.max_rad - range.min_rad) * kRadToDeg);
-    return std::string(lo) + " deg + [0, " + span + "] deg";
-  }
-  return range.min_rad == range.max_rad ? std::string(lo) + " deg (constant)" : std::string(lo) + " – " + hi + " deg";
-}
-
 void DrawSunGridBackdrop(ImDrawList* dl, const LUMICE_PathSunGrid& grid, const SunGlobeProjector& projector,
                          const SunGridRange& range, const ImVec2& centre, float radius) {
   const size_t count = SunGridDrawCount(grid);
@@ -871,31 +866,85 @@ void DrawSunGridBackdrop(ImDrawList* dl, const LUMICE_PathSunGrid& grid, const S
   }
 }
 
-float SunGridLegendHeight(const SunGridRange& range, float width) {
-  const float spacing = ImGui::GetStyle().ItemSpacing.y;
-  const float wrap = std::max(1.0f, width);
-  return ImGui::CalcTextSize(kSunGridLegendTitle, nullptr, false, wrap).y + spacing +
-         ImGui::CalcTextSize(SunGridRangeText(range).c_str(), nullptr, false, wrap).y + spacing +
-         (range.available ? UiPx(8) + spacing : 0.0f);
+float SunGridLegendColumnWidth() {
+  // The column's fixed width claim on the canvas row: wide enough for the common "12.3° – 45.6°"
+  // range on one line at the default font, narrow enough to leave the disk the row's majority.
+  // Longer extreme-value texts wrap to further lines (the footprint is consumed vertically —
+  // the band absorbs the row's slack, never the text).
+  return UiPx(96.0f);
 }
 
-void RenderSunGridLegend(const SunGridRange& range) {
-  DisabledWrappedText("%s", kSunGridLegendTitle);
-  RegisterPointTextItem("##sun_grid_title");
-  if (range.available) {
-    const ImVec2 start = ImGui::GetCursorScreenPos();
-    const float width = std::max(1.0f, ImGui::GetContentRegionAvail().x);
-    ImGui::InvisibleButton("##sun_grid_band", ImVec2(width, UiPx(8)));
-    ImDrawList* dl = ImGui::GetWindowDrawList();
-    const bool constant = range.min_rad == range.max_rad;
-    const int steps = constant ? 1 : 64;
-    for (int i = 0; i < steps; ++i) {
-      const double delta = constant ? range.min_rad : range.min_rad + (range.max_rad - range.min_rad) * i / (steps - 1);
-      dl->AddRectFilled(ImVec2(start.x + width * i / steps, start.y),
-                        ImVec2(start.x + width * (i + 1) / steps, start.y + UiPx(8)),
-                        SunGridCellColorRgba(delta, 1, range));
+// The range text's own endpoint ladder (the 6..17 significant-digit climb until lo and hi read
+// apart, or the conversion itself collides) — shared with the band's end ticks so the ticks and
+// the text cannot disagree about the endpoints they name. Also the single owner of the rad→deg
+// display conversion.
+void SunGridDegEndpoints(const SunGridRange& range, char* lo, size_t lo_size, char* hi, size_t hi_size) {
+  constexpr double kRadToDeg = 180.0 / 3.14159265358979323846;
+  for (int precision = 6; precision <= 17; ++precision) {
+    std::snprintf(lo, lo_size, "%.*g", precision, range.min_rad * kRadToDeg);
+    std::snprintf(hi, hi_size, "%.*g", precision, range.max_rad * kRadToDeg);
+    if (range.min_rad == range.max_rad || std::strcmp(lo, hi) != 0) {
+      break;
     }
   }
+}
+
+std::string SunGridRangeText(const SunGridRange& range) {
+  if (!range.available) {
+    return "No valid deviation data";
+  }
+  char lo[64], hi[64];
+  SunGridDegEndpoints(range, lo, sizeof(lo), hi, sizeof(hi));
+  if (range.min_rad != range.max_rad && std::strcmp(lo, hi) == 0) {
+    // Adjacent doubles can collide in the degree conversion itself, not just in formatting.
+    // Keep a nonzero interval honest with an origin + offsets, rather than inventing extrema.
+    char span[64];
+    std::snprintf(span, sizeof(span), "%.17g", (range.max_rad - range.min_rad) * (180.0 / 3.14159265358979323846));
+    return std::string(lo) + "° + [0, " + span + "]°";
+  }
+  return range.min_rad == range.max_rad ? std::string(lo) + "° (constant)" : std::string(lo) + "° – " + hi + "°";
+}
+
+void RenderSunGridLegend(const SunGridRange& range, float row_height) {
+  // The vertical column at the canvas's right edge: header, high tick, the band (low value at
+  // the BOTTOM, high at the top — y-down screens invert the ramp's drawing order), low tick, the
+  // range text. Every text wraps at the column's width; the band's height is the row's slack
+  // between a floor and a cap, so the column never clips and never grows past its host's intent
+  // by more than the text it must show.
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  const float wrap = std::max(1.0f, SunGridLegendColumnWidth());
+  const float spacing = ImGui::GetStyle().ItemSpacing.y;
+  DisabledWrappedText("%s", kSunGridLegendTitle);
+  RegisterPointTextItem("##sun_grid_title");
+  if (!range.available) {
+    DisabledWrappedText("%s", SunGridRangeText(range).c_str());
+    RegisterPointTextItem("##sun_grid_range");
+    return;
+  }
+  char lo[64], hi[64];
+  SunGridDegEndpoints(range, lo, sizeof(lo), hi, sizeof(hi));
+  DisabledWrappedText("%s°", hi);
+  RegisterPointTextItem("##sun_grid_hi_tick");
+  const float text_block = ImGui::CalcTextSize(kSunGridLegendTitle, nullptr, false, wrap).y + spacing +
+                           ImGui::CalcTextSize(hi, nullptr, false, wrap).y + spacing +
+                           ImGui::CalcTextSize(lo, nullptr, false, wrap).y + spacing +
+                           ImGui::CalcTextSize(SunGridRangeText(range).c_str(), nullptr, false, wrap).y + spacing;
+  const float band_h = std::clamp(row_height - text_block, UiPx(16.0f), UiPx(120.0f));
+  const float band_w = UiPx(12.0f);
+  const ImVec2 band_pos = ImGui::GetCursorScreenPos();
+  ImGui::InvisibleButton("##sun_grid_band", ImVec2(band_w, band_h));
+  const bool constant = range.min_rad == range.max_rad;
+  const int steps = constant ? 1 : 64;
+  for (int i = 0; i < steps; ++i) {
+    // Segment i counts from the TOP: the last segment (the ramp's high end) sits at the top, so
+    // the delta walk runs high → low as y grows.
+    const double delta = constant ? range.min_rad : range.max_rad - (range.max_rad - range.min_rad) * i / (steps - 1);
+    dl->AddRectFilled(ImVec2(band_pos.x, band_pos.y + band_h * i / steps),
+                      ImVec2(band_pos.x + band_w, band_pos.y + band_h * (i + 1) / steps),
+                      SunGridCellColorRgba(delta, 1, range));
+  }
+  DisabledWrappedText("%s°", lo);
+  RegisterPointTextItem("##sun_grid_lo_tick");
   DisabledWrappedText("%s", SunGridRangeText(range).c_str());
   RegisterPointTextItem("##sun_grid_range");
 }
@@ -1670,7 +1719,32 @@ const CrystalConfig* FrozenCrystalForPool(const GuiState& state, int pool) {
   return &state.analysis.frozen_crystals[static_cast<size_t>(pool)];
 }
 
-// ---- The sun-direction globe -------------------------------------------------------------------------
+// ---- The sun-direction globe
+// -----------------------------------------------------------------------------------------
+
+// The globe view's fixed two-cell control (the curve range control's shape, a different life:
+// this mode survives adoptions where the curve's refits — see SunGlobeViewMode). Clicking the
+// current cell is a no-op; the pair's shared concept rides the region title's info icon.
+void RenderSunGlobeViewControl(SunGlobeViewMode* mode) {
+  const float cell_w =
+      std::max(ImGui::CalcTextSize("Fit").x, ImGui::CalcTextSize("Full").x) + 2.0f * ImGui::GetStyle().FramePadding.x;
+  for (int segment = 0; segment < 2; ++segment) {
+    const auto candidate = segment == 0 ? SunGlobeViewMode::kFit : SunGlobeViewMode::kFull;
+    const bool current = *mode == candidate;
+    if (current) {
+      PushCurrentSegmentStyle();
+    }
+    if (ImGui::Button(segment == 0 ? "Fit##globe_view" : "Full##globe_view", ImVec2(cell_w, 0)) && !current) {
+      *mode = candidate;
+    }
+    if (current) {
+      ImGui::PopStyleColor(4);
+    }
+    if (segment == 0) {
+      ImGui::SameLine(0.0f, 0.0f);
+    }
+  }
+}
 
 void RenderAnalyzeSunGlobeRegion(GuiState& state, const ImVec2& size) {
   ImGui::BeginChild("##AnalyzeSunGlobe", size, ImGuiChildFlags_Borders);
@@ -1681,10 +1755,33 @@ void RenderAnalyzeSunGlobeRegion(GuiState& state, const ImVec2& size) {
   const auto render_state_area = [](auto&& draw_lines) { draw_lines(); };
 
   // ---- The fixed interaction stack (R4): the controls a hand must reach are submitted outside
-  // any scrolling region at every cell the window's minimum admits — the title here (the
-  // deviation-grid toggle lives in the factors region's user-facing diagnostics group, §16.4);
-  // the combo, canvas, colour legend and slider/play row in the discovered arm below. ----
+  // any scrolling region at every cell the window's minimum admits — the title with the view
+  // control and its info icon here (the deviation-grid toggle lives in the factors region's
+  // user-facing diagnostics group, §16.4); the combo, canvas, colour legend and slider/play row
+  // in the discovered arm below. ----
   ImGui::TextUnformatted("Sun direction globe");
+  // The view control joins the title while the line admits it; the shared concept text rides
+  // one info icon (the two-tier rule) — the six per-arm copies of the old concept sentence are
+  // retired with it.
+  const auto title_band_fits = [&](float next_w) {
+    const float line_right = ImGui::GetContentRegionMax().x + ImGui::GetWindowPos().x;
+    return ImGui::GetItemRectMax().x + ImGui::GetStyle().ItemSpacing.x + next_w <= line_right;
+  };
+  if (title_band_fits(ImGui::CalcTextSize("Fit").x + ImGui::CalcTextSize("Full").x +
+                      4.0f * ImGui::GetStyle().FramePadding.x)) {
+    ImGui::SameLine();
+  }
+  RenderSunGlobeViewControl(&view.sun_globe_view_mode);
+  if (title_band_fits(InfoIconAdvance())) {
+    ImGui::SameLine();
+  }
+  InfoIcon("globe_view_help",
+           "Crystal-frame sun directions — a pose projection, not the full SO(3).\n"
+           "Full: a fixed crystal-frame basis (centre +x, up +z — the c-axis vertical on "
+           "screen); the same arc draws the same map at every picked point.\n"
+           "Fit: centred on this component's first valid sample — the view follows the point.\n"
+           "The deviation colour scale is auto-ranged per document; colours do not compare "
+           "across results.");
 
   const auto info = point.adopted_result ? ReadPointInfo(*point.adopted_result) : std::nullopt;
   std::vector<PointComponentRow> rows;
@@ -1717,8 +1814,9 @@ void RenderAnalyzeSunGlobeRegion(GuiState& state, const ImVec2& size) {
   if (valid_count > 0) {
     AdvancePointPlayback(&view, valid_count, ImGui::GetTime());
   }
-  // Read once, before allocating the canvas: the complete legend footprint has first claim.
-  // Only the discovered arm displays terrain; waiting/withdrawn/mass documents show no old scale.
+  // Read once, before allocating the canvas: the legend's width claim on the canvas row is
+  // known before the row is laid out. Only the discovered arm displays terrain; waiting/
+  // withdrawn/mass documents show no old scale.
   LUMICE_PathSunGrid grid{};
   grid.struct_size = sizeof(grid);
   const bool have_grid =
@@ -1730,19 +1828,25 @@ void RenderAnalyzeSunGlobeRegion(GuiState& state, const ImVec2& size) {
       std::max(ImGui::CalcTextSize("Stop").x, ImGui::CalcTextSize("Play").x) + ImGui::GetStyle().FramePadding.x * 2.0f;
   const ImVec2 available = ImGui::GetContentRegionAvail();
   const bool shared_line = available.x - play_w - ImGui::GetStyle().ItemSpacing.x >= UiPx(80.0f);
-  const float controls_h = ImGui::GetFrameHeightWithSpacing() * (shared_line ? 1.0f : 2.0f) +
-                           (have_grid ? SunGridLegendHeight(grid_range, available.x) : 0.0f);
-  const float graph_side = std::min(
-      available.x, CanvasHeightBeforeReport(available.y, controls_h, UiPx(64.0f), ImGui::GetStyle().ItemSpacing.y));
+  // The vertical legend left the height budget with its old horizontal layout: the column rides
+  // the canvas row's right edge and its band absorbs the row's slack, so only the slider/play
+  // row reserves height above the canvas. The column's WIDTH, by contrast, has first claim on
+  // the row — the square canvas is what remains.
+  const float controls_h = ImGui::GetFrameHeightWithSpacing() * (shared_line ? 1.0f : 2.0f);
+  const float legend_w = have_grid ? SunGridLegendColumnWidth() + ImGui::GetStyle().ItemSpacing.x : 0.0f;
+  const float graph_side =
+      std::min(available.x - legend_w,
+               CanvasHeightBeforeReport(available.y, controls_h, UiPx(64.0f), ImGui::GetStyle().ItemSpacing.y));
   const ImVec2 graph_min = ImGui::GetCursorScreenPos();
   ImDrawList* graph_draw_list = ImGui::GetWindowDrawList();
   if (graph_side > 0.0f) {
     ImGui::InvisibleButton("##globe_canvas", ImVec2(graph_side, graph_side));
     graph_draw_list->AddCircle(ImVec2(graph_min.x + graph_side * 0.5f, graph_min.y + graph_side * 0.5f),
                                std::max(1.0f, graph_side * 0.5f - UiPx(4.0f)), ImGui::GetColorU32(ImGuiCol_Border));
-  }
-  if (have_grid) {
-    RenderSunGridLegend(grid_range);
+    if (have_grid) {
+      ImGui::SameLine();
+      RenderSunGridLegend(grid_range, graph_side);
+    }
   }
   int pos = valid_count > 0 ? std::clamp(view.sample_index, 0, valid_count - 1) : 0;
   ImGui::BeginDisabled(valid_count == 0);
@@ -1765,7 +1869,6 @@ void RenderAnalyzeSunGlobeRegion(GuiState& state, const ImVec2& size) {
     if (st == PointQueryState::kNoIntent) {
       render_state_area([&] {
         ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-        ImGui::TextWrapped("Crystal-frame sun directions — a pose projection, not the full SO(3).");
         if (!state.analysis.sky_point.valid) {
           ImGui::TextWrapped(
               "Pick a sky point on the raypath view (or type coordinates there); the fiber of poses "
@@ -1778,12 +1881,8 @@ void RenderAnalyzeSunGlobeRegion(GuiState& state, const ImVec2& size) {
       return;
     }
     if (st == PointQueryState::kWaiting || st == PointQueryState::kCancelled || st == PointQueryState::kRefused) {
-      render_state_area([&] {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-        ImGui::TextWrapped("Crystal-frame sun directions — a pose projection, not the full SO(3).");
-        // Query progress and refusal reasons have one owner: the window's fixed footer.
-        ImGui::PopStyleColor();
-      });
+      // Empty by design: query progress and refusal reasons have one owner, the window's fixed
+      // footer — the pose projection's concept text rides the title's info icon.
       return;
     }
 
@@ -1795,7 +1894,6 @@ void RenderAnalyzeSunGlobeRegion(GuiState& state, const ImVec2& size) {
     if (info->outcome == LUMICE_PATH_POINT_MASS) {
       render_state_area([&] {
         ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-        ImGui::TextWrapped("Crystal-frame sun directions — a pose projection, not the full SO(3).");
         ImGui::TextWrapped("A rank-0 point mass has no fiber to project — the details carry the mass numbers.");
         ImGui::PopStyleColor();
       });
@@ -1823,7 +1921,6 @@ void RenderAnalyzeSunGlobeRegion(GuiState& state, const ImVec2& size) {
       const bool have_reach = LUMICE_PathPointGetReach(point.adopted_result.get(), &reach) == LUMICE_PATH_READ_OK;
       render_state_area([&] {
         ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-        ImGui::TextWrapped("Crystal-frame sun directions — a pose projection, not the full SO(3).");
         draw_partial_note();
         if (have_reach && !reach.target_in_range) {
           ImGui::TextWrapped(
@@ -1841,7 +1938,6 @@ void RenderAnalyzeSunGlobeRegion(GuiState& state, const ImVec2& size) {
     if (valid_count == 0) {
       render_state_area([&] {
         ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-        ImGui::TextWrapped("Crystal-frame sun directions — a pose projection, not the full SO(3).");
         draw_partial_note();
         ImGui::TextWrapped("This component carries no valid sample — nothing to project.");
         ImGui::PopStyleColor();
@@ -1849,8 +1945,17 @@ void RenderAnalyzeSunGlobeRegion(GuiState& state, const ImVec2& size) {
       return;
     }
     if (graph_side > 0.0f) {
+      // Full's fixed basis is a total function of nothing — no document read can fail it; Fit
+      // anchors on the component's first valid sample (its ok=false arm is unreachable here,
+      // the no-valid-sample state above already returned).
       SunGlobeProjector projector;
-      const bool have_projector = MakeSunGlobeProjector(*point.adopted_result, component, &projector);
+      bool have_projector = false;
+      if (view.sun_globe_view_mode == SunGlobeViewMode::kFull) {
+        projector = MakeSunGlobeFullProjector();
+        have_projector = true;
+      } else {
+        have_projector = MakeSunGlobeProjector(*point.adopted_result, component, &projector);
+      }
 
       const float side = graph_side;
       ImDrawList* dl = graph_draw_list;
@@ -1926,7 +2031,6 @@ void RenderAnalyzeSunGlobeRegion(GuiState& state, const ImVec2& size) {
     // lines live at every width. ----
     const std::optional<CurrentSample> current = CurrentSampleOf(*point.adopted_result, view, valid_indices);
     render_state_area([&] {
-      DisabledWrappedText("Crystal-frame sun directions — a pose projection, not the full SO(3).");
       if (partial_document) {
         WarningTextWrapped("Partial document (%s) — the fiber on show is what arrived.",
                            ExecutionText(info->execution));

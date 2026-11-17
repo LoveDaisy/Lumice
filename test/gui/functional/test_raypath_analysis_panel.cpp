@@ -9904,6 +9904,11 @@ bool RefinedPayloadSampleFollowsCurveGlobeAndTrace(ImGuiTestContext* ctx) {
       false);
   ctx->Yield(3);
   const auto point = gui::g_state.analysis.point.adopted_result;
+  // This leg pins the DOCUMENT-derived projection (the marker = the current sample through the
+  // component-anchored basis), so it pins the Fit view explicitly: the factory default is Full,
+  // whose basis is fixed and would make the marker's expected position document-independent.
+  gui::g_state.analysis.point_view.sun_globe_view_mode = gui::SunGlobeViewMode::kFit;
+  ctx->Yield(3);
   gui::PointContributionCurve curve;
   IM_CHECK_RETV(gui::BuildPointContributionCurve(*point, 0, &curve), false);
   LUMICE_PathPointComponent component{};
@@ -11823,7 +11828,7 @@ bool SunGridRealReaderLayoutAndSelection(ImGuiTestContext* ctx) {
   std::snprintf(hi, sizeof(hi), "%.6g", max_rad * 180 / 3.14159265358979323846);
   const auto check = [&]() -> bool {
     const std::string text = CaptureFrameText(ctx);
-    IM_CHECK_RETV(text.find(std::string(lo) + " – " + hi + " deg") != std::string::npos, false);
+    IM_CHECK_RETV(text.find(std::string(lo) + "° – " + hi + "°") != std::string::npos, false);
     auto* w = PoseRegionWindow("##AnalyzeSunGlobe");
     IM_CHECK_RETV(w != nullptr, false);
     const auto item_visible = [&](const char* id) -> bool {
@@ -11848,10 +11853,22 @@ bool SunGridRealReaderLayoutAndSelection(ImGuiTestContext* ctx) {
       return true;
     };
     IM_CHECK_RETV(item_visible("##sun_grid_title") && item_visible("##sun_grid_band") &&
-                      item_visible("##sun_grid_range") && item_visible("##globe_sample"),
+                      item_visible("##sun_grid_range") && item_visible("##sun_grid_hi_tick") &&
+                      item_visible("##sun_grid_lo_tick") && item_visible("##globe_sample"),
                   false);
     const auto canvas = ctx->ItemInfo(w->GetID("##globe_canvas"), ImGuiTestOpFlags_NoError);
     IM_CHECK_RETV(canvas.ID != 0, false);
+    // The vertical legend's geometry: the band is a tall narrow column right of the disk, the
+    // high tick reads above it and the low tick below it — the ramp's direction pinned at the
+    // item-rect level (the fixture test's colour legs pin the ramp's own colours).
+    const auto band = ctx->ItemInfo(w->GetID("##sun_grid_band"), ImGuiTestOpFlags_NoError);
+    const auto hi_tick = ctx->ItemInfo(w->GetID("##sun_grid_hi_tick"), ImGuiTestOpFlags_NoError);
+    const auto lo_tick = ctx->ItemInfo(w->GetID("##sun_grid_lo_tick"), ImGuiTestOpFlags_NoError);
+    IM_CHECK_RETV(band.ID != 0 && hi_tick.ID != 0 && lo_tick.ID != 0, false);
+    IM_CHECK_RETV(band.RectFull.GetHeight() > band.RectFull.GetWidth(), false);
+    IM_CHECK_RETV(band.RectFull.Min.x >= canvas.RectFull.Max.x - 0.5f, false);
+    IM_CHECK_RETV(hi_tick.RectFull.Max.y <= band.RectFull.Min.y + 1.0f, false);
+    IM_CHECK_RETV(lo_tick.RectFull.Min.y >= band.RectFull.Max.y - 1.0f, false);
     bool terrain_colors = true;
     for (const auto color : { IM_COL32(92, 55, 135, 235), IM_COL32(219, 184, 250, 235) }) {
       terrain_colors &=
@@ -14393,7 +14410,7 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       for (int i = 0; i < 3; ++i)
         cell_colors[i] = cell_vertices >= (i + 1) * 4 ? dl->VtxBuffer[before + i * 4].col : 0;
       ImGui::LogToBuffer();
-      gui::RenderSunGridLegend(range);
+      gui::RenderSunGridLegend(range, 320.0f);  // the row the real region's canvas side would offer
       frame_text = ImGui::GetCurrentContext()->LogBuffer.c_str();
       ImGui::LogFinish();
       ImGui::End();
@@ -14418,7 +14435,7 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
         ctx->Yield(2);
         const std::string text = frame_text;
         IM_CHECK_RETV(ImGui::GetFrameCount() > frame, false);
-        IM_CHECK_RETV(text.find("Deviation δ (deg) · auto range") != std::string::npos, false);
+        IM_CHECK_RETV(text.find("Deviation δ · auto") != std::string::npos, false);
         IM_CHECK_RETV(text.find(expected) != std::string::npos, false);
         IM_CHECK_RETV(cell_vertices == 12, false);  // only three valid cell quads
         unsigned char pixels[2][3];
@@ -14440,6 +14457,10 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
         IM_CHECK_RETV(cell_colors[0] == IM_COL32(92, 55, 135, 235), false);
         IM_CHECK_RETV(cell_colors[2] == IM_COL32(219, 184, 250, 235), false);
         const auto band = ctx->ItemInfo("**/##sun_grid_band");
+        // The vertical legend: the band is taller than wide, and its two endpoint colours sit
+        // inside it (any ramp direction would still pass colour presence — the geometry pins
+        // the direction along with the layout claim).
+        IM_CHECK_RETV(band.RectFull.GetHeight() > band.RectFull.GetWidth(), false);
         auto* w = ctx->GetWindowByRef("//Sun grid fixture");
         bool band_colors = true;
         for (const ImU32 color : { IM_COL32(92, 55, 135, 235), IM_COL32(219, 184, 250, 235) }) {
@@ -14451,17 +14472,17 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
         IM_CHECK_RETV(SaveWindowPng(ctx, "//Sun grid fixture", GuiTestTempPath(screenshot).string()), false);
         return true;
       };
-      IM_CHECK(check_band("5.72958 – 11.4592 deg", "sun_grid_A.png"));
+      IM_CHECK(check_band("5.72958° – 11.4592°", "sun_grid_A.png"));
       const int a_frame = ImGui::GetFrameCount();
       delta[0] = .4;
       delta[1] = .41;
       delta[2] = .42;
       ctx->Yield(3);
       IM_CHECK(ImGui::GetFrameCount() > a_frame);
-      IM_CHECK(check_band("22.9183 – 24.0642 deg", "sun_grid_B.png"));
+      IM_CHECK(check_band("22.9183° – 24.0642°", "sun_grid_B.png"));
       delta[0] = delta[1] = delta[2] = 0;
       ctx->Yield(3);
-      IM_CHECK(frame_text.find("0 deg (constant)") != std::string::npos);
+      IM_CHECK(frame_text.find("0° (constant)") != std::string::npos);
       IM_CHECK(cell_colors[0] == IM_COL32(155, 119, 192, 235) && cell_colors[0] == cell_colors[2]);
       for (auto& v : valid)
         v = 0;

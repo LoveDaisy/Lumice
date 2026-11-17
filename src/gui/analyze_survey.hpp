@@ -431,6 +431,20 @@ struct Ray3DReportRecord {
 // Curve range is a session-only display attribute: adoption resets Fit; closing the window keeps it.
 enum class PointCurveRangeMode { kFit, kFull };
 
+// The u-globe's view mode (2026-11-17 feedback, the Fit/Full pair the curve control standardized):
+//   * Full projects the crystal frame from a FIXED basis — centre +x, up +z (the c-axis stays
+//     vertical on screen, the orbit camera's own convention). The same arc's backdrop is then
+//     the same map at every picked point; the default.
+//   * Fit centres the projection on the selected component's first valid sample — the
+//     pre-2026-11-17 behaviour made explicit: the view deliberately follows the point.
+// An independent T-session attribute with a DIFFERENT reset law from the curve's, despite the
+// shared Fit/Full vocabulary: the globe mode survives adoptions (the pose view is a browsing
+// surface — a new point must not silently re-center a view the user pinned), while the curve
+// range refits per document. New / successful Open resets it with the whole analysis session
+// (the struct default); Revert keeps it like the other session display preferences. Deliberately
+// not a PointCurveRangeMode alias — one type per life.
+enum class SunGlobeViewMode { kFit, kFull };
+
 struct PointViewState {
   int component_index = 0;  // the selected component of the adopted document (clamped on adoption)
   int sample_index = 0;     // index into that component's VALID samples
@@ -453,6 +467,11 @@ struct PointViewState {
   float orbit_pitch_deg = kDefaultOrbitPitchDeg;
   float orbit_zoom = 1.0f;  // 1 = the fit-to-content default
   PointCurveRangeMode curve_range_mode = PointCurveRangeMode::kFit;
+  SunGlobeViewMode sun_globe_view_mode = SunGlobeViewMode::kFull;  // the u-globe's view: fixed
+                                                                   // crystal basis (Full, the
+                                                                   // default) vs fibre-centred
+                                                                   // (Fit) — survives adoptions,
+                                                                   // see the enum's reset law
 
   // Restore orientation only; zoom and the other session display choices survive.
   void ResetOrbitOrientation() {
@@ -463,7 +482,9 @@ struct PointViewState {
 
 // Resets the display cursor for a NEW adoption: the component/sample selection belongs to the
 // document it was read from. Playback stops — a new document must not inherit a running cursor.
-// The curve axis refits. The toggles and 3D camera survive as session display preferences.
+// The curve axis refits. The toggles, the 3D camera and the globe's Fit/Full view survive as
+// session display preferences (the globe view deliberately outlives the point that anchored the
+// last projection — its reset law lives on the enum).
 // (Defined in analyze_point_view.cpp.)
 void ResetPointViewStateForNewAdoption(PointViewState* view);
 
