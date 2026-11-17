@@ -1492,7 +1492,9 @@ static void RenderCrystalModal(GuiState& /*state*/) {
     if (g_pull_adopted.crystal_name) {
       ReloadInputTextIfActive(ImGui::GetID("##crystal_name"));
     }
-    ImGui::SetNextItemWidth(-FLT_MIN);
+    // The fill width leaves room for the joined help icon, so the row stays inside the column
+    // (no horizontal scroll; the_sync_column_leaves_the_slider_room pins that).
+    ImGui::SetNextItemWidth(-FLT_MIN - InfoIconAdvance());
     if (ImGui::InputTextWithHint("##crystal_name", "unnamed — shown as its pool id everywhere", name_buf,
                                  sizeof(name_buf))) {
       cr.name = name_buf;
