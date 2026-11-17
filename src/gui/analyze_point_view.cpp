@@ -908,30 +908,52 @@ std::string SunGridRangeText(const SunGridRange& range) {
 void RenderSunGridLegend(const SunGridRange& range, float row_height) {
   // The vertical column at the canvas's right edge: header, high tick, the band (low value at
   // the BOTTOM, high at the top — y-down screens invert the ramp's drawing order), low tick, the
-  // range text. Every text wraps at the column's width; the band's height is the row's slack
-  // between a floor and a cap, so the column never clips and never grows past its host's intent
-  // by more than the text it must show.
+  // range text. The column manages the cursor EXPLICITLY: a wrapped text ends ImGui's item flow
+  // back at the window's line start, so a SameLine'd column of wrapped texts would scatter its
+  // tail down the window's left edge — every item is placed at the column's x by hand, wrapped
+  // at the column's width, and the band's height takes the row's slack between a floor and a
+  // cap (the column never clips; the text it must show is all it may add).
   ImDrawList* dl = ImGui::GetWindowDrawList();
   const float wrap = std::max(1.0f, SunGridLegendColumnWidth());
   const float spacing = ImGui::GetStyle().ItemSpacing.y;
+  const ImVec2 column = ImGui::GetCursorScreenPos();
+  const float wrap_x = ImGui::GetCursorPosX() + wrap;  // window-local
+  ImGui::PushTextWrapPos(wrap_x);
+  float y = column.y;
+  // Place BEFORE each item: ImGui's ItemSize pulls the flow cursor back to the window's line
+  // start after every item (wrapped texts and buttons alike), so the column re-pins its own
+  // cursor ahead of each member — nothing can fall out of the column to the line below.
+  const auto place = [&](float item_h) {
+    ImGui::SetCursorScreenPos(ImVec2(column.x, y));
+    y += item_h + spacing;
+  };
+  const auto text_h = [&](const char* text) { return ImGui::CalcTextSize(text, nullptr, false, wrap).y; };
+  place(text_h(kSunGridLegendTitle));
   DisabledWrappedText("%s", kSunGridLegendTitle);
   RegisterPointTextItem("##sun_grid_title");
   if (!range.available) {
-    DisabledWrappedText("%s", SunGridRangeText(range).c_str());
+    const std::string empty_text = SunGridRangeText(range);
+    place(text_h(empty_text.c_str()));
+    DisabledWrappedText("%s", empty_text.c_str());
     RegisterPointTextItem("##sun_grid_range");
+    ImGui::PopTextWrapPos();
+    ImGui::SetCursorScreenPos(ImVec2(column.x, y));
     return;
   }
   char lo[64], hi[64];
   SunGridDegEndpoints(range, lo, sizeof(lo), hi, sizeof(hi));
+  char hi_tick[72];
+  std::snprintf(hi_tick, sizeof(hi_tick), "%s°", hi);
+  place(text_h(hi_tick));
   DisabledWrappedText("%s°", hi);
   RegisterPointTextItem("##sun_grid_hi_tick");
-  const float text_block = ImGui::CalcTextSize(kSunGridLegendTitle, nullptr, false, wrap).y + spacing +
-                           ImGui::CalcTextSize(hi, nullptr, false, wrap).y + spacing +
-                           ImGui::CalcTextSize(lo, nullptr, false, wrap).y + spacing +
-                           ImGui::CalcTextSize(SunGridRangeText(range).c_str(), nullptr, false, wrap).y + spacing;
-  const float band_h = std::clamp(row_height - text_block, UiPx(16.0f), UiPx(120.0f));
+  const std::string range_text = SunGridRangeText(range);
+  const float band_h =
+      std::clamp(row_height - (y - column.y) - spacing - text_h(range_text.c_str()), UiPx(16.0f), UiPx(120.0f));
   const float band_w = UiPx(12.0f);
-  const ImVec2 band_pos = ImGui::GetCursorScreenPos();
+  const ImVec2 band_pos(column.x, y);
+  y += band_h + spacing;
+  ImGui::SetCursorScreenPos(band_pos);
   ImGui::InvisibleButton("##sun_grid_band", ImVec2(band_w, band_h));
   const bool constant = range.min_rad == range.max_rad;
   const int steps = constant ? 1 : 64;
@@ -943,10 +965,17 @@ void RenderSunGridLegend(const SunGridRange& range, float row_height) {
                       ImVec2(band_pos.x + band_w, band_pos.y + band_h * (i + 1) / steps),
                       SunGridCellColorRgba(delta, 1, range));
   }
+  char lo_tick[72];
+  std::snprintf(lo_tick, sizeof(lo_tick), "%s°", lo);
+  place(text_h(lo_tick));
   DisabledWrappedText("%s°", lo);
   RegisterPointTextItem("##sun_grid_lo_tick");
-  DisabledWrappedText("%s", SunGridRangeText(range).c_str());
+  place(text_h(range_text.c_str()));
+  DisabledWrappedText("%s", range_text.c_str());
   RegisterPointTextItem("##sun_grid_range");
+  ImGui::PopTextWrapPos();
+  // The column's end: the caller resumes the flow from here (the slider row below the canvas).
+  ImGui::SetCursorScreenPos(ImVec2(column.x, y));
 }
 
 // ---- The representative-ray display -----------------------------------------------------------------
@@ -1847,6 +1876,10 @@ void RenderAnalyzeSunGlobeRegion(GuiState& state, const ImVec2& size) {
       ImGui::SameLine();
       RenderSunGridLegend(grid_range, graph_side);
     }
+    // The legend column manages its own cursor; the row's end is the canvas's bottom either way
+    // — the slider resumes from there, never from wherever the column's last wrapped line left
+    // the flow.
+    ImGui::SetCursorScreenPos(ImVec2(graph_min.x, graph_min.y + graph_side + ImGui::GetStyle().ItemSpacing.y));
   }
   int pos = valid_count > 0 ? std::clamp(view.sample_index, 0, valid_count - 1) : 0;
   ImGui::BeginDisabled(valid_count == 0);

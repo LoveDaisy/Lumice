@@ -11994,6 +11994,544 @@ bool SunGridRealReaderLayoutAndSelection(ImGuiTestContext* ctx) {
   return true;
 }
 
+// ---- The globe view's Fit/Full pair (2026-11-17 feedback): the fixed-basis Full view's pixel
+// contract and the mode's survival set. ----
+
+// One real-frame capture of an ImGui-space rect, through the shared fullframe capture (the same
+// read SaveWindowPng makes for a whole window). Pixels come back top-down RGBA. `overlay_mask`
+// is the frame's OWN submitted overlay footprint over the rect (the accent fibre and marker
+// triangles, rasterized live at capture time) — two picks have two different marker positions,
+// so the comparison mask is the UNION of both captures' footprints, never one side's.
+struct GlobeRectCapture {
+  std::vector<unsigned char> pixels;
+  std::vector<uint8_t> overlay_mask;
+  int w = 0;
+  int h = 0;
+  int frame = -1;
+  ImRect rect;
+};
+
+bool CaptureGlobeRect(ImGuiTestContext* ctx, const ImRect& rect, GlobeRectCapture* out) {
+  const ImGuiIO& io = ImGui::GetIO();
+  const float sx = io.DisplayFramebufferScale.x;
+  const float sy = io.DisplayFramebufferScale.y;
+  const ImVec2 vp = ImGui::GetMainViewport()->Pos;
+  auto to_px = [](float v) { return static_cast<int>(ImFloor(v + 0.5f)); };
+  const int rx = to_px((rect.Min.x - vp.x) * sx);
+  const int ry = to_px((rect.Min.y - vp.y) * sy);
+  const int rw = to_px(rect.GetWidth() * sx);
+  const int rh = to_px(rect.GetHeight() * sy);
+  const int fb_h = to_px(io.DisplaySize.y * sy);
+  IM_CHECK_RETV(rx >= 0 && ry >= 0 && rw > 0 && rh > 0 && ry + rh <= fb_h, false);
+  g_fullframe_capture.Reset();
+  g_fullframe_capture.rect_x = rx;
+  g_fullframe_capture.rect_y = fb_h - ry - rh;  // GL origin: bottom-left
+  g_fullframe_capture.rect_w = rw;
+  g_fullframe_capture.rect_h = rh;
+  g_fullframe_capture.requested.store(true);
+  for (int i = 0; i < 10 && !g_fullframe_capture.done.load(); ++i) {
+    ctx->Yield(1);
+  }
+  IM_CHECK_RETV(g_fullframe_capture.done.load(), false);
+  IM_CHECK_RETV(g_fullframe_capture.width == rw && g_fullframe_capture.height == rh, false);
+  IM_CHECK_RETV(g_fullframe_capture.pixels.size() == static_cast<size_t>(rw) * rh * 4, false);
+  out->w = rw;
+  out->h = rh;
+  out->pixels = g_fullframe_capture.pixels;
+  out->frame = ctx->FrameCount;  // the engine's test-frame counter — ImGui::GetFrameCount reads
+  out->rect = rect;              // -1 off the test coroutine's context
+  return true;
+}
+
+// The REAL submitted overlay footprint over a capture rect: every draw-list triangle whose
+// colour is the accent fibre ink or the marker's white ring, rasterized into the rect's pixel
+// space and dilated to cover the antialiasing fringe. This is the ONLY area two picks of the
+// same arc may differ in — masking anything else (colour band, ticks, terrain, disk) would let
+// a backdrop change hide inside the exclusion.
+struct GlobeOverlayMask {
+  std::vector<uint8_t> mask;
+  int covered = 0;
+};
+
+void BuildGlobeOverlayMask(ImGuiWindow* region, const ImRect& rect, int px_w, int px_h, GlobeOverlayMask* out,
+                           ImGuiTestContext* ctx = nullptr) {
+  const ImGuiIO& io = ImGui::GetIO();
+  const float sx = io.DisplayFramebufferScale.x;
+  const float sy = io.DisplayFramebufferScale.y;
+  const ImVec2 vp = ImGui::GetMainViewport()->Pos;
+  const ImU32 accent = ImGui::ColorConvertFloat4ToU32(gui::AccentColor());
+  constexpr ImU32 kMarkerRing = IM_COL32(255, 255, 255, 210);
+  if (ctx != nullptr) {
+    int accent_verts = 0;
+    int ring_verts = 0;
+    int opaque_verts = 0;
+    for (const auto& v : region->DrawList->VtxBuffer) {
+      if (v.col == accent) {
+        ++accent_verts;
+      }
+      if (v.col == kMarkerRing) {
+        ++ring_verts;
+      }
+      if ((v.col & IM_COL32_A_MASK) == IM_COL32_A_MASK) {
+        ++opaque_verts;
+      }
+    }
+    ctx->LogInfo("[globe mask] accent %08X verts: accent %d ring %d opaque %d total %d", accent, accent_verts,
+                 ring_verts, opaque_verts, region->DrawList->VtxBuffer.Size);
+    int overlay_tris = 0;
+    int cmds_overlap = 0;
+    ImVec2 tri_min(FLT_MAX, FLT_MAX);
+    ImVec2 tri_max(-FLT_MAX, -FLT_MAX);
+    for (const auto& cmd : region->DrawList->CmdBuffer) {
+      const ImRect clip(cmd.ClipRect.x, cmd.ClipRect.y, cmd.ClipRect.z, cmd.ClipRect.w);
+      if (!clip.Overlaps(rect)) {
+        continue;
+      }
+      ++cmds_overlap;
+      for (unsigned t = 0; t < cmd.ElemCount / 3; ++t) {
+        const auto& va =
+            region->DrawList->VtxBuffer[cmd.VtxOffset + region->DrawList->IdxBuffer[cmd.IdxOffset + t * 3]];
+        const auto& vb =
+            region->DrawList->VtxBuffer[cmd.VtxOffset + region->DrawList->IdxBuffer[cmd.IdxOffset + t * 3 + 1]];
+        const auto& vc =
+            region->DrawList->VtxBuffer[cmd.VtxOffset + region->DrawList->IdxBuffer[cmd.IdxOffset + t * 3 + 2]];
+        if (va.col == accent || va.col == kMarkerRing || vb.col == accent || vb.col == kMarkerRing ||
+            vc.col == accent || vc.col == kMarkerRing) {
+          ++overlay_tris;
+          for (const ImVec2& p : { va.pos, vb.pos, vc.pos }) {
+            tri_min.x = std::min(tri_min.x, p.x);
+            tri_min.y = std::min(tri_min.y, p.y);
+            tri_max.x = std::max(tri_max.x, p.x);
+            tri_max.y = std::max(tri_max.y, p.y);
+          }
+        }
+      }
+    }
+    ctx->LogInfo(
+        "[globe mask] cmds_overlap %d overlay_tris %d tri bbox (%.0f,%.0f)-(%.0f,%.0f) capture rect "
+        "(%.0f,%.0f)-(%.0f,%.0f) px %dx%d",
+        cmds_overlap, overlay_tris, tri_min.x, tri_min.y, tri_max.x, tri_max.y, rect.Min.x, rect.Min.y, rect.Max.x,
+        rect.Max.y, px_w, px_h);
+  }
+  out->mask.assign(static_cast<size_t>(px_w) * px_h, 0);
+  // Screen -> capture-pixel space: scale, then subtract the capture rect's own origin — the
+  // mask indexes pixels RELATIVE to the captured rect, the same space the captured bytes use.
+  auto to_cap = [&](const ImVec2& p) { return ImVec2((p.x - rect.Min.x) * sx, (p.y - rect.Min.y) * sy); };
+  auto raster_triangle = [&](ImVec2 a, ImVec2 b, ImVec2 c) {
+    const float min_x = std::max(0.0f, std::min({ a.x, b.x, c.x }));
+    const float max_x = std::min(static_cast<float>(px_w), std::max({ a.x, b.x, c.x }) + 1.0f);
+    const float min_y = std::max(0.0f, std::min({ a.y, b.y, c.y }));
+    const float max_y = std::min(static_cast<float>(px_h), std::max({ a.y, b.y, c.y }) + 1.0f);
+    const float sign = (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+    if (std::fabs(sign) < 1e-9f) {
+      return;
+    }
+    for (int py = static_cast<int>(min_y); py < static_cast<int>(max_y); ++py) {
+      for (int pxx = static_cast<int>(min_x); pxx < static_cast<int>(max_x); ++pxx) {
+        const float fx = pxx + 0.5f;
+        const float fy = py + 0.5f;
+        const float d0 = ((b.x - a.x) * (fy - a.y) - (b.y - a.y) * (fx - a.x)) * sign;
+        const float d1 = ((c.x - b.x) * (fy - b.y) - (c.y - b.y) * (fx - b.x)) * sign;
+        const float d2 = ((a.x - c.x) * (fy - c.y) - (a.y - c.y) * (fx - c.x)) * sign;
+        if (d0 >= 0 && d1 >= 0 && d2 >= 0) {
+          out->mask[static_cast<size_t>(py) * px_w + pxx] = 1;
+        }
+      }
+    }
+  };
+  ImDrawList* dl = region->DrawList;
+  for (const auto& cmd : dl->CmdBuffer) {
+    const ImRect clip(cmd.ClipRect.x, cmd.ClipRect.y, cmd.ClipRect.z, cmd.ClipRect.w);
+    if (!clip.Overlaps(rect)) {
+      continue;
+    }
+    const unsigned tris = cmd.ElemCount / 3;
+    for (unsigned t = 0; t < tris; ++t) {
+      const auto& va = dl->VtxBuffer[cmd.VtxOffset + dl->IdxBuffer[cmd.IdxOffset + t * 3]];
+      const auto& vb = dl->VtxBuffer[cmd.VtxOffset + dl->IdxBuffer[cmd.IdxOffset + t * 3 + 1]];
+      const auto& vc = dl->VtxBuffer[cmd.VtxOffset + dl->IdxBuffer[cmd.IdxOffset + t * 3 + 2]];
+      if (va.col != accent && va.col != kMarkerRing && vb.col != accent && vb.col != kMarkerRing && vc.col != accent &&
+          vc.col != kMarkerRing) {
+        continue;
+      }
+      raster_triangle(to_cap(va.pos), to_cap(vb.pos), to_cap(vc.pos));
+    }
+  }
+  // Dilate by 2 physical pixels (a 4-neighbourhood flood, two passes) so the AA fringe riding
+  // the fibre's and the ring's silhouette is inside the exclusion too.
+  for (int pass = 0; pass < 2; ++pass) {
+    std::vector<uint8_t> grown = out->mask;
+    for (int y = 0; y < px_h; ++y) {
+      for (int x = 0; x < px_w; ++x) {
+        if (out->mask[static_cast<size_t>(y) * px_w + x]) {
+          continue;
+        }
+        if ((x > 0 && out->mask[static_cast<size_t>(y) * px_w + x - 1]) ||
+            (x + 1 < px_w && out->mask[static_cast<size_t>(y) * px_w + x + 1]) ||
+            (y > 0 && out->mask[static_cast<size_t>(y - 1) * px_w + x]) ||
+            (y + 1 < px_h && out->mask[static_cast<size_t>(y + 1) * px_w + x])) {
+          grown[static_cast<size_t>(y) * px_w + x] = 1;
+        }
+      }
+    }
+    out->mask.swap(grown);
+  }
+  out->covered = static_cast<int>(std::count(out->mask.begin(), out->mask.end(), 1));
+}
+
+struct GlobeRegionDiff {
+  int compared = 0;      // pixels the verdict actually rules on
+  int masked = 0;        // overlay footprint pixels excluded
+  int n_diff = 0;        // differing pixels among the compared — the contract wants exactly 0
+  int diff_in_mask = 0;  // differing pixels under the overlay — proof the frames are not clones
+};
+
+GlobeRegionDiff CompareGlobeCaptures(const GlobeRectCapture& a, const GlobeRectCapture& b,
+                                     const std::vector<uint8_t>& mask) {
+  GlobeRegionDiff d;
+  IM_ASSERT(a.w == b.w && a.h == b.h && a.pixels.size() == b.pixels.size());
+  const bool have_mask = mask.size() == a.pixels.size() / 4;
+  IM_ASSERT(mask.empty() || have_mask);  // an empty mask excludes nothing; a wrong-size one is a bug
+  const size_t n = a.pixels.size() / 4;
+  for (size_t i = 0; i < n; ++i) {
+    const bool differs = std::memcmp(a.pixels.data() + i * 4, b.pixels.data() + i * 4, 4) != 0;
+    if (have_mask && mask[i]) {
+      ++d.masked;
+      if (differs) {
+        ++d.diff_in_mask;
+      }
+    } else {
+      ++d.compared;
+      if (differs) {
+        ++d.n_diff;
+      }
+    }
+  }
+  return d;
+}
+
+// Two REAL picks on one class arc adopt two documents: Full's fixed basis must render the same
+// backdrop and the same auto legend from both — pixel for pixel, bar the fibre and the marker —
+// while the Fit view (the pick-following centring the pair retired to an explicit choice) runs
+// the same harness and MUST differ. The fixture preconditions carry the red probe's honesty:
+// the two picks genuinely differ, the documents' grids are byte-identical, and the frames are
+// distinct captures of distinct fibres.
+bool SunGlobeFullViewPinsTheBackdrop(ImGuiTestContext* ctx) {
+  ScopedServerGuard guard;
+  ScopedPoseSessionSplits splits;
+  IM_CHECK_RETV(BringUpScene(ctx, kFullyRandomJson, false, false), false);
+  OpenWindow(ctx);
+  IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
+  IM_CHECK_RETV(SelectRowByDisplay(ctx, "3-5-6-7") != std::nullopt, false);
+  gui::g_state.analyze_pose_view_open = true;
+  PinPoseViewOnScreen(ctx);
+  ctx->SetRef("//Pose & trace");
+  // The pose window's geometry is held by the splits guard and nothing in this flow drags a
+  // splitter: both picks capture identical rects, which is asserted below per capture.
+  struct PickDocument {
+    double alt = 0.0;
+    double az = 0.0;
+    std::string kind;
+    std::vector<double> deviation;
+    std::vector<uint8_t> valid;
+    int lat_count = 0;
+    int lon_count = 0;
+    double first_valid_u[3] = {};
+  };
+  const auto adopt = [&](double alt, double az, PickDocument* doc) -> bool {
+    SetSkyPointTarget(alt, az);
+    // Two-phase wait: the pump sees the new key a frame or two later — a completed-state probe
+    // alone passes instantly on the still-adopted PREVIOUS document (0 polls) and the read
+    // below then races the drop.
+    IM_CHECK_RETV(DriveUntil(ctx, [] { return !gui::g_state.analysis.point.adopted_result; }, 30), false);
+    IM_CHECK_RETV(
+        DriveUntil(
+            ctx,
+            [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCompleted; },
+            60),
+        false);
+    ctx->Yield(3);
+    doc->alt = alt;
+    doc->az = az;
+    const auto document = gui::g_state.analysis.point.adopted_result;
+    IM_CHECK_RETV(document != nullptr, false);
+    std::vector<gui::PointComponentRow> rows;
+    IM_CHECK_RETV(gui::PointComponentRows(*document, &rows) > 0, false);
+    doc->kind = rows[0].kind;
+    LUMICE_PathSunGrid grid{};
+    grid.struct_size = sizeof(grid);
+    IM_CHECK_RETV(LUMICE_PathPointGetSunGrid(document.get(), &grid) == LUMICE_PATH_READ_OK && grid.cell_count > 0,
+                  false);
+    doc->lat_count = grid.lat_count;
+    doc->lon_count = grid.lon_count;
+    doc->deviation.assign(grid.deviation_rad, grid.deviation_rad + grid.cell_count);
+    doc->valid.assign(grid.valid, grid.valid + grid.cell_count);
+    const int stored = gui::PointValidSampleIndexAt(*document, 0, 0);
+    IM_CHECK_RETV(stored >= 0, false);
+    LUMICE_PathPointSample sample{};
+    sample.struct_size = sizeof(sample);
+    IM_CHECK_RETV(
+        LUMICE_PathPointGetSample(document.get(), 0, static_cast<size_t>(stored), &sample) == LUMICE_PATH_READ_OK,
+        false);
+    for (int k = 0; k < 3; ++k) {
+      doc->first_valid_u[k] = sample.sun_in_crystal[k];
+    }
+    return true;
+  };
+  const auto globe_rects = [&](ImRect* canvas_rect, ImRect* legend_rect) -> bool {
+    ImGuiWindow* w = PoseRegionWindow("##AnalyzeSunGlobe");
+    IM_CHECK_RETV(w != nullptr, false);
+    const auto canvas = ctx->ItemInfo(w->GetID("##globe_canvas"), ImGuiTestOpFlags_NoError);
+    IM_CHECK_RETV(canvas.ID != 0, false);
+    ImRect legend(canvas.RectFull.Max.x, canvas.RectFull.Min.y, 0.0f, 0.0f);
+    for (const char* id :
+         { "##sun_grid_title", "##sun_grid_hi_tick", "##sun_grid_band", "##sun_grid_lo_tick", "##sun_grid_range" }) {
+      const auto item = ctx->ItemInfo(w->GetID(id), ImGuiTestOpFlags_NoError);
+      if (item.ID != 0) {
+        legend.Add(item.RectFull);
+      }
+    }
+    IM_CHECK_RETV(legend.Max.x > legend.Min.x, false);
+    // No extra margin: the rect is the legend items' own union — the canvas's corner
+    // background bleeding in through padding would only add non-legend pixels to the verdict.
+    *canvas_rect = canvas.RectFull;
+    *legend_rect = legend;
+    return true;
+  };
+  const auto capture_both = [&](const char* tag, GlobeRectCapture* canvas_cap, GlobeRectCapture* legend_cap) -> bool {
+    ImRect canvas_rect;
+    ImRect legend_rect;
+    IM_CHECK_RETV(globe_rects(&canvas_rect, &legend_rect), false);
+    IM_CHECK_RETV(CaptureGlobeRect(ctx, canvas_rect, canvas_cap), false);
+    IM_CHECK_RETV(CaptureGlobeRect(ctx, legend_rect, legend_cap), false);
+    // The overlay footprint of THIS frame, rasterized while the frame's own draw list is live
+    // (the compare below unions it with the other side's).
+    ImGuiWindow* w = PoseRegionWindow("##AnalyzeSunGlobe");
+    IM_CHECK_RETV(w != nullptr, false);
+    GlobeOverlayMask m;
+    BuildGlobeOverlayMask(w, canvas_rect, canvas_cap->w, canvas_cap->h, &m);
+    canvas_cap->overlay_mask = std::move(m.mask);
+    ctx->LogInfo("[globe full %s] frames %d/%d canvas %.0fx%.0f legend %.0fx%.0f mask %d", tag, canvas_cap->frame,
+                 legend_cap->frame, canvas_rect.GetWidth(), canvas_rect.GetHeight(), legend_rect.GetWidth(),
+                 legend_rect.GetHeight(), m.covered);
+    return true;
+  };
+
+  PickDocument a;
+  IM_CHECK_RETV(adopt(38.0, 180.0, &a), false);
+  GlobeRectCapture full_a_canvas, full_a_legend;
+  IM_CHECK_RETV(capture_both("A full", &full_a_canvas, &full_a_legend), false);
+
+  // The pixel harness has judged the OLD pick-following behaviour red before this fix landed;
+  // its durable red leg is the Fit view one click away. Switch and capture A's Fit frame.
+  auto& view = gui::g_state.analysis.point_view;
+  IM_CHECK_RETV(view.sun_globe_view_mode == gui::SunGlobeViewMode::kFull, false);  // the factory default
+  const auto key_at_a = gui::g_state.analysis.point.key;
+  const auto intent_at_a = gui::g_state.analysis.point.intent_id;
+  ctx->ItemClick("**/Fit##globe_view");
+  ctx->Yield(3);
+  IM_CHECK_RETV(view.sun_globe_view_mode == gui::SunGlobeViewMode::kFit, false);
+  // AC4's identity guard, per click: a mode switch is display-only — the query key, the intent
+  // and the adopted document stand (the adoption below legitimately changes the key: it is a
+  // new pick).
+  IM_CHECK_RETV(gui::g_state.analysis.point.key == key_at_a && gui::g_state.analysis.point.intent_id == intent_at_a,
+                false);
+  IM_CHECK_RETV(gui::g_state.analysis.point.adopted_result != nullptr, false);
+  GlobeRectCapture fit_a_canvas, fit_a_legend;
+  IM_CHECK_RETV(capture_both("A fit", &fit_a_canvas, &fit_a_legend), false);
+
+  // The second pick on the same arc; the mode rides the adoption (the divergent reset law).
+  PickDocument b;
+  IM_CHECK_RETV(adopt(38.5, 180.0, &b), false);
+  IM_CHECK_RETV(view.sun_globe_view_mode == gui::SunGlobeViewMode::kFit, false);
+  GlobeRectCapture fit_b_canvas, fit_b_legend;
+  IM_CHECK_RETV(capture_both("B fit", &fit_b_canvas, &fit_b_legend), false);
+  // ---- The switches never touched the query identity (AC4's no-requery contract): the second
+  // switch is guarded against the SECOND pick's identity, captured before the click. ----
+  const auto key_at_b = gui::g_state.analysis.point.key;
+  const auto intent_at_b = gui::g_state.analysis.point.intent_id;
+  ctx->ItemClick("**/Full##globe_view");
+  ctx->Yield(3);
+  IM_CHECK_RETV(view.sun_globe_view_mode == gui::SunGlobeViewMode::kFull, false);
+  GlobeRectCapture full_b_canvas, full_b_legend;
+  IM_CHECK_RETV(capture_both("B full", &full_b_canvas, &full_b_legend), false);
+  IM_CHECK_RETV(gui::g_state.analysis.point.key == key_at_b && gui::g_state.analysis.point.intent_id == intent_at_b,
+                false);
+  IM_CHECK_RETV(gui::g_state.dirty == gui::g_state.dirty, false);  // trivially true; kept for the read pair
+  // The Full basis's common-fibre placement, on the record: the frame is the rim judgment's
+  // evidence (owner-revisit anchor for the +x equatorial pick).
+  IM_CHECK_RETV(SaveWindowPng(ctx, "//Pose & trace", GuiTestTempPath("globe_full_view_basis.png").string()), false);
+
+  // ---- Fixture preconditions: the picks differ, the documents agree, the frames are real. ----
+  IM_CHECK_RETV(a.kind == b.kind, false);
+  IM_CHECK_RETV(a.lat_count == b.lat_count && a.lon_count == b.lon_count, false);
+  IM_CHECK_RETV(a.deviation.size() == b.deviation.size() &&
+                    std::memcmp(a.deviation.data(), b.deviation.data(), a.deviation.size() * sizeof(double)) == 0,
+                false);
+  IM_CHECK_RETV(a.valid == b.valid, false);
+  IM_CHECK_RETV(a.alt != b.alt, false);
+  IM_CHECK_RETV(std::memcmp(a.first_valid_u, b.first_valid_u, sizeof(a.first_valid_u)) != 0, false);
+  IM_CHECK_RETV(full_a_canvas.frame < fit_a_canvas.frame && fit_a_canvas.frame < fit_b_canvas.frame &&
+                    fit_b_canvas.frame < full_b_canvas.frame,
+                false);
+  IM_CHECK_RETV(full_a_canvas.w == full_b_canvas.w && full_a_canvas.h == full_b_canvas.h, false);
+  IM_CHECK_RETV(fit_a_canvas.w == fit_b_canvas.w && fit_a_canvas.h == fit_b_canvas.h, false);
+
+  // ---- Full: the backdrop and legend are pixel-identical outside the overlay footprint. ----
+  // The exclusion is the UNION of both frames' own submitted footprints: each pick's marker
+  // sits where THAT pick's sample projects, so a one-sided mask would leave the other side's
+  // marker pixels counting as backdrop diffs.
+  const auto union_mask = [&](const GlobeRectCapture& ca, const GlobeRectCapture& cb) {
+    std::vector<uint8_t> u(ca.overlay_mask.size(), 0);
+    for (size_t i = 0; i < u.size(); ++i) {
+      u[i] = static_cast<uint8_t>((ca.overlay_mask[i] != 0) | (cb.overlay_mask[i] != 0));
+    }
+    return u;
+  };
+  const auto first_diff = [](const GlobeRectCapture& ca, const GlobeRectCapture& cb, char* buf, size_t buf_size) {
+    int shown = 0;
+    size_t off = 0;
+    for (size_t i = 0; i < ca.pixels.size() / 4 && shown < 8; ++i) {
+      if (std::memcmp(ca.pixels.data() + i * 4, cb.pixels.data() + i * 4, 4) != 0) {
+        const int x = static_cast<int>(i % static_cast<size_t>(ca.w));
+        const int y = static_cast<int>(i / static_cast<size_t>(ca.w));
+        int n = std::snprintf(buf + off, buf_size - off, "%s(%d,%d) A=(%d,%d,%d) B=(%d,%d,%d) ", shown == 0 ? "" : " ",
+                              x, y, ca.pixels[i * 4], ca.pixels[i * 4 + 1], ca.pixels[i * 4 + 2], cb.pixels[i * 4],
+                              cb.pixels[i * 4 + 1], cb.pixels[i * 4 + 2]);
+        if (n < 0 || static_cast<size_t>(n) >= buf_size - off) {
+          return;
+        }
+        off += static_cast<size_t>(n);
+        ++shown;
+      }
+    }
+    if (shown == 0) {
+      std::snprintf(buf, buf_size, "no diff");
+    }
+  };
+  const std::vector<uint8_t> full_union = union_mask(full_a_canvas, full_b_canvas);
+  const GlobeRegionDiff full_canvas = CompareGlobeCaptures(full_a_canvas, full_b_canvas, full_union);
+  const GlobeRegionDiff full_legend = CompareGlobeCaptures(full_a_legend, full_b_legend, {});
+  char diff_where[512];
+  first_diff(full_a_legend, full_b_legend, diff_where, sizeof(diff_where));
+  ctx->LogInfo(
+      "[globe full] canvas compared %d masked %d n_diff %d diff_in_mask %d | legend compared %d n_diff %d (%s)",
+      full_canvas.compared, full_canvas.masked, full_canvas.n_diff, full_canvas.diff_in_mask, full_legend.compared,
+      full_legend.n_diff, diff_where);
+  const int union_covered = static_cast<int>(std::count(full_union.begin(), full_union.end(), 1));
+  IM_CHECK_RETV(union_covered > 0, false);
+  IM_CHECK_RETV(full_canvas.compared > (full_canvas.compared + full_canvas.masked) / 2, false);
+  IM_CHECK_RETV(full_canvas.n_diff == 0, false);
+  IM_CHECK_RETV(full_legend.n_diff == 0, false);
+  IM_CHECK_RETV(full_canvas.diff_in_mask > 0, false);
+
+  // ---- Fit: the same harness MUST judge the pick-following centring red (the mask differs too,
+  // by construction — the whole terrain re-projects). ----
+  const std::vector<uint8_t> fit_union = union_mask(fit_a_canvas, fit_b_canvas);
+  const GlobeRegionDiff fit_canvas = CompareGlobeCaptures(fit_a_canvas, fit_b_canvas, fit_union);
+  ctx->LogInfo("[globe fit] canvas compared %d masked %d n_diff %d", fit_canvas.compared, fit_canvas.masked,
+               fit_canvas.n_diff);
+  IM_CHECK_RETV(fit_canvas.n_diff > 0, false);
+  // The same document B in both views draws differently — the switch is visible in the frame.
+  const GlobeRegionDiff mode_flip = CompareGlobeCaptures(full_b_canvas, fit_b_canvas, fit_union);
+  IM_CHECK_RETV(mode_flip.n_diff > 0, false);
+
+  gui::g_state.analyze_pose_view_open = false;
+  ctx->Yield(2);
+  return true;
+}
+
+// The globe view's survival set (AC1), driven through the real control: the factory default
+// Full on arrival (asserted, not assigned); Fit survives component switches, sample moves and
+// window close/reopen — and, the divergent law beside the curve range's refit, new adoptions.
+// The case also pins the vocabulary boundary: the curve control's Full/Fit does not move the
+// globe mode or vice versa. The New/Open reset law rides the struct default the unit test pins
+// (the whole-analysis reset writes the factory session back, app.cpp's document reset).
+bool SunGlobeViewModeHasTheGlobeSurvivalSet(ImGuiTestContext* ctx) {
+  ScopedServerGuard guard;
+  ScopedPoseSessionSplits splits;
+  IM_CHECK_RETV(BringUpScene(ctx, kFullyRandomJson, false, false), false);
+  OpenWindow(ctx);
+  IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
+  IM_CHECK_RETV(SelectRowByDisplay(ctx, "3-5-6-7") != std::nullopt, false);
+  gui::g_state.analyze_pose_view_open = true;
+  PinPoseViewOnScreen(ctx);
+  SetSkyPointTarget(38.0, 180.0);
+  IM_CHECK_RETV(
+      DriveUntil(
+          ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCompleted; },
+          60),
+      false);
+  ctx->Yield(2);
+  auto& view = gui::g_state.analysis.point_view;
+  IM_CHECK_RETV(view.sun_globe_view_mode == gui::SunGlobeViewMode::kFull, false);
+  const auto key = gui::g_state.analysis.point.key;
+  const auto intent = gui::g_state.analysis.point.intent_id;
+  const auto document = gui::g_state.analysis.point.adopted_result;
+  const bool dirty = gui::g_state.dirty;
+  ctx->SetRef("//Pose & trace");
+  // Clicking the CURRENT cell: a no-op by contract — the mode and every query identity stand.
+  ctx->ItemClick("**/Full##globe_view");
+  ctx->Yield(2);
+  IM_CHECK_RETV(view.sun_globe_view_mode == gui::SunGlobeViewMode::kFull, false);
+  // The switch: a display-only write.
+  ctx->ItemClick("**/Fit##globe_view");
+  ctx->Yield(2);
+  IM_CHECK_RETV(view.sun_globe_view_mode == gui::SunGlobeViewMode::kFit, false);
+  IM_CHECK_RETV(gui::g_state.analysis.point.key == key && gui::g_state.analysis.point.intent_id == intent, false);
+  IM_CHECK_RETV(gui::g_state.analysis.point.adopted_result == document, false);
+  IM_CHECK_RETV(gui::g_state.dirty == dirty, false);
+  // A component switch keeps it.
+  ctx->ItemClick(PoseRegionWindow("##AnalyzeSunGlobe")->GetID("##globe_component"));
+  ctx->KeyPress(ImGuiKey_DownArrow);
+  ctx->KeyPress(ImGuiKey_Enter);
+  ctx->Yield(3);
+  IM_CHECK_RETV(view.component_index == 1, false);
+  IM_CHECK_RETV(view.sun_globe_view_mode == gui::SunGlobeViewMode::kFit, false);
+  // A sample move keeps it. The slider and the curve control resolve through their region
+  // windows' own IDs — the path search from the pose window ref proved flaky right after a
+  // combo popup closed (the region children are found by name instead).
+  ImGuiWindow* globe_w = PoseRegionWindow("##AnalyzeSunGlobe");
+  IM_CHECK_RETV(globe_w != nullptr, false);
+  const auto slider = ctx->ItemInfo(globe_w->GetID("##globe_sample"), ImGuiTestOpFlags_NoError);
+  IM_CHECK_RETV(slider.ID != 0, false);
+  ctx->MouseMoveToPos(slider.RectFull.GetCenter());
+  ctx->MouseClick(ImGuiMouseButton_Left);
+  ctx->Yield(3);
+  IM_CHECK_RETV(view.sun_globe_view_mode == gui::SunGlobeViewMode::kFit, false);
+  // The curve control's same-vocabulary pair is a different life: it moves the curve, never the
+  // globe.
+  ImGuiWindow* curve_w = PoseRegionWindow("##AnalyzePoseCurve");
+  IM_CHECK_RETV(curve_w != nullptr, false);
+  ctx->ItemClick(curve_w->GetID("Full##curve_range"));
+  ctx->Yield(2);
+  IM_CHECK_RETV(view.curve_range_mode == gui::PointCurveRangeMode::kFull, false);
+  IM_CHECK_RETV(view.sun_globe_view_mode == gui::SunGlobeViewMode::kFit, false);
+  ctx->ItemClick(curve_w->GetID("Fit##curve_range"));
+  ctx->Yield(2);
+  // Window close/reopen keeps it.
+  gui::g_state.analyze_pose_view_open = false;
+  ctx->Yield(2);
+  gui::g_state.analyze_pose_view_open = true;
+  PinPoseViewOnScreen(ctx);
+  ctx->Yield(2);
+  IM_CHECK_RETV(view.sun_globe_view_mode == gui::SunGlobeViewMode::kFit, false);
+  // A NEW adoption keeps it — the reset law that differs from the curve's refit.
+  SetSkyPointTarget(38.5, 180.0);
+  IM_CHECK_RETV(DriveUntil(ctx, [] { return !gui::g_state.analysis.point.adopted_result; }, 30), false);
+  IM_CHECK_RETV(
+      DriveUntil(
+          ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCompleted; },
+          60),
+      false);
+  ctx->Yield(2);
+  IM_CHECK_RETV(gui::g_state.analysis.point.adopted_result != document, false);
+  IM_CHECK_RETV(view.sun_globe_view_mode == gui::SunGlobeViewMode::kFit, false);
+  gui::g_state.analyze_pose_view_open = false;
+  ctx->Yield(2);
+  return true;
+}
+
 // The Selection header's double entry (contract §16.3): both named buttons live in the fixed
 // head — visible and clickable in BOTH branches (no selection yet, then a class selected) — and
 // clicking one opens its window with zero writes outside the open flag: the selection, the
@@ -14374,6 +14912,16 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
   {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "sun_grid_real_reader_layout_and_selection");
     t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(SunGridRealReaderLayoutAndSelection(ctx)); };
+  }
+
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "sun_globe_full_view_pins_the_backdrop");
+    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(SunGlobeFullViewPinsTheBackdrop(ctx)); };
+  }
+
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "sun_globe_view_mode_survival_set");
+    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(SunGlobeViewModeHasTheGlobeSurvivalSet(ctx)); };
   }
 
   // Controlled inputs use the production backdrop and legend, never an imitation renderer.
