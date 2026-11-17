@@ -15049,13 +15049,19 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
     static ImU32 cell_colors[3];
     static std::string frame_text;
     // The yield probe: the region's caller shape verbatim (canvas, SameLine, legend, slider,
-    // SameLine'd play) with a legend row too short for even its words — pins that the yield
-    // exit consumes the pending SameLine instead of letting the play button anchor to the
-    // canvas's top line.
+    // SameLine'd play) with a 24 px legend row, driving BOTH yield exits — an all-zero-valid
+    // grid makes the range unavailable (the short-row exit), and restored constant cells keep
+    // the range available while the words alone exceed the row (the budget < 0 exit). Pins
+    // that either yield consumes the pending SameLine instead of letting the play button
+    // anchor to the canvas's top line.
     static bool draw_yield_probe = false;
     static int yield_sample = 0;
     static ImRect yield_slider_rect;
     static ImRect yield_play_rect;
+    // Which yield exit a leg can reach is pinned by the range's own availability: the
+    // budget < 0 leg must stay available, or it would silently degrade into the short-row
+    // exit and stop testing that branch while staying green.
+    static bool probe_range_available = false;
     t->GuiFunc = [](ImGuiTestContext*) {
       if (draw_yield_probe) {
         ImGui::SetNextWindowPos(ImVec2(40, 520), ImGuiCond_Always);
@@ -15068,10 +15074,13 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
         probe_grid.deviation_rad = delta;
         probe_grid.valid = valid;
         const auto probe_range = gui::SunGridDisplayRange(probe_grid);
+        probe_range_available = probe_range.available;
         const ImVec2 probe_origin = ImGui::GetCursorScreenPos();
         ImGui::InvisibleButton("##yield_canvas", ImVec2(60, 60));
         ImGui::SameLine();
-        // budget < 0: the header and the range text alone exceed this row.
+        // The exit follows the grid's validity: the all-zero leg takes the !range.available
+        // short-row exit; the restored-constant leg stays available and yields at budget < 0
+        // (the header and the range text alone exceed this row).
         gui::RenderSunGridLegend(probe_range, 24.0f);
         ImGui::SetCursorScreenPos(ImVec2(probe_origin.x, probe_origin.y + 70.0f));
         ImGui::SetNextItemWidth(200.0f);
@@ -15208,27 +15217,45 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       IM_CHECK(cell_vertices == 0);
       IM_CHECK(!ctx->ItemExists("**/##sun_grid_band"));
 
-      // The yield leg: a legend row that cannot host even its words. The legend must yield
-      // cleanly AND consume the caller's pending SameLine — otherwise the play button after
-      // the slider anchors to the canvas's top line and lands on the disk (the line the
-      // region's real geometry reaches whenever the wrapped range text outgrows its floor).
+      // The yield legs: legend rows that cannot host the column. Both legs share one assertion
+      // group — no legend item survives the yield, and the play button still shares the
+      // slider's row (to its right) — because each yield exit must consume the caller's
+      // pending SameLine on its own: losing either one anchors the play button to the canvas's
+      // top line and lands it on the disk.
       draw_yield_probe = true;
       {
         struct YieldLease {
           ~YieldLease() { draw_yield_probe = false; }
         } yield_lease;
-        ctx->Yield(3);
-        ImGuiWindow* probe = ctx->GetWindowByRef("//Sun grid yield probe");
-        IM_CHECK(probe != nullptr);
-        if (probe != nullptr) {
+        const auto expect_yielded = [&](const char* leg) {
+          ImGuiWindow* probe = ctx->GetWindowByRef("//Sun grid yield probe");
+          IM_CHECK(probe != nullptr);
+          if (probe == nullptr) {
+            return;
+          }
           IM_CHECK(ctx->ItemInfo(probe->GetID("##sun_grid_title"), ImGuiTestOpFlags_NoError).ID == 0);
           IM_CHECK(ctx->ItemInfo(probe->GetID("##sun_grid_range"), ImGuiTestOpFlags_NoError).ID == 0);
           IM_CHECK(ctx->ItemInfo(probe->GetID("##sun_grid_band"), ImGuiTestOpFlags_NoError).ID == 0);
           IM_CHECK(std::abs(yield_play_rect.Min.y - yield_slider_rect.Min.y) < 0.5f);
           IM_CHECK(yield_play_rect.Min.x >= yield_slider_rect.Max.x - 0.5f);
-          ctx->LogInfo("[sun grid yield] legend yielded clean; play (%.0f,%.0f) shares the slider row (%.0f,%.0f)",
+          ctx->LogInfo("[sun grid yield] %s yielded clean; play (%.0f,%.0f) shares the slider row (%.0f,%.0f)", leg,
                        yield_play_rect.Min.x, yield_play_rect.Min.y, yield_slider_rect.Min.x, yield_slider_rect.Min.y);
-        }
+        };
+        // Leg 1 — the !range.available short-row exit: the fixture above zeroed every valid
+        // cell, so the probe grid inherits "No valid deviation data" and its range is
+        // unavailable — the precondition that pins the leg to the short-row exit.
+        ctx->Yield(3);
+        IM_CHECK(!probe_range_available);
+        expect_yielded("!range.available");
+        // Leg 2 — the budget < 0 exit: restore three valid constant cells; the range becomes
+        // available ("0° (constant)", a single line) but the wrapped header plus the range
+        // text and the two spacings already exceed the 24 px row, so the legend yields through
+        // the budget exit — a different branch than leg 1, same consumed SameLine. The
+        // availability pin below is what keeps this leg from silently collapsing into leg 1.
+        valid[0] = valid[1] = valid[2] = 1;
+        ctx->Yield(3);
+        IM_CHECK(probe_range_available);
+        expect_yielded("budget<0");
       }
     };
   }
