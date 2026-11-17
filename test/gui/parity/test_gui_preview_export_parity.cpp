@@ -57,13 +57,14 @@
 //     rectangle, whatever style.WindowBorderSize says.
 //   * Measured. At `kInsetPx = 0` the two arms come back byte-identical over all 900x912 pixels
 //     of the viewport, this suite's whole rectangle, with nothing skipped.
-// One piece of chrome IS painted inside the rectangle, by design: the display-mode segmented control
-// in the preview's top-right corner (RenderDisplayModeControl, src/gui/app_panels.cpp). It is an
-// ImGui widget drawn over the blit and so never part of the export — which is correct, a Screenshot
-// must not carry it. It is excluded by name and by the rectangle the test engine reports for its
-// two segments, not by an inset: an inset would stop watching every edge to hide one corner. The
-// case asserts that exclusion both ways — differences do occur inside it (it is really drawn
-// there) and it stays under 2% of the frame.
+// Two pieces of chrome ARE painted inside the rectangle, by design: the display-mode segmented
+// control in the preview's top-right corner (RenderDisplayModeControl, src/gui/app_panels.cpp),
+// and the help icon riding the same row (the control reserves the icon's advance and ends the row
+// with InfoIcon). They are ImGui widgets drawn over the blit and so never part of the export —
+// which is correct, a Screenshot must not carry them. They are excluded by name and by the
+// rectangles the test engine reports for them, not by an inset: an inset would stop watching every
+// edge to hide one corner. The case asserts that exclusion both ways — differences do occur inside
+// them (they are really drawn there) and they stay under 2% of the frame.
 //
 // Keep it at 0. Widening it is how this gate would quietly stop watching its own edges — and the
 // edge is where a blit-rectangle or DPI-rounding regression shows up FIRST. If a future change
@@ -99,6 +100,7 @@
 #include <cstdio>
 #include <vector>
 
+#include "IconsFontAwesome6.h"  // ICON_FA_CIRCLE_INFO selector: the help icon's label carries the glyph
 #include "gui/export_fbo_renderer.hpp"
 #include "gui/overlay_labels.hpp"
 #include "imgui.h"
@@ -164,9 +166,15 @@ PreviewExportRequest g_req;
 // texel in all three channels so that "the two arms agree" is a statement about content and not
 // about a flat field.
 // The display-mode control's two segments (RenderDisplayModeControl), by the ids the control gives
-// them. The one chrome element drawn over the blit; see the inset section above.
+// them. Chrome drawn over the blit; see the inset section above.
 const char* const kDisplayModeControlSegments[] = { "//##PreviewPanel/Normal##preview_display_mode",
                                                     "//##PreviewPanel/Channel B-R##preview_display_mode" };
+// The help icon riding the same row is the second chrome element over the blit: the control
+// reserves the icon's advance (so the icon's right edge lands on the margin line instead of
+// clipping away entirely), and InfoIcon ends the row with a SameLine circle-info SmallButton.
+// Excluded the same way as the segments — by name and by the rectangle the test engine reports
+// for it — never by widening the inset.
+const char* const kDisplayModeHelpIcon = "//##PreviewPanel/" ICON_FA_CIRCLE_INFO "##preview_display_mode_help";
 
 constexpr int kXyzTexW = 64;
 constexpr int kXyzTexH = 64;
@@ -339,16 +347,21 @@ static void RunPreviewExportParity(ImGuiTestContext* ctx, int display_mode) {
   IM_CHECK(g_req.export_ok);
   IM_CHECK_EQ(g_req.rgba.size(), screen.size());
 
-  // The one piece of chrome inside the rectangle: the display-mode control, excluded by the
-  // rectangle ImGui itself laid it out in (see the inset section above for why this is not an
-  // inset). Converted from screen points to this capture's pixels through the published DPI, from
-  // the preview window's own origin — the same origin the blit rectangle is built from.
+  // The chrome inside the rectangle: the display-mode control and the help icon riding its row,
+  // excluded by the rectangles ImGui itself laid them out in (see the inset section above for why
+  // this is not an inset). Converted from screen points to this capture's pixels through the
+  // published DPI, from the preview window's own origin — the same origin the blit rectangle is
+  // built from. The icon joined the row when RenderDisplayModeControl began reserving its
+  // advance; before that it clipped away entirely, which is why it was not part of the original
+  // exclusion. Measured on the change that added it: the glyph's ~175 px were the whole
+  // screen-vs-export delta in both display modes, all of them inside the icon's rect.
   const ImGuiWindow* panel = ctx->GetWindowByRef("//##PreviewPanel");
   IM_CHECK(panel != nullptr);
   ImRect control = ctx->ItemInfo(kDisplayModeControlSegments[0]).RectFull;
   for (const char* ref : kDisplayModeControlSegments) {
     control.Add(ctx->ItemInfo(ref).RectFull);
   }
+  control.Add(ctx->ItemInfo(kDisplayModeHelpIcon).RectFull);
   const PixelRect excluded{
     static_cast<int>(std::floor((control.Min.x - panel->Pos.x) * gui::g_preview_vp.dpi_scale_x)),
     static_cast<int>(std::floor((control.Min.y - panel->Pos.y) * gui::g_preview_vp.dpi_scale_y)),
