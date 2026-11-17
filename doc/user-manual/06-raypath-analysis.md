@@ -270,9 +270,9 @@ removes (the curve's reading strip holds an eight-line budget until you drag its
 yourself).
 
 Waiting, cancelled, refused and sample changes retain the same canvas and control slots. Missing
-components or samples disable the corresponding controls instead of inventing data. Descriptions,
-partial-document notes, legends and factor readouts scroll in each graph's report below it; they do
-not squeeze the graph when they grow. Resize and divider changes still resize the graph normally.
+components or samples disable the corresponding controls instead of inventing data. Each graph's
+report below it scrolls; it does not squeeze the graph when its content grows. Resize and divider
+changes still resize the graph normally.
 
 **The sun direction globe** (the window's upper right) draws the selected component's fiber:
 each valid sample is one pose where the sun sits somewhere in the crystal (the `u` arrow), the
@@ -290,11 +290,15 @@ and resumes on reopen).
 **Raypath 3D** (the window's left column, upper region) draws the current sample's real path:
 the crystal's wireframe (its analysis shape — distributions flattened to the values the engine
 used) with the entry leg, every internal reflection and the exit leg from the engine's
-representative-ray recovery, colour-coded with a legend, contacts marked. **World** and
-**Crystal** are the same physical path in two frames (drag orbits, wheel zooms). While the path
-for a fresh pose is computing the region says so; a pose with no legal path names why (the
-corridor's refusal and its measured area); a rank-0 point mass has no path and says that
-instead of drawing one.
+representative-ray recovery, colour-coded by the entry/internal/exit legend at the canvas's
+left edge, contacts marked. **World** and **Crystal** are the same physical path in two frames
+(drag orbits, wheel zooms). The title band holds the frame radios, **Reset View**, the **Show
+Fresnel ratios** toggle (on by default — the per-segment ratio numbers are the path's
+exact-value face; switching it never moves the canvas) and an ⓘ help icon carrying the usage
+and display-semantics notes. While the path for a fresh pose is computing, the window's status
+bar says so and the report keeps the previous sample's named source line; a pose with no legal
+path names why in the report (the corridor's refusal and its measured area); a rank-0 point
+mass has no path and says that instead of drawing one.
 
 **Contribution curve** (the window's left column, lower region) draws the selected component's
 five named

@@ -521,6 +521,22 @@ Raypath view 的 map 状态、Pose & trace 的 point 状态各由自己的会话
 等待结束后清空；Analyze 帧仍由 workspace 入口先清，Render 帧由各开窗宿主先清再画，
 关窗字段沿用既有寿命、不冒充新鲜绘制。主窗活跃段与 survey 字段不受此迁移影响。
 
+### 10.5 Ray3D 报告的 stale-honest 保留与底栏 trace 瞬态（2026-11-17）
+
+`Ray3DReportRecord`（`analyze_survey.hpp`，挂在 analysis struct 的 trace 会话旁）是 session-tier
+显示保留：Ray3D 报告最后真正展示过的**持久**内容（drawn 的来源行、error/refused 的已格式化详情）
+及其来源身份（point 采纳 id + 分量）。样本切换的在途窗口里报告渲染它，而不是让 computing 文案
+反复进出（报告内容高度不动）。清理由读取点按身份核对完成——新点采纳 / 换分量 / 文档重置使
+`point_id`+`component` 不匹配即失效，整体 struct 重置随会话一起清；kHidden（reset/撤回，恰为
+失效事件族）显诚实空态，不显保留。记录只在持久臂捕获、瞬态臂只读；详情文本捕获时已格式化
+（瞬态期 handle 可能已被丢弃，不得回读）。不持久化、不 dirty、不进快照/查询键；关窗保留（同相机），
+重开先核身份再显。
+
+Pose 底栏的 trace 瞬态段（computing / not requested）：只在 point 已完成且当前样本有效时附在
+point 自己的词之后（point 优先，partial 旗标与 wait 字段的原写者不动）；drawn/error/refused 是
+答案、归报告，底栏不提。无新增反馈字段——底栏可见文案由窗口帧文本承载验证，绘制写者仍是
+底栏唯一站点。
+
 ## 11. 视图侧副本与位置引用的重同步不变量
 
 > 状态：as-built（2026-09-20）。触发缺陷：光路分析面板对某行点「Exclude this raypath」时，若 Immediate 模式的
