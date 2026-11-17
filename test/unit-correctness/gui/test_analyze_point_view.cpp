@@ -445,7 +445,7 @@ TEST(AnalyzePointView, CurveClassifySplitsTheFlagQuadrants) {
   EXPECT_EQ(PointCurveClassify(-1.0, true), K::kUnavailable);          // physically impossible: named, not drawn
 }
 
-TEST(AnalyzePointView, CurveModesUseExactPositiveUnionAndFiveOrEightDecadeFloors) {
+TEST(AnalyzePointView, CurveModesUseExactPositiveUnionAndFiveOrFourteenDecadeFloors) {
   using K = PointCurveValueKind;
   PointContributionCurve curve;
   EXPECT_FALSE(PointCurveAxisFit(curve).valid);
@@ -467,7 +467,7 @@ TEST(AnalyzePointView, CurveModesUseExactPositiveUnionAndFiveOrEightDecadeFloors
   curve.points[0].k_kind = K::kPositive;
   EXPECT_DOUBLE_EQ(PointCurveAxisFit(curve).lo, 3.2e-5);
   EXPECT_DOUBLE_EQ(PointCurveAxisFit(curve).hi, 3.2);
-  EXPECT_DOUBLE_EQ(PointCurveAxisFit(curve, PointCurveRangeMode::kFull).lo, 3.2e-8);
+  EXPECT_DOUBLE_EQ(PointCurveAxisFit(curve, PointCurveRangeMode::kFull).lo, 3.2e-14);
   curve.points.resize(1);
   curve.points[0] = {};
   curve.points[0].rho_kind = K::kPositive;

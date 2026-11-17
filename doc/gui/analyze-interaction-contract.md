@@ -1014,7 +1014,8 @@ dirty、模拟或查询身份。切样本/分量、新点采纳、撤回选择�
 弧长/积分回显及 incomplete、口径（angle-Lebesgue · rad）、图例和 partial 限定；当前姿态因素归右下。
 
 固定标题行上的 **Fit | Full** 使用与 Render | Analyze 同款两格，当前格实填、点击 no-op。
-有限正值并集的 `hi=max`、`lo=max(min,hi×ratio)`，Fit ratio=`1e-5`、Full=`1e-8`；窄于上限的
+有限正值并集的 `hi=max`、`lo=max(min,hi×ratio)`，Fit ratio=`1e-5`、Full=`1e-14`（owner 2026-11-17
+裁定放宽，上手后可再调）；窄于上限的
 数据域保原 min/max，不按 decade 取整。单值保一个 decade 的显示退化，刻度/格线只在显示域内。
 默认 Fit；新点采纳/文档重置回 Fit，分量切换沿当前档重算，浮窗关闭重开保档。档位是纯客户端会话
 显示态：不持久、不 dirty、不进配置快照/查询键、不发查询、不停播放。

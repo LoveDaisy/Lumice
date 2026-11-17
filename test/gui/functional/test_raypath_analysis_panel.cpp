@@ -14086,7 +14086,9 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       ctx->Yield(2);
       IM_CHECK(mode == gui::PointCurveRangeMode::kFull);
       IM_CHECK(has_arm(4));
-      IM_CHECK(ink_at(4, 5, .25));  // [-8,0], log(1e-6) => y=.25
+      // Full's floor is max(min positive, hi x 10^-14); this sample's min positive is 1e-12, so
+      // the window is [-12,0] and log(1e-6) sits at 6/12 = 0.5 of the plot height.
+      IM_CHECK(ink_at(4, 5, .5));
       ctx->MouseMoveToPos(ImVec2(2, 2));
       ctx->Yield(2);  // keep the control tooltip from covering the axis being inspected
       const auto label_bands = [&] {
@@ -14115,16 +14117,18 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
         }
         return bands;
       };
-      // Full's actual production labels: nine decades on a tall plot, three non-overlapping
-      // labels (-6,-3,0) at 80px. This is emitted glyph ink, not a LabelStep-only assertion.
-      IM_CHECK(label_bands().size() == 9);
+      // Full's actual production labels: twelve decades on a tall plot, every decade labelled
+      // (the tall plot's label step stays 1: twelve labels fit its height) = 13 bands -12..0;
+      // at 80px the step is 4, labelling -12,-8,-4,0 = 4 non-overlapping bands. This is emitted
+      // glyph ink, not a LabelStep-only assertion.
+      IM_CHECK(label_bands().size() == 13);
       short_plot = true;
       ctx->Yield(3);
       const auto bands = label_bands();
-      IM_CHECK(bands.size() == 3);
+      IM_CHECK(bands.size() == 4);
       IM_CHECK(bands[0].Max.y + gui::UiPx(3) < bands[1].Min.y && bands[1].Max.y + gui::UiPx(3) < bands[2].Min.y);
       IM_CHECK(
-          SaveWindowPng(ctx, "//Curve draw fixture", GuiTestTempPath("curve_full_eight_decades_short.png").string()));
+          SaveWindowPng(ctx, "//Curve draw fixture", GuiTestTempPath("curve_full_twelve_decades_short.png").string()));
       short_plot = false;
       ctx->Yield(2);
       const ImRect after = ctx->ItemInfo("**/##fixture_plot").RectFull;
