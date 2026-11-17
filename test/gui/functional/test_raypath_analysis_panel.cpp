@@ -14137,6 +14137,15 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       ctx->ItemClick("**/Fit##curve_range");
       ctx->Yield(2);
       IM_CHECK(!has_arm(4));
+      // The pair's associated help icon: a real hover draws the tooltip (the two-tier rule's
+      // Fit/Full carrier) and the capture is the plan's representative-evidence shot for it.
+      ctx->MouseMoveToPos(ctx->ItemInfo("**/" ICON_FA_CIRCLE_INFO "##curve_range_help").RectFull.GetCenter());
+      ctx->Yield(3);
+      ImGuiWindow* range_tooltip = ImGui::FindWindowByName("##Tooltip_00");
+      IM_CHECK(range_tooltip != nullptr && range_tooltip->Active);
+      IM_CHECK(SaveWindowPng(ctx, "//Curve draw fixture", GuiTestTempPath("curve_range_help_hover.png").string()));
+      ctx->MouseMoveToPos(ImVec2(2.0f, 2.0f));
+      ctx->Yield(2);
       scroll_test = true;
       ctx->Yield(3);
       IM_CHECK(w->ScrollMax.y > 0);
@@ -17564,16 +17573,18 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       IM_CHECK_FLOAT_NEAR(settled.Min.x, before.Min.x, 0.5f);
       IM_CHECK_FLOAT_NEAR(settled.Min.y, before.Min.y, 0.5f);
       // Calibrate the boundary from complete rendered item footprints, not the product's
-      // template formula. The bar's last control is the Rays(M) pair, and its trailing label is
-      // probe-registered at the text's own rect (TextWithLabelProbe), so the label's right edge
-      // closes the footprint — no font-advance arithmetic on a frame-only ruler.
+      // template formula. The bar's last control is the Rays(M) pair's help icon (joined after
+      // the trailing label, whose own rect is probe-registered at the text —
+      // TextWithLabelProbe), so the icon's right edge closes the footprint — no font-advance
+      // arithmetic on a frame-only ruler.
       const float span = ImGui::GetIO().DisplaySize.x - gui::UiPx(gui::kAnalyzeLeftPanelWidth);
       gui::g_state.workspace.right_column_ratio = 0.2f;
       ctx->Yield(3);
       const auto whole = ctx->ItemInfo("Whole sky");
+      const auto budget_icon = ctx->ItemInfo("**/" ICON_FA_CIRCLE_INFO "##analysis_ray_budget_help");
       const auto budget_label = ctx->ItemInfo("##Rays(M)_label");
       IM_CHECK_FLOAT_NEAR(whole.RectFull.Min.y, budget_label.RectFull.Min.y, 0.5f);
-      const float full_footprint = budget_label.RectFull.Max.x - whole.RectFull.Min.x;
+      const float full_footprint = budget_icon.RectFull.Max.x - whole.RectFull.Min.x;
       const float padding = ImGui::GetStyle().WindowPadding.x * 2.0f;
       const auto at_width = [&](float content_width, bool single) -> bool {
         gui::g_state.workspace.right_column_ratio =
@@ -17595,8 +17606,8 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
             infinite.RectFull.Max.x - ctx->ItemInfo("Whole sky").RectFull.Min.x);
         IM_CHECK_RETV(one_row == single, false);
         // Nothing clips at either template: the two-row form's row 1 ends at Infinite rays and
-        // row 2 at the Rays(M) label; the one-row form's only end is that same label.
-        const auto last_end = ctx->ItemInfo("##Rays(M)_label");
+        // row 2 at the Rays(M) pair's help icon; the one-row form's only end is that same icon.
+        const auto last_end = ctx->ItemInfo("**/" ICON_FA_CIRCLE_INFO "##analysis_ray_budget_help");
         IM_CHECK_RETV(infinite.RectFull.Max.x <= host->InnerClipRect.Max.x + 0.5f, false);
         IM_CHECK_RETV(last_end.RectFull.Max.x <= host->InnerClipRect.Max.x + 0.5f, false);
         const ImRect point_picture = PanoramaPictureWindow()->Rect();
