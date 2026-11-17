@@ -4098,6 +4098,56 @@ bool TraceLegendSwatchesAvoidText(ImGuiTestContext* ctx) {
   return true;
 }
 
+// AC5's pixel leg (2026-11-17 rework): the axes region is no longer a plate — a blank spot
+// inside the compass's reserved square must equal the same frame's blank GL canvas background,
+// and NO sampled spot in the square may still be the old plate colour. The crystal and its
+// lattice stay centred at the standing orbit, so the reserved square's inset corners are blank
+// background; the canvas's bottom-left corner is the blank reference (the legend owns the
+// top-left, the compass the bottom-right). The screenshot is the owner's judgement material —
+// the pixel probe is the mechanical half, never an aesthetic verdict.
+bool TraceAxesBackgroundMatchesTheCanvas(ImGuiTestContext* ctx) {
+  const gui::Ray3DFrameInfo frame = gui::LastRay3DFrameInfo();
+  IM_CHECK_RETV(frame.valid && frame.axes_drawn && frame.frame_count == ImGui::GetFrameCount(), false);
+  auto* region = PoseRegionWindow("##AnalyzeRaypath3D");
+  IM_CHECK_RETV(region != nullptr, false);
+  unsigned char ref[3] = {};
+  const ImVec2 canvas_max(frame.canvas_min.x + frame.canvas_size.x, frame.canvas_min.y + frame.canvas_size.y);
+  const ImVec2 blank(frame.canvas_min.x + 4.0f, canvas_max.y - 4.0f);  // the bottom-left corner, inset
+  IM_CHECK_RETV(ReadScreenPixel(ctx, blank, ref), false);
+  ctx->LogInfo("[axes plate] canvas blank reference rgb(%u,%u,%u)", ref[0], ref[1], ref[2]);
+  IM_CHECK_RETV(!(ref[0] == 16 && ref[1] == 18 && ref[2] == 22), false);  // sanity: the reference is not the plate
+  const float in = gui::UiPx(2.0f);
+  const ImVec2 corners[4] = {
+    ImVec2(frame.axes_min.x + in, frame.axes_min.y + in),
+    ImVec2(frame.axes_max.x - in, frame.axes_min.y + in),
+    ImVec2(frame.axes_min.x + in, frame.axes_max.y - in),
+    ImVec2(frame.axes_max.x - in, frame.axes_max.y - in),
+  };
+  int blank_hits = 0;
+  int plate_hits = 0;
+  const auto sample_corner = [&](const ImVec2& c) -> bool {
+    unsigned char rgb[3] = {};
+    IM_CHECK_RETV(ReadScreenPixel(ctx, c, rgb), false);
+    ctx->LogInfo("[axes plate] corner (%.0f,%.0f) rgb(%u,%u,%u)", c.x, c.y, rgb[0], rgb[1], rgb[2]);
+    if (rgb[0] == ref[0] && rgb[1] == ref[1] && rgb[2] == ref[2]) {
+      ++blank_hits;
+    }
+    if (rgb[0] == 16 && rgb[1] == 18 && rgb[2] == 22) {
+      ++plate_hits;
+    }
+    return true;
+  };
+  for (const ImVec2& c : corners) {
+    if (!sample_corner(c)) {
+      return false;  // the row's own IM_CHECK named the failure
+    }
+  }
+  IM_CHECK_RETV(plate_hits == 0, false);  // no old plate anywhere sampled in the square
+  IM_CHECK_RETV(blank_hits >= 3, false);  // the square shows the canvas's own background
+  IM_CHECK_RETV(SaveWindowPng(ctx, "//Pose & trace", GuiTestTempPath("ray3d_axes_no_plate.png").string()), false);
+  return true;
+}
+
 // ---- The 2026-11-12 display-model legs (feedback #7/#8/#9): mesh-only framing, cumulative
 // Fresnel widths, ratio labels, contact facing. The oracle side reads the SAME persisted frame
 // fields (Ray3DFrameInfo) through the shared CrystalRenderer camera formulas and inspects the
@@ -5613,6 +5663,7 @@ bool InternalReflectionTraceFromTheRealConsumer(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(TraceWidthsFollowCumulativeEnergy(ctx), false);
   IM_CHECK_RETV(TraceLabelsFollowTheToggle(ctx), false);
   IM_CHECK_RETV(TraceResetAndAxesTakeRealInput(ctx), false);
+  IM_CHECK_RETV(TraceAxesBackgroundMatchesTheCanvas(ctx), false);
   IM_CHECK_RETV(SplitterStripsCarryTheDragHintGlyph(ctx), false);
   IM_CHECK_RETV(TraceContactShapesFollowTheRealFacing(ctx), false);
   IM_CHECK_RETV(TraceSunArrowFollowsTheCrystalSun(ctx), false);

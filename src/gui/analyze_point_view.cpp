@@ -1472,7 +1472,10 @@ void DrawRay3DAxes(ImDrawList* dl, const float rotation[16], Ray3DFrameInfo& fra
   frame.axes_max = ImVec2(visible.Max.x - inset, visible.Max.y - inset);
   frame.axes_min = ImVec2(frame.axes_max.x - half * 2, frame.axes_max.y - half * 2);
   frame.axes_origin = ImVec2(frame.axes_max.x - half, frame.axes_max.y - half);
-  dl->AddRectFilled(frame.axes_min, frame.axes_max, IM_COL32(16, 18, 22, 255), UiPx(3.0f));
+  // No plate (2026-11-17 feedback: the old IM_COL32(16,18,22) square read as a black box glued
+  // on the canvas). The arrows and letters draw straight over the GL image — the same surface
+  // every other overlay ink sits on; the compass's reserved footprint still feeds the labels'
+  // avoidance, and the owner judges the look.
   std::vector<ImRect> letters;
   for (int axis = 0; axis < 3; ++axis) {
     const ImVec2 delta(length * rotation[axis * 4], -length * rotation[axis * 4 + 1]);
