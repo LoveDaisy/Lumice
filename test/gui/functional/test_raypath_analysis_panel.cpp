@@ -11849,6 +11849,10 @@ bool SunGridRealReaderLayoutAndSelection(ImGuiTestContext* ctx) {
             ink = true;
         }
       }
+      if (!ink) {
+        ctx->LogError("[item ink] %s rect (%.0f,%.0f)-(%.0f,%.0f) carries no submitted ink", id, r.Min.x, r.Min.y,
+                      r.Max.x, r.Max.y);
+      }
       IM_CHECK_RETV(ink, false);
       return true;
     };
@@ -11867,8 +11871,20 @@ bool SunGridRealReaderLayoutAndSelection(ImGuiTestContext* ctx) {
     IM_CHECK_RETV(band.ID != 0 && hi_tick.ID != 0 && lo_tick.ID != 0, false);
     IM_CHECK_RETV(band.RectFull.GetHeight() > band.RectFull.GetWidth(), false);
     IM_CHECK_RETV(band.RectFull.Min.x >= canvas.RectFull.Max.x - 0.5f, false);
-    IM_CHECK_RETV(hi_tick.RectFull.Max.y <= band.RectFull.Min.y + 1.0f, false);
-    IM_CHECK_RETV(lo_tick.RectFull.Min.y >= band.RectFull.Max.y - 1.0f, false);
+    // The end ticks ride the band's right edge: high top-aligned, low never above the high one.
+    IM_CHECK_RETV(hi_tick.RectFull.Min.x >= band.RectFull.Max.x - 0.5f, false);
+    IM_CHECK_RETV(lo_tick.RectFull.Min.x >= band.RectFull.Max.x - 0.5f, false);
+    IM_CHECK_RETV(hi_tick.RectFull.Min.y >= band.RectFull.Min.y - 1.0f, false);
+    IM_CHECK_RETV(hi_tick.RectFull.Max.y <= lo_tick.RectFull.Min.y + 0.5f, false);
+    // The structural no-overlap contract (the band's height is the row's slack with a 0
+    // floor): the column's tail stays above the slider row at every tier — vertex ink inside
+    // the clip is not visibility; the layout rectangles must not overlap the row below.
+    const auto slider_item = ctx->ItemInfo(w->GetID("##globe_sample"), ImGuiTestOpFlags_NoError);
+    IM_CHECK_RETV(slider_item.ID != 0, false);
+    const auto range_item = ctx->ItemInfo(w->GetID("##sun_grid_range"), ImGuiTestOpFlags_NoError);
+    IM_CHECK_RETV(range_item.ID != 0, false);
+    IM_CHECK_RETV(lo_tick.RectFull.Max.y <= slider_item.RectFull.Min.y + 0.5f, false);
+    IM_CHECK_RETV(range_item.RectFull.Max.y <= slider_item.RectFull.Min.y + 0.5f, false);
     bool terrain_colors = true;
     for (const auto color : { IM_COL32(92, 55, 135, 235), IM_COL32(219, 184, 250, 235) }) {
       terrain_colors &=
@@ -11996,6 +12012,17 @@ bool SunGridRealReaderLayoutAndSelection(ImGuiTestContext* ctx) {
 
 // ---- The globe view's Fit/Full pair (2026-11-17 feedback): the fixed-basis Full view's pixel
 // contract and the mode's survival set. ----
+
+// The overlay-suppressed supplementary leg's window state (AC2's masked-pixels evidence): the
+// PRODUCTION backdrop face draws BOTH real picks' grids side by side in one frame, through the
+// real Full projector — no fibre, no marker, no exclusion mask at all, so the pixels the union
+// mask shelters in the live frames are here ruled over their whole area. File-scope statics:
+// the case's GuiFunc and its TestFunc body share them.
+static bool g_globe_dual_draw = false;
+static LUMICE_PathSunGrid g_globe_dual_grids[2];
+static gui::SunGlobeProjector g_globe_dual_proj;
+static gui::SunGridRange g_globe_dual_ranges[2];
+static ImRect g_globe_dual_disk_rects[2];
 
 // One real-frame capture of an ImGui-space rect, through the shared fullframe capture (the same
 // read SaveWindowPng makes for a whole window). Pixels come back top-down RGBA. `overlay_mask`
@@ -12328,14 +12355,16 @@ bool SunGlobeFullViewPinsTheBackdrop(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(view.sun_globe_view_mode == gui::SunGlobeViewMode::kFull, false);  // the factory default
   const auto key_at_a = gui::g_state.analysis.point.key;
   const auto intent_at_a = gui::g_state.analysis.point.intent_id;
+  const bool dirty_at_a = gui::g_state.dirty;
   ctx->ItemClick("**/Fit##globe_view");
   ctx->Yield(3);
   IM_CHECK_RETV(view.sun_globe_view_mode == gui::SunGlobeViewMode::kFit, false);
-  // AC4's identity guard, per click: a mode switch is display-only — the query key, the intent
-  // and the adopted document stand (the adoption below legitimately changes the key: it is a
-  // new pick).
+  // AC4's identity guard, per click: a mode switch is display-only — the query key, the intent,
+  // the dirty bit and the adopted document stand (the adoption below legitimately changes the
+  // key: it is a new pick).
   IM_CHECK_RETV(gui::g_state.analysis.point.key == key_at_a && gui::g_state.analysis.point.intent_id == intent_at_a,
                 false);
+  IM_CHECK_RETV(gui::g_state.dirty == dirty_at_a, false);
   IM_CHECK_RETV(gui::g_state.analysis.point.adopted_result != nullptr, false);
   GlobeRectCapture fit_a_canvas, fit_a_legend;
   IM_CHECK_RETV(capture_both("A fit", &fit_a_canvas, &fit_a_legend), false);
@@ -12350,6 +12379,7 @@ bool SunGlobeFullViewPinsTheBackdrop(ImGuiTestContext* ctx) {
   // switch is guarded against the SECOND pick's identity, captured before the click. ----
   const auto key_at_b = gui::g_state.analysis.point.key;
   const auto intent_at_b = gui::g_state.analysis.point.intent_id;
+  const bool dirty_at_b = gui::g_state.dirty;
   ctx->ItemClick("**/Full##globe_view");
   ctx->Yield(3);
   IM_CHECK_RETV(view.sun_globe_view_mode == gui::SunGlobeViewMode::kFull, false);
@@ -12357,7 +12387,7 @@ bool SunGlobeFullViewPinsTheBackdrop(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(capture_both("B full", &full_b_canvas, &full_b_legend), false);
   IM_CHECK_RETV(gui::g_state.analysis.point.key == key_at_b && gui::g_state.analysis.point.intent_id == intent_at_b,
                 false);
-  IM_CHECK_RETV(gui::g_state.dirty == gui::g_state.dirty, false);  // trivially true; kept for the read pair
+  IM_CHECK_RETV(gui::g_state.dirty == dirty_at_b, false);
   // The Full basis's common-fibre placement, on the record: the frame is the rim judgment's
   // evidence (owner-revisit anchor for the +x equatorial pick).
   IM_CHECK_RETV(SaveWindowPng(ctx, "//Pose & trace", GuiTestTempPath("globe_full_view_basis.png").string()), false);
@@ -12436,6 +12466,70 @@ bool SunGlobeFullViewPinsTheBackdrop(ImGuiTestContext* ctx) {
   const GlobeRegionDiff mode_flip = CompareGlobeCaptures(full_b_canvas, fit_b_canvas, fit_union);
   IM_CHECK_RETV(mode_flip.n_diff > 0, false);
 
+  // ---- AC2's overlay-suppressed supplementary evidence: the production backdrop face draws
+  // BOTH real payloads in ONE frame — no fibre, no marker, no mask — and the two disks match
+  // pixel for pixel over their whole area, the pixels the union mask shelters in the live
+  // frames included. The payloads are the adopted documents' own byte-identical grids (copied
+  // out above); the projector is the production Full basis.
+  g_globe_dual_grids[0] = LUMICE_PathSunGrid{};
+  g_globe_dual_grids[0].struct_size = sizeof(LUMICE_PathSunGrid);
+  g_globe_dual_grids[0].lat_count = a.lat_count;
+  g_globe_dual_grids[0].lon_count = a.lon_count;
+  g_globe_dual_grids[0].cell_count = a.deviation.size();
+  g_globe_dual_grids[0].deviation_rad = a.deviation.data();
+  g_globe_dual_grids[0].valid = a.valid.data();
+  g_globe_dual_grids[1] = g_globe_dual_grids[0];
+  g_globe_dual_grids[1].deviation_rad = b.deviation.data();
+  g_globe_dual_grids[1].valid = b.valid.data();
+  g_globe_dual_ranges[0] = gui::SunGridDisplayRange(g_globe_dual_grids[0]);
+  g_globe_dual_ranges[1] = gui::SunGridDisplayRange(g_globe_dual_grids[1]);
+  g_globe_dual_proj = gui::MakeSunGlobeFullProjector();
+  g_globe_dual_draw = true;
+  struct DualLease {
+    ~DualLease() { g_globe_dual_draw = false; }
+  } dual_lease;
+  ctx->Yield(4);
+  ImGuiWindow* probe = ctx->GetWindowByRef("//Globe dual backdrop probe");
+  IM_CHECK_RETV(probe != nullptr, false);
+  GlobeRectCapture dual_cap;
+  IM_CHECK_RETV(CaptureGlobeRect(ctx, probe->Rect(), &dual_cap), false);
+  const ImGuiIO& dual_io = ImGui::GetIO();
+  const ImVec2 dual_a0((g_globe_dual_disk_rects[0].Min.x - probe->Rect().Min.x) * dual_io.DisplayFramebufferScale.x,
+                       (g_globe_dual_disk_rects[0].Min.y - probe->Rect().Min.y) * dual_io.DisplayFramebufferScale.y);
+  const ImVec2 dual_b0((g_globe_dual_disk_rects[1].Min.x - probe->Rect().Min.x) * dual_io.DisplayFramebufferScale.x,
+                       (g_globe_dual_disk_rects[1].Min.y - probe->Rect().Min.y) * dual_io.DisplayFramebufferScale.y);
+  const int dual_w = static_cast<int>((g_globe_dual_disk_rects[0].Max.x - g_globe_dual_disk_rects[0].Min.x) *
+                                      dual_io.DisplayFramebufferScale.x);
+  const int dual_h = static_cast<int>((g_globe_dual_disk_rects[0].Max.y - g_globe_dual_disk_rects[0].Min.y) *
+                                      dual_io.DisplayFramebufferScale.y);
+  IM_CHECK_RETV(dual_w > 32 && dual_h > 32, false);
+  int dual_diff = 0;
+  int dual_max_delta = 0;
+  for (int py = 0; py < dual_h; ++py) {
+    for (int pxx = 0; pxx < dual_w; ++pxx) {
+      const size_t ia = (static_cast<size_t>(dual_a0.y) + py) * dual_cap.w + static_cast<size_t>(dual_a0.x) + pxx;
+      const size_t ib = (static_cast<size_t>(dual_b0.y) + py) * dual_cap.w + static_cast<size_t>(dual_b0.x) + pxx;
+      const auto* pa = dual_cap.pixels.data() + ia * 4;
+      const auto* pb = dual_cap.pixels.data() + ib * 4;
+      if (std::memcmp(pa, pb, 4) != 0) {
+        ++dual_diff;
+        for (int ch = 0; ch < 4; ++ch) {
+          dual_max_delta = std::max(dual_max_delta, std::abs(static_cast<int>(pa[ch]) - static_cast<int>(pb[ch])));
+        }
+      }
+    }
+  }
+  // The live-frame legs above answer exact 0 and keep it; this supplementary leg carries a
+  // measured quantization-noise bound instead of a fake exactness claim: identical inputs and
+  // identical draw calls still show ±1-LSB GPU blend shifts at the rim's antialiasing ring
+  // (~15 px of 34.6k, all single-LSB — measured). A real single-cell drawing defect is a
+  // multi-LSB shift across a ~6px quad: far over both bounds.
+  const int dual_pixels = dual_w * dual_h;
+  ctx->LogInfo("[globe dual backdrop] production frame disks %dx%d px each, n_diff %d, max_delta %d", dual_w, dual_h,
+               dual_diff, dual_max_delta);
+  IM_CHECK_RETV(dual_diff * 500 <= dual_pixels, false);
+  IM_CHECK_RETV(dual_max_delta <= 1, false);
+
   gui::g_state.analyze_pose_view_open = false;
   ctx->Yield(2);
   return true;
@@ -12457,6 +12551,9 @@ bool SunGlobeViewModeHasTheGlobeSurvivalSet(ImGuiTestContext* ctx) {
   gui::g_state.analyze_pose_view_open = true;
   PinPoseViewOnScreen(ctx);
   SetSkyPointTarget(38.0, 180.0);
+  // Two-phase wait, the adopt() helper's own recorded rationale: the completed-state probe
+  // alone passes instantly on a still-adopted previous document.
+  IM_CHECK_RETV(DriveUntil(ctx, [] { return !gui::g_state.analysis.point.adopted_result; }, 30), false);
   IM_CHECK_RETV(
       DriveUntil(
           ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCompleted; },
@@ -14939,6 +15036,29 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
 
   {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "sun_globe_full_view_pins_the_backdrop");
+    t->GuiFunc = [](ImGuiTestContext*) {
+      if (!g_globe_dual_draw) {
+        return;
+      }
+      ImGui::SetNextWindowPos(ImVec2(40.0f, 60.0f), ImGuiCond_Always);
+      ImGui::SetNextWindowSize(ImVec2(430.0f, 240.0f), ImGuiCond_Always);
+      ImGui::Begin("Globe dual backdrop probe", nullptr, ImGuiWindowFlags_NoResize);
+      ImDrawList* dl = ImGui::GetWindowDrawList();
+      const ImVec2 origin = ImGui::GetCursorScreenPos();
+      for (int side = 0; side < 2; ++side) {
+        const ImVec2 centre(origin.x + 105.0f + side * 215.0f, origin.y + 105.0f);
+        const float radius = 95.0f;
+        dl->AddCircleFilled(centre, radius, IM_COL32(16, 18, 22, 255));
+        dl->AddCircle(centre, radius, IM_COL32(70, 74, 82, 200), 0, 1.0f);
+        if (g_globe_dual_grids[side].deviation_rad != nullptr) {
+          gui::DrawSunGridBackdrop(dl, g_globe_dual_grids[side], g_globe_dual_proj, g_globe_dual_ranges[side], centre,
+                                   radius - gui::UiPx(4.0f));
+        }
+        g_globe_dual_disk_rects[side] = ImRect(centre.x - radius + 2.0f, centre.y - radius + 2.0f,
+                                               centre.x + radius - 2.0f, centre.y + radius - 2.0f);
+      }
+      ImGui::End();
+    };
     t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(SunGlobeFullViewPinsTheBackdrop(ctx)); };
   }
 
@@ -15040,6 +15160,28 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
                           [&](const ImDrawVert& v) { return v.col == color && band.RectFull.Contains(v.pos); });
         }
         IM_CHECK_RETV(band_colors, false);
+        // The ramp's colour-to-end mapping, the tick geometry's blind spot: the TOP of the band
+        // reads nearer the light (high-deviation) endpoint, the BOTTOM nearer the dark one —
+        // reversing the walk direction flips the ramp and still passes every geometry assert.
+        unsigned char ramp_top[3];
+        unsigned char ramp_bottom[3];
+        IM_CHECK_RETV(ReadScreenPixel(ctx, ImVec2(band.RectFull.GetCenter().x, band.RectFull.Min.y + 2.0f), ramp_top),
+                      false);
+        IM_CHECK_RETV(
+            ReadScreenPixel(ctx, ImVec2(band.RectFull.GetCenter().x, band.RectFull.Max.y - 2.0f), ramp_bottom), false);
+        constexpr ImU32 kRampDarkEnd = IM_COL32(92, 55, 135, 235);
+        constexpr ImU32 kRampLightEnd = IM_COL32(219, 184, 250, 235);
+        const auto ramp_dist2 = [](const unsigned char* p, ImU32 c) {
+          // int casts on both sides: the naive `int - unsigned` promotes to unsigned and wraps
+          // on every darker-than-endpoint sample.
+          return std::pow((static_cast<int>(p[0]) - static_cast<int>(c & 0xFF)) / 255.0, 2) +
+                 std::pow((static_cast<int>(p[1]) - static_cast<int>((c >> 8) & 0xFF)) / 255.0, 2) +
+                 std::pow((static_cast<int>(p[2]) - static_cast<int>((c >> 16) & 0xFF)) / 255.0, 2);
+        };
+        const double upright = ramp_dist2(ramp_top, kRampLightEnd) + ramp_dist2(ramp_bottom, kRampDarkEnd);
+        const double flipped = ramp_dist2(ramp_top, kRampDarkEnd) + ramp_dist2(ramp_bottom, kRampLightEnd);
+        ctx->LogInfo("[sun grid ramp] upright %.4f flipped %.4f", upright, flipped);
+        IM_CHECK_RETV(upright < flipped, false);
         IM_CHECK_RETV(SaveWindowPng(ctx, "//Sun grid fixture", GuiTestTempPath(screenshot).string()), false);
         return true;
       };

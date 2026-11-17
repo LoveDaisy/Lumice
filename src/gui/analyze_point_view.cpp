@@ -877,9 +877,10 @@ float SunGridLegendColumnWidth() {
 // The range text's own endpoint ladder (the 6..17 significant-digit climb until lo and hi read
 // apart, or the conversion itself collides) — shared with the band's end ticks so the ticks and
 // the text cannot disagree about the endpoints they name. Also the single owner of the rad→deg
-// display conversion.
+// display conversion (kRadToDeg, this file's one copy).
+constexpr double kRadToDeg = 180.0 / 3.14159265358979323846;
+
 void SunGridDegEndpoints(const SunGridRange& range, char* lo, size_t lo_size, char* hi, size_t hi_size) {
-  constexpr double kRadToDeg = 180.0 / 3.14159265358979323846;
   for (int precision = 6; precision <= 17; ++precision) {
     std::snprintf(lo, lo_size, "%.*g", precision, range.min_rad * kRadToDeg);
     std::snprintf(hi, hi_size, "%.*g", precision, range.max_rad * kRadToDeg);
@@ -899,20 +900,23 @@ std::string SunGridRangeText(const SunGridRange& range) {
     // Adjacent doubles can collide in the degree conversion itself, not just in formatting.
     // Keep a nonzero interval honest with an origin + offsets, rather than inventing extrema.
     char span[64];
-    std::snprintf(span, sizeof(span), "%.17g", (range.max_rad - range.min_rad) * (180.0 / 3.14159265358979323846));
+    std::snprintf(span, sizeof(span), "%.17g", (range.max_rad - range.min_rad) * kRadToDeg);
     return std::string(lo) + "° + [0, " + span + "]°";
   }
   return range.min_rad == range.max_rad ? std::string(lo) + "° (constant)" : std::string(lo) + "° – " + hi + "°";
 }
 
 void RenderSunGridLegend(const SunGridRange& range, float row_height) {
-  // The vertical column at the canvas's right edge: header, high tick, the band (low value at
-  // the BOTTOM, high at the top — y-down screens invert the ramp's drawing order), low tick, the
-  // range text. The column manages the cursor EXPLICITLY: a wrapped text ends ImGui's item flow
-  // back at the window's line start, so a SameLine'd column of wrapped texts would scatter its
-  // tail down the window's left edge — every item is placed at the column's x by hand, wrapped
-  // at the column's width, and the band's height takes the row's slack between a floor and a
-  // cap (the column never clips; the text it must show is all it may add).
+  // The vertical column at the canvas's right edge: header, the band row (the ramp with BOTH
+  // end ticks to its right — the high tick top-aligned to the band's top, the low tick pinned
+  // to the band's bottom, stacking just below the high one when the band is shorter than two
+  // text lines), then the range text. The column manages the cursor EXPLICITLY: a wrapped text
+  // ends ImGui's item flow back at the window's line start, so a SameLine'd column of wrapped
+  // texts would scatter its tail down the window's left edge — every item is placed at the
+  // column's x by hand, wrapped at the column's width. The band's height is the row's remainder
+  // after the header and the range text (a 0 floor, a 120 cap): the structural invariant
+  // column_height <= row_height holds unconditionally — a too-short row loses its ramp, never
+  // slides its numbers under the slider row's later-submitted frame.
   ImDrawList* dl = ImGui::GetWindowDrawList();
   const float wrap = std::max(1.0f, SunGridLegendColumnWidth());
   const float spacing = ImGui::GetStyle().ItemSpacing.y;
@@ -944,15 +948,17 @@ void RenderSunGridLegend(const SunGridRange& range, float row_height) {
   SunGridDegEndpoints(range, lo, sizeof(lo), hi, sizeof(hi));
   char hi_tick[72];
   std::snprintf(hi_tick, sizeof(hi_tick), "%s°", hi);
-  place(text_h(hi_tick));
-  DisabledWrappedText("%s°", hi);
-  RegisterPointTextItem("##sun_grid_hi_tick");
+  char lo_tick[72];
+  std::snprintf(lo_tick, sizeof(lo_tick), "%s°", lo);
+  const float hi_h = text_h(hi_tick);
+  const float lo_h = text_h(lo_tick);
   const std::string range_text = SunGridRangeText(range);
-  const float band_h =
-      std::clamp(row_height - (y - column.y) - spacing - text_h(range_text.c_str()), UiPx(16.0f), UiPx(120.0f));
+  const float band_budget = row_height - (y - column.y) - spacing - text_h(range_text.c_str());
+  const float band_h = std::clamp(band_budget, 0.0f, UiPx(120.0f));
   const float band_w = UiPx(12.0f);
+  const float band_gap = ImGui::GetStyle().ItemSpacing.x;
   const ImVec2 band_pos(column.x, y);
-  y += band_h + spacing;
+  const float band_row_bottom = y + std::max(band_h, hi_h + 2.0f + lo_h);
   ImGui::SetCursorScreenPos(band_pos);
   ImGui::InvisibleButton("##sun_grid_band", ImVec2(band_w, band_h));
   const bool constant = range.min_rad == range.max_rad;
@@ -965,11 +971,17 @@ void RenderSunGridLegend(const SunGridRange& range, float row_height) {
                       ImVec2(band_pos.x + band_w, band_pos.y + band_h * (i + 1) / steps),
                       SunGridCellColorRgba(delta, 1, range));
   }
-  char lo_tick[72];
-  std::snprintf(lo_tick, sizeof(lo_tick), "%s°", lo);
-  place(text_h(lo_tick));
+  // The end ticks ride the band's right edge: the high one top-aligned, the low one pinned to
+  // the band's bottom — or, when the band is shorter than two text lines, stacked directly
+  // below the high one so the two can never overlap.
+  ImGui::SetCursorScreenPos(ImVec2(band_pos.x + band_w + band_gap, band_pos.y));
+  DisabledWrappedText("%s°", hi);
+  RegisterPointTextItem("##sun_grid_hi_tick");
+  const float lo_y = band_pos.y + std::max(band_h - lo_h, hi_h + 2.0f);
+  ImGui::SetCursorScreenPos(ImVec2(band_pos.x + band_w + band_gap, lo_y));
   DisabledWrappedText("%s°", lo);
   RegisterPointTextItem("##sun_grid_lo_tick");
+  y = band_row_bottom + spacing;
   place(text_h(range_text.c_str()));
   DisabledWrappedText("%s", range_text.c_str());
   RegisterPointTextItem("##sun_grid_range");
@@ -1751,6 +1763,15 @@ const CrystalConfig* FrozenCrystalForPool(const GuiState& state, int pool) {
 // ---- The sun-direction globe
 // -----------------------------------------------------------------------------------------
 
+// The globe view control's full footprint: two same-width cells (the wider of the two labels,
+// frame padding each side) joined with zero spacing — the width budget the title band's
+// fits-on-line check reserves, single-sourced with the control so the check cannot undercount
+// the Full−Fit label difference again.
+float SunGlobeViewControlWidth() {
+  return 2.0f * std::max(ImGui::CalcTextSize("Fit").x, ImGui::CalcTextSize("Full").x) +
+         4.0f * ImGui::GetStyle().FramePadding.x;
+}
+
 // The globe view's fixed two-cell control (the curve range control's shape, a different life:
 // this mode survives adoptions where the curve's refits — see SunGlobeViewMode). Clicking the
 // current cell is a no-op; the pair's shared concept rides the region title's info icon.
@@ -1796,8 +1817,7 @@ void RenderAnalyzeSunGlobeRegion(GuiState& state, const ImVec2& size) {
     const float line_right = ImGui::GetContentRegionMax().x + ImGui::GetWindowPos().x;
     return ImGui::GetItemRectMax().x + ImGui::GetStyle().ItemSpacing.x + next_w <= line_right;
   };
-  if (title_band_fits(ImGui::CalcTextSize("Fit").x + ImGui::CalcTextSize("Full").x +
-                      4.0f * ImGui::GetStyle().FramePadding.x)) {
+  if (title_band_fits(SunGlobeViewControlWidth())) {
     ImGui::SameLine();
   }
   RenderSunGlobeViewControl(&view.sun_globe_view_mode);
