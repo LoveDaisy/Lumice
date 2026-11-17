@@ -144,6 +144,21 @@ TEST(AnalyzePointView, PointQueryStateTruthTable) {
   // The completed arm reads a real handle — the composition tests cover it over a live adoption.
 }
 
+TEST(AnalyzePointView, PointViewStateDefaultsPinTheFactorySession) {
+  // The factory session's display defaults, pinned at the state struct (the AC's default-on leg
+  // lives here so a flip is a one-line red, not a GUI-run surprise). The Fresnel toggle defaults
+  // ON (2026-11-17 feedback: the ratio numbers are the trace's exact-value face); the grid
+  // backdrop stays ON; the frame starts in world; the curve range starts at Fit.
+  PointViewState view;
+  EXPECT_TRUE(view.show_fresnel_labels);
+  EXPECT_TRUE(view.show_deviation_grid);
+  EXPECT_FALSE(view.crystal_frame);
+  EXPECT_EQ(view.curve_range_mode, PointCurveRangeMode::kFit);
+  EXPECT_EQ(view.component_index, 0);
+  EXPECT_EQ(view.sample_index, 0);
+  EXPECT_FALSE(view.playing);
+}
+
 TEST(AnalyzePointView, ResetOrbitRestoresOnlyOrientationAndIsIdempotent) {
   PointViewState view;
   view.orbit_yaw_deg = 143.0f;

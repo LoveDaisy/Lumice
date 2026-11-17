@@ -399,6 +399,26 @@ struct RayTraceSession {
   std::string adopted_error;
 };
 
+// The Ray3D report's stale-honest retention: the last PERSISTENT content the report actually
+// showed for its source, kept so a sample switch's transient (the trace re-arming for the new
+// key) leaves the report's content and height in place instead of cycling a computing line
+// through it. `point_id` + `component` are the source identity the display checks before
+// showing it — a new point adoption, a component switch or a document reset invalidates it at
+// the read site (no write needed; the whole-analysis reset clears it with the sessions). The
+// detail texts are captured FORMATTED: during a transient the trace handle may already be
+// dropped, so the record can never re-read it. Captured only from the report's persistent arms
+// (the drawn source line, an error, a refusal) — never from a transient; the pose window closed
+// keeps it like the camera, and a reopen re-checks the identity before showing it.
+struct Ray3DReportRecord {
+  bool valid = false;
+  SurveyQueryId point_id;
+  int component = 0;
+  enum class Kind { kDrawn, kError, kRefused } kind = Kind::kDrawn;
+  std::string source_line;  // "Component %d · sample %d/%d" — the stable identity label
+  std::string detail_head;  // the failure's head line (empty for kDrawn)
+  std::string detail_body;  // the failure's wrapped body (empty for kDrawn)
+};
+
 // The point inspector's display state (742.6): which component and which of its valid samples are
 // on show, whether playback is running, the globe's backdrop toggle and the 3D view's frame +
 // orbit camera. Session tier beside the sessions it reads (this header — the analysis struct's
@@ -416,15 +436,17 @@ struct PointViewState {
   int sample_index = 0;     // index into that component's VALID samples
   bool playing = false;     // playback advances sample_index; never any other state (AC3)
   double last_play_step_s = 0.0;
-  bool show_deviation_grid = true;   // the sun grid's backdrop: drawn only when the result carries one
-  bool show_fresnel_labels = false;  // the 3D trace's per-segment Fresnel ratio numbers: a session
-                                     // display preference with the same survival set as the other
-                                     // toggles (kept across adoptions and window reopen; default
-                                     // off for a new process/document; never persisted, never in
-                                     // a query key) — the ratio numbers stay honest relative
-                                     // values, the width mapping stays the only visual encoding
-  bool crystal_frame = false;        // the 3D view's frame: false = world, true = crystal (AC4's one
-                                     // physical state, two views — a display transform, nothing else)
+  bool show_deviation_grid = true;  // the sun grid's backdrop: drawn only when the result carries one
+  bool show_fresnel_labels = true;  // the 3D trace's per-segment Fresnel ratio numbers: a session
+                                    // display preference with the same survival set as the other
+                                    // toggles (kept across adoptions and window reopen; default
+                                    // on for a new process/document — 2026-11-17 feedback: the
+                                    // ratio numbers are the trace's exact-value face; never
+                                    // persisted, never in a query key) — the ratio numbers stay
+                                    // honest relative values, the width mapping stays the only
+                                    // visual encoding
+  bool crystal_frame = false;       // the 3D view's frame: false = world, true = crystal (AC4's one
+                                    // physical state, two views — a display transform, nothing else)
   static constexpr float kDefaultOrbitYawDeg = 35.0f;
   static constexpr float kDefaultOrbitPitchDeg = 22.0f;
   float orbit_yaw_deg = kDefaultOrbitYawDeg;  // the 3D orbit camera (drag to rotate, wheel to zoom)

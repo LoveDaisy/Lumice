@@ -1905,6 +1905,12 @@ struct GuiState {
     // writes the sample index and nothing else (AC3).
     PointQuerySession point;
     RayTraceSession trace;
+    // The Ray3D report's stale-honest retention (analyze_survey.hpp Ray3DReportRecord): the
+    // last persistent report content and its source identity, shown while the trace re-arms so
+    // the report does not cycle a transient through it. Cleared with the whole struct where the
+    // sessions die; re-shown only while the record's point/component identity matches the live
+    // selection (the read site's check). Written only by the Ray3D report's persistent arms.
+    Ray3DReportRecord ray3d_report_record;
     PointViewState point_view;
     // The 3D trace's per-segment Fresnel ratio labels, exactly as drawn this frame (the
     // draw-list carries no strings; the positions come from the submitted primitives, the

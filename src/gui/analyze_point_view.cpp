@@ -1525,6 +1525,28 @@ ImU32 SegmentColor(int kind, float alpha) {
   return (color & ~IM_COL32_A_MASK) | (static_cast<ImU32>(255 * alpha) << IM_COL32_A_SHIFT);
 }
 
+// The Ray3D region's one conceptual help text (the two-tier tooltip rule): the usage note and
+// the display semantics' legend — the width mapping's honesty note (visual sqrt scaling, no
+// absorption — the ratio numbers carry the exact values), the contact shapes' vocabulary, and
+// the unusable-factor boundary. Status reasons and real errors stay in the report: they are
+// facts of a state, not concepts.
+constexpr const char* kRay3DHelpText =
+    "One pose's real path in the crystal: drag orbits, wheel zooms. Same physical state, two "
+    "views.\n\n"
+    "Width follows cumulative Fresnel relative energy (no absorption); visual scaling — the "
+    "ratio numbers, when shown, carry the exact values. Contacts: solid = facing the camera, "
+    "hollow = back-facing or facing unknown. A segment past an unusable interface factor draws "
+    "neutral (n/a).";
+
+// The Ray3D report's fixed budget: two text lines over the child's real chrome (its padding and
+// border), computed from the LIVE font every call — never from content, last frame's height or
+// the trace state. The canvas eats whatever this does not reserve; narrower columns scroll their
+// longer wraps (an error's full text stays reachable by native scrolling).
+float Ray3DReportQuota() {
+  const ImGuiStyle& style = ImGui::GetStyle();
+  return 2.0f * ImGui::GetTextLineHeightWithSpacing() + 2.0f * style.WindowPadding.y + UiPx(6.0f);
+}
+
 }  // namespace
 
 // The point session's one-line state word (the hpp comment carries the contract). The mapping's
@@ -1931,9 +1953,29 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
   if (ImGui::Button("Reset View##r3d_reset")) {
     view.ResetOrbitOrientation();
   }
+  // The Fresnel toggle: a title-band session preference (moved out of the report head — the
+  // report's fixed two-line budget carries status/qualifying facts only). The same survival
+  // set as the other toggles (kept across sample/component switches, point adoptions and
+  // window reopen; reset only by the whole-state new-document paths; never persisted, never
+  // in a query key); default on — the ratio numbers are the trace's exact-value face. It sits
+  // in the fixed control band, so toggling it moves no canvas geometry.
+  const float fresnel_w =
+      ImGui::GetFrameHeight() + ImGui::GetStyle().ItemInnerSpacing.x + ImGui::CalcTextSize("Show Fresnel ratios").x;
+  if (fits_on_line(fresnel_w)) {
+    ImGui::SameLine();
+  }
+  ImGui::Checkbox("Show Fresnel ratios##r3d_fresnel", &view.show_fresnel_labels);
+  // The region's one help carrier: usage note + display semantics (kRay3DHelpText). The shared
+  // icon joins this line when it fits and takes its own fresh line at the wrap boundary — the
+  // same complete-footprint rule as every control above, no compressed hit target.
+  if (fits_on_line(InfoIconAdvance())) {
+    InfoIcon("r3d_help", kRay3DHelpText);
+  } else {
+    InfoIconLine("r3d_help", kRay3DHelpText);
+  }
   const ImVec2 remaining = ImGui::GetContentRegionAvail();
   const float graph_h =
-      CanvasHeightBeforeReport(remaining.y, 0.0f, UiPx(kPoseView3dReportQuota), ImGui::GetStyle().ItemSpacing.y);
+      CanvasHeightBeforeReport(remaining.y, 0.0f, Ray3DReportQuota(), ImGui::GetStyle().ItemSpacing.y);
   const ImVec2 canvas_size(remaining.x, graph_h);
   const ImVec2 graph_min = ImGui::GetCursorScreenPos();
   ImDrawList* graph_draw_list = ImGui::GetWindowDrawList();
@@ -1949,19 +1991,6 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
   AnalyzeRegionWheelClaim(graph_hovered, AnalyzeRay3DWheelOwnerId());
   ImGui::BeginChild("##Ray3DReport", RemainingReportSize());
   const auto render_content = [&] {
-    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-    ImGui::TextWrapped(
-        "One pose's real path in the crystal: drag orbits, wheel zooms. Same physical state, two "
-        "views.");
-    ImGui::PopStyleColor();
-    RegisterPointTextItem("##r3d_description");
-    // The per-segment Fresnel ratio numbers: a session display preference (default off; kept
-    // across sample/component switches, point adoptions and window reopen — the same survival
-    // set as the other toggles; reset only by the whole-state new-document paths). This report
-    // head is its one site, reachable in every query state; the canvas keeps its fixed report
-    // quota, so the toggle moves no geometry.
-    ImGui::Checkbox("Show Fresnel ratios##r3d_fresnel", &view.show_fresnel_labels);
-
     const PointQueryState st = PointQueryStateFor(point);
     if (st == PointQueryState::kNoIntent) {
       ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
@@ -2529,30 +2558,10 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
       ImGui::TextDisabled("%s", labels[kind]);
       RegisterPointTextItem(labels[kind]);
     }
-    // The display semantics' legend (2026-11-12 feedback #8/#9): the width mapping's honesty
-    // note (visual sqrt scaling, no absorption — the ratio numbers, when shown, carry the
-    // exact values), the contact shapes' vocabulary, and the unusable-factor boundary.
-    DisabledWrappedText(
-        "Width follows cumulative Fresnel relative energy (no absorption); visual scaling — the "
-        "ratio numbers, when shown, carry the exact values. Contacts: solid = facing the camera, "
-        "hollow = back-facing or facing unknown. A segment past an unusable interface factor "
-        "draws neutral (n/a).");
-    RegisterPointTextItem("##r3d_semantics");
-    if (current->sample.interface_count >= 2) {
-      char transmittance[96];
-      std::snprintf(transmittance, sizeof(transmittance), "face transmittance: entry %.3f, exit %.3f",
-                    current->sample.interface_transmittances[0],
-                    current->sample.interface_transmittances[current->sample.interface_count - 1]);
-      if (fits_on_line(ImGui::CalcTextSize(transmittance).x)) {
-        ImGui::SameLine();
-        ImGui::TextDisabled("%s", transmittance);
-      } else {
-        ImGui::NewLine();  // end the labels' line — the wrapped readout owns a fresh line, not the tail
-        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-        ImGui::TextWrapped("%s", transmittance);
-        ImGui::PopStyleColor();
-      }
-    }
+    // The display semantics' legend and the face-transmittance readout both moved out of the
+    // report: the semantics live in the title band's help icon (kRay3DHelpText), and the
+    // exact per-interface transmittances stay in the factors region's Interface transmission
+    // fold — the report keeps status/qualifying facts only, within its fixed two-line budget.
   };
   render_content();
   ImGui::EndChild();

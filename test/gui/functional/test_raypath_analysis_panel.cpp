@@ -4462,6 +4462,14 @@ bool TraceResetAndAxesTakeRealInput(ImGuiTestContext* ctx) {
 // line, so span differences equal width differences; the chain's real decay shows a visible
 // spread. Runs with the toggle off (no label ink interleaves between the lines).
 bool TraceWidthsFollowCumulativeEnergy(ImGuiTestContext* ctx) {
+  // This leg needs the labels' ink OUT of the draw list — the factory default is now ON, so the
+  // leg sets its own off state (and leaves with it restored, happy path or early exit alike).
+  struct RestoreFresnel {
+    bool saved = gui::g_state.analysis.point_view.show_fresnel_labels;
+    ~RestoreFresnel() { gui::g_state.analysis.point_view.show_fresnel_labels = saved; }
+  } restore_fresnel;
+  gui::g_state.analysis.point_view.show_fresnel_labels = false;
+  ctx->Yield(2);
   const auto& frame = gui::LastRay3DFrameInfo();
   IM_CHECK_RETV(frame.valid && frame.frame_count == ImGui::GetFrameCount(), false);
   IM_CHECK_RETV(gui::g_state.analysis.point_view.show_fresnel_labels == false, false);
@@ -4566,22 +4574,34 @@ bool TraceWidthsFollowCumulativeEnergy(ImGuiTestContext* ctx) {
   return true;
 }
 
-// AC3's primitive leg: the ratio numbers default off, a real click turns them on, every
-// canvas-touching drawn segment then carries its label — the ink near the visible part's
-// midpoint, the exact ratio text from the render-feedback slot (the draw-list carries no
-// strings), and the canvas geometry holds still across the toggle.
+// AC3's primitive leg: the ratio numbers DEFAULT ON (2026-11-17 feedback — the factory state a
+// fresh session shows), a real click turns them off (ink gone, canvas geometry unchanged), a
+// second click restores them, and every canvas-touching drawn segment then carries its label —
+// the ink near the visible part's midpoint, the exact ratio text from the render-feedback slot
+// (the draw-list carries no strings), and the canvas geometry still where it started.
 bool TraceLabelsFollowTheToggle(ImGuiTestContext* ctx) {
   auto& view = gui::g_state.analysis.point_view;
   struct Restore {
     bool saved = gui::g_state.analysis.point_view.show_fresnel_labels;
     ~Restore() { gui::g_state.analysis.point_view.show_fresnel_labels = saved; }
   } restore;
-  IM_CHECK_RETV(view.show_fresnel_labels == false, false);  // the AC's initial state
+  IM_CHECK_RETV(view.show_fresnel_labels == true, false);  // the factory default (the AC's initial state)
   ctx->Yield(2);
-  IM_CHECK_RETV(TraceCanvasVertices(gui::kRayTraceLabelColor).empty(), false);
+  IM_CHECK_RETV(!TraceCanvasVertices(gui::kRayTraceLabelColor).empty(), false);  // on by default
   const gui::Ray3DFrameInfo before = gui::LastRay3DFrameInfo();
   IM_CHECK_RETV(before.valid, false);
   ctx->SetRef("//Pose & trace");
+  ctx->ItemClick("**/Show Fresnel ratios##r3d_fresnel");
+  ctx->Yield(2);
+  IM_CHECK_RETV(view.show_fresnel_labels == false, false);
+  IM_CHECK_RETV(TraceCanvasVertices(gui::kRayTraceLabelColor).empty(), false);
+  // The toggle lives in the fixed control band: switching it moves no canvas geometry —
+  // asserted in BOTH directions (off here, back on below).
+  const gui::Ray3DFrameInfo after_off = gui::LastRay3DFrameInfo();
+  IM_CHECK_RETV(after_off.valid && after_off.canvas_min.x == before.canvas_min.x &&
+                    after_off.canvas_min.y == before.canvas_min.y && after_off.canvas_size.x == before.canvas_size.x &&
+                    after_off.canvas_size.y == before.canvas_size.y,
+                false);
   ctx->ItemClick("**/Show Fresnel ratios##r3d_fresnel");
   ctx->Yield(2);
   IM_CHECK_RETV(view.show_fresnel_labels == true, false);
@@ -4691,16 +4711,13 @@ bool TraceLabelsFollowTheToggle(ImGuiTestContext* ctx) {
     });
   });
   IM_CHECK_RETV(ink_owned, false);
-  ctx->LogInfo("[trace labels] %d labelled segments, %zu ink vertices, %zu rects pairwise apart, default-off leg held",
+  ctx->LogInfo("[trace labels] %d labelled segments, %zu ink vertices, %zu rects pairwise apart, default-on leg held",
                labelled, label_ink.size(), placed_rects.size());
   IM_CHECK_RETV(SaveWindowPng(ctx, "//Pose & trace", GuiTestTempPath("analyze_c03_trace_fresnel_labels.png").string()),
                 false);
-  ctx->ItemClick("**/Show Fresnel ratios##r3d_fresnel");
-  ctx->Yield(2);
-  IM_CHECK_RETV(view.show_fresnel_labels == false, false);
-  IM_CHECK_RETV(TraceCanvasVertices(gui::kRayTraceLabelColor).empty(), false);
-  return true;
+  return true;  // the RAII restore returns the factory default (on); the off leg ran above
 }
+
 
 // The splitter strips' drag-hint glyph leg (the mechanism-consolidation red-green pin): every
 // strip carries ink beyond its tri-state centre line, on both sides along the drag axis. The
@@ -6630,6 +6647,125 @@ struct ScopedUiScaleAndBasisLease {
     ctx->Yield(3);
   }
 };
+
+// The 2026-11-17 region-rework's own acceptance legs (scrum 800 / task r3d-region-rework):
+// AC1's canvas gain and AC2's title band. AC1 measures the canvas item rect at the default
+// 960x720pt / UI 1x against the recorded pre-change baseline — canvas 608x117, measured at
+// d6ad263e4 by the same probe (the quota test's TraceAxesFootprints log line, archived in the
+// task's baseline-evidence.md) — the gain must be the plan's +64pt or better at the SAME
+// window, scale and defaults, not a bigger window or a moved split. AC2 pins the title band:
+// the Fresnel toggle is a control-band item, default ON for a fresh session, every band
+// control wraps by its complete footprint and stays really operable in the empty state AND at
+// the narrowest window, and the band's help icon carries the usage/semantics prose in a
+// wrapped tooltip whose laid-out height proves the long form (not a one-line stub).
+bool Ray3DTitleBandAndCanvasGainHold(ImGuiTestContext* ctx) {
+  ScopedServerGuard guard;
+  const ScopedUiScaleAndBasisLease geometry_lease(ctx);
+  IM_CHECK_RETV(BringUpHaloScene(ctx, /*infinite=*/false), false);
+  OpenWindow(ctx);
+  gui::g_state.analyze_pose_view_open = true;
+  PinPoseViewOnScreen(ctx);
+  auto& view = gui::g_state.analysis.point_view;
+  IM_CHECK_RETV(view.show_fresnel_labels == true, false);  // the factory default (AC2)
+  IM_CHECK_RETV(gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kNoIntent, false);
+
+  // The band in the EMPTY state: every control's complete footprint inside the region, and
+  // every one of them really answers a click (the plan's "无结果时控制带同样可达").
+  auto* region = PoseRegionWindow("##AnalyzeRaypath3D");
+  IM_CHECK_RETV(region != nullptr, false);
+  ImGuiTestItemInfo found{};
+  const auto band_control = [&](const char* id) -> bool {
+    found = ctx->ItemInfo(id, ImGuiTestOpFlags_NoError);
+    IM_CHECK_RETV(found.ID != 0, false);
+    IM_CHECK_RETV(region->InnerClipRect.Contains(found.RectFull), false);
+    return true;
+  };
+  const auto band_clicks = [&](const char* what) -> bool {
+    ctx->SetRef("//Pose & trace");
+    IM_CHECK_RETV(band_control("**/World##r3d"), false);
+    IM_CHECK_RETV(band_control("**/Crystal##r3d"), false);
+    ctx->ItemClick("**/Crystal##r3d");
+    ctx->Yield(2);
+    IM_CHECK_RETV(view.crystal_frame, false);
+    ctx->ItemClick("**/World##r3d");
+    ctx->Yield(2);
+    IM_CHECK_RETV(!view.crystal_frame, false);
+    view.orbit_yaw_deg = 121.0f;
+    view.orbit_pitch_deg = -41.0f;
+    ctx->ItemClick("**/Reset View##r3d_reset");
+    ctx->Yield(2);
+    IM_CHECK_RETV(view.orbit_yaw_deg == 35.0f && view.orbit_pitch_deg == 22.0f, false);
+    ctx->ItemClick("**/Show Fresnel ratios##r3d_fresnel");
+    ctx->Yield(2);
+    IM_CHECK_RETV(view.show_fresnel_labels == false, false);
+    ctx->ItemClick("**/Show Fresnel ratios##r3d_fresnel");
+    ctx->Yield(2);
+    IM_CHECK_RETV(view.show_fresnel_labels == true, false);
+    IM_CHECK_RETV(band_control("**/" ICON_FA_CIRCLE_INFO "##r3d_help"),
+                  false);  // no click side effect; the hover leg runs below
+    ctx->LogInfo("[r3d rework] %s band: radios, reset, toggle and help icon all operable", what);
+    return true;
+  };
+  IM_CHECK_RETV(band_clicks("empty state"), false);
+
+  // The icon's help text: the full long form, laid out wrapped (the height proves it — a
+  // truncated single-line stub cannot reach three text lines).
+  {
+    ctx->SetRef("//Pose & trace");
+    IM_CHECK_RETV(band_control("**/" ICON_FA_CIRCLE_INFO "##r3d_help"), false);
+    const ImGuiTestItemInfo icon = found;
+    ctx->MouseMoveToPos(icon.RectFull.GetCenter());
+    ctx->Yield(3);
+    ImGuiWindow* tooltip = nullptr;
+    for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
+      if (w != nullptr && w->Active && (w->Flags & ImGuiWindowFlags_Tooltip) != 0) {
+        tooltip = w;
+      }
+    }
+    IM_CHECK_RETV(tooltip != nullptr, false);
+    ctx->LogInfo("[r3d rework] help tooltip laid out %.0fx%.0f (line height %.1f)", tooltip->ContentSize.x,
+                 tooltip->ContentSize.y, ImGui::GetTextLineHeight());
+    IM_CHECK_RETV(tooltip->ContentSize.y >= 3.0f * ImGui::GetTextLineHeight(), false);
+    ctx->MouseMoveToPos(ImVec2(2, 2));
+    ctx->Yield(2);
+  }
+
+  // AC1 — the canvas gain at the default geometry, on a drawn trace ("同一可绘制场景").
+  // The point query arms only against a selected class: run the whole-sky analysis and select
+  // the top chain (the pose_curve_modes leg's flow), then the on-fiber anchor (42,0).
+  IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
+  IM_CHECK_RETV(SelectRowByDisplay(ctx, TopChainDisplay().c_str()) != std::nullopt, false);
+  SetSkyPointTarget(42.0, 0.0);
+  IM_CHECK_RETV(
+      DriveUntil(
+          ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCompleted; },
+          60),
+      false);
+  IM_CHECK_RETV(DriveUntil(ctx, [] { return CurrentTraceIsDrawn(); }, 30), false);
+  const auto canvas_rect = [&](const char* what) -> float {
+    const ImGuiTestItemInfo c = ctx->ItemInfo("**/##r3d_canvas", ImGuiTestOpFlags_NoError);
+    IM_CHECK_RETV(c.ID != 0, false);
+    ctx->LogInfo("[r3d rework] %s canvas %.1fx%.1f", what, c.RectFull.GetWidth(), c.RectFull.GetHeight());
+    return c.RectFull.GetHeight();
+  };
+  const float default_h = canvas_rect("default 960x720");
+  IM_CHECK_RETV(default_h >= 117.0f + 64.0f, false);  // baseline 608x117 @ d6ad263e4 + the plan's floor
+
+  // AC2's narrow leg: the same band, wrapped by complete footprints, still operable.
+  ImGuiWindow* host = ctx->GetWindowByRef("//Pose & trace");
+  IM_CHECK_RETV(host != nullptr, false);
+  ImGui::SetWindowSize(host, ImVec2(gui::UiPx(640.0f), gui::UiPx(680.0f)), ImGuiCond_Always);
+  ctx->Yield(4);
+  IM_CHECK_RETV(band_clicks("narrowest 640x680"), false);
+  canvas_rect("narrowest 640x680");
+  IM_CHECK_RETV(SaveWindowPng(ctx, "//Pose & trace", GuiTestTempPath("r3d_title_band_narrow.png").string()), false);
+
+  // Leave the standing geometry as the pin set it (the resize legs restore their own splits).
+  PinPoseViewOnScreen(ctx);
+  gui::g_state.analyze_pose_view_open = false;
+  ctx->Yield(2);
+  return true;
+}
 
 bool AnalyzeResultCarriesAcrossScaleTiers(ImGuiTestContext* ctx) {
   ScopedServerGuard guard;
@@ -10101,14 +10237,20 @@ bool PoseCurveReportQuotasTrackContent(ImGuiTestContext* ctx) {
         gui::g_state.analysis.point_view.show_fresnel_labels = true;
         ctx->Yield(3);
         IM_CHECK_RETV(TraceAxesFootprints(ctx, true), false);
+        auto* region_3d = PoseRegionWindow("##AnalyzeRaypath3D");
+        IM_CHECK_RETV(region_3d != nullptr, false);
         // Full default rectangles, not the bbox of only those glyphs clipping happened to emit.
+        // The Ray3D report's quota carries the legend row only: the usage/semantics prose lives
+        // in the title band's help icon (hover-time, no layout item) and the Fresnel toggle sits
+        // in the fixed control band — the toggle and the icon are asserted against the REGION
+        // child, the legend against the report child.
         if (!narrow) {
-          IM_CHECK_RETV(full_item("**/##r3d_description", report), false);
-          IM_CHECK_RETV(full_item("**/Show Fresnel ratios##r3d_fresnel", report), false);
+          IM_CHECK_RETV(full_item("**/Show Fresnel ratios##r3d_fresnel", region_3d), false);
+          IM_CHECK_RETV(full_item("**/" ICON_FA_CIRCLE_INFO "##r3d_help", region_3d), false);
+          IM_CHECK_RETV(full_item("**/Reset View##r3d_reset", region_3d), false);
           IM_CHECK_RETV(full_item("**/entry", report), false);
           IM_CHECK_RETV(full_item("**/internal", report), false);
           IM_CHECK_RETV(full_item("**/exit", report), false);
-          IM_CHECK_RETV(full_item("**/##r3d_semantics", report), false);
           IM_CHECK_RETV(report->ScrollMax.y == 0, false);
           IM_CHECK_RETV(full_item("**/##curve_identity", companion), false);
           IM_CHECK_RETV(full_item("**/##curve_caliber", companion), false);
@@ -13877,6 +14019,11 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
   {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "pose_curve_report_quotas_track_content");
     t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(PoseCurveReportQuotasTrackContent(ctx)); };
+  }
+
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "r3d_title_band_and_canvas_gain_hold");
+    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(Ray3DTitleBandAndCanvasGainHold(ctx)); };
   }
 
   {
