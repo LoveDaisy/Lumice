@@ -34,6 +34,7 @@
 #include "gui/symmetry_ui.hpp"
 #include "gui/table_focus_ring.hpp"
 #include "gui/theme.hpp"
+#include "gui/tooltip.hpp"
 #include "gui/user_defaults.hpp"
 #include "gui/window_sizing.hpp"
 #include "imgui.h"
@@ -1930,30 +1931,18 @@ static void RenderSummandRowList() {
   // it does not compete with the live-preview block below.
   ImGui::TextDisabled("e.g. 3-5  or  1-3;3-5 (OR)  or  entry:2 & exit:4  or  3-5 & len:2-3");
 
-  // Token help icon: transparent SmallButton acts as a stable hover target
-  // (mirrors the symmetry checkboxes' info-icon pattern, symmetry_ui.cpp InfoIcon).
-  ImGui::SameLine();
-  ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
-  ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0, 0, 0, 0));
-  ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0, 0, 0, 0));
-  ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-  ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0.0f);
-  ImGui::SmallButton(ICON_FA_CIRCLE_INFO "##summand_token_help");
-  ImGui::PopStyleVar();
-  ImGui::PopStyleColor(4);
-  if (ImGui::IsItemHovered()) {
-    ImGui::SetTooltip(
-        "Token syntax:\n"
-        "  3-5           face path (a raypath token)\n"
-        "  1-3;3-5       raypath OR alternatives (';' distributes over '&')\n"
-        "  entry:2       enter through face 2\n"
-        "  exit:4        exit through face 4\n"
-        "  len:2-3       ray length range\n"
-        "  entry:1,2     comma-list = 'entry:1 OR entry:2' (expanded at filter apply)\n"
-        "  & (AND)       within a row\n"
-        "  new row       = OR alternative (sum-of-products)\n"
-        "  blank row     = states nothing, dropped (all rows blank = no filter)");
-  }
+  // Token syntax reference: the shared info icon (gui/tooltip.hpp) is the stable hover target.
+  InfoIcon("summand_token_help",
+           "Token syntax:\n"
+           "  3-5           face path (a raypath token)\n"
+           "  1-3;3-5       raypath OR alternatives (';' distributes over '&')\n"
+           "  entry:2       enter through face 2\n"
+           "  exit:4        exit through face 4\n"
+           "  len:2-3       ray length range\n"
+           "  entry:1,2     comma-list = 'entry:1 OR entry:2' (expanded at filter apply)\n"
+           "  & (AND)       within a row\n"
+           "  new row       = OR alternative (sum-of-products)\n"
+           "  blank row     = states nothing, dropped (all rows blank = no filter)");
 
   // Live preview of the sum-of-products the current row buffers would
   // expand to on commit. Uses the SAME parse/format helpers as the commit

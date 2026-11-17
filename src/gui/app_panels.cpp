@@ -39,6 +39,7 @@
 #include "gui/sim_state_rules.hpp"
 #include "gui/theme.hpp"
 #include "gui/toolbar_layout.hpp"
+#include "gui/tooltip.hpp"
 #include "gui/view_look_at.hpp"
 #include "imgui.h"
 // imgui_internal.h for SeparatorEx(ImGuiSeparatorFlags_Vertical) only — the one themed vertical
@@ -1754,13 +1755,11 @@ void RenderViewControlsGroup(GuiState& state) {
   }
   ImGui::SeparatorText("Pose");
   if (is_globe) {
-    ImGui::TextDisabled("(?)");
-    if (ImGui::IsItemHovered()) {
-      ImGui::SetTooltip(
-          "In Globe lens, Az/El/Roll control the observer's orbit\n"
-          "around the sphere, not the camera's own attitude.\n"
-          "Roll is locked to 0 in this mode (slider is greyed out).");
-    }
+    // Globe-only pose semantics as a section help marker (InfoIconLine: fresh line, not joined).
+    InfoIconLine("globe_pose_help",
+                 "In Globe lens, Az/El/Roll control the observer's orbit\n"
+                 "around the sphere, not the camera's own attitude.\n"
+                 "Roll is locked to 0 in this mode (slider is greyed out).");
   }
   // The elevation limit backs off one degree from the pole under Globe; that, like the full-sky
   // gate the two share, is the registry's to state. Both entries carry the SAME gate
