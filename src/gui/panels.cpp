@@ -25,6 +25,7 @@
 #include "gui/slider_mapping.hpp"
 #include "gui/table_focus_ring.hpp"
 #include "gui/theme.hpp"
+#include "gui/tooltip.hpp"
 #include "gui/user_defaults.hpp"  // DescribeAxisPresetDomain — the badge tooltip's second line
 #include "imgui.h"
 // imgui_internal.h for two things. ReloadInputTextIfActive: GetActiveID / GetInputTextState /
@@ -2282,18 +2283,14 @@ void RenderSunControls(GuiState& state) {
   SliderWithInput(PanelLabel("sun.altitude").c_str(), &state.sun.altitude, static_cast<float>(alt_c.min_value),
                   static_cast<float>(alt_c.max_value), alt_c.fmt, alt_c.scale);
   ImGui::EndGroup();
-  if (ImGui::IsItemHovered()) {
-    ImGui::SetTooltip("Sun elevation angle above the horizon");
-  }
+  InfoIcon("sun_altitude_help", "Sun elevation angle above the horizon");
   ImGui::BeginGroup();
   // AC2 migration path: same rationale as sun.altitude above.
   const FieldEditorConstraint dia_c = ConstraintFor("sun.diameter", state);
   SliderWithInput(PanelLabel("sun.diameter").c_str(), &state.sun.diameter, static_cast<float>(dia_c.min_value),
                   static_cast<float>(dia_c.max_value), dia_c.fmt, dia_c.scale);
   ImGui::EndGroup();
-  if (ImGui::IsItemHovered()) {
-    ImGui::SetTooltip("Angular diameter of the sun disk. 0 = point source.");
-  }
+  InfoIcon("sun_diameter_help", "Angular diameter of the sun disk. 0 = point source.");
   PushLabelColumnItemWidth();
   // Combo carries kSpectrumCount presets + "Custom..." tail (item count = kSpectrumComboItemCount).
   // Built once from kSpectrumNames so adding/renaming a preset only requires editing kSpectrumNames.
@@ -2319,11 +2316,9 @@ void RenderSunControls(GuiState& state) {
       // switching to a preset and back restores the user's edits instead of silently discarding them.
     }
   }
-  if (ImGui::IsItemHovered()) {
-    ImGui::SetTooltip(
-        "Light source spectrum for wavelength-dependent refraction.\n"
-        "\"Custom...\" opens an editor for a discrete wavelength/weight list.");
-  }
+  InfoIcon("sun_spectrum_help",
+           "Light source spectrum for wavelength-dependent refraction.\n"
+           "\"Custom...\" opens an editor for a discrete wavelength/weight list.");
   ImGui::PopItemWidth();
   if (state.sun.spectrum_index == kCustomSpectrumIndex) {
     if (ImGui::SmallButton("Edit spectrum...##spectrum_edit")) {
@@ -2335,9 +2330,7 @@ void RenderSunControls(GuiState& state) {
 void RenderSimulationControls(GuiState& state) {
   ImGui::SeparatorText("Simulation");
   Checkbox(PanelLabel("sim.infinite").c_str(), &state.sim.infinite);
-  if (ImGui::IsItemHovered()) {
-    ImGui::SetTooltip("Run simulation continuously until manually stopped");
-  }
+  InfoIcon("sim_infinite_help", "Run simulation continuously until manually stopped");
   ImGui::BeginGroup();
   // One call, not one per branch. The two branches were identical apart from the BeginDisabled
   // wrapper, and `enabled` (the registry's "infinite rays is on, so no ray total applies") is
@@ -2349,21 +2342,17 @@ void RenderSimulationControls(GuiState& state) {
                   static_cast<float>(rays_c.min_value), static_cast<float>(rays_c.max_value), rays_c.fmt, rays_c.scale);
   ImGui::EndDisabled();
   ImGui::EndGroup();
-  if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-    ImGui::SetTooltip(
-        "Total rays across all spectrum wavelengths, in millions.\n"
-        "The server distributes the total to each wavelength as\n"
-        "ceil(total / N_wavelengths) per wavelength.");
-  }
+  InfoIcon("sim_ray_num_help",
+           "Total rays across all spectrum wavelengths, in millions.\n"
+           "The server distributes the total to each wavelength as\n"
+           "ceil(total / N_wavelengths) per wavelength.");
   ImGui::BeginGroup();
   // An int field has no fmt/scale to read — SliderIntWithInput takes neither.
   const FieldEditorConstraint hits_c = ConstraintFor("sim.max_hits", state);
   SliderIntWithInput(PanelLabel("sim.max_hits").c_str(), &state.sim.max_hits, static_cast<int>(hits_c.min_value),
                      static_cast<int>(hits_c.max_value));
   ImGui::EndGroup();
-  if (ImGui::IsItemHovered()) {
-    ImGui::SetTooltip("Maximum number of crystal face hits per ray path");
-  }
+  InfoIcon("sim_max_hits_help", "Maximum number of crystal face hits per ray path");
 
   // GPU backend toggle (Metal on Apple, CUDA on NVIDIA). Marked dirty explicitly so
   // the next Apply/Run reconstructs the server for the chosen backend
@@ -2391,12 +2380,10 @@ void RenderSimulationControls(GuiState& state) {
     if (Checkbox("Use GPU", &state.use_gpu_backend)) {
       state.MarkDirty();
     }
-    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-      ImGui::SetTooltip("Use the GPU for simulation (falls back to CPU if incompatible)");
-    }
     if (busy) {
       ImGui::EndDisabled();
     }
+    InfoIcon("use_gpu_help", "Use the GPU for simulation (falls back to CPU if incompatible)");
   }
 }
 

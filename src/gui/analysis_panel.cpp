@@ -36,6 +36,7 @@
 #include "gui/sim_state_rules.hpp"
 #include "gui/symmetry_ui.hpp"
 #include "gui/theme.hpp"
+#include "gui/tooltip.hpp"
 #include "imgui.h"
 #include "include/lumice_base.h"
 #include "include/lumice_editor.h"
@@ -1286,15 +1287,16 @@ namespace {
 // The budget's existing slider + precise input pair, within the operation template's slot.
 void RenderRequestParamsControls(GuiState& state, float width) {
   EnsureDefaultAnalysisRayBudget(state);
+  // `width` is the pair's own reservation (the calibrated track included); the joined help icon
+  // rides AFTER the pair, and its advance is carried by the row's demand (rays_row), not by
+  // shrinking the pair.
   ImGui::BeginDisabled(state.analysis.infinite);
   SliderWithInput("Rays(M)", &state.analysis.ray_num_millions, kRayNumMinMillions, kRayNumMaxMillions, kRayNumSliderFmt,
                   kRayNumSliderScale, LabelPlacement::kTrailing, nullptr, nullptr, width);
   ImGui::EndDisabled();
-  if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-    ImGui::SetTooltip(
-        "Total rays the analysis traces across all wavelengths, in millions.\n"
-        "Starts from the document's Rays; independent of it from then on.");
-  }
+  InfoIcon("analysis_ray_budget_help",
+           "Total rays the analysis traces across all wavelengths, in millions.\n"
+           "Starts from the document's Rays; independent of it from then on.");
 }
 
 // The top line of the window when the list on show no longer describes the document on the
@@ -1383,17 +1385,21 @@ void RenderRadiusSlider(GuiState& state, float width) {
   // Track and visible label share the template's complete footprint, independent of payload.
   ImGui::BeginDisabled(state.analysis.roi_mode != LUMICE_RAYPATH_ROI_CONE);
   const float label_w = ImGui::CalcTextSize("Radius").x;
-  ImGui::SetNextItemWidth(std::max(UiPx(40.0f), width - label_w - ImGui::GetStyle().ItemInnerSpacing.x));
+  // The slot reserves the joined help icon's advance; the track keeps its designed width.
+  ImGui::SetNextItemWidth(
+      std::max(UiPx(40.0f), width - label_w - ImGui::GetStyle().ItemInnerSpacing.x - InfoIconAdvance()));
   if (ImGui::SliderFloat("Radius###Radius_narrow", &state.analysis.cone_radius_deg, min_deg, cone_deg, "%.1f°")) {
     RecomputeAnalysisDisplayOrder(state);
   }
-  if (ImGui::IsItemHovered()) {
-    ImGui::SetTooltip(cone_result ?
-                          "How far from the picked point counts. Re-sums the result on hand; does not re-run." :
-                          "How far from the picked point will count, shown as the ring on the preview.\n"
-                          "The analysis always traces the whole cone; this picks the part the list sums.");
+  // The what-it-means half moved to the associated info icon below; what stays here is the
+  // current-state branch (whether the slider re-sums an existing result or only sizes the ring).
+  if (cone_result && ImGui::IsItemHovered()) {
+    ImGui::SetTooltip("Re-sums the result on hand; does not re-run.");
   }
   ImGui::EndDisabled();
+  InfoIcon("analysis_radius_help",
+           "How far from the picked point counts, shown as the ring on the preview.\n"
+           "The analysis always traces the whole cone; this picks the part the list sums.");
 }
 
 // The P/B/D checkboxes — the filter editor's own widget — and the read they drive: a change
@@ -1404,12 +1410,11 @@ void RenderSymmetryControls(GuiState& state, LUMICE_Server* server) {
   auto& a = state.analysis;
   ImGui::AlignTextToFramePadding();
   ImGui::TextUnformatted("Symmetry");
-  if (ImGui::IsItemHovered()) {
-    ImGui::SetTooltip(
-        "Merges only raypaths that are physically equivalent on their crystal (its shape and\n"
-        "orientation), so one row is one physical class. A filter's P/B/D is different: it\n"
-        "merges face labels. Re-reads the result on hand; does not re-run.");
-  }
+  // The reduction's semantics ride the associated info icon, not the title's hover.
+  InfoIcon("analysis_symmetry_help",
+           "Merges only raypaths that are physically equivalent on their crystal (its shape and\n"
+           "orientation), so one row is one physical class. A filter's P/B/D is different: it\n"
+           "merges face labels. Re-reads the result on hand; does not re-run.");
   // The first checkbox joins the title's row only while the row holds it — at the compressed
   // tiers' widths the group wraps below the title instead of clipping (the analysis head's
   // scrolling child has no horizontal scrollbar; the same judgment guards the checkboxes' own
@@ -1977,12 +1982,17 @@ OperationWidths MeasureOperationWidths() {
   const float gap = ImGui::GetStyle().ItemSpacing.x;
   OperationWidths w;
   w.modes = InlineLabelledControlWidth("Whole sky") + InlineLabelledControlWidth("Point") + gap;
-  w.radius_slot = UiPx(80.0f) + ImGui::GetStyle().ItemInnerSpacing.x + ImGui::CalcTextSize("Radius").x;
+  // Radius reserves its joined help icon's advance inside the slot (the icon rides the slider's
+  // row, and the slider's track formula subtracts the same advance, so the track keeps its
+  // designed width). Rays(M)'s slot is the pair's own reservation — its calibrated track must
+  // not shrink — so the icon's advance is carried by the row's consumption (rays_row) instead.
+  const float help_advance = InfoIconAdvance();
+  w.radius_slot = UiPx(80.0f) + ImGui::GetStyle().ItemInnerSpacing.x + ImGui::CalcTextSize("Radius").x + help_advance;
   w.radius = w.modes + gap + w.radius_slot;
   w.run = w.radius + gap + InlineButtonWidth(ICON_FA_PLAY " Analyze");
   w.first = w.run + gap + InlineLabelledControlWidth("Infinite rays");
   w.rays_slot = UiPx(kAnalysisRayBudgetTrackPt + kInputWidth + kLabelColWidth) + gap + LabelColumnGapX();
-  w.rays_row = w.rays_slot - UiPx(kLabelColWidth) + ImGui::CalcTextSize("Rays(M)").x;
+  w.rays_row = w.rays_slot - UiPx(kLabelColWidth) + ImGui::CalcTextSize("Rays(M)").x + help_advance;
   w.single = w.first + gap + w.rays_row;
   return w;
 }

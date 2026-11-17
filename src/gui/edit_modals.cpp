@@ -1497,12 +1497,10 @@ static void RenderCrystalModal(GuiState& /*state*/) {
                                  sizeof(name_buf))) {
       cr.name = name_buf;
     }
-  }
-  if (ImGui::IsItemHovered()) {
-    ImGui::SetTooltip(
-        "A name for this crystal, shown on its card and wherever a colour class refers to it.\n"
-        "Names need not be unique — the pool id stays visible alongside so two crystals sharing\n"
-        "a name are still tellable apart.");
+    InfoIcon("crystal_name_help",
+             "A name for this crystal, shown on its card and wherever a colour class refers to it.\n"
+             "Names need not be unique — the pool id stays visible alongside so two crystals sharing\n"
+             "a name are still tellable apart.");
   }
 
   ImGui::Spacing();
@@ -1663,9 +1661,7 @@ static void RenderAxisModal(GuiState& state) {
       "loads this label's memory — or its definition when nothing is remembered. The preview "
       "pose follows, re-seating on this label's typical view.";
   ImGui::Text("Label:");
-  if (ImGui::IsItemHovered()) {
-    ImGui::SetTooltip("%s", kChipSwitchNote);
-  }
+  InfoIcon("axis_label_switch_help", "%s", kChipSwitchNote);
   for (const auto& entry : kAxisPresets) {
     ImGui::SameLine();
     bool highlighted = entry.id == active;
@@ -1703,9 +1699,6 @@ static void RenderAxisModal(GuiState& state) {
     }
     if (highlighted) {
       ImGui::PopStyleColor(4);
-    }
-    if (ImGui::IsItemHovered()) {
-      ImGui::SetTooltip("%s", kChipSwitchNote);
     }
   }
 
@@ -2015,16 +2008,11 @@ static void RenderSharedFilterControls(const SymmetryAvailability& avail) {
   if (ImGui::RadioButton("Filter In##filter_action", g_filter_top.action == 0)) {
     g_filter_top.action = 0;
   }
-  if (ImGui::IsItemHovered()) {
-    ImGui::SetTooltip("Show only rays matching the filter");
-  }
   ImGui::SameLine();
   if (ImGui::RadioButton("Filter Out##filter_action", g_filter_top.action == 1)) {
     g_filter_top.action = 1;
   }
-  if (ImGui::IsItemHovered()) {
-    ImGui::SetTooltip("Hide rays matching the filter");
-  }
+  InfoIcon("filter_action_help", "Filter In: show only rays matching the filter.\nFilter Out: hide them.");
 
   RenderSymmetryCheckboxes(g_filter_top.sym_p, g_filter_top.sym_b, g_filter_top.sym_d, avail,
                            SymmetryCheckboxMeaning::kFilterLabel, "filter_modal");
@@ -3267,7 +3255,7 @@ void RenderEditModals(GuiState& state, GLFWwindow* window) {
   const float immediate_w = ImGui::GetFrameHeight() + style.ItemInnerSpacing.x +
                             ImGui::CalcTextSize("Immediate##edit_modal", nullptr, true).x;
   const float view_toggle_group_x =
-      ImGui::GetContentRegionMax().x - (layout_combo_w + style.ItemSpacing.x + immediate_w);
+      ImGui::GetContentRegionMax().x - (layout_combo_w + style.ItemSpacing.x + immediate_w + InfoIconAdvance());
   if (view_toggle_group_x > ImGui::GetCursorPosX()) {
     ImGui::SetCursorPosX(view_toggle_group_x);
   }
@@ -3279,18 +3267,15 @@ void RenderEditModals(GuiState& state, GLFWwindow* window) {
       if (ImGui::Selectable(kModalLayoutNames[i], selected)) {
         state.modal_layout_compact = (i == 0);
       }
-      if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("%s", kModalLayoutTooltips[i]);
-      }
       if (selected) {
         ImGui::SetItemDefaultFocus();
       }
     }
     ImGui::EndCombo();
   }
-  if (ImGui::IsItemHovered()) {
-    ImGui::SetTooltip("%s", kModalLayoutTooltips[layout_selector_idx]);
-  }
+  // The layouts' semantics ride one associated info icon (both entries' text); the combo's own
+  // hover and the popup items' hover stay quiet per the two-tier rule.
+  InfoIcon("modal_layout_help", "%s\n%s", kModalLayoutTooltips[0], kModalLayoutTooltips[1]);
   ImGui::SameLine();
   // ImGui::Checkbox returns true only on the frame the user actually toggled
   // the value, so checking the return alone is sufficient to detect a change.
@@ -3327,9 +3312,7 @@ void RenderEditModals(GuiState& state, GLFWwindow* window) {
       // reopen gate to fire in Frame N+2).
     }
   }
-  if (ImGui::IsItemHovered()) {
-    ImGui::SetTooltip("Apply parameter changes to simulation in real-time");
-  }
+  InfoIcon("edit_modal_immediate_help", "Apply parameter changes to simulation in real-time");
 
   // Next frame's height request, and what of it the flexible pane cannot take away.
   EndHeightFollow(g_edit_modal_height);

@@ -26,6 +26,7 @@
 #include "gui/gui_state.hpp"
 #include "gui/preview_renderer.hpp"
 #include "gui/theme.hpp"
+#include "gui/tooltip.hpp"
 #include "gui/view_look_at.hpp"
 #include "imgui.h"
 #include "util/env_knobs.hpp"             // env::AnalyzeDebugDetails — the diagnostics groups' env gate
@@ -1446,17 +1447,16 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   // tier over the rows' hover). It lives on this header row — the fixed operation stack, never
   // inside the growing report — and the session field IS the control's state (the slider's
   // shape). The join is the row's own judgment: wrap, don't clip.
-  const float verdict_check_w =
-      ImGui::GetFrameHeight() + ImGui::GetStyle().ItemInnerSpacing.x + ImGui::CalcTextSize("Verdict anchors##map").x;
+  // The joined help icon's advance is part of the unit's footprint the wrap judgment counts.
+  const float verdict_check_w = ImGui::GetFrameHeight() + ImGui::GetStyle().ItemInnerSpacing.x +
+                                ImGui::CalcTextSize("Verdict anchors##map").x + InfoIconAdvance();
   if (fits_on_line(verdict_check_w)) {
     ImGui::SameLine();
   }
   ImGui::Checkbox("Verdict anchors##map", &state.analysis.verdict_anchor_shown);
-  if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-    ImGui::SetTooltip(
-        "Draw the class answer's colour verdict on the map: hovering its rows shows "
-        "the anchor temporarily, this switch keeps it.\nHidden together with Overlays.");
-  }
+  InfoIcon("map_verdict_anchors_help",
+           "Draw the class answer's colour verdict on the map: hovering its rows shows "
+           "the anchor temporarily, this switch keeps it.\nHidden together with Overlays.");
 
   const float canvas_avail_w = ImGui::GetContentRegionAvail().x;
   const float canvas_avail_h = ImGui::GetContentRegionAvail().y;

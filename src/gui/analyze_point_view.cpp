@@ -28,6 +28,7 @@
 #include "gui/overlay_labels.hpp"  // detail::ClampLabelPosToViewport — the one shared label clamp
 #include "gui/semantic_colors.hpp"
 #include "gui/theme.hpp"
+#include "gui/tooltip.hpp"
 #include "imgui.h"
 #include "include/lumice_editor.h"  // LUMICE_GetCrystalMesh — the crystal's true-scale wireframe
 #include "util/env_knobs.hpp"       // env::AnalyzeDebugDetails — the diagnostics groups' env gate
@@ -85,9 +86,10 @@ void RegisterPointTextItem(const char* label) {
   g.LastItemData = saved;
 }
 
-// One policy value drives both the numerical floor and its human-readable tooltip.
+// One policy value drives both the numerical floor and its help icon's text (owner 2026-11-17:
+// Full widens to 14 decades; both values stay adjustable after hands-on).
 constexpr int CurveRangeDecades(PointCurveRangeMode mode) {
-  return mode == PointCurveRangeMode::kFull ? 8 : 5;
+  return mode == PointCurveRangeMode::kFull ? 14 : 5;
 }
 
 struct CurveArm {
@@ -640,13 +642,14 @@ void RenderPointCurveRangeControl(PointCurveRangeMode* mode) {
     if (current) {
       ImGui::PopStyleColor(4);
     }
-    if (ImGui::IsItemHovered()) {
-      ImGui::SetTooltip("Up to %d decades below the largest positive value.", CurveRangeDecades(candidate));
-    }
     if (segment == 0) {
       ImGui::SameLine(0.0f, 0.0f);
     }
   }
+  // The two-tier rule: the pair's shared concept rides one associated info icon instead of the
+  // buttons' hover (doc/gui/gui-visual-language.md); the floors stay the policy values.
+  InfoIcon("curve_range_help", "Log-axis floor, decades below the largest positive value:\nFit %d, Full %d.",
+           CurveRangeDecades(PointCurveRangeMode::kFit), CurveRangeDecades(PointCurveRangeMode::kFull));
 }
 
 void DrawPointCurveLogAxis(ImDrawList* dl, const PointCurveAxisRange& visible, const ImVec2& plot_min,

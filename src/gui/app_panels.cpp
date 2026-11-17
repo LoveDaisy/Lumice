@@ -1729,11 +1729,11 @@ void RenderViewControlsGroup(GuiState& state) {
   if (Checkbox(PanelLabel("renderer.front", "visible").c_str(), &front_effective)) {
     r.front = front_effective;
   }
-  if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-    ImGui::SetTooltip("%s", front_c.enabled ? "Show front hemisphere only\n(combine with Upper/Full/Lower)" :
-                                              front_c.disabled_reason);
+  if (!front_c.enabled && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+    ImGui::SetTooltip("%s", front_c.disabled_reason);
   }
   ImGui::EndDisabled();
+  InfoIcon("renderer_front_help", "Show front hemisphere only\n(combine with Upper/Full/Lower)");
   // The globe's far side, seen through the near one. Only drawn under Globe — the one lens that
   // looks at the sky from outside and so has a far side at all — rather than greyed under the
   // ten that do not; the registry note (GlobeBackFadeNote) still states the rule for the panel
@@ -1744,14 +1744,12 @@ void RenderViewControlsGroup(GuiState& state) {
     SliderWithInput(PanelLabel("renderer.globe_back_fade", "visible").c_str(), &r.globe_back_fade,
                     static_cast<float>(fade_c.min_value), static_cast<float>(fade_c.max_value), fade_c.fmt,
                     fade_c.scale);
-    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-      ImGui::SetTooltip(
-          "Let the far side of the sphere, its light and its grid lines, show\n"
-          "through, fading like fog with distance from the camera.\n"
-          "The value is the fog length: larger fades more slowly.\n"
-          "0 shows the near side only; 0.3-0.6 is a light haze.");
-    }
     ImGui::EndDisabled();
+    InfoIcon("globe_back_fade_help",
+             "Let the far side of the sphere, its light and its grid lines, show\n"
+             "through, fading like fog with distance from the camera.\n"
+             "The value is the fog length: larger fades more slowly.\n"
+             "0 shows the near side only; 0.3-0.6 is a light haze.");
   }
   ImGui::SeparatorText("Pose");
   if (is_globe) {
@@ -1867,10 +1865,10 @@ void RenderViewControlsGroup(GuiState& state) {
     }
     ImGui::EndCombo();
   }
-  if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-    ImGui::SetTooltip(
-        "%s", el_c.enabled ? "Choose a named direction; Lock follows it as the scene changes." : el_c.disabled_reason);
+  if (!el_c.enabled && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+    ImGui::SetTooltip("%s", el_c.disabled_reason);
   }
+  InfoIcon("look_at_help", "Choose a named direction; Lock follows it as the scene changes.");
   ImGui::SameLine();
   bool locked = state.look_at.locked;
   if (Checkbox(kLockLabel, &locked)) {
@@ -1897,17 +1895,15 @@ void RenderDisplayTimeControlsGroup(GuiState& state, bool host_bg_pick) {
   // from position. This one names what it anchors and sits directly above the EV slider it
   // qualifies, so the two rows read as one pair.
   ImGui::Combo(PanelLabel("renderer.ev_mode", "display").c_str(), &r.ev_mode, kEvModeNames, kEvModeCount);
-  if (ImGui::IsItemHovered()) {
-    ImGui::SetTooltip(
-        "Which anchor display brightness is measured against.\n\n"
-        "Relative: each snapshot is re-anchored to its own brightest pixels. This is the "
-        "default and what the preview has always done. Good for looking at one document; "
-        "brightness carries no meaning when compared with another.\n\n"
-        "Absolute: anchored to the energy the light source emitted. EV then reads as stops "
-        "above or below physical, and two scenes at the same EV are directly comparable.\n\n"
-        "Switching only changes how the pixels already simulated are converted. It does not "
-        "re-run the simulation.");
-  }
+  InfoIcon("ev_anchor_help",
+           "Which anchor display brightness is measured against.\n\n"
+           "Relative: each snapshot is re-anchored to its own brightest pixels. This is the "
+           "default and what the preview has always done. Good for looking at one document; "
+           "brightness carries no meaning when compared with another.\n\n"
+           "Absolute: anchored to the energy the light source emitted. EV then reads as stops "
+           "above or below physical, and two scenes at the same EV are directly comparable.\n\n"
+           "Switching only changes how the pixels already simulated are converted. It does not "
+           "re-run the simulation.");
 
   ImGui::BeginGroup();
   const FieldEditorConstraint ev_c = ConstraintFor("renderer.exposure_offset", state);
@@ -1983,15 +1979,13 @@ void RenderDisplayTimeControlsGroup(GuiState& state, bool host_bg_pick) {
   // the user thinks in, and the two entries say what they do without the word "tone", which is
   // opaque to anyone who has not met tone mapping.
   ImGui::Combo(PanelLabel("renderer.tone", "display_tone").c_str(), &r.tone, kToneNames, kToneCount);
-  if (ImGui::IsItemHovered()) {
-    ImGui::SetTooltip(
-        "Which operator turns the simulated light into pixels.\n\n"
-        "Screen: light is ADDED to the sky colour. This is the default and what the preview "
-        "has always done. A light sky can only stay light, which is why a white sky shows no "
-        "halo.\n\n"
-        "Print: light is laid down as INK on the paper below, so the picture darkens where the "
-        "halo is — the way it would come off a printer.");
-  }
+  InfoIcon("display_tone_help",
+           "Which operator turns the simulated light into pixels.\n\n"
+           "Screen: light is ADDED to the sky colour. This is the default and what the preview "
+           "has always done. A light sky can only stay light, which is why a white sky shows no "
+           "halo.\n\n"
+           "Print: light is laid down as INK on the paper below, so the picture darkens where the "
+           "halo is — the way it would come off a printer.");
 
   // ColorEdit3 with NoInputs, the same swatch form the overlay rows and the defaults table use.
   // Its label sits beside the swatch rather than in the panel's right-hand label column, which is
@@ -2018,13 +2012,11 @@ void RenderDisplayTimeControlsGroup(GuiState& state, bool host_bg_pick) {
   if (!IsPrintTone(r)) {
     ImGui::ColorEdit3(PanelLabel("renderer.background", "display_sky_color").c_str(), r.background,
                       ImGuiColorEditFlags_NoInputs);
-    if (ImGui::IsItemHovered()) {
-      ImGui::SetTooltip(
-          "Colour of the empty sky, added to the halo in linear RGB before the\n"
-          "gamma curve — so an empty pixel renders exactly the colour picked here.\n"
-          "Only where the lens images something: outside the image circle, and\n"
-          "outside the visible hemisphere, stays black.");
-    }
+    InfoIcon("display_sky_color_help",
+             "Colour of the empty sky, added to the halo in linear RGB before the\n"
+             "gamma curve — so an empty pixel renders exactly the colour picked here.\n"
+             "Only where the lens images something: outside the image circle, and\n"
+             "outside the visible hemisphere, stays black.");
 
     // Eyedropper: take the sky colour off the imported photograph instead of dialling it. The
     // point is not convenience alone — the shader composites the photo as
@@ -2073,13 +2065,11 @@ void RenderDisplayTimeControlsGroup(GuiState& state, bool host_bg_pick) {
     // colour.
     ImGui::ColorEdit3(PanelLabel("renderer.paper", "display_paper_color").c_str(), r.paper,
                       ImGuiColorEditFlags_NoInputs);
-    if (ImGui::IsItemHovered()) {
-      ImGui::SetTooltip(
-          "Colour of the paper the ink is laid on under Print mode.\n\n"
-          "A separate field from Sky Color, and white rather than black by default: ink\n"
-          "only ever darkens what is beneath it, so black paper would render a black page.\n"
-          "Switch Mode back to Screen to get the sky colour back — it is kept, not reset.");
-    }
+    InfoIcon("display_paper_color_help",
+             "Colour of the paper the ink is laid on under Print mode.\n\n"
+             "A separate field from Sky Color, and white rather than black by default: ink\n"
+             "only ever darkens what is beneath it, so black paper would render a black page.\n"
+             "Switch Mode back to Screen to get the sky colour back — it is kept, not reset.");
   }
 
   // doc/rendering/print-mode-subtractive-ink.md §8 (owner decision D6), GUI half. Each operator has one
@@ -2387,25 +2377,21 @@ bool RenderDisplayModeControl() {
   ImGui::EndGroup();
   ImGui::PopStyleVar();
 
-  // The tooltip carries the same three points the user manual's section does (value moves with
-  // EV, clipping flattens it, compare at one EV) because those are what make the reading
-  // trustworthy, and a user who only ever hovers must still meet them. With the segment names as
-  // the only label, it is also where "Channel B-R" is explained at all.
-  if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-    if (dm_c.inactive_note != nullptr) {
-      ImGui::SetTooltip("%s", dm_c.inactive_note);
-    } else {
-      ImGui::SetTooltip(
-          "Normal: the rendered image.\n\n"
-          "Channel B-R: is this spot bluer or redder? Shows blue minus red of the halo-only\n"
-          "sRGB image after gamma, at the same exposure and view; sky colour excluded.\n"
-          "Mid grey is no difference (including empty sky), lighter is bluer, darker is redder.\n\n"
-          "The value moves with EV, and once red or blue clips at full brightness the\n"
-          "difference is flattened, so compare places at the same EV. Overlays are drawn\n"
-          "on top in their own colours; the background photo and the colored composite\n"
-          "are hidden while it is on.");
-    }
+  // The modes' shared concept ("what is Channel B-R" and the three reading caveats) rides the
+  // associated info icon per the two-tier rule; what stays on the control's hover is the
+  // current-state note (inactive_note) only.
+  if (dm_c.inactive_note != nullptr && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+    ImGui::SetTooltip("%s", dm_c.inactive_note);
   }
+  InfoIcon("preview_display_mode_help",
+           "Normal: the rendered image.\n\n"
+           "Channel B-R: is this spot bluer or redder? Shows blue minus red of the halo-only\n"
+           "sRGB image after gamma, at the same exposure and view; sky colour excluded.\n"
+           "Mid grey is no difference (including empty sky), lighter is bluer, darker is redder.\n\n"
+           "The value moves with EV, and once red or blue clips at full brightness the\n"
+           "difference is flattened, so compare places at the same EV. Overlays are drawn\n"
+           "on top in their own colours; the background photo and the colored composite\n"
+           "are hidden while it is on.");
 
   // Back to where the caller's next item expects to start: the content region's top-left.
   ImGui::SetCursorScreenPos(origin);

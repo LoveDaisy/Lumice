@@ -70,4 +70,9 @@ void InfoIconLine(const char* id_suffix, const char* fmt, ...) {
   va_end(args);
 }
 
+float InfoIconAdvance() {
+  return ImGui::CalcTextSize(ICON_FA_CIRCLE_INFO).x + ImGui::GetStyle().FramePadding.x * 2.0f +
+         ImGui::GetStyle().ItemSpacing.x;
+}
+
 }  // namespace lumice::gui

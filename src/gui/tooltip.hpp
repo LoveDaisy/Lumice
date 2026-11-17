@@ -27,4 +27,8 @@ void InfoIcon(const char* id_suffix, const char* fmt, ...) IM_FMTARGS(2);
 // section-marker shape (e.g. a help marker directly under a SeparatorText).
 void InfoIconLine(const char* id_suffix, const char* fmt, ...) IM_FMTARGS(2);
 
+// The layout advance an InfoIcon occupies joined after a control: the icon frame plus one
+// ItemSpacing. Measurement-side counterpart of the SameLine join, for width-budgeted rows.
+float InfoIconAdvance();
+
 }  // namespace lumice::gui
