@@ -1,7 +1,7 @@
 {
   "groups": {
     "capture_harness": {
-      "generated_at": "2026-11-17T12:33:08",
+      "generated_at": "2026-11-17T13:51:17",
       "n_ref_runs": 1,
       "n_calib_runs": 1,
       "scenes": {
@@ -88,7 +88,7 @@
       }
     },
     "modal_layout": {
-      "generated_at": "2026-11-17T12:50:18",
+      "generated_at": "2026-11-17T14:05:49",
       "n_ref_runs": 1,
       "n_calib_runs": 1,
       "scenes": {
