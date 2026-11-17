@@ -124,7 +124,7 @@ ScrollbarRounding 3  WindowRounding 4  PopupRounding 4
 
 **info icon 权威形态** —— 单一实现是 `gui/tooltip.hpp` 的 `InfoIcon`：透明 `SmallButton` 承载 FontAwesome 圆形问号（`ICON_FA_CIRCLE_INFO`），`TextDisabled` 色、无边框、稳定 item ID（调用方提供 `##` 后缀并保证窗口内唯一）；`SameLine` 并入前一控件所在行（`InfoIconLine` 为独立行标记变体）；hover 正文经 `SetWrappedTooltip` 呈现，无点击副作用、不改控件值、正文按需构造。同主题共用一个 icon，不逐按钮机械追加。
 
-**`SetWrappedTooltip`** 保留 ImGui tooltip 的格式化、定位与覆盖语义，正文最多 `UiPx(400)`，外框另加实际 `WindowPadding`；短句仍自适应宽度。它是全 GUI 唯一的悬浮排版载体——info icon 的 hover 正文与所有长 tooltip 都走它（原「仅 Settings 采用」的限定废止）。Settings 对行长提示的原有保障不变：全文不丢、长正文多行、外框受限、短句自适应；400 是排版设计选值，维持既有合同，owner 上手后可再调。
+**`SetWrappedTooltip`** 保留 ImGui tooltip 的格式化、定位与覆盖语义，正文最多 `UiPx(400)`，外框另加实际 `WindowPadding`；短句仍自适应宽度。它是 info icon 的 hover 正文与迁移/新增长 tooltip 的统一排版载体（原「仅 Settings 采用」的限定废止）。width-exact 的存量行（右面板各宽定行、Look-at 行——行宽由列预算精确钉死、无处安放 per-control icon 的行）暂沿控件 hover 原样，待 owner 对这些行终裁后归属；终裁前本条的「统一载体」不覆盖它们。Settings 对行长提示的原有保障不变：全文不丢、长正文多行、外框受限、短句自适应；400 是排版设计选值，维持既有合同，owner 上手后可再调。
 
 **4.3 调色板** —— 见 §3 定案列。核心两条规则：**强调色不做大面积常驻填充，且滑条静止态不上色**；分组标题是**染色**不是实心条。
 

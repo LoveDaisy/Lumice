@@ -1729,8 +1729,8 @@ void RenderViewControlsGroup(GuiState& state) {
   if (Checkbox(PanelLabel("renderer.front", "visible").c_str(), &front_effective)) {
     r.front = front_effective;
   }
-  // Two-branch hover, not an info icon: this row lives in the right panel's width-exact column
-  // (ledger dispute #10), where no per-control icon fits.
+  // Two-branch hover, not an info icon: this row lives in the right panel's width-exact column,
+  // where no per-control icon fits.
   if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
     ImGui::SetTooltip("%s", front_c.enabled ? "Show front hemisphere only\n(combine with Upper/Full/Lower)" :
                                               front_c.disabled_reason);
@@ -1746,7 +1746,8 @@ void RenderViewControlsGroup(GuiState& state) {
     SliderWithInput(PanelLabel("renderer.globe_back_fade", "visible").c_str(), &r.globe_back_fade,
                     static_cast<float>(fade_c.min_value), static_cast<float>(fade_c.max_value), fade_c.fmt,
                     fade_c.scale);
-    // Hover tooltip, not an info icon — right panel width-exact column (dispute #10).
+    // Hover tooltip, not an info icon — the right panel's rows are width-exact: no per-control
+    // icon fits without breaking the column budget.
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
       ImGui::SetTooltip(
           "Let the far side of the sphere, its light and its grid lines, show\n"
@@ -1872,8 +1873,7 @@ void RenderViewControlsGroup(GuiState& state) {
   }
   // Two-branch hover, not an info icon: this row is width-exact — the Lock square's
   // column-aligned right edge is pinned by look_at_controls_share_one_unclipped_row, the combo
-  // floor already binds, and the only free variable left is the owner-owned kRightPanelWidth
-  // (ledger dispute #9).
+  // floor already binds, and the only free variable left is the owner-owned kRightPanelWidth.
   if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
     ImGui::SetTooltip(
         "%s", el_c.enabled ? "Choose a named direction; Lock follows it as the scene changes." : el_c.disabled_reason);
@@ -1904,8 +1904,9 @@ void RenderDisplayTimeControlsGroup(GuiState& state, bool host_bg_pick) {
   // from position. This one names what it anchors and sits directly above the EV slider it
   // qualifies, so the two rows read as one pair.
   ImGui::Combo(PanelLabel("renderer.ev_mode", "display").c_str(), &r.ev_mode, kEvModeNames, kEvModeCount);
-  // Hover tooltip, not an info icon — right panel width-exact column (dispute #10); the same
-  // shared group hosts in the Analyze left column, equally narrow.
+  // Hover tooltip, not an info icon — the right panel's rows are width-exact: no per-control
+  // icon fits without breaking the column budget. The same shared group hosts in the Analyze
+  // left column, equally narrow.
   if (ImGui::IsItemHovered()) {
     ImGui::SetTooltip(
         "Which anchor display brightness is measured against.\n\n"
@@ -1992,7 +1993,8 @@ void RenderDisplayTimeControlsGroup(GuiState& state, bool host_bg_pick) {
   // the user thinks in, and the two entries say what they do without the word "tone", which is
   // opaque to anyone who has not met tone mapping.
   ImGui::Combo(PanelLabel("renderer.tone", "display_tone").c_str(), &r.tone, kToneNames, kToneCount);
-  // Hover tooltip, not an info icon — right panel width-exact column (dispute #10).
+  // Hover tooltip, not an info icon — the right panel's rows are width-exact: no per-control
+  // icon fits without breaking the column budget.
   if (ImGui::IsItemHovered()) {
     ImGui::SetTooltip(
         "Which operator turns the simulated light into pixels.\n\n"
@@ -2028,7 +2030,8 @@ void RenderDisplayTimeControlsGroup(GuiState& state, bool host_bg_pick) {
   if (!IsPrintTone(r)) {
     ImGui::ColorEdit3(PanelLabel("renderer.background", "display_sky_color").c_str(), r.background,
                       ImGuiColorEditFlags_NoInputs);
-    // Hover tooltip, not an info icon — right panel width-exact column (dispute #10).
+    // Hover tooltip, not an info icon — the right panel's rows are width-exact: no per-control
+    // icon fits without breaking the column budget.
     if (ImGui::IsItemHovered()) {
       ImGui::SetTooltip(
           "Colour of the empty sky, added to the halo in linear RGB before the\n"
@@ -2084,7 +2087,8 @@ void RenderDisplayTimeControlsGroup(GuiState& state, bool host_bg_pick) {
     // colour.
     ImGui::ColorEdit3(PanelLabel("renderer.paper", "display_paper_color").c_str(), r.paper,
                       ImGuiColorEditFlags_NoInputs);
-    // Hover tooltip, not an info icon — right panel width-exact column (dispute #10).
+    // Hover tooltip, not an info icon — the right panel's rows are width-exact: no per-control
+    // icon fits without breaking the column budget.
     if (ImGui::IsItemHovered()) {
       ImGui::SetTooltip(
           "Colour of the paper the ink is laid on under Print mode.\n\n"

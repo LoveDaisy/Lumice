@@ -1,7 +1,5 @@
 #pragma once
 
-#include <cstdarg>
-
 #include "IconsFontAwesome6.h"
 #include "imgui.h"
 
@@ -10,10 +8,6 @@ namespace lumice::gui {
 // SetTooltip's formatting, positioning and replacement semantics, with a UI-scaled maximum
 // text width. Call inside the existing hover predicate; short text still auto-sizes.
 void SetWrappedTooltip(const char* fmt, ...) IM_FMTARGS(1);
-
-// va_list form of SetWrappedTooltip: the one formatting / wrap-width / override authority that
-// both text entry points share.
-void SetWrappedTooltipV(const char* fmt, va_list args);
 
 // The GUI's one explicit help carrier for stable functional/conceptual explanations (the
 // two-tier tooltip rule in doc/gui/gui-visual-language.md): a transparent, borderless FontAwesome

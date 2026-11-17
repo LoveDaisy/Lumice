@@ -10,7 +10,9 @@ namespace lumice::gui {
 
 namespace {
 
-// The one formatting / wrap-width / override body behind both text entry points.
+// The one formatting / wrap-width / override body behind both text entry points. The va_list
+// form stays TU-local: there is no external forwarding consumer yet, so the formatting authority
+// is not part of the public contract (promote it only when one appears).
 void WrappedTooltipBody(const char* fmt, va_list args) {
   // Match SetTooltipV, including hiding a previous tooltip submitted on the same frame.
   if (!ImGui::BeginTooltipEx(ImGuiTooltipFlags_OverridePrevious, ImGuiWindowFlags_None)) {
@@ -25,8 +27,11 @@ void WrappedTooltipBody(const char* fmt, va_list args) {
 
 // The one icon body behind both placement entry points.
 void DrawInfoIcon(const char* id_suffix, const char* fmt, va_list args, bool join_previous) {
+  // Icon glyph + "##" + suffix + NUL. 96 bytes cap the suffix at ~90 chars; a truncated label
+  // would silently collide two items' ids, so truncation asserts instead.
   char label[96];
-  std::snprintf(label, sizeof(label), ICON_FA_CIRCLE_INFO "##%s", id_suffix);
+  const int needed = std::snprintf(label, sizeof(label), ICON_FA_CIRCLE_INFO "##%s", id_suffix);
+  IM_ASSERT(needed > 0 && needed < static_cast<int>(sizeof(label)));
   if (join_previous) {
     ImGui::SameLine();
   }
@@ -39,15 +44,11 @@ void DrawInfoIcon(const char* id_suffix, const char* fmt, va_list args, bool joi
   ImGui::PopStyleVar();
   ImGui::PopStyleColor(4);
   if (ImGui::IsItemHovered()) {
-    SetWrappedTooltipV(fmt, args);
+    WrappedTooltipBody(fmt, args);
   }
 }
 
 }  // namespace
-
-void SetWrappedTooltipV(const char* fmt, va_list args) {
-  WrappedTooltipBody(fmt, args);
-}
 
 void SetWrappedTooltip(const char* fmt, ...) {
   va_list args;
