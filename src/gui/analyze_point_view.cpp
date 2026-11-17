@@ -984,11 +984,18 @@ void RenderSunGridLegend(const SunGridRange& range, float row_height) {
     ImGui::SetCursorScreenPos(ImVec2(column.x, y));
   };
   const float title_h = text_h(kSunGridLegendTitle, wrap);
+  // The caller joins the legend to the canvas with SameLine(); a yield exit that submits
+  // nothing would leave that SameLine pending, and the region's NEXT item (the slider row,
+  // then the SameLine'd Play/Stop) would anchor to the canvas row's top line and land on the
+  // disk. A zero-size Dummy consumes the join: ItemSize clears the pending line with no
+  // identified item left behind.
+  const auto yield = [&] { ImGui::Dummy(ImVec2(0.0f, 0.0f)); };
   if (!range.available) {
     const std::string empty_text = SunGridRangeText(range);
     const float body_h = text_h(empty_text.c_str(), wrap);
     if (title_h + spacing + body_h > row_height) {
-      return;  // a row too short for even the words yields the legend (the short-host rule)
+      yield();  // a row too short for even the words yields the legend (the short-host rule)
+      return;
     }
     submit_column(title_h, 0.0f, 0.0f, false, "", "", empty_text.c_str(), body_h);
     return;
@@ -1006,7 +1013,8 @@ void RenderSunGridLegend(const SunGridRange& range, float row_height) {
   const float range_h = text_h(range_text.c_str(), wrap);
   const float budget = row_height - title_h - spacing - range_h - spacing;
   if (budget < 0.0f) {
-    return;  // even the header and the numbers exceed the row — yield, never overlap the row below
+    yield();  // even the header and the numbers exceed the row — yield, never overlap the row below
+    return;
   }
   const bool show_ticks = budget >= tick_stack;
   const float band_h = std::clamp(budget, 0.0f, UiPx(120.0f));
@@ -1787,21 +1795,25 @@ const CrystalConfig* FrozenCrystalForPool(const GuiState& state, int pool) {
 // ---- The sun-direction globe
 // -----------------------------------------------------------------------------------------
 
-// The globe view control's full footprint: two same-width cells (the wider of the two labels,
-// frame padding each side) joined with zero spacing — the width budget the title band's
-// fits-on-line check reserves, single-sourced with the control so the check cannot undercount
-// the Full−Fit label difference again.
+// One cell of the globe view control: the wider of the two labels plus frame padding each
+// side — the single authority both the control's cells and the title band's fits check build
+// on (the check undercounting Full−Fit once already, the two copies would drift again).
+float SunGlobeViewCellWidth() {
+  return std::max(ImGui::CalcTextSize("Fit").x, ImGui::CalcTextSize("Full").x) +
+         2.0f * ImGui::GetStyle().FramePadding.x;
+}
+
+// The globe view control's full footprint: two same-width cells joined with zero spacing — the
+// width budget the title band's fits-on-line check reserves.
 float SunGlobeViewControlWidth() {
-  return 2.0f * std::max(ImGui::CalcTextSize("Fit").x, ImGui::CalcTextSize("Full").x) +
-         4.0f * ImGui::GetStyle().FramePadding.x;
+  return 2.0f * SunGlobeViewCellWidth();
 }
 
 // The globe view's fixed two-cell control (the curve range control's shape, a different life:
 // this mode survives adoptions where the curve's refits — see SunGlobeViewMode). Clicking the
 // current cell is a no-op; the pair's shared concept rides the region title's info icon.
 void RenderSunGlobeViewControl(SunGlobeViewMode* mode) {
-  const float cell_w =
-      std::max(ImGui::CalcTextSize("Fit").x, ImGui::CalcTextSize("Full").x) + 2.0f * ImGui::GetStyle().FramePadding.x;
+  const float cell_w = SunGlobeViewCellWidth();
   for (int segment = 0; segment < 2; ++segment) {
     const auto candidate = segment == 0 ? SunGlobeViewMode::kFit : SunGlobeViewMode::kFull;
     const bool current = *mode == candidate;
@@ -1921,8 +1933,9 @@ void RenderAnalyzeSunGlobeRegion(GuiState& state, const ImVec2& size) {
       RenderSunGridLegend(grid_range, graph_side);
     }
     // The legend column manages its own cursor; the row's end is the canvas's bottom either way
-    // — the slider resumes from there, never from wherever the column's last wrapped line left
-    // the flow.
+    // — the slider (and the SameLine'd Play/Stop after it) resume from here, never from
+    // wherever the column's last wrapped line left the flow, and never from a line the
+    // column's yield exit left pending (the exit consumes the join itself).
     ImGui::SetCursorScreenPos(ImVec2(graph_min.x, graph_min.y + graph_side + ImGui::GetStyle().ItemSpacing.y));
   }
   int pos = valid_count > 0 ? std::clamp(view.sample_index, 0, valid_count - 1) : 0;

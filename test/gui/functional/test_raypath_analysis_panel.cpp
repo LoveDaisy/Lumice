@@ -11856,8 +11856,10 @@ bool SunGridRealReaderLayoutAndSelection(ImGuiTestContext* ctx) {
       IM_CHECK_RETV(ink, false);
       return true;
     };
-    // Title, range and slider must be present and inked at every geometry; the band and the
-    // ticks are presence-branch-checked below (a crushed row legitimately withdraws them).
+    // Title, range and slider must be present and inked at every geometry THIS SUITE covers;
+    // deeper crushes make the whole legend yield (the short-host rule — the production
+    // contract is RenderSunGridLegend's own comment). The band and the ticks are
+    // presence-branch-checked below: a crushed row legitimately withdraws them.
     IM_CHECK_RETV(
         item_visible("##sun_grid_title") && item_visible("##sun_grid_range") && item_visible("##globe_sample"), false);
     const auto canvas = ctx->ItemInfo(w->GetID("##globe_canvas"), ImGuiTestOpFlags_NoError);
@@ -15046,7 +15048,40 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
     static int cell_vertices;
     static ImU32 cell_colors[3];
     static std::string frame_text;
+    // The yield probe: the region's caller shape verbatim (canvas, SameLine, legend, slider,
+    // SameLine'd play) with a legend row too short for even its words — pins that the yield
+    // exit consumes the pending SameLine instead of letting the play button anchor to the
+    // canvas's top line.
+    static bool draw_yield_probe = false;
+    static int yield_sample = 0;
+    static ImRect yield_slider_rect;
+    static ImRect yield_play_rect;
     t->GuiFunc = [](ImGuiTestContext*) {
+      if (draw_yield_probe) {
+        ImGui::SetNextWindowPos(ImVec2(40, 520), ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(420, 160), ImGuiCond_Always);
+        ImGui::Begin("Sun grid yield probe", nullptr, ImGuiWindowFlags_NoSavedSettings);
+        LUMICE_PathSunGrid probe_grid{};
+        probe_grid.lat_count = 1;
+        probe_grid.lon_count = 8;
+        probe_grid.cell_count = 8;
+        probe_grid.deviation_rad = delta;
+        probe_grid.valid = valid;
+        const auto probe_range = gui::SunGridDisplayRange(probe_grid);
+        const ImVec2 probe_origin = ImGui::GetCursorScreenPos();
+        ImGui::InvisibleButton("##yield_canvas", ImVec2(60, 60));
+        ImGui::SameLine();
+        // budget < 0: the header and the range text alone exceed this row.
+        gui::RenderSunGridLegend(probe_range, 24.0f);
+        ImGui::SetCursorScreenPos(ImVec2(probe_origin.x, probe_origin.y + 70.0f));
+        ImGui::SetNextItemWidth(200.0f);
+        ImGui::SliderInt("##yield_sample", &yield_sample, 0, 3);
+        yield_slider_rect = ImRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
+        ImGui::SameLine();
+        ImGui::Button("Play##yield_play", ImVec2(50, 0));
+        yield_play_rect = ImRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
+        ImGui::End();
+      }
       if (!draw)
         return;
       ImGui::SetNextWindowPos(ImVec2(40, 60), ImGuiCond_Always);
@@ -15172,6 +15207,29 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       IM_CHECK(frame_text.find("No valid deviation data") != std::string::npos);
       IM_CHECK(cell_vertices == 0);
       IM_CHECK(!ctx->ItemExists("**/##sun_grid_band"));
+
+      // The yield leg: a legend row that cannot host even its words. The legend must yield
+      // cleanly AND consume the caller's pending SameLine — otherwise the play button after
+      // the slider anchors to the canvas's top line and lands on the disk (the line the
+      // region's real geometry reaches whenever the wrapped range text outgrows its floor).
+      draw_yield_probe = true;
+      {
+        struct YieldLease {
+          ~YieldLease() { draw_yield_probe = false; }
+        } yield_lease;
+        ctx->Yield(3);
+        ImGuiWindow* probe = ctx->GetWindowByRef("//Sun grid yield probe");
+        IM_CHECK(probe != nullptr);
+        if (probe != nullptr) {
+          IM_CHECK(ctx->ItemInfo(probe->GetID("##sun_grid_title"), ImGuiTestOpFlags_NoError).ID == 0);
+          IM_CHECK(ctx->ItemInfo(probe->GetID("##sun_grid_range"), ImGuiTestOpFlags_NoError).ID == 0);
+          IM_CHECK(ctx->ItemInfo(probe->GetID("##sun_grid_band"), ImGuiTestOpFlags_NoError).ID == 0);
+          IM_CHECK(std::abs(yield_play_rect.Min.y - yield_slider_rect.Min.y) < 0.5f);
+          IM_CHECK(yield_play_rect.Min.x >= yield_slider_rect.Max.x - 0.5f);
+          ctx->LogInfo("[sun grid yield] legend yielded clean; play (%.0f,%.0f) shares the slider row (%.0f,%.0f)",
+                       yield_play_rect.Min.x, yield_play_rect.Min.y, yield_slider_rect.Min.x, yield_slider_rect.Min.y);
+        }
+      }
     };
   }
 
