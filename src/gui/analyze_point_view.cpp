@@ -1573,6 +1573,13 @@ std::string Ray3DReportSourceLine(int component, int sample_position, int valid_
   return std::string(buf);
 }
 
+// The canvas legend's drawing vocabulary — ONE source for the footprint decision, the Fresnel
+// ladder's exclusion extents and the ink emission (a56: the ink can never drift from the rects
+// the avoidance reserves by).
+constexpr const char* kRay3DLegendLabels[] = { "entry", "internal", "exit" };
+constexpr float kRay3DLegendSwatchUi = 9.0f;
+constexpr float kRay3DLegendSwatchGapUi = 5.0f;
+
 }  // namespace
 
 // The point session's one-line state word (the hpp comment carries the contract). The mapping's
@@ -2318,11 +2325,11 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
         // emission itself stays after the contacts and sun arrow; the rects ride the frame.
         const bool legend_wanted = display_state == RayTraceDisplayState::kDrawn;
         if (legend_wanted) {
-          const float swatch_side = UiPx(9.0f);
-          const float swatch_gap_x = UiPx(5.0f);
+          const float swatch_side = UiPx(kRay3DLegendSwatchUi);
+          const float swatch_gap_x = UiPx(kRay3DLegendSwatchGapUi);
           const float unit_gap_y = UiPx(3.0f);
           const float legend_inset = UiPx(4.0f);
-          const char* legend_labels[] = { "entry", "internal", "exit" };
+          const char* const(&legend_labels)[3] = kRay3DLegendLabels;
           const float legend_line_h = ImGui::GetTextLineHeight();
           const float legend_h = 3.0f * legend_line_h + 2.0f * unit_gap_y;
           float legend_w = 0.0f;
@@ -2437,9 +2444,13 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
                   // colliding candidate moves right of the reserved footprint before scoring —
                   // also before the least-overlap fallback, so the degraded form cannot land
                   // back on the legend either. The band's right edge yields to the compass's
-                  // bound too, so the two hard exclusions COMMUTE: whichever runs first, the
-                  // candidate can never land in the other's footprint (a double collision is
-                  // then impossible by construction, not by the shortness of label words).
+                  // bound too, so while the band fits the label the two exclusions commute — a
+                  // candidate colliding with either zone cannot land in the other. Below that
+                  // fit the shared clamp's degenerate branch leaves the axis untouched (the
+                  // same honest degradation the compass exclusion has always had); that domain
+                  // is unreachable at every legal canvas — the path is mesh-anchored at the
+                  // centre while both zones sit in corners ~240 px out — so the premise rides
+                  // on the canvas gates' joint, not on this site.
                   if (rendered.legend_drawn &&
                       ImRect(candidate, ImVec2(candidate.x + text_size.x, candidate.y + text_size.y))
                           .Overlaps(ImRect(rendered.legend_min, rendered.legend_max))) {
@@ -2591,9 +2602,9 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
         // above the per-segment loop). The colour vocabulary lives beside the light it names
         // (2026-11-17 feedback), not in the report.
         if (rendered.legend_drawn) {
-          const float swatch_side = UiPx(9.0f);
-          const float swatch_gap_x = UiPx(5.0f);
-          const char* legend_labels[] = { "entry", "internal", "exit" };
+          const float swatch_side = UiPx(kRay3DLegendSwatchUi);
+          const float swatch_gap_x = UiPx(kRay3DLegendSwatchGapUi);
+          const char* const(&legend_labels)[3] = kRay3DLegendLabels;
           for (int kind = 0; kind < 3; ++kind) {
             const ImVec2 unit_min = rendered.legend_unit_min[kind];
             const float unit_h = rendered.legend_unit_max[kind].y - unit_min.y;
@@ -3244,7 +3255,12 @@ void RenderPoseFactorsRegion(GuiState& state, const ImVec2& size) {
 // words own the bar. Otherwise the same named state the 3D region's gate computes: the pump is
 // the session's writer, this is a read over the same public state, and the key comes from the
 // ONE shared constructor (RayTraceKeyFor) the region's gate uses — the report and the bar
-// cannot disagree about which state the trace is in.
+// cannot disagree about which state the trace is in. The derivation deliberately is NOT
+// extracted into one shared CurrentSampleForSelection for both sites: the region's walk
+// interleaves a distinct honest render per failure arm (unreadable Info / mass / no components
+// / no valid sample / unreadable sample), which a combined optional helper would collapse into
+// one generic failure. The shared layer is the four primitives both sites call, plus the key
+// constructor above; the guard sequences stay each site's own.
 std::optional<RayTraceDisplayState> TraceDisplayStateForSelection(const GuiState& state) {
   const PointQuerySession& point = state.analysis.point;
   if (!point.adopted_result || PointQueryStateFor(point) != PointQueryState::kCompleted) {

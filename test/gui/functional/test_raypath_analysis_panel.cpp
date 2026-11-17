@@ -5450,16 +5450,25 @@ bool RefusedTraceKeepsCrystalVisible(ImGuiTestContext* ctx, const gui::SelectedC
   const bool has_segments = std::any_of(std::begin(gui::kRayTraceSegmentColors), std::end(gui::kRayTraceSegmentColors),
                                         [](ImU32 color) { return !TraceCanvasVertices(color).empty(); });
   IM_CHECK_RETV(!has_segments, false);
-  // The refusal text sits below the report's fixed fold (the Fresnel-toggle row grew the
-  // report head), and the frame-text capture records only what a window actually shows
-  // (ItemUnclipByLog is off — clipped rows never reach the log buffer): scroll the report to
-  // the bottom before capturing.
+  // The plan's scroll-reach obligation (§3.1 "长错误有至少完整可读的一行、可滚达全文首尾"):
+  // the head is readable at scroll 0 (the report reads from its top — the first content line),
+  // and the full tail stays reachable at the end of the native scroll. The frame-text capture
+  // records only what a window actually shows (ItemUnclipByLog is off — clipped rows never
+  // reach the log buffer), so the two captures bracket the real scroll span; the ScrollMax is
+  // logged because "fits without scrolling" is the stronger form, not a skipped check.
   ImGuiWindow* report = TraceReportWindow();
   IM_CHECK_RETV(report != nullptr, false);
+  report->Scroll.y = 0.0f;
+  ctx->Yield(1);
+  const std::string head_text = CaptureWindowFrameText(ctx, "Pose & trace");
+  IM_CHECK_RETV(head_text.find("No legal path for this pose:") != std::string::npos, false);
   report->Scroll.y = report->ScrollMax.y;
+  ctx->Yield(1);
   const std::string text = CaptureWindowFrameText(ctx, "Pose & trace");
   IM_CHECK_RETV(text.find("No legal path for this pose:") != std::string::npos, false);
   IM_CHECK_RETV(text.find(reason) != std::string::npos, false);
+  ctx->LogInfo("[trace refusal] report ScrollMax %.1f (content %.1f, viewport %.1f) — head readable at 0, tail at end",
+               report->ScrollMax.y, report->ContentSize.y, report->Size.y);
   // The retention discipline's capture half: the refusal is a persistent fact, so the report
   // captured its formatted details (head + body) — the next sample switch's transient retains
   // exactly these as its source-named previous result.
@@ -5468,6 +5477,32 @@ bool RefusedTraceKeepsCrystalVisible(ImGuiTestContext* ctx, const gui::SelectedC
   IM_CHECK_RETV(refused_record.detail_head == "No legal path for this pose:", false);
   IM_CHECK_RETV(refused_record.detail_body.find(reason) != std::string::npos, false);
   IM_CHECK_RETV(!refused_record.source_line.empty(), false);
+  // The retained-failure arm itself (r2 Suggestion 3): within the SAME component, a sample
+  // switch's transient renders the retained refusal head + details — source-named, height
+  // stable — instead of cycling a computing line through the report.
+  {
+    const int refusal_valid_count = gui::PointValidSampleCount(*gui::g_state.analysis.point.adopted_result, 0);
+    if (refusal_valid_count >= 2) {
+      const float refused_h = report->ContentSize.y;
+      const int refusal_saved_sample = gui::g_state.analysis.point_view.sample_index;
+      ScopedPointPickupHold hold_ret(gui::QueryFace::kRay);
+      gui::g_state.analysis.point_view.sample_index = (refusal_saved_sample + 1) % refusal_valid_count;
+      ctx->Yield(2);
+      IM_CHECK_RETV(!hold_ret.Voided(), false);
+      IM_CHECK_RETV(gui::g_state.analysis.point_view.sample_index != refusal_saved_sample, false);
+      const std::string retained_text = CaptureWindowFrameText(ctx, "Pose & trace");
+      IM_CHECK_RETV(retained_text.find("No legal path for this pose:") != std::string::npos, false);
+      IM_CHECK_RETV(retained_text.find(reason) != std::string::npos, false);
+      ImGuiWindow* report_ret = TraceReportWindow();
+      ctx->LogInfo("[trace refusal] sample-switch transient retains the failure: content %.1f -> %.1f",
+                   static_cast<double>(refused_h), static_cast<double>(report_ret->ContentSize.y));
+      IM_CHECK_RETV(std::fabs(report_ret->ContentSize.y - refused_h) <= 1.0f, false);
+      gui::g_state.analysis.point_view.sample_index = refusal_saved_sample;
+      ctx->Yield(1);
+    } else {
+      ctx->LogInfo("[trace refusal] single valid sample: retained-failure transient leg not reachable here");
+    }
+  }
   // The domain leg on this two-component document (the switch_leg pair above proved both exist):
   // the retained refusal is the OLD component's source — the other component's transient must
   // not show it (the honest empty line instead).
