@@ -573,6 +573,10 @@
 // no progress percentage and no done value (a snapshot that stops changing is a stalled or
 // cancelled query; "settled" stays the caller's knowledge). No existing symbol or struct
 // layout changed.
-#define LUMICE_API_VERSION 461
+// ADDED (v4.62): context_symmetry_bits_plus_one appended to LUMICE_SinglePathRequest and
+// LUMICE_PathProbeRequest. Zero and older complete extents retain physical P|B|D context;
+// one requests literal context. Point fibers and representative-member probe quantities are
+// unchanged. No symbols added; existing request prefixes retain their layout and behavior.
+#define LUMICE_API_VERSION 462
 
 #endif  // LUMICE_API_VERSION_H_

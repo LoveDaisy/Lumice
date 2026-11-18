@@ -165,6 +165,7 @@ LUMICE_ErrorCode CopyDerivedJson(const Handle* handle, Serialize serialize, char
 // read only when the whole group fits.
 constexpr size_t kRequestSizeV450 = offsetof(LUMICE_SinglePathRequest, warm_json_len) + sizeof(size_t);
 constexpr size_t kRequestSizeV452 = offsetof(LUMICE_SinglePathRequest, interrupted) + sizeof(void*);
+constexpr size_t kProbeRequestSizeV461 = offsetof(LUMICE_PathProbeRequest, interrupted) + sizeof(void*);
 constexpr size_t kFeatureReportRequestSizeV1 = offsetof(LUMICE_PathFeatureReportRequest, sample_count) + sizeof(int);
 constexpr size_t kSurveyRequestSizeV1 = offsetof(LUMICE_PathSurveyRequest, symmetry_bits_plus_one) + sizeof(int);
 
@@ -193,6 +194,16 @@ LUMICE_ErrorCode ValidateQueryOptions(const LUMICE_PathQueryOptions* options, bo
     WriteError(err_buf, err_size, "invalid_argument: invalid query options");
     return LUMICE_ERR_INVALID_VALUE;
   }
+  return LUMICE_OK;
+}
+
+LUMICE_ErrorCode ReadContextSymmetry(int encoded, lumice::raypath::PathSelection* selection, char* err_buf,
+                                     size_t err_size) {
+  if (encoded != 0 && encoded != 1) {
+    WriteError(err_buf, err_size, "invalid_argument: context_symmetry_bits_plus_one must be 0 or 1");
+    return LUMICE_ERR_INVALID_VALUE;
+  }
+  selection->symmetry_bits = encoded == 0 ? 7u : 0u;
   return LUMICE_OK;
 }
 
@@ -243,6 +254,12 @@ LUMICE_ErrorCode Analyze(const LUMICE_Scene* scene, const LUMICE_SinglePathReque
   }
   req.sample_count = request.sample_count == 0 ? rp::kDefaultSampleCount : request.sample_count;
   req.sun_grid_lat_count = request.sun_grid_lat_count;
+  if (request.struct_size >= sizeof(LUMICE_SinglePathRequest)) {
+    if (const auto error = ReadContextSymmetry(request.context_symmetry_bits_plus_one, &req, err_buf, err_size);
+        error != LUMICE_OK) {
+      return error;
+    }
+  }
   if (workspace != nullptr) {
     req.budget_ms = options != nullptr ? options->deadline_ms : 0;
     if (request.struct_size >= kRequestSizeV452) {
@@ -513,6 +530,12 @@ LUMICE_ErrorCode AnalyzeProbe(const LUMICE_Scene* scene, const LUMICE_PathProbeR
   }
   req.at_altitude_deg = request.at_altitude_deg;
   req.at_azimuth_deg = request.at_azimuth_deg;
+  if (request.struct_size >= sizeof(LUMICE_PathProbeRequest)) {
+    if (const auto error = ReadContextSymmetry(request.context_symmetry_bits_plus_one, &req, err_buf, err_size);
+        error != LUMICE_OK) {
+      return error;
+    }
+  }
   if (request.wavelength_count < 0) {
     return Refuse({ rp::ErrorCode::kInvalidArgument, "negative wavelength count" }, err_buf, err_size);
   }
@@ -864,11 +887,11 @@ LUMICE_ErrorCode LUMICE_AnalyzePathProbe(const LUMICE_Scene* scene, const LUMICE
     WriteError(err_buf, err_size, "null_arg: scene, request and out must not be NULL");
     return LUMICE_ERR_NULL_ARG;
   }
-  if (request->struct_size < sizeof(LUMICE_PathProbeRequest)) {
+  if (request->struct_size < kProbeRequestSizeV461) {
     WriteError(err_buf, err_size,
                "invalid_argument: struct_size " + std::to_string(request->struct_size) +
-                   " is smaller than this version's LUMICE_PathProbeRequest (" +
-                   std::to_string(sizeof(LUMICE_PathProbeRequest)) + "); set it to sizeof(LUMICE_PathProbeRequest)");
+                   " is smaller than this version's LUMICE_PathProbeRequest (" + std::to_string(kProbeRequestSizeV461) +
+                   "); set it to sizeof(LUMICE_PathProbeRequest)");
     return LUMICE_ERR_INVALID_VALUE;
   }
   if ((request->faces == nullptr && request->face_count > 0) ||
@@ -1266,7 +1289,8 @@ LUMICE_ErrorCode LUMICE_PathWorkspaceQueryPoint(LUMICE_PathWorkspace* workspace,
                                                 const LUMICE_PathQueryOptions* options, LUMICE_SinglePathResult** out,
                                                 char* err_buf, size_t err_size) {
   return RunWorkspaceQuery(
-      workspace, request, options, out, err_buf, err_size, { kRequestSizeV450, kRequestSizeV452 }, true, [&] {
+      workspace, request, options, out, err_buf, err_size,
+      { kRequestSizeV450, kRequestSizeV452, sizeof(LUMICE_SinglePathRequest) }, true, [&] {
         if (const auto error = ValidateWarm(request->warm_json, request->warm_json_len, options, err_buf, err_size);
             error != LUMICE_OK) {
           return error;
@@ -1279,7 +1303,8 @@ LUMICE_ErrorCode LUMICE_PathWorkspaceQueryProbe(LUMICE_PathWorkspace* workspace,
                                                 const LUMICE_PathQueryOptions* options, LUMICE_PathProbe** out,
                                                 char* err_buf, size_t err_size) {
   return RunWorkspaceQuery(
-      workspace, request, options, out, err_buf, err_size, { sizeof(LUMICE_PathProbeRequest) }, true, [&] {
+      workspace, request, options, out, err_buf, err_size, { kProbeRequestSizeV461, sizeof(LUMICE_PathProbeRequest) },
+      true, [&] {
         if ((request->wavelengths_nm == nullptr && request->wavelength_count > 0)) {
           WriteError(err_buf, err_size, "null_arg: wavelengths_nm is NULL with non-zero count");
           return LUMICE_ERR_NULL_ARG;

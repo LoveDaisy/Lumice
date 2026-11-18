@@ -493,6 +493,132 @@ TEST_F(SurveyCApi, WorkspaceRejectsUnpublishedRequestExtentsAndConflictingWarm) 
             LUMICE_ERR_INVALID_VALUE);
 }
 
+TEST_F(SurveyCApi, ContextScopePreservesAutomaticExplicitAndLegacyContracts) {
+  const int faces[] = { 1, 2 };
+  const int counts[] = { 2 };
+  LUMICE_SinglePathRequest point{};
+  point.struct_size = sizeof(point);
+  point.crystal_id = 1;
+  point.faces = faces;
+  point.face_count = 2;
+  point.layer_face_counts = counts;
+  point.layer_count = 1;
+  point.target_altitude_deg = 36;
+  point.target_azimuth_deg = 52;
+  point.sample_count = 100;
+  LUMICE_PathProbeRequest probe{};
+  probe.struct_size = sizeof(probe);
+  probe.crystal_id = 1;
+  probe.faces = faces;
+  probe.face_count = 2;
+  probe.layer_face_counts = counts;
+  probe.layer_count = 1;
+  probe.at_altitude_deg = 36;
+  probe.at_azimuth_deg = 52;
+  probe.sample_count = 100;
+  LUMICE_PathQueryOptions options{};
+  options.struct_size = sizeof(options);
+  options.include_context = 1;
+  char err[512]{};
+  const auto check_producer = [&](int producer_scope) {
+    SCOPED_TRACE(producer_scope);
+    LUMICE_PathWorkspace* raw_workspace = nullptr;
+    ASSERT_EQ(LUMICE_PathWorkspaceCreate(scene_.get(), &raw_workspace, err, sizeof(err)), LUMICE_OK);
+    std::unique_ptr<LUMICE_PathWorkspace, decltype(&LUMICE_PathWorkspaceDestroy)> workspace(
+        raw_workspace, LUMICE_PathWorkspaceDestroy);
+    LUMICE_PathSurveyRequest survey{};
+    survey.struct_size = sizeof(survey);
+    survey.crystal_id = 1;
+    survey.faces = faces;
+    survey.face_count = 2;
+    survey.layer_face_counts = counts;
+    survey.layer_count = 1;
+    survey.symmetry_bits_plus_one = producer_scope;
+    LUMICE_PathSurvey* source = nullptr;
+    ASSERT_EQ(LUMICE_PathWorkspaceQuerySurvey(workspace.get(), &survey, nullptr, &source, err, sizeof(err)), LUMICE_OK)
+        << err;
+    LUMICE_PathWarmData* raw_warm = nullptr;
+    ASSERT_EQ(LUMICE_PathWarmDataFromSurvey(source, &raw_warm), LUMICE_OK);
+    LUMICE_PathSurveyDestroy(source);
+    std::unique_ptr<LUMICE_PathWarmData, decltype(&LUMICE_PathWarmDataDestroy)> warm(raw_warm,
+                                                                                     LUMICE_PathWarmDataDestroy);
+    const auto check_consumer = [&](int consumer_scope) {
+      SCOPED_TRACE(consumer_scope);
+      point.context_symmetry_bits_plus_one = consumer_scope;
+      probe.context_symmetry_bits_plus_one = consumer_scope;
+      options.warm = nullptr;
+      LUMICE_SinglePathResult* point_result = nullptr;
+      ASSERT_EQ(LUMICE_PathWorkspaceQueryPoint(workspace.get(), &point, &options, &point_result, err, sizeof(err)),
+                LUMICE_OK)
+          << err;
+      const auto point_doc = ResultDocument(point_result, LUMICE_SinglePathResultToJson);
+      EXPECT_EQ(point_doc["survey_context"]["source"], producer_scope == consumer_scope ? "warm" : "inline");
+      LUMICE_SinglePathResultDestroy(point_result);
+      LUMICE_PathProbe* probe_result = nullptr;
+      ASSERT_EQ(LUMICE_PathWorkspaceQueryProbe(workspace.get(), &probe, &options, &probe_result, err, sizeof(err)),
+                LUMICE_OK)
+          << err;
+      const auto probe_doc = ResultDocument(probe_result, LUMICE_PathProbeToJson);
+      EXPECT_EQ(probe_doc["context"]["source"], producer_scope == consumer_scope ? "warm" : "inline");
+      LUMICE_PathProbeDestroy(probe_result);
+      options.warm = warm.get();
+      const auto expected = producer_scope == consumer_scope ? LUMICE_OK : LUMICE_ERR_INVALID_VALUE;
+      EXPECT_EQ(LUMICE_PathWorkspaceQueryPoint(workspace.get(), &point, &options, &point_result, err, sizeof(err)),
+                expected)
+          << err;
+      if (expected != LUMICE_OK)
+        EXPECT_NE(std::string(err).find("config fingerprint gate"), std::string::npos);
+      LUMICE_SinglePathResultDestroy(point_result);
+      EXPECT_EQ(LUMICE_PathWorkspaceQueryProbe(workspace.get(), &probe, &options, &probe_result, err, sizeof(err)),
+                expected)
+          << err;
+      if (expected != LUMICE_OK)
+        EXPECT_NE(std::string(err).find("config fingerprint gate"), std::string::npos);
+      LUMICE_PathProbeDestroy(probe_result);
+    };
+    for (int consumer_scope : { 0, 1 }) {
+      check_consumer(consumer_scope);
+    }
+    options.warm = nullptr;
+    // The pre-extension complete extents must never read the poisoned new tail.
+    point.context_symmetry_bits_plus_one = 99;
+    probe.context_symmetry_bits_plus_one = 99;
+    point.struct_size = offsetof(LUMICE_SinglePathRequest, interrupted) + sizeof(void*);
+    probe.struct_size = offsetof(LUMICE_PathProbeRequest, interrupted) + sizeof(void*);
+    LUMICE_SinglePathResult* point_result = nullptr;
+    LUMICE_PathProbe* probe_result = nullptr;
+    ASSERT_EQ(LUMICE_PathWorkspaceQueryPoint(workspace.get(), &point, &options, &point_result, err, sizeof(err)),
+              LUMICE_OK)
+        << err;
+    EXPECT_EQ(ResultDocument(point_result, LUMICE_SinglePathResultToJson)["survey_context"]["source"],
+              producer_scope == 0 ? "warm" : "inline");
+    LUMICE_SinglePathResultDestroy(point_result);
+    ASSERT_EQ(LUMICE_PathWorkspaceQueryProbe(workspace.get(), &probe, &options, &probe_result, err, sizeof(err)),
+              LUMICE_OK)
+        << err;
+    LUMICE_PathProbeDestroy(probe_result);
+    ASSERT_EQ(LUMICE_AnalyzeSinglePath(scene_.get(), &point, &point_result, err, sizeof(err)), LUMICE_OK) << err;
+    LUMICE_SinglePathResultDestroy(point_result);
+    ASSERT_EQ(LUMICE_AnalyzePathProbe(scene_.get(), &probe, &probe_result, err, sizeof(err)), LUMICE_OK) << err;
+    LUMICE_PathProbeDestroy(probe_result);
+    ++point.struct_size;
+    ++probe.struct_size;
+    EXPECT_EQ(LUMICE_PathWorkspaceQueryPoint(workspace.get(), &point, &options, &point_result, err, sizeof(err)),
+              LUMICE_ERR_INVALID_VALUE);
+    EXPECT_EQ(LUMICE_PathWorkspaceQueryProbe(workspace.get(), &probe, &options, &probe_result, err, sizeof(err)),
+              LUMICE_ERR_INVALID_VALUE);
+    point.struct_size = sizeof(point);
+    probe.struct_size = sizeof(probe);
+    EXPECT_EQ(LUMICE_PathWorkspaceQueryPoint(workspace.get(), &point, &options, &point_result, err, sizeof(err)),
+              LUMICE_ERR_INVALID_VALUE);
+    EXPECT_EQ(LUMICE_PathWorkspaceQueryProbe(workspace.get(), &probe, &options, &probe_result, err, sizeof(err)),
+              LUMICE_ERR_INVALID_VALUE);
+  };
+  for (int producer_scope : { 0, 1 }) {
+    check_producer(producer_scope);
+  }
+}
+
 TEST_F(SurveyCApi, WorkspaceQueriesOwnResultsAndTypedWarmOutlivesSurvey) {
   static int faces[] = { 1, 2 };
   static int counts[] = { 2 };

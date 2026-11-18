@@ -50,10 +50,10 @@ class AnalysisWorkspace {
 
   const ConfigManager& Scene() const { return snapshot_; }
 
-  // The four faces, on the snapshot. A point/probe query whose selection matches the warm
-  // slot's carries the slot as its warm candidate (the typed chain — no JSON); the faces' own
-  // admission and per-fact evaluation stay the reuse authority. `cancel` (optional, every
-  // face) is the query's one-way token — the same single stop authority the faces poll.
+  // The four faces, on the snapshot. A point/probe query carries the automatic warm candidate
+  // only when the shared admission authority accepts it; otherwise it runs the same request
+  // cold. Explicit candidates are never replaced or silently ignored. Per-fact qualification
+  // remains the faces' responsibility. `cancel` is the one-way token the faces poll.
   Error QueryPoint(const SinglePathRequest& request, bool include_context, PointResult* out,
                    const analytic::StopToken* cancel = nullptr);
   Error QueryProbe(const ProbeRequest& request, ProbeResult* out, const analytic::StopToken* cancel = nullptr);

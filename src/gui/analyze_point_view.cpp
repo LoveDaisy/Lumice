@@ -163,6 +163,7 @@ LUMICE_SinglePathRequest MakePointRequestForKey(const PointIntentKey& key, std::
   request.warm_json_len = 0;
   request.deadline_ms = kPointQueryBudgetMs;
   request.interrupted = nullptr;  // the executor's cancel token is the one stop channel
+  request.context_symmetry_bits_plus_one = key.selection.symmetry_bits_plus_one;
   return request;
 }
 

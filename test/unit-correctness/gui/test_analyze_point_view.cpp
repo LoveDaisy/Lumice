@@ -979,6 +979,33 @@ void SetSkyPoint(GuiState& state, double alt_deg, double az_deg) {
   }
 }
 
+TEST(AnalyzePointView, AllCheckboxCombinationsCarryTheSameScopeToSurveyAndPoint) {
+  GuiState state;
+  state.analysis_result.payload = Rows(7, { "8-1" }, { { 8, 1 } });
+  state.analysis.selected_entry = "8-1";
+  for (unsigned bits = 0; bits < 8; ++bits) {
+    SCOPED_TRACE(bits);
+    state.analysis.symmetry_p = (bits & 1) != 0;
+    state.analysis.symmetry_b = (bits & 2) != 0;
+    state.analysis.symmetry_d = (bits & 4) != 0;
+    const auto identity = SelectedClassIdentityFor(state);
+    if (!identity.has_value()) {
+      ADD_FAILURE() << "selected row has no identity";
+      continue;
+    }
+    PointIntentKey key;
+    key.selection = SurveySelectionKeyFor(*identity, 7);
+    std::vector<int> faces;
+    std::vector<int> counts;
+    const auto point = MakePointRequestForKey(key, &faces, &counts);
+    const int expected = bits == 7 ? 0 : 1;
+    EXPECT_EQ(point.context_symmetry_bits_plus_one, expected);
+    EXPECT_EQ(faces, (std::vector<int>{ 8, 1 }));
+    const auto survey = MakeSurveyRequestForIdentity(*identity, &faces, &counts);
+    EXPECT_EQ(survey.symmetry_bits_plus_one, expected);
+  }
+}
+
 // The headless frame loop: the two pumps under test (point, then the ray trace it feeds). The
 // survey and map pumps stay out — a selection with a payload makes the survey pump issue a full
 // survey (its chromatic legs run ~15 s on this class, queueing first on the one worker), which is

@@ -75,6 +75,10 @@ typedef struct LUMICE_SinglePathRequest {
   const volatile int* interrupted;  // the caller's one-way stop flag: 0 runs, non-zero stops at the
                                     // next loop boundary (a signal handler's sig_atomic_t; the
                                     // engine only reads it, never writes). NULL = no flag.
+  // Appended v4.62. Context only: 0 = physical P|B|D class (also the default for older
+  // request extents); 1 = literal requested sequence. Other values are invalid. The point's
+  // fiber and members always remain literal, independent of this context selection.
+  int context_symmetry_bits_plus_one;
 } LUMICE_SinglePathRequest;
 
 typedef struct LUMICE_SinglePathResult_ LUMICE_SinglePathResult;
@@ -313,6 +317,10 @@ typedef struct LUMICE_PathProbeRequest {
   int budget_ms;
   const volatile int* interrupted;  // the caller's one-way stop flag (the engine only reads it,
                                     // never writes). NULL = no flag.
+  // Appended v4.62. Same context selection as LUMICE_SinglePathRequest: 0 = physical
+  // P|B|D default (including older extents), 1 = literal; all other values are invalid.
+  // Profiles remain representative-member quantities, never multiplied by the class size.
+  int context_symmetry_bits_plus_one;
 } LUMICE_PathProbeRequest;
 
 typedef struct LUMICE_PathProbe_ LUMICE_PathProbe;
