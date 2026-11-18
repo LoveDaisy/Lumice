@@ -142,7 +142,13 @@ Witness attachment is restricted to support objects, and its claim is independen
 the partition claim: a refused partition plus a finite positive witness is valid. A
 witness never upgrades the family routing's structural-output verdict.
 
-Point mass and discovered fibers are mutually exclusive point payloads. The discovered
+Point mass and discovered fibers are mutually exclusive point payloads. A one-face external
+reflection also uses the mass arm when its outward normal is invariant over the actual declared
+Euler freedoms (including a single fixed pose); its location is the reflected image, not the sun.
+The orbit integral then stays unavailable with `external_reflection_mass_not_integrated` rather
+than inventing a mass or a coarea Jacobian. For a varying-normal singular family, geometric
+fiber samples remain available but continuous angle-density/product factors are NaN (not zero).
+The discovered
 arm owns incomplete components as well as completed ones. Probe profiles carry a spec
 and a claim; refused profiles have no samples/readings, while a finite all-zero profile
 keeps its bins. Survey probes likewise own their samples/readings only in a successful

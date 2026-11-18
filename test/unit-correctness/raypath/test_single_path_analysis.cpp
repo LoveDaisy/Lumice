@@ -166,6 +166,54 @@ TEST(SurveyReuse, StructureAndReadingHaveSeparateScopeDependencies) {
   EXPECT_EQ(context.band_sum.reason, "scope_field_missing");
 }
 
+TEST(SingleFacePoint, FixedNormalMassLandsAtReflectionNotSun) {
+  ConfigManager config = Scene(Prism(1.0f));
+  auto& axis = config.crystals_.at(1).axis_;
+  axis.latitude_dist = Fixed(90.0f);  // zenith 0: basal normal stays world +z
+  axis.azimuth_dist = axis.roll_dist = { DistributionType::kUniform, 0, 360 };
+  PointResult point;
+  ASSERT_TRUE(AnalyzePathPointValue(config, Request({ 1 }, -20.0, 0.0), false, &point).Ok());
+  ASSERT_EQ(point.Data().OutcomeValue(), Outcome::kPointMass);
+  EXPECT_NEAR(point.Data().Mass().altitude_deg, -20.0, 1e-12);
+  EXPECT_NEAR(point.Data().Mass().azimuth_deg, 0.0, 1e-12);
+  EXPECT_NEAR(point.Data().Mass().target_separation_deg, 0.0, 1e-12);
+  EXPECT_FALSE(point.Data().Mass().orbit_factors.available);
+  EXPECT_EQ(point.Data().Mass().orbit_factors.reason, "external_reflection_mass_not_integrated");
+  axis.azimuth_dist = Fixed(37.0f);
+  axis.roll_dist = Fixed(19.0f);
+  ASSERT_TRUE(AnalyzePathPointValue(config, Request({ 1 }, -20.0, 0.0), false, &point).Ok());
+  ASSERT_EQ(point.Data().OutcomeValue(), Outcome::kPointMass);
+  EXPECT_NEAR(point.Data().Mass().altitude_deg, -20.0, 1e-12);
+  EXPECT_EQ(point.Data().Mass().orbit_factors.measure_support, "single_pose");
+}
+
+TEST(SingleFacePoint, VaryingNormalFamilyIsNotMassAndHasNoFakeContinuousDensity) {
+  ConfigManager config = Scene(Prism(1.0f));
+  auto& axis = config.crystals_.at(1).axis_;
+  axis.latitude_dist = Fixed(90.0f);
+  axis.azimuth_dist = axis.roll_dist = { DistributionType::kUniform, 0, 360 };
+  PointResult point;
+  ASSERT_TRUE(AnalyzePathPointValue(config, Request({ 3 }, 20.0, 90.0), false, &point).Ok());
+  ASSERT_EQ(point.Data().OutcomeValue(), Outcome::kDiscovered);
+  ASSERT_FALSE(point.Data().Discovered().components.empty());
+  const auto& sample = point.Data().Discovered().components.front().points.front();
+  ASSERT_TRUE(sample.valid);
+  EXPECT_GT(sample.entry_measure, 0.0);
+  EXPECT_TRUE(std::isnan(sample.rho));
+  EXPECT_TRUE(std::isnan(sample.factor_product));
+  // The returned geometric pose really sends the incident direction to the target.
+  const double* r = sample.pose;
+  const double normal[3] = { r[0], r[3], r[6] };
+  const auto& meta = point.Data().meta;
+  double dot = 0.0;
+  for (int i = 0; i < 3; ++i) {
+    dot += meta.incident_direction[i] * normal[i];
+  }
+  for (int i = 0; i < 3; ++i) {
+    EXPECT_NEAR(meta.incident_direction[i] - 2.0 * dot * normal[i], meta.target_direction[i], 1e-8);
+  }
+}
+
 // ---- conversions ----------------------------------------------------------------------------
 
 TEST(SinglePathConvert, TakesTheCentreSlotOfEveryDistribution) {

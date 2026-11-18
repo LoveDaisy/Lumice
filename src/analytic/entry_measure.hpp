@@ -14,6 +14,10 @@
 // against each other (doc/interfaces/analytic-api.md section 3), which is why this is a second implementation
 // by design, not a fork to be merged.
 //
+// A one-face path instead projects its one finite face along the incident air-side line.
+// Its internal footprint is unavailable (NaN); diagnostics.raw_area is the incident
+// projected area, and recovery returns one verified contact, never an internal corridor.
+//
 // One deliberate difference, documented at its site: the corners are the engine's float closed-form
 // polygons promoted to double (LI builds its own polyhedron in double). The exit gate uses the call's
 // refractive index, as LI's does.
@@ -62,7 +66,7 @@ struct RepresentativePath {
 // crystal and path; evaluating a pose allocates nothing once the scratch has grown.
 class Corridor {
  public:
-  // `slots` as ResolveFaceSequence returns them, 2 <= slot_count <= kMaxFaceCount.
+  // `slots` as ResolveFaceSequence returns them, 1 <= slot_count <= kMaxFaceCount.
   Corridor(const FaceNormalTable& normals, const FacePolygonTable& polygons, const int* slots, int slot_count);
 
   // A_P at a pose, given the body-frame incident propagation direction s_body = R^T s (unit) and the

@@ -28,7 +28,7 @@ static_assert(kMaxFaceCount + 2 <= kMaxDomainMargins, "a path's validity margins
 
 class IcePathMap {
  public:
-  // `slots` holds `slot_count` resolved slots of `table` (ResolveFaceSequence), 2 <= slot_count <=
+  // `slots` holds `slot_count` resolved slots of `table` (ResolveFaceSequence), 1 <= slot_count <=
   // kMaxFaceCount; `incident_direction` is a world unit vector.
   IcePathMap(const FaceNormalTable& table, const int* slots, int slot_count, double refractive_index,
              const double incident_direction[3])

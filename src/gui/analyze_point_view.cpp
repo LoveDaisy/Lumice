@@ -279,11 +279,17 @@ std::vector<std::string> PointFactorHeadLines(const LUMICE_PathPointSample& samp
   std::snprintf(buf, sizeof(buf), "pose: zenith %.2f°, azimuth %.2f°, roll %.2f°%s", sample.zenith_deg,
                 sample.azimuth_deg, sample.roll_deg, sample.angles_degenerate != 0 ? " (degenerate)" : "");
   lines.emplace_back(buf);
-  std::snprintf(buf, sizeof(buf), "axis density = %.6g rad^-3", sample.rho);
-  lines.emplace_back(buf);
+  if (std::isfinite(sample.rho)) {
+    std::snprintf(buf, sizeof(buf), "axis density = %.6g rad^-3", sample.rho);
+    lines.emplace_back(buf);
+  } else {
+    lines.emplace_back("axis density: unavailable (singular declared measure)");
+  }
   std::snprintf(buf, sizeof(buf), "A_P = %.6g, A/a^2 = %.6g", sample.entry_measure, sample.entry_measure_a2);
   lines.emplace_back(buf);
-  std::snprintf(buf, sizeof(buf), "T (total transmission) = %.6g", sample.total_transmission);
+  std::snprintf(buf, sizeof(buf),
+                sample.interface_count == 1 ? "R (external reflection) = %.6g" : "T (total transmission) = %.6g",
+                sample.total_transmission);
   lines.emplace_back(buf);
   if (sample.jacobian_available != 0) {
     std::snprintf(buf, sizeof(buf), "J (jacobian) = %.6g (sigma %.4g, %.4g)", sample.jacobian,
@@ -291,8 +297,12 @@ std::vector<std::string> PointFactorHeadLines(const LUMICE_PathPointSample& samp
     lines.emplace_back(buf);
     std::snprintf(buf, sizeof(buf), "K = 1/(J+eps) = %.6g", sample.k_carea);
     lines.emplace_back(buf);
-    std::snprintf(buf, sizeof(buf), "axis density × A/a^2 × T × K = %.6g", sample.factor_product);
-    lines.emplace_back(buf);
+    if (std::isfinite(sample.factor_product)) {
+      std::snprintf(buf, sizeof(buf), "axis density × A/a^2 × T × K = %.6g", sample.factor_product);
+      lines.emplace_back(buf);
+    } else {
+      lines.emplace_back("axis density × A/a^2 × T × K: unavailable (singular declared measure)");
+    }
   } else {
     lines.emplace_back("J (jacobian): unavailable");
     lines.emplace_back("K = 1/(J+eps): unavailable");
@@ -306,8 +316,8 @@ std::vector<std::string> PointFactorInterfaceLines(const LUMICE_PathPointSample&
   char buf[192];
   const int interfaces = static_cast<int>(sample.interface_count);
   for (int i = 0; i < interfaces; ++i) {
-    std::snprintf(buf, sizeof(buf), "interface %d/%d transmittance = %.6g (conditional on this path)", i + 1,
-                  interfaces, sample.interface_transmittances[i]);
+    std::snprintf(buf, sizeof(buf), "interface %d/%d %s = %.6g (conditional on this path)", i + 1, interfaces,
+                  interfaces == 1 ? "reflectance" : "transmittance", sample.interface_transmittances[i]);
     lines.emplace_back(buf);
   }
   return lines;
@@ -2901,9 +2911,13 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
           refused_detail += " | chain: " + PathTextToString(rinfo.chain_failure);
         }
         char area_buf[96];
-        std::snprintf(area_buf, sizeof(area_buf), " | corridor area %.3e (threshold %.3e)", rinfo.area_perp_internal,
-                      rinfo.area_threshold);
-        refused_detail += area_buf;
+        if (rinfo.face_count == 1) {
+          refused_detail += " | internal corridor: not applicable (external reflection)";
+        } else {
+          std::snprintf(area_buf, sizeof(area_buf), " | corridor area %.3e (threshold %.3e)", rinfo.area_perp_internal,
+                        rinfo.area_threshold);
+          refused_detail += area_buf;
+        }
         capture_record(Ray3DReportRecord::Kind::kRefused, "No legal path for this pose:", std::move(refused_detail));
         render_record(state.analysis.ray3d_report_record);
         return;

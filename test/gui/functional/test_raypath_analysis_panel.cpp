@@ -9059,6 +9059,65 @@ bool PoseViewOpensFromBothExplicitEntries(ImGuiTestContext* ctx) {
 // ② — the selection chain's sync face: the open window follows the current selection/sky point/λ
 // with no stale-class remnant — every change drops the old document (the pump's key compare) and
 // the window's globe region states the new key's honest state.
+bool SingleFaceListMapPointAndTrace(ImGuiTestContext* ctx) {
+  ScopedWatchdogGuard watchdog(ctx->EngineIO);
+  ScopedServerGuard guard;
+  IM_CHECK_RETV(BringUpScene(ctx, kFullyRandomJson, false, false), false);
+  OpenWindow(ctx);
+  IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
+  // Select a real positive-energy row, never inject a fabricated analysis list.
+  IM_CHECK_RETV(SelectRowByDisplay(ctx, "3").has_value(), false);
+  IM_CHECK_RETV(DriveUntil(ctx, [] { return gui::g_state.analysis.map.adopted_result != nullptr; }, 90), false);
+  LUMICE_PathMapInfo map_info{};
+  map_info.struct_size = sizeof(map_info);
+  IM_CHECK_RETV(LUMICE_PathMapGetInfo(gui::g_state.analysis.map.adopted_result.get(), &map_info) == LUMICE_PATH_READ_OK,
+                false);
+  IM_CHECK_RETV(map_info.state == LUMICE_PATH_STATE_FINITE && map_info.members_evaluated > 0, false);
+  LUMICE_PathMapPixels pixels{};
+  pixels.struct_size = sizeof(pixels);
+  IM_CHECK_RETV(LUMICE_PathMapGetPixels(gui::g_state.analysis.map.adopted_result.get(), &pixels) == LUMICE_PATH_READ_OK,
+                false);
+  int positive = 0;
+  for (size_t i = 0; i < pixels.pixel_count; ++i) {
+    positive += std::isfinite(pixels.values[i]) && pixels.values[i] > 0.0;
+  }
+  IM_CHECK_RETV(positive > 0, false);
+  IM_CHECK_RETV(SaveWindowPng(ctx, "//Raypath view", GuiTestTempPath("external_reflection_map.png").string()), false);
+  SetSkyPointTarget(20.0, 90.0);
+  IM_CHECK_RETV(
+      DriveUntil(
+          ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCompleted; },
+          90),
+      false);
+  ctx->SetRef("//Raypath view");
+  ctx->ItemClick("**/Pose & trace###pose_open");
+  PinPoseViewOnScreen(ctx);
+  ctx->Yield(2);
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      const auto& trace = gui::g_state.analysis.trace;
+                      return trace.adopted_result && trace.intent_valid &&
+                             gui::RayTraceDisplayStateFor(trace, trace.key) == gui::RayTraceDisplayState::kDrawn;
+                    },
+                    30),
+                false);
+  LUMICE_RepresentativeRayInfo info{};
+  info.struct_size = sizeof(info);
+  const auto& ray = *gui::g_state.analysis.trace.adopted_result;
+  IM_CHECK_RETV(LUMICE_RepresentativeRayGetInfo(&ray, &info) == LUMICE_PATH_READ_OK, false);
+  IM_CHECK_RETV(info.face_count == 1 && info.faces[0] == 3 && info.produced, false);
+  gui::RayTracePolyline line;
+  IM_CHECK_RETV(gui::BuildRayTracePolyline(ray, 1.1f, &line), false);
+  IM_CHECK_RETV(line.seg_kinds.size() == 2 && line.seg_kinds[0] == 0 && line.seg_kinds[1] == 2, false);
+  IM_CHECK_RETV(line.points.size() == 12, false);
+  IM_CHECK_RETV(line.seg_energy.size() == 2, false);
+  IM_CHECK_RETV(SaveWindowPng(ctx, "//Pose & trace", GuiTestTempPath("external_reflection_trace.png").string()), false);
+  ctx->LogInfo("[external reflection] real row 3 -> %d positive map cells -> point -> one-contact/two-leg trace",
+               positive);
+  return true;
+}
+
 bool PoseViewFollowsTheSelectionChain(ImGuiTestContext* ctx) {
   ScopedServerGuard guard;
   IM_CHECK_RETV(BringUpHaloScene(ctx, /*infinite=*/false), false);
@@ -18103,6 +18162,10 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       }
     };
     t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(MapRegionShowsTheClassMapAndTakesThePick(ctx)); };
+  }
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "single_face_list_map_point_and_trace");
+    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(SingleFaceListMapPointAndTrace(ctx)); };
   }
   // The point inspector (742.6): the real chain pick → point → component → slider/trace →
   // playback invariance. Real-timing pool: the point queues behind the selection's survey on the

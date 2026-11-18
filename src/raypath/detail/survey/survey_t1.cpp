@@ -281,7 +281,9 @@ void AssembleChromaticLayer(const analytic::FaceNormalTable& table, const analyt
     out_row.profile = analytic::OnsetProfileName(row.profile);
     out_row.values_deg = row.values_deg;
     out_row.displacement_deg = row.displacement_deg;
-    out_row.direction = row.values_deg[0] < row.values_deg[1] ? "red_inner_blue_outer" : "blue_inner_red_outer";
+    out_row.direction = slots.size() == 1 ?
+                            "none" :
+                            (row.values_deg[0] < row.values_deg[1] ? "red_inner_blue_outer" : "blue_inner_red_outer");
     dispersion.followed_onsets.push_back(std::move(out_row));
   }
   dispersion.evidence.state = EvidenceState::kFinite;

@@ -25,6 +25,30 @@ resolution's rule — the scene's spectrum when exactly one discrete wavelength,
 nominal geometry, the point sun, the scene's declared pose density. Per-lambda maps are a later
 face (742.4's dispersion reads positions, not a colored map).
 
+## One-face external reflection
+
+A single existing face is a complete air-side reflection, not an incomplete transmitted
+path. It is accepted by the engine map, survey, point, probe and representative-ray entries.
+The normal, finite face and Fresnel authority are the same ones used by the multi-face chain;
+no synthetic exit face or crystal-interior leg is inserted. For world propagation `d` and
+outward normal `N`, `c=-d·N>0`, `q=d+2cN`, and the event weight is
+`A_face*c*R_air_to_ice(c)`. The direction is index-independent; the Fresnel weight is not.
+
+Under a random orientation, a literal member has smooth density
+`A_face*R(sin(delta/2))/(16*pi)` per steradian: `dOmega_q=4c*dOmega_N` cancels
+the projected-area cosine. The existing lattice band estimator averages this density over its
+angular band, with its existing centre-sine normalization, rather than evaluating it exactly
+at the centre. Areas use the closed-form reference crystal (circumscribed diameter 1), not a
+rescaled hexagon with edge 1. Physical-class values still sum each real member separately.
+
+An external mirror is never a full-SO(3) identity path. A declared restricted family can
+nevertheless keep its normal fixed, producing a mass at the **reflected** direction, not
+automatically at the sun. Survey preserves the family image; Point explicitly locates that
+mass and names `external_reflection_mass_not_integrated` when its integral is not computed.
+Map and Probe retain their `measure_not_expressible` refusal for singular orientation
+measures; they do not place this reflection mass through the sun-only identity arm. A
+nonconstant restricted image is not labelled a mass merely because a dimension is fixed.
+
 ## The view and its mapping
 
 A view is a (deviation x azimuth-about-sun) grid in the probe frame — the line probe's own frame

@@ -233,6 +233,16 @@ TEST(ExternalReflection, IndependentDirectionFresnelAreaAndJacobian) {
   const double grazing[3] = { 0, 1, 0 };
   EXPECT_EQ(measure.Evaluate(backface, kN).status, EntryMeasureStatus::kEntryBackface);
   EXPECT_EQ(measure.Evaluate(grazing, kN).status, EntryMeasureStatus::kEntryBackface);
+  const double identity[9] = { 1, 0, 0, 0, 1, 0, 0, 0, 1 };
+  const double front[3] = { -1, 0, 0 };
+  double segments[6];
+  double factor;
+  PathOutputs zero{ {}, 0.0, segments, &factor };
+  ASSERT_TRUE(EvaluatePath(table, &slot, 1, 1.0, front, identity, &zero));
+  EXPECT_DOUBLE_EQ(factor, 0.0);  // index-matched interface: valid geometry, legal zero energy
+  EXPECT_GT(measure.Evaluate(front, 1.0).value, 0.0);
+  EXPECT_FALSE(EvaluatePath(table, &slot, 1, kN, backface, identity, &zero));
+  EXPECT_FALSE(EvaluatePath(table, &slot, 1, kN, grazing, identity, &zero));
 }
 
 TEST_F(PathEvaluationTest, FaceNormalsMatchTheShapeDescription) {

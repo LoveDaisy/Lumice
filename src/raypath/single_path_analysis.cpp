@@ -18,6 +18,7 @@
 #include "raypath/detail/input_scope.hpp"
 #include "raypath/detail/measure/declared_density.hpp"
 #include "raypath/detail/measure/fiber_quadrature.hpp"
+#include "raypath/detail/measure_scope.hpp"
 #include "raypath/detail/survey/config_fingerprint.hpp"
 #include "raypath/detail/survey/survey_assembly.hpp"
 #include "raypath/prepared_geometry.hpp"
@@ -210,6 +211,36 @@ void SunInCrystal(const double pose[9], const double incident[3], double u[3]) {
   }
 }
 
+// Exact invariance under each free Euler rotation, not a sampled rank-zero guess.
+// R=Z(az-pi)Y(-zenith)Z(roll): a free rotation fixes a vector only on its axis.
+// The tolerance only absorbs sin(pi)'s rounding on unit normals (the pose's 1e-12 calibre).
+bool ConstantReflectionPose(const double normal[3], const survey::FamilyMeasureReading& reading, double pose[9]) {
+  if (!reading.ok) {
+    return false;
+  }
+  const auto& m = reading.measure;
+  constexpr double kAxisTolerance = 1e-12;
+  if (m.roll.kind != survey::FamilyDimKind::kFixed && std::hypot(normal[0], normal[1]) > kAxisTolerance) {
+    return false;
+  }
+  double roll_pose[9];
+  analytic::EulerPoseDeg(180.0, 0.0, m.roll.center_deg, roll_pose);
+  double rolled[3];
+  analytic::BodyToWorld(roll_pose, normal, rolled);
+  if (m.zenith.kind != survey::FamilyDimKind::kFixed && std::hypot(rolled[0], rolled[2]) > kAxisTolerance) {
+    return false;
+  }
+  double tilted_pose[9];
+  analytic::EulerPoseDeg(180.0, m.zenith.center_deg, m.roll.center_deg, tilted_pose);
+  double tilted[3];
+  analytic::BodyToWorld(tilted_pose, normal, tilted);
+  if (m.azimuth.kind != survey::FamilyDimKind::kFixed && std::hypot(tilted[0], tilted[1]) > kAxisTolerance) {
+    return false;
+  }
+  analytic::EulerPoseDeg(m.azimuth.center_deg, m.zenith.center_deg, m.roll.center_deg, pose);
+  return true;
+}
+
 // Everything that is fixed for one call: the crystal, the resolved path, the index, the sun, and
 // the orientation measure the declared pose density reads.
 class PathContext {
@@ -220,7 +251,15 @@ class PathContext {
         incident_{ incident[0], incident[1], incident[2] }, axis_(axis),
         lat_(axis.IsFullSphereUniform() ? MakeFullSphereLatitude() : MakeLatitudeDensity(axis.latitude_dist)),
         corridor_(table_, polygons, slots_.data(), SlotCount()), segments_(3 * (slots_.size() + 1)),
-        transmittances_(slots_.size()) {}
+        transmittances_(slots_.size()) {
+    if (slots_.size() == 1) {
+      const auto reading = survey::ReadFamilyMeasure(axis_);
+      const auto& measure = reading.measure;
+      density_available_ = !reading.ok || (measure.zenith.kind != survey::FamilyDimKind::kFixed &&
+                                           measure.azimuth.kind != survey::FamilyDimKind::kFixed &&
+                                           measure.roll.kind != survey::FamilyDimKind::kFixed);
+    }
+  }
 
   int SlotCount() const { return static_cast<int>(slots_.size()); }
 
@@ -228,6 +267,9 @@ class PathContext {
   // angles: the config's own orientation angles are the composed ones (azimuth = lambda_out,
   // zenith = pi/2 - phi_out, roll = roll_out — the same chart both specs spell).
   double PoseDensity(const double pose[9]) const {
+    if (!density_available_) {
+      return std::numeric_limits<double>::quiet_NaN();
+    }
     const PoseAngles angles = PoseToAngles(pose);
     return DeclaredPoseDensity(lat_, axis_, angles.azimuth_deg * math::kDegreeToRadD,
                                (90.0 - angles.zenith_deg) * math::kDegreeToRadD, angles.roll_deg * math::kDegreeToRadD);
@@ -321,6 +363,7 @@ class PathContext {
   double n_;
   double incident_[3];
   AxisDistribution axis_;
+  bool density_available_ = true;
   LatitudeDensity lat_;
   analytic::Corridor corridor_;
   std::vector<double> segments_;
@@ -1017,11 +1060,15 @@ Error RunPointExecution(const ConfigManager& config, const SinglePathRequest& in
 
   // ---- rank 0, and whether the path is realisable at all ----
   const RankProbe rank = ProbeRank(ctx);
+  double reflection_pose[9];
+  const auto actual_measure = survey::ReadFamilyMeasure(crystal_it->second.axis_);
+  const bool reflection_mass =
+      slots.size() == 1 && ConstantReflectionPose(table.normal[slots[0]], actual_measure, reflection_pose);
   if (rank.valid_count == 0) {
     return { ErrorCode::kPathInfeasible, "no pose realises this face sequence (none of " +
                                              std::to_string(kRankProbeCount) + " probed sun directions is valid)" };
   }
-  if (!rank.rank_zero && !(delta > 0.0 && delta < math::kPiD)) {
+  if (!rank.rank_zero && !reflection_mass && !(delta > 0.0 && delta < math::kPiD)) {
     return { ErrorCode::kInvalidTarget,
              "the target coincides with the sun or its antipode; no fiber is defined there" };
   }
@@ -1037,19 +1084,32 @@ Error RunPointExecution(const ConfigManager& config, const SinglePathRequest& in
   // the legs return — in the execution, cancel-stoppable, never stored as deferred inputs.
   *admitted_out = std::move(admitted);
 
-  if (rank.rank_zero) {
+  if (rank.rank_zero || reflection_mass) {
     result.payload = PointMass{};
     const double sun[3] = { sun_hat[0], sun_hat[1], sun_hat[2] };
     double pose[9];
-    RotationTaking(rank.first_valid_u, sun, pose);
+    if (reflection_mass) {
+      std::copy(reflection_pose, reflection_pose + 9, pose);
+    } else {
+      RotationTaking(rank.first_valid_u, sun, pose);
+    }
     const PointDetail probe = ctx.Detail(pose, 0.0);
+    if (reflection_mass && !probe.valid) {
+      return { ErrorCode::kPathInfeasible, "external_reflection_backface_on_actual_family" };
+    }
     for (int i = 0; i < 3; i++) {
       result.Mass().direction[i] = probe.outgoing_direction[i];
     }
     DirToAltAz(result.Mass().direction, &result.Mass().altitude_deg, &result.Mass().azimuth_deg);
     result.Mass().target_separation_deg =
         analytic::so3::AngleBetween(result.Mass().direction, meta.target_direction) * math::kRadToDegreeD;
-    result.Mass().orbit_factors = BuildOrbitFactors(marginal, ctx, sun_hat, &stop);
+    if (reflection_mass) {
+      result.Mass().orbit_factors.reason = "external_reflection_mass_not_integrated";
+      result.Mass().orbit_factors.measure_support =
+          actual_measure.single_pose ? "single_pose" : "constant_normal_family";
+    } else {
+      result.Mass().orbit_factors = BuildOrbitFactors(marginal, ctx, sun_hat, &stop);
+    }
     if (stopped()) {
       meta.interrupted = true;
     }

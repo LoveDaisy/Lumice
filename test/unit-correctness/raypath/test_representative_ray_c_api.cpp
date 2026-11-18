@@ -63,6 +63,52 @@ LUMICE_RepresentativeRayRequest RingRequest(const double* pose) {
 
 char g_err[512];
 
+TEST(RepresentativeRayCApi, ExternalReflectionHasOneContactTwoOutsideLegsAndFrozenLifetime) {
+  LUMICE_Scene* raw_scene = nullptr;
+  ASSERT_EQ(LUMICE_SceneFromJson(kPrismScene, &raw_scene), LUMICE_OK);
+  ScenePtr scene(raw_scene);
+  const double pose[9] = { 1, 0, 0, 0, 1, 0, 0, 0, 1 };
+  auto request = RingRequest(pose);
+  const int face = 3;
+  const int count = 1;
+  request.faces = &face;
+  request.face_count = 1;
+  request.layer_face_counts = &count;
+  LUMICE_RepresentativeRay* raw_ray = nullptr;
+  ASSERT_EQ(LUMICE_AnalyzeRepresentativeRay(scene.get(), &request, &raw_ray, g_err, sizeof(g_err)), LUMICE_OK) << g_err;
+  RayPtr ray(raw_ray);
+  scene.reset();
+  LUMICE_RepresentativeRayInfo info{};
+  info.struct_size = sizeof(info);
+  ASSERT_EQ(LUMICE_RepresentativeRayGetInfo(ray.get(), &info), LUMICE_PATH_READ_OK);
+  ASSERT_EQ(info.produced, 1);
+  EXPECT_EQ(info.face_count, 1);
+  EXPECT_TRUE(std::isnan(info.area_perp_internal));  // explicitly not an internal corridor
+  LUMICE_PathRayContacts contacts{};
+  contacts.struct_size = sizeof(contacts);
+  ASSERT_EQ(LUMICE_RepresentativeRayGetContacts(ray.get(), &contacts), LUMICE_PATH_READ_OK);
+  ASSERT_EQ(contacts.contact_count, 1u);
+  LUMICE_PathRayLegs legs{};
+  legs.struct_size = sizeof(legs);
+  ASSERT_EQ(LUMICE_RepresentativeRayGetLegs(ray.get(), &legs), LUMICE_PATH_READ_OK);
+  ASSERT_EQ(legs.leg_count, 2u);
+  const double cosine = std::cos(15.0 * 3.14159265358979323846 / 180.0);
+  const double n = info.refractive_index;
+  const double ct = std::sqrt(1.0 - (1.0 - cosine * cosine) / (n * n));
+  const double rs = (cosine - n * ct) / (cosine + n * ct);
+  const double rp = (n * cosine - ct) / (n * cosine + ct);
+  EXPECT_NEAR(contacts.contacts[0].transmittance, 0.5 * (rs * rs + rp * rp), 1e-12);
+  EXPECT_NEAR(info.entry_measure, 0.5 * cosine, 1e-12);
+  EXPECT_NEAR(contacts.contacts[0].point[0], std::sqrt(3.0) / 4.0, 1e-12);
+  EXPECT_LT(legs.legs[0].direction[0], 0.0);
+  EXPECT_NEAR(legs.legs[1].direction[0], -legs.legs[0].direction[0], 1e-12);
+  EXPECT_NEAR(legs.legs[1].direction[2], legs.legs[0].direction[2], 1e-12);
+  LUMICE_PathRayContacts again{};
+  again.struct_size = sizeof(again);
+  ASSERT_EQ(LUMICE_RepresentativeRayGetContacts(ray.get(), &again), LUMICE_PATH_READ_OK);
+  EXPECT_EQ(again.contacts, contacts.contacts);
+}
+
 // The happy path: request -> readers, all contracts on one legal pose.
 TEST(RepresentativeRayCApi, RequestEvaluatesAndReadersCarryThePath) {
   ScenePtr scene;

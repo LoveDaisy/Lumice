@@ -2645,7 +2645,7 @@ typedef struct LUMICE_RepresentativeRayInfo {
   LUMICE_PathText entry_status;   // the corridor gate's status name, always spelled
   LUMICE_PathText chain_failure;  // the chain's failure name when it refused; empty otherwise
   int geometry_evaluated;         // whether the corridor cut an intersection at all
-  double area_perp_internal;      // the measured corridor area
+  double area_perp_internal;      // measured internal footprint; NaN for one-face external reflection (not applicable)
   double area_threshold;          // the corridor's own area gate
   double entry_measure;           // A_P at the pose; 0 on a refusal
   int crystal_id;
@@ -2665,7 +2665,7 @@ typedef struct LUMICE_RepresentativeRayInfo {
 } LUMICE_RepresentativeRayInfo;
 
 // One collision point: the world-frame point on its original finite face and the Fresnel factor
-// of the interface it sits on (T at entry and exit, R at internal faces).
+// of the interface it sits on (T at entry and exit, R at internal faces; a one-face path is external R).
 typedef struct LUMICE_PathRayContact {
   double point[3];
   double transmittance;

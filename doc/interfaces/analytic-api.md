@@ -1200,6 +1200,16 @@ re-derives; (d) end-state convergence follows the shared criteria — LI consume
 `liblumice_analytic` through a binding and the JAX version retires. The wave-2 hold ledger counts
 this entry (+1) and stays as it is; the 2026-10-07 ruling is not reopened by it.
 
+### Engine-only external-reflection extension
+
+The shared C++ optical chain and finite-path geometry also accept a single face as air-side
+external reflection. Its scalar/Jet/Jet2 direction is the same reflection map, its sole path
+factor is Fresnel R, and its finite entry measure is projected face area; there is no internal
+footprint or transmitted exit. The engine raypath capabilities consume this extension. The
+published analytic C requests retain their documented 2..64-face domain in API 8; they do not
+silently acquire a new diagnostic-interface or corridor-payload convention. Their existing
+multi-face results and LI parity fixtures are unchanged.
+
 ## 5. Conventions, errors, threading **(design)**
 
 

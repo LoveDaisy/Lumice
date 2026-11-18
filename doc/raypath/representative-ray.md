@@ -23,6 +23,23 @@ recomputes anything):
 - `legs`: `face_count + 1` rows of world-frame unit directions — row 0 is the incident
   direction, row k runs from contact k−1 to contact k, the last row is the outgoing direction.
 
+## External-reflection paths
+
+A one-face sequence means external air-side reflection. Its produced result has **one**
+verified point on the original finite face and **two** world-frame propagation legs (incoming
+and reflected); its contact factor and total are `R`, not `1-R`. It has no internal segment,
+Snell gate, exit critical-angle gate or crystal-interior corridor. The same finite-polygon
+projection/recovery machinery uses the incident air-side line, with no ghost exit face.
+The plane and polygon containment checks remain; there is no internal midpoint to check.
+
+`entry_measure` is the incident projected face area. `area_perp_internal` is explicitly
+**not applicable**, represented by NaN on both produced/refused one-face results, never a
+fabricated internal area of zero. `face_count==1` identifies that applicability on the existing
+C Info layout; no struct extent, array stride, export, or request version changes. The frozen
+result and borrowed-array lifetime contracts are unchanged. GUI consumes the same readers,
+draws two exterior legs meeting at one contact, and labels the factor as external reflectance.
+The legacy field spelling `transmittance` denotes that contact's Fresnel path factor.
+
 ## The recovery, on the corridor authority
 
 There is no second geometry implementation anywhere in the chain — the raypath layer sequences

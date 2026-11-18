@@ -19,7 +19,8 @@
 namespace lumice::analytic {
 
 
-// `slots` resolved by ResolveFaceSequence, slot_count >= 2.
+// `slots` resolved by ResolveFaceSequence, slot_count >= 1. An external mirror is never
+// identity on all SO(3); a restricted family's constant-normal image is a separate fact.
 bool IsRankZeroPath(const FaceNormalTable& table, const int* slots, int slot_count);
 
 }  // namespace lumice::analytic
