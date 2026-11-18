@@ -14263,7 +14263,8 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
             analyze ? gui::GuiState::WorkspaceMode::kAnalyze : gui::GuiState::WorkspaceMode::kRender;
         gui::g_state.renderer.lens_type = gui::kLensTypeLinear;
         gui::g_state.renderer.fov = 90.0f;
-        gui::g_state.look_at.locked = true;
+        IM_CHECK_RETV(gui::SelectLookAtTarget(gui::g_state, gui::LookAtId::kSun), false);
+        IM_CHECK_RETV(gui::SetLookAtLocked(gui::g_state, true), false);
         ctx->Yield(3);
         ImGuiWindow* picture = analyze ? PanoramaPictureWindow() : ImGui::FindWindowByName("##PreviewPanel");
         IM_CHECK_RETV(picture != nullptr && picture->Active, false);

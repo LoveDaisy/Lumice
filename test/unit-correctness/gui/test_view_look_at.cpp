@@ -67,7 +67,7 @@ std::array<float, 3> ForwardOfPreset(LookAtId id, float sun_altitude_deg, bool* 
 
 TEST(CameraWheelZoom, UsesNotchesAndLensBoundsWithoutChangingLookAtOrLifecycle) {
   lumice::gui::GuiState state;
-  state.look_at.locked = true;
+  state.look_at = { LookAtId::kSun, true };
   // Each lens has a user-facing FOV bound; the full-sky ids are an independent explicit list
   // here, so changing the production gate alone cannot make this expectation follow it.
   for (int lens = 0; lens <= 10; ++lens) {

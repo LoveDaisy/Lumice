@@ -1805,7 +1805,7 @@ void RenderViewControlsGroup(GuiState& state) {
   // test that holds it is look_at_controls_share_one_unclipped_row.
   const float row_avail = ImGui::GetContentRegionAvail().x;  // before Reset: the whole line
   if (ImGui::Button("Reset##view")) {
-    UnlockLookAt(state);
+    SelectLookAtTarget(state, LookAtId::kNone);
     const ViewDefaults d = DefaultViewParamsFor(r.lens_type);
     r.fov = d.fov;
     r.elevation = d.elevation;
@@ -1818,7 +1818,7 @@ void RenderViewControlsGroup(GuiState& state) {
   constexpr const char* kLockLabel = "Lock##view_look_at_lock";
   const char* look_at_preview = LookAtDisplayName(state.look_at.target);
   if (look_at_preview == nullptr) {
-    look_at_preview = "Sun";
+    look_at_preview = LookAtDisplayName(LookAtId::kNone);
   }
   const ImGuiStyle& style = ImGui::GetStyle();
   // Reset's width is read off the drawn button rather than estimated — the text's pixel width is
@@ -1852,6 +1852,13 @@ void RenderViewControlsGroup(GuiState& state) {
   ImGui::SetNextItemWidth(combo_w);
   ImGui::BeginDisabled(!el_c.enabled);
   if (ImGui::BeginCombo(kLookAtId, look_at_preview)) {
+    const bool none_selected = state.look_at.target == LookAtId::kNone;
+    if (ImGui::Selectable(LookAtDisplayName(LookAtId::kNone), none_selected)) {
+      SelectLookAtTarget(state, LookAtId::kNone);
+    }
+    if (none_selected) {
+      ImGui::SetItemDefaultFocus();
+    }
     for (int i = 0; i < static_cast<int>(LookAtId::kCount); ++i) {
       const auto id = static_cast<LookAtId>(i);
       const char* name = LookAtDisplayName(id);
@@ -1879,10 +1886,16 @@ void RenderViewControlsGroup(GuiState& state) {
         "%s", el_c.enabled ? "Choose a named direction; Lock follows it as the scene changes." : el_c.disabled_reason);
   }
   ImGui::SameLine();
+  const bool has_target = IsValidLookAtId(state.look_at.target);
+  ImGui::BeginDisabled(!has_target);
   bool locked = state.look_at.locked;
   if (Checkbox(kLockLabel, &locked)) {
     SetLookAtLocked(state, locked);
   }
+  if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled) && (!el_c.enabled || !has_target)) {
+    SetWrappedTooltip("%s", !el_c.enabled ? el_c.disabled_reason : "Choose a Look At target before enabling Lock.");
+  }
+  ImGui::EndDisabled();
   ImGui::EndDisabled();
 
   ImGui::PopItemWidth();
