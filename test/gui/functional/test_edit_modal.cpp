@@ -567,6 +567,10 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
             return false;
           }
         }
+        // Restore the scale before teardown: the scaled Compact footer can be below the
+        // physical desktop. All host/tooltip observations above still use the original scale.
+        gui::SetUiScaleMultiplierImmediate(1.0f);
+        ctx->Yield(4);
         ctx->ItemClick(kCancel);
         ctx->Yield(2);
         return true;
