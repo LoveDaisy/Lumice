@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[2]
 pytestmark = pytest.mark.slow
 
 
-class PointRequest(C.Structure):
+class PointRequestV461(C.Structure):
     _fields_ = [
         ("struct_size", C.c_size_t), ("crystal_id", C.c_int),
         ("faces", C.POINTER(C.c_int)), ("face_count", C.c_int),
@@ -27,6 +27,10 @@ class PointRequest(C.Structure):
         ("warm_json_len", C.c_size_t), ("deadline_ms", C.c_int),
         ("interrupted", C.c_void_p),
     ]
+
+
+class PointRequest(C.Structure):
+    _fields_ = PointRequestV461._fields_ + [("context_symmetry_bits_plus_one", C.c_int)]
 
 
 class ReportRequest(C.Structure):
@@ -54,7 +58,7 @@ class SurveyRequest(C.Structure):
     ]
 
 
-class ProbeRequest(C.Structure):
+class ProbeRequestV461(C.Structure):
     _fields_ = [
         ("struct_size", C.c_size_t), ("crystal_id", C.c_int),
         ("faces", C.POINTER(C.c_int)), ("face_count", C.c_int),
@@ -65,6 +69,10 @@ class ProbeRequest(C.Structure):
         ("warm_json", C.c_void_p), ("warm_json_len", C.c_size_t),
         ("budget_ms", C.c_int), ("interrupted", C.c_void_p),
     ]
+
+
+class ProbeRequest(C.Structure):
+    _fields_ = ProbeRequestV461._fields_ + [("context_symmetry_bits_plus_one", C.c_int)]
 
 
 class QueryOptions(C.Structure):
@@ -259,7 +267,10 @@ def _product_library_path():
 
 def _check_published_request_extents_and_future_tail_keep_borrowed_result_alive():
     assert (C.sizeof(PointRequest), C.sizeof(ReportRequest), C.sizeof(SurveyRequest),
-            C.sizeof(ProbeRequest)) == (112, 120, 72, 112)
+            C.sizeof(ProbeRequest)) == (120, 120, 72, 120)
+    assert (C.sizeof(PointRequestV461), C.sizeof(ProbeRequestV461)) == (112, 112)
+    assert PointRequest.context_symmetry_bits_plus_one.offset == 112
+    assert ProbeRequest.context_symmetry_bits_plus_one.offset == 112
     assert (PointRequest.warm_json_len.offset + C.sizeof(C.c_size_t),
             ReportRequest.sample_count.offset + C.sizeof(C.c_int),
             SurveyRequest.symmetry_bits_plus_one.offset + C.sizeof(C.c_int)) == (96, 72, 64)
@@ -316,7 +327,13 @@ def _check_published_request_extents_and_future_tail_keep_borrowed_result_alive(
         assert lib.LUMICE_PathWorkspaceQueryPoint(workspace, C.byref(request), C.byref(options),
                                                   C.byref(result), err, len(err)) == 0, err.value
         lib.LUMICE_SinglePathResultDestroy(result)
-        for invalid in (95, 104):
+        # A separately allocated old layout has no new tail to read.
+        old = PointRequestV461.from_buffer_copy(request)
+        old.struct_size = C.sizeof(old)
+        assert lib.LUMICE_PathWorkspaceQueryPoint(workspace, C.byref(old), C.byref(options),
+                                                  C.byref(result), err, len(err)) == 0, err.value
+        lib.LUMICE_SinglePathResultDestroy(result)
+        for invalid in (95, 104, 113, 119):
             request.struct_size = invalid
             result = C.c_void_p(1)
             assert lib.LUMICE_PathWorkspaceQueryPoint(workspace, C.byref(request), C.byref(options),
@@ -327,11 +344,11 @@ def _check_published_request_extents_and_future_tail_keep_borrowed_result_alive(
         future = FuturePointRequest()
         future.base = request
         C.memset(C.addressof(future) + C.sizeof(PointRequest), 0xA5, 32)
-        future.base.struct_size = 128
+        future.base.struct_size = C.sizeof(PointRequest) + 16
         result = C.c_void_p()
         assert lib.LUMICE_PathWorkspaceQueryPoint(workspace, C.byref(future), C.byref(options),
                                                   C.byref(result), err, len(err)) == 0, err.value
-        assert C.string_at(C.addressof(future) + 112, 32) == bytes([0xA5] * 32)
+        assert C.string_at(C.addressof(future) + C.sizeof(PointRequest), 32) == bytes([0xA5] * 32)
     finally:
         lib.LUMICE_PathWorkspaceDestroy(workspace)
 
@@ -431,6 +448,11 @@ def _check_other_request_families_accept_published_extents_and_preserve_future_t
             result = C.c_void_p()
             assert query(workspace, C.byref(request), C.byref(options), C.byref(result), err, len(err)) == 0, err.value
             destroy(result)
+            if typ is ProbeRequest:
+                old = ProbeRequestV461.from_buffer_copy(request)
+                old.struct_size = C.sizeof(old)
+                assert query(workspace, C.byref(old), C.byref(options), C.byref(result), err, len(err)) == 0, err.value
+                destroy(result)
             request.struct_size = invalid_extent
             result = C.c_void_p(1)
             assert query(workspace, C.byref(request), C.byref(options), C.byref(result), err, len(err)) == 5
