@@ -14966,7 +14966,7 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
     t->GuiFunc = [](ImGuiTestContext*) {
       if (draw_grid_probe) {
         ImGui::SetNextWindowPos(ImVec2(40.0f, 60.0f), ImGuiCond_Always);
-        ImGui::SetNextWindowSize(ImVec2(320.0f, 170.0f), ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(320.0f, 100.0f), ImGuiCond_Always);
         ImGui::Begin("Compressed grid probe", nullptr, ImGuiWindowFlags_NoResize);
         ImGui::LogToBuffer();
         gui::RenderAnalyzeSunGlobeRegion(grid_probe, ImGui::GetContentRegionAvail());
@@ -15019,12 +15019,12 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       ctx->Yield(3);
       ctx->SetRef("//Compressed grid probe");
       IM_CHECK(!ctx->ItemExists("**/##globe_canvas"));
-      // The probe's canary pair: the region's fixed stack rendered (title) and the state area's
-      // honest discovered-arm text is present (the sample readout — the six per-arm concept
-      // sentences retired into the title band's info icon, so the readout is what the arm says
-      // now). The factors region's no-grid note stays absent: the copied document carries a grid.
+      // The deliberately canvas-less host still submits its fixed interaction stack. The
+      // retired success readout/report must not reappear as a short-host fallback.
       IM_CHECK(grid_report.find("Sun direction globe") != std::string::npos);
-      IM_CHECK(grid_report.find("sample ") != std::string::npos && grid_report.find("zenith") != std::string::npos);
+      IM_CHECK(!IsDisabled(ctx->ItemInfo("**/##globe_sample")));
+      IM_CHECK(grid_report.find("sample ") == std::string::npos && grid_report.find("zenith") == std::string::npos);
+      IM_CHECK(PoseRegionScrollChild("##AnalyzeSunGlobe", "##AnalyzeGlobeState") == nullptr);
       IM_CHECK(grid_report.find("no sun grid in this document") == std::string::npos);
       ctx->SetRef("");
       // The backdrop is the toggle's DISPLAY EFFECT, gated at the draw site by the toggle and
