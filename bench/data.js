@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794967144017,
+  "lastUpdate": 1794967145896,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9620,50 +9620,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "7578ffac709fd28e350dc9de11f7cd14c68c6bd0",
-          "message": "Merge pull request #501 from LoveDaisy/fix/xyz-stats-current-capi\n\nFix dump_xyz_stats.py: consume current C API contract via CLI npy export",
-          "timestamp": "2026-10-17T15:52:48+08:00",
-          "tree_id": "b76c99c2e7759bc60276b944ee897ddb60ef96a4",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/7578ffac709fd28e350dc9de11f7cd14c68c6bd0"
-        },
-        "date": 1792223724257,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 90.7,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 100.2,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 98.1,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 93.8,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "2d8b602f597c2077eef981ad5ed97922620caecc",
           "message": "Merge pull request #502 from LoveDaisy/fix/cli-verbose-help-level\n\nfix(cli): describe -v as verbose level in help text",
           "timestamp": "2026-10-17T16:38:00+08:00",
@@ -14003,6 +13959,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 94,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "a8533ca7a68228cf2eed6d461ae87db2ea03f822",
+          "message": "Merge pull request #617 from LoveDaisy/feat/gui-feedback-1117\n\nGUI feedback wave 2026-11-17: tooltip two-tier rule, Ray3D region rework, globe Fit/Full views",
+          "timestamp": "2026-11-18T09:53:57+08:00",
+          "tree_id": "8cb29f609a7727ad38280d90429697f273fe4803",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/a8533ca7a68228cf2eed6d461ae87db2ea03f822"
+        },
+        "date": 1794967145412,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 89.4,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 99.9,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 98,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 95.4,
             "unit": "%"
           }
         ]
