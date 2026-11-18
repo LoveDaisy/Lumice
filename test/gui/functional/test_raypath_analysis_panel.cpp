@@ -6878,6 +6878,9 @@ bool Ray3DTitleBandAndCanvasGainHold(ImGuiTestContext* ctx) {
     return c.RectFull.GetHeight();
   };
   const auto readout_budget = [&](const char* name) -> bool {
+    ctx->WindowFocus("//Pose & trace");
+    ctx->MouseMoveToPos(ImVec2(2, 2));
+    ctx->Yield(2);
     const auto ray = ctx->ItemInfo("**/##r3d_canvas", ImGuiTestOpFlags_NoError);
     const auto globe = ctx->ItemInfo("**/##globe_canvas", ImGuiTestOpFlags_NoError);
     const auto slider = ctx->ItemInfo("**/##globe_sample", ImGuiTestOpFlags_NoError);
