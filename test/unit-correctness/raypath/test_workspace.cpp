@@ -351,6 +351,42 @@ TEST(Workspace, SurveyToPointIsTheTypedWarmChainWithNoRecompute) {
   EXPECT_EQ(workspace->StructureRunCount(), runs);
 }
 
+TEST(Workspace, AutomaticScopeMismatchIsAMissButExplicitMismatchIsRefused) {
+  const ConfigManager config = survey::RandomPrismScene();
+  std::unique_ptr<AnalysisWorkspace> workspace;
+  ASSERT_TRUE(AnalysisWorkspace::Create(config, &workspace).Ok());
+  SurveyRequest literal = SurveyOf({ 1, 2 });
+  literal.symmetry_bits = 0;
+  survey::SurveyResult survey;
+  ASSERT_TRUE(workspace->QuerySurvey(literal, &survey).Ok());
+  ASSERT_EQ(survey.Data().execution, ExecutionOutcome::kCompleted);
+  ASSERT_EQ(workspace->OccupiedSlotCount(), 3);
+  const long runs = workspace->StructureRunCount();
+
+  SinglePathRequest point_request = PointOf({ 1, 2 });  // default physical context
+  PointResult point;
+  const Error point_error = workspace->QueryPoint(point_request, true, &point);
+  ASSERT_TRUE(point_error.Ok()) << point_error.message;
+  EXPECT_EQ(point.Data().survey_context.source, ContextSource::kInline);
+  EXPECT_GT(workspace->StructureRunCount(), runs);
+
+  ProbeRequest probe_request;
+  probe_request.crystal_id = 1;
+  probe_request.path_layers = { { 1, 2 } };
+  probe_request.at_altitude_deg = -30.0;
+  probe_request.sample_count = 100;
+  probe_request.budget_ms = 120000;
+  ProbeResult probe;
+  const Error probe_error = workspace->QueryProbe(probe_request, &probe);
+  ASSERT_TRUE(probe_error.Ok()) << probe_error.message;
+  EXPECT_EQ(probe.Data().context.source, ContextSource::kInline);
+
+  point_request.warm_candidate = HarvestSurveyResult(survey);
+  EXPECT_FALSE(workspace->QueryPoint(point_request, true, &point).Ok());
+  probe_request.warm_candidate = HarvestSurveyResult(survey);
+  EXPECT_FALSE(workspace->QueryProbe(probe_request, &probe).Ok());
+}
+
 TEST(Workspace, ExplicitTypedWarmOutlivesItsSourceAndIsNotOverwritten) {
   std::unique_ptr<AnalysisWorkspace> producer;
   ASSERT_TRUE(AnalysisWorkspace::Create(survey::RandomPrismScene(), &producer).Ok());
