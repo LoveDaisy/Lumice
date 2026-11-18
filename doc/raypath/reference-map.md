@@ -76,7 +76,7 @@ an explicit re-evaluation, not an upscale of an older raster.
 
 `LUMICE_PathMapGetPixels` borrows five row-major columns: cell-centre `delta_deg`/`azimuth_deg`,
 the per-sr `values` (LI Phase I pixel convention: power per steradian along the path, per unit
-incident irradiance, hexagon edge a = 1), summed member event `counts`, and a `status` byte
+incident irradiance, using the closed-form reference crystal's circumscribed diameter 1), summed member event `counts`, and a `status` byte
 (`OK` / `SINGULAR` / `POINT_MASS`). A cell covering the sun direction or its antipode is
 SINGULAR: NaN value, never a written zero. `LUMICE_PATH_MAP_PIXEL_POINT_MASS` marks the cell
 holding `m_total / Omega`; `LUMICE_PathMapGetPointMass` reads the mass, its error and the

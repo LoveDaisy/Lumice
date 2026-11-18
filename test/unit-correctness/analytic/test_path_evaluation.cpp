@@ -969,7 +969,8 @@ TEST(PathEvaluationInput, FaceSequenceIsChecked) {
   ASSERT_EQ(BuildFaceNormals(Prism(1.0), &t), Status::kOk);
   int slots[4];
   const int one[] = { 3 };
-  EXPECT_EQ(ResolveFaceSequence(t, one, 1, slots), Status::kInvalidValue);
+  EXPECT_EQ(ResolveFaceSequence(t, one, 1, slots), Status::kOk);
+  EXPECT_EQ(ResolveFaceSequence(t, one, 0, slots), Status::kInvalidValue);
   const int unknown[] = { 3, 13 };
   EXPECT_EQ(ResolveFaceSequence(t, unknown, 2, slots), Status::kInvalidValue);
   const int zero[] = { 0, 3 };
