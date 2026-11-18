@@ -47,6 +47,7 @@
 
 #include "IconsFontAwesome6.h"  // the sky eyedropper's label is an icon glyph, and its "##" id folds it in
 #include "gui/analyze_map_view.hpp"
+#include "gui/analyze_overview.hpp"
 #include "gui/analyze_survey.hpp"
 #include "gui/analyze_ui_widgets.hpp"
 #include "gui/app.hpp"  // g_state / g_server / g_preview_vp / DoRun — the exposure-mode case
@@ -305,6 +306,53 @@ void PickLens(ImGuiTestContext* ctx, int lens) {
 }  // namespace
 
 void RegisterViewDisplayControlTests(ImGuiTestEngine* engine) {
+  {
+    ImGuiTest* t =
+        IM_REGISTER_TEST(engine, "view_display_controls", "survey_object_tooltip_keeps_rows_and_full_reason");
+    static gui::SurveyObjectRow row;
+    static bool draw = false;
+    t->GuiFunc = [](ImGuiTestContext*) {
+      if (!draw) {
+        return;
+      }
+      ImGui::SetNextWindowPos(ImVec2(40.0f, 80.0f), ImGuiCond_Always);
+      ImGui::Begin("Survey tooltip host");
+      ImGui::Button("Located object", ImVec2(gui::UiPx(180.0f), gui::UiPx(60.0f)));
+      if (ImGui::IsItemHovered()) {
+        gui::RenderSurveyObjectTooltip({ &row, &row });
+      }
+      ImGui::End();
+    };
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      const ScopedTooltipUiScale scale(ctx);
+      struct Clear {
+        ~Clear() { draw = false; }
+      } clear;
+      // A model-level fixture, not a fabricated physics result or an engine acquisition.
+      row = {};
+      row.kind_name = "family";
+      row.state_name = "refused";
+      row.position_available = true;
+      row.position_altitude_deg = 12.5;
+      row.position_azimuth_deg = 30.25;
+      row.family_level = 2;
+      row.blur_deg = 0.5;
+      row.reason =
+          "The located family retains its position and evidence fields even when this part of the "
+          "calculation is refused. The complete reason must remain readable beside the grouped "
+          "object count, without dropping this final explanation.";
+      draw = true;
+      ctx->Yield(3);
+      std::string rendered;
+      IM_CHECK(ObserveTooltip(ctx, ctx->ItemInfo("//Survey tooltip host/Located object").RectFull.GetCenter(),
+                              row.reason.c_str(), true, "survey-object-tooltip.png", &rendered));
+      IM_CHECK(rendered.find("Survey objects") != std::string::npos);
+      IM_CHECK(rendered.find("2 objects") != std::string::npos);
+      IM_CHECK(rendered.find("×2 identical") != std::string::npos);
+      IM_CHECK(rendered.find("alt 12.50° az 30.25° · level 2 · blur 0.50°") != std::string::npos);
+    };
+  }
   {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "view_display_controls", "truncated_status_tooltip_uses_the_shared_bound");
     static std::string status;

@@ -912,6 +912,46 @@ void GroupOverlayHits(const std::vector<const SurveyObjectRow*>& hits, std::vect
   }
 }
 
+void RenderSurveyObjectTooltip(const std::vector<const SurveyObjectRow*>& hits) {
+  if (hits.empty() || !ImGui::BeginTooltip()) {
+    return;
+  }
+  const SurveyObjectRow& first = *hits.front();
+  ImGui::TextUnformatted("Survey objects");
+  ImGui::TextDisabled("alt %.2f° az %.2f° · %zu object%s", first.position_altitude_deg, first.position_azimuth_deg,
+                      hits.size(), hits.size() == 1 ? "" : "s");
+  std::vector<OverlayHitGroup> groups;
+  GroupOverlayHits(hits, &groups);
+  for (const OverlayHitGroup& group : groups) {
+    const SurveyObjectRow& row = *group.representative;
+    ImGui::Text("%s · %s", row.kind_name.c_str(), row.state_name.c_str());
+    if (group.count > 1) {
+      ImGui::SameLine();
+      ImGui::TextDisabled("×%d identical", group.count);
+    }
+    // Keep the evidence fields visible where two grouped entries differ.
+    char pos_line[96];
+    if (row.family_level >= 0 && row.blur_deg > 0.0) {
+      std::snprintf(pos_line, sizeof(pos_line), "alt %.2f° az %.2f° · level %d · blur %.2f°", row.position_altitude_deg,
+                    row.position_azimuth_deg, row.family_level, row.blur_deg);
+    } else if (row.family_level >= 0) {
+      std::snprintf(pos_line, sizeof(pos_line), "alt %.2f° az %.2f° · level %d", row.position_altitude_deg,
+                    row.position_azimuth_deg, row.family_level);
+    } else if (row.blur_deg > 0.0) {
+      std::snprintf(pos_line, sizeof(pos_line), "alt %.2f° az %.2f° · blur %.2f°", row.position_altitude_deg,
+                    row.position_azimuth_deg, row.blur_deg);
+    } else {
+      std::snprintf(pos_line, sizeof(pos_line), "alt %.2f° az %.2f°", row.position_altitude_deg,
+                    row.position_azimuth_deg);
+    }
+    ImGui::TextDisabled("%s", pos_line);
+    if (!row.reason.empty()) {
+      WrappedTooltipText("%s", row.reason.c_str());
+    }
+  }
+  ImGui::EndTooltip();
+}
+
 namespace {
 
 struct SurveyOverlayCache {
@@ -1019,44 +1059,7 @@ void DrawSurveyOverlays(ImDrawList* dl, GuiState& state, const MapCanvasProjecti
   // ONE tooltip per frame for everything under the pointer: the position header, then one line
   // per observation key (identical keys fold into an ×N count — a display grouping of the
   // model's rows; nothing drops, different sources stay separate).
-  if (!hits.empty() && ImGui::BeginTooltip()) {
-    const SurveyObjectRow& first = *hits.front();
-    ImGui::TextUnformatted("Survey objects");
-    ImGui::TextDisabled("alt %.2f° az %.2f° · %zu object%s", first.position_altitude_deg, first.position_azimuth_deg,
-                        hits.size(), hits.size() == 1 ? "" : "s");
-    std::vector<OverlayHitGroup> groups;
-    GroupOverlayHits(hits, &groups);
-    for (const OverlayHitGroup& group : groups) {
-      const SurveyObjectRow& row = *group.representative;
-      ImGui::Text("%s · %s", row.kind_name.c_str(), row.state_name.c_str());
-      if (group.count > 1) {
-        ImGui::SameLine();
-        ImGui::TextDisabled("×%d identical", group.count);
-      }
-      // The evidence fields the fold key honors, spelled on the position line: a family arm's
-      // level tag and a blur readout, when the row carries them — the differences between two
-      // entries are then readable where the entries differ, not only in their count.
-      char pos_line[96];
-      if (row.family_level >= 0 && row.blur_deg > 0.0) {
-        std::snprintf(pos_line, sizeof(pos_line), "alt %.2f° az %.2f° · level %d · blur %.2f°",
-                      row.position_altitude_deg, row.position_azimuth_deg, row.family_level, row.blur_deg);
-      } else if (row.family_level >= 0) {
-        std::snprintf(pos_line, sizeof(pos_line), "alt %.2f° az %.2f° · level %d", row.position_altitude_deg,
-                      row.position_azimuth_deg, row.family_level);
-      } else if (row.blur_deg > 0.0) {
-        std::snprintf(pos_line, sizeof(pos_line), "alt %.2f° az %.2f° · blur %.2f°", row.position_altitude_deg,
-                      row.position_azimuth_deg, row.blur_deg);
-      } else {
-        std::snprintf(pos_line, sizeof(pos_line), "alt %.2f° az %.2f°", row.position_altitude_deg,
-                      row.position_azimuth_deg);
-      }
-      ImGui::TextDisabled("%s", pos_line);
-      if (!row.reason.empty()) {
-        WrappedTooltipText("%s", row.reason.c_str());
-      }
-    }
-    ImGui::EndTooltip();
-  }
+  RenderSurveyObjectTooltip(hits);
   // The chromatic dispersion's inner-edge pair: the engine's own delta values, drawn as
   // iso-deviation circles about the sun, red inside blue (the C01 alignment face).
   if (model.dispersion.available && model.dispersion.min_row_available) {

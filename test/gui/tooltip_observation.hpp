@@ -20,7 +20,7 @@ inline ImGuiWindow* ActiveTooltipWindow() {
 }
 
 inline bool ObserveTooltip(ImGuiTestContext* ctx, const ImVec2& target, const char* expected, bool multiline = true,
-                           const char* capture_name = nullptr) {
+                           const char* capture_name = nullptr, std::string* rendered_out = nullptr) {
   ctx->MouseMoveToPos(ImVec2(1.0f, 1.0f));
   ctx->Yield(3);
   IM_CHECK_RETV(ActiveTooltipWindow() == nullptr, false);
@@ -32,6 +32,9 @@ inline bool ObserveTooltip(ImGuiTestContext* ctx, const ImVec2& target, const ch
   ctx->Yield();
   const std::string rendered = GImGui->LogBuffer.c_str();
   ImGui::LogFinish();
+  if (rendered_out != nullptr) {
+    *rendered_out = rendered;
+  }
   ImGuiWindow* tooltip = ActiveTooltipWindow();
   IM_CHECK_RETV(tooltip != nullptr, false);
   if (rendered.find(expected) == std::string::npos) {

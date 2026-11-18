@@ -432,9 +432,6 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
       const ScopedPopups popups(ctx);
       const ScopedTooltipUiScale scale(ctx);
       ctx->Yield(2);
-      OpenCardEditor(ctx, 0, kCrystalTabRef);
-      ctx->ItemClick("**/###axis_tab");
-      ctx->Yield(3);
       constexpr const char* kText =
           "Switches to this label: remembers the current parameters under the one you leave, then "
           "loads this label's memory — or its definition when nothing is remembered. The preview "
@@ -451,6 +448,9 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
         }
         ctx->Yield(4);
         IM_CHECK_RETV(g_window_size_test.done.load(), false);
+        OpenCardEditor(ctx, 0, kCrystalTabRef);
+        ctx->ItemClick("**/###axis_tab");
+        ctx->Yield(4);
         const auto first = ctx->ItemInfo("**/Random##axis_label_chip");
         IM_CHECK_RETV(first.ID != 0, false);
         // The id-zero caption precedes the first chip on this same line; no production test ID.
@@ -480,11 +480,12 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
             return false;
           }
         }
+        ctx->ItemClick(kCancel);
+        ctx->Yield(2);
         return true;
       };
       IM_CHECK(exercise(1.0f));
       IM_CHECK(exercise(1.5f));
-      ctx->ItemClick(kCancel);
     };
   }
   // ===================================================================================

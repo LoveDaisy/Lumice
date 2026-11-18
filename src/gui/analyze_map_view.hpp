@@ -164,6 +164,9 @@ struct OverlayHitGroup {
 };
 void GroupOverlayHits(const std::vector<const SurveyObjectRow*>& hits, std::vector<OverlayHitGroup>* out);
 
+// The grouped hover presentation, independent of marker projection and hit collection.
+void RenderSurveyObjectTooltip(const std::vector<const SurveyObjectRow*>& hits);
+
 // What the frame actually drew — the legend's one input (a legend describes the drawn picture,
 // so a category absent from this frame draws no entry). The overlay/anchor draws fill it; the
 // info region's legend reads it, same frame.
