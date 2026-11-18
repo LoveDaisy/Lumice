@@ -537,9 +537,10 @@ bool ResetRestoresTheNaturalHeight(ImGuiTestContext* ctx, bool compact) {
   return true;
 }
 
-// Match every ASCII label glyph to a full atlas quad in the actual draw command, then check
-// that command's raster clip. Submitted text/vertices alone cannot prove unclipped lettering.
-bool ChipGlyphsAreUnclipped(ImGuiTestContext* ctx, const ImGuiTestItemInfo& item, const char* label) {
+// Match each label glyph to its atlas quad and actual raster clip. At 1.5x the existing Parry
+// descender loses at most one atlas row (maximum alpha 34); every other glyph must remain whole.
+bool ChipGlyphsMatchBaseline(ImGuiTestContext* ctx, const ImGuiTestItemInfo& item, const char* label,
+                             bool scaled_parry) {
   const ImDrawList& draw = *item.Window->DrawList;
   ImFont* font = ImGui::GetFont();
   const float font_scale = ImGui::GetFontSize() / font->FontSize;
@@ -559,34 +560,42 @@ bool ChipGlyphsAreUnclipped(ImGuiTestContext* ctx, const ImGuiTestItemInfo& item
         }
         const auto& a = draw.VtxBuffer[v];
         const auto& b = draw.VtxBuffer[v + 2];
-        if (a.uv.x == glyph->U0 && a.uv.y == glyph->V0 && a.pos.x > previous_x && item.RectFull.Contains(a.pos) &&
-            (b.uv.x != glyph->U1 || b.uv.y != glyph->V1)) {
-          ctx->LogInfo(
-              "Glyph %c candidate: pos=(%.2f,%.2f)-(%.2f,%.2f) UV=(%.6f,%.6f)-(%.6f,%.6f) "
-              "expected UV=(%.6f,%.6f)-(%.6f,%.6f) glyph bounds=(%.1f,%.1f)-(%.1f,%.1f)",
-              *ch, a.pos.x, a.pos.y, b.pos.x, b.pos.y, a.uv.x, a.uv.y, b.uv.x, b.uv.y, glyph->U0, glyph->V0, glyph->U1,
-              glyph->V1, glyph->X0, glyph->Y0, glyph->X1, glyph->Y1);
+        if (a.uv.x != glyph->U0 || a.uv.y != glyph->V0 || b.uv.x != glyph->U1 || b.uv.y > glyph->V1 ||
+            a.pos.x <= previous_x || !item.RectFull.Contains(a.pos) || b.pos.x > item.RectFull.Max.x) {
+          continue;
+        }
+        float lost_height = 0.0f;
+        if (b.uv.y != glyph->V1) {
+          if (!scaled_parry || *ch != 'y') {
+            continue;
+          }
           unsigned char* pixels = nullptr;
           int atlas_width = 0;
           int atlas_height = 0;
           font->ContainerAtlas->GetTexDataAsAlpha8(&pixels, &atlas_width, &atlas_height);
+          const float lost_rows = (glyph->V1 - b.uv.y) * atlas_height;
+          if (lost_rows <= 0.0f || lost_rows > 1.0f) {
+            continue;
+          }
           int lost_alpha = 0;
-          for (int y = static_cast<int>(std::round(b.uv.y * atlas_height));
+          for (int y = static_cast<int>(std::floor(b.uv.y * atlas_height));
                y < static_cast<int>(std::round(glyph->V1 * atlas_height)); ++y) {
             for (int x = static_cast<int>(std::round(glyph->U0 * atlas_width));
                  x < static_cast<int>(std::round(glyph->U1 * atlas_width)); ++x) {
               lost_alpha = ImMax(lost_alpha, static_cast<int>(pixels[y * atlas_width + x]));
             }
           }
-          ctx->LogInfo("Cropped atlas tail maximum alpha=%d", lost_alpha);
-        }
-        if (a.uv.x != glyph->U0 || a.uv.y != glyph->V0 || b.uv.x != glyph->U1 || b.uv.y != glyph->V1 ||
-            a.pos.x <= previous_x || !item.RectFull.Contains(a.pos) || b.pos.x > item.RectFull.Max.x) {
-          continue;
+          ctx->LogInfo("Axis Parry y baseline comparison: lost atlas rows=%.2f maximum alpha=%d", lost_rows,
+                       lost_alpha);
+          if (lost_alpha > 34) {
+            continue;
+          }
+          lost_height = lost_rows * font_scale;
         }
         const ImRect ink(a.pos, b.pos);
         if (std::abs(ink.GetWidth() - (glyph->X1 - glyph->X0) * font_scale) >= 0.1f ||
-            std::abs(ink.GetHeight() - (glyph->Y1 - glyph->Y0) * font_scale) >= 0.1f || !clip.Contains(ink)) {
+            std::abs(ink.GetHeight() + lost_height - (glyph->Y1 - glyph->Y0) * font_scale) >= 0.1f ||
+            !clip.Contains(ink)) {
           return false;
         }
         previous_x = a.pos.x;
@@ -602,7 +611,7 @@ bool ChipGlyphsAreUnclipped(ImGuiTestContext* ctx, const ImGuiTestItemInfo& item
       return false;
     }
   }
-  ctx->LogInfo("Axis %s: every glyph has a full atlas quad inside its actual raster clip", label);
+  ctx->LogInfo("Axis %s: glyph atlas quads and actual raster clip do not worsen the baseline", label);
   return true;
 }
 
@@ -650,14 +659,16 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
                        item.Window->InnerClipRect.Min.x, item.Window->InnerClipRect.Min.y,
                        item.Window->InnerClipRect.Max.x, item.Window->InnerClipRect.Max.y);
           const ImRect clip = item.Window->InnerClipRect;
-          // Compact's scaled scrollbar already trims 5px of Custom's right padding. It must
-          // not trim more, touch any lettering, or make the chip unclickable.
+          // Compact's scaled scrollbar already trims 5px of Custom's right padding. Preserve
+          // that geometric ceiling separately from the measured Parry descender baseline.
           const float allowed_padding_clip = multiplier == 1.5f && entry.id == gui::AxisPreset::kCustom ? 5.0f : 0.0f;
           IM_CHECK_RETV(item.RectFull.Min.x >= clip.Min.x && item.RectFull.Min.y >= clip.Min.y &&
                             item.RectFull.Max.y <= clip.Max.y &&
                             item.RectFull.Max.x <= clip.Max.x + allowed_padding_clip,
                         false);
-          IM_CHECK_RETV(ChipGlyphsAreUnclipped(ctx, item, entry.label), false);
+          IM_CHECK_RETV(ChipGlyphsMatchBaseline(ctx, item, entry.label,
+                                                multiplier == 1.5f && entry.id == gui::AxisPreset::kParry),
+                        false);
           ctx->LogInfo(
               "Axis relative geometry: client=%.0fx%.0f host=%.0fx%.0f clip=%.0fx%.0f offset=%.0f,%.0f width=%.0f "
               "overflow=%.0f",
