@@ -3224,9 +3224,15 @@ bool ProfileRowsHighlightAndDrawOnTheMap(ImGuiTestContext* ctx) {
   gui::g_state.renderer.visible = gui::kVisibleFull;
   gui::g_state.renderer.front = false;
   ctx->Yield(3);
-  // Drain the original legitimate requests before observing display-only actions. Count worker
-  // pickups as well as identities: a same-key duplicate would evade an identity-only check.
-  IM_CHECK_RETV(DriveUntil(ctx, [] { return !gui::g_survey_executor.InFlight(); }, 90), false);
+  // Establish the map's adopted baseline before observing display-only actions: an idle worker
+  // can still have a finished result waiting for the GUI pump. The probe itself does not need a
+  // map, but the legend and the retained-source assertion do. Drain queued requests as well as
+  // the running one, so legitimate work cannot enter the display-only pickup counter later.
+  IM_CHECK_RETV(
+      DriveUntil(
+          ctx, [] { return gui::MapQueryStateFor(gui::g_state.analysis.map) == gui::MapQueryState::kCompleted; }, 60),
+      false);
+  IM_CHECK_RETV(DriveUntil(ctx, [] { return !gui::g_survey_executor.QueryOutstanding(); }, 90), false);
   const auto map_id = gui::g_state.analysis.map.intent_id;
   const auto survey_id = gui::g_state.analysis.survey.intent_id;
   const auto point_id = gui::g_state.analysis.point.intent_id;
@@ -3333,16 +3339,8 @@ bool ProfileRowsHighlightAndDrawOnTheMap(ImGuiTestContext* ctx) {
   ctx->Yield(3);
   // The legend icons (AC4): scroll the report to its legend, then assert the icons' colour
   // buckets — the frame anchors drew (full sky), so the sun's gold and the zenith/horizon greys
-  // stand; qualified verdicts join Overlays by default. The anchors draw from the adopted map's own sun
-  // echo, and the map query queues BEHIND the survey on the executor's one worker — the
-  // survey's completion gates nothing about the map's adoption. Gated here, at the point of
-  // use (the map-ink legs above read the survey model's device, not the map); a deadline-cut
-  // map still carries the echo (written before the budget window), so adoption — completed or
-  // cut — is what this waits on.
-  IM_CHECK_RETV(
-      DriveUntil(
-          ctx, [] { return gui::MapQueryStateFor(gui::g_state.analysis.map) == gui::MapQueryState::kCompleted; }, 60),
-      false);
+  // stand; qualified verdicts join Overlays by default. The adopted map's sun echo was required
+  // before the display-only baseline, so this leg must not wait for a new source to arrive.
   if (ImGuiWindow* report = MapReportWindow()) {
     report->Scroll.y = report->ScrollMax.y;
   }
