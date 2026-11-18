@@ -3205,6 +3205,31 @@ bool ProfileRowsHighlightAndDrawOnTheMap(ImGuiTestContext* ctx) {
   gui::g_state.renderer.visible = gui::kVisibleFull;
   gui::g_state.renderer.front = false;
   ctx->Yield(3);
+  // Drain the original legitimate requests before observing display-only actions. Count worker
+  // pickups as well as identities: a same-key duplicate would evade an identity-only check.
+  IM_CHECK_RETV(DriveUntil(ctx, [] { return !gui::g_survey_executor.InFlight(); }, 90), false);
+  const auto map_id = gui::g_state.analysis.map.intent_id;
+  const auto survey_id = gui::g_state.analysis.survey.intent_id;
+  const auto point_id = gui::g_state.analysis.point.intent_id;
+  const auto trace_id = gui::g_state.analysis.trace.intent_id;
+  const auto original_map = gui::g_state.analysis.map.adopted_result;
+  const auto sky = gui::g_state.analysis.sky_point;
+  const auto roi_mode = gui::g_state.analysis.roi_mode;
+  const auto sample = gui::g_state.analysis.point_view.sample_index;
+  const auto playing = gui::g_state.analysis.point_view.playing;
+  auto display_pickups = std::make_shared<std::atomic<int>>(0);
+  gui::g_survey_executor.SetPickupGateForTest([display_pickups](gui::QueryFace) { ++*display_pickups; });
+  struct DisplayPickupLease {
+    ~DisplayPickupLease() { gui::g_survey_executor.SetPickupGateForTest(nullptr); }
+  } display_pickup_lease;
+  ctx->MouseMove("**/" ICON_FA_CIRCLE_INFO "##map_overlays_help");
+  ctx->Yield(3);
+  const std::string help = CaptureFrameText(ctx);
+  IM_CHECK_RETV(help.find("Hover Profile edge") != std::string::npos &&
+                    help.find("reference profile (not an all-sky peak)") != std::string::npos,
+                false);
+  ctx->MouseMoveToPos(ImVec2(2, 2));
+  ctx->Yield(3);
   // The default frame: no hover, no profile ink — the map is the picture it always was.
   const ImU32 hovered_ink = ImGui::GetColorU32(ImGuiCol_HeaderHovered);
   IM_CHECK_RETV(gui::g_state.analysis.profile_row_hover == gui::SurveyProfileHover::kNone, false);
@@ -3316,6 +3341,19 @@ bool ProfileRowsHighlightAndDrawOnTheMap(ImGuiTestContext* ctx) {
   const ImU32 anchor_ink = gui::LastMapOverlayLegend().verdict_anchor_colour;
   IM_CHECK_RETV(MapReportIndexCountForColour(anchor_ink) > 0, false);
   IM_CHECK_RETV(SaveWindowPng(ctx, "//Raypath view", GuiTestTempPath("analysis_legend_icons.png").string()), false);
+  IM_CHECK_RETV(display_pickups->load() == 0, false);
+  IM_CHECK_RETV(gui::g_state.analysis.map.intent_id == map_id && gui::g_state.analysis.survey.intent_id == survey_id &&
+                    gui::g_state.analysis.point.intent_id == point_id &&
+                    gui::g_state.analysis.trace.intent_id == trace_id,
+                false);
+  IM_CHECK_RETV(
+      gui::g_state.analysis.map.adopted_result == original_map && gui::g_state.analysis.sky_point.valid == sky.valid &&
+          std::equal(sky.dir, sky.dir + 3, gui::g_state.analysis.sky_point.dir) &&
+          gui::g_state.analysis.roi_mode == roi_mode && gui::g_state.analysis.point_view.sample_index == sample &&
+          gui::g_state.analysis.point_view.playing == playing,
+      false);
+  ctx->LogInfo(
+      "[profile hover] display-only toggle/hover: zero query pickups; camera, ROI, sky point and sample retained");
   ctx->WindowClose("//Raypath view");
   ctx->Yield(1);
   return true;
@@ -6783,6 +6821,50 @@ struct ScopedUiScaleAndBasisLease {
 
 // Independent draw-list oracle: recover actual backing quads, then require all glyph UVs of
 // each complete expected string inside its own patch. No production layout feedback is read.
+bool CheckMapReadoutGlyphs(ImGuiTestContext* ctx, const ImDrawList* dl, const ImRect& patch, ImU32 colour,
+                           const std::string& text) {
+  ImFont* font = ImGui::GetIO().Fonts->Fonts[0];
+  // Each visible glyph is one atlas rectangle. Text expected from the source document is
+  // independently decoded; whitespace has advance but no glyph quad.
+  std::vector<std::pair<float, float>> want;
+  for (const char* p = text.c_str(); *p;) {
+    unsigned int c = 0;
+    p += ImTextCharFromUtf8(&c, p, nullptr);
+    const ImFontGlyph* g = font->FindGlyph(static_cast<ImWchar>(c));
+    if (g && g->Visible) {
+      want.emplace_back(g->U0, g->V0);
+    }
+  }
+  std::vector<std::pair<float, float>> got;
+  for (int k = 0; k + 3 < dl->VtxBuffer.Size; ++k) {
+    const auto* v = &dl->VtxBuffer[k];
+    if (v[0].col != colour || v[1].col != v[0].col || v[2].col != v[0].col || v[3].col != v[0].col ||
+        v[0].uv.x != v[3].uv.x || v[1].uv.x != v[2].uv.x || v[0].uv.y != v[1].uv.y || v[2].uv.y != v[3].uv.y ||
+        v[0].uv.x >= v[1].uv.x || v[0].uv.y >= v[2].uv.y) {
+      continue;
+    }
+    const bool glyph = std::any_of(font->Glyphs.begin(), font->Glyphs.end(), [&](const ImFontGlyph& g) {
+      return g.Visible && g.U0 == v[0].uv.x && g.V0 == v[0].uv.y && g.U1 == v[2].uv.x && g.V1 == v[2].uv.y;
+    });
+    if (!glyph || !patch.Contains(v[0].pos)) {
+      continue;
+    }
+    if (!(v[2].pos.x <= patch.Max.x + 0.5f && v[2].pos.y <= patch.Max.y + 0.5f)) {
+      ctx->LogError("[map readability] %s", "v[2].pos.x <= patch.Max.x + 0.5f && v[2].pos.y <= patch.Max.y + 0.5f");
+      return false;
+    }
+    got.emplace_back(v[0].uv.x, v[0].uv.y);
+    k += 3;
+  }
+  std::sort(want.begin(), want.end());
+  std::sort(got.begin(), got.end());
+  if (got != want) {
+    ctx->LogError("[readout glyphs] '%s': expected %zu glyphs, got %zu", text.c_str(), want.size(), got.size());
+    return false;
+  }
+  return true;
+}
+
 bool CheckMapReadoutPatches(ImGuiTestContext* ctx, const ImDrawList* dl, const ImRect& visible,
                             const std::vector<std::pair<ImU32, std::string>>& expected) {
   std::vector<ImRect> patches;
@@ -6799,7 +6881,6 @@ bool CheckMapReadoutPatches(ImGuiTestContext* ctx, const ImDrawList* dl, const I
     ctx->LogError("[map readability] %s", "patches.size() == expected.size()");
     return false;
   }
-  ImFont* font = ImGui::GetIO().Fonts->Fonts[0];
   for (size_t i = 0; i < patches.size(); ++i) {
     const auto& patch = patches[i];
     if (!(visible.Contains(patch))) {
@@ -6812,43 +6893,7 @@ bool CheckMapReadoutPatches(ImGuiTestContext* ctx, const ImDrawList* dl, const I
         return false;
       }
     }
-    // Each visible glyph is one atlas rectangle. Text expected from the source document is
-    // independently decoded; whitespace has advance but no glyph quad.
-    std::vector<std::pair<float, float>> want;
-    for (const char* p = expected[i].second.c_str(); *p;) {
-      unsigned int c = 0;
-      p += ImTextCharFromUtf8(&c, p, nullptr);
-      const ImFontGlyph* g = font->FindGlyph(static_cast<ImWchar>(c));
-      if (g && g->Visible) {
-        want.emplace_back(g->U0, g->V0);
-      }
-    }
-    std::vector<std::pair<float, float>> got;
-    for (int k = 0; k + 3 < dl->VtxBuffer.Size; ++k) {
-      const auto* v = &dl->VtxBuffer[k];
-      if (v[0].col != expected[i].first || v[1].col != v[0].col || v[2].col != v[0].col || v[3].col != v[0].col ||
-          v[0].uv.x != v[3].uv.x || v[1].uv.x != v[2].uv.x || v[0].uv.y != v[1].uv.y || v[2].uv.y != v[3].uv.y ||
-          v[0].uv.x >= v[1].uv.x || v[0].uv.y >= v[2].uv.y) {
-        continue;
-      }
-      const bool glyph = std::any_of(font->Glyphs.begin(), font->Glyphs.end(), [&](const ImFontGlyph& g) {
-        return g.Visible && g.U0 == v[0].uv.x && g.V0 == v[0].uv.y && g.U1 == v[2].uv.x && g.V1 == v[2].uv.y;
-      });
-      if (!glyph || !patch.Contains(v[0].pos)) {
-        continue;
-      }
-      if (!(v[2].pos.x <= patch.Max.x + 0.5f && v[2].pos.y <= patch.Max.y + 0.5f)) {
-        ctx->LogError("[map readability] %s", "v[2].pos.x <= patch.Max.x + 0.5f && v[2].pos.y <= patch.Max.y + 0.5f");
-        return false;
-      }
-      got.emplace_back(v[0].uv.x, v[0].uv.y);
-      k += 3;
-    }
-    std::sort(want.begin(), want.end());
-    std::sort(got.begin(), got.end());
-    if (got != want) {
-      ctx->LogError("[readout glyphs] '%s': expected %zu glyphs, got %zu", expected[i].second.c_str(), want.size(),
-                    got.size());
+    if (!CheckMapReadoutGlyphs(ctx, dl, patch, expected[i].first, expected[i].second)) {
       return false;
     }
   }
@@ -6960,15 +7005,30 @@ bool MapReadabilityControlledFrames(ImGuiTestContext* ctx) {
   ctx->Yield(3);
   ctx->MouseMoveToPos(ImVec2(p.canvas.Min.x + 18, p.canvas.Min.y + 8));
   ctx->Yield(3);
-  const std::string tooltip_text = CaptureFrameText(ctx);
-  IM_CHECK_RETV(tooltip_text.find("Map too small for inline readouts") != std::string::npos, false);
-  IM_CHECK_RETV(tooltip_text.find(p.labels[0].text) != std::string::npos &&
-                    tooltip_text.find(p.labels[1].text) != std::string::npos &&
-                    tooltip_text.find(p.labels[2].text) != std::string::npos,
+  // GuiFunc runs in the engine's NewFramePost before the application-frame log hook;
+  // inspect the actual tooltip's glyphs instead of incorrectly logging a later app frame.
+  ImGuiWindow* tooltip = nullptr;
+  for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
+    if (w->Active && (w->Flags & ImGuiWindowFlags_Tooltip) != 0) {
+      tooltip = w;
+      break;
+    }
+  }
+  IM_CHECK_RETV(tooltip != nullptr, false);
+  const std::string all_readings = "Map too small for inline readouts. Enlarge it to restore labels." +
+                                   p.labels[0].text + p.labels[1].text + p.labels[2].text;
+  IM_CHECK_RETV(CheckMapReadoutGlyphs(ctx, tooltip->DrawList, tooltip->InnerClipRect, ImGui::GetColorU32(ImGuiCol_Text),
+                                      all_readings),
+                false);
+  const std::string tooltip_ref = std::string("//") + tooltip->Name;
+  IM_CHECK_RETV(SaveWindowPng(ctx, tooltip_ref.c_str(), GuiTestTempPath("map_readouts_compact_fulltext.png").string()),
                 false);
   IM_CHECK_RETV(SaveWindowPng(ctx, "//Map readability probe", GuiTestTempPath("map_readouts_compact.png").string()),
                 false);
   ctx->MouseMoveToPos(ImVec2(2, 2));
+  // Keep the raster ruler on its calibrated 2x frame; the compact-text leg above used 1x.
+  gui::SetUiScaleMultiplierImmediate(2.0f);
+  IM_CHECK_RETV(DriveUntil(ctx, [] { return !gui::g_ui_scale_dirty && gui::CurrentUiScale() == 2.0f; }, 5), false);
   p.labels.clear();
   p.size = ImVec2(200, 160);
   p.marker = true;
