@@ -166,6 +166,29 @@ TEST(SurveyReuse, StructureAndReadingHaveSeparateScopeDependencies) {
   EXPECT_EQ(context.band_sum.reason, "scope_field_missing");
 }
 
+TEST(SingleFacePoint, AntisolarTargetHasRegularReflectionFiber) {
+  ConfigManager config = Scene(Prism(1.0f));
+  auto& axis = config.crystals_.at(1).axis_;
+  axis.latitude_dist = { DistributionType::kUniform, 90, 360 };
+  axis.azimuth_dist = axis.roll_dist = { DistributionType::kUniform, 0, 360 };
+  PointResult point;
+  const auto error = AnalyzePathPointValue(config, Request({ 3 }, -20.0, 180.0), false, &point);
+  ASSERT_TRUE(error.Ok()) << error.message;
+  ASSERT_EQ(point.Data().OutcomeValue(), Outcome::kDiscovered);
+  ASSERT_EQ(point.Data().Discovered().components.size(), 1u);
+  const auto& component = point.Data().Discovered().components.front();
+  EXPECT_EQ(component.kind, ComponentKind::kClosed);
+  ASSERT_GT(component.points.size(), 4u);
+  for (const auto& sample : component.points) {
+    EXPECT_TRUE(sample.valid);
+    EXPECT_GT(sample.entry_measure, 0.0);
+    EXPECT_NEAR(sample.jacobian, 4.0, 1e-10);
+    for (int k = 0; k < 3; ++k) {
+      EXPECT_NEAR(sample.outgoing_direction[k], -point.Data().meta.incident_direction[k], 1e-8);
+    }
+  }
+}
+
 TEST(SingleFacePoint, FixedNormalMassLandsAtReflectionNotSun) {
   ConfigManager config = Scene(Prism(1.0f));
   auto& axis = config.crystals_.at(1).axis_;
