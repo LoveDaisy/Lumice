@@ -63,8 +63,9 @@ def halo():
 
 
 def test_single_face_external_reflection_point_context_and_probe():
-    point = _raypath("--crystal", "1", "--path", "3", "--target", "20,90",
-                     "--events", "50k", "--grid", "0")
+    reflection_config = get_project_root() / "test" / "e2e" / "configs" / "raypath_feature_random_regular.json"
+    point = run_lumice(["raypath", "point", "-f", str(reflection_config), "--crystal", "1", "--path", "3",
+                        "--target", "20,90", "--events", "50k", "--grid", "0"])
     assert point.returncode == 0, point.stderr
     doc = json.loads(point.stdout)
     assert doc["meta"]["faces"] == [3]
@@ -74,14 +75,14 @@ def test_single_face_external_reflection_point_context_and_probe():
                   if p["valid"] and p["entry_measure"] > 0)
     pose = sample["pose"]
     normal = (pose[0], pose[3], pose[6])
-    incident = (-math.cos(math.radians(20)), 0.0, -math.sin(math.radians(20)))
+    incident = (-1.0, 0.0, 0.0)  # C01's sun is at altitude 0
     dot = sum(a * b for a, b in zip(normal, incident))
     expected = [a - 2 * dot * b for a, b in zip(incident, normal)]
     assert sample["outgoing_direction"] == pytest.approx(expected, abs=1e-10)
     assert len(sample["interface_transmittances"]) == 1
     assert len(sample["segment_directions"]) == 6
     assert doc["survey_context"]["object"]["target_inside_support"]
-    probe = run_lumice(["raypath", "probe", "-f", str(_CONFIG), "--crystal", "1", "--path", "3",
+    probe = run_lumice(["raypath", "probe", "-f", str(reflection_config), "--crystal", "1", "--path", "3",
                         "--along", "radial", "--at", "20,90", "--lambda", "550", "--events", "50k"])
     assert probe.returncode == 0, probe.stderr
     profile = json.loads(probe.stdout)["profiles"][0]
