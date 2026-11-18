@@ -409,7 +409,7 @@ TEST(Workspace, BothContextScopesReuseOnlyTheirOwnMembers) {
     survey::SurveyResult source;
     ASSERT_TRUE(workspace->QuerySurvey(survey_request, &source).Ok());
     const auto& expected = scope == 0 ? literal_members : class_members;
-    EXPECT_EQ(sorted(source.Data().members.members), expected);
+    EXPECT_EQ(sorted(source.Data().members), expected);
     const long runs = workspace->StructureRunCount();
 
     SinglePathRequest point_request = PointOf({ 3, 5 });
