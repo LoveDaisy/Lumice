@@ -6944,6 +6944,9 @@ bool Ray3DTitleBandAndCanvasGainHold(ImGuiTestContext* ctx) {
   ctx->LogInfo("[readout budget] successful frame text: %s", success_text.c_str());
   {
     ScopedPoseSessionSplits splits;
+    gui::g_state.analyze_pose_view_globe_ratio = .35f;
+    ctx->Yield(3);
+    IM_CHECK_RETV(readout_budget("height_limited"), false);
     gui::g_state.analyze_pose_view_globe_ratio = .75f;
     ctx->Yield(3);
     IM_CHECK_RETV(readout_budget("width_limited"), false);
