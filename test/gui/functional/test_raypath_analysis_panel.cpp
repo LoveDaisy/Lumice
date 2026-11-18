@@ -4023,48 +4023,128 @@ ImGuiWindow* TraceReportWindow() {
 }
 
 bool TraceLegendSwatchesAvoidText(ImGuiTestContext* ctx) {
-  const ImGuiWindow* report = TraceReportWindow();
-  IM_CHECK_RETV(report != nullptr, false);
-  const auto& vertices = report->DrawList->VtxBuffer;
+  // The legend lives ON the canvas now (2026-11-17 rework): its feedback rects name the
+  // complete per-unit footprints, and the ink probe reads the REGION's draw list scoped to
+  // those rects — the report child no longer carries the swatches.
+  const gui::Ray3DFrameInfo frame = gui::LastRay3DFrameInfo();
+  IM_CHECK_RETV(frame.valid && frame.legend_drawn && frame.frame_count == ImGui::GetFrameCount(), false);
+  auto* region = PoseRegionWindow("##AnalyzeRaypath3D");
+  IM_CHECK_RETV(region != nullptr, false);
+  const auto& vertices = region->DrawList->VtxBuffer;
   const ImU32 text_color = ImGui::GetColorU32(ImGuiCol_TextDisabled);
-  std::vector<ImRect> glyphs;
-  for (int i = 0; i + 3 < vertices.Size;) {
-    if (vertices[i].col != text_color) {
-      ++i;
-      continue;
-    }
-    ImRect rect(vertices[i].pos, vertices[i].pos);
-    for (int k = 1; k < 4; ++k) {
-      rect.Add(vertices[i + k].pos);
-    }
-    glyphs.push_back(rect);
-    i += 4;
-  }
-  IM_CHECK_RETV(!glyphs.empty(), false);
-  const auto check_swatch = [&](ImU32 color) -> bool {
-    ImRect rect(ImVec2(FLT_MAX, FLT_MAX), ImVec2(-FLT_MAX, -FLT_MAX));
-    int count = 0;
-    for (const ImDrawVert& vertex : vertices) {
-      if (vertex.col == color) {
-        rect.Add(vertex.pos);
+  const float side = gui::UiPx(9.0f);
+  const auto check_unit = [&](int kind) -> bool {
+    // One unit's checks run inside an immediate lambda (the loop-fatal-assert rule).
+    const bool unit_ok = [&](int k) {
+      const ImRect unit(frame.legend_unit_min[k], frame.legend_unit_max[k]);
+      IM_CHECK_RETV(region->InnerClipRect.Contains(unit), false);
+      // The swatch: the exact-colour filled quad at the unit's left edge, vertically centred.
+      const ImVec2 sw_min(unit.Min.x, (unit.Min.y + unit.Max.y) * 0.5f - side * 0.5f);
+      const ImRect swatch_box(sw_min, ImVec2(sw_min.x + side, sw_min.y + side));
+      ImRect gather = swatch_box;
+      gather.Expand(0.6f);
+      ImRect ink(ImVec2(FLT_MAX, FLT_MAX), ImVec2(-FLT_MAX, -FLT_MAX));
+      int count = 0;
+      for (const ImDrawVert& vertex : vertices) {
+        if (vertex.col != gui::kRayTraceSegmentColors[k] || !gather.Contains(vertex.pos)) {
+          continue;
+        }
+        ink.Add(vertex.pos);
         ++count;
       }
+      IM_CHECK_RETV(count >= 4, false);  // the swatch's own quad; path ink stays out of the box
+      IM_CHECK_RETV(std::abs(ink.Min.x - swatch_box.Min.x) < 0.2f && std::abs(ink.Min.y - swatch_box.Min.y) < 0.2f &&
+                        std::abs(ink.Max.x - swatch_box.Max.x) < 0.2f && std::abs(ink.Max.y - swatch_box.Max.y) < 0.2f,
+                    false);
+      // The label: TextDisabled ink inside the unit, right of the swatch.
+      bool label_ink = false;
+      for (const ImDrawVert& vertex : vertices) {
+        if (vertex.col != text_color) {
+          continue;
+        }
+        if (vertex.pos.x >= swatch_box.Max.x && unit.Contains(vertex.pos)) {
+          label_ink = true;
+          break;
+        }
+      }
+      IM_CHECK_RETV(label_ink, false);
+      return true;
+    }(kind);
+    if (!unit_ok) {
+      return false;
     }
-    // AddRectFilled emits a real four-vertex swatch, unlike the old diagonal AA line.
-    IM_CHECK_RETV(count == 4, false);
-    IM_CHECK_RETV(std::abs(rect.GetWidth() - gui::UiPx(9.0f)) < 0.1f, false);
-    IM_CHECK_RETV(std::abs(rect.GetHeight() - gui::UiPx(9.0f)) < 0.1f, false);
-    const bool overlaps =
-        std::any_of(glyphs.begin(), glyphs.end(), [&](const ImRect& glyph) { return rect.Overlaps(glyph); });
-    IM_CHECK_RETV(!overlaps, false);
     return true;
   };
-  for (ImU32 color : gui::kRayTraceSegmentColors) {
-    if (!check_swatch(color)) {
+  for (int kind = 0; kind < 3; ++kind) {
+    if (!check_unit(kind)) {
       return false;
     }
   }
-  ctx->LogInfo("[trace legend] three 9px swatches, no overlap with %zu text glyphs", glyphs.size());
+  // The units sit pairwise apart (the reserved footprint is the completeness evidence).
+  const auto units_pairwise_apart = [&](int a, int b) -> bool {
+    IM_CHECK_RETV(!ImRect(frame.legend_unit_min[a], frame.legend_unit_max[a])
+                       .Overlaps(ImRect(frame.legend_unit_min[b], frame.legend_unit_max[b])),
+                  false);
+    return true;
+  };
+  for (int a = 0; a < 3; ++a) {
+    for (int b = a + 1; b < 3; ++b) {
+      if (!units_pairwise_apart(a, b)) {
+        return false;  // the row's own IM_CHECK named the failure
+      }
+    }
+  }
+  ctx->LogInfo("[trace legend] three 9px canvas swatches at the left edge, labels inked beside them");
+  return true;
+}
+
+// AC5's pixel leg (2026-11-17 rework): the axes region is no longer a plate — a blank spot
+// inside the compass's reserved square must equal the same frame's blank GL canvas background,
+// and NO sampled spot in the square may still be the old plate colour. The crystal and its
+// lattice stay centred at the standing orbit, so the reserved square's inset corners are blank
+// background; the canvas's bottom-left corner is the blank reference (the legend owns the
+// top-left, the compass the bottom-right). The screenshot is the owner's judgement material —
+// the pixel probe is the mechanical half, never an aesthetic verdict.
+bool TraceAxesBackgroundMatchesTheCanvas(ImGuiTestContext* ctx) {
+  const gui::Ray3DFrameInfo frame = gui::LastRay3DFrameInfo();
+  IM_CHECK_RETV(frame.valid && frame.axes_drawn && frame.frame_count == ImGui::GetFrameCount(), false);
+  auto* region = PoseRegionWindow("##AnalyzeRaypath3D");
+  IM_CHECK_RETV(region != nullptr, false);
+  unsigned char ref[3] = {};
+  const ImVec2 canvas_max(frame.canvas_min.x + frame.canvas_size.x, frame.canvas_min.y + frame.canvas_size.y);
+  const ImVec2 blank(frame.canvas_min.x + 4.0f, canvas_max.y - 4.0f);  // the bottom-left corner, inset
+  IM_CHECK_RETV(ReadScreenPixel(ctx, blank, ref), false);
+  ctx->LogInfo("[axes plate] canvas blank reference rgb(%u,%u,%u)", ref[0], ref[1], ref[2]);
+  IM_CHECK_RETV(!(ref[0] == 16 && ref[1] == 18 && ref[2] == 22), false);  // sanity: the reference is not the plate
+  const float in = gui::UiPx(2.0f);
+  const ImVec2 corners[4] = {
+    ImVec2(frame.axes_min.x + in, frame.axes_min.y + in),
+    ImVec2(frame.axes_max.x - in, frame.axes_min.y + in),
+    ImVec2(frame.axes_min.x + in, frame.axes_max.y - in),
+    ImVec2(frame.axes_max.x - in, frame.axes_max.y - in),
+  };
+  int blank_hits = 0;
+  int plate_hits = 0;
+  const auto sample_corner = [&](const ImVec2& c) -> bool {
+    unsigned char rgb[3] = {};
+    IM_CHECK_RETV(ReadScreenPixel(ctx, c, rgb), false);
+    ctx->LogInfo("[axes plate] corner (%.0f,%.0f) rgb(%u,%u,%u)", c.x, c.y, rgb[0], rgb[1], rgb[2]);
+    if (rgb[0] == ref[0] && rgb[1] == ref[1] && rgb[2] == ref[2]) {
+      ++blank_hits;
+    }
+    if (rgb[0] == 16 && rgb[1] == 18 && rgb[2] == 22) {
+      ++plate_hits;
+    }
+    return true;
+  };
+  for (const ImVec2& c : corners) {
+    if (!sample_corner(c)) {
+      return false;  // the row's own IM_CHECK named the failure
+    }
+  }
+  IM_CHECK_RETV(plate_hits == 0, false);  // no old plate anywhere sampled in the square
+  IM_CHECK_RETV(blank_hits >= 3, false);  // the square shows the canvas's own background
+  IM_CHECK_RETV(SaveWindowPng(ctx, "//Pose & trace", GuiTestTempPath("ray3d_axes_no_plate.png").string()), false);
   return true;
 }
 
@@ -4293,6 +4373,28 @@ bool TraceAxesFootprints(ImGuiTestContext* ctx, bool direction_anchor = false) {
     }
   }
   IM_CHECK_RETV(labels_apart, false);
+  // The canvas legend (when drawn) is the left edge's reserved footprint: inside the canvas,
+  // and every placed label stays out of it (the ladder's hard exclusion, fallback included).
+  // Reachability note (review r1's collision-frame request): the exclusion is structural
+  // insurance — the path is mesh-anchored at the canvas centre, so a segment's visible
+  // midpoint reaches at most ~0.45 short-side px from the centre (1.1 scene units at the
+  // zoom-8 pixel scale), while both reserved zones sit in corners (~240 px away on the default
+  // 608x207 canvas, still beyond reach on the narrowest) — no legal geometry produces a
+  // natural collision frame, so this overlap assertion is defense in depth, never the
+  // mechanism's sole evidence (the liveness contract lives in the production code: the
+  // footprint is computed before the ladder reads it).
+  if (frame.legend_drawn) {
+    const ImRect legend(frame.legend_min, frame.legend_max);
+    IM_CHECK_RETV(canvas.Contains(legend), false);
+    bool legend_apart = true;
+    for (size_t i = 0; i < labels.size(); ++i) {
+      if (!labels[i].empty()) {
+        legend_apart &= !legend.Overlaps(ImRect(rects[i * 5], rects[i * 5 + 1], rects[i * 5 + 2], rects[i * 5 + 3]));
+      }
+    }
+    IM_CHECK_RETV(legend_apart, false);
+    ctx->LogInfo("[ray3d legend] reserved %.1fx%.1f at the canvas's left edge", legend.GetWidth(), legend.GetHeight());
+  }
   auto* report = TraceReportWindow();
   IM_CHECK_RETV(report != nullptr && !reserved.Overlaps(report->InnerClipRect), false);
   const auto reset = ctx->ItemInfo("**/Reset View##r3d_reset", ImGuiTestOpFlags_NoError);
@@ -4462,6 +4564,14 @@ bool TraceResetAndAxesTakeRealInput(ImGuiTestContext* ctx) {
 // line, so span differences equal width differences; the chain's real decay shows a visible
 // spread. Runs with the toggle off (no label ink interleaves between the lines).
 bool TraceWidthsFollowCumulativeEnergy(ImGuiTestContext* ctx) {
+  // This leg needs the labels' ink OUT of the draw list — the factory default is now ON, so the
+  // leg sets its own off state (and leaves with it restored, happy path or early exit alike).
+  struct RestoreFresnel {
+    bool saved = gui::g_state.analysis.point_view.show_fresnel_labels;
+    ~RestoreFresnel() { gui::g_state.analysis.point_view.show_fresnel_labels = saved; }
+  } restore_fresnel;
+  gui::g_state.analysis.point_view.show_fresnel_labels = false;
+  ctx->Yield(2);
   const auto& frame = gui::LastRay3DFrameInfo();
   IM_CHECK_RETV(frame.valid && frame.frame_count == ImGui::GetFrameCount(), false);
   IM_CHECK_RETV(gui::g_state.analysis.point_view.show_fresnel_labels == false, false);
@@ -4566,22 +4676,34 @@ bool TraceWidthsFollowCumulativeEnergy(ImGuiTestContext* ctx) {
   return true;
 }
 
-// AC3's primitive leg: the ratio numbers default off, a real click turns them on, every
-// canvas-touching drawn segment then carries its label — the ink near the visible part's
-// midpoint, the exact ratio text from the render-feedback slot (the draw-list carries no
-// strings), and the canvas geometry holds still across the toggle.
+// AC3's primitive leg: the ratio numbers DEFAULT ON (2026-11-17 feedback — the factory state a
+// fresh session shows), a real click turns them off (ink gone, canvas geometry unchanged), a
+// second click restores them, and every canvas-touching drawn segment then carries its label —
+// the ink near the visible part's midpoint, the exact ratio text from the render-feedback slot
+// (the draw-list carries no strings), and the canvas geometry still where it started.
 bool TraceLabelsFollowTheToggle(ImGuiTestContext* ctx) {
   auto& view = gui::g_state.analysis.point_view;
   struct Restore {
     bool saved = gui::g_state.analysis.point_view.show_fresnel_labels;
     ~Restore() { gui::g_state.analysis.point_view.show_fresnel_labels = saved; }
   } restore;
-  IM_CHECK_RETV(view.show_fresnel_labels == false, false);  // the AC's initial state
+  IM_CHECK_RETV(view.show_fresnel_labels == true, false);  // the factory default (the AC's initial state)
   ctx->Yield(2);
-  IM_CHECK_RETV(TraceCanvasVertices(gui::kRayTraceLabelColor).empty(), false);
+  IM_CHECK_RETV(!TraceCanvasVertices(gui::kRayTraceLabelColor).empty(), false);  // on by default
   const gui::Ray3DFrameInfo before = gui::LastRay3DFrameInfo();
   IM_CHECK_RETV(before.valid, false);
   ctx->SetRef("//Pose & trace");
+  ctx->ItemClick("**/Show Fresnel ratios##r3d_fresnel");
+  ctx->Yield(2);
+  IM_CHECK_RETV(view.show_fresnel_labels == false, false);
+  IM_CHECK_RETV(TraceCanvasVertices(gui::kRayTraceLabelColor).empty(), false);
+  // The toggle lives in the fixed control band: switching it moves no canvas geometry —
+  // asserted in BOTH directions (off here, back on below).
+  const gui::Ray3DFrameInfo after_off = gui::LastRay3DFrameInfo();
+  IM_CHECK_RETV(after_off.valid && after_off.canvas_min.x == before.canvas_min.x &&
+                    after_off.canvas_min.y == before.canvas_min.y && after_off.canvas_size.x == before.canvas_size.x &&
+                    after_off.canvas_size.y == before.canvas_size.y,
+                false);
   ctx->ItemClick("**/Show Fresnel ratios##r3d_fresnel");
   ctx->Yield(2);
   IM_CHECK_RETV(view.show_fresnel_labels == true, false);
@@ -4691,16 +4813,13 @@ bool TraceLabelsFollowTheToggle(ImGuiTestContext* ctx) {
     });
   });
   IM_CHECK_RETV(ink_owned, false);
-  ctx->LogInfo("[trace labels] %d labelled segments, %zu ink vertices, %zu rects pairwise apart, default-off leg held",
+  ctx->LogInfo("[trace labels] %d labelled segments, %zu ink vertices, %zu rects pairwise apart, default-on leg held",
                labelled, label_ink.size(), placed_rects.size());
   IM_CHECK_RETV(SaveWindowPng(ctx, "//Pose & trace", GuiTestTempPath("analyze_c03_trace_fresnel_labels.png").string()),
                 false);
-  ctx->ItemClick("**/Show Fresnel ratios##r3d_fresnel");
-  ctx->Yield(2);
-  IM_CHECK_RETV(view.show_fresnel_labels == false, false);
-  IM_CHECK_RETV(TraceCanvasVertices(gui::kRayTraceLabelColor).empty(), false);
-  return true;
+  return true;  // the RAII restore returns the factory default (on); the off leg ran above
 }
+
 
 // The splitter strips' drag-hint glyph leg (the mechanism-consolidation red-green pin): every
 // strip carries ink beyond its tri-state centre line, on both sides along the drag axis. The
@@ -5331,16 +5450,75 @@ bool RefusedTraceKeepsCrystalVisible(ImGuiTestContext* ctx, const gui::SelectedC
   const bool has_segments = std::any_of(std::begin(gui::kRayTraceSegmentColors), std::end(gui::kRayTraceSegmentColors),
                                         [](ImU32 color) { return !TraceCanvasVertices(color).empty(); });
   IM_CHECK_RETV(!has_segments, false);
-  // The refusal text sits below the report's fixed fold (the Fresnel-toggle row grew the
-  // report head), and the frame-text capture records only what a window actually shows
-  // (ItemUnclipByLog is off — clipped rows never reach the log buffer): scroll the report to
-  // the bottom before capturing.
+  // The plan's scroll-reach obligation (§3.1 "长错误有至少完整可读的一行、可滚达全文首尾"):
+  // the head is readable at scroll 0 (the report reads from its top — the first content line),
+  // and the full tail stays reachable at the end of the native scroll. The frame-text capture
+  // records only what a window actually shows (ItemUnclipByLog is off — clipped rows never
+  // reach the log buffer), so the two captures bracket the real scroll span; the ScrollMax is
+  // logged because "fits without scrolling" is the stronger form, not a skipped check.
   ImGuiWindow* report = TraceReportWindow();
   IM_CHECK_RETV(report != nullptr, false);
+  report->Scroll.y = 0.0f;
+  ctx->Yield(1);
+  const std::string head_text = CaptureWindowFrameText(ctx, "Pose & trace");
+  IM_CHECK_RETV(head_text.find("No legal path for this pose:") != std::string::npos, false);
   report->Scroll.y = report->ScrollMax.y;
+  ctx->Yield(1);
   const std::string text = CaptureWindowFrameText(ctx, "Pose & trace");
   IM_CHECK_RETV(text.find("No legal path for this pose:") != std::string::npos, false);
   IM_CHECK_RETV(text.find(reason) != std::string::npos, false);
+  ctx->LogInfo("[trace refusal] report ScrollMax %.1f (content %.1f, viewport %.1f) — head readable at 0, tail at end",
+               report->ScrollMax.y, report->ContentSize.y, report->Size.y);
+  // The retention discipline's capture half: the refusal is a persistent fact, so the report
+  // captured its formatted details (head + body) — the next sample switch's transient retains
+  // exactly these as its source-named previous result.
+  const gui::Ray3DReportRecord refused_record = gui::g_state.analysis.ray3d_report_record;
+  IM_CHECK_RETV(refused_record.valid && refused_record.kind == gui::Ray3DReportRecord::Kind::kRefused, false);
+  IM_CHECK_RETV(refused_record.detail_head == "No legal path for this pose:", false);
+  IM_CHECK_RETV(refused_record.detail_body.find(reason) != std::string::npos, false);
+  IM_CHECK_RETV(!refused_record.source_line.empty(), false);
+  // The retained-failure arm itself (r2 Suggestion 3): within the SAME component, a sample
+  // switch's transient renders the retained refusal head + details — source-named, height
+  // stable — instead of cycling a computing line through the report.
+  {
+    const int refusal_valid_count = gui::PointValidSampleCount(*gui::g_state.analysis.point.adopted_result, 0);
+    if (refusal_valid_count >= 2) {
+      const float refused_h = report->ContentSize.y;
+      const int refusal_saved_sample = gui::g_state.analysis.point_view.sample_index;
+      ScopedPointPickupHold hold_ret(gui::QueryFace::kRay);
+      gui::g_state.analysis.point_view.sample_index = (refusal_saved_sample + 1) % refusal_valid_count;
+      ctx->Yield(2);
+      IM_CHECK_RETV(!hold_ret.Voided(), false);
+      IM_CHECK_RETV(gui::g_state.analysis.point_view.sample_index != refusal_saved_sample, false);
+      const std::string retained_text = CaptureWindowFrameText(ctx, "Pose & trace");
+      IM_CHECK_RETV(retained_text.find("No legal path for this pose:") != std::string::npos, false);
+      IM_CHECK_RETV(retained_text.find(reason) != std::string::npos, false);
+      ImGuiWindow* report_ret = TraceReportWindow();
+      ctx->LogInfo("[trace refusal] sample-switch transient retains the failure: content %.1f -> %.1f",
+                   static_cast<double>(refused_h), static_cast<double>(report_ret->ContentSize.y));
+      IM_CHECK_RETV(std::fabs(report_ret->ContentSize.y - refused_h) <= 1.0f, false);
+      gui::g_state.analysis.point_view.sample_index = refusal_saved_sample;
+      ctx->Yield(1);
+    } else {
+      ctx->LogInfo("[trace refusal] single valid sample: retained-failure transient leg not reachable here");
+    }
+  }
+  // The domain leg on this two-component document (the switch_leg pair above proved both exist):
+  // the retained refusal is the OLD component's source — the other component's transient must
+  // not show it (the honest empty line instead).
+  {
+    ScopedPointPickupHold hold_ray(gui::QueryFace::kRay);
+    gui::g_state.analysis.point_view.component_index = 1;
+    ctx->Yield(2);
+    IM_CHECK_RETV(!hold_ray.Voided(), false);
+    const gui::Ray3DReportRecord stale = gui::g_state.analysis.ray3d_report_record;
+    IM_CHECK_RETV(stale.valid && stale.kind == gui::Ray3DReportRecord::Kind::kRefused && stale.component == 0, false);
+    const std::string domain_text = CaptureWindowFrameText(ctx, "Pose & trace");
+    IM_CHECK_RETV(domain_text.find(stale.source_line) == std::string::npos, false);
+    IM_CHECK_RETV(domain_text.find("No legal path for this pose:") == std::string::npos, false);
+    ctx->LogInfo("[trace refusal] domain switch: the retained refusal does not follow into component 1");
+  }
+  ctx->Yield(2);
   IM_CHECK_RETV(SaveWindowPng(ctx, "//Pose & trace", GuiTestTempPath("analyze_c03_trace_refused.png").string()), false);
   ctx->LogInfo("[trace refusal] %s: mesh visible, no segments or markers, named refusal text", reason.c_str());
   return true;
@@ -5528,6 +5706,7 @@ bool InternalReflectionTraceFromTheRealConsumer(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(TraceWidthsFollowCumulativeEnergy(ctx), false);
   IM_CHECK_RETV(TraceLabelsFollowTheToggle(ctx), false);
   IM_CHECK_RETV(TraceResetAndAxesTakeRealInput(ctx), false);
+  IM_CHECK_RETV(TraceAxesBackgroundMatchesTheCanvas(ctx), false);
   IM_CHECK_RETV(SplitterStripsCarryTheDragHintGlyph(ctx), false);
   IM_CHECK_RETV(TraceContactShapesFollowTheRealFacing(ctx), false);
   IM_CHECK_RETV(TraceSunArrowFollowsTheCrystalSun(ctx), false);
@@ -6630,6 +6809,268 @@ struct ScopedUiScaleAndBasisLease {
     ctx->Yield(3);
   }
 };
+
+// The 2026-11-17 region-rework's own acceptance legs (scrum 800 / task r3d-region-rework):
+// AC1's canvas gain and AC2's title band. AC1 measures the canvas item rect at the default
+// 960x720pt / UI 1x against the recorded pre-change baseline — canvas 608x117, measured at
+// d6ad263e4 by the same probe (the quota test's TraceAxesFootprints log line, archived in the
+// task's baseline-evidence.md) — the gain must be the plan's +64pt or better at the SAME
+// window, scale and defaults, not a bigger window or a moved split. AC2 pins the title band:
+// the Fresnel toggle is a control-band item, default ON for a fresh session, every band
+// control wraps by its complete footprint and stays really operable in the empty state AND at
+// the narrowest window, and the band's help icon carries the usage/semantics prose in a
+// wrapped tooltip whose laid-out height proves the long form (not a one-line stub).
+bool Ray3DTitleBandAndCanvasGainHold(ImGuiTestContext* ctx) {
+  ScopedServerGuard guard;
+  const ScopedUiScaleAndBasisLease geometry_lease(ctx);
+  IM_CHECK_RETV(BringUpHaloScene(ctx, /*infinite=*/false), false);
+  OpenWindow(ctx);
+  gui::g_state.analyze_pose_view_open = true;
+  PinPoseViewOnScreen(ctx);
+  auto& view = gui::g_state.analysis.point_view;
+  IM_CHECK_RETV(view.show_fresnel_labels == true, false);  // the factory default (AC2)
+  IM_CHECK_RETV(gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kNoIntent, false);
+
+  // The band in the EMPTY state: every control's complete footprint inside the region, and
+  // every one of them really answers a click (the plan's "无结果时控制带同样可达").
+  auto* region = PoseRegionWindow("##AnalyzeRaypath3D");
+  IM_CHECK_RETV(region != nullptr, false);
+  ImGuiTestItemInfo found{};
+  const auto band_control = [&](const char* id) -> bool {
+    found = ctx->ItemInfo(id, ImGuiTestOpFlags_NoError);
+    IM_CHECK_RETV(found.ID != 0, false);
+    IM_CHECK_RETV(region->InnerClipRect.Contains(found.RectFull), false);
+    return true;
+  };
+  const auto band_clicks = [&](const char* what) -> bool {
+    ctx->SetRef("//Pose & trace");
+    IM_CHECK_RETV(band_control("**/World##r3d"), false);
+    IM_CHECK_RETV(band_control("**/Crystal##r3d"), false);
+    ctx->ItemClick("**/Crystal##r3d");
+    ctx->Yield(2);
+    IM_CHECK_RETV(view.crystal_frame, false);
+    ctx->ItemClick("**/World##r3d");
+    ctx->Yield(2);
+    IM_CHECK_RETV(!view.crystal_frame, false);
+    view.orbit_yaw_deg = 121.0f;
+    view.orbit_pitch_deg = -41.0f;
+    ctx->ItemClick("**/Reset View##r3d_reset");
+    ctx->Yield(2);
+    IM_CHECK_RETV(view.orbit_yaw_deg == 35.0f && view.orbit_pitch_deg == 22.0f, false);
+    ctx->ItemClick("**/Show Fresnel ratios##r3d_fresnel");
+    ctx->Yield(2);
+    IM_CHECK_RETV(view.show_fresnel_labels == false, false);
+    ctx->ItemClick("**/Show Fresnel ratios##r3d_fresnel");
+    ctx->Yield(2);
+    IM_CHECK_RETV(view.show_fresnel_labels == true, false);
+    IM_CHECK_RETV(band_control("**/" ICON_FA_CIRCLE_INFO "##r3d_help"),
+                  false);  // no click side effect; the hover leg runs below
+    ctx->LogInfo("[r3d rework] %s band: radios, reset, toggle and help icon all operable", what);
+    return true;
+  };
+  IM_CHECK_RETV(band_clicks("empty state"), false);
+
+  // The icon's help text: the full long form, laid out wrapped (the height proves it — a
+  // truncated single-line stub cannot reach three text lines).
+  {
+    ctx->SetRef("//Pose & trace");
+    IM_CHECK_RETV(band_control("**/" ICON_FA_CIRCLE_INFO "##r3d_help"), false);
+    const ImGuiTestItemInfo icon = found;
+    ctx->MouseMoveToPos(icon.RectFull.GetCenter());
+    ctx->Yield(3);
+    ImGuiWindow* tooltip = nullptr;
+    for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
+      if (w != nullptr && w->Active && (w->Flags & ImGuiWindowFlags_Tooltip) != 0) {
+        tooltip = w;
+      }
+    }
+    IM_CHECK_RETV(tooltip != nullptr, false);
+    ctx->LogInfo("[r3d rework] help tooltip laid out %.0fx%.0f (line height %.1f)", tooltip->ContentSize.x,
+                 tooltip->ContentSize.y, ImGui::GetTextLineHeight());
+    IM_CHECK_RETV(tooltip->ContentSize.y >= 3.0f * ImGui::GetTextLineHeight(), false);
+    ctx->MouseMoveToPos(ImVec2(2, 2));
+    ctx->Yield(2);
+  }
+
+  // AC1 — the canvas gain at the default geometry, on a drawn trace ("同一可绘制场景").
+  // The point query arms only against a selected class: run the whole-sky analysis and select
+  // the top chain (the pose_curve_modes leg's flow), then the on-fiber anchor (42,0).
+  IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
+  IM_CHECK_RETV(SelectRowByDisplay(ctx, TopChainDisplay().c_str()) != std::nullopt, false);
+  SetSkyPointTarget(42.0, 0.0);
+  IM_CHECK_RETV(
+      DriveUntil(
+          ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCompleted; },
+          60),
+      false);
+  IM_CHECK_RETV(DriveUntil(ctx, [] { return CurrentTraceIsDrawn(); }, 30), false);
+  const auto canvas_rect = [&](const char* what) -> float {
+    const ImGuiTestItemInfo c = ctx->ItemInfo("**/##r3d_canvas", ImGuiTestOpFlags_NoError);
+    IM_CHECK_RETV(c.ID != 0, false);
+    ctx->LogInfo("[r3d rework] %s canvas %.1fx%.1f", what, c.RectFull.GetWidth(), c.RectFull.GetHeight());
+    return c.RectFull.GetHeight();
+  };
+  const float default_h = canvas_rect("default 960x720");
+  IM_CHECK_RETV(default_h >= 117.0f + 64.0f, false);  // baseline 608x117 @ d6ad263e4 + the plan's floor
+
+  // AC2's narrow leg: the same band, wrapped by complete footprints, still operable.
+  ImGuiWindow* host = ctx->GetWindowByRef("//Pose & trace");
+  IM_CHECK_RETV(host != nullptr, false);
+  ImGui::SetWindowSize(host, ImVec2(gui::UiPx(640.0f), gui::UiPx(680.0f)), ImGuiCond_Always);
+  ctx->Yield(4);
+  IM_CHECK_RETV(band_clicks("narrowest 640x680"), false);
+  canvas_rect("narrowest 640x680");
+  IM_CHECK_RETV(SaveWindowPng(ctx, "//Pose & trace", GuiTestTempPath("r3d_title_band_narrow.png").string()), false);
+
+  // Leave the standing geometry as the pin set it (the resize legs restore their own splits).
+  PinPoseViewOnScreen(ctx);
+  gui::g_state.analyze_pose_view_open = false;
+  ctx->Yield(2);
+  return true;
+}
+
+// The 2026-11-17 rework's transient legs (AC4): a real sample-slider click moves the cursor,
+// the trace re-keys and its computing frames are HELD deterministic (the pickup hold), and
+// across drawn→computing→drawn the report's content height stays put — the retained source
+// line names the sample it belongs to, the status bar reads the transient, and the canvas
+// rectangle never moves. A component switch is a domain change: the retained record must NOT
+// show across it (the honest empty line instead).
+bool Ray3DTransientHoldsTheReportAndReadsTheBar(ImGuiTestContext* ctx) {
+  ScopedServerGuard guard;
+  IM_CHECK_RETV(BringUpHaloScene(ctx, /*infinite=*/false), false);
+  OpenWindow(ctx);
+  IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
+  IM_CHECK_RETV(SelectRowByDisplay(ctx, TopChainDisplay().c_str()) != std::nullopt, false);
+  gui::g_state.analyze_pose_view_open = true;
+  PinPoseViewOnScreen(ctx);
+  SetSkyPointTarget(42.0, 0.0);
+  IM_CHECK_RETV(
+      DriveUntil(
+          ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCompleted; },
+          60),
+      false);
+  IM_CHECK_RETV(DriveUntil(ctx, [] { return CurrentTraceIsDrawn(); }, 30), false);
+  ctx->Yield(2);
+  auto& view = gui::g_state.analysis.point_view;
+  const int valid_count = gui::PointValidSampleCount(*gui::g_state.analysis.point.adopted_result, view.component_index);
+  IM_CHECK_RETV(valid_count >= 2, false);
+
+  ImGuiWindow* report = TraceReportWindow();
+  IM_CHECK_RETV(report != nullptr, false);
+  ImGuiWindow* region = PoseRegionWindow("##AnalyzeRaypath3D");
+  IM_CHECK_RETV(region != nullptr, false);
+  // By-value snapshots: the record and the frame info are mutable globals the renderer updates
+  // in place — two references would alias (the learnings' state-transition trap).
+  const float drawn_content_h = report->ContentSize.y;
+  const gui::Ray3DFrameInfo drawn_frame = gui::LastRay3DFrameInfo();
+  const gui::Ray3DReportRecord drawn_record = gui::g_state.analysis.ray3d_report_record;
+  IM_CHECK_RETV(drawn_record.valid && !drawn_record.source_line.empty(), false);
+  IM_CHECK_RETV(drawn_frame.legend_drawn, false);
+
+  // REAL input: the globe sample slider's track clicks move the shared cursor (the slider's
+  // own input contract; the probe position round-trips through the widget, so the assertions
+  // read back the ACTUAL sample the slider set). The hold is armed FIRST so the superseded
+  // query parks at the pickup — the computing frames are held, not a microsecond luck.
+  const int saved_sample = view.sample_index;
+  ScopedPointPickupHold hold(gui::QueryFace::kRay);
+  int actual = saved_sample;
+  {
+    const ImGuiTestItemInfo slider = ctx->ItemInfo("**/##globe_sample", ImGuiTestOpFlags_NoError);
+    IM_CHECK_RETV(slider.ID != 0, false);
+    for (const float probe : { 0.5f, 0.9f, 0.1f }) {
+      if (actual != saved_sample) {
+        break;  // the cursor moved — this probe's click is the re-keying one
+      }
+      const ImVec2 at(slider.RectFull.Min.x + slider.RectFull.GetWidth() * probe, slider.RectFull.GetCenter().y);
+      ctx->MouseMoveToPos(at);
+      ctx->Yield(1);
+      ctx->MouseClick(0);
+      ctx->Yield(1);
+      actual = view.sample_index;
+    }
+  }
+  IM_CHECK_RETV(actual != saved_sample, false);  // the slider really moved the shared cursor
+  const int target_stored =
+      gui::PointValidSampleIndexAt(*gui::g_state.analysis.point.adopted_result, view.component_index, actual);
+  ctx->Yield(2);  // the pump re-keys and issues; the worker parks at the pickup — computing held
+  IM_CHECK_RETV(!hold.Voided(), false);
+  IM_CHECK_RETV(gui::RayTraceDisplayStateFor(gui::g_state.analysis.trace, { gui::g_state.analysis.point.intent_id,
+                                                                            view.component_index, target_stored }) ==
+                    gui::RayTraceDisplayState::kComputing,
+                false);
+
+  // The transient's two faces: the bar reads computing; the report holds the retained source
+  // line at the SAME content height, and the canvas rectangle does not move.
+  const std::string bar_text = CaptureWindowFrameText(ctx, "Pose & trace");
+  IM_CHECK_RETV(bar_text.find("representative path computing") != std::string::npos, false);
+  const gui::Ray3DReportRecord computing_record = gui::g_state.analysis.ray3d_report_record;
+  IM_CHECK_RETV(computing_record.valid && computing_record.source_line == drawn_record.source_line, false);
+  IM_CHECK_RETV(computing_record.point_id == gui::g_state.analysis.point.intent_id, false);
+  IM_CHECK_RETV(computing_record.component == drawn_record.component, false);
+  const float computing_content_h = report->ContentSize.y;
+  ctx->LogInfo("[r3d transient] report content drawn %.1f -> computing %.1f", drawn_content_h, computing_content_h);
+  IM_CHECK_RETV(std::fabs(computing_content_h - drawn_content_h) <= 1.0f, false);
+  const gui::Ray3DFrameInfo computing_frame = gui::LastRay3DFrameInfo();
+  IM_CHECK_RETV(computing_frame.valid && computing_frame.canvas_min.x == drawn_frame.canvas_min.x &&
+                    computing_frame.canvas_min.y == drawn_frame.canvas_min.y &&
+                    computing_frame.canvas_size.x == drawn_frame.canvas_size.x &&
+                    computing_frame.canvas_size.y == drawn_frame.canvas_size.y,
+                false);
+  IM_CHECK_RETV(!computing_frame.legend_drawn, false);  // no colour vocabulary over an empty canvas
+  ctx->LogInfo("[r3d transient] bar: '%s'", bar_text.substr(0, 160).c_str());
+
+  // Release; the same key's answer adopts and the drawn frame names the NEW sample.
+  hold.Release();
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [&] {
+                      const auto& t = gui::g_state.analysis.trace;
+                      return t.adopted_result != nullptr && t.key.sample == target_stored &&
+                             gui::RayTraceDisplayStateFor(t, { t.key.point_id, t.key.component, t.key.sample }) ==
+                                 gui::RayTraceDisplayState::kDrawn;
+                    },
+                    60),
+                false);
+  ctx->Yield(2);
+  const gui::Ray3DReportRecord drawn2_record = gui::g_state.analysis.ray3d_report_record;
+  IM_CHECK_RETV(drawn2_record.valid && drawn2_record.source_line != drawn_record.source_line, false);
+  const float drawn2_content_h = report->ContentSize.y;
+  ctx->LogInfo("[r3d transient] report content computing %.1f -> drawn %.1f ('%s' -> '%s')", computing_content_h,
+               drawn2_content_h, drawn_record.source_line.c_str(), drawn2_record.source_line.c_str());
+  IM_CHECK_RETV(std::fabs(drawn2_content_h - drawn_content_h) <= 1.0f, false);  // AC4's bounded flip
+  const std::string bar_after = CaptureWindowFrameText(ctx, "Pose & trace");
+  IM_CHECK_RETV(bar_after.find("representative path computing") == std::string::npos, false);  // the transient left
+  IM_CHECK_RETV(bar_after.find(drawn2_record.source_line) != std::string::npos, false);        // the report shows it
+
+  // DOMAIN leg: a component switch invalidates the retained record — the computing report
+  // must not carry the old domain's source line (the honest empty line instead). The write is
+  // the same one the answer rows make; the display gate is what is under test. The leg needs
+  // a document with two discovered components; on a single-component one the C03 flow's own
+  // scene covers the two-domain shape, and the leg says so instead of asserting nothing.
+  {
+    LUMICE_PathPointInfo domain_info{};
+    domain_info.struct_size = sizeof(domain_info);
+    IM_CHECK_RETV(
+        LUMICE_PathPointGetInfo(gui::g_state.analysis.point.adopted_result.get(), &domain_info) == LUMICE_PATH_READ_OK,
+        false);
+    if (domain_info.component_count >= 2) {
+      ScopedPointPickupHold hold2(gui::QueryFace::kRay);
+      view.component_index = view.component_index == 0 ? 1 : 0;
+      ctx->Yield(2);
+      IM_CHECK_RETV(!hold2.Voided(), false);
+      const gui::Ray3DReportRecord stale = gui::g_state.analysis.ray3d_report_record;  // the old record persists
+      IM_CHECK_RETV(stale.valid && stale.component != view.component_index, false);
+      const std::string domain_text = CaptureWindowFrameText(ctx, "Pose & trace");
+      IM_CHECK_RETV(domain_text.find(stale.source_line) == std::string::npos, false);
+      ctx->LogInfo("[r3d transient] component switch: stale '%s' not shown", stale.source_line.c_str());
+    } else {
+      ctx->LogInfo("[r3d transient] single-component document (%d): two-domain leg covered by the C03 flow",
+                   domain_info.component_count);
+    }
+  }
+  ctx->Yield(2);
+  return true;
+}
 
 bool AnalyzeResultCarriesAcrossScaleTiers(ImGuiTestContext* ctx) {
   ScopedServerGuard guard;
@@ -9463,6 +9904,11 @@ bool RefinedPayloadSampleFollowsCurveGlobeAndTrace(ImGuiTestContext* ctx) {
       false);
   ctx->Yield(3);
   const auto point = gui::g_state.analysis.point.adopted_result;
+  // This leg pins the DOCUMENT-derived projection (the marker = the current sample through the
+  // component-anchored basis), so it pins the Fit view explicitly: the factory default is Full,
+  // whose basis is fixed and would make the marker's expected position document-independent.
+  gui::g_state.analysis.point_view.sun_globe_view_mode = gui::SunGlobeViewMode::kFit;
+  ctx->Yield(3);
   gui::PointContributionCurve curve;
   IM_CHECK_RETV(gui::BuildPointContributionCurve(*point, 0, &curve), false);
   LUMICE_PathPointComponent component{};
@@ -10101,15 +10547,39 @@ bool PoseCurveReportQuotasTrackContent(ImGuiTestContext* ctx) {
         gui::g_state.analysis.point_view.show_fresnel_labels = true;
         ctx->Yield(3);
         IM_CHECK_RETV(TraceAxesFootprints(ctx, true), false);
+        auto* region_3d = PoseRegionWindow("##AnalyzeRaypath3D");
+        IM_CHECK_RETV(region_3d != nullptr, false);
         // Full default rectangles, not the bbox of only those glyphs clipping happened to emit.
+        // The Ray3D report's quota carries the legend row only: the usage/semantics prose lives
+        // in the title band's help icon (hover-time, no layout item) and the Fresnel toggle sits
+        // in the fixed control band — the toggle and the icon are asserted against the REGION
+        // child, the legend against the report child.
         if (!narrow) {
-          IM_CHECK_RETV(full_item("**/##r3d_description", report), false);
-          IM_CHECK_RETV(full_item("**/Show Fresnel ratios##r3d_fresnel", report), false);
-          IM_CHECK_RETV(full_item("**/entry", report), false);
-          IM_CHECK_RETV(full_item("**/internal", report), false);
-          IM_CHECK_RETV(full_item("**/exit", report), false);
-          IM_CHECK_RETV(full_item("**/##r3d_semantics", report), false);
+          IM_CHECK_RETV(full_item("**/Show Fresnel ratios##r3d_fresnel", region_3d), false);
+          IM_CHECK_RETV(full_item("**/" ICON_FA_CIRCLE_INFO "##r3d_help", region_3d), false);
+          IM_CHECK_RETV(full_item("**/Reset View##r3d_reset", region_3d), false);
+          IM_CHECK_RETV(full_item("**/##r3d_source", report), false);
           IM_CHECK_RETV(report->ScrollMax.y == 0, false);
+          // The colour legend is canvas ink now: its three complete unit footprints sit inside
+          // the canvas (the report child carries the source line only).
+          {
+            const gui::Ray3DFrameInfo frame_now = gui::LastRay3DFrameInfo();
+            IM_CHECK_RETV(frame_now.valid && frame_now.legend_drawn, false);
+            const ImRect canvas_now(frame_now.canvas_min, ImVec2(frame_now.canvas_min.x + frame_now.canvas_size.x,
+                                                                 frame_now.canvas_min.y + frame_now.canvas_size.y));
+            const auto legend_unit_inside = [&](int kind) -> bool {
+              const ImRect unit(frame_now.legend_unit_min[kind], frame_now.legend_unit_max[kind]);
+              ctx->LogInfo("[quota item] legend unit %d x=%.1f..%.1f y=%.1f..%.1f canvas=%.1f..%.1f", kind, unit.Min.x,
+                           unit.Max.x, unit.Min.y, unit.Max.y, canvas_now.Min.x, canvas_now.Max.x);
+              IM_CHECK_RETV(canvas_now.Contains(unit), false);
+              return true;
+            };
+            for (int kind = 0; kind < 3; ++kind) {
+              if (!legend_unit_inside(kind)) {
+                return false;  // the row's own IM_CHECK named the failure
+              }
+            }
+          }
           IM_CHECK_RETV(full_item("**/##curve_identity", companion), false);
           IM_CHECK_RETV(full_item("**/##curve_caliber", companion), false);
           IM_CHECK_RETV(full_item("**/##curve_legend_0", companion), false);
@@ -10623,6 +11093,23 @@ bool FiveOperationsChainInOneSession(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(PanoramaPictureWindow() != nullptr, false);
 
   ctx->SetRef(PanoramaRegionRef());
+  // The panorama host of the display-mode control now has a picture, so the control (and its
+  // help icon) submits: the icon must sit inside the clip — the control's layout reserves the
+  // icon's advance — and its hover must really draw.
+  {
+    ctx->SetRef("");
+    const auto mode_icon = ctx->ItemInfo("**/" ICON_FA_CIRCLE_INFO "##preview_display_mode_help");
+    IM_CHECK_RETV(mode_icon.ID != 0, false);
+    IM_CHECK_RETV(mode_icon.Window != nullptr, false);
+    IM_CHECK_RETV(mode_icon.RectFull.Max.x <= mode_icon.Window->InnerClipRect.Max.x + 0.5f, false);
+    ctx->MouseMoveToPos(mode_icon.RectFull.GetCenter());
+    ctx->Yield(3);
+    ImGuiWindow* mode_tooltip = ImGui::FindWindowByName("##Tooltip_00");
+    IM_CHECK_RETV(mode_tooltip != nullptr && mode_tooltip->Active, false);
+    ctx->MouseMoveToPos(ImVec2(2.0f, 2.0f));
+    ctx->Yield(2);
+    ctx->SetRef(PanoramaRegionRef());
+  }
   IM_CHECK_RETV(!IsDisabled(ctx->ItemInfo(kAnalyzeButton)), false);
   ctx->ItemClick(kAnalyzeButton);  // click 3
   ctx->SetRef("");
@@ -11341,7 +11828,7 @@ bool SunGridRealReaderLayoutAndSelection(ImGuiTestContext* ctx) {
   std::snprintf(hi, sizeof(hi), "%.6g", max_rad * 180 / 3.14159265358979323846);
   const auto check = [&]() -> bool {
     const std::string text = CaptureFrameText(ctx);
-    IM_CHECK_RETV(text.find(std::string(lo) + " – " + hi + " deg") != std::string::npos, false);
+    IM_CHECK_RETV(text.find(std::string(lo) + "° – " + hi + "°") != std::string::npos, false);
     auto* w = PoseRegionWindow("##AnalyzeSunGlobe");
     IM_CHECK_RETV(w != nullptr, false);
     const auto item_visible = [&](const char* id) -> bool {
@@ -11362,14 +11849,51 @@ bool SunGridRealReaderLayoutAndSelection(ImGuiTestContext* ctx) {
             ink = true;
         }
       }
+      if (!ink) {
+        ctx->LogError("[item ink] %s rect (%.0f,%.0f)-(%.0f,%.0f) carries no submitted ink", id, r.Min.x, r.Min.y,
+                      r.Max.x, r.Max.y);
+      }
       IM_CHECK_RETV(ink, false);
       return true;
     };
-    IM_CHECK_RETV(item_visible("##sun_grid_title") && item_visible("##sun_grid_band") &&
-                      item_visible("##sun_grid_range") && item_visible("##globe_sample"),
-                  false);
+    // Title, range and slider must be present and inked at every geometry THIS SUITE covers;
+    // deeper crushes make the whole legend yield (the short-host rule — the production
+    // contract is RenderSunGridLegend's own comment). The band and the ticks are
+    // presence-branch-checked below: a crushed row legitimately withdraws them.
+    IM_CHECK_RETV(
+        item_visible("##sun_grid_title") && item_visible("##sun_grid_range") && item_visible("##globe_sample"), false);
     const auto canvas = ctx->ItemInfo(w->GetID("##globe_canvas"), ImGuiTestOpFlags_NoError);
     IM_CHECK_RETV(canvas.ID != 0, false);
+    // The vertical legend's geometry: the band (when the row's remainder leaves it any height)
+    // is a narrow column right of the disk. The end ticks ride the band's right edge (high
+    // above low) WHEN the row's remainder can host their stack — a crushed row legitimately
+    // withdraws them (the range text carries the endpoints), and a fully crushed one can
+    // withdraw the band itself; title and numbers stay at every geometry.
+    const auto band = ctx->ItemInfo(w->GetID("##sun_grid_band"), ImGuiTestOpFlags_NoError);
+    const auto hi_tick = ctx->ItemInfo(w->GetID("##sun_grid_hi_tick"), ImGuiTestOpFlags_NoError);
+    const auto lo_tick = ctx->ItemInfo(w->GetID("##sun_grid_lo_tick"), ImGuiTestOpFlags_NoError);
+    if (band.ID != 0) {
+      IM_CHECK_RETV(band.RectFull.GetHeight() > 0.0f, false);
+      IM_CHECK_RETV(band.RectFull.Min.x >= canvas.RectFull.Max.x - 0.5f, false);
+    }
+    if (hi_tick.ID != 0) {
+      IM_CHECK_RETV(lo_tick.ID != 0 && band.ID != 0, false);
+      IM_CHECK_RETV(hi_tick.RectFull.Min.x >= band.RectFull.Max.x - 0.5f, false);
+      IM_CHECK_RETV(lo_tick.RectFull.Min.x >= band.RectFull.Max.x - 0.5f, false);
+      IM_CHECK_RETV(hi_tick.RectFull.Min.y >= band.RectFull.Min.y - 1.0f, false);
+      IM_CHECK_RETV(hi_tick.RectFull.Max.y <= lo_tick.RectFull.Min.y + 0.5f, false);
+    } else {
+      IM_CHECK_RETV(lo_tick.ID == 0, false);
+    }
+    // The structural no-overlap contract (the column's tail is bounded by the row): the range
+    // text stays above the slider row at every tier — vertex ink inside the clip is not
+    // visibility; the layout rectangles must not overlap the row below.
+    const auto slider_item = ctx->ItemInfo(w->GetID("##globe_sample"), ImGuiTestOpFlags_NoError);
+    IM_CHECK_RETV(slider_item.ID != 0, false);
+    const auto range_item = ctx->ItemInfo(w->GetID("##sun_grid_range"), ImGuiTestOpFlags_NoError);
+    IM_CHECK_RETV(range_item.ID != 0, false);
+    IM_CHECK_RETV(lo_tick.ID == 0 || lo_tick.RectFull.Max.y <= slider_item.RectFull.Min.y + 0.5f, false);
+    IM_CHECK_RETV(range_item.RectFull.Max.y <= slider_item.RectFull.Min.y + 0.5f, false);
     bool terrain_colors = true;
     for (const auto color : { IM_COL32(92, 55, 135, 235), IM_COL32(219, 184, 250, 235) }) {
       terrain_colors &=
@@ -11438,6 +11962,12 @@ bool SunGridRealReaderLayoutAndSelection(ImGuiTestContext* ctx) {
       IM_CHECK_RETV(PoseDragStrip(ctx, "**/##PoseViewRowsSplitter", 0, -1800), false);
       auto* globe = PoseRegionWindow("##AnalyzeSunGlobe");
       IM_CHECK_RETV(globe != nullptr && globe->ScrollMax.y >= 0, false);
+      // The crushed floor runs the same check in place: this geometry is where the legend's
+      // column is bounded tightest (the document's own range wraps two lines here) — the
+      // tick-withdrawal branch and the no-overlap contract are exercised exactly here, not
+      // only at the comfortable sizes.
+      ctx->Yield(2);
+      IM_CHECK_RETV(check(), false);
       IM_CHECK_RETV(PoseDragStrip(ctx, "**/##PoseViewRowsSplitter", 0, 1800), false);
       IM_CHECK_RETV(check(), false);
       return true;
@@ -11492,6 +12022,599 @@ bool SunGridRealReaderLayoutAndSelection(ImGuiTestContext* ctx) {
   gui::g_state.analysis.point.adopted_result.reset();
   ctx->Yield(3);
   IM_CHECK_RETV(!ctx->ItemExists("**/##sun_grid_band") && !ctx->ItemExists("**/##sun_grid_range"), false);
+  return true;
+}
+
+// ---- The globe view's Fit/Full pair (2026-11-17 feedback): the fixed-basis Full view's pixel
+// contract and the mode's survival set. ----
+
+// The overlay-suppressed supplementary leg's window state (AC2's masked-pixels evidence): the
+// PRODUCTION backdrop face draws BOTH real picks' grids side by side in one frame, through the
+// real Full projector — no fibre, no marker, no exclusion mask at all, so the pixels the union
+// mask shelters in the live frames are here ruled over their whole area. File-scope statics:
+// the case's GuiFunc and its TestFunc body share them.
+static bool g_globe_dual_draw = false;
+static LUMICE_PathSunGrid g_globe_dual_grids[2];
+static gui::SunGlobeProjector g_globe_dual_proj;
+static gui::SunGridRange g_globe_dual_ranges[2];
+static ImRect g_globe_dual_disk_rects[2];
+
+// One real-frame capture of an ImGui-space rect, through the shared fullframe capture (the same
+// read SaveWindowPng makes for a whole window). Pixels come back top-down RGBA. `overlay_mask`
+// is the frame's OWN submitted overlay footprint over the rect (the accent fibre and marker
+// triangles, rasterized live at capture time) — two picks have two different marker positions,
+// so the comparison mask is the UNION of both captures' footprints, never one side's.
+struct GlobeRectCapture {
+  std::vector<unsigned char> pixels;
+  std::vector<uint8_t> overlay_mask;
+  int w = 0;
+  int h = 0;
+  int frame = -1;
+  ImRect rect;
+};
+
+bool CaptureGlobeRect(ImGuiTestContext* ctx, const ImRect& rect, GlobeRectCapture* out) {
+  const ImGuiIO& io = ImGui::GetIO();
+  const float sx = io.DisplayFramebufferScale.x;
+  const float sy = io.DisplayFramebufferScale.y;
+  const ImVec2 vp = ImGui::GetMainViewport()->Pos;
+  auto to_px = [](float v) { return static_cast<int>(ImFloor(v + 0.5f)); };
+  const int rx = to_px((rect.Min.x - vp.x) * sx);
+  const int ry = to_px((rect.Min.y - vp.y) * sy);
+  const int rw = to_px(rect.GetWidth() * sx);
+  const int rh = to_px(rect.GetHeight() * sy);
+  const int fb_h = to_px(io.DisplaySize.y * sy);
+  IM_CHECK_RETV(rx >= 0 && ry >= 0 && rw > 0 && rh > 0 && ry + rh <= fb_h, false);
+  g_fullframe_capture.Reset();
+  g_fullframe_capture.rect_x = rx;
+  g_fullframe_capture.rect_y = fb_h - ry - rh;  // GL origin: bottom-left
+  g_fullframe_capture.rect_w = rw;
+  g_fullframe_capture.rect_h = rh;
+  g_fullframe_capture.requested.store(true);
+  for (int i = 0; i < 10 && !g_fullframe_capture.done.load(); ++i) {
+    ctx->Yield(1);
+  }
+  IM_CHECK_RETV(g_fullframe_capture.done.load(), false);
+  IM_CHECK_RETV(g_fullframe_capture.width == rw && g_fullframe_capture.height == rh, false);
+  IM_CHECK_RETV(g_fullframe_capture.pixels.size() == static_cast<size_t>(rw) * rh * 4, false);
+  out->w = rw;
+  out->h = rh;
+  out->pixels = g_fullframe_capture.pixels;
+  out->frame = ctx->FrameCount;  // the engine's test-frame counter — ImGui::GetFrameCount reads
+  out->rect = rect;              // -1 off the test coroutine's context
+  return true;
+}
+
+// The REAL submitted overlay footprint over a capture rect: every draw-list triangle whose
+// colour is the accent fibre ink or the marker's white ring, rasterized into the rect's pixel
+// space and dilated to cover the antialiasing fringe. This is the ONLY area two picks of the
+// same arc may differ in — masking anything else (colour band, ticks, terrain, disk) would let
+// a backdrop change hide inside the exclusion.
+struct GlobeOverlayMask {
+  std::vector<uint8_t> mask;
+  int covered = 0;
+};
+
+void BuildGlobeOverlayMask(ImGuiWindow* region, const ImRect& rect, int px_w, int px_h, GlobeOverlayMask* out) {
+  const ImGuiIO& io = ImGui::GetIO();
+  const float sx = io.DisplayFramebufferScale.x;
+  const float sy = io.DisplayFramebufferScale.y;
+  const ImVec2 vp = ImGui::GetMainViewport()->Pos;
+  const ImU32 accent = ImGui::ColorConvertFloat4ToU32(gui::AccentColor());
+  constexpr ImU32 kMarkerRing = IM_COL32(255, 255, 255, 210);
+  out->mask.assign(static_cast<size_t>(px_w) * px_h, 0);
+  // Screen -> capture-pixel space: scale, then subtract the capture rect's own origin — the
+  // mask indexes pixels RELATIVE to the captured rect, the same space the captured bytes use.
+  auto to_cap = [&](const ImVec2& p) { return ImVec2((p.x - rect.Min.x) * sx, (p.y - rect.Min.y) * sy); };
+  auto raster_triangle = [&](ImVec2 a, ImVec2 b, ImVec2 c) {
+    const float min_x = std::max(0.0f, std::min({ a.x, b.x, c.x }));
+    const float max_x = std::min(static_cast<float>(px_w), std::max({ a.x, b.x, c.x }) + 1.0f);
+    const float min_y = std::max(0.0f, std::min({ a.y, b.y, c.y }));
+    const float max_y = std::min(static_cast<float>(px_h), std::max({ a.y, b.y, c.y }) + 1.0f);
+    const float sign = (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+    if (std::fabs(sign) < 1e-9f) {
+      return;
+    }
+    for (int py = static_cast<int>(min_y); py < static_cast<int>(max_y); ++py) {
+      for (int pxx = static_cast<int>(min_x); pxx < static_cast<int>(max_x); ++pxx) {
+        const float fx = pxx + 0.5f;
+        const float fy = py + 0.5f;
+        const float d0 = ((b.x - a.x) * (fy - a.y) - (b.y - a.y) * (fx - a.x)) * sign;
+        const float d1 = ((c.x - b.x) * (fy - b.y) - (c.y - b.y) * (fx - b.x)) * sign;
+        const float d2 = ((a.x - c.x) * (fy - c.y) - (a.y - c.y) * (fx - c.x)) * sign;
+        if (d0 >= 0 && d1 >= 0 && d2 >= 0) {
+          out->mask[static_cast<size_t>(py) * px_w + pxx] = 1;
+        }
+      }
+    }
+  };
+  ImDrawList* dl = region->DrawList;
+  for (const auto& cmd : dl->CmdBuffer) {
+    const ImRect clip(cmd.ClipRect.x, cmd.ClipRect.y, cmd.ClipRect.z, cmd.ClipRect.w);
+    if (!clip.Overlaps(rect)) {
+      continue;
+    }
+    const unsigned tris = cmd.ElemCount / 3;
+    for (unsigned t = 0; t < tris; ++t) {
+      const auto& va = dl->VtxBuffer[cmd.VtxOffset + dl->IdxBuffer[cmd.IdxOffset + t * 3]];
+      const auto& vb = dl->VtxBuffer[cmd.VtxOffset + dl->IdxBuffer[cmd.IdxOffset + t * 3 + 1]];
+      const auto& vc = dl->VtxBuffer[cmd.VtxOffset + dl->IdxBuffer[cmd.IdxOffset + t * 3 + 2]];
+      if (va.col != accent && va.col != kMarkerRing && vb.col != accent && vb.col != kMarkerRing && vc.col != accent &&
+          vc.col != kMarkerRing) {
+        continue;
+      }
+      raster_triangle(to_cap(va.pos), to_cap(vb.pos), to_cap(vc.pos));
+    }
+  }
+  // Dilate by 2 physical pixels (a 4-neighbourhood flood, two passes) so the AA fringe riding
+  // the fibre's and the ring's silhouette is inside the exclusion too.
+  for (int pass = 0; pass < 2; ++pass) {
+    std::vector<uint8_t> grown = out->mask;
+    for (int y = 0; y < px_h; ++y) {
+      for (int x = 0; x < px_w; ++x) {
+        if (out->mask[static_cast<size_t>(y) * px_w + x]) {
+          continue;
+        }
+        if ((x > 0 && out->mask[static_cast<size_t>(y) * px_w + x - 1]) ||
+            (x + 1 < px_w && out->mask[static_cast<size_t>(y) * px_w + x + 1]) ||
+            (y > 0 && out->mask[static_cast<size_t>(y - 1) * px_w + x]) ||
+            (y + 1 < px_h && out->mask[static_cast<size_t>(y + 1) * px_w + x])) {
+          grown[static_cast<size_t>(y) * px_w + x] = 1;
+        }
+      }
+    }
+    out->mask.swap(grown);
+  }
+  out->covered = static_cast<int>(std::count(out->mask.begin(), out->mask.end(), 1));
+}
+
+struct GlobeRegionDiff {
+  int compared = 0;      // pixels the verdict actually rules on
+  int masked = 0;        // overlay footprint pixels excluded
+  int n_diff = 0;        // differing pixels among the compared — the contract wants exactly 0
+  int diff_in_mask = 0;  // differing pixels under the overlay — proof the frames are not clones
+};
+
+GlobeRegionDiff CompareGlobeCaptures(const GlobeRectCapture& a, const GlobeRectCapture& b,
+                                     const std::vector<uint8_t>& mask) {
+  GlobeRegionDiff d;
+  IM_ASSERT(a.w == b.w && a.h == b.h && a.pixels.size() == b.pixels.size());
+  const bool have_mask = mask.size() == a.pixels.size() / 4;
+  IM_ASSERT(mask.empty() || have_mask);  // an empty mask excludes nothing; a wrong-size one is a bug
+  const size_t n = a.pixels.size() / 4;
+  for (size_t i = 0; i < n; ++i) {
+    const bool differs = std::memcmp(a.pixels.data() + i * 4, b.pixels.data() + i * 4, 4) != 0;
+    if (have_mask && mask[i]) {
+      ++d.masked;
+      if (differs) {
+        ++d.diff_in_mask;
+      }
+    } else {
+      ++d.compared;
+      if (differs) {
+        ++d.n_diff;
+      }
+    }
+  }
+  return d;
+}
+
+// Two REAL picks on one class arc adopt two documents: Full's fixed basis must render the same
+// backdrop and the same auto legend from both — pixel for pixel, bar the fibre and the marker —
+// while the Fit view (the pick-following centring the pair retired to an explicit choice) runs
+// the same harness and MUST differ. The fixture preconditions carry the red probe's honesty:
+// the two picks genuinely differ, the documents' grids are byte-identical, and the frames are
+// distinct captures of distinct fibres.
+bool SunGlobeFullViewPinsTheBackdrop(ImGuiTestContext* ctx) {
+  ScopedServerGuard guard;
+  ScopedPoseSessionSplits splits;
+  IM_CHECK_RETV(BringUpScene(ctx, kFullyRandomJson, false, false), false);
+  OpenWindow(ctx);
+  IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
+  IM_CHECK_RETV(SelectRowByDisplay(ctx, "3-5-6-7") != std::nullopt, false);
+  gui::g_state.analyze_pose_view_open = true;
+  PinPoseViewOnScreen(ctx);
+  ctx->SetRef("//Pose & trace");
+  // The pose window's geometry is held by the splits guard and nothing in this flow drags a
+  // splitter: both picks capture identical rects, which is asserted below per capture.
+  struct PickDocument {
+    double alt = 0.0;
+    double az = 0.0;
+    std::string kind;
+    std::vector<double> deviation;
+    std::vector<uint8_t> valid;
+    int lat_count = 0;
+    int lon_count = 0;
+    double first_valid_u[3] = {};
+  };
+  const auto adopt = [&](double alt, double az, PickDocument* doc) -> bool {
+    SetSkyPointTarget(alt, az);
+    // Two-phase wait: the pump sees the new key a frame or two later — a completed-state probe
+    // alone passes instantly on the still-adopted PREVIOUS document (0 polls) and the read
+    // below then races the drop.
+    IM_CHECK_RETV(DriveUntil(ctx, [] { return !gui::g_state.analysis.point.adopted_result; }, 30), false);
+    IM_CHECK_RETV(
+        DriveUntil(
+            ctx,
+            [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCompleted; },
+            60),
+        false);
+    ctx->Yield(3);
+    doc->alt = alt;
+    doc->az = az;
+    const auto document = gui::g_state.analysis.point.adopted_result;
+    IM_CHECK_RETV(document != nullptr, false);
+    std::vector<gui::PointComponentRow> rows;
+    IM_CHECK_RETV(gui::PointComponentRows(*document, &rows) > 0, false);
+    doc->kind = rows[0].kind;
+    LUMICE_PathSunGrid grid{};
+    grid.struct_size = sizeof(grid);
+    IM_CHECK_RETV(LUMICE_PathPointGetSunGrid(document.get(), &grid) == LUMICE_PATH_READ_OK && grid.cell_count > 0,
+                  false);
+    doc->lat_count = grid.lat_count;
+    doc->lon_count = grid.lon_count;
+    doc->deviation.assign(grid.deviation_rad, grid.deviation_rad + grid.cell_count);
+    doc->valid.assign(grid.valid, grid.valid + grid.cell_count);
+    const int stored = gui::PointValidSampleIndexAt(*document, 0, 0);
+    IM_CHECK_RETV(stored >= 0, false);
+    LUMICE_PathPointSample sample{};
+    sample.struct_size = sizeof(sample);
+    IM_CHECK_RETV(
+        LUMICE_PathPointGetSample(document.get(), 0, static_cast<size_t>(stored), &sample) == LUMICE_PATH_READ_OK,
+        false);
+    for (int k = 0; k < 3; ++k) {
+      doc->first_valid_u[k] = sample.sun_in_crystal[k];
+    }
+    return true;
+  };
+  const auto globe_rects = [&](ImRect* canvas_rect, ImRect* legend_rect) -> bool {
+    ImGuiWindow* w = PoseRegionWindow("##AnalyzeSunGlobe");
+    IM_CHECK_RETV(w != nullptr, false);
+    const auto canvas = ctx->ItemInfo(w->GetID("##globe_canvas"), ImGuiTestOpFlags_NoError);
+    IM_CHECK_RETV(canvas.ID != 0, false);
+    ImRect legend(canvas.RectFull.Max.x, canvas.RectFull.Min.y, 0.0f, 0.0f);
+    for (const char* id :
+         { "##sun_grid_title", "##sun_grid_hi_tick", "##sun_grid_band", "##sun_grid_lo_tick", "##sun_grid_range" }) {
+      const auto item = ctx->ItemInfo(w->GetID(id), ImGuiTestOpFlags_NoError);
+      if (item.ID != 0) {
+        legend.Add(item.RectFull);
+      }
+    }
+    IM_CHECK_RETV(legend.Max.x > legend.Min.x, false);
+    // No extra margin: the rect is the legend items' own union — the canvas's corner
+    // background bleeding in through padding would only add non-legend pixels to the verdict.
+    *canvas_rect = canvas.RectFull;
+    *legend_rect = legend;
+    return true;
+  };
+  const auto capture_both = [&](const char* tag, GlobeRectCapture* canvas_cap, GlobeRectCapture* legend_cap) -> bool {
+    ImRect canvas_rect;
+    ImRect legend_rect;
+    IM_CHECK_RETV(globe_rects(&canvas_rect, &legend_rect), false);
+    IM_CHECK_RETV(CaptureGlobeRect(ctx, canvas_rect, canvas_cap), false);
+    IM_CHECK_RETV(CaptureGlobeRect(ctx, legend_rect, legend_cap), false);
+    // The overlay footprint of THIS frame, rasterized while the frame's own draw list is live
+    // (the compare below unions it with the other side's).
+    ImGuiWindow* w = PoseRegionWindow("##AnalyzeSunGlobe");
+    IM_CHECK_RETV(w != nullptr, false);
+    GlobeOverlayMask m;
+    BuildGlobeOverlayMask(w, canvas_rect, canvas_cap->w, canvas_cap->h, &m);
+    canvas_cap->overlay_mask = std::move(m.mask);
+    ctx->LogInfo("[globe full %s] frames %d/%d canvas %.0fx%.0f legend %.0fx%.0f mask %d", tag, canvas_cap->frame,
+                 legend_cap->frame, canvas_rect.GetWidth(), canvas_rect.GetHeight(), legend_rect.GetWidth(),
+                 legend_rect.GetHeight(), m.covered);
+    return true;
+  };
+
+  PickDocument a;
+  IM_CHECK_RETV(adopt(38.0, 180.0, &a), false);
+  GlobeRectCapture full_a_canvas, full_a_legend;
+  IM_CHECK_RETV(capture_both("A full", &full_a_canvas, &full_a_legend), false);
+
+  // The pixel harness has judged the OLD pick-following behaviour red before this fix landed;
+  // its durable red leg is the Fit view one click away. Switch and capture A's Fit frame.
+  auto& view = gui::g_state.analysis.point_view;
+  IM_CHECK_RETV(view.sun_globe_view_mode == gui::SunGlobeViewMode::kFull, false);  // the factory default
+  const auto key_at_a = gui::g_state.analysis.point.key;
+  const auto intent_at_a = gui::g_state.analysis.point.intent_id;
+  const bool dirty_at_a = gui::g_state.dirty;
+  ctx->ItemClick("**/Fit##globe_view");
+  ctx->Yield(3);
+  IM_CHECK_RETV(view.sun_globe_view_mode == gui::SunGlobeViewMode::kFit, false);
+  // AC4's identity guard, per click: a mode switch is display-only — the query key, the intent,
+  // the dirty bit and the adopted document stand (the adoption below legitimately changes the
+  // key: it is a new pick).
+  IM_CHECK_RETV(gui::g_state.analysis.point.key == key_at_a && gui::g_state.analysis.point.intent_id == intent_at_a,
+                false);
+  IM_CHECK_RETV(gui::g_state.dirty == dirty_at_a, false);
+  IM_CHECK_RETV(gui::g_state.analysis.point.adopted_result != nullptr, false);
+  GlobeRectCapture fit_a_canvas, fit_a_legend;
+  IM_CHECK_RETV(capture_both("A fit", &fit_a_canvas, &fit_a_legend), false);
+
+  // The second pick on the same arc; the mode rides the adoption (the divergent reset law).
+  PickDocument b;
+  IM_CHECK_RETV(adopt(38.5, 180.0, &b), false);
+  IM_CHECK_RETV(view.sun_globe_view_mode == gui::SunGlobeViewMode::kFit, false);
+  GlobeRectCapture fit_b_canvas, fit_b_legend;
+  IM_CHECK_RETV(capture_both("B fit", &fit_b_canvas, &fit_b_legend), false);
+  // ---- The switches never touched the query identity (AC4's no-requery contract): the second
+  // switch is guarded against the SECOND pick's identity, captured before the click. ----
+  const auto key_at_b = gui::g_state.analysis.point.key;
+  const auto intent_at_b = gui::g_state.analysis.point.intent_id;
+  const bool dirty_at_b = gui::g_state.dirty;
+  ctx->ItemClick("**/Full##globe_view");
+  ctx->Yield(3);
+  IM_CHECK_RETV(view.sun_globe_view_mode == gui::SunGlobeViewMode::kFull, false);
+  GlobeRectCapture full_b_canvas, full_b_legend;
+  IM_CHECK_RETV(capture_both("B full", &full_b_canvas, &full_b_legend), false);
+  IM_CHECK_RETV(gui::g_state.analysis.point.key == key_at_b && gui::g_state.analysis.point.intent_id == intent_at_b,
+                false);
+  IM_CHECK_RETV(gui::g_state.dirty == dirty_at_b, false);
+  // The Full basis's common-fibre placement, on the record: the frame is the rim judgment's
+  // evidence (owner-revisit anchor for the +x equatorial pick).
+  IM_CHECK_RETV(SaveWindowPng(ctx, "//Pose & trace", GuiTestTempPath("globe_full_view_basis.png").string()), false);
+
+  // ---- Fixture preconditions: the picks differ, the documents agree, the frames are real. ----
+  IM_CHECK_RETV(a.kind == b.kind, false);
+  IM_CHECK_RETV(a.lat_count == b.lat_count && a.lon_count == b.lon_count, false);
+  IM_CHECK_RETV(a.deviation.size() == b.deviation.size() &&
+                    std::memcmp(a.deviation.data(), b.deviation.data(), a.deviation.size() * sizeof(double)) == 0,
+                false);
+  IM_CHECK_RETV(a.valid == b.valid, false);
+  IM_CHECK_RETV(a.alt != b.alt, false);
+  IM_CHECK_RETV(std::memcmp(a.first_valid_u, b.first_valid_u, sizeof(a.first_valid_u)) != 0, false);
+  IM_CHECK_RETV(full_a_canvas.frame < fit_a_canvas.frame && fit_a_canvas.frame < fit_b_canvas.frame &&
+                    fit_b_canvas.frame < full_b_canvas.frame,
+                false);
+  IM_CHECK_RETV(full_a_canvas.w == full_b_canvas.w && full_a_canvas.h == full_b_canvas.h, false);
+  IM_CHECK_RETV(fit_a_canvas.w == fit_b_canvas.w && fit_a_canvas.h == fit_b_canvas.h, false);
+
+  // ---- Full: the backdrop and legend are pixel-identical outside the overlay footprint. ----
+  // The exclusion is the UNION of both frames' own submitted footprints: each pick's marker
+  // sits where THAT pick's sample projects, so a one-sided mask would leave the other side's
+  // marker pixels counting as backdrop diffs.
+  const auto union_mask = [&](const GlobeRectCapture& ca, const GlobeRectCapture& cb) {
+    std::vector<uint8_t> u(ca.overlay_mask.size(), 0);
+    for (size_t i = 0; i < u.size(); ++i) {
+      u[i] = static_cast<uint8_t>((ca.overlay_mask[i] != 0) | (cb.overlay_mask[i] != 0));
+    }
+    return u;
+  };
+  const auto first_diff = [](const GlobeRectCapture& ca, const GlobeRectCapture& cb, char* buf, size_t buf_size) {
+    int shown = 0;
+    size_t off = 0;
+    for (size_t i = 0; i < ca.pixels.size() / 4 && shown < 8; ++i) {
+      if (std::memcmp(ca.pixels.data() + i * 4, cb.pixels.data() + i * 4, 4) != 0) {
+        const int x = static_cast<int>(i % static_cast<size_t>(ca.w));
+        const int y = static_cast<int>(i / static_cast<size_t>(ca.w));
+        int n = std::snprintf(buf + off, buf_size - off, "%s(%d,%d) A=(%d,%d,%d) B=(%d,%d,%d) ", shown == 0 ? "" : " ",
+                              x, y, ca.pixels[i * 4], ca.pixels[i * 4 + 1], ca.pixels[i * 4 + 2], cb.pixels[i * 4],
+                              cb.pixels[i * 4 + 1], cb.pixels[i * 4 + 2]);
+        if (n < 0 || static_cast<size_t>(n) >= buf_size - off) {
+          return;
+        }
+        off += static_cast<size_t>(n);
+        ++shown;
+      }
+    }
+    if (shown == 0) {
+      std::snprintf(buf, buf_size, "no diff");
+    }
+  };
+  const std::vector<uint8_t> full_union = union_mask(full_a_canvas, full_b_canvas);
+  const GlobeRegionDiff full_canvas = CompareGlobeCaptures(full_a_canvas, full_b_canvas, full_union);
+  const GlobeRegionDiff full_legend = CompareGlobeCaptures(full_a_legend, full_b_legend, {});
+  char diff_where[512];
+  first_diff(full_a_legend, full_b_legend, diff_where, sizeof(diff_where));
+  ctx->LogInfo(
+      "[globe full] canvas compared %d masked %d n_diff %d diff_in_mask %d | legend compared %d n_diff %d (%s)",
+      full_canvas.compared, full_canvas.masked, full_canvas.n_diff, full_canvas.diff_in_mask, full_legend.compared,
+      full_legend.n_diff, diff_where);
+  const int union_covered = static_cast<int>(std::count(full_union.begin(), full_union.end(), 1));
+  IM_CHECK_RETV(union_covered > 0, false);
+  IM_CHECK_RETV(full_canvas.compared > (full_canvas.compared + full_canvas.masked) / 2, false);
+  IM_CHECK_RETV(full_canvas.n_diff == 0, false);
+  IM_CHECK_RETV(full_legend.n_diff == 0, false);
+  IM_CHECK_RETV(full_canvas.diff_in_mask > 0, false);
+
+  // ---- Fit: the same harness MUST judge the pick-following centring red (the mask differs too,
+  // by construction — the whole terrain re-projects). ----
+  const std::vector<uint8_t> fit_union = union_mask(fit_a_canvas, fit_b_canvas);
+  const GlobeRegionDiff fit_canvas = CompareGlobeCaptures(fit_a_canvas, fit_b_canvas, fit_union);
+  ctx->LogInfo("[globe fit] canvas compared %d masked %d n_diff %d", fit_canvas.compared, fit_canvas.masked,
+               fit_canvas.n_diff);
+  IM_CHECK_RETV(fit_canvas.n_diff > 0, false);
+  // The same document B in both views draws differently — the switch is visible in the frame.
+  const GlobeRegionDiff mode_flip = CompareGlobeCaptures(full_b_canvas, fit_b_canvas, fit_union);
+  IM_CHECK_RETV(mode_flip.n_diff > 0, false);
+
+  // ---- AC2's overlay-suppressed supplementary evidence: the production backdrop face draws
+  // BOTH real payloads in ONE frame — no fibre, no marker, no mask — and the two disks match
+  // pixel for pixel over their whole area, the pixels the union mask shelters in the live
+  // frames included. The payloads are the adopted documents' own byte-identical grids (copied
+  // out above); the projector is the production Full basis.
+  g_globe_dual_grids[0] = LUMICE_PathSunGrid{};
+  g_globe_dual_grids[0].struct_size = sizeof(LUMICE_PathSunGrid);
+  g_globe_dual_grids[0].lat_count = a.lat_count;
+  g_globe_dual_grids[0].lon_count = a.lon_count;
+  g_globe_dual_grids[0].cell_count = a.deviation.size();
+  g_globe_dual_grids[0].deviation_rad = a.deviation.data();
+  g_globe_dual_grids[0].valid = a.valid.data();
+  g_globe_dual_grids[1] = g_globe_dual_grids[0];
+  g_globe_dual_grids[1].deviation_rad = b.deviation.data();
+  g_globe_dual_grids[1].valid = b.valid.data();
+  g_globe_dual_ranges[0] = gui::SunGridDisplayRange(g_globe_dual_grids[0]);
+  g_globe_dual_ranges[1] = gui::SunGridDisplayRange(g_globe_dual_grids[1]);
+  g_globe_dual_proj = gui::MakeSunGlobeFullProjector();
+  g_globe_dual_draw = true;
+  struct DualLease {
+    ~DualLease() { g_globe_dual_draw = false; }
+  } dual_lease;
+  ctx->Yield(4);
+  ImGuiWindow* probe = ctx->GetWindowByRef("//Globe dual backdrop probe");
+  IM_CHECK_RETV(probe != nullptr, false);
+  GlobeRectCapture dual_cap;
+  IM_CHECK_RETV(CaptureGlobeRect(ctx, probe->Rect(), &dual_cap), false);
+  const ImGuiIO& dual_io = ImGui::GetIO();
+  const ImVec2 dual_a0((g_globe_dual_disk_rects[0].Min.x - probe->Rect().Min.x) * dual_io.DisplayFramebufferScale.x,
+                       (g_globe_dual_disk_rects[0].Min.y - probe->Rect().Min.y) * dual_io.DisplayFramebufferScale.y);
+  const ImVec2 dual_b0((g_globe_dual_disk_rects[1].Min.x - probe->Rect().Min.x) * dual_io.DisplayFramebufferScale.x,
+                       (g_globe_dual_disk_rects[1].Min.y - probe->Rect().Min.y) * dual_io.DisplayFramebufferScale.y);
+  const int dual_w = static_cast<int>((g_globe_dual_disk_rects[0].Max.x - g_globe_dual_disk_rects[0].Min.x) *
+                                      dual_io.DisplayFramebufferScale.x);
+  const int dual_h = static_cast<int>((g_globe_dual_disk_rects[0].Max.y - g_globe_dual_disk_rects[0].Min.y) *
+                                      dual_io.DisplayFramebufferScale.y);
+  IM_CHECK_RETV(dual_w > 32 && dual_h > 32, false);
+  int dual_diff = 0;
+  int dual_max_delta = 0;
+  for (int py = 0; py < dual_h; ++py) {
+    for (int pxx = 0; pxx < dual_w; ++pxx) {
+      const size_t ia = (static_cast<size_t>(dual_a0.y) + py) * dual_cap.w + static_cast<size_t>(dual_a0.x) + pxx;
+      const size_t ib = (static_cast<size_t>(dual_b0.y) + py) * dual_cap.w + static_cast<size_t>(dual_b0.x) + pxx;
+      const auto* pa = dual_cap.pixels.data() + ia * 4;
+      const auto* pb = dual_cap.pixels.data() + ib * 4;
+      if (std::memcmp(pa, pb, 4) != 0) {
+        ++dual_diff;
+        for (int ch = 0; ch < 4; ++ch) {
+          dual_max_delta = std::max(dual_max_delta, std::abs(static_cast<int>(pa[ch]) - static_cast<int>(pb[ch])));
+        }
+      }
+    }
+  }
+  // The live-frame legs above answer exact 0 and keep it; this supplementary leg carries a
+  // measured quantization-noise bound instead of a fake exactness claim: identical inputs and
+  // identical draw calls still show ±1-LSB GPU blend shifts at the rim's antialiasing ring
+  // (~15 px of 34.6k, all single-LSB — measured). A real single-cell drawing defect is a
+  // multi-LSB shift across a ~6px quad: far over both bounds.
+  const int dual_pixels = dual_w * dual_h;
+  ctx->LogInfo("[globe dual backdrop] production frame disks %dx%d px each, n_diff %d, max_delta %d", dual_w, dual_h,
+               dual_diff, dual_max_delta);
+  IM_CHECK_RETV(dual_diff * 500 <= dual_pixels, false);
+  IM_CHECK_RETV(dual_max_delta <= 1, false);
+
+  gui::g_state.analyze_pose_view_open = false;
+  ctx->Yield(2);
+  return true;
+}
+
+// The globe view's survival set (AC1), driven through the real control: the factory default
+// Full on arrival (asserted, not assigned); Fit survives component switches, sample moves and
+// window close/reopen — and, the divergent law beside the curve range's refit, new adoptions.
+// The case also pins the vocabulary boundary: the curve control's Full/Fit does not move the
+// globe mode or vice versa. The New/Open reset law rides the struct default the unit test pins
+// (the whole-analysis reset writes the factory session back, app.cpp's document reset).
+bool SunGlobeViewModeHasTheGlobeSurvivalSet(ImGuiTestContext* ctx) {
+  ScopedServerGuard guard;
+  ScopedPoseSessionSplits splits;
+  IM_CHECK_RETV(BringUpScene(ctx, kFullyRandomJson, false, false), false);
+  OpenWindow(ctx);
+  IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
+  IM_CHECK_RETV(SelectRowByDisplay(ctx, "3-5-6-7") != std::nullopt, false);
+  gui::g_state.analyze_pose_view_open = true;
+  PinPoseViewOnScreen(ctx);
+  SetSkyPointTarget(38.0, 180.0);
+  // Two-phase wait, the adopt() helper's own recorded rationale: the completed-state probe
+  // alone passes instantly on a still-adopted previous document.
+  IM_CHECK_RETV(DriveUntil(ctx, [] { return !gui::g_state.analysis.point.adopted_result; }, 30), false);
+  IM_CHECK_RETV(
+      DriveUntil(
+          ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCompleted; },
+          60),
+      false);
+  ctx->Yield(2);
+  auto& view = gui::g_state.analysis.point_view;
+  IM_CHECK_RETV(view.sun_globe_view_mode == gui::SunGlobeViewMode::kFull, false);
+  const auto key = gui::g_state.analysis.point.key;
+  const auto intent = gui::g_state.analysis.point.intent_id;
+  const auto document = gui::g_state.analysis.point.adopted_result;
+  const bool dirty = gui::g_state.dirty;
+  ctx->SetRef("//Pose & trace");
+  // Clicking the CURRENT cell: a no-op by contract — the mode and every query identity stand.
+  ctx->ItemClick("**/Full##globe_view");
+  ctx->Yield(2);
+  IM_CHECK_RETV(view.sun_globe_view_mode == gui::SunGlobeViewMode::kFull, false);
+  // The switch: a display-only write.
+  ctx->ItemClick("**/Fit##globe_view");
+  ctx->Yield(2);
+  IM_CHECK_RETV(view.sun_globe_view_mode == gui::SunGlobeViewMode::kFit, false);
+  IM_CHECK_RETV(gui::g_state.analysis.point.key == key && gui::g_state.analysis.point.intent_id == intent, false);
+  IM_CHECK_RETV(gui::g_state.analysis.point.adopted_result == document, false);
+  IM_CHECK_RETV(gui::g_state.dirty == dirty, false);
+  // AC6: the six per-arm copies of the concept sentence are gone from every state arm's
+  // persistent text; the title band's shared info icon carries the whole explanation on a real
+  // hover (the two-tier rule's carrier — Full/Fit meanings and the auto-scale caveat among
+  // them). The absence leg reads a submitted frame, not an unrendered one.
+  {
+    const std::string region_text = CaptureFrameText(ctx);
+    IM_CHECK_RETV(region_text.find("not the full SO(3)") == std::string::npos, false);
+    ctx->MouseMoveToPos(ctx->ItemInfo("**/" ICON_FA_CIRCLE_INFO "##globe_view_help").RectFull.GetCenter());
+    ctx->Yield(3);
+    ImGuiWindow* tip = ImGui::FindWindowByName("##Tooltip_00");
+    IM_CHECK_RETV(tip != nullptr && tip->Active, false);
+    const std::string tip_text = CaptureFrameText(ctx);
+    IM_CHECK_RETV(tip_text.find("not the full SO(3)") != std::string::npos, false);
+    IM_CHECK_RETV(tip_text.find("fixed crystal-frame basis") != std::string::npos, false);
+    IM_CHECK_RETV(tip_text.find("auto-ranged per document") != std::string::npos, false);
+    ctx->MouseMoveToPos(ImVec2(2.0f, 2.0f));
+    ctx->Yield(2);
+  }
+  // A component switch keeps it.
+  ctx->ItemClick(PoseRegionWindow("##AnalyzeSunGlobe")->GetID("##globe_component"));
+  ctx->KeyPress(ImGuiKey_DownArrow);
+  ctx->KeyPress(ImGuiKey_Enter);
+  ctx->Yield(3);
+  IM_CHECK_RETV(view.component_index == 1, false);
+  IM_CHECK_RETV(view.sun_globe_view_mode == gui::SunGlobeViewMode::kFit, false);
+  // A sample move keeps it. The slider and the curve control resolve through their region
+  // windows' own IDs — the path search from the pose window ref proved flaky right after a
+  // combo popup closed (the region children are found by name instead).
+  ImGuiWindow* globe_w = PoseRegionWindow("##AnalyzeSunGlobe");
+  IM_CHECK_RETV(globe_w != nullptr, false);
+  const auto slider = ctx->ItemInfo(globe_w->GetID("##globe_sample"), ImGuiTestOpFlags_NoError);
+  IM_CHECK_RETV(slider.ID != 0, false);
+  ctx->MouseMoveToPos(slider.RectFull.GetCenter());
+  ctx->MouseClick(ImGuiMouseButton_Left);
+  ctx->Yield(3);
+  IM_CHECK_RETV(view.sun_globe_view_mode == gui::SunGlobeViewMode::kFit, false);
+  // The curve control's same-vocabulary pair is a different life: it moves the curve, never the
+  // globe.
+  ImGuiWindow* curve_w = PoseRegionWindow("##AnalyzePoseCurve");
+  IM_CHECK_RETV(curve_w != nullptr, false);
+  ctx->ItemClick(curve_w->GetID("Full##curve_range"));
+  ctx->Yield(2);
+  IM_CHECK_RETV(view.curve_range_mode == gui::PointCurveRangeMode::kFull, false);
+  IM_CHECK_RETV(view.sun_globe_view_mode == gui::SunGlobeViewMode::kFit, false);
+  ctx->ItemClick(curve_w->GetID("Fit##curve_range"));
+  ctx->Yield(2);
+  // Window close/reopen keeps it.
+  gui::g_state.analyze_pose_view_open = false;
+  ctx->Yield(2);
+  gui::g_state.analyze_pose_view_open = true;
+  PinPoseViewOnScreen(ctx);
+  ctx->Yield(2);
+  IM_CHECK_RETV(view.sun_globe_view_mode == gui::SunGlobeViewMode::kFit, false);
+  // A NEW adoption keeps it — the reset law that differs from the curve's refit.
+  SetSkyPointTarget(38.5, 180.0);
+  IM_CHECK_RETV(DriveUntil(ctx, [] { return !gui::g_state.analysis.point.adopted_result; }, 30), false);
+  IM_CHECK_RETV(
+      DriveUntil(
+          ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCompleted; },
+          60),
+      false);
+  ctx->Yield(2);
+  IM_CHECK_RETV(gui::g_state.analysis.point.adopted_result != document, false);
+  IM_CHECK_RETV(view.sun_globe_view_mode == gui::SunGlobeViewMode::kFit, false);
+  // Revert keeps it: the committed scene is the same one, the session display preferences ride
+  // (the withdrawal path only latches an OUTSTANDING query — none is out here).
+  gui::DoRevert();
+  ctx->Yield(2);
+  IM_CHECK_RETV(view.sun_globe_view_mode == gui::SunGlobeViewMode::kFit, false);
+  // New writes the factory session back: the whole-document reset restores the Full default.
+  gui::DoNew();
+  ctx->Yield(2);
+  IM_CHECK_RETV(view.sun_globe_view_mode == gui::SunGlobeViewMode::kFull, false);
+  gui::g_state.analyze_pose_view_open = false;
+  ctx->Yield(2);
   return true;
 }
 
@@ -13812,7 +14935,12 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       ctx->Yield(3);
       ctx->SetRef("//Compressed grid probe");
       IM_CHECK(!ctx->ItemExists("**/##globe_canvas"));
-      IM_CHECK(grid_report.find("Crystal-frame sun directions") != std::string::npos);
+      // The probe's canary pair: the region's fixed stack rendered (title) and the state area's
+      // honest discovered-arm text is present (the sample readout — the six per-arm concept
+      // sentences retired into the title band's info icon, so the readout is what the arm says
+      // now). The factors region's no-grid note stays absent: the copied document carries a grid.
+      IM_CHECK(grid_report.find("Sun direction globe") != std::string::npos);
+      IM_CHECK(grid_report.find("sample ") != std::string::npos && grid_report.find("zenith") != std::string::npos);
       IM_CHECK(grid_report.find("no sun grid in this document") == std::string::npos);
       ctx->SetRef("");
       // The backdrop is the toggle's DISPLAY EFFECT, gated at the draw site by the toggle and
@@ -13863,8 +14991,51 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
   }
 
   {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "r3d_title_band_and_canvas_gain_hold");
+    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(Ray3DTitleBandAndCanvasGainHold(ctx)); };
+  }
+
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "r3d_transient_holds_the_report_and_reads_the_bar");
+    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(Ray3DTransientHoldsTheReportAndReadsTheBar(ctx)); };
+  }
+
+  {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "sun_grid_real_reader_layout_and_selection");
     t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(SunGridRealReaderLayoutAndSelection(ctx)); };
+  }
+
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "sun_globe_full_view_pins_the_backdrop");
+    t->GuiFunc = [](ImGuiTestContext*) {
+      if (!g_globe_dual_draw) {
+        return;
+      }
+      ImGui::SetNextWindowPos(ImVec2(40.0f, 60.0f), ImGuiCond_Always);
+      ImGui::SetNextWindowSize(ImVec2(430.0f, 240.0f), ImGuiCond_Always);
+      ImGui::Begin("Globe dual backdrop probe", nullptr, ImGuiWindowFlags_NoResize);
+      ImDrawList* dl = ImGui::GetWindowDrawList();
+      const ImVec2 origin = ImGui::GetCursorScreenPos();
+      for (int side = 0; side < 2; ++side) {
+        const ImVec2 centre(origin.x + 105.0f + side * 215.0f, origin.y + 105.0f);
+        const float radius = 95.0f;
+        dl->AddCircleFilled(centre, radius, IM_COL32(16, 18, 22, 255));
+        dl->AddCircle(centre, radius, IM_COL32(70, 74, 82, 200), 0, 1.0f);
+        if (g_globe_dual_grids[side].deviation_rad != nullptr) {
+          gui::DrawSunGridBackdrop(dl, g_globe_dual_grids[side], g_globe_dual_proj, g_globe_dual_ranges[side], centre,
+                                   radius - gui::UiPx(4.0f));
+        }
+        g_globe_dual_disk_rects[side] = ImRect(centre.x - radius + 2.0f, centre.y - radius + 2.0f,
+                                               centre.x + radius - 2.0f, centre.y + radius - 2.0f);
+      }
+      ImGui::End();
+    };
+    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(SunGlobeFullViewPinsTheBackdrop(ctx)); };
+  }
+
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "sun_globe_view_mode_survival_set");
+    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(SunGlobeViewModeHasTheGlobeSurvivalSet(ctx)); };
   }
 
   // Controlled inputs use the production backdrop and legend, never an imitation renderer.
@@ -13877,7 +15048,49 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
     static int cell_vertices;
     static ImU32 cell_colors[3];
     static std::string frame_text;
+    // The yield probe: the region's caller shape verbatim (canvas, SameLine, legend, slider,
+    // SameLine'd play) with a 24 px legend row, driving BOTH yield exits — an all-zero-valid
+    // grid makes the range unavailable (the short-row exit), and restored constant cells keep
+    // the range available while the words alone exceed the row (the budget < 0 exit). Pins
+    // that either yield consumes the pending SameLine instead of letting the play button
+    // anchor to the canvas's top line.
+    static bool draw_yield_probe = false;
+    static int yield_sample = 0;
+    static ImRect yield_slider_rect;
+    static ImRect yield_play_rect;
+    // Which yield exit a leg can reach is pinned by the range's own availability: the
+    // budget < 0 leg must stay available, or it would silently degrade into the short-row
+    // exit and stop testing that branch while staying green.
+    static bool probe_range_available = false;
     t->GuiFunc = [](ImGuiTestContext*) {
+      if (draw_yield_probe) {
+        ImGui::SetNextWindowPos(ImVec2(40, 520), ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(420, 160), ImGuiCond_Always);
+        ImGui::Begin("Sun grid yield probe", nullptr, ImGuiWindowFlags_NoSavedSettings);
+        LUMICE_PathSunGrid probe_grid{};
+        probe_grid.lat_count = 1;
+        probe_grid.lon_count = 8;
+        probe_grid.cell_count = 8;
+        probe_grid.deviation_rad = delta;
+        probe_grid.valid = valid;
+        const auto probe_range = gui::SunGridDisplayRange(probe_grid);
+        probe_range_available = probe_range.available;
+        const ImVec2 probe_origin = ImGui::GetCursorScreenPos();
+        ImGui::InvisibleButton("##yield_canvas", ImVec2(60, 60));
+        ImGui::SameLine();
+        // The exit follows the grid's validity: the all-zero leg takes the !range.available
+        // short-row exit; the restored-constant leg stays available and yields at budget < 0
+        // (the header and the range text alone exceed this row).
+        gui::RenderSunGridLegend(probe_range, 24.0f);
+        ImGui::SetCursorScreenPos(ImVec2(probe_origin.x, probe_origin.y + 70.0f));
+        ImGui::SetNextItemWidth(200.0f);
+        ImGui::SliderInt("##yield_sample", &yield_sample, 0, 3);
+        yield_slider_rect = ImRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
+        ImGui::SameLine();
+        ImGui::Button("Play##yield_play", ImVec2(50, 0));
+        yield_play_rect = ImRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
+        ImGui::End();
+      }
       if (!draw)
         return;
       ImGui::SetNextWindowPos(ImVec2(40, 60), ImGuiCond_Always);
@@ -13901,7 +15114,7 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       for (int i = 0; i < 3; ++i)
         cell_colors[i] = cell_vertices >= (i + 1) * 4 ? dl->VtxBuffer[before + i * 4].col : 0;
       ImGui::LogToBuffer();
-      gui::RenderSunGridLegend(range);
+      gui::RenderSunGridLegend(range, 320.0f);  // the row the real region's canvas side would offer
       frame_text = ImGui::GetCurrentContext()->LogBuffer.c_str();
       ImGui::LogFinish();
       ImGui::End();
@@ -13926,7 +15139,7 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
         ctx->Yield(2);
         const std::string text = frame_text;
         IM_CHECK_RETV(ImGui::GetFrameCount() > frame, false);
-        IM_CHECK_RETV(text.find("Deviation δ (deg) · auto range") != std::string::npos, false);
+        IM_CHECK_RETV(text.find("Deviation δ · auto") != std::string::npos, false);
         IM_CHECK_RETV(text.find(expected) != std::string::npos, false);
         IM_CHECK_RETV(cell_vertices == 12, false);  // only three valid cell quads
         unsigned char pixels[2][3];
@@ -13948,6 +15161,10 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
         IM_CHECK_RETV(cell_colors[0] == IM_COL32(92, 55, 135, 235), false);
         IM_CHECK_RETV(cell_colors[2] == IM_COL32(219, 184, 250, 235), false);
         const auto band = ctx->ItemInfo("**/##sun_grid_band");
+        // The vertical legend: the band is taller than wide, and its two endpoint colours sit
+        // inside it (any ramp direction would still pass colour presence — the geometry pins
+        // the direction along with the layout claim).
+        IM_CHECK_RETV(band.RectFull.GetHeight() > band.RectFull.GetWidth(), false);
         auto* w = ctx->GetWindowByRef("//Sun grid fixture");
         bool band_colors = true;
         for (const ImU32 color : { IM_COL32(92, 55, 135, 235), IM_COL32(219, 184, 250, 235) }) {
@@ -13956,20 +15173,42 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
                           [&](const ImDrawVert& v) { return v.col == color && band.RectFull.Contains(v.pos); });
         }
         IM_CHECK_RETV(band_colors, false);
+        // The ramp's colour-to-end mapping, the tick geometry's blind spot: the TOP of the band
+        // reads nearer the light (high-deviation) endpoint, the BOTTOM nearer the dark one —
+        // reversing the walk direction flips the ramp and still passes every geometry assert.
+        unsigned char ramp_top[3];
+        unsigned char ramp_bottom[3];
+        IM_CHECK_RETV(ReadScreenPixel(ctx, ImVec2(band.RectFull.GetCenter().x, band.RectFull.Min.y + 2.0f), ramp_top),
+                      false);
+        IM_CHECK_RETV(
+            ReadScreenPixel(ctx, ImVec2(band.RectFull.GetCenter().x, band.RectFull.Max.y - 2.0f), ramp_bottom), false);
+        constexpr ImU32 kRampDarkEnd = IM_COL32(92, 55, 135, 235);
+        constexpr ImU32 kRampLightEnd = IM_COL32(219, 184, 250, 235);
+        const auto ramp_dist2 = [](const unsigned char* p, ImU32 c) {
+          // int casts on both sides: the naive `int - unsigned` promotes to unsigned and wraps
+          // on every darker-than-endpoint sample.
+          return std::pow((static_cast<int>(p[0]) - static_cast<int>(c & 0xFF)) / 255.0, 2) +
+                 std::pow((static_cast<int>(p[1]) - static_cast<int>((c >> 8) & 0xFF)) / 255.0, 2) +
+                 std::pow((static_cast<int>(p[2]) - static_cast<int>((c >> 16) & 0xFF)) / 255.0, 2);
+        };
+        const double upright = ramp_dist2(ramp_top, kRampLightEnd) + ramp_dist2(ramp_bottom, kRampDarkEnd);
+        const double flipped = ramp_dist2(ramp_top, kRampDarkEnd) + ramp_dist2(ramp_bottom, kRampLightEnd);
+        ctx->LogInfo("[sun grid ramp] upright %.4f flipped %.4f", upright, flipped);
+        IM_CHECK_RETV(upright < flipped, false);
         IM_CHECK_RETV(SaveWindowPng(ctx, "//Sun grid fixture", GuiTestTempPath(screenshot).string()), false);
         return true;
       };
-      IM_CHECK(check_band("5.72958 – 11.4592 deg", "sun_grid_A.png"));
+      IM_CHECK(check_band("5.72958° – 11.4592°", "sun_grid_A.png"));
       const int a_frame = ImGui::GetFrameCount();
       delta[0] = .4;
       delta[1] = .41;
       delta[2] = .42;
       ctx->Yield(3);
       IM_CHECK(ImGui::GetFrameCount() > a_frame);
-      IM_CHECK(check_band("22.9183 – 24.0642 deg", "sun_grid_B.png"));
+      IM_CHECK(check_band("22.9183° – 24.0642°", "sun_grid_B.png"));
       delta[0] = delta[1] = delta[2] = 0;
       ctx->Yield(3);
-      IM_CHECK(frame_text.find("0 deg (constant)") != std::string::npos);
+      IM_CHECK(frame_text.find("0° (constant)") != std::string::npos);
       IM_CHECK(cell_colors[0] == IM_COL32(155, 119, 192, 235) && cell_colors[0] == cell_colors[2]);
       for (auto& v : valid)
         v = 0;
@@ -13977,6 +15216,47 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       IM_CHECK(frame_text.find("No valid deviation data") != std::string::npos);
       IM_CHECK(cell_vertices == 0);
       IM_CHECK(!ctx->ItemExists("**/##sun_grid_band"));
+
+      // The yield legs: legend rows that cannot host the column. Both legs share one assertion
+      // group — no legend item survives the yield, and the play button still shares the
+      // slider's row (to its right) — because each yield exit must consume the caller's
+      // pending SameLine on its own: losing either one anchors the play button to the canvas's
+      // top line and lands it on the disk.
+      draw_yield_probe = true;
+      {
+        struct YieldLease {
+          ~YieldLease() { draw_yield_probe = false; }
+        } yield_lease;
+        const auto expect_yielded = [&](const char* leg) {
+          ImGuiWindow* probe = ctx->GetWindowByRef("//Sun grid yield probe");
+          IM_CHECK(probe != nullptr);
+          if (probe == nullptr) {
+            return;
+          }
+          IM_CHECK(ctx->ItemInfo(probe->GetID("##sun_grid_title"), ImGuiTestOpFlags_NoError).ID == 0);
+          IM_CHECK(ctx->ItemInfo(probe->GetID("##sun_grid_range"), ImGuiTestOpFlags_NoError).ID == 0);
+          IM_CHECK(ctx->ItemInfo(probe->GetID("##sun_grid_band"), ImGuiTestOpFlags_NoError).ID == 0);
+          IM_CHECK(std::abs(yield_play_rect.Min.y - yield_slider_rect.Min.y) < 0.5f);
+          IM_CHECK(yield_play_rect.Min.x >= yield_slider_rect.Max.x - 0.5f);
+          ctx->LogInfo("[sun grid yield] %s yielded clean; play (%.0f,%.0f) shares the slider row (%.0f,%.0f)", leg,
+                       yield_play_rect.Min.x, yield_play_rect.Min.y, yield_slider_rect.Min.x, yield_slider_rect.Min.y);
+        };
+        // Leg 1 — the !range.available short-row exit: the fixture above zeroed every valid
+        // cell, so the probe grid inherits "No valid deviation data" and its range is
+        // unavailable — the precondition that pins the leg to the short-row exit.
+        ctx->Yield(3);
+        IM_CHECK(!probe_range_available);
+        expect_yielded("!range.available");
+        // Leg 2 — the budget < 0 exit: restore three valid constant cells; the range becomes
+        // available ("0° (constant)", a single line) but the wrapped header plus the range
+        // text and the two spacings already exceed the 24 px row, so the legend yields through
+        // the budget exit — a different branch than leg 1, same consumed SameLine. The
+        // availability pin below is what keeps this leg from silently collapsing into leg 1.
+        valid[0] = valid[1] = valid[2] = 1;
+        ctx->Yield(3);
+        IM_CHECK(probe_range_available);
+        expect_yielded("budget<0");
+      }
     };
   }
 
@@ -14086,7 +15366,9 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       ctx->Yield(2);
       IM_CHECK(mode == gui::PointCurveRangeMode::kFull);
       IM_CHECK(has_arm(4));
-      IM_CHECK(ink_at(4, 5, .25));  // [-8,0], log(1e-6) => y=.25
+      // Full's floor is max(min positive, hi x 10^-14); this sample's min positive is 1e-12, so
+      // the window is [-12,0] and log(1e-6) sits at 6/12 = 0.5 of the plot height.
+      IM_CHECK(ink_at(4, 5, .5));
       ctx->MouseMoveToPos(ImVec2(2, 2));
       ctx->Yield(2);  // keep the control tooltip from covering the axis being inspected
       const auto label_bands = [&] {
@@ -14115,16 +15397,18 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
         }
         return bands;
       };
-      // Full's actual production labels: nine decades on a tall plot, three non-overlapping
-      // labels (-6,-3,0) at 80px. This is emitted glyph ink, not a LabelStep-only assertion.
-      IM_CHECK(label_bands().size() == 9);
+      // Full's actual production labels: twelve decades on a tall plot, every decade labelled
+      // (the tall plot's label step stays 1: twelve labels fit its height) = 13 bands -12..0;
+      // at 80px the step is 4, labelling -12,-8,-4,0 = 4 non-overlapping bands. This is emitted
+      // glyph ink, not a LabelStep-only assertion.
+      IM_CHECK(label_bands().size() == 13);
       short_plot = true;
       ctx->Yield(3);
       const auto bands = label_bands();
-      IM_CHECK(bands.size() == 3);
+      IM_CHECK(bands.size() == 4);
       IM_CHECK(bands[0].Max.y + gui::UiPx(3) < bands[1].Min.y && bands[1].Max.y + gui::UiPx(3) < bands[2].Min.y);
       IM_CHECK(
-          SaveWindowPng(ctx, "//Curve draw fixture", GuiTestTempPath("curve_full_eight_decades_short.png").string()));
+          SaveWindowPng(ctx, "//Curve draw fixture", GuiTestTempPath("curve_full_twelve_decades_short.png").string()));
       short_plot = false;
       ctx->Yield(2);
       const ImRect after = ctx->ItemInfo("**/##fixture_plot").RectFull;
@@ -14133,6 +15417,15 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       ctx->ItemClick("**/Fit##curve_range");
       ctx->Yield(2);
       IM_CHECK(!has_arm(4));
+      // The pair's associated help icon: a real hover draws the tooltip (the two-tier rule's
+      // Fit/Full carrier) and the capture is the plan's representative-evidence shot for it.
+      ctx->MouseMoveToPos(ctx->ItemInfo("**/" ICON_FA_CIRCLE_INFO "##curve_range_help").RectFull.GetCenter());
+      ctx->Yield(3);
+      ImGuiWindow* range_tooltip = ImGui::FindWindowByName("##Tooltip_00");
+      IM_CHECK(range_tooltip != nullptr && range_tooltip->Active);
+      IM_CHECK(SaveWindowPng(ctx, "//Curve draw fixture", GuiTestTempPath("curve_range_help_hover.png").string()));
+      ctx->MouseMoveToPos(ImVec2(2.0f, 2.0f));
+      ctx->Yield(2);
       scroll_test = true;
       ctx->Yield(3);
       IM_CHECK(w->ScrollMax.y > 0);
@@ -17560,16 +18853,18 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       IM_CHECK_FLOAT_NEAR(settled.Min.x, before.Min.x, 0.5f);
       IM_CHECK_FLOAT_NEAR(settled.Min.y, before.Min.y, 0.5f);
       // Calibrate the boundary from complete rendered item footprints, not the product's
-      // template formula. The bar's last control is the Rays(M) pair, and its trailing label is
-      // probe-registered at the text's own rect (TextWithLabelProbe), so the label's right edge
-      // closes the footprint — no font-advance arithmetic on a frame-only ruler.
+      // template formula. The bar's last control is the Rays(M) pair's help icon (joined after
+      // the trailing label, whose own rect is probe-registered at the text —
+      // TextWithLabelProbe), so the icon's right edge closes the footprint — no font-advance
+      // arithmetic on a frame-only ruler.
       const float span = ImGui::GetIO().DisplaySize.x - gui::UiPx(gui::kAnalyzeLeftPanelWidth);
       gui::g_state.workspace.right_column_ratio = 0.2f;
       ctx->Yield(3);
       const auto whole = ctx->ItemInfo("Whole sky");
+      const auto budget_icon = ctx->ItemInfo("**/" ICON_FA_CIRCLE_INFO "##analysis_ray_budget_help");
       const auto budget_label = ctx->ItemInfo("##Rays(M)_label");
       IM_CHECK_FLOAT_NEAR(whole.RectFull.Min.y, budget_label.RectFull.Min.y, 0.5f);
-      const float full_footprint = budget_label.RectFull.Max.x - whole.RectFull.Min.x;
+      const float full_footprint = budget_icon.RectFull.Max.x - whole.RectFull.Min.x;
       const float padding = ImGui::GetStyle().WindowPadding.x * 2.0f;
       const auto at_width = [&](float content_width, bool single) -> bool {
         gui::g_state.workspace.right_column_ratio =
@@ -17591,8 +18886,8 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
             infinite.RectFull.Max.x - ctx->ItemInfo("Whole sky").RectFull.Min.x);
         IM_CHECK_RETV(one_row == single, false);
         // Nothing clips at either template: the two-row form's row 1 ends at Infinite rays and
-        // row 2 at the Rays(M) label; the one-row form's only end is that same label.
-        const auto last_end = ctx->ItemInfo("##Rays(M)_label");
+        // row 2 at the Rays(M) pair's help icon; the one-row form's only end is that same icon.
+        const auto last_end = ctx->ItemInfo("**/" ICON_FA_CIRCLE_INFO "##analysis_ray_budget_help");
         IM_CHECK_RETV(infinite.RectFull.Max.x <= host->InnerClipRect.Max.x + 0.5f, false);
         IM_CHECK_RETV(last_end.RectFull.Max.x <= host->InnerClipRect.Max.x + 0.5f, false);
         const ImRect point_picture = PanoramaPictureWindow()->Rect();

@@ -1731,8 +1731,12 @@ void RegisterDefaultsPanelTests(ImGuiTestEngine* engine) {
           "controls and panels alike. Applies to this window immediately; Save keeps it for every "
           "later start. The display's scaling (Windows 125%, Retina) is detected on its own and is "
           "not part of this number.";
-      const std::string scale_ref = std::string(gui::kDefaultsPanelTitle) + "/###defaults_app_ui_scale";
-      IM_CHECK(ObserveSettingsTooltip(ctx, "**/###defaults_app_use_gpu", kGpuText));
+      const std::string scale_ref =
+          std::string(gui::kDefaultsPanelTitle) + "/" + ICON_FA_CIRCLE_INFO "##defaults_app_ui_scale_help";
+      // The two-tier rule moved the stored-preference explanations onto the associated info
+      // icons; the full-text, width and multi-line assertions ride the icons now.
+      IM_CHECK(ObserveSettingsTooltip(
+          ctx, (std::string("**/") + ICON_FA_CIRCLE_INFO + "##defaults_app_use_gpu_help").c_str(), kGpuText));
       if (g_keep_export_png) {
         g_fullframe_capture.Reset();
         g_fullframe_capture.requested.store(true);
@@ -1748,7 +1752,7 @@ void RegisterDefaultsPanelTests(ImGuiTestEngine* engine) {
       }
       IM_CHECK(ObserveSettingsTooltip(ctx, scale_ref.c_str(), kScaleText));
       IM_CHECK(ObserveSettingsTooltip(
-          ctx, "**/###defaults_app_worker_count",
+          ctx, (std::string("**/") + ICON_FA_CIRCLE_INFO + "##defaults_app_worker_count_help").c_str(),
           "How many CPU worker threads a NEW document's simulation runs on. 0 means automatic: one "
           "per physical core on Linux/macOS, one per logical core (hardware thread) on Windows, up to "
           "a measured per-platform ceiling. A number you type here is used as-is, ceiling included. "
@@ -1777,7 +1781,8 @@ void RegisterDefaultsPanelTests(ImGuiTestEngine* engine) {
       gui::SetUiScaleMultiplierImmediate(1.5f);
       ctx->Yield(4);
       IM_CHECK_FLOAT_EQ_EPS(gui::CurrentUiScale(), 1.5f);
-      IM_CHECK(ObserveSettingsTooltip(ctx, "**/###defaults_app_use_gpu", kGpuText));
+      IM_CHECK(ObserveSettingsTooltip(
+          ctx, (std::string("**/") + ICON_FA_CIRCLE_INFO + "##defaults_app_use_gpu_help").c_str(), kGpuText));
       IM_CHECK(ObserveSettingsTooltip(ctx, scale_ref.c_str(), kScaleText));
     };
   }

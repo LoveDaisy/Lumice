@@ -38,6 +38,7 @@
 #include "gui/semantic_colors.hpp"
 #include "gui/symmetry_ui.hpp"
 #include "gui/theme.hpp"
+#include "gui/tooltip.hpp"
 #include "imgui.h"
 #include "include/lumice_base.h"
 #include "include/lumice_editor.h"
@@ -343,13 +344,11 @@ void RenderCompositeModeCombo(GuiState& state) {
   if (ImGui::Combo("##ColorMode", &mode, kModeNames, 3)) {
     state.raypath_color_mode = mode;
   }
-  if (ImGui::IsItemHovered()) {
-    ImGui::SetTooltip(
-        "How overlapping color classes combine per pixel:\n"
-        "  dominant -- brightest participating class wins\n"
-        "  additive -- colors sum (clamped to white)\n"
-        "  painter  -- highest-priority class with any signal wins, regardless of brightness");
-  }
+  InfoIcon("color_mode_help",
+           "How overlapping color classes combine per pixel:\n"
+           "  dominant -- brightest participating class wins\n"
+           "  additive -- colors sum (clamped to white)\n"
+           "  painter  -- highest-priority class with any signal wins, regardless of brightness");
   ImGui::PopItemWidth();
 }
 
@@ -548,11 +547,9 @@ void RenderRefRow(GuiState& state, ColorClassConfig& cls, size_t ref_idx, bool& 
     SetRefMatchAll(ref, whole);
     // T1: structural → reconciler.
   }
-  if (ImGui::IsItemHovered()) {
-    ImGui::SetTooltip(
-        "Match every raypath through the whole crystal (ignores the predicate text\n"
-        "below, which stays but is frozen while this is checked).");
-  }
+  InfoIcon("color_ref_whole_help",
+           "Match every raypath through the whole crystal (ignores the predicate text\n"
+           "below, which stays but is frozen while this is checked).");
 
   // Predicate text — always rendered so its layout does not disappear when
   // whole is checked; BeginDisabled greys it out under match_all. Suppress the
@@ -594,20 +591,16 @@ void RenderRefRow(GuiState& state, ColorClassConfig& cls, size_t ref_idx, bool& 
     ImGui::PopStyleVar();
     ImGui::PopStyleColor();
   }
-  // Single SetTooltip for the item — syntax hint always; the validation error
-  // (if any) is appended below it. AllowWhenDisabled so users still see the
-  // hint while whole freezes the field (mirrors the up/down arrow tooltips
-  // that also survive their at_top / at_bot disabled states).
-  if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-    static constexpr const char* kSyntaxHint =
-        "Same token syntax as the filter editor (e.g. 3-5, entry:2, exit:4, len:2-3).\n"
-        "Single atom only here -- no ';' OR / '&' AND; add another ref + Combine below for that.";
-    if (invalid && !validation.message.empty()) {
-      ImGui::SetTooltip("%s\n\n%s", kSyntaxHint, validation.message.c_str());
-    } else {
-      ImGui::SetTooltip("%s", kSyntaxHint);
-    }
+  // Two-tier split: the stable syntax reference rides the associated info icon; the validation
+  // error (if any) stays alone on the field's own hover — an error must not hide behind a
+  // merged tooltip. AllowWhenDisabled so the error stays readable while whole freezes the field
+  // (mirrors the up/down arrow tooltips that also survive their at_top / at_bot disabled states).
+  if (invalid && !validation.message.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+    ImGui::SetTooltip("%s", validation.message.c_str());
   }
+  InfoIcon("color_ref_predicate_syntax_help",
+           "Same token syntax as the filter editor (e.g. 3-5, entry:2, exit:4, len:2-3).\n"
+           "Single atom only here -- no ';' OR / '&' AND; add another ref + Combine below for that.");
   ImGui::PopItemWidth();
 
   // task-356.3 — per-ref P/B/D symmetry checkboxes.
@@ -1114,11 +1107,9 @@ void RenderColorWindow(GuiState& state, LUMICE_Server* server) {
         cls.combine = combine_val;
         // T1: structural (ColorClassStructState.combine) → reconciler routes to hard-reset.
       }
-      if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip(
-            "any -- a ray belongs to this class if it matches AT LEAST ONE ref below (OR)\n"
-            "all -- a ray belongs to this class only if it matches EVERY ref below (AND)");
-      }
+      InfoIcon("color_ref_combine_help",
+               "any -- a ray belongs to this class if it matches AT LEAST ONE ref below (OR)\n"
+               "all -- a ray belongs to this class only if it matches EVERY ref below (AND)");
       ImGui::PopItemWidth();
       wash.End();
 

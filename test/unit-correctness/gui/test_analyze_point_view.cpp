@@ -144,6 +144,23 @@ TEST(AnalyzePointView, PointQueryStateTruthTable) {
   // The completed arm reads a real handle — the composition tests cover it over a live adoption.
 }
 
+TEST(AnalyzePointView, PointViewStateDefaultsPinTheFactorySession) {
+  // The factory session's display defaults, pinned at the state struct (the AC's default-on leg
+  // lives here so a flip is a one-line red, not a GUI-run surprise). The Fresnel toggle defaults
+  // ON (2026-11-17 feedback: the ratio numbers are the trace's exact-value face); the grid
+  // backdrop stays ON; the frame starts in world; the curve range starts at Fit; the globe view
+  // starts at Full (the fixed crystal basis — the default view).
+  PointViewState view;
+  EXPECT_TRUE(view.show_fresnel_labels);
+  EXPECT_TRUE(view.show_deviation_grid);
+  EXPECT_FALSE(view.crystal_frame);
+  EXPECT_EQ(view.curve_range_mode, PointCurveRangeMode::kFit);
+  EXPECT_EQ(view.sun_globe_view_mode, SunGlobeViewMode::kFull);
+  EXPECT_EQ(view.component_index, 0);
+  EXPECT_EQ(view.sample_index, 0);
+  EXPECT_FALSE(view.playing);
+}
+
 TEST(AnalyzePointView, ResetOrbitRestoresOnlyOrientationAndIsIdempotent) {
   PointViewState view;
   view.orbit_yaw_deg = 143.0f;
@@ -157,6 +174,7 @@ TEST(AnalyzePointView, ResetOrbitRestoresOnlyOrientationAndIsIdempotent) {
   view.show_deviation_grid = false;
   view.show_fresnel_labels = true;
   view.curve_range_mode = PointCurveRangeMode::kFull;
+  view.sun_globe_view_mode = SunGlobeViewMode::kFit;
   for (int i = 0; i < 2; ++i) {
     view.ResetOrbitOrientation();
     EXPECT_EQ(view.orbit_yaw_deg, PointViewState{}.orbit_yaw_deg);
@@ -170,6 +188,7 @@ TEST(AnalyzePointView, ResetOrbitRestoresOnlyOrientationAndIsIdempotent) {
     EXPECT_FALSE(view.show_deviation_grid);
     EXPECT_TRUE(view.show_fresnel_labels);
     EXPECT_EQ(view.curve_range_mode, PointCurveRangeMode::kFull);
+    EXPECT_EQ(view.sun_globe_view_mode, SunGlobeViewMode::kFit);
   }
 }
 
@@ -293,20 +312,20 @@ TEST(AnalyzePointView, SunGridRangeAndSequentialColor) {
   EXPECT_TRUE(constant.available);
   EXPECT_EQ(constant.min_rad, 0);
   EXPECT_EQ(constant.max_rad, 0);
-  EXPECT_EQ(SunGridRangeText(constant), "0 deg (constant)");
+  EXPECT_EQ(SunGridRangeText(constant), "0° (constant)");
   EXPECT_EQ(SunGridRangeText({}), "No valid deviation data");
   // Nonzero narrow spans must not be treated as constant or rounded to identical labels.
   const auto tiny = SunGridRange{ true, .1, std::nextafter(.1, 1.0) };
   EXPECT_EQ(SunGridCellColorRgba(tiny.min_rad, 1, tiny), 0xeb87375cu);
   EXPECT_EQ(SunGridCellColorRgba(tiny.max_rad, 1, tiny), 0xebfab8dbu);
   EXPECT_EQ(SunGridRangeText(tiny).find("constant"), std::string::npos);
-  EXPECT_TRUE(SunGridRangeText(tiny).find(" – ") != std::string::npos ||
-              SunGridRangeText(tiny).find("deg + [0, ") != std::string::npos);
-  EXPECT_NE(SunGridRangeText({ true, .1, .1000000001 }).find(" – "), std::string::npos);
+  EXPECT_TRUE(SunGridRangeText(tiny).find("° – ") != std::string::npos ||
+              SunGridRangeText(tiny).find("° + [0, ") != std::string::npos);
+  EXPECT_NE(SunGridRangeText({ true, .1, .1000000001 }).find("° – "), std::string::npos);
   // Here the double degree conversion itself rounds both endpoints to the same number.
   const auto collision = SunGridRange{ true, .013, std::nextafter(.013, 1.0) };
   const auto offsets = SunGridRangeText(collision);
-  EXPECT_NE(offsets.find("deg + [0, "), std::string::npos);
+  EXPECT_NE(offsets.find("° + [0, "), std::string::npos);
   EXPECT_EQ(offsets.find("[0, 0]"), std::string::npos);
   EXPECT_EQ(offsets.find("constant"), std::string::npos);
   grid.lat_count = 0;
@@ -445,7 +464,7 @@ TEST(AnalyzePointView, CurveClassifySplitsTheFlagQuadrants) {
   EXPECT_EQ(PointCurveClassify(-1.0, true), K::kUnavailable);          // physically impossible: named, not drawn
 }
 
-TEST(AnalyzePointView, CurveModesUseExactPositiveUnionAndFiveOrEightDecadeFloors) {
+TEST(AnalyzePointView, CurveModesUseExactPositiveUnionAndFiveOrFourteenDecadeFloors) {
   using K = PointCurveValueKind;
   PointContributionCurve curve;
   EXPECT_FALSE(PointCurveAxisFit(curve).valid);
@@ -467,7 +486,7 @@ TEST(AnalyzePointView, CurveModesUseExactPositiveUnionAndFiveOrEightDecadeFloors
   curve.points[0].k_kind = K::kPositive;
   EXPECT_DOUBLE_EQ(PointCurveAxisFit(curve).lo, 3.2e-5);
   EXPECT_DOUBLE_EQ(PointCurveAxisFit(curve).hi, 3.2);
-  EXPECT_DOUBLE_EQ(PointCurveAxisFit(curve, PointCurveRangeMode::kFull).lo, 3.2e-8);
+  EXPECT_DOUBLE_EQ(PointCurveAxisFit(curve, PointCurveRangeMode::kFull).lo, 3.2e-14);
   curve.points.resize(1);
   curve.points[0] = {};
   curve.points[0].rho_kind = K::kPositive;
@@ -491,6 +510,72 @@ TEST(AnalyzePointView, CurveModeResetsOnAdoptionButKeepsTheCamera) {
   ResetPointViewStateForNewAdoption(&view);
   EXPECT_EQ(view.curve_range_mode, PointCurveRangeMode::kFit);
   EXPECT_FLOAT_EQ(view.orbit_zoom, 2.0f);
+}
+
+// The globe view is the curve mode's same-vocabulary DIFFERENT-LIFE sibling: adoption keeps it
+// (the pose view is a browsing surface — a new point must not silently re-centre a view the
+// user pinned), while the curve axis refits. The divergent laws pinned side by side so a field
+// borrow cannot regress one into the other.
+TEST(AnalyzePointView, GlobeViewSurvivesAdoptionWhereTheCurveModeRefits) {
+  PointViewState view;
+  EXPECT_EQ(view.sun_globe_view_mode, SunGlobeViewMode::kFull);
+  view.sun_globe_view_mode = SunGlobeViewMode::kFit;
+  view.curve_range_mode = PointCurveRangeMode::kFull;
+  ResetPointViewStateForNewAdoption(&view);
+  EXPECT_EQ(view.sun_globe_view_mode, SunGlobeViewMode::kFit);
+  EXPECT_EQ(view.curve_range_mode, PointCurveRangeMode::kFit);
+}
+
+// The Full view's fixed basis, hand-derived from the definition (not re-computed through the
+// production basis): centre +x, up +z, right = up × centre = +y. The c-axis projection sits
+// above the disk's centre at (0.5, 0.5 − √2/4) in normalized disk coordinates — inside the
+// disk, straight up (the AC's geometric anchor); the centre maps to itself; the antipode −x
+// rides the rim at the deterministic azimuth; the orthonormality and the maker's handedness
+// hold exactly.
+TEST(AnalyzePointView, FullProjectorIsTheFixedCrystalBasisWithVerticalCAxis) {
+  const SunGlobeProjector full = MakeSunGlobeFullProjector();
+  // The fixed triple's fields, spelled against their definition.
+  constexpr double kSqrt2Half = 0.70710678118654752440;
+  for (int k = 0; k < 3; ++k) {
+    EXPECT_NEAR(full.centre[k], k == 0 ? 1.0 : 0.0, 1e-15);
+    EXPECT_NEAR(full.up[k], k == 2 ? 1.0 : 0.0, 1e-15);
+    EXPECT_NEAR(full.right[k], k == 1 ? 1.0 : 0.0, 1e-15);
+  }
+  // Handedness shared with the Fit maker: right = up × centre (the cross product spelled here).
+  EXPECT_NEAR(full.right[0], full.up[1] * full.centre[2] - full.up[2] * full.centre[1], 1e-15);
+  EXPECT_NEAR(full.right[1], full.up[2] * full.centre[0] - full.up[0] * full.centre[2], 1e-15);
+  EXPECT_NEAR(full.right[2], full.up[0] * full.centre[1] - full.up[1] * full.centre[0], 1e-15);
+  // Orthonormal to the dot product.
+  const auto dot = [](const double a[3], const double b[3]) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; };
+  EXPECT_NEAR(dot(full.centre, full.up), 0.0, 1e-15);
+  EXPECT_NEAR(dot(full.centre, full.right), 0.0, 1e-15);
+  EXPECT_NEAR(dot(full.up, full.right), 0.0, 1e-15);
+  // The anchors: the crystal +z lands centred and ABOVE the middle (screen y is down), at the
+  // 90° radius rho = 2 sin(π/4)/2 = sin(π/4) halved by the projection's 0.5 factor.
+  double x = 0.0;
+  double y = 0.0;
+  const double c_axis[3] = { 0.0, 0.0, 1.0 };
+  SunGlobeProject(full, c_axis, &x, &y);
+  EXPECT_NEAR(x, 0.5, 1e-12);
+  EXPECT_NEAR(y, 0.5 - 0.5 * kSqrt2Half, 1e-12);
+  EXPECT_GT(y, 0.0);
+  EXPECT_LT(y, 0.5);  // inside the disk, above its centre
+  const double centre_dir[3] = { 1.0, 0.0, 0.0 };
+  SunGlobeProject(full, centre_dir, &x, &y);
+  EXPECT_NEAR(x, 0.5, 1e-12);
+  EXPECT_NEAR(y, 0.5, 1e-12);
+  const double down_dir[3] = { 0.0, 0.0, -1.0 };
+  SunGlobeProject(full, down_dir, &x, &y);
+  EXPECT_NEAR(x, 0.5, 1e-12);
+  EXPECT_NEAR(y, 0.5 + 0.5 * kSqrt2Half, 1e-12);  // below the centre, mirrored
+  const double antipode[3] = { -1.0, 0.0, 0.0 };
+  SunGlobeProject(full, antipode, &x, &y);
+  EXPECT_NEAR(x, 1.0, 1e-12);
+  EXPECT_NEAR(y, 0.5, 1e-12);  // the rim, at the deterministic azimuth along +right
+  const double along_right[3] = { 0.0, 1.0, 0.0 };
+  SunGlobeProject(full, along_right, &x, &y);
+  EXPECT_NEAR(x, 0.5 + 0.5 * kSqrt2Half, 1e-12);
+  EXPECT_NEAR(y, 0.5, 1e-12);
 }
 
 TEST(AnalyzePointView, CurveClipsInLogSpaceAtBothBoundsAndPreservesCrossings) {

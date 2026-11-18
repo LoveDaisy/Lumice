@@ -282,10 +282,11 @@ void RenderPointCurveRangeControl(PointCurveRangeMode* mode);
 // ---- The u-globe (crystal-frame sun-direction sphere) -----------------------------------------------
 
 // The disk projection of the crystal-frame sun-direction sphere: Lambert azimuthal equal-area
-// about a centre fixed PER COMPONENT (the first valid sample's u — deterministic from the
-// document, stable while the slider and playback move), the map's rho = 2 sin(theta/2) family
-// normalized so the disk's rim is the ANTIPODE (the whole sphere maps into the disk). Coordinates
-// are the map's: [0,1]^2 over the bounding square, (0,0) top-left, y down.
+// about the mode's centre, the map's rho = 2 sin(theta/2) family normalized so the disk's rim is
+// the ANTIPODE (the whole sphere maps into the disk). Fit centres per component (the first valid
+// sample's u — deterministic from the document, stable while the slider and playback move); Full
+// centres on the fixed crystal basis below. Coordinates are the map's: [0,1]^2 over the bounding
+// square, (0,0) top-left, y down.
 struct SunGlobeProjector {
   double centre[3] = { 0.0, 0.0, 1.0 };
   double up[3] = { 0.0, 1.0, 0.0 };
@@ -295,6 +296,13 @@ struct SunGlobeProjector {
 // The component-fixed projector, read from the adopted document. ok=false when the component
 // carries no valid sample (no fibre to anchor on) — the caller renders the honest empty state.
 bool MakeSunGlobeProjector(const LUMICE_SinglePathResult& result, int component, SunGlobeProjector* out);
+
+// The Full view's fixed projector, a total function of nothing: centre = the crystal +x (an
+// equatorial direction, owner-picked 2026-11-17), up = the crystal +z — the c-axis stands
+// vertical on screen, the display convention the 3D orbit camera shares (doc/geometry/
+// coordinate-convention.md) — and right = up × centre, the maker's own handedness. The same arc
+// projects identically at every picked point (the backdrop's pixel-identity contract).
+SunGlobeProjector MakeSunGlobeFullProjector();
 
 // The crystal-frame direction `u` -> normalized disk coordinates. Always answers (the whole
 // sphere is in bounds; the antipode collapses to the rim).
@@ -310,12 +318,17 @@ struct SunGridRange {
 SunGridRange SunGridDisplayRange(const LUMICE_PathSunGrid& grid);
 uint32_t SunGridCellColorRgba(double deviation_rad, uint8_t valid, const SunGridRange& range);
 std::string SunGridRangeText(const SunGridRange& range);
+// The vertical deviation legend that rides the globe canvas's RIGHT edge (2026-11-17 feedback:
+// the colour band and its ticks are a column — low value at the bottom, high at the top, degrees
+// spelled with °). `SunGridLegendColumnWidth` is the layout's width claim on the canvas row
+// (the full wrapped footprint of the header and range text at that width); the column's height
+// absorbs the row's slack into the band itself, so no vertical budget is reserved for it.
 // Shared production faces, also exercised by controlled real-frame fixtures. No borrowed data
 // escapes the frame; legend and backdrop consume the same range and colour authority.
 void DrawSunGridBackdrop(ImDrawList* dl, const LUMICE_PathSunGrid& grid, const SunGlobeProjector& projector,
                          const SunGridRange& range, const ImVec2& centre, float radius);
-float SunGridLegendHeight(const SunGridRange& range, float width);
-void RenderSunGridLegend(const SunGridRange& range);
+float SunGridLegendColumnWidth();
+void RenderSunGridLegend(const SunGridRange& range, float row_height);
 
 // ---- The representative-ray display -----------------------------------------------------------------
 
@@ -465,6 +478,14 @@ struct Ray3DFrameInfo {
   ImVec2 axes_tips[3];
   ImVec2 axes_label_min[3];
   ImVec2 axes_label_max[3];
+  // Render feedback only: the canvas legend's complete reserved footprint and per-unit rects
+  // when it drew this frame (a drawn trace only, at the canvas's left edge). `legend_drawn`
+  // answers presence — an undrawn frame leaves the rects stale, the flag is the gate.
+  bool legend_drawn = false;
+  ImVec2 legend_min;
+  ImVec2 legend_max;
+  ImVec2 legend_unit_min[3];
+  ImVec2 legend_unit_max[3];
 };
 const Ray3DFrameInfo& LastRay3DFrameInfo();
 

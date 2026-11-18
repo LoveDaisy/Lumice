@@ -6,6 +6,7 @@
 #include "IconsFontAwesome6.h"
 #include "gui/file_io.hpp"
 #include "gui/theme.hpp"
+#include "gui/tooltip.hpp"
 #include "imgui.h"
 #include "lumice_base.h"
 #include "lumice_editor.h"
@@ -15,9 +16,11 @@ namespace lumice::gui {
 
 namespace {
 
-// Filter-side hints (kFilterLabel). A filter's P/B/D relabels face numbers whatever the crystal,
-// so the hint's job is to say when that merges paths that are not physically alike, and how to
-// select them exactly instead: untick the element and write each wanted path as its own row.
+// Transparent hover target for the conditional P/B/D help is the shared InfoIcon (gui/tooltip.hpp);
+// what remains local is only when each icon appears and the text it carries. A filter's P/B/D
+// relabels face numbers whatever the crystal, so the hint's job is to say when that merges paths
+// that are not physically alike, and how to select them exactly instead: untick the element and
+// write each wanted path as its own row.
 #define LUMICE_EXACT_ROUTE "\nTo select them separately, untick it and write each path as its own row."
 constexpr const char* kDAxisTooltipText =
     "D applies when azimuth = uniform 360\xc2\xb0 and roll mean is a multiple of 30\xc2\xb0.\n"
@@ -46,23 +49,6 @@ constexpr const char* kBAnalysisHover =
     "B: merge the 1<->2 / upper<->lower cone mirror, only where it is physically equivalent";
 constexpr const char* kDAnalysisHover =
     "D: merge the vertical mirror the roll selects, only where it is physically equivalent";
-
-// Transparent SmallButton as a hover target for a tooltip (TextDisabled lacks a stable item ID
-// needed by the test engine). `icon_id` is the ImGui id of the button.
-void InfoIcon(const char* icon_id, const char* tooltip) {
-  ImGui::SameLine();
-  ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
-  ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0, 0, 0, 0));
-  ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0, 0, 0, 0));
-  ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-  ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0.0f);
-  ImGui::SmallButton(icon_id);
-  ImGui::PopStyleVar();
-  ImGui::PopStyleColor(4);
-  if (ImGui::IsItemHovered()) {
-    ImGui::SetTooltip("%s", tooltip);
-  }
-}
 
 }  // namespace
 
@@ -136,7 +122,7 @@ void RenderSymmetryCheckboxes(bool& sym_p, bool& sym_b, bool& sym_d, const Symme
   }
   const bool p_icon = !physical && (!avail.p_axis || avail.rotation_step != 1);
   if (!physical && !avail.p_axis) {
-    std::snprintf(id_buf, sizeof(id_buf), ICON_FA_CIRCLE_INFO "##p_tooltip_icon_%s", id_suffix);
+    std::snprintf(id_buf, sizeof(id_buf), "p_tooltip_icon_%s", id_suffix);
     InfoIcon(id_buf, kPAxisTooltipText);
   } else if (!physical && avail.rotation_step != 1) {
     char tip[320];
@@ -150,7 +136,7 @@ void RenderSymmetryCheckboxes(bool& sym_p, bool& sym_b, bool& sym_d, const Symme
                     "paths through faces that differ." LUMICE_EXACT_ROUTE,
                     avail.rotation_step * 60);
     }
-    std::snprintf(id_buf, sizeof(id_buf), ICON_FA_CIRCLE_INFO "##p_tooltip_icon_%s", id_suffix);
+    std::snprintf(id_buf, sizeof(id_buf), "p_tooltip_icon_%s", id_suffix);
     InfoIcon(id_buf, tip);
   }
   if (fits_on_line(unit_w("B", !physical && !avail.b))) {
@@ -162,7 +148,7 @@ void RenderSymmetryCheckboxes(bool& sym_p, bool& sym_b, bool& sym_d, const Symme
     ImGui::SetTooltip("%s", physical ? kBAnalysisHover : kBFilterHover);
   }
   if (!physical && !avail.b) {
-    std::snprintf(id_buf, sizeof(id_buf), ICON_FA_CIRCLE_INFO "##b_tooltip_icon_%s", id_suffix);
+    std::snprintf(id_buf, sizeof(id_buf), "b_tooltip_icon_%s", id_suffix);
     InfoIcon(id_buf, avail.b_axis ? kBShapeTooltipText : kBAxisTooltipText);
   }
   if (fits_on_line(unit_w("D", !physical && !avail.d))) {
@@ -174,7 +160,7 @@ void RenderSymmetryCheckboxes(bool& sym_p, bool& sym_b, bool& sym_d, const Symme
     ImGui::SetTooltip("%s", physical ? kDAnalysisHover : kDFilterHover);
   }
   if (!physical && !avail.d) {
-    std::snprintf(id_buf, sizeof(id_buf), ICON_FA_CIRCLE_INFO "##d_tooltip_icon_%s", id_suffix);
+    std::snprintf(id_buf, sizeof(id_buf), "d_tooltip_icon_%s", id_suffix);
     InfoIcon(id_buf, avail.d_axis ? kDShapeTooltipText : kDAxisTooltipText);
   }
 }

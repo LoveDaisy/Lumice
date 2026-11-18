@@ -28,6 +28,7 @@
 #include "gui/overlay_labels.hpp"  // detail::ClampLabelPosToViewport — the one shared label clamp
 #include "gui/semantic_colors.hpp"
 #include "gui/theme.hpp"
+#include "gui/tooltip.hpp"
 #include "imgui.h"
 #include "include/lumice_editor.h"  // LUMICE_GetCrystalMesh — the crystal's true-scale wireframe
 #include "util/env_knobs.hpp"       // env::AnalyzeDebugDetails — the diagnostics groups' env gate
@@ -85,9 +86,10 @@ void RegisterPointTextItem(const char* label) {
   g.LastItemData = saved;
 }
 
-// One policy value drives both the numerical floor and its human-readable tooltip.
+// One policy value drives both the numerical floor and its help icon's text (owner 2026-11-17:
+// Full widens to 14 decades; both values stay adjustable after hands-on).
 constexpr int CurveRangeDecades(PointCurveRangeMode mode) {
-  return mode == PointCurveRangeMode::kFull ? 8 : 5;
+  return mode == PointCurveRangeMode::kFull ? 14 : 5;
 }
 
 struct CurveArm {
@@ -640,13 +642,14 @@ void RenderPointCurveRangeControl(PointCurveRangeMode* mode) {
     if (current) {
       ImGui::PopStyleColor(4);
     }
-    if (ImGui::IsItemHovered()) {
-      ImGui::SetTooltip("Up to %d decades below the largest positive value.", CurveRangeDecades(candidate));
-    }
     if (segment == 0) {
       ImGui::SameLine(0.0f, 0.0f);
     }
   }
+  // The two-tier rule: the pair's shared concept rides one associated info icon instead of the
+  // buttons' hover (doc/gui/gui-visual-language.md); the floors stay the policy values.
+  InfoIcon("curve_range_help", "Log-axis floor, decades below the largest positive value:\nFit %d, Full %d.",
+           CurveRangeDecades(PointCurveRangeMode::kFit), CurveRangeDecades(PointCurveRangeMode::kFull));
 }
 
 void DrawPointCurveLogAxis(ImDrawList* dl, const PointCurveAxisRange& visible, const ImVec2& plot_min,
@@ -717,22 +720,13 @@ void DrawPointCurveSeed(ImDrawList* dl, const PointContributionCurve& curve, con
 
 // ---- The u-globe -------------------------------------------------------------------------------------
 
-bool MakeSunGlobeProjector(const LUMICE_SinglePathResult& result, int component, SunGlobeProjector* out) {
-  const int stored = PointValidSampleIndexAt(result, component, 0);
-  if (stored < 0) {
-    return false;
-  }
-  LUMICE_PathPointSample sample{};
-  sample.struct_size = sizeof(sample);
-  if (LUMICE_PathPointGetSample(&result, static_cast<size_t>(component), static_cast<size_t>(stored), &sample) !=
-      LUMICE_PATH_READ_OK) {
-    return false;
-  }
-  // The projector's basis: the centre is the component's first valid u; the reference up picks the
-  // world +z when the centre is not parallel to it (the map's own fallback rule), else +x. The
-  // centre/up/right triple is orthonormal by construction (Gram-Schmidt, then a re-cross).
+// The projector's basis rule, shared by both view modes so they cannot drift: `centre` as given;
+// the reference up picks the world +z when the centre is not parallel to it (the map's own
+// fallback rule), else +x; then up is orthogonalized against the centre and right = up × centre
+// re-crosses the triple orthonormal.
+void BuildSunGlobeBasis(const double centre[3], SunGlobeProjector* out) {
   for (int k = 0; k < 3; ++k) {
-    out->centre[k] = sample.sun_in_crystal[k];
+    out->centre[k] = centre[k];
   }
   static constexpr double kRefZ[3] = { 0.0, 0.0, 1.0 };
   static constexpr double kRefX[3] = { 1.0, 0.0, 0.0 };
@@ -750,7 +744,34 @@ bool MakeSunGlobeProjector(const LUMICE_SinglePathResult& result, int component,
   out->right[0] = up[1] * out->centre[2] - up[2] * out->centre[1];
   out->right[1] = up[2] * out->centre[0] - up[0] * out->centre[2];
   out->right[2] = up[0] * out->centre[1] - up[1] * out->centre[0];
+}
+
+bool MakeSunGlobeProjector(const LUMICE_SinglePathResult& result, int component, SunGlobeProjector* out) {
+  const int stored = PointValidSampleIndexAt(result, component, 0);
+  if (stored < 0) {
+    return false;
+  }
+  LUMICE_PathPointSample sample{};
+  sample.struct_size = sizeof(sample);
+  if (LUMICE_PathPointGetSample(&result, static_cast<size_t>(component), static_cast<size_t>(stored), &sample) !=
+      LUMICE_PATH_READ_OK) {
+    return false;
+  }
+  // The Fit view's centre is the component's first valid u.
+  BuildSunGlobeBasis(sample.sun_in_crystal, out);
   return true;
+}
+
+SunGlobeProjector MakeSunGlobeFullProjector() {
+  // The Full view's centre: the crystal +x, an equatorial fixed direction (owner-picked within
+  // the "fixed equatorial direction" budget — the same latitude band the common refraction /
+  // reflection fibres sweep, so the band stays off the rim). The shared basis rule puts +z (the
+  // c-axis) on screen-up from it: |centre.z| = 0 < 0.999 references +z, up orthogonalizes to
+  // exactly +z, right = up × centre = +y.
+  static constexpr double kFixedCentre[3] = { 1.0, 0.0, 0.0 };
+  SunGlobeProjector out;
+  BuildSunGlobeBasis(kFixedCentre, &out);
+  return out;
 }
 
 void SunGlobeProject(const SunGlobeProjector& projector, const double u[3], double* out_x, double* out_y) {
@@ -789,7 +810,7 @@ size_t SunGridDrawCount(const LUMICE_PathSunGrid& grid) {
   return std::min(grid.cell_count, static_cast<size_t>(grid.lat_count) * static_cast<size_t>(grid.lon_count));
 }
 
-constexpr const char* kSunGridLegendTitle = "Deviation δ (deg) · auto range";
+constexpr const char* kSunGridLegendTitle = "Deviation δ · auto";
 
 }  // namespace
 
@@ -824,29 +845,6 @@ uint32_t SunGridCellColorRgba(double deviation_rad, uint8_t valid, const SunGrid
   return IM_COL32(static_cast<int>(92 + 127 * t), static_cast<int>(55 + 129 * t), static_cast<int>(135 + 115 * t), 235);
 }
 
-std::string SunGridRangeText(const SunGridRange& range) {
-  if (!range.available) {
-    return "No valid deviation data";
-  }
-  constexpr double kRadToDeg = 180.0 / 3.14159265358979323846;
-  char lo[64], hi[64];
-  for (int precision = 6; precision <= 17; ++precision) {
-    std::snprintf(lo, sizeof(lo), "%.*g", precision, range.min_rad * kRadToDeg);
-    std::snprintf(hi, sizeof(hi), "%.*g", precision, range.max_rad * kRadToDeg);
-    if (range.min_rad == range.max_rad || std::strcmp(lo, hi) != 0) {
-      break;
-    }
-  }
-  if (range.min_rad != range.max_rad && std::strcmp(lo, hi) == 0) {
-    // Adjacent doubles can collide in the degree conversion itself, not just in formatting.
-    // Keep a nonzero interval honest with an origin + offsets, rather than inventing extrema.
-    char span[64];
-    std::snprintf(span, sizeof(span), "%.17g", (range.max_rad - range.min_rad) * kRadToDeg);
-    return std::string(lo) + " deg + [0, " + span + "] deg";
-  }
-  return range.min_rad == range.max_rad ? std::string(lo) + " deg (constant)" : std::string(lo) + " – " + hi + " deg";
-}
-
 void DrawSunGridBackdrop(ImDrawList* dl, const LUMICE_PathSunGrid& grid, const SunGlobeProjector& projector,
                          const SunGridRange& range, const ImVec2& centre, float radius) {
   const size_t count = SunGridDrawCount(grid);
@@ -868,33 +866,184 @@ void DrawSunGridBackdrop(ImDrawList* dl, const LUMICE_PathSunGrid& grid, const S
   }
 }
 
-float SunGridLegendHeight(const SunGridRange& range, float width) {
-  const float spacing = ImGui::GetStyle().ItemSpacing.y;
-  const float wrap = std::max(1.0f, width);
-  return ImGui::CalcTextSize(kSunGridLegendTitle, nullptr, false, wrap).y + spacing +
-         ImGui::CalcTextSize(SunGridRangeText(range).c_str(), nullptr, false, wrap).y + spacing +
-         (range.available ? UiPx(8) + spacing : 0.0f);
+float SunGridLegendColumnWidth() {
+  // The column's fixed width claim on the canvas row: wide enough for the common "12.3° – 45.6°"
+  // range on one line at the default font, narrow enough to leave the disk the row's majority.
+  // Longer extreme-value texts wrap to further lines (the footprint is consumed vertically —
+  // the band absorbs the row's slack, never the text).
+  return UiPx(96.0f);
 }
 
-void RenderSunGridLegend(const SunGridRange& range) {
-  DisabledWrappedText("%s", kSunGridLegendTitle);
-  RegisterPointTextItem("##sun_grid_title");
-  if (range.available) {
-    const ImVec2 start = ImGui::GetCursorScreenPos();
-    const float width = std::max(1.0f, ImGui::GetContentRegionAvail().x);
-    ImGui::InvisibleButton("##sun_grid_band", ImVec2(width, UiPx(8)));
-    ImDrawList* dl = ImGui::GetWindowDrawList();
-    const bool constant = range.min_rad == range.max_rad;
-    const int steps = constant ? 1 : 64;
-    for (int i = 0; i < steps; ++i) {
-      const double delta = constant ? range.min_rad : range.min_rad + (range.max_rad - range.min_rad) * i / (steps - 1);
-      dl->AddRectFilled(ImVec2(start.x + width * i / steps, start.y),
-                        ImVec2(start.x + width * (i + 1) / steps, start.y + UiPx(8)),
-                        SunGridCellColorRgba(delta, 1, range));
+// The range text's own endpoint ladder (the 6..17 significant-digit climb until lo and hi read
+// apart, or the conversion itself collides) — shared with the band's end ticks so the ticks and
+// the text cannot disagree about the endpoints they name. Also the single owner of the rad→deg
+// display conversion (kRadToDeg, this file's one copy).
+constexpr double kRadToDeg = 180.0 / 3.14159265358979323846;
+
+void SunGridDegEndpoints(const SunGridRange& range, char* lo, size_t lo_size, char* hi, size_t hi_size) {
+  for (int precision = 6; precision <= 17; ++precision) {
+    std::snprintf(lo, lo_size, "%.*g", precision, range.min_rad * kRadToDeg);
+    std::snprintf(hi, hi_size, "%.*g", precision, range.max_rad * kRadToDeg);
+    if (range.min_rad == range.max_rad || std::strcmp(lo, hi) != 0) {
+      break;
     }
   }
-  DisabledWrappedText("%s", SunGridRangeText(range).c_str());
-  RegisterPointTextItem("##sun_grid_range");
+}
+
+std::string SunGridRangeText(const SunGridRange& range) {
+  if (!range.available) {
+    return "No valid deviation data";
+  }
+  char lo[64], hi[64];
+  SunGridDegEndpoints(range, lo, sizeof(lo), hi, sizeof(hi));
+  if (range.min_rad != range.max_rad && std::strcmp(lo, hi) == 0) {
+    // Adjacent doubles can collide in the degree conversion itself, not just in formatting.
+    // Keep a nonzero interval honest with an origin + offsets, rather than inventing extrema.
+    char span[64];
+    std::snprintf(span, sizeof(span), "%.17g", (range.max_rad - range.min_rad) * kRadToDeg);
+    return std::string(lo) + "° + [0, " + span + "]°";
+  }
+  return range.min_rad == range.max_rad ? std::string(lo) + "° (constant)" : std::string(lo) + "° – " + hi + "°";
+}
+
+void RenderSunGridLegend(const SunGridRange& range, float row_height) {
+  // The vertical column at the canvas's right edge: header, the band row, the range text. The
+  // end ticks ride the band's right edge (the high one top-aligned, the low one pinned to the
+  // band's bottom) but are SUBMITTED only when the row's remainder can host their stack — the
+  // range text carries both endpoints verbatim, so a short row loses the tick labels, then the
+  // ramp, never its numbers. The column manages the cursor EXPLICITLY: a wrapped text ends
+  // ImGui's item flow back at the window's line start, so a SameLine'd column of wrapped texts
+  // would scatter its tail down the window's left edge — every item is placed at the column's
+  // x by hand, wrapped at the column's width.
+  //
+  // The bound is the mechanism, measured before anything submits: budget = the row's remainder
+  // after the header and the range text. budget >= tick stack submits band + ticks (band =
+  // min(budget, cap), the column bounded by the row); 0 <= budget < stack submits band alone
+  // (band = budget); budget < 0 — even the words exceed the row — yields the whole legend, the
+  // canvas's own short-host rule. Every submitted branch satisfies column_height <= row_height
+  // by construction; nothing can slide under the slider row's later-submitted frame.
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  const float wrap = std::max(1.0f, SunGridLegendColumnWidth());
+  const float spacing = ImGui::GetStyle().ItemSpacing.y;
+  const ImVec2 column = ImGui::GetCursorScreenPos();
+  const float wrap_x = ImGui::GetCursorPosX() + wrap;  // window-local
+  const float band_w = UiPx(12.0f);
+  const float band_gap = ImGui::GetStyle().ItemSpacing.x;
+  // The ticks render at the band's right edge, so their measured width uses the width they
+  // actually have there — measuring from the column origin would undercount the second line a
+  // long endpoint string wraps into and could overlap the two ticks.
+  const float tick_wrap = std::max(1.0f, wrap - band_w - band_gap);
+  const auto text_h = [&](const char* text, float avail) { return ImGui::CalcTextSize(text, nullptr, false, avail).y; };
+  // One submission plan, grouped by section: same-typed scalars cannot silently transpose
+  // across band / ticks / range at either call site, and the groups read in the column's own
+  // section order.
+  struct LegendColumnPlan {
+    struct Band {
+      float row_h;
+      float h;
+      bool show_ticks;
+    };
+    struct Ticks {
+      const char* hi;
+      const char* lo;
+    };
+    struct Range {
+      const char* text;
+      float h;
+    };
+    float title_h;
+    Band band;
+    Ticks ticks;
+    Range range;
+  };
+  const auto submit_column = [&](const LegendColumnPlan& plan) {
+    ImGui::PushTextWrapPos(wrap_x);
+    float y = column.y;
+    // Place BEFORE each item: ImGui's ItemSize pulls the flow cursor back to the window's line
+    // start after every item (wrapped texts and buttons alike), so the column re-pins its own
+    // cursor ahead of each member — nothing can fall out of the column to the line below.
+    const auto place = [&](float item_h) {
+      ImGui::SetCursorScreenPos(ImVec2(column.x, y));
+      y += item_h + spacing;
+    };
+    place(plan.title_h);
+    DisabledWrappedText("%s", kSunGridLegendTitle);
+    RegisterPointTextItem("##sun_grid_title");
+    const ImVec2 band_pos(column.x, y);
+    y += plan.band.row_h + spacing;
+    // A zero-height band submits no item at all: an empty hit target would only register as a
+    // phantom "present" widget to the tests and the item registry.
+    if (plan.band.h > 0.0f) {
+      ImGui::SetCursorScreenPos(band_pos);
+      ImGui::InvisibleButton("##sun_grid_band", ImVec2(band_w, plan.band.h));
+      const bool constant = range.min_rad == range.max_rad;
+      const int steps = constant ? 1 : 64;
+      for (int i = 0; i < steps; ++i) {
+        // Segment i counts from the TOP: the last segment (the ramp's high end) sits at the top,
+        // so the delta walk runs high → low as y grows.
+        const double delta =
+            constant ? range.min_rad : range.max_rad - (range.max_rad - range.min_rad) * i / (steps - 1);
+        dl->AddRectFilled(ImVec2(band_pos.x, band_pos.y + plan.band.h * i / steps),
+                          ImVec2(band_pos.x + band_w, band_pos.y + plan.band.h * (i + 1) / steps),
+                          SunGridCellColorRgba(delta, 1, range));
+      }
+    }
+    if (plan.band.show_ticks) {
+      ImGui::SetCursorScreenPos(ImVec2(band_pos.x + band_w + band_gap, band_pos.y));
+      DisabledWrappedText("%s°", plan.ticks.hi);
+      RegisterPointTextItem("##sun_grid_hi_tick");
+      const float lo_y = band_pos.y + std::max(plan.band.h - text_h(plan.ticks.lo, tick_wrap),
+                                               text_h(plan.ticks.hi, tick_wrap) + 2.0f);
+      ImGui::SetCursorScreenPos(ImVec2(band_pos.x + band_w + band_gap, lo_y));
+      DisabledWrappedText("%s°", plan.ticks.lo);
+      RegisterPointTextItem("##sun_grid_lo_tick");
+    }
+    place(plan.range.h);
+    DisabledWrappedText("%s", plan.range.text);
+    RegisterPointTextItem("##sun_grid_range");
+    ImGui::PopTextWrapPos();
+    // The column's end: the caller resumes the flow from here (the slider row below the canvas).
+    ImGui::SetCursorScreenPos(ImVec2(column.x, y));
+  };
+  const float title_h = text_h(kSunGridLegendTitle, wrap);
+  // The caller joins the legend to the canvas with SameLine(); a yield exit that submits
+  // nothing would leave that SameLine pending, and the region's NEXT item (the slider row,
+  // then the SameLine'd Play/Stop) would anchor to the canvas row's top line and land on the
+  // disk. A zero-size Dummy consumes the join: ItemSize clears the pending line with no
+  // identified item left behind.
+  const auto yield = [&] { ImGui::Dummy(ImVec2(0.0f, 0.0f)); };
+  if (!range.available) {
+    const std::string empty_text = SunGridRangeText(range);
+    const float body_h = text_h(empty_text.c_str(), wrap);
+    // Charges the two spacings the submission below actually advances (band row or not), so the
+    // column_height <= row_height bound stated above holds for this arm verbatim.
+    if (title_h + 2.0f * spacing + body_h > row_height) {
+      yield();  // a row too short for even the words yields the legend (the short-host rule)
+      return;
+    }
+    submit_column({ title_h, { 0.0f, 0.0f, false }, { nullptr, nullptr }, { empty_text.c_str(), body_h } });
+    return;
+  }
+  char lo[64], hi[64];
+  SunGridDegEndpoints(range, lo, sizeof(lo), hi, sizeof(hi));
+  char hi_tick[72];
+  std::snprintf(hi_tick, sizeof(hi_tick), "%s°", hi);
+  char lo_tick[72];
+  std::snprintf(lo_tick, sizeof(lo_tick), "%s°", lo);
+  const float hi_h = text_h(hi_tick, tick_wrap);
+  const float lo_h = text_h(lo_tick, tick_wrap);
+  const float tick_stack = hi_h + 2.0f + lo_h;
+  const std::string range_text = SunGridRangeText(range);
+  const float range_h = text_h(range_text.c_str(), wrap);
+  const float budget = row_height - title_h - spacing - range_h - spacing;
+  if (budget < 0.0f) {
+    yield();  // even the header and the numbers exceed the row — yield, never overlap the row below
+    return;
+  }
+  const bool show_ticks = budget >= tick_stack;
+  const float band_h = std::clamp(budget, 0.0f, UiPx(120.0f));
+  const float band_row_h = show_ticks ? std::max(band_h, tick_stack) : band_h;
+  submit_column({ title_h, { band_row_h, band_h, show_ticks }, { hi, lo }, { range_text.c_str(), range_h } });
 }
 
 // ---- The representative-ray display -----------------------------------------------------------------
@@ -1327,6 +1476,19 @@ std::optional<CurrentSample> CurrentSampleOf(const LUMICE_SinglePathResult& resu
   return out;
 }
 
+// The trace key for the sample the display currently points at — the ONE constructor for the
+// identity both the 3D region's gate and the status bar's transient read consume (a56: the
+// key's field semantics have one implementation, so the two readers cannot drift apart; the
+// guard SEQUENCES around it stay each site's own, because the region renders per-arm facts
+// while the bar only needs the no-valid-sample vs state split).
+RayTraceKey RayTraceKeyFor(const SurveyQueryId& point_id, const CurrentSample& current) {
+  RayTraceKey key;
+  key.point_id = point_id;
+  key.component = current.component;
+  key.sample = current.stored;
+  return key;
+}
+
 // The mesh cache: one crystal's wireframe, rebuilt when the pool slot or the config's param hash
 // moves. LUMICE_CrystalMesh owns its storage by value (lumice_editor.h: fixed-size caller
 // arrays, no destroy) — the by-value cache is the whole ownership story; overwriting sheds the
@@ -1469,7 +1631,10 @@ void DrawRay3DAxes(ImDrawList* dl, const float rotation[16], Ray3DFrameInfo& fra
   frame.axes_max = ImVec2(visible.Max.x - inset, visible.Max.y - inset);
   frame.axes_min = ImVec2(frame.axes_max.x - half * 2, frame.axes_max.y - half * 2);
   frame.axes_origin = ImVec2(frame.axes_max.x - half, frame.axes_max.y - half);
-  dl->AddRectFilled(frame.axes_min, frame.axes_max, IM_COL32(16, 18, 22, 255), UiPx(3.0f));
+  // No plate (2026-11-17 feedback: the old IM_COL32(16,18,22) square read as a black box glued
+  // on the canvas). The arrows and letters draw straight over the GL image — the same surface
+  // every other overlay ink sits on; the compass's reserved footprint still feeds the labels'
+  // avoidance, and the owner judges the look.
   std::vector<ImRect> letters;
   for (int axis = 0; axis < 3; ++axis) {
     const ImVec2 delta(length * rotation[axis * 4], -length * rotation[axis * 4 + 1]);
@@ -1521,6 +1686,45 @@ ImU32 SegmentColor(int kind, float alpha) {
   const ImU32 color = kRayTraceSegmentColors[kind == 0 ? 0 : kind == 1 ? 1 : 2];
   return (color & ~IM_COL32_A_MASK) | (static_cast<ImU32>(255 * alpha) << IM_COL32_A_SHIFT);
 }
+
+// The Ray3D region's one conceptual help text (the two-tier tooltip rule): the usage note and
+// the display semantics' legend — the width mapping's honesty note (visual sqrt scaling, no
+// absorption — the ratio numbers carry the exact values), the contact shapes' vocabulary, and
+// the unusable-factor boundary. Status reasons and real errors stay in the report: they are
+// facts of a state, not concepts.
+constexpr const char* kRay3DHelpText =
+    "One pose's real path in the crystal: drag orbits, wheel zooms. Same physical state, two "
+    "views.\n\n"
+    "Width follows cumulative Fresnel relative energy (no absorption); visual scaling — the "
+    "ratio numbers, when shown, carry the exact values. Contacts: solid = facing the camera, "
+    "hollow = back-facing or facing unknown. A segment past an unusable interface factor draws "
+    "neutral (n/a).";
+
+// The Ray3D report's fixed budget: two text lines over the child's real chrome (its padding and
+// border), computed from the LIVE font every call — never from content, last frame's height or
+// the trace state. The canvas eats whatever this does not reserve; narrower columns scroll their
+// longer wraps (an error's full text stays reachable by native scrolling).
+float Ray3DReportQuota() {
+  const ImGuiStyle& style = ImGui::GetStyle();
+  return 2.0f * ImGui::GetTextLineHeightWithSpacing() + 2.0f * style.WindowPadding.y + UiPx(6.0f);
+}
+
+// The report's stable source label: the component/sample identity the shown content belongs to
+// (1-based, the component list's and the curve readout's vocabulary). It is the honesty marker
+// that lets the report hold still across a sample switch's transient: the retained line names
+// its own sample, never masquerading as the cursor's.
+std::string Ray3DReportSourceLine(int component, int sample_position, int valid_count) {
+  char buf[64];
+  std::snprintf(buf, sizeof(buf), "Component %d \xc2\xb7 sample %d/%d", component + 1, sample_position, valid_count);
+  return std::string(buf);
+}
+
+// The canvas legend's drawing vocabulary — ONE source for the footprint decision, the Fresnel
+// ladder's exclusion extents and the ink emission (a56: the ink can never drift from the rects
+// the avoidance reserves by).
+constexpr const char* kRay3DLegendLabels[] = { "entry", "internal", "exit" };
+constexpr float kRay3DLegendSwatchUi = 9.0f;
+constexpr float kRay3DLegendSwatchGapUi = 5.0f;
 
 }  // namespace
 
@@ -1612,7 +1816,45 @@ const CrystalConfig* FrozenCrystalForPool(const GuiState& state, int pool) {
   return &state.analysis.frozen_crystals[static_cast<size_t>(pool)];
 }
 
-// ---- The sun-direction globe -------------------------------------------------------------------------
+// ---- The sun-direction globe
+// -----------------------------------------------------------------------------------------
+
+// One cell of the globe view control: the wider of the two labels plus frame padding each
+// side — the single authority both the control's cells and the title band's fits check build
+// on (the check undercounting Full−Fit once already, the two copies would drift again).
+float SunGlobeViewCellWidth() {
+  return std::max(ImGui::CalcTextSize("Fit").x, ImGui::CalcTextSize("Full").x) +
+         2.0f * ImGui::GetStyle().FramePadding.x;
+}
+
+// The globe view control's full footprint: two same-width cells joined with zero spacing — the
+// width budget the title band's fits-on-line check reserves.
+float SunGlobeViewControlWidth() {
+  return 2.0f * SunGlobeViewCellWidth();
+}
+
+// The globe view's fixed two-cell control (the curve range control's shape, a different life:
+// this mode survives adoptions where the curve's refits — see SunGlobeViewMode). Clicking the
+// current cell is a no-op; the pair's shared concept rides the region title's info icon.
+void RenderSunGlobeViewControl(SunGlobeViewMode* mode) {
+  const float cell_w = SunGlobeViewCellWidth();
+  for (int segment = 0; segment < 2; ++segment) {
+    const auto candidate = segment == 0 ? SunGlobeViewMode::kFit : SunGlobeViewMode::kFull;
+    const bool current = *mode == candidate;
+    if (current) {
+      PushCurrentSegmentStyle();
+    }
+    if (ImGui::Button(segment == 0 ? "Fit##globe_view" : "Full##globe_view", ImVec2(cell_w, 0)) && !current) {
+      *mode = candidate;
+    }
+    if (current) {
+      ImGui::PopStyleColor(4);
+    }
+    if (segment == 0) {
+      ImGui::SameLine(0.0f, 0.0f);
+    }
+  }
+}
 
 void RenderAnalyzeSunGlobeRegion(GuiState& state, const ImVec2& size) {
   ImGui::BeginChild("##AnalyzeSunGlobe", size, ImGuiChildFlags_Borders);
@@ -1623,10 +1865,32 @@ void RenderAnalyzeSunGlobeRegion(GuiState& state, const ImVec2& size) {
   const auto render_state_area = [](auto&& draw_lines) { draw_lines(); };
 
   // ---- The fixed interaction stack (R4): the controls a hand must reach are submitted outside
-  // any scrolling region at every cell the window's minimum admits — the title here (the
-  // deviation-grid toggle lives in the factors region's user-facing diagnostics group, §16.4);
-  // the combo, canvas, colour legend and slider/play row in the discovered arm below. ----
+  // any scrolling region at every cell the window's minimum admits — the title with the view
+  // control and its info icon here (the deviation-grid toggle lives in the factors region's
+  // user-facing diagnostics group, §16.4); the combo, canvas, colour legend and slider/play row
+  // in the discovered arm below. ----
   ImGui::TextUnformatted("Sun direction globe");
+  // The view control joins the title while the line admits it; the shared concept text rides
+  // one info icon (the two-tier rule) — the six per-arm copies of the old concept sentence are
+  // retired with it.
+  const auto title_band_fits = [&](float next_w) {
+    const float line_right = ImGui::GetContentRegionMax().x + ImGui::GetWindowPos().x;
+    return ImGui::GetItemRectMax().x + ImGui::GetStyle().ItemSpacing.x + next_w <= line_right;
+  };
+  if (title_band_fits(SunGlobeViewControlWidth())) {
+    ImGui::SameLine();
+  }
+  RenderSunGlobeViewControl(&view.sun_globe_view_mode);
+  if (title_band_fits(InfoIconAdvance())) {
+    ImGui::SameLine();
+  }
+  InfoIcon("globe_view_help",
+           "Crystal-frame sun directions — a pose projection, not the full SO(3).\n"
+           "Full: a fixed crystal-frame basis (centre +x, up +z — the c-axis vertical on "
+           "screen); the same arc draws the same map at every picked point.\n"
+           "Fit: centred on this component's first valid sample — the view follows the point.\n"
+           "The deviation colour scale is auto-ranged per document; colours do not compare "
+           "across results.");
 
   const auto info = point.adopted_result ? ReadPointInfo(*point.adopted_result) : std::nullopt;
   std::vector<PointComponentRow> rows;
@@ -1659,8 +1923,9 @@ void RenderAnalyzeSunGlobeRegion(GuiState& state, const ImVec2& size) {
   if (valid_count > 0) {
     AdvancePointPlayback(&view, valid_count, ImGui::GetTime());
   }
-  // Read once, before allocating the canvas: the complete legend footprint has first claim.
-  // Only the discovered arm displays terrain; waiting/withdrawn/mass documents show no old scale.
+  // Read once, before allocating the canvas: the legend's width claim on the canvas row is
+  // known before the row is laid out. Only the discovered arm displays terrain; waiting/
+  // withdrawn/mass documents show no old scale.
   LUMICE_PathSunGrid grid{};
   grid.struct_size = sizeof(grid);
   const bool have_grid =
@@ -1672,19 +1937,30 @@ void RenderAnalyzeSunGlobeRegion(GuiState& state, const ImVec2& size) {
       std::max(ImGui::CalcTextSize("Stop").x, ImGui::CalcTextSize("Play").x) + ImGui::GetStyle().FramePadding.x * 2.0f;
   const ImVec2 available = ImGui::GetContentRegionAvail();
   const bool shared_line = available.x - play_w - ImGui::GetStyle().ItemSpacing.x >= UiPx(80.0f);
-  const float controls_h = ImGui::GetFrameHeightWithSpacing() * (shared_line ? 1.0f : 2.0f) +
-                           (have_grid ? SunGridLegendHeight(grid_range, available.x) : 0.0f);
-  const float graph_side = std::min(
-      available.x, CanvasHeightBeforeReport(available.y, controls_h, UiPx(64.0f), ImGui::GetStyle().ItemSpacing.y));
+  // The vertical legend left the height budget with its old horizontal layout: the column rides
+  // the canvas row's right edge and its band absorbs the row's slack, so only the slider/play
+  // row reserves height above the canvas. The column's WIDTH, by contrast, has first claim on
+  // the row — the square canvas is what remains.
+  const float controls_h = ImGui::GetFrameHeightWithSpacing() * (shared_line ? 1.0f : 2.0f);
+  const float legend_w = have_grid ? SunGridLegendColumnWidth() + ImGui::GetStyle().ItemSpacing.x : 0.0f;
+  const float graph_side =
+      std::min(available.x - legend_w,
+               CanvasHeightBeforeReport(available.y, controls_h, UiPx(64.0f), ImGui::GetStyle().ItemSpacing.y));
   const ImVec2 graph_min = ImGui::GetCursorScreenPos();
   ImDrawList* graph_draw_list = ImGui::GetWindowDrawList();
   if (graph_side > 0.0f) {
     ImGui::InvisibleButton("##globe_canvas", ImVec2(graph_side, graph_side));
     graph_draw_list->AddCircle(ImVec2(graph_min.x + graph_side * 0.5f, graph_min.y + graph_side * 0.5f),
                                std::max(1.0f, graph_side * 0.5f - UiPx(4.0f)), ImGui::GetColorU32(ImGuiCol_Border));
-  }
-  if (have_grid) {
-    RenderSunGridLegend(grid_range);
+    if (have_grid) {
+      ImGui::SameLine();
+      RenderSunGridLegend(grid_range, graph_side);
+    }
+    // The legend column manages its own cursor; the row's end is the canvas's bottom either way
+    // — the slider (and the SameLine'd Play/Stop after it) resume from here, never from
+    // wherever the column's last wrapped line left the flow, and never from a line the
+    // column's yield exit left pending (the exit consumes the join itself).
+    ImGui::SetCursorScreenPos(ImVec2(graph_min.x, graph_min.y + graph_side + ImGui::GetStyle().ItemSpacing.y));
   }
   int pos = valid_count > 0 ? std::clamp(view.sample_index, 0, valid_count - 1) : 0;
   ImGui::BeginDisabled(valid_count == 0);
@@ -1707,7 +1983,6 @@ void RenderAnalyzeSunGlobeRegion(GuiState& state, const ImVec2& size) {
     if (st == PointQueryState::kNoIntent) {
       render_state_area([&] {
         ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-        ImGui::TextWrapped("Crystal-frame sun directions — a pose projection, not the full SO(3).");
         if (!state.analysis.sky_point.valid) {
           ImGui::TextWrapped(
               "Pick a sky point on the raypath view (or type coordinates there); the fiber of poses "
@@ -1720,12 +1995,8 @@ void RenderAnalyzeSunGlobeRegion(GuiState& state, const ImVec2& size) {
       return;
     }
     if (st == PointQueryState::kWaiting || st == PointQueryState::kCancelled || st == PointQueryState::kRefused) {
-      render_state_area([&] {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-        ImGui::TextWrapped("Crystal-frame sun directions — a pose projection, not the full SO(3).");
-        // Query progress and refusal reasons have one owner: the window's fixed footer.
-        ImGui::PopStyleColor();
-      });
+      // Empty by design: query progress and refusal reasons have one owner, the window's fixed
+      // footer — the pose projection's concept text rides the title's info icon.
       return;
     }
 
@@ -1737,7 +2008,6 @@ void RenderAnalyzeSunGlobeRegion(GuiState& state, const ImVec2& size) {
     if (info->outcome == LUMICE_PATH_POINT_MASS) {
       render_state_area([&] {
         ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-        ImGui::TextWrapped("Crystal-frame sun directions — a pose projection, not the full SO(3).");
         ImGui::TextWrapped("A rank-0 point mass has no fiber to project — the details carry the mass numbers.");
         ImGui::PopStyleColor();
       });
@@ -1765,7 +2035,6 @@ void RenderAnalyzeSunGlobeRegion(GuiState& state, const ImVec2& size) {
       const bool have_reach = LUMICE_PathPointGetReach(point.adopted_result.get(), &reach) == LUMICE_PATH_READ_OK;
       render_state_area([&] {
         ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-        ImGui::TextWrapped("Crystal-frame sun directions — a pose projection, not the full SO(3).");
         draw_partial_note();
         if (have_reach && !reach.target_in_range) {
           ImGui::TextWrapped(
@@ -1783,7 +2052,6 @@ void RenderAnalyzeSunGlobeRegion(GuiState& state, const ImVec2& size) {
     if (valid_count == 0) {
       render_state_area([&] {
         ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-        ImGui::TextWrapped("Crystal-frame sun directions — a pose projection, not the full SO(3).");
         draw_partial_note();
         ImGui::TextWrapped("This component carries no valid sample — nothing to project.");
         ImGui::PopStyleColor();
@@ -1791,8 +2059,17 @@ void RenderAnalyzeSunGlobeRegion(GuiState& state, const ImVec2& size) {
       return;
     }
     if (graph_side > 0.0f) {
+      // Full's fixed basis is a total function of nothing — no document read can fail it; Fit
+      // anchors on the component's first valid sample (its ok=false arm is unreachable here,
+      // the no-valid-sample state above already returned).
       SunGlobeProjector projector;
-      const bool have_projector = MakeSunGlobeProjector(*point.adopted_result, component, &projector);
+      bool have_projector = false;
+      if (view.sun_globe_view_mode == SunGlobeViewMode::kFull) {
+        projector = MakeSunGlobeFullProjector();
+        have_projector = true;
+      } else {
+        have_projector = MakeSunGlobeProjector(*point.adopted_result, component, &projector);
+      }
 
       const float side = graph_side;
       ImDrawList* dl = graph_draw_list;
@@ -1868,7 +2145,6 @@ void RenderAnalyzeSunGlobeRegion(GuiState& state, const ImVec2& size) {
     // lines live at every width. ----
     const std::optional<CurrentSample> current = CurrentSampleOf(*point.adopted_result, view, valid_indices);
     render_state_area([&] {
-      DisabledWrappedText("Crystal-frame sun directions — a pose projection, not the full SO(3).");
       if (partial_document) {
         WarningTextWrapped("Partial document (%s) — the fiber on show is what arrived.",
                            ExecutionText(info->execution));
@@ -1893,6 +2169,7 @@ void RenderAnalyzeSunGlobeRegion(GuiState& state, const ImVec2& size) {
 void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
   g_ray3d_frame.valid = false;
   g_ray3d_frame.axes_drawn = false;
+  g_ray3d_frame.legend_drawn = false;
   state.analysis.ray3d_fresnel_labels.clear();
   state.analysis.ray3d_fresnel_label_rects.clear();
   // The canvas and frame controls never scroll with result prose. The report scrolls
@@ -1928,9 +2205,30 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
   if (ImGui::Button("Reset View##r3d_reset")) {
     view.ResetOrbitOrientation();
   }
+  // The Fresnel toggle: a title-band session preference (moved out of the report head — the
+  // report's fixed two-line budget carries status/qualifying facts only). The same survival
+  // set as the other toggles (kept across sample/component switches, point adoptions and
+  // window reopen; reset only by the whole-state new-document paths; never persisted, never
+  // in a query key); default on — the ratio numbers are the trace's exact-value face. It sits
+  // in the fixed control band, so toggling it moves no canvas geometry.
+  const char* fresnel_item = "Show Fresnel ratios##r3d_fresnel";
+  const float fresnel_w =
+      ImGui::GetFrameHeight() + ImGui::GetStyle().ItemInnerSpacing.x + ImGui::CalcTextSize(fresnel_item).x;
+  if (fits_on_line(fresnel_w)) {
+    ImGui::SameLine();
+  }
+  ImGui::Checkbox(fresnel_item, &view.show_fresnel_labels);
+  // The region's one help carrier: usage note + display semantics (kRay3DHelpText). The shared
+  // icon joins this line when it fits and takes its own fresh line at the wrap boundary — the
+  // same complete-footprint rule as every control above, no compressed hit target.
+  if (fits_on_line(InfoIconAdvance())) {
+    InfoIcon("r3d_help", kRay3DHelpText);
+  } else {
+    InfoIconLine("r3d_help", kRay3DHelpText);
+  }
   const ImVec2 remaining = ImGui::GetContentRegionAvail();
   const float graph_h =
-      CanvasHeightBeforeReport(remaining.y, 0.0f, UiPx(kPoseView3dReportQuota), ImGui::GetStyle().ItemSpacing.y);
+      CanvasHeightBeforeReport(remaining.y, 0.0f, Ray3DReportQuota(), ImGui::GetStyle().ItemSpacing.y);
   const ImVec2 canvas_size(remaining.x, graph_h);
   const ImVec2 graph_min = ImGui::GetCursorScreenPos();
   ImDrawList* graph_draw_list = ImGui::GetWindowDrawList();
@@ -1946,19 +2244,6 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
   AnalyzeRegionWheelClaim(graph_hovered, AnalyzeRay3DWheelOwnerId());
   ImGui::BeginChild("##Ray3DReport", RemainingReportSize());
   const auto render_content = [&] {
-    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-    ImGui::TextWrapped(
-        "One pose's real path in the crystal: drag orbits, wheel zooms. Same physical state, two "
-        "views.");
-    ImGui::PopStyleColor();
-    RegisterPointTextItem("##r3d_description");
-    // The per-segment Fresnel ratio numbers: a session display preference (default off; kept
-    // across sample/component switches, point adoptions and window reopen — the same survival
-    // set as the other toggles; reset only by the whole-state new-document paths). This report
-    // head is its one site, reachable in every query state; the canvas keeps its fixed report
-    // quota, so the toggle moves no geometry.
-    ImGui::Checkbox("Show Fresnel ratios##r3d_fresnel", &view.show_fresnel_labels);
-
     const PointQueryState st = PointQueryStateFor(point);
     if (st == PointQueryState::kNoIntent) {
       ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
@@ -2000,10 +2285,7 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
       DisabledWrappedText("No valid sample on show — nothing to draw.");
       return;
     }
-    RayTraceKey current_key;
-    current_key.point_id = point.intent_id;
-    current_key.component = current->component;
-    current_key.sample = current->stored;
+    const RayTraceKey current_key = RayTraceKeyFor(point.intent_id, *current);
     const RayTraceDisplayState display_state = RayTraceDisplayStateFor(trace, current_key);
 
     // The crystal's mesh: the FROZEN binding's config (captured at DoAnalyze), in the analysis
@@ -2252,6 +2534,42 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
           point_to_display(p, d);
           return ToRay3DScene(d, rendered);
         };
+        // The canvas legend's reserved footprint: computed and decided BEFORE the per-segment
+        // label ladder runs — the ladder's hard exclusion reads it live (the compass's mirror;
+        // the compass is live for the same structural reason, DrawRay3DAxes runs on channel 1
+        // ahead of this loop). Only a drawn trace wants it — a static colour legend over an
+        // empty canvas would read as a path being present. Complete footprints or nothing: a
+        // clipped partial legend lies about what it names (the compass's own gate). The ink
+        // emission itself stays after the contacts and sun arrow; the rects ride the frame.
+        const bool legend_wanted = display_state == RayTraceDisplayState::kDrawn;
+        if (legend_wanted) {
+          const float swatch_side = UiPx(kRay3DLegendSwatchUi);
+          const float swatch_gap_x = UiPx(kRay3DLegendSwatchGapUi);
+          const float unit_gap_y = UiPx(3.0f);
+          const float legend_inset = UiPx(4.0f);
+          const char* const(&legend_labels)[3] = kRay3DLegendLabels;
+          const float legend_line_h = ImGui::GetTextLineHeight();
+          const float legend_h = 3.0f * legend_line_h + 2.0f * unit_gap_y;
+          float legend_w = 0.0f;
+          for (const char* label : legend_labels) {
+            legend_w = std::max(legend_w, swatch_side + swatch_gap_x + ImGui::CalcTextSize(label).x);
+          }
+          rendered.legend_drawn =
+              canvas_size.x >= legend_w + legend_inset * 2.0f && canvas_size.y >= legend_h + legend_inset * 2.0f;
+          if (rendered.legend_drawn) {
+            const ImVec2 legend_min(canvas_min.x + legend_inset, canvas_min.y + legend_inset);
+            rendered.legend_min = legend_min;
+            rendered.legend_max = ImVec2(legend_min.x + legend_w, legend_min.y + legend_h);
+            for (int kind = 0; kind < 3; ++kind) {
+              const ImVec2 unit_min(legend_min.x,
+                                    legend_min.y + static_cast<float>(kind) * (legend_line_h + unit_gap_y));
+              const float text_w = ImGui::CalcTextSize(legend_labels[kind]).x;
+              rendered.legend_unit_min[kind] = unit_min;
+              rendered.legend_unit_max[kind] =
+                  ImVec2(unit_min.x + swatch_side + swatch_gap_x + text_w, unit_min.y + legend_line_h);
+            }
+          }
+        }
         std::vector<ImRect> placed_label_rects;  // the labels' placed text rects, in order
         for (size_t s = 0; s < line.seg_kinds.size(); ++s) {
           const float* p0 = &line.points[s * 6];
@@ -2340,6 +2658,26 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
                     candidate = detail::ClampLabelPosToViewport(candidate, text_size, vis_min_x, vis_min_y,
                                                                 rendered.axes_min.x - vis_min_x, vis_max_y - vis_min_y);
                   }
+                  // The legend is the left edge's hard exclusion, the compass's mirror: a
+                  // colliding candidate moves right of the reserved footprint before scoring —
+                  // also before the least-overlap fallback, so the degraded form cannot land
+                  // back on the legend either. The band's right edge yields to the compass's
+                  // bound too, so while the band fits the label the two exclusions commute — a
+                  // candidate colliding with either zone cannot land in the other. Below that
+                  // fit the shared clamp's degenerate branch leaves the axis untouched (the
+                  // same honest degradation the compass exclusion has always had); that domain
+                  // is unreachable at every legal canvas — the path is mesh-anchored at the
+                  // centre while both zones sit in corners ~240 px out — so the premise rides
+                  // on the canvas gates' joint, not on this site.
+                  if (rendered.legend_drawn &&
+                      ImRect(candidate, ImVec2(candidate.x + text_size.x, candidate.y + text_size.y))
+                          .Overlaps(ImRect(rendered.legend_min, rendered.legend_max))) {
+                    const float legend_band_right =
+                        rendered.axes_drawn ? std::min(vis_max_x, rendered.axes_min.x - text_size.x) : vis_max_x;
+                    candidate = detail::ClampLabelPosToViewport(candidate, text_size, rendered.legend_max.x, vis_min_y,
+                                                                legend_band_right - rendered.legend_max.x,
+                                                                vis_max_y - vis_min_y);
+                  }
                   const ImRect candidate_rect(candidate, ImVec2(candidate.x + text_size.x, candidate.y + text_size.y));
                   float overlap = 0.0f;
                   for (const ImRect& placed_rect : placed_label_rects) {
@@ -2378,6 +2716,7 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
                        x + text_size.x + inset <= std::min(canvas_max.x, clip_max.x); x += text_size.x + inset) {
                     const ImRect rect(ImVec2(x, y), ImVec2(x + text_size.x, y + text_size.y));
                     if (rect.Overlaps(ImRect(rendered.axes_min, rendered.axes_max)) ||
+                        (rendered.legend_drawn && rect.Overlaps(ImRect(rendered.legend_min, rendered.legend_max))) ||
                         std::any_of(placed_label_rects.begin(), placed_label_rects.end(),
                                     [&](const ImRect& other) { return other.Overlaps(rect); })) {
                       continue;
@@ -2476,79 +2815,102 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
             dl->AddLine(pa, pb, ImGui::ColorConvertFloat4ToU32(AccentColor()), 1.5f);
           }
         }
+        // The segment legend's INK: emitted at the reserved rects computed before the label
+        // ladder ran (the footprint itself decided there, kDrawn-gated — see the hoisted block
+        // above the per-segment loop). The colour vocabulary lives beside the light it names
+        // (2026-11-17 feedback), not in the report.
+        if (rendered.legend_drawn) {
+          const float swatch_side = UiPx(kRay3DLegendSwatchUi);
+          const float swatch_gap_x = UiPx(kRay3DLegendSwatchGapUi);
+          const char* const(&legend_labels)[3] = kRay3DLegendLabels;
+          for (int kind = 0; kind < 3; ++kind) {
+            const ImVec2 unit_min = rendered.legend_unit_min[kind];
+            const float unit_h = rendered.legend_unit_max[kind].y - unit_min.y;
+            const float swatch_y = unit_min.y + (unit_h - swatch_side) * 0.5f;
+            dl->AddRectFilled(ImVec2(unit_min.x, swatch_y), ImVec2(unit_min.x + swatch_side, swatch_y + swatch_side),
+                              SegmentColor(kind, 1.0f));
+            dl->AddText(ImVec2(unit_min.x + swatch_side + swatch_gap_x, unit_min.y),
+                        ImGui::GetColorU32(ImGuiCol_TextDisabled), legend_labels[kind]);
+          }
+        }
         axes_layer.Merge(dl);
         dl->PopClipRect();
       };
       render_canvas();
     }
     // The current pose's crystal remains visible even when its trace has no drawable path.
+    // Transient vs persistent (2026-11-17 feedback): computing and hidden never cycle through
+    // the report — the status bar owns the transient words. Computing shows the RETAINED
+    // record (the identity-checked source line and, for a retained failure, its details) so
+    // the report's content and height hold still while the trace re-arms; without a retained
+    // source in THIS domain, the honest empty line. Hidden means the session itself was
+    // dropped — a reset or a withdrawn intent, exactly the source-invalidating events — so it
+    // shows the honest empty line, never a stale report. Error/refused are the current key's
+    // persistent facts: the live details render here AND are captured into the record, so the
+    // next sample switch's transient retains them as the named previous result. The drawn arm
+    // captures its own source line the same way.
+    const auto capture_record = [&](Ray3DReportRecord::Kind kind, const char* detail_head, std::string detail_body) {
+      Ray3DReportRecord& record = state.analysis.ray3d_report_record;
+      record.valid = true;
+      record.point_id = point.intent_id;
+      record.component = current->component;
+      record.kind = kind;
+      record.source_line = Ray3DReportSourceLine(
+          current->component, std::clamp(view.sample_index, 0, current->valid_count - 1) + 1, current->valid_count);
+      record.detail_head = detail_head == nullptr ? std::string() : std::string(detail_head);
+      record.detail_body = std::move(detail_body);
+    };
+    const auto render_record = [&](const Ray3DReportRecord& record) {
+      ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+      ImGui::TextWrapped("%s", record.source_line.c_str());
+      ImGui::PopStyleColor();
+      RegisterPointTextItem("##r3d_source");
+      if (!record.detail_head.empty()) {
+        ImGui::TextUnformatted(record.detail_head.c_str());
+        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+        ImGui::TextWrapped("%s", record.detail_body.c_str());
+        ImGui::PopStyleColor();
+      }
+    };
     switch (display_state) {
       case RayTraceDisplayState::kHidden:
         DisabledWrappedText("No representative path asked for yet.");
         return;
-      case RayTraceDisplayState::kComputing:
-        DisabledWrappedText("Computing the representative path for this sample…");
+      case RayTraceDisplayState::kComputing: {
+        const Ray3DReportRecord& record = state.analysis.ray3d_report_record;
+        if (record.valid && record.point_id == point.intent_id && record.component == current->component) {
+          render_record(record);  // the retained form — stale-honest, source-named
+        } else {
+          DisabledWrappedText("No representative path shown yet.");
+        }
         return;
-      case RayTraceDisplayState::kError:
-        ImGui::TextUnformatted("Path query failed:");
-        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-        ImGui::TextWrapped("%s", trace.adopted_error.c_str());
-        ImGui::PopStyleColor();
+      }
+      case RayTraceDisplayState::kError: {
+        capture_record(Ray3DReportRecord::Kind::kError, "Path query failed:", trace.adopted_error);
+        render_record(state.analysis.ray3d_report_record);
         return;
+      }
       case RayTraceDisplayState::kRefused: {
         LUMICE_RepresentativeRayInfo rinfo{};
         rinfo.struct_size = sizeof(rinfo);
         LUMICE_RepresentativeRayGetInfo(trace.adopted_result.get(), &rinfo);
-        ImGui::TextUnformatted("No legal path for this pose:");
-        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-        ImGui::TextWrapped("reason: %s | entry status: %s%s%s | corridor area %.3e (threshold %.3e)",
-                           PathTextToString(rinfo.reason).c_str(), PathTextToString(rinfo.entry_status).c_str(),
-                           rinfo.chain_failure.length > 0 ? " | chain: " : "",
-                           rinfo.chain_failure.length > 0 ? PathTextToString(rinfo.chain_failure).c_str() : "",
-                           rinfo.area_perp_internal, rinfo.area_threshold);
-        ImGui::PopStyleColor();
+        std::string refused_detail =
+            "reason: " + PathTextToString(rinfo.reason) + " | entry status: " + PathTextToString(rinfo.entry_status);
+        if (rinfo.chain_failure.length > 0) {
+          refused_detail += " | chain: " + PathTextToString(rinfo.chain_failure);
+        }
+        char area_buf[96];
+        std::snprintf(area_buf, sizeof(area_buf), " | corridor area %.3e (threshold %.3e)", rinfo.area_perp_internal,
+                      rinfo.area_threshold);
+        refused_detail += area_buf;
+        capture_record(Ray3DReportRecord::Kind::kRefused, "No legal path for this pose:", std::move(refused_detail));
+        render_record(state.analysis.ray3d_report_record);
         return;
       }
       case RayTraceDisplayState::kDrawn:
-        break;
-    }
-
-    // Each legend unit owns a swatch item and its label; test the whole unit before SameLine.
-    const float swatch = UiPx(9.0f);
-    const char* labels[] = { "entry", "internal", "exit" };
-    for (int kind = 0; kind < 3; ++kind) {
-      const float unit_w = swatch + ImGui::GetStyle().ItemSpacing.x + ImGui::CalcTextSize(labels[kind]).x;
-      if (kind > 0 && fits_on_line(unit_w)) {
-        ImGui::SameLine();
-      }
-      DrawLegendIconSlot([&] { DrawSwatchSquare(SegmentColor(kind, 1.0f), swatch); }, swatch,
-                         ImGui::GetTextLineHeight());
-      ImGui::TextDisabled("%s", labels[kind]);
-      RegisterPointTextItem(labels[kind]);
-    }
-    // The display semantics' legend (2026-11-12 feedback #8/#9): the width mapping's honesty
-    // note (visual sqrt scaling, no absorption — the ratio numbers, when shown, carry the
-    // exact values), the contact shapes' vocabulary, and the unusable-factor boundary.
-    DisabledWrappedText(
-        "Width follows cumulative Fresnel relative energy (no absorption); visual scaling — the "
-        "ratio numbers, when shown, carry the exact values. Contacts: solid = facing the camera, "
-        "hollow = back-facing or facing unknown. A segment past an unusable interface factor "
-        "draws neutral (n/a).");
-    RegisterPointTextItem("##r3d_semantics");
-    if (current->sample.interface_count >= 2) {
-      char transmittance[96];
-      std::snprintf(transmittance, sizeof(transmittance), "face transmittance: entry %.3f, exit %.3f",
-                    current->sample.interface_transmittances[0],
-                    current->sample.interface_transmittances[current->sample.interface_count - 1]);
-      if (fits_on_line(ImGui::CalcTextSize(transmittance).x)) {
-        ImGui::SameLine();
-        ImGui::TextDisabled("%s", transmittance);
-      } else {
-        ImGui::NewLine();  // end the labels' line — the wrapped readout owns a fresh line, not the tail
-        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-        ImGui::TextWrapped("%s", transmittance);
-        ImGui::PopStyleColor();
-      }
+        capture_record(Ray3DReportRecord::Kind::kDrawn, nullptr, std::string());
+        render_record(state.analysis.ray3d_report_record);
+        return;
     }
   };
   render_content();
@@ -3106,6 +3468,37 @@ void RenderPoseFactorsRegion(GuiState& state, const ImVec2& size) {
   ImGui::EndChild();
 }
 
+// The trace face's display state for the CURRENT selection, read for the status bar's transient
+// segment. nullopt = no valid current point/sample — no trace fact to state, the point's own
+// words own the bar. Otherwise the same named state the 3D region's gate computes: the pump is
+// the session's writer, this is a read over the same public state, and the key comes from the
+// ONE shared constructor (RayTraceKeyFor) the region's gate uses — the report and the bar
+// cannot disagree about which state the trace is in. The derivation deliberately is NOT
+// extracted into one shared CurrentSampleForSelection for both sites: the region's walk
+// interleaves a distinct honest render per failure arm (unreadable Info / mass / no components
+// / no valid sample / unreadable sample), which a combined optional helper would collapse into
+// one generic failure. The shared layer is the four primitives both sites call, plus the key
+// constructor above; the guard sequences stay each site's own.
+std::optional<RayTraceDisplayState> TraceDisplayStateForSelection(const GuiState& state) {
+  const PointQuerySession& point = state.analysis.point;
+  if (!point.adopted_result || PointQueryStateFor(point) != PointQueryState::kCompleted) {
+    return std::nullopt;
+  }
+  const std::optional<LUMICE_PathPointInfo> info = ReadPointInfo(*point.adopted_result);
+  if (!info.has_value() || info->outcome != LUMICE_PATH_POINT_DISCOVERED || info->component_count == 0) {
+    return std::nullopt;
+  }
+  const std::vector<int> valid_indices = CollectValidSampleIndices(
+      *point.adopted_result,
+      std::clamp(state.analysis.point_view.component_index, 0, static_cast<int>(info->component_count) - 1));
+  const std::optional<CurrentSample> current =
+      CurrentSampleOf(*point.adopted_result, state.analysis.point_view, valid_indices);
+  if (!current.has_value()) {
+    return std::nullopt;
+  }
+  return RayTraceDisplayStateFor(state.analysis.trace, RayTraceKeyFor(point.intent_id, *current));
+}
+
 }  // namespace
 
 void RenderAnalyzePoseViewWindow(GuiState& state) {
@@ -3282,6 +3675,19 @@ void RenderAnalyzePoseViewWindow(GuiState& state) {
       break;
     default:
       break;
+  }
+  // The trace's transient words ride the same single-line bar, AFTER the point's own words
+  // (point first; the segment exists only while the point answer is in and the current sample
+  // is valid — the helper's nullopt arms). Computing and not-requested are the transients the
+  // report no longer cycles; drawn/error/refused are answers — the report owns those, and the
+  // bar says nothing about the trace. The point's partial flag and wait field keep their own
+  // writers: this append never overwrites them.
+  if (const std::optional<RayTraceDisplayState> trace_state = TraceDisplayStateForSelection(state)) {
+    if (*trace_state == RayTraceDisplayState::kComputing) {
+      status += " — representative path computing";
+    } else if (*trace_state == RayTraceDisplayState::kHidden) {
+      status += " — representative path not requested";
+    }
   }
   RenderAnalyzeStatusBar(status_layout, status, partial || PointQueryStateFor(point) == PointQueryState::kRefused);
   ImGui::End();

@@ -34,6 +34,7 @@
 #include "gui/symmetry_ui.hpp"
 #include "gui/table_focus_ring.hpp"
 #include "gui/theme.hpp"
+#include "gui/tooltip.hpp"
 #include "gui/user_defaults.hpp"
 #include "gui/window_sizing.hpp"
 #include "imgui.h"
@@ -1491,17 +1492,17 @@ static void RenderCrystalModal(GuiState& /*state*/) {
     if (g_pull_adopted.crystal_name) {
       ReloadInputTextIfActive(ImGui::GetID("##crystal_name"));
     }
-    ImGui::SetNextItemWidth(-FLT_MIN);
+    // The fill width leaves room for the joined help icon, so the row stays inside the column
+    // (no horizontal scroll; the_sync_column_leaves_the_slider_room pins that).
+    ImGui::SetNextItemWidth(-FLT_MIN - InfoIconAdvance());
     if (ImGui::InputTextWithHint("##crystal_name", "unnamed — shown as its pool id everywhere", name_buf,
                                  sizeof(name_buf))) {
       cr.name = name_buf;
     }
-  }
-  if (ImGui::IsItemHovered()) {
-    ImGui::SetTooltip(
-        "A name for this crystal, shown on its card and wherever a colour class refers to it.\n"
-        "Names need not be unique — the pool id stays visible alongside so two crystals sharing\n"
-        "a name are still tellable apart.");
+    InfoIcon("crystal_name_help",
+             "A name for this crystal, shown on its card and wherever a colour class refers to it.\n"
+             "Names need not be unique — the pool id stays visible alongside so two crystals sharing\n"
+             "a name are still tellable apart.");
   }
 
   ImGui::Spacing();
@@ -1656,7 +1657,9 @@ static void RenderAxisModal(GuiState& state) {
 
   // One note, two hover homes: the caption and every chip below. The chips are the high-frequency
   // path, so the switch contract belongs where the pointer actually lands, not only on the small
-  // print.
+  // print. This row stays tooltip-carried (not an info icon): the axis modal's width is pinned
+  // (compact min == max) and the chip chain has no wrap path, so the icon's advance would clip
+  // the trailing chip — the width-exact class the two-tier rule carves out.
   constexpr const char* kChipSwitchNote =
       "Switches to this label: remembers the current parameters under the one you leave, then "
       "loads this label's memory — or its definition when nothing is remembered. The preview "
@@ -1930,30 +1933,18 @@ static void RenderSummandRowList() {
   // it does not compete with the live-preview block below.
   ImGui::TextDisabled("e.g. 3-5  or  1-3;3-5 (OR)  or  entry:2 & exit:4  or  3-5 & len:2-3");
 
-  // Token help icon: transparent SmallButton acts as a stable hover target
-  // (mirrors the symmetry checkboxes' info-icon pattern, symmetry_ui.cpp InfoIcon).
-  ImGui::SameLine();
-  ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
-  ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0, 0, 0, 0));
-  ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0, 0, 0, 0));
-  ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-  ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0.0f);
-  ImGui::SmallButton(ICON_FA_CIRCLE_INFO "##summand_token_help");
-  ImGui::PopStyleVar();
-  ImGui::PopStyleColor(4);
-  if (ImGui::IsItemHovered()) {
-    ImGui::SetTooltip(
-        "Token syntax:\n"
-        "  3-5           face path (a raypath token)\n"
-        "  1-3;3-5       raypath OR alternatives (';' distributes over '&')\n"
-        "  entry:2       enter through face 2\n"
-        "  exit:4        exit through face 4\n"
-        "  len:2-3       ray length range\n"
-        "  entry:1,2     comma-list = 'entry:1 OR entry:2' (expanded at filter apply)\n"
-        "  & (AND)       within a row\n"
-        "  new row       = OR alternative (sum-of-products)\n"
-        "  blank row     = states nothing, dropped (all rows blank = no filter)");
-  }
+  // Token syntax reference: the shared info icon (gui/tooltip.hpp) is the stable hover target.
+  InfoIcon("summand_token_help",
+           "Token syntax:\n"
+           "  3-5           face path (a raypath token)\n"
+           "  1-3;3-5       raypath OR alternatives (';' distributes over '&')\n"
+           "  entry:2       enter through face 2\n"
+           "  exit:4        exit through face 4\n"
+           "  len:2-3       ray length range\n"
+           "  entry:1,2     comma-list = 'entry:1 OR entry:2' (expanded at filter apply)\n"
+           "  & (AND)       within a row\n"
+           "  new row       = OR alternative (sum-of-products)\n"
+           "  blank row     = states nothing, dropped (all rows blank = no filter)");
 
   // Live preview of the sum-of-products the current row buffers would
   // expand to on commit. Uses the SAME parse/format helpers as the commit
@@ -2026,16 +2017,11 @@ static void RenderSharedFilterControls(const SymmetryAvailability& avail) {
   if (ImGui::RadioButton("Filter In##filter_action", g_filter_top.action == 0)) {
     g_filter_top.action = 0;
   }
-  if (ImGui::IsItemHovered()) {
-    ImGui::SetTooltip("Show only rays matching the filter");
-  }
   ImGui::SameLine();
   if (ImGui::RadioButton("Filter Out##filter_action", g_filter_top.action == 1)) {
     g_filter_top.action = 1;
   }
-  if (ImGui::IsItemHovered()) {
-    ImGui::SetTooltip("Hide rays matching the filter");
-  }
+  InfoIcon("filter_action_help", "Filter In: show only rays matching the filter.\nFilter Out: hide them.");
 
   RenderSymmetryCheckboxes(g_filter_top.sym_p, g_filter_top.sym_b, g_filter_top.sym_d, avail,
                            SymmetryCheckboxMeaning::kFilterLabel, "filter_modal");
@@ -3278,7 +3264,7 @@ void RenderEditModals(GuiState& state, GLFWwindow* window) {
   const float immediate_w = ImGui::GetFrameHeight() + style.ItemInnerSpacing.x +
                             ImGui::CalcTextSize("Immediate##edit_modal", nullptr, true).x;
   const float view_toggle_group_x =
-      ImGui::GetContentRegionMax().x - (layout_combo_w + style.ItemSpacing.x + immediate_w);
+      ImGui::GetContentRegionMax().x - (layout_combo_w + style.ItemSpacing.x + immediate_w + InfoIconAdvance());
   if (view_toggle_group_x > ImGui::GetCursorPosX()) {
     ImGui::SetCursorPosX(view_toggle_group_x);
   }
@@ -3290,18 +3276,15 @@ void RenderEditModals(GuiState& state, GLFWwindow* window) {
       if (ImGui::Selectable(kModalLayoutNames[i], selected)) {
         state.modal_layout_compact = (i == 0);
       }
-      if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("%s", kModalLayoutTooltips[i]);
-      }
       if (selected) {
         ImGui::SetItemDefaultFocus();
       }
     }
     ImGui::EndCombo();
   }
-  if (ImGui::IsItemHovered()) {
-    ImGui::SetTooltip("%s", kModalLayoutTooltips[layout_selector_idx]);
-  }
+  // The layouts' semantics ride one associated info icon (both entries' text); the combo's own
+  // hover and the popup items' hover stay quiet per the two-tier rule.
+  InfoIcon("modal_layout_help", "%s\n%s", kModalLayoutTooltips[0], kModalLayoutTooltips[1]);
   ImGui::SameLine();
   // ImGui::Checkbox returns true only on the frame the user actually toggled
   // the value, so checking the return alone is sufficient to detect a change.
@@ -3338,9 +3321,7 @@ void RenderEditModals(GuiState& state, GLFWwindow* window) {
       // reopen gate to fire in Frame N+2).
     }
   }
-  if (ImGui::IsItemHovered()) {
-    ImGui::SetTooltip("Apply parameter changes to simulation in real-time");
-  }
+  InfoIcon("edit_modal_immediate_help", "Apply parameter changes to simulation in real-time");
 
   // Next frame's height request, and what of it the flexible pane cannot take away.
   EndHeightFollow(g_edit_modal_height);

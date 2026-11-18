@@ -438,13 +438,11 @@ void RenderAppPreferences(const GuiState& state) {
     // false; recording the user's answer means it stays their answer if that ever moves.
     WriteUseGpuBackendToDoc(g_copy_doc, checked);
   }
-  if (ImGui::IsItemHovered()) {
-    SetWrappedTooltip(
-        "Whether a NEW document starts with GPU simulation selected. This is the stored preference, "
-        "not the Use GPU switch in the main window — changing it here does not touch the current "
-        "document, and it takes effect on the next new document. The GPU falls back to the CPU on a "
-        "machine that has none.");
-  }
+  InfoIcon("defaults_app_use_gpu_help",
+           "Whether a NEW document starts with GPU simulation selected. This is the stored preference, "
+           "not the Use GPU switch in the main window — changing it here does not touch the current "
+           "document, and it takes effect on the next new document. The GPU falls back to the CPU on a "
+           "machine that has none.");
 
   // The main window's CURRENT value, so the user can tell what they are about to store from what
   // they are running right now. The two are independent by design: this panel is an editor of the
@@ -475,15 +473,13 @@ void RenderAppPreferences(const GuiState& state) {
     }
     WriteWorkerCountToDoc(g_copy_doc, workers);
   }
-  if (ImGui::IsItemHovered()) {
-    SetWrappedTooltip(
-        "How many CPU worker threads a NEW document's simulation runs on. 0 means automatic: one "
-        "per physical core on Linux/macOS, one per logical core (hardware thread) on Windows, up to "
-        "a measured per-platform ceiling. A number you type here is used as-is, ceiling included. "
-        "This is the stored preference — changing it here does not touch the current document, "
-        "and it takes effect on the next new document. The GPU route is a single engine and "
-        "ignores it.");
-  }
+  InfoIcon("defaults_app_worker_count_help",
+           "How many CPU worker threads a NEW document's simulation runs on. 0 means automatic: one "
+           "per physical core on Linux/macOS, one per logical core (hardware thread) on Windows, up to "
+           "a measured per-platform ceiling. A number you type here is used as-is, ceiling included. "
+           "This is the stored preference — changing it here does not touch the current document, "
+           "and it takes effect on the next new document. The GPU route is a single engine and "
+           "ignores it.");
   ImGui::SameLine();
   ImGui::TextDisabled("(this window: %d)", state.worker_count);
 
@@ -519,13 +515,11 @@ void RenderAppPreferences(const GuiState& state) {
     WriteUiScaleMultiplierToDoc(g_copy_doc, chosen);
     SetUiScaleMultiplierImmediate(chosen);
   }
-  if (ImGui::IsItemHovered()) {
-    SetWrappedTooltip(
-        "How much larger than the display's own scaling the whole interface is drawn — text, "
-        "controls and panels alike. Applies to this window immediately; Save keeps it for every "
-        "later start. The display's scaling (Windows 125%%, Retina) is detected on its own and is "
-        "not part of this number.");
-  }
+  InfoIcon("defaults_app_ui_scale_help",
+           "How much larger than the display's own scaling the whole interface is drawn — text, "
+           "controls and panels alike. Applies to this window immediately; Save keeps it for every "
+           "later start. The display's scaling (Windows 125%%, Retina) is detected on its own and is "
+           "not part of this number.");
   ImGui::SameLine();
   ImGui::TextDisabled("(this window: %d%%)", static_cast<int>(std::lround(g_ui_scale_multiplier * 100.0f)));
 
@@ -545,13 +539,11 @@ void RenderAppPreferences(const GuiState& state) {
     }
     ImGui::EndCombo();
   }
-  if (ImGui::IsItemHovered()) {
-    SetWrappedTooltip(
-        "The crystal preview style for the NEXT application start. Save keeps this default; "
-        "neither editing nor saving it changes the current session. The Entry Edit style combo "
-        "remains a temporary session choice. Restore factory removes only this preference on Save; "
-        "Reset all my defaults below does not affect application preferences.");
-  }
+  InfoIcon("defaults_app_preview_style_help",
+           "The crystal preview style for the NEXT application start. Save keeps this default; "
+           "neither editing nor saving it changes the current session. The Entry Edit style combo "
+           "remains a temporary session choice. Restore factory removes only this preference on Save; "
+           "Reset all my defaults below does not affect application preferences.");
   ImGui::SameLine();
   if (ImGui::SmallButton("Factory###defaults_app_preview_factory")) {
     EraseEntryEditPreviewStyleFromDoc(g_copy_doc);
@@ -587,15 +579,12 @@ void RenderListControls() {
   ImGui::SameLine();
   ImGui::RadioButton("Differs from factory###filter_differs", &filter,
                      static_cast<int>(DefaultsRowFilter::kDiffersFromFactory));
-  if (ImGui::IsItemHovered()) {
-    SetWrappedTooltip("Rows whose current value is not the built-in one — whether or not you saved it.");
-  }
+  InfoIcon("defaults_filter_differs_help",
+           "Rows whose current value is not the built-in one — whether or not you saved it.");
   ImGui::SameLine();
   ImGui::RadioButton("Edited this session###filter_edited", &filter,
                      static_cast<int>(DefaultsRowFilter::kEditedThisSession));
-  if (ImGui::IsItemHovered()) {
-    SetWrappedTooltip("Rows whose checkbox you changed since this panel opened.");
-  }
+  InfoIcon("defaults_filter_edited_help", "Rows whose checkbox you changed since this panel opened.");
   g_row_filter = static_cast<DefaultsRowFilter>(filter);
 }
 

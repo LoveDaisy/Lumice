@@ -115,7 +115,16 @@ ScrollbarRounding 3  WindowRounding 4  PopupRounding 4
 
 实测收益：同一面板在字号更大的前提下，可见内容反而**多于**现状（现状 Overlay 组被截断，量化后连末尾的半径行都可见）。
 
-**Settings tooltip 行长** —— `gui/tooltip.hpp` 的 `SetWrappedTooltip` 保留 ImGui tooltip 的格式化、定位与覆盖语义，正文最多 `UiPx(400)`，外框另加实际 `WindowPadding`；短句仍自适应宽度。400 是排版设计选值，不代表已经通过用户观感终裁。当前仅 Settings 采用，不改变其他窗口的 tooltip。
+**tooltip 两档规则与 info icon（2026-11-17 owner 裁决，全 GUI 单一规则）** —— 悬浮帮助分两档：
+
+- **功能/概念性解释 → info icon**。一个控件/字段/模式/术语「是什么、意味着什么」的稳定解释，集中到显式的 info icon 上（集中、可发现、不烦人），不再黏在控件 hover 上。
+- **瞬态语境反馈 → 控件 tooltip 保留**。悬停读数、拖拽/操作提示、禁用/惰性原因、状态告警——「随状态出现的短提示」继续走控件自身 hover；被截断内容的完整读回同此。
+- **豁免**：窄档纯图标按钮的词义与动作说明始终在 tooltip（§4.8 顶栏六命令与其余纯图标钮）；逐行重复控件（表格行/卡片行）的行级读助保留在行 hover——逐行挂 icon 是「过密」反模式。
+- 判别线是**内容**而非 API 形态：解释不因短、位于 disabled 控件或已经换行就豁免；状态依赖说明也不因长就强行迁移。混合文案拆开：稳定概念进 icon，即时原因/值留原控件，不得一并隐藏错误。
+
+**info icon 权威形态** —— 单一实现是 `gui/tooltip.hpp` 的 `InfoIcon`：透明 `SmallButton` 承载 FontAwesome 圆形问号（`ICON_FA_CIRCLE_INFO`），`TextDisabled` 色、无边框、稳定 item ID（调用方提供 `##` 后缀并保证窗口内唯一）；`SameLine` 并入前一控件所在行（`InfoIconLine` 为独立行标记变体）；hover 正文经 `SetWrappedTooltip` 呈现，无点击副作用、不改控件值、正文按需构造。同主题共用一个 icon，不逐按钮机械追加。
+
+**`SetWrappedTooltip`** 保留 ImGui tooltip 的格式化、定位与覆盖语义，正文最多 `UiPx(400)`，外框另加实际 `WindowPadding`；短句仍自适应宽度。它是 info icon 的 hover 正文与迁移/新增长 tooltip 的统一排版载体（原「仅 Settings 采用」的限定废止）。width-exact 的存量行（右面板各宽定行、Look-at 行——行宽由列预算精确钉死、无处安放 per-control icon 的行）暂沿控件 hover 原样，待 owner 对这些行终裁后归属；终裁前本条的「统一载体」不覆盖它们。Settings 对行长提示的原有保障不变：全文不丢、长正文多行、外框受限、短句自适应；400 是排版设计选值，维持既有合同，owner 上手后可再调。
 
 **4.3 调色板** —— 见 §3 定案列。核心两条规则：**强调色不做大面积常驻填充，且滑条静止态不上色**；分组标题是**染色**不是实心条。
 

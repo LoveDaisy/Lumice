@@ -39,6 +39,7 @@
 #include "gui/sim_state_rules.hpp"
 #include "gui/theme.hpp"
 #include "gui/toolbar_layout.hpp"
+#include "gui/tooltip.hpp"
 #include "gui/view_look_at.hpp"
 #include "imgui.h"
 // imgui_internal.h for SeparatorEx(ImGuiSeparatorFlags_Vertical) only — the one themed vertical
@@ -1728,6 +1729,8 @@ void RenderViewControlsGroup(GuiState& state) {
   if (Checkbox(PanelLabel("renderer.front", "visible").c_str(), &front_effective)) {
     r.front = front_effective;
   }
+  // Two-branch hover, not an info icon: this row lives in the right panel's width-exact column,
+  // where no per-control icon fits.
   if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
     ImGui::SetTooltip("%s", front_c.enabled ? "Show front hemisphere only\n(combine with Upper/Full/Lower)" :
                                               front_c.disabled_reason);
@@ -1743,6 +1746,8 @@ void RenderViewControlsGroup(GuiState& state) {
     SliderWithInput(PanelLabel("renderer.globe_back_fade", "visible").c_str(), &r.globe_back_fade,
                     static_cast<float>(fade_c.min_value), static_cast<float>(fade_c.max_value), fade_c.fmt,
                     fade_c.scale);
+    // Hover tooltip, not an info icon — the right panel's rows are width-exact: no per-control
+    // icon fits without breaking the column budget.
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
       ImGui::SetTooltip(
           "Let the far side of the sphere, its light and its grid lines, show\n"
@@ -1754,13 +1759,11 @@ void RenderViewControlsGroup(GuiState& state) {
   }
   ImGui::SeparatorText("Pose");
   if (is_globe) {
-    ImGui::TextDisabled("(?)");
-    if (ImGui::IsItemHovered()) {
-      ImGui::SetTooltip(
-          "In Globe lens, Az/El/Roll control the observer's orbit\n"
-          "around the sphere, not the camera's own attitude.\n"
-          "Roll is locked to 0 in this mode (slider is greyed out).");
-    }
+    // Globe-only pose semantics as a section help marker (InfoIconLine: fresh line, not joined).
+    InfoIconLine("globe_pose_help",
+                 "In Globe lens, Az/El/Roll control the observer's orbit\n"
+                 "around the sphere, not the camera's own attitude.\n"
+                 "Roll is locked to 0 in this mode (slider is greyed out).");
   }
   // The elevation limit backs off one degree from the pole under Globe; that, like the full-sky
   // gate the two share, is the registry's to state. Both entries carry the SAME gate
@@ -1868,6 +1871,9 @@ void RenderViewControlsGroup(GuiState& state) {
     }
     ImGui::EndCombo();
   }
+  // Two-branch hover, not an info icon: this row is width-exact — the Lock square's
+  // column-aligned right edge is pinned by look_at_controls_share_one_unclipped_row, the combo
+  // floor already binds, and the only free variable left is the owner-owned kRightPanelWidth.
   if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
     ImGui::SetTooltip(
         "%s", el_c.enabled ? "Choose a named direction; Lock follows it as the scene changes." : el_c.disabled_reason);
@@ -1898,6 +1904,9 @@ void RenderDisplayTimeControlsGroup(GuiState& state, bool host_bg_pick) {
   // from position. This one names what it anchors and sits directly above the EV slider it
   // qualifies, so the two rows read as one pair.
   ImGui::Combo(PanelLabel("renderer.ev_mode", "display").c_str(), &r.ev_mode, kEvModeNames, kEvModeCount);
+  // Hover tooltip, not an info icon — the right panel's rows are width-exact: no per-control
+  // icon fits without breaking the column budget. The same shared group hosts in the Analyze
+  // left column, equally narrow.
   if (ImGui::IsItemHovered()) {
     ImGui::SetTooltip(
         "Which anchor display brightness is measured against.\n\n"
@@ -1984,6 +1993,8 @@ void RenderDisplayTimeControlsGroup(GuiState& state, bool host_bg_pick) {
   // the user thinks in, and the two entries say what they do without the word "tone", which is
   // opaque to anyone who has not met tone mapping.
   ImGui::Combo(PanelLabel("renderer.tone", "display_tone").c_str(), &r.tone, kToneNames, kToneCount);
+  // Hover tooltip, not an info icon — the right panel's rows are width-exact: no per-control
+  // icon fits without breaking the column budget.
   if (ImGui::IsItemHovered()) {
     ImGui::SetTooltip(
         "Which operator turns the simulated light into pixels.\n\n"
@@ -2019,6 +2030,8 @@ void RenderDisplayTimeControlsGroup(GuiState& state, bool host_bg_pick) {
   if (!IsPrintTone(r)) {
     ImGui::ColorEdit3(PanelLabel("renderer.background", "display_sky_color").c_str(), r.background,
                       ImGuiColorEditFlags_NoInputs);
+    // Hover tooltip, not an info icon — the right panel's rows are width-exact: no per-control
+    // icon fits without breaking the column budget.
     if (ImGui::IsItemHovered()) {
       ImGui::SetTooltip(
           "Colour of the empty sky, added to the halo in linear RGB before the\n"
@@ -2074,6 +2087,8 @@ void RenderDisplayTimeControlsGroup(GuiState& state, bool host_bg_pick) {
     // colour.
     ImGui::ColorEdit3(PanelLabel("renderer.paper", "display_paper_color").c_str(), r.paper,
                       ImGuiColorEditFlags_NoInputs);
+    // Hover tooltip, not an info icon — the right panel's rows are width-exact: no per-control
+    // icon fits without breaking the column budget.
     if (ImGui::IsItemHovered()) {
       ImGui::SetTooltip(
           "Colour of the paper the ink is laid on under Print mode.\n\n"
@@ -2353,9 +2368,13 @@ bool RenderDisplayModeControl() {
   for (int i = 0; i < kDisplayModeCount; i++) {
     text_w.push_back(ImGui::CalcTextSize(kDisplayModeNames[i]).x);
   }
-  const SegmentedControlLayout layout =
-      LayoutSegmentedControl(avail.x, UiPx(kDisplayModeControlMarginPt), UiPx(kDisplayModeControlPadXPt),
-                             UiPx(kDisplayModeControlPadYPt), ImGui::GetTextLineHeight(), text_w);
+  // The layout's region reserves the help icon's advance: the control right-anchors at
+  // margin from the region edge, so without this the SameLine icon after the group starts past
+  // the content edge and clips entirely. With it, the icon's right edge lands exactly on the
+  // margin line, inside the clip, at both hosts.
+  const SegmentedControlLayout layout = LayoutSegmentedControl(
+      avail.x - InfoIconAdvance(), UiPx(kDisplayModeControlMarginPt), UiPx(kDisplayModeControlPadXPt),
+      UiPx(kDisplayModeControlPadYPt), ImGui::GetTextLineHeight(), text_w);
   const ImVec2 frame_min(origin.x + layout.frame.x0, origin.y + layout.frame.y0);
   const ImVec2 frame_max(origin.x + layout.frame.x1, origin.y + layout.frame.y1);
   const bool over_control = ImGui::IsMouseHoveringRect(frame_min, frame_max);
@@ -2388,25 +2407,21 @@ bool RenderDisplayModeControl() {
   ImGui::EndGroup();
   ImGui::PopStyleVar();
 
-  // The tooltip carries the same three points the user manual's section does (value moves with
-  // EV, clipping flattens it, compare at one EV) because those are what make the reading
-  // trustworthy, and a user who only ever hovers must still meet them. With the segment names as
-  // the only label, it is also where "Channel B-R" is explained at all.
-  if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-    if (dm_c.inactive_note != nullptr) {
-      ImGui::SetTooltip("%s", dm_c.inactive_note);
-    } else {
-      ImGui::SetTooltip(
-          "Normal: the rendered image.\n\n"
-          "Channel B-R: is this spot bluer or redder? Shows blue minus red of the halo-only\n"
-          "sRGB image after gamma, at the same exposure and view; sky colour excluded.\n"
-          "Mid grey is no difference (including empty sky), lighter is bluer, darker is redder.\n\n"
-          "The value moves with EV, and once red or blue clips at full brightness the\n"
-          "difference is flattened, so compare places at the same EV. Overlays are drawn\n"
-          "on top in their own colours; the background photo and the colored composite\n"
-          "are hidden while it is on.");
-    }
+  // The modes' shared concept ("what is Channel B-R" and the three reading caveats) rides the
+  // associated info icon per the two-tier rule; what stays on the control's hover is the
+  // current-state note (inactive_note) only.
+  if (dm_c.inactive_note != nullptr && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+    ImGui::SetTooltip("%s", dm_c.inactive_note);
   }
+  InfoIcon("preview_display_mode_help",
+           "Normal: the rendered image.\n\n"
+           "Channel B-R: is this spot bluer or redder? Shows blue minus red of the halo-only\n"
+           "sRGB image after gamma, at the same exposure and view; sky colour excluded.\n"
+           "Mid grey is no difference (including empty sky), lighter is bluer, darker is redder.\n\n"
+           "The value moves with EV, and once red or blue clips at full brightness the\n"
+           "difference is flattened, so compare places at the same EV. Overlays are drawn\n"
+           "on top in their own colours; the background photo and the colored composite\n"
+           "are hidden while it is on.");
 
   // Back to where the caller's next item expects to start: the content region's top-left.
   ImGui::SetCursorScreenPos(origin);
