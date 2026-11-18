@@ -349,7 +349,7 @@ own copy of the non-finite-to-`null` mapping or the sun-grid rounding again.
 
 ## 5. `--warm`: two document families, one flag
 
-`--warm <file>` reads what a previous document is worth. The document's family decides:
+`--warm <file>` reads what a previous document is worth.
 
 This flag supplies **explicit** input: incompatible identity remains a refusal. A long-lived
 Workspace's automatic survey slot instead treats failed admission as a cache miss before
@@ -359,6 +359,8 @@ when their optional survey context is physical-class scoped. C v4.62 additionall
 and Probe callers explicitly request literal context; zero and old request extents preserve
 physical-class context by default. Probe quantities remain representative-member profiles,
 not a class sum. CLI defaults and JSON schema versions are unchanged.
+
+The document's family decides:
 
 **A schema-1 `point` output** — the seed sheet. Its `components[*].seed` and then
 `incomplete[*].seed` (9 row-major doubles each) start the search as extra starting poses.

@@ -607,6 +607,21 @@ TEST_F(SurveyCApi, ContextScopePreservesAutomaticExplicitAndLegacyContracts) {
               LUMICE_ERR_INVALID_VALUE);
     EXPECT_EQ(LUMICE_PathWorkspaceQueryProbe(workspace.get(), &probe, &options, &probe_result, err, sizeof(err)),
               LUMICE_ERR_INVALID_VALUE);
+    // Legacy Analyze retains prefix-group reading, unlike the Workspace's complete extents.
+    ASSERT_EQ(LUMICE_AnalyzeSinglePath(scene_.get(), &point, &point_result, err, sizeof(err)), LUMICE_OK) << err;
+    LUMICE_SinglePathResultDestroy(point_result);
+    ASSERT_EQ(LUMICE_AnalyzePathProbe(scene_.get(), &probe, &probe_result, err, sizeof(err)), LUMICE_OK) << err;
+    LUMICE_PathProbeDestroy(probe_result);
+    point.struct_size = sizeof(point) - 1;
+    probe.struct_size = sizeof(probe) - 1;
+    ASSERT_EQ(LUMICE_AnalyzeSinglePath(scene_.get(), &point, &point_result, err, sizeof(err)), LUMICE_OK) << err;
+    LUMICE_SinglePathResultDestroy(point_result);
+    ASSERT_EQ(LUMICE_AnalyzePathProbe(scene_.get(), &probe, &probe_result, err, sizeof(err)), LUMICE_OK) << err;
+    LUMICE_PathProbeDestroy(probe_result);
+    EXPECT_EQ(LUMICE_PathWorkspaceQueryPoint(workspace.get(), &point, &options, &point_result, err, sizeof(err)),
+              LUMICE_ERR_INVALID_VALUE);
+    EXPECT_EQ(LUMICE_PathWorkspaceQueryProbe(workspace.get(), &probe, &options, &probe_result, err, sizeof(err)),
+              LUMICE_ERR_INVALID_VALUE);
     point.struct_size = sizeof(point);
     probe.struct_size = sizeof(probe);
     EXPECT_EQ(LUMICE_PathWorkspaceQueryPoint(workspace.get(), &point, &options, &point_result, err, sizeof(err)),
