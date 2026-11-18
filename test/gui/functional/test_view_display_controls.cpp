@@ -38,6 +38,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <filesystem>
 #include <nlohmann/json.hpp>
 #include <set>
@@ -45,7 +46,10 @@
 #include <vector>
 
 #include "IconsFontAwesome6.h"  // the sky eyedropper's label is an icon glyph, and its "##" id folds it in
-#include "gui/app.hpp"          // g_state / g_server / g_preview_vp / DoRun — the exposure-mode case
+#include "gui/analyze_map_view.hpp"
+#include "gui/analyze_survey.hpp"
+#include "gui/analyze_ui_widgets.hpp"
+#include "gui/app.hpp"  // g_state / g_server / g_preview_vp / DoRun — the exposure-mode case
 #include "gui/defaults_diff.hpp"
 #include "gui/file_io.hpp"
 #include "gui/gui_state.hpp"
@@ -300,6 +304,69 @@ void PickLens(ImGuiTestContext* ctx, int lens) {
 }  // namespace
 
 void RegisterViewDisplayControlTests(ImGuiTestEngine* engine) {
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "view_display_controls", "truncated_status_tooltip_uses_the_shared_bound");
+    static std::string status;
+    t->GuiFunc = [](ImGuiTestContext*) {
+      if (status.empty()) {
+        return;
+      }
+      ImGui::SetNextWindowPos(ImVec2(30.0f, 80.0f), ImGuiCond_Always);
+      ImGui::SetNextWindowSize(ImVec2(gui::UiPx(480.0f), gui::UiPx(140.0f)), ImGuiCond_Always);
+      ImGui::Begin("Tooltip status host");
+      const auto layout = gui::ReserveAnalyzeStatusBar();
+      ImGui::Dummy(layout.body_size);
+      gui::RenderAnalyzeStatusBar(layout, status);
+      ImGui::End();
+    };
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      const ScopedTooltipUiScale scale(ctx);
+      struct Clear {
+        ~Clear() { status.clear(); }
+      } clear;
+      gui::InflightPoll poll;
+      poll.in_flight = true;
+      poll.face = gui::QueryFace::kMap;
+      poll.stage = LUMICE_PATH_POLL_STAGE_SURVEY_ASSEMBLY;
+      status = "Waiting — " + gui::MapWaitLineFor({}, true, 1234.5, poll);
+      const auto exercise = [&](float multiplier) -> bool {
+        gui::SetUiScaleMultiplierImmediate(multiplier);
+        ctx->Yield(4);
+        ImGuiWindow* bar = nullptr;
+        for (ImGuiWindow* window : GImGui->Windows) {
+          if (window->Active && std::strstr(window->Name, "Tooltip status host/") != nullptr &&
+              std::strstr(window->Name, "##QueryStatusBar") != nullptr) {
+            bar = window;
+          }
+        }
+        IM_CHECK_RETV(bar != nullptr, false);
+        IM_CHECK_RETV(ImGui::CalcTextSize(status.c_str()).x > bar->WorkRect.GetWidth(), false);
+        IM_CHECK_RETV(ObserveTooltip(ctx, bar->Rect().GetCenter(), status.c_str(), true,
+                                     multiplier == 1.0f ? "status-tooltip-1x.png" : "status-tooltip-15x.png"),
+                      false);
+        return true;
+      };
+      IM_CHECK(exercise(1.0f));
+      IM_CHECK(exercise(1.5f));
+    };
+  }
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "view_display_controls", "map_cursor_tooltip_bounds_its_explanation");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      const ScopedTooltipUiScale scale(ctx);
+      gui::SelectLensType(gui::g_state, gui::kLensTypeGlobe);
+      gui::g_state.renderer.front = false;
+      gui::g_state.analyze_raypath_view_open = true;
+      ctx->Yield(4);
+      const auto canvas = ctx->ItemInfo("**/##map_canvas");
+      IM_CHECK(canvas.ID != 0);
+      IM_CHECK(ObserveTooltip(ctx, canvas.RectFull.GetCenter(), "Far-side hint — separate direction, not a sum", true,
+                              "map-cursor-tooltip.png"));
+      ctx->WindowClose("//Raypath view");
+    };
+  }
   {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "view_display_controls", "retained_display_tooltips_wrap_in_both_hosts");
     t->TestFunc = [](ImGuiTestContext* ctx) {
