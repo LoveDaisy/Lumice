@@ -6912,11 +6912,11 @@ bool MapReadabilityControlledFrames(ImGuiTestContext* ctx) {
     // Controlled third-verdict stress, not evidence of a physically reachable red verdict.
     p.labels = { { 35, 4, gui::kChromaticColourRed, "650 nm · 21.839° · arc in view" },
                  { 36, 5, gui::kChromaticColourBlue, "450 nm · 22.627° · arc in view" },
-                 { 37, 6, IM_COL32(140, 230, 200, 255), "verdict · 22.600° · arc in view" } };
+                 { 37, 6, gui::kChromaticColourBlue, "verdict · 22.600° · arc in view" } };
     const std::vector<std::pair<ImU32, std::string>> expected = { { p.labels[0].colour, p.labels[0].text },
                                                                   { p.labels[1].colour, p.labels[1].text },
                                                                   { p.labels[2].colour, p.labels[2].text } };
-    for (const float width : { 600.0f, 200.0f }) {
+    for (const float width : { 600.0f, 120.0f }) {
       p.size = ImVec2(width * scale, 240.0f * scale);
       ctx->Yield(3);
       ctx->WindowFocus("//Map readability probe");
@@ -6953,6 +6953,22 @@ bool MapReadabilityControlledFrames(ImGuiTestContext* ctx) {
     ctx->LogError("[map readability] %s", "one_scale(2.0f)");
     return false;
   }
+  // An explicitly advertised fallback, not silent truncation: hover restores every reading.
+  gui::SetUiScaleMultiplierImmediate(1.0f);
+  IM_CHECK_RETV(DriveUntil(ctx, [] { return !gui::g_ui_scale_dirty && gui::CurrentUiScale() == 1.0f; }, 5), false);
+  p.size = ImVec2(180, 46);
+  ctx->Yield(3);
+  ctx->MouseMoveToPos(ImVec2(p.canvas.Min.x + 18, p.canvas.Min.y + 8));
+  ctx->Yield(3);
+  const std::string tooltip_text = CaptureFrameText(ctx);
+  IM_CHECK_RETV(tooltip_text.find("Map too small for inline readouts") != std::string::npos, false);
+  IM_CHECK_RETV(tooltip_text.find(p.labels[0].text) != std::string::npos &&
+                    tooltip_text.find(p.labels[1].text) != std::string::npos &&
+                    tooltip_text.find(p.labels[2].text) != std::string::npos,
+                false);
+  IM_CHECK_RETV(SaveWindowPng(ctx, "//Map readability probe", GuiTestTempPath("map_readouts_compact.png").string()),
+                false);
+  ctx->MouseMoveToPos(ImVec2(2, 2));
   p.labels.clear();
   p.size = ImVec2(200, 160);
   p.marker = true;
@@ -7048,6 +7064,7 @@ bool CheckRealMapReadability(ImGuiTestContext* ctx, const gui::SurveyOverviewMod
     PinRaypathViewOnScreen(ctx);
     ctx->WindowResize("//Raypath view",
                       ImVec2((minimum ? 480.0f : 840.0f) * scale, (minimum ? 360.0f : 640.0f) * scale));
+    PinRaypathViewOnScreen(ctx);  // resizing around a pivot must not leave the next capture off-screen
     ctx->WindowFocus("//Raypath view");
     ctx->MouseMoveToPos(ImVec2(2, 2));
     ctx->Yield(4);
