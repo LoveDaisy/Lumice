@@ -215,10 +215,12 @@ profile drawings are hover-transient: no row standing, no ink, and Overlays off 
 while the row highlight stays.
 
 **Readout labels stay readable together.** The dispersion pair and verdict share one layout
-inside the visible map. Full wavelength/deviation/arc qualifiers stay with their readings;
-moved labels have leaders to their curves. Narrow maps use a marked, wrapped reading stack.
-If even that cannot fit, **Readouts: hover for all** opens all full readings and explains how to
-restore inline labels by enlarging the map. Fonts and circles are not reduced or hidden.
+inside the visible map. Full wavelength/deviation/arc qualifiers stay with their readings.
+When several labels are laid out together, leaders connect them to their curves, including in
+the marked, wrapped stack used by narrow maps. A lone label is clamped inside the visible map
+without a leader. If even the stack cannot fit, **Readouts: hover for all** opens all full readings
+without curve leaders and explains how to restore inline labels by enlarging the map.
+Fonts and circles are not reduced or hidden.
 Your sky-point ring/crosshair has a light core and dark outline for both bright and dark maps,
 with the same shape for a pick, drag or typed **Set sky point**.
 

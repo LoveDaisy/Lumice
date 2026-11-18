@@ -774,7 +774,7 @@ dispersion 双圈与 verdict 锚定同走线同措辞）；②弧 = 带方位向
 **常驻管理（2026-11-18 上手反馈修订）**：Raypath view 图侧只有 **Overlays** 总门（默认开，
 沿用窗口 storage 寿命）；合格 verdict 与对象/色散一起常显，不再有独立开关或隐藏抑制位。
 关总门也不画 profile 临时设备；太阳/天顶/地平线和用户 sky point 不属此门。
-verdict/Position 行保留 hover 面与本地高亮；它们不再决定常驻锚的出墨权限。
+verdict/Position 行保留 hover 面与本帧本地高亮，不产生会话 hover 身份；它们不决定常驻锚的出墨权限。
 profile 行仍逐帧覆写瞬态身份，地图消费上一帧（一帧延迟）；类答案缺席、关闭/裁剪窗口清身份。
 开关、hover 和标签避让不改冻结结果、共享相机或查询身份，不发新请求。
 
@@ -803,8 +803,8 @@ nav 焦点无（InvisibleButton 默认 NoNav）。主窗路径不传读出参数
   φ = π − az；内建 probe 的 `azimuth_deg=0` 是代表楔的显式 schema 值（方位自由剖面的代表线），
   非缺省未知。点标语义 = 「参考剖线上的读数位置」，不是全域峰或全圆可见性声明。
 - **profile 触发集（封闭）**：类答案区三条读数行（`###profile_edge_row`/`###profile_peak_row`/
-  `###profile_separation_row`）各自携带 hover 面，写会话 `profile_row_hover`（互斥身份，覆写
-  契约与复位接缝与 verdict hover 完全同构）。设备的诚实门短路序：无身份、probe 拒答、方位
+  `###profile_separation_row`）各自携带 hover 面，写会话 `profile_row_hover`（互斥身份；类答案
+  每帧覆写，答案缺席、关窗或 Begin-false 时清除；verdict/Position 行仅本地高亮）。设备的诚实门短路序：无身份、probe 拒答、方位
   不可用、具名读数缺席 → 不画（行文字承载缺席）；端点出视 → 整体不画（全有或全无，不跨投影
   断裂桥接，无「arc in view」类限定可承载的部分画法）。probe 行只在非 full-dimensional 臂渲染
   （echo 规则不变）——固定 zenith/roll 的 family 臂无 pose density、量化腿全跳，profile 行天然
@@ -812,7 +812,7 @@ nav 焦点无（InvisibleButton 默认 NoNav）。主窗路径不传读出参数
 - **ratio 行 = 仅本地反馈**：Blue/red ratio 行有 hover 面与行高亮，无任何地图几何——ratio 无
   空间载荷，不为它虚构位置（AC3 的合法完成态）。
 - **profile 设备不进图例**：设备为 hover 瞬态，驱动它的行本身就是解释；图例「画了才亮」的
-  常驻类别记账不含它（verdict hover 联动仍点亮 verdict 图例位，不变）。
+  常驻类别记账不含它；verdict 图例位仅由合格常驻锚实际出墨点亮，与行 hover 无关。
 - **图例四锚图标**：sun marker / zenith cross / horizon circle / verdict anchor 四条目各带与
   地图形状、颜色对应的小图标（同一图标槽位模式，object kinds 先例）：日 = 金色实心圆+外环，
   天顶 = 双线，地平 = 圆圈（地图地平线 alpha 60 在图标尺寸不可辨，取天顶 alpha——色相是对应、
@@ -822,9 +822,10 @@ nav 焦点无（InvisibleButton 默认 NoNav）。主窗路径不传读出参数
 - **readout 标签共同布局（2026-11-18 修订）**：dispersion 红/蓝与 verdict 的完整文字先集中，
   曲线全部绘制后才放标签，避免后画的曲线/标签覆盖前者。约束域仍为画布与有效 clip 的交集，
   复用 `ClampLabelPosToViewport`，但调用侧拒绝共享 clamp 的“不容纳轴不动”作为合格标签布局。
-  普通单行标签共同避让，位移后有同色引线连接原曲线采样点；原波长、角度、`arc in view` 不丢。
+  普通单行标签共同避让；多标签集合以同色引线连接各自原曲线采样点，完整换行栈也保留这些引线。
+  单标签只钳制到可视区、不画引线；原波长、角度、`arc in view` 不丢。
   容不下单行时转完整换行栈，标明 `Readouts (stacked)`；连栈也容不下时显式显示
-  `Readouts: hover for all`，hover 全文并说明放大地图可恢复，不缩字、不藏圈、不静默丢读数。
+  `Readouts: hover for all`，hover 全文并说明放大地图可恢复（此形态不画曲线引线），不缩字、不藏圈、不静默丢读数。
   这是当前三份读数的显示集合，不改变全局 annotation placement 或物理可见域。
 - **profile 操作发现**：三行上方有轻量 hover 说明；Overlays 的共享 info icon 解释参考剖线与总门。
   只在可联动的完整答案宿主出现说明，不给无位置量补标记，也不把剖线峰扩成全天峰圈。
