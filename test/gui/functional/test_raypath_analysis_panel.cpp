@@ -6910,8 +6910,45 @@ bool Ray3DTitleBandAndCanvasGainHold(ImGuiTestContext* ctx) {
     ctx->LogInfo("[r3d rework] %s canvas %.1fx%.1f", what, c.RectFull.GetWidth(), c.RectFull.GetHeight());
     return c.RectFull.GetHeight();
   };
+  const auto readout_budget = [&](const char* name) -> bool {
+    const auto ray = ctx->ItemInfo("**/##r3d_canvas", ImGuiTestOpFlags_NoError);
+    const auto globe = ctx->ItemInfo("**/##globe_canvas", ImGuiTestOpFlags_NoError);
+    const auto slider = ctx->ItemInfo("**/##globe_sample", ImGuiTestOpFlags_NoError);
+    auto* ray_region = PoseRegionWindow("##AnalyzeRaypath3D");
+    auto* globe_region = PoseRegionWindow("##AnalyzeSunGlobe");
+    IM_CHECK_RETV(ray.ID && globe.ID && slider.ID && ray_region && globe_region, false);
+    ctx->LogInfo(
+        "[readout budget] %s scale=%.2f font=%.1f D4=%.4f D5=%.4f D6=%.4f D7=%.4f "
+        "ray=(%.1f,%.1f)-(%.1f,%.1f) region=(%.1f,%.1f)-(%.1f,%.1f) "
+        "globe=(%.1f,%.1f)-(%.1f,%.1f) region=(%.1f,%.1f)-(%.1f,%.1f) slider-bottom=%.1f report=%d",
+        name, gui::CurrentUiScale(), ImGui::GetFontSize(), gui::g_state.analyze_pose_view_right_ratio,
+        gui::g_state.analyze_pose_view_left_row_ratio, gui::g_state.analyze_pose_view_globe_ratio,
+        gui::g_state.analyze_pose_view_curve_canvas_ratio, ray.RectFull.Min.x, ray.RectFull.Min.y, ray.RectFull.Max.x,
+        ray.RectFull.Max.y, ray_region->InnerClipRect.Min.x, ray_region->InnerClipRect.Min.y,
+        ray_region->InnerClipRect.Max.x, ray_region->InnerClipRect.Max.y, globe.RectFull.Min.x, globe.RectFull.Min.y,
+        globe.RectFull.Max.x, globe.RectFull.Max.y, globe_region->InnerClipRect.Min.x,
+        globe_region->InnerClipRect.Min.y, globe_region->InnerClipRect.Max.x, globe_region->InnerClipRect.Max.y,
+        slider.RectFull.Max.y, TraceReportWindow() != nullptr);
+    IM_CHECK_RETV(std::fabs(globe.RectFull.GetWidth() - globe.RectFull.GetHeight()) < .5f, false);
+    char filename[96];
+    std::snprintf(filename, sizeof(filename), "readout_budget_%s.png", name);
+    IM_CHECK_RETV(SaveWindowPng(ctx, "//Pose & trace", GuiTestTempPath(filename).string()), false);
+    return true;
+  };
   const float default_h = canvas_rect("default 960x720");
-  IM_CHECK_RETV(default_h >= 117.0f + 64.0f, false);  // baseline 608x117 @ d6ad263e4 + the plan's floor
+  IM_CHECK_RETV(default_h >= 117.0f + 64.0f, false);
+  IM_CHECK_RETV(readout_budget("default"), false);
+  const std::string success_text = CaptureWindowFrameText(ctx, "Pose & trace");
+  IM_CHECK_RETV(success_text.find("Sun direction globe") != std::string::npos, false);
+  IM_CHECK_RETV(success_text.find("Current pose factors") != std::string::npos, false);
+  ctx->LogInfo("[readout budget] successful frame text: %s", success_text.c_str());
+  {
+    ScopedPoseSessionSplits splits;
+    gui::g_state.analyze_pose_view_globe_ratio = .75f;
+    ctx->Yield(3);
+    IM_CHECK_RETV(readout_budget("width_limited"), false);
+  }
+  ctx->Yield(3);
 
   // AC2's narrow leg: the same band, wrapped by complete footprints, still operable.
   ImGuiWindow* host = ctx->GetWindowByRef("//Pose & trace");
@@ -6921,6 +6958,10 @@ bool Ray3DTitleBandAndCanvasGainHold(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(band_clicks("narrowest 640x680"), false);
   canvas_rect("narrowest 640x680");
   IM_CHECK_RETV(SaveWindowPng(ctx, "//Pose & trace", GuiTestTempPath("r3d_title_band_narrow.png").string()), false);
+  IM_CHECK_RETV(readout_budget("minimum"), false);
+  IM_CHECK_RETV(TraceReportWindow() == nullptr, false);
+  IM_CHECK_RETV(success_text.find("Component 1 · sample") == std::string::npos, false);
+  IM_CHECK_RETV(success_text.find("— zenith") == std::string::npos, false);
 
   // Leave the standing geometry as the pin set it (the resize legs restore their own splits).
   PinPoseViewOnScreen(ctx);
