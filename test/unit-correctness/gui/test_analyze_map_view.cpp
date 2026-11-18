@@ -972,7 +972,7 @@ class MapDeviceDrawRig : public ::testing::Test {
     return d;
   }
 
-  static VerdictAnchorInput Input(const ViewProjection& vp, bool shown, bool hover) {
+  static VerdictAnchorInput Input(const ViewProjection& vp, bool overlays) {
     VerdictAnchorInput in;
     in.camera = &vp;
     in.width_px = 600;
@@ -984,8 +984,7 @@ class MapDeviceDrawRig : public ::testing::Test {
     in.pic_px = 600.0f;
     in.sun.altitude_deg = 20.0;
     in.sun.azimuth_deg = 0.0;
-    in.shown = shown;
-    in.hover = hover;
+    in.overlays = overlays;
     return in;
   }
 
@@ -1119,31 +1118,27 @@ TEST_F(VerdictAnchorDraw, HonestyGateLegs) {
                          { "colour with no palette entry", &unpainted_colour } };
   for (const Leg& leg : absent) {
     OverlayLegendState legend;
-    VerdictAnchorInput in = Input(vp, /*shown=*/true, /*hover=*/false);
+    VerdictAnchorInput in = Input(vp, /*overlays=*/true);
     in.legend = &legend;
     DrawVerdictAnchor(ImGui::GetBackgroundDrawList(), *leg.d, in);
     EXPECT_EQ(IndexCountForColour(kChromaticColourBlue), 0) << leg.what;
     EXPECT_EQ(IndexCountForColour(kChromaticColourRed), 0) << leg.what;
     EXPECT_FALSE(legend.verdict_anchor) << leg.what;
   }
-  // And the density gate: a fully anchorable verdict with neither switch standing draws nothing.
+  // The sole Overlays gate: even a fully anchorable verdict draws nothing while off.
   OverlayLegendState legend;
-  VerdictAnchorInput in = Input(vp, /*shown=*/false, /*hover=*/false);
+  VerdictAnchorInput in = Input(vp, /*overlays=*/false);
   in.legend = &legend;
   DrawVerdictAnchor(ImGui::GetBackgroundDrawList(), pilot, in);
   EXPECT_EQ(IndexCountForColour(kChromaticColourBlue), 0);
   EXPECT_FALSE(legend.verdict_anchor);
 }
 
-// The density gate's two tiers: the hover alone anchors, the toggle alone anchors — and the
-// closed kind set's second member (gate_edge) anchors through the same path. One frame, two
-// colour buckets: the hover tier draws blue, the toggle tier's gate_edge red. The legend bit is
-// pinned here too (the drawn → bit-set coupling, unit-tier, not only through the functional
-// chain).
-TEST_F(VerdictAnchorDraw, HoverAndToggleEachAnchor) {
+// Both positioned kinds draw under the sole Overlays gate without a row hover.
+TEST_F(VerdictAnchorDraw, OverlaysIncludesBothPositionedKinds) {
   const ViewProjection vp = SunCamera();
   OverlayLegendState legend;
-  VerdictAnchorInput in = Input(vp, /*shown=*/false, /*hover=*/true);
+  VerdictAnchorInput in = Input(vp, /*overlays=*/true);
   in.legend = &legend;
   DrawVerdictAnchor(ImGui::GetBackgroundDrawList(), Diagnose("edge", "blue", 40.0, true), in);
   EXPECT_GT(IndexCountForColour(kChromaticColourBlue), 0);
@@ -1151,7 +1146,7 @@ TEST_F(VerdictAnchorDraw, HoverAndToggleEachAnchor) {
   // The icon's own facts, recorded with the bit: the palette entry that drew, the solid form.
   EXPECT_EQ(legend.verdict_anchor_colour, kChromaticColourBlue);
   EXPECT_FALSE(legend.verdict_anchor_dashed);
-  in = Input(vp, /*shown=*/true, /*hover=*/false);
+  in = Input(vp, /*overlays=*/true);
   in.legend = &legend;
   DrawVerdictAnchor(ImGui::GetBackgroundDrawList(), Diagnose("gate_edge", "red", 60.0, true), in);
   EXPECT_GT(IndexCountForColour(kChromaticColourRed), 0);
@@ -1169,7 +1164,7 @@ TEST_F(VerdictAnchorDraw, HoverAndToggleEachAnchor) {
 TEST_F(VerdictAnchorDraw, OutOfViewRingDrawsNothingAndEarnsNoLegend) {
   const ViewProjection vp = SunCamera();
   OverlayLegendState legend;
-  VerdictAnchorInput in = Input(vp, /*shown=*/true, /*hover=*/false);
+  VerdictAnchorInput in = Input(vp, /*overlays=*/true);
   in.legend = &legend;
   // δ=150 about the sun on a 180° fisheye aimed at the sun: every sample sits beyond the
   // frustum's 90° reach, so the whole walk is out of view.
@@ -1182,7 +1177,7 @@ TEST_F(VerdictAnchorDraw, OutOfViewRingDrawsNothingAndEarnsNoLegend) {
 // anchor lands in the red bucket and nowhere else.
 TEST_F(VerdictAnchorDraw, ColourRoutingUsesTheSharedPalette) {
   const ViewProjection vp = SunCamera();
-  VerdictAnchorInput in = Input(vp, /*shown=*/true, /*hover=*/false);
+  VerdictAnchorInput in = Input(vp, /*overlays=*/true);
   DrawVerdictAnchor(ImGui::GetBackgroundDrawList(), Diagnose("edge", "red", 40.0, true), in);
   EXPECT_GT(IndexCountForColour(kChromaticColourRed), 0);
   EXPECT_EQ(IndexCountForColour(kChromaticColourBlue), 0);
@@ -1193,7 +1188,7 @@ TEST_F(VerdictAnchorDraw, ColourRoutingUsesTheSharedPalette) {
 // radius law), inside one frame and two colour buckets.
 TEST_F(VerdictAnchorDraw, RingsLandAtTheRatiosTheDeltasName) {
   const ViewProjection vp = SunCamera();
-  VerdictAnchorInput in = Input(vp, /*shown=*/true, /*hover=*/false);
+  VerdictAnchorInput in = Input(vp, /*overlays=*/true);
   ImDrawList* dl = ImGui::GetBackgroundDrawList();
   DrawVerdictAnchor(dl, Diagnose("edge", "blue", 40.0, true), in);
   DrawVerdictAnchor(dl, Diagnose("edge", "red", 80.0, true), in);
@@ -1221,7 +1216,7 @@ TEST_F(VerdictAnchorDraw, RingsLandAtTheRatiosTheDeltasName) {
 // submitted primitives. The label's glyphs ride each bucket equally, so the ratio band is wide.
 TEST_F(VerdictAnchorDraw, IncompleteCoverageDrawsTheDashedForm) {
   const ViewProjection vp = SunCamera();
-  VerdictAnchorInput in = Input(vp, /*shown=*/true, /*hover=*/false);
+  VerdictAnchorInput in = Input(vp, /*overlays=*/true);
   ImDrawList* dl = ImGui::GetBackgroundDrawList();
   // The legend record leg, isolated in its own draw: the dashed red form's bits (the icon reads
   // what actually drew), with no other draw's ink in the buffer.
@@ -1261,7 +1256,7 @@ TEST_F(VerdictAnchorDraw, IncompleteCoverageDrawsTheDashedForm) {
 // whole patch — backing AND glyphs — inside the canvas rectangle. The unclamped draw centred the
 // text on the walk's topmost in-disk sample with no inset: an edge-close anchor cropped the word
 // on the canvas edge (the owner's screenshot cut "verdict" to "dict"). The backing ink
-// (16,17,20,170 — DrawIsoDeltaReadoutLabel's own literal) is unique in the frame, so its vertex
+// (16,17,20,170 — the shared readout backing) is unique in the frame, so its vertex
 // box IS the patch rect; the glyph bucket (the anchor's colour) must sit inside it, text and
 // backing moving together. Two independent pokes — the canvas's right edge (the owner's cut) and
 // its top edge — plus the non-zero-origin face: the rectangle the patch must respect is the
@@ -1300,7 +1295,7 @@ TEST_F(VerdictAnchorDraw, EdgeAnchorKeepsTheLabelInsideTheCanvas) {
     { "right-edge anchor, effective clip narrower than the canvas", &sun_vp, 20.0, 88.0, 20.0, 0.0f, 0.0f, 400.0f },
   };
   for (const Poke& poke : pokes) {
-    VerdictAnchorInput in = Input(*poke.vp, /*shown=*/true, /*hover=*/false);
+    VerdictAnchorInput in = Input(*poke.vp, /*overlays=*/true);
     in.sun.altitude_deg = poke.sun_alt;
     in.sun.azimuth_deg = poke.sun_az;
     in.pic_min_x = poke.pic_min_x;
@@ -1706,7 +1701,7 @@ TEST_F(ProfileHoverDraw, IntervalBesideThePoleDrawsOnTheRectangularMap) {
 // read as white-uv quads of the anchor colour (the label's glyphs carry atlas uv and stay out).
 TEST_F(VerdictAnchorDraw, WalkBreaksAtTheDualFisheyeDiskSplit) {
   const ViewProjection vp = DualFisheyeCamera();
-  VerdictAnchorInput in = Input(vp, /*shown=*/true, /*hover=*/false);
+  VerdictAnchorInput in = Input(vp, /*overlays=*/true);
   in.sun.altitude_deg = 45.0;
   in.sun.azimuth_deg = 0.0;
   ImDrawList* dl = ImGui::GetBackgroundDrawList();
@@ -1745,7 +1740,7 @@ TEST_F(VerdictAnchorDraw, WalkBreaksAtTheDualFisheyeDiskSplit) {
 // the seam chord is the whole canvas.
 TEST_F(VerdictAnchorDraw, WalkBreaksAtTheRectangularSeam) {
   const ViewProjection vp = RectangularCamera();
-  VerdictAnchorInput in = Input(vp, /*shown=*/true, /*hover=*/false);
+  VerdictAnchorInput in = Input(vp, /*overlays=*/true);
   in.sun.altitude_deg = 20.0;
   in.sun.azimuth_deg = 170.0;
   ImDrawList* dl = ImGui::GetBackgroundDrawList();

@@ -2726,6 +2726,7 @@ bool PointMassArmIsHonestAndForcesNoFiber(ImGuiTestContext* ctx) {
 std::string CaptureFrameText(ImGuiTestContext* ctx);
 std::string CaptureWindowFrameText(ImGuiTestContext* ctx, const char* window_name);
 std::string CaptureMapFrameText(ImGuiTestContext* ctx);
+bool CheckRealMapReadability(ImGuiTestContext* ctx, const gui::SurveyOverviewModel& model);
 bool SurveyOverviewShowsDispersionAndProfile(ImGuiTestContext* ctx) {
   ScopedServerGuard guard;
   IM_CHECK_RETV(BringUpScene(ctx, kFullyRandomJson, /*infinite=*/false, /*gpu=*/false), false);
@@ -2871,25 +2872,15 @@ bool SurveyOverviewShowsDispersionAndProfile(ImGuiTestContext* ctx) {
     const ImGuiID diagnostics_fold = ctx->ItemInfo("**/Class diagnostics##sv_answer", ImGuiTestOpFlags_NoError).ID;
     IM_CHECK_RETV(diagnostics_fold == 0, false);
   }
+  IM_CHECK_RETV(CheckRealMapReadability(ctx, model), false);
   ctx->WindowClose("//Raypath view");
   ctx->Yield(1);
   return true;
 }
 
-// The verdict anchor's density interaction (§16.1's A2 pilot), on the real window: the class
-// answer's diagnose rows — addressable hover surfaces over the wrapped text — drive the map's
-// anchor, the toggle keeps it, and the legend bit (the same accounting the legend entry renders
-// from) reads what the canvas actually drew. The fixture is the dispersion face's own scene; the
-// clicked row is NOT the top chain — the top chain (a two-face chain, like 3-6) structurally
-// refuses the TIR leg and its verdict names itself not visible, anchoring nothing BY DESIGN (the
-// honesty gate's own leg), while this chain's diagnose is the pilot's edge/blue/visible and its
-// dispersion carries no min row (no dispersion circle shares the canvas, so the verdict bit is
-// unambiguous).
-// Flake attribution, should this ever red: the premise asserts below (the 1-3-2 survey's
-// diagnose fields) are the FIRST suspects — the whole-sky analysis is unseeded and the survey's
-// chromatic legs complete in ~5.6 s of the 15 s budget (~2.7x margin), so a red premise is a
-// data/ranking or budget-truncation event, not an interaction-chain defect. The interaction
-// chain is only in play once the premises hold.
+// Real blue positioned verdict: the Overlays gate is sufficient, row hover retains its
+// feedback without becoming another permission. The 1-3-2 document has no dispersion minimum,
+// so this frame's blue map ink unambiguously belongs to the verdict anchor.
 bool VerdictAnchorHoverAndToggleOnTheMap(ImGuiTestContext* ctx) {
   ScopedServerGuard guard;
   IM_CHECK_RETV(BringUpScene(ctx, kFullyRandomJson, /*infinite=*/false, /*gpu=*/false), false);
@@ -2929,13 +2920,11 @@ bool VerdictAnchorHoverAndToggleOnTheMap(ImGuiTestContext* ctx) {
   gui::g_state.renderer.front = false;
   ctx->Yield(3);
   ctx->Yield(3);
-  // The default frame: no hover, the toggle off — the anchor drew nothing even with the ring in
-  // view. The bucket read is the draw face itself (the production assembly's own quads), the
-  // reads above only imply it.
-  IM_CHECK_RETV(!gui::g_state.analysis.verdict_anchor_shown, false);
+  // Qualified verdicts draw by default, with no second toggle and no row hover.
+  IM_CHECK_RETV(ctx->ItemInfo("**/Verdict anchors##map", ImGuiTestOpFlags_NoError).ID == 0, false);
   IM_CHECK_RETV(!gui::g_state.analysis.verdict_anchor_hover, false);
-  IM_CHECK_RETV(!gui::LastMapOverlayLegend().verdict_anchor, false);
-  IM_CHECK_RETV(MapWindowIndexCountForColour(gui::kChromaticColourBlue) == 0, false);
+  IM_CHECK_RETV(gui::LastMapOverlayLegend().verdict_anchor, false);
+  IM_CHECK_RETV(MapWindowIndexCountForColour(gui::kChromaticColourBlue) > 0, false);
   // Hover the verdict row: the row's overlay takes the pointer, the info column writes the
   // standing, the canvas draws it the NEXT frame — three frames carry the whole chain (the
   // frame lag the contract accepts for hover semantics).
@@ -2954,23 +2943,20 @@ bool VerdictAnchorHoverAndToggleOnTheMap(ImGuiTestContext* ctx) {
   ctx->MouseMoveToPos(position_center);
   ctx->Yield(3);
   IM_CHECK_RETV(gui::LastMapOverlayLegend().verdict_anchor, false);
-  // Off the rows: the hover tier's annotation leaves.
+  // Leaving the row keeps qualified persistent ink; only Overlays can turn it off.
   ctx->MouseMoveToPos(ImVec2(-100.0f, -100.0f));
   ctx->Yield(3);
   IM_CHECK_RETV(!gui::g_state.analysis.verdict_anchor_hover, false);
+  IM_CHECK_RETV(gui::LastMapOverlayLegend().verdict_anchor, false);
+  IM_CHECK_RETV(SaveWindowPng(ctx, "//Raypath view", GuiTestTempPath("map_verdict_overlays_on.png").string()), false);
+  ctx->ItemClick("**/Overlays##map");
+  ctx->Yield(3);
   IM_CHECK_RETV(!gui::LastMapOverlayLegend().verdict_anchor, false);
   IM_CHECK_RETV(MapWindowIndexCountForColour(gui::kChromaticColourBlue) == 0, false);
-  // The toggle's always-on tier: no row hover, the anchor stands; off, it leaves.
-  ctx->ItemClick("**/Verdict anchors##map");
+  ctx->ItemClick("**/Overlays##map");
   ctx->Yield(3);
-  IM_CHECK_RETV(gui::g_state.analysis.verdict_anchor_shown, false);
-  IM_CHECK_RETV(!gui::g_state.analysis.verdict_anchor_hover, false);
   IM_CHECK_RETV(gui::LastMapOverlayLegend().verdict_anchor, false);
   IM_CHECK_RETV(MapWindowIndexCountForColour(gui::kChromaticColourBlue) > 0, false);
-  ctx->ItemClick("**/Verdict anchors##map");
-  ctx->Yield(3);
-  IM_CHECK_RETV(!gui::LastMapOverlayLegend().verdict_anchor, false);
-  IM_CHECK_RETV(MapWindowIndexCountForColour(gui::kChromaticColourBlue) == 0, false);
   return true;
 }
 
@@ -3301,7 +3287,7 @@ bool ProfileRowsHighlightAndDrawOnTheMap(ImGuiTestContext* ctx) {
   ctx->Yield(3);
   // The legend icons (AC4): scroll the report to its legend, then assert the icons' colour
   // buckets — the frame anchors drew (full sky), so the sun's gold and the zenith/horizon greys
-  // stand; the anchor's icon rides its toggle. The anchors draw from the adopted map's own sun
+  // stand; qualified verdicts join Overlays by default. The anchors draw from the adopted map's own sun
   // echo, and the map query queues BEHIND the survey on the executor's one worker — the
   // survey's completion gates nothing about the map's adoption. Gated here, at the point of
   // use (the map-ink legs above read the survey model's device, not the map); a deadline-cut
@@ -3326,14 +3312,10 @@ bool ProfileRowsHighlightAndDrawOnTheMap(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(legend_at_assert.anchor_sun, false);
   IM_CHECK_RETV(MapReportIndexCountForColour(IM_COL32(255, 231, 168, 255)) > 0, false);
   IM_CHECK_RETV(MapReportIndexCountForColour(IM_COL32(200, 205, 215, 110)) > 0, false);
-  ctx->ItemClick("**/Verdict anchors##map");
-  ctx->Yield(3);
   IM_CHECK_RETV(gui::LastMapOverlayLegend().verdict_anchor, false);
   const ImU32 anchor_ink = gui::LastMapOverlayLegend().verdict_anchor_colour;
   IM_CHECK_RETV(MapReportIndexCountForColour(anchor_ink) > 0, false);
   IM_CHECK_RETV(SaveWindowPng(ctx, "//Raypath view", GuiTestTempPath("analysis_legend_icons.png").string()), false);
-  ctx->ItemClick("**/Verdict anchors##map");
-  ctx->Yield(2);
   ctx->WindowClose("//Raypath view");
   ctx->Yield(1);
   return true;
@@ -6798,6 +6780,349 @@ struct ScopedUiScaleAndBasisLease {
     ctx->Yield(3);
   }
 };
+
+// Independent draw-list oracle: recover actual backing quads, then require all glyph UVs of
+// each complete expected string inside its own patch. No production layout feedback is read.
+bool CheckMapReadoutPatches(ImGuiTestContext* ctx, const ImDrawList* dl, const ImRect& visible,
+                            const std::vector<std::pair<ImU32, std::string>>& expected) {
+  std::vector<ImRect> patches;
+  for (int i = 0; i + 3 < dl->VtxBuffer.Size; ++i) {
+    const auto* v = &dl->VtxBuffer[i];
+    if (v[0].col == gui::kReadoutBackingInk && v[1].col == v[0].col && v[2].col == v[0].col && v[3].col == v[0].col &&
+        v[0].pos.x == v[3].pos.x && v[1].pos.x == v[2].pos.x && v[0].pos.y == v[1].pos.y && v[2].pos.y == v[3].pos.y &&
+        v[1].pos.x > v[0].pos.x && v[2].pos.y > v[0].pos.y) {
+      patches.emplace_back(v[0].pos, v[2].pos);
+      i += 3;
+    }
+  }
+  if (!(patches.size() == expected.size())) {
+    ctx->LogError("[map readability] %s", "patches.size() == expected.size()");
+    return false;
+  }
+  ImFont* font = ImGui::GetIO().Fonts->Fonts[0];
+  for (size_t i = 0; i < patches.size(); ++i) {
+    const auto& patch = patches[i];
+    if (!(visible.Contains(patch))) {
+      ctx->LogError("[map readability] %s", "visible.Contains(patch)");
+      return false;
+    }
+    for (size_t j = 0; j < i; ++j) {
+      if (!(!patch.Overlaps(patches[j]))) {
+        ctx->LogError("[map readability] %s", "!patch.Overlaps(patches[j])");
+        return false;
+      }
+    }
+    // Each visible glyph is one atlas rectangle. Text expected from the source document is
+    // independently decoded; whitespace has advance but no glyph quad.
+    std::vector<std::pair<float, float>> want;
+    for (const char* p = expected[i].second.c_str(); *p;) {
+      unsigned int c = 0;
+      p += ImTextCharFromUtf8(&c, p, nullptr);
+      const ImFontGlyph* g = font->FindGlyph(static_cast<ImWchar>(c));
+      if (g && g->Visible) {
+        want.emplace_back(g->U0, g->V0);
+      }
+    }
+    std::vector<std::pair<float, float>> got;
+    for (int k = 0; k + 3 < dl->VtxBuffer.Size; ++k) {
+      const auto* v = &dl->VtxBuffer[k];
+      if (v[0].col != expected[i].first || v[1].col != v[0].col || v[2].col != v[0].col || v[3].col != v[0].col ||
+          v[0].uv.x != v[3].uv.x || v[1].uv.x != v[2].uv.x || v[0].uv.y != v[1].uv.y || v[2].uv.y != v[3].uv.y ||
+          v[0].uv.x >= v[1].uv.x || v[0].uv.y >= v[2].uv.y) {
+        continue;
+      }
+      const bool glyph = std::any_of(font->Glyphs.begin(), font->Glyphs.end(), [&](const ImFontGlyph& g) {
+        return g.Visible && g.U0 == v[0].uv.x && g.V0 == v[0].uv.y && g.U1 == v[2].uv.x && g.V1 == v[2].uv.y;
+      });
+      if (!glyph || !patch.Contains(v[0].pos)) {
+        continue;
+      }
+      if (!(v[2].pos.x <= patch.Max.x + 0.5f && v[2].pos.y <= patch.Max.y + 0.5f)) {
+        ctx->LogError("[map readability] %s", "v[2].pos.x <= patch.Max.x + 0.5f && v[2].pos.y <= patch.Max.y + 0.5f");
+        return false;
+      }
+      got.emplace_back(v[0].uv.x, v[0].uv.y);
+      k += 3;
+    }
+    std::sort(want.begin(), want.end());
+    std::sort(got.begin(), got.end());
+    if (got != want) {
+      ctx->LogError("[readout glyphs] '%s': expected %zu glyphs, got %zu", expected[i].second.c_str(), want.size(),
+                    got.size());
+      return false;
+    }
+  }
+  return true;
+}
+
+struct MapReadabilityProbe {
+  bool active = false;
+  bool marker = false;
+  bool bright = false;
+  ImVec2 size{ 600, 300 };
+  ImRect canvas;
+  std::vector<gui::MapReadoutLabel> labels;
+};
+MapReadabilityProbe g_map_readability_probe;
+
+void DrawMapReadabilityProbe(ImGuiTestContext*) {
+  auto& p = g_map_readability_probe;
+  if (!p.active) {
+    return;
+  }
+  ImGui::SetNextWindowPos(ImVec2(40, 60), ImGuiCond_Always);
+  ImGui::SetNextWindowSize(ImVec2(p.size.x + 32, p.size.y + 60), ImGuiCond_Always);
+  ImGui::Begin("Map readability probe", nullptr, ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoResize);
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  const ImVec2 origin = ImGui::GetCursorScreenPos();
+  p.canvas = ImRect(origin, ImVec2(origin.x + p.size.x, origin.y + p.size.y));
+  dl->AddRectFilled(p.canvas.Min, p.canvas.Max, p.bright ? IM_COL32(250, 250, 250, 255) : IM_COL32(8, 10, 14, 255));
+  dl->PushClipRect(p.canvas.Min, p.canvas.Max, true);
+  if (p.marker) {
+    const ImVec2 c = p.canvas.GetCenter();
+    gui::DrawSkyPointIndicator(dl, c.x, c.y);
+  } else {
+    auto labels = p.labels;
+    for (auto& label : labels) {
+      label.anchor_x += p.canvas.Min.x;
+      label.anchor_y += p.canvas.Min.y;
+    }
+    gui::DrawMapReadoutLabels(dl, labels, p.canvas.Min.x, p.canvas.Min.y, p.size.x, p.size.y);
+  }
+  dl->PopClipRect();
+  ImGui::Dummy(p.size);
+  ImGui::End();
+}
+
+bool MapReadabilityControlledFrames(ImGuiTestContext* ctx) {
+  ResetTestState();
+  ScopedUiScaleAndBasisLease geometry_lease(ctx);
+  struct ProbeLease {
+    ~ProbeLease() { g_map_readability_probe = {}; }
+  } probe_lease;
+  auto& p = g_map_readability_probe;
+  p.active = true;
+  const auto one_scale = [&](float scale) -> bool {
+    gui::SetUiScaleMultiplierImmediate(scale);
+    if (!(DriveUntil(ctx, [=] { return !gui::g_ui_scale_dirty && gui::CurrentUiScale() == scale; }, 5))) {
+      ctx->LogError("[map readability] %s",
+                    "DriveUntil(ctx, [=] { return !gui::g_ui_scale_dirty && gui::CurrentUiScale() == scale; }, 5)");
+      return false;
+    }
+    // Controlled third-verdict stress, not evidence of a physically reachable red verdict.
+    p.labels = { { 35, 4, gui::kChromaticColourRed, "650 nm · 21.839° · arc in view" },
+                 { 36, 5, gui::kChromaticColourBlue, "450 nm · 22.627° · arc in view" },
+                 { 37, 6, IM_COL32(140, 230, 200, 255), "verdict · 22.600° · arc in view" } };
+    const std::vector<std::pair<ImU32, std::string>> expected = { { p.labels[0].colour, p.labels[0].text },
+                                                                  { p.labels[1].colour, p.labels[1].text },
+                                                                  { p.labels[2].colour, p.labels[2].text } };
+    for (const float width : { 600.0f, 200.0f }) {
+      p.size = ImVec2(width * scale, 240.0f * scale);
+      ctx->Yield(3);
+      ctx->WindowFocus("//Map readability probe");
+      ctx->Yield(2);
+      const auto* window = ctx->GetWindowByRef("//Map readability probe");
+      ImRect visible = p.canvas;
+      visible.ClipWith(window->InnerClipRect);
+      if (!(CheckMapReadoutPatches(ctx, window->DrawList, visible, expected))) {
+        ctx->LogError("[map readability] %s", "CheckMapReadoutPatches(ctx, window->DrawList, visible, expected)");
+        return false;
+      }
+      const std::string file = "map_labels_stress_" + std::to_string(static_cast<int>(width)) + "_" +
+                               std::to_string(static_cast<int>(scale * 100)) + ".png";
+      if (!(SaveWindowPng(ctx, "//Map readability probe", GuiTestTempPath(file).string()))) {
+        ctx->LogError("[map readability] %s",
+                      "SaveWindowPng(ctx, \"//Map readability probe\", GuiTestTempPath(file).string())");
+        return false;
+      }
+      ctx->LogInfo(
+          "[readout stress] scale %.1f canvas %.0fx%.0f: all three full readings inside nonoverlapping patches", scale,
+          visible.GetWidth(), visible.GetHeight());
+    }
+    return true;
+  };
+  if (!(one_scale(1.0f))) {
+    ctx->LogError("[map readability] %s", "one_scale(1.0f)");
+    return false;
+  }
+  if (!(one_scale(1.5f))) {
+    ctx->LogError("[map readability] %s", "one_scale(1.5f)");
+    return false;
+  }
+  if (!(one_scale(2.0f))) {
+    ctx->LogError("[map readability] %s", "one_scale(2.0f)");
+    return false;
+  }
+  p.labels.clear();
+  p.size = ImVec2(200, 160);
+  p.marker = true;
+  for (const bool bright : { false, true }) {
+    p.bright = bright;
+    ctx->Yield(3);
+    ctx->WindowFocus("//Map readability probe");
+    ctx->Yield(2);
+    const ImVec2 c = p.canvas.GetCenter();
+    // Read a local raster, not a colour constant: both sides of a ring must contain contrast
+    // against the actual background. The old all-white shape has no dark pixels on near-white.
+    const auto vp = ImGui::GetMainViewport()->Pos;
+    const auto dpi = ImGui::GetIO().DisplayFramebufferScale;
+    const int span = static_cast<int>(std::round(64 * dpi.x));
+    g_fullframe_capture.Reset();
+    g_fullframe_capture.rect_x = static_cast<int>(std::round((c.x - vp.x - 32) * dpi.x));
+    g_fullframe_capture.rect_y =
+        static_cast<int>(std::round((ImGui::GetIO().DisplaySize.y - (c.y - vp.y) - 32) * dpi.y));
+    g_fullframe_capture.rect_w = span;
+    g_fullframe_capture.rect_h = static_cast<int>(std::round(64 * dpi.y));
+    g_fullframe_capture.requested.store(true);
+    if (!(DriveUntil(ctx, [] { return g_fullframe_capture.done.load(); }, 5))) {
+      ctx->LogError("[map readability] %s", "DriveUntil(ctx, [] { return g_fullframe_capture.done.load(); }, 5)");
+      return false;
+    }
+    int contrast[4] = {};
+    const int w = g_fullframe_capture.width;
+    const int h = g_fullframe_capture.height;
+    for (int y = 0; y < h; ++y) {
+      for (int x = 0; x < w; ++x) {
+        const auto* rgb = &g_fullframe_capture.pixels[(y * w + x) * 4];
+        const int peak = std::max({ rgb[0], rgb[1], rgb[2] });
+        const int low = std::min({ rgb[0], rgb[1], rgb[2] });
+        if ((bright && peak < 140) || (!bright && low > 170)) {
+          ++contrast[(y >= h / 2 ? 2 : 0) + (x >= w / 2 ? 1 : 0)];
+        }
+      }
+    }
+    ctx->LogInfo("[marker contrast] %s quadrants %d/%d/%d/%d", bright ? "near-white" : "dark", contrast[0], contrast[1],
+                 contrast[2], contrast[3]);
+    if (!(*std::min_element(contrast, contrast + 4) > 12)) {
+      ctx->LogError("[map readability] %s", "*std::min_element(contrast, contrast + 4) > 12");
+      return false;
+    }
+    if (!(SaveWindowPng(ctx, "//Map readability probe",
+                        GuiTestTempPath(bright ? "sky_point_near_white.png" : "sky_point_dark.png").string()))) {
+      ctx->LogError("[map readability] %s",
+                    "SaveWindowPng(ctx, \"//Map readability probe\", GuiTestTempPath(bright ? "
+                    "\"sky_point_near_white.png\" : \"sky_point_dark.png\").string())");
+      return false;
+    }
+  }
+  return true;
+}
+
+bool CheckRealMapReadability(ImGuiTestContext* ctx, const gui::SurveyOverviewModel& model) {
+  ScopedUiScaleAndBasisLease geometry_lease(ctx);
+  if (!(DriveUntil(ctx, [] { return !gui::g_survey_executor.InFlight(); }, 90))) {
+    ctx->LogError("[map readability] %s", "DriveUntil(ctx, [] { return !gui::g_survey_executor.InFlight(); }, 90)");
+    return false;
+  }
+  if (!(gui::g_state.analysis.map.adopted_result != nullptr)) {
+    ctx->LogError("[map readability] %s", "gui::g_state.analysis.map.adopted_result != nullptr");
+    return false;
+  }
+  gui::SelectLensType(gui::g_state, gui::kLensTypeFisheyeEquidist);
+  gui::g_state.renderer.fov = 50.0f;
+  gui::g_state.renderer.elevation = 0.0f;
+  gui::g_state.renderer.azimuth = 0.0f;
+  gui::g_state.renderer.visible = gui::kVisibleFull;
+  gui::g_state.renderer.front = false;
+  ctx->Yield(3);
+  const auto map_id = gui::g_state.analysis.map.intent_id;
+  const auto survey_id = gui::g_state.analysis.survey.intent_id;
+  const auto point_id = gui::g_state.analysis.point.intent_id;
+  const auto ray_id = gui::g_state.analysis.trace.intent_id;
+  const auto original_map = gui::g_state.analysis.map.adopted_result;
+  const auto original_sky = gui::g_state.analysis.sky_point;
+  const auto original_roi = gui::g_state.analysis.roi_mode;
+  const auto sample = gui::g_state.analysis.point_view.sample_index;
+  auto pickups = std::make_shared<std::atomic<int>>(0);
+  gui::g_survey_executor.SetPickupGateForTest([pickups](gui::QueryFace) { ++*pickups; });
+  struct PickupLease {
+    ~PickupLease() { gui::g_survey_executor.SetPickupGateForTest(nullptr); }
+  } pickup_lease;
+  const auto one_geometry = [&](float scale, bool minimum) -> bool {
+    gui::SetUiScaleMultiplierImmediate(scale);
+    if (!(DriveUntil(ctx, [=] { return !gui::g_ui_scale_dirty && gui::CurrentUiScale() == scale; }, 5))) {
+      ctx->LogError("[map readability] %s",
+                    "DriveUntil(ctx, [=] { return !gui::g_ui_scale_dirty && gui::CurrentUiScale() == scale; }, 5)");
+      return false;
+    }
+    PinRaypathViewOnScreen(ctx);
+    ctx->WindowResize("//Raypath view",
+                      ImVec2((minimum ? 480.0f : 840.0f) * scale, (minimum ? 360.0f : 640.0f) * scale));
+    ctx->WindowFocus("//Raypath view");
+    ctx->MouseMoveToPos(ImVec2(2, 2));
+    ctx->Yield(4);
+    const auto legend = gui::LastMapOverlayLegend();
+    if (!(legend.dispersion_red && legend.dispersion_blue && legend.dispersion_partial)) {
+      ctx->LogError("[map readability] %s",
+                    "legend.dispersion_red && legend.dispersion_blue && legend.dispersion_partial");
+      return false;
+    }
+    std::vector<std::pair<ImU32, std::string>> expected;
+    for (int i = 0; i < 2; ++i) {
+      char line[112];
+      std::snprintf(line, sizeof(line), "%s · %.3f° · arc in view",
+                    (i == 0 ? model.dispersion.red_label : model.dispersion.blue_label).c_str(),
+                    i == 0 ? model.dispersion.value_red_deg : model.dispersion.value_blue_deg);
+      expected.emplace_back(i == 0 ? gui::kChromaticColourRed : gui::kChromaticColourBlue, line);
+    }
+    ImGuiWindow* region = MapRegionWindow();
+    if (!(region != nullptr)) {
+      ctx->LogError("[map readability] %s", "region != nullptr");
+      return false;
+    }
+    ImRect visible = ctx->ItemInfo("**/##map_canvas").RectFull;
+    visible.ClipWith(region->InnerClipRect);
+    if (!(CheckMapReadoutPatches(ctx, region->DrawList, visible, expected))) {
+      ctx->LogError("[map readability] %s", "CheckMapReadoutPatches(ctx, region->DrawList, visible, expected)");
+      return false;
+    }
+    const std::string file = std::string("map_readouts_real_") + (minimum ? "minimum_" : "default_") +
+                             std::to_string(static_cast<int>(scale * 100)) + ".png";
+    if (!(SaveWindowPng(ctx, "//Raypath view", GuiTestTempPath(file).string()))) {
+      ctx->LogError("[map readability] %s", "SaveWindowPng(ctx, \"//Raypath view\", GuiTestTempPath(file).string())");
+      return false;
+    }
+    ctx->LogInfo(
+        "[real readouts] %s scale %.1f actual canvas/clip %.0fx%.0f, red %.3f blue %.3f; complete glyphs, no overlap",
+        minimum ? "480x360" : "840x640", scale, visible.GetWidth(), visible.GetHeight(), model.dispersion.value_red_deg,
+        model.dispersion.value_blue_deg);
+    return true;
+  };
+  for (const float scale : { 1.0f, 1.5f, 2.0f }) {
+    if (!one_geometry(scale, false) || !one_geometry(scale, true)) {
+      return false;
+    }
+  }
+  if (!(pickups->load() == 0)) {
+    ctx->LogError("[map readability] %s", "pickups->load() == 0");
+    return false;
+  }
+  if (!(gui::g_state.analysis.map.intent_id == map_id && gui::g_state.analysis.survey.intent_id == survey_id &&
+        gui::g_state.analysis.point.intent_id == point_id && gui::g_state.analysis.trace.intent_id == ray_id)) {
+    ctx->LogError(
+        "[map readability] %s",
+        "gui::g_state.analysis.map.intent_id == map_id && gui::g_state.analysis.survey.intent_id == survey_id && "
+        "gui::g_state.analysis.point.intent_id == point_id && gui::g_state.analysis.trace.intent_id == ray_id");
+    return false;
+  }
+  if (!(gui::g_state.analysis.map.adopted_result == original_map &&
+        gui::g_state.analysis.sky_point.valid == original_sky.valid && gui::g_state.analysis.roi_mode == original_roi &&
+        gui::g_state.analysis.point_view.sample_index == sample)) {
+    ctx->LogError("[map readability] %s",
+                  "gui::g_state.analysis.map.adopted_result == original_map && gui::g_state.analysis.sky_point.valid "
+                  "== original_sky.valid && gui::g_state.analysis.roi_mode == original_roi && "
+                  "gui::g_state.analysis.point_view.sample_index == sample");
+    return false;
+  }
+  if (!(gui::g_state.renderer.fov == 50.0f && gui::g_state.renderer.elevation == 0.0f &&
+        gui::g_state.renderer.azimuth == 0.0f)) {
+    ctx->LogError("[map readability] %s",
+                  "gui::g_state.renderer.fov == 50.0f && gui::g_state.renderer.elevation == 0.0f && "
+                  "gui::g_state.renderer.azimuth == 0.0f");
+    return false;
+  }
+  return true;
+}
 
 // Real title controls and before/after canvas budgets at the same host, scale and user splits.
 bool Ray3DTitleBandAndCanvasGainHold(ImGuiTestContext* ctx) {
@@ -18209,6 +18534,11 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
   {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "survey_overview_shows_dispersion_and_profile");
     t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(SurveyOverviewShowsDispersionAndProfile(ctx)); };
+  }
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "map_readability_controlled_frames");
+    t->GuiFunc = DrawMapReadabilityProbe;
+    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(MapReadabilityControlledFrames(ctx)); };
   }
   {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "verdict_anchor_hover_and_toggle_on_the_map");

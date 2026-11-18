@@ -1924,25 +1924,13 @@ struct GuiState {
     // site drew this frame, for the gui_test layer to read (ImGui text has no ID to address).
     // Cleared at the Analyze workspace's frame entry; the render sites are the only writers.
     WaitFeedbackTexts wait_feedback_texts;
-    // The verdict anchor's density interaction (contract §16.1's A2 pilot): the class answer's
-    // colour verdict drawn on the map, two switches. `verdict_anchor_shown` is the persistent
-    // checkbox (default off — with nothing hovered the default frame's canvas is unchanged).
-    // `verdict_anchor_hover` is the diagnose-row hover standing: the class answer's render path
-    // overwrites it EVERY frame it renders (hover on either of the two linked rows → true,
-    // otherwise false), and
-    // the canvas consumes it the NEXT frame (the map region draws before the info column writes
-    // — the one-frame lag is the hover semantics' own, accepted at the contract). The two seams
-    // that skip the render path write false explicitly — the class-answer-absent frame and the
-    // closed window — so the flag only ever stands while the region that wrote it is on screen.
-    // A document switch drops the whole struct with the session (the reset below). Session tier
-    // like the struct's other display fields: never persisted, not in ConfigSnapshot or the
-    // dirty diff, Revert keeps them.
-    // WRITERS (the audit set): the checkbox in the Raypath view's map header row;
-    // RenderAnalyzeMapRegion's ##MapReport class-answer host (the overwrite, and the absent
-    // branch's reset); RenderAnalyzeRaypathViewWindow's closed-window seams (both the closed
-    // early-return and the Begin-false branch). No other write path by construction. READER:
-    // the canvas's verdict anchor draw (analyze_map_view.cpp DrawSurveyOverlays).
-    bool verdict_anchor_shown = false;
+    // The class answer's verdict-row hover standing: overwritten every rendered frame and
+    // cleared when the answer/window is absent. It is row feedback, not another drawing gate:
+    // qualified verdict anchors are always part of Overlays. The canvas and report retain the
+    // same one-frame ordering as the profile standing below. Document reset drops the session;
+    // neither field is persisted, dirty, or part of ConfigSnapshot.
+    // WRITERS: the map report's class-answer path and absent branch, plus the closed/Begin-false
+    // Raypath view seams. No persistent verdict-only toggle exists.
     bool verdict_anchor_hover = false;
     // The reference profile's hover standing (§16.1.3's extension): which of the class answer's
     // three profile reading rows the pointer stood on — the profile device's read, written by the

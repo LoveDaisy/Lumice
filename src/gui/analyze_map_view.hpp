@@ -191,7 +191,21 @@ struct OverlayLegendState {
 // Last actually drawn overlay legend, not a second camera/availability model.
 OverlayLegendState LastMapOverlayLegend();
 
-// ---- The verdict anchor (contract §16.1's A2 pilot) --------------------------------------------------
+// Same-frame readouts for the dispersion pair and the verdict. All three keep their full text;
+// layout owns only display positions, never the curve's physical anchor or projection.
+struct MapReadoutLabel {
+  float anchor_x = 0.0f;
+  float anchor_y = 0.0f;
+  unsigned int colour = 0;
+  std::string text;
+};
+void DrawMapReadoutLabels(ImDrawList* dl, const std::vector<MapReadoutLabel>& labels, float x, float y, float width,
+                          float height);
+
+// The production sky-point ink, shared by every provenance path after projection succeeds.
+void DrawSkyPointIndicator(ImDrawList* dl, float cx, float cy);
+
+// ---- The verdict anchor ---------------------------------------------------------------------------
 
 struct SurveyDiagnoseView;  // gui/analyze_overview.hpp — the anchor's input facts, by reference
 
@@ -211,11 +225,11 @@ struct VerdictAnchorInput {
   float height_pt = 1.0f;
   float pic_min_x = 0.0f;  // the canvas rectangle's top-left, screen coords
   float pic_min_y = 0.0f;
-  float pic_px = 1.0f;                   // the canvas width in points (the walk's disk)
-  SkySunAnchor sun;                      // the sun the delta quotes (SkySunAnchorFor's read)
-  bool shown = false;                    // the persistent toggle (the session's checkbox)
-  bool hover = false;                    // the standing row hover (last frame's read)
-  OverlayLegendState* legend = nullptr;  // the frame's legend accounting; null = no legend
+  float pic_px = 1.0f;                             // the canvas width in points (the walk's disk)
+  SkySunAnchor sun;                                // the sun the delta quotes (SkySunAnchorFor's read)
+  bool overlays = true;                            // the sole analysis-ink gate
+  OverlayLegendState* legend = nullptr;            // the frame's legend accounting; null = no legend
+  std::vector<MapReadoutLabel>* labels = nullptr;  // production collects before laying out; null draws alone
 };
 
 // The diagnose block's spatial conclusion drawn as an iso-deviation circle about the sun — the
@@ -232,7 +246,7 @@ struct VerdictAnchorInput {
 // circle's precedents (topmost drawn point, backing rect, "arc in view"; a legend describes the
 // drawn picture — nothing drawn, no entry). Surfaced whole (gate + geometry) for the unit
 // layer's draw-list assertions; the map region's overlay path calls it with the adopted survey's
-// cache model and the session's two switches.
+// cache model under the sole Overlays gate.
 void DrawVerdictAnchor(ImDrawList* dl, const SurveyDiagnoseView& diagnose, const VerdictAnchorInput& in);
 struct MapObservationTiming {
   double began_seconds = 0.0;

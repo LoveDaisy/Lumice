@@ -765,34 +765,6 @@ IsoDeltaWalk WalkIsoDeltaCircle(ImDrawList* dl, const MapCanvasProjection& view,
   return walk;
 }
 
-// The curve readout's label (the dispersion circles' and the verdict anchor's shared shape): the
-// walk's topmost in-disk sample carries the text over a dark backing rect, in the curve's own
-// colour (the dashed form may leave that sample on a skipped stretch — the anchor sits within one
-// dash cycle of the nearest submitted line). One body for both callers — the backing ink's
-// literal is the promoted kReadoutBackingInk and lives nowhere else. The patch is clamped into
-// the canvas rectangle INTERSECTED WITH THE DRAW LIST'S EFFECTIVE CLIP (the ancestors' clip rect
-// the glyphs will actually be cut by — a window or viewport partially covering the canvas bounds
-// the visible label, not the nominal rectangle), through the ONE shared viewport clamp
-// (util/label_viewport_clamp.hpp): a readout anchored near the visible edge must keep text AND
-// backing inside (the unclamped draw cropped the word on the edge), and the two move together —
-// the clamp adjusts the position, never the size, and leaves a degenerate axis (a viewport that
-// cannot hold the patch plus the inset) untouched, per the shared rule.
-void DrawIsoDeltaReadoutLabel(ImDrawList* dl, const IsoDeltaWalk& walk, ImU32 colour, const char* text,
-                              const LabelViewport& canvas) {
-  const ImVec2 clip_min = dl->GetClipRectMin();
-  const ImVec2 clip_max = dl->GetClipRectMax();
-  const float left = std::max(canvas.x, clip_min.x);
-  const float top = std::max(canvas.y, clip_min.y);
-  const float right = std::min(canvas.x + canvas.w, clip_max.x);
-  const float bottom = std::min(canvas.y + canvas.h, clip_max.y);
-  const LabelViewport visible{ left, top, std::max(right - left, 0.0f), std::max(bottom - top, 0.0f) };
-  const ImVec2 ts = ImGui::CalcTextSize(text);
-  LabelPos pos{ static_cast<float>(walk.top_x) - ts.x * 0.5f, static_cast<float>(walk.top_y) - ts.y };
-  const LabelSize size{ ts.x + 6.0f, ts.y };  // the backing's full extent: the text plus 3pt each side
-  pos = ClampLabelPosToViewport(pos, size, visible);
-  dl->AddRectFilled(ImVec2(pos.x - 3.0f, pos.y), ImVec2(pos.x + ts.x + 3.0f, pos.y + ts.y), kReadoutBackingInk);
-  dl->AddText(ImVec2(pos.x, pos.y), colour, text);
-}
 
 void DrawFrameAnchors(ImDrawList* dl, const MapCanvasProjection& view, const LUMICE_PathMapInfo& info,
                       const ImVec2& pic_min, float pic_px, OverlayLegendState* legend) {
@@ -849,6 +821,113 @@ void DrawFrameAnchors(ImDrawList* dl, const MapCanvasProjection& view, const LUM
 }
 
 }  // namespace
+
+void DrawMapReadoutLabels(ImDrawList* dl, const std::vector<MapReadoutLabel>& labels, float x, float y, float width,
+                          float height) {
+  if (labels.empty()) {
+    return;
+  }
+  const ImVec2 clip_min = dl->GetClipRectMin();
+  const ImVec2 clip_max = dl->GetClipRectMax();
+  const LabelViewport visible{ std::max(x, clip_min.x), std::max(y, clip_min.y),
+                               std::max(0.0f, std::min(x + width, clip_max.x) - std::max(x, clip_min.x)),
+                               std::max(0.0f, std::min(y + height, clip_max.y) - std::max(y, clip_min.y)) };
+  const float pad = UiPx(3.0f);
+  const float gap = UiPx(4.0f);
+  const float inset = kLabelViewportInsetPx;
+  const float max_width = visible.w - 2.0f * inset;
+  const float max_height = visible.h - 2.0f * inset;
+  struct Patch {
+    LabelPos pos;
+    LabelSize size;
+    float wrap = 0.0f;
+  };
+  std::vector<Patch> patches;
+  // Try the complete, single-line labels near their own anchors first. The shared clamp owns
+  // edge placement; the caller rejects its degenerate axis rather than pretending it fits.
+  for (const auto& label : labels) {
+    const ImVec2 text_size = ImGui::CalcTextSize(label.text.c_str());
+    const LabelSize size{ text_size.x + 2.0f * pad, text_size.y };
+    bool placed = false;
+    if (size.w < max_width && size.h < max_height) {
+      const float step = size.h + gap;
+      const int rows = static_cast<int>(max_height / step) + 1;
+      for (int row = 0; row <= rows && !placed; ++row) {
+        for (const float direction : { 1.0f, -1.0f }) {
+          const LabelPos candidate = ClampLabelPosToViewport(
+              { label.anchor_x - size.w * 0.5f, label.anchor_y - size.h + direction * row * step }, size, visible);
+          const bool overlaps = std::any_of(patches.begin(), patches.end(), [&](const Patch& p) {
+            return candidate.x < p.pos.x + p.size.w + gap && candidate.x + size.w + gap > p.pos.x &&
+                   candidate.y < p.pos.y + p.size.h + gap && candidate.y + size.h + gap > p.pos.y;
+          });
+          if (!overlaps) {
+            patches.push_back({ candidate, size });
+            placed = true;
+            break;
+          }
+        }
+      }
+    }
+    if (!placed) {
+      break;
+    }
+  }
+  bool stacked = patches.size() != labels.size();
+  if (stacked) {
+    // A narrow map gets one wrapped reading stack, never a smaller font or a missing colour.
+    patches.clear();
+    const float wrap = std::max(1.0f, max_width - 2.0f * pad);
+    float top = visible.y + inset + ImGui::GetTextLineHeight() + gap;
+    for (const auto& label : labels) {
+      const ImVec2 ts = ImGui::CalcTextSize(label.text.c_str(), nullptr, false, wrap);
+      patches.push_back({ { visible.x + inset, top }, { ts.x + 2.0f * pad, ts.y }, wrap });
+      top += ts.y + gap;
+    }
+    if (max_width <= 2.0f * pad || top > visible.y + visible.h - inset) {
+      // Even the stack cannot fit (e.g. a splitter compressed to its floor). Advertise the
+      // loss of inline room explicitly; the normal wrapped tooltip keeps EVERY full reading.
+      // This is display-only and has no item/click ownership to steal from the map gestures.
+      const char* summary = "Readouts: hover for all";
+      const ImVec2 ts = ImGui::CalcTextSize(summary, nullptr, false, wrap);
+      if (ts.x + 2.0f * pad < max_width && ts.y < max_height) {
+        const ImVec2 p(visible.x + inset, visible.y + inset);
+        dl->AddRectFilled(p, ImVec2(p.x + ts.x + 2.0f * pad, p.y + ts.y), kReadoutBackingInk);
+        dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(p.x + pad, p.y), ImGui::GetColorU32(ImGuiCol_Text),
+                    summary, nullptr, wrap);
+        if (ImGui::IsMouseHoveringRect(p, ImVec2(p.x + ts.x + 2.0f * pad, p.y + ts.y)) && ImGui::BeginTooltip()) {
+          WrappedTooltipText("Map too small for inline readouts. Enlarge it to restore labels.");
+          for (const auto& label : labels) {
+            WrappedTooltipText("%s", label.text.c_str());
+          }
+          ImGui::EndTooltip();
+        }
+      }
+      return;
+    }
+  }
+  // Leaders go below ALL patches, so a later curve or connector cannot overwrite an earlier
+  // label. Each leader ends at the curve's original sample; neither walk nor physics moves.
+  for (size_t i = 0; labels.size() > 1 && i < labels.size(); ++i) {
+    const auto& p = patches[i];
+    const auto& label = labels[i];
+    const ImVec2 anchor(label.anchor_x, label.anchor_y);
+    const ImVec2 end(std::clamp(label.anchor_x, p.pos.x, p.pos.x + p.size.w),
+                     std::clamp(label.anchor_y, p.pos.y, p.pos.y + p.size.h));
+    dl->AddLine(anchor, end, IM_COL32(16, 17, 20, 240), UiPx(3.0f));
+    dl->AddLine(anchor, end, label.colour, UiPx(1.0f));
+    dl->AddCircleFilled(anchor, UiPx(2.0f), label.colour);
+  }
+  if (stacked) {
+    dl->AddText(ImVec2(visible.x + inset + pad, visible.y + inset), ImGui::GetColorU32(ImGuiCol_Text),
+                "Readouts (stacked)");
+  }
+  for (size_t i = 0; i < labels.size(); ++i) {
+    const auto& p = patches[i];
+    dl->AddRectFilled(ImVec2(p.pos.x, p.pos.y), ImVec2(p.pos.x + p.size.w, p.pos.y + p.size.h), kReadoutBackingInk);
+    dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(p.pos.x + pad, p.pos.y), labels[i].colour,
+                labels[i].text.c_str(), nullptr, p.wrap);
+  }
+}
 
 // The marker vocabulary: a shape and a colour per kind (the engine's six kinds plus the
 // fallback), solid for a concluded claim (certified/finite) and outline-only otherwise — the
@@ -1060,6 +1139,7 @@ void DrawSurveyOverlays(ImDrawList* dl, GuiState& state, const MapCanvasProjecti
   // per observation key (identical keys fold into an ×N count — a display grouping of the
   // model's rows; nothing drops, different sources stay separate).
   RenderSurveyObjectTooltip(hits);
+  std::vector<MapReadoutLabel> labels;
   // The chromatic dispersion's inner-edge pair: the engine's own delta values, drawn as
   // iso-deviation circles about the sun, red inside blue (the C01 alignment face).
   if (model.dispersion.available && model.dispersion.min_row_available) {
@@ -1103,16 +1183,12 @@ void DrawSurveyOverlays(ImDrawList* dl, GuiState& state, const MapCanvasProjecti
         char line[112];
         std::snprintf(line, sizeof(line), "%s · %.3f°%s", curve.label->c_str(), curve.delta_deg,
                       walk.partial() ? " · arc in view" : "");
-        DrawIsoDeltaReadoutLabel(dl, walk, curve.colour, line,
-                                 LabelViewport{ pic_min.x, pic_min.y, view.width_pt, view.height_pt });
+        labels.push_back({ static_cast<float>(walk.top_x), static_cast<float>(walk.top_y), curve.colour, line });
       }
     }
   }
-  // The verdict anchor (§16.1's A2 pilot): the class answer's diagnose drawn about the sun, the
-  // vocabulary's circle device at the verdict's own delta. The density interaction's two
-  // switches read the session — the hover standing is LAST frame's row state (the canvas draws
-  // before the info column writes; the one-frame lag is the hover semantics' own). The honesty
-  // gate, the closed kind set and the colour routing are the anchor draw's own (single owner).
+  // Qualified verdicts join the same Overlays pass and readout collection as dispersion.
+  // Honesty, the closed kind set and colour routing remain the anchor draw's own.
   VerdictAnchorInput verdict;
   verdict.camera = &view.camera;
   verdict.width_px = view.width;
@@ -1123,17 +1199,17 @@ void DrawSurveyOverlays(ImDrawList* dl, GuiState& state, const MapCanvasProjecti
   verdict.pic_min_y = pic_min.y;
   verdict.pic_px = pic_px;
   SkySunAnchorFor(state, &verdict.sun);
-  verdict.shown = state.analysis.verdict_anchor_shown;
-  verdict.hover = state.analysis.verdict_anchor_hover;
+  verdict.labels = &labels;
   verdict.legend = legend;
   DrawVerdictAnchor(dl, model.diagnose, verdict);
+  DrawMapReadoutLabels(dl, labels, pic_min.x, pic_min.y, view.width_pt, view.height_pt);
   // The reference profile's hover device (§16.1.3's extension): the hovered profile row's
   // reading, drawn on the radial line the probe sampled — the SURVEY document's own sun echo and
   // its own azimuth frame (the probe's premise; not the map's anchor fallback, which may carry
   // another generation's sun). Consumes LAST frame's row standing (the same one-frame lag the
   // verdict hover owns). Under the Overlays gate by construction: this whole pass runs behind it,
-  // so the default frame adds no profile ink, and the verdict-anchors switch stays the verdict
-  // anchor's own — the profile device never joins the persistent set. No legend entry: the device
+  // so the default frame adds no profile ink. The profile device never joins the persistent
+  // set. No legend entry: the device
   // is hover-transient and the driving row is its explanation (the contract's sync records it).
   if (state.analysis.profile_row_hover != SurveyProfileHover::kNone && model.sun_available) {
     ProfileHoverInput profile;
@@ -1171,22 +1247,33 @@ void DrawSkyPointMarker(ImDrawList* dl, const MapCanvasProjection& view, const S
   }
   const float cx = static_cast<float>(x);
   const float cy = static_cast<float>(y);
-  const float r = UiPx(6.0f);
-  dl->AddCircle(ImVec2(cx, cy), r, IM_COL32(255, 255, 255, 235), 0, 1.6f);
-  dl->AddLine(ImVec2(cx - 2.0f * r, cy), ImVec2(cx - r - 1.0f, cy), IM_COL32(255, 255, 255, 200), 1.2f);
-  dl->AddLine(ImVec2(cx + r + 1.0f, cy), ImVec2(cx + 2.0f * r, cy), IM_COL32(255, 255, 255, 200), 1.2f);
-  dl->AddLine(ImVec2(cx, cy - 2.0f * r), ImVec2(cx, cy - r - 1.0f), IM_COL32(255, 255, 255, 200), 1.2f);
-  dl->AddLine(ImVec2(cx, cy + r + 1.0f), ImVec2(cx, cy + 2.0f * r), IM_COL32(255, 255, 255, 200), 1.2f);
+  DrawSkyPointIndicator(dl, cx, cy);
   *out_marker_px = cx;
   *out_marker_py = cy;
 }
 
 }  // namespace
 
+void DrawSkyPointIndicator(ImDrawList* dl, float cx, float cy) {
+  const float r = UiPx(6.0f);
+  // The same marker has a dark under-stroke and a light core on every input path. Keep the
+  // projected centre and the separate hit-radius owner unchanged.
+  const ImU32 rim = IM_COL32(16, 17, 20, 255);
+  dl->AddCircle(ImVec2(cx, cy), r, rim, 0, 4.0f);
+  dl->AddLine(ImVec2(cx - 2.0f * r, cy), ImVec2(cx - r - 1.0f, cy), rim, 3.6f);
+  dl->AddLine(ImVec2(cx + r + 1.0f, cy), ImVec2(cx + 2.0f * r, cy), rim, 3.6f);
+  dl->AddLine(ImVec2(cx, cy - 2.0f * r), ImVec2(cx, cy - r - 1.0f), rim, 3.6f);
+  dl->AddLine(ImVec2(cx, cy + r + 1.0f), ImVec2(cx, cy + 2.0f * r), rim, 3.6f);
+  dl->AddCircle(ImVec2(cx, cy), r, IM_COL32(255, 255, 255, 235), 0, 1.6f);
+  dl->AddLine(ImVec2(cx - 2.0f * r, cy), ImVec2(cx - r - 1.0f, cy), IM_COL32(255, 255, 255, 200), 1.2f);
+  dl->AddLine(ImVec2(cx + r + 1.0f, cy), ImVec2(cx + 2.0f * r, cy), IM_COL32(255, 255, 255, 200), 1.2f);
+  dl->AddLine(ImVec2(cx, cy - 2.0f * r), ImVec2(cx, cy - r - 1.0f), IM_COL32(255, 255, 255, 200), 1.2f);
+  dl->AddLine(ImVec2(cx, cy + r + 1.0f), ImVec2(cx, cy + 2.0f * r), IM_COL32(255, 255, 255, 200), 1.2f);
+}
+
 void DrawVerdictAnchor(ImDrawList* dl, const SurveyDiagnoseView& diagnose, const VerdictAnchorInput& in) {
-  // The density gate first: neither switch standing → nothing (with the toggle off and nothing
-  // hovered the canvas is the frame it always was).
-  if (!in.shown && !in.hover) {
+  // One analysis-ink gate. Row hover cannot bypass Overlays or suppress a qualified anchor.
+  if (!in.overlays) {
     return;
   }
   // The honesty gate, in contract §16.1.3's order, each leg short-circuiting. An unavailable
@@ -1248,8 +1335,12 @@ void DrawVerdictAnchor(ImDrawList* dl, const SurveyDiagnoseView& diagnose, const
     char line[96];
     std::snprintf(line, sizeof(line), "verdict · %.3f°%s", diagnose.position_deg,
                   walk.partial() ? " · arc in view" : "");
-    DrawIsoDeltaReadoutLabel(dl, walk, colour, line,
-                             LabelViewport{ in.pic_min_x, in.pic_min_y, in.width_pt, in.height_pt });
+    const MapReadoutLabel label{ static_cast<float>(walk.top_x), static_cast<float>(walk.top_y), colour, line };
+    if (in.labels != nullptr) {
+      in.labels->push_back(label);
+    } else {
+      DrawMapReadoutLabels(dl, { label }, in.pic_min_x, in.pic_min_y, in.width_pt, in.height_pt);
+    }
   }
 }
 
@@ -1445,21 +1536,11 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   if (ImGui::Checkbox("Overlays##map", &overlays)) {
     storage->SetBool(overlay_key, overlays);
   }
-  // The verdict anchor's persistent switch (§16.1's A2 pilot), beside the Overlays toggle it
-  // nests under (the anchor draws only while Overlays stands; this switch adds the always-on
-  // tier over the rows' hover). It lives on this header row — the fixed operation stack, never
-  // inside the growing report — and the session field IS the control's state (the slider's
-  // shape). The join is the row's own judgment: wrap, don't clip.
-  // The joined help icon's advance is part of the unit's footprint the wrap judgment counts.
-  const float verdict_check_w = ImGui::GetFrameHeight() + ImGui::GetStyle().ItemInnerSpacing.x +
-                                ImGui::CalcTextSize("Verdict anchors##map").x + InfoIconAdvance();
-  if (fits_on_line(verdict_check_w)) {
-    ImGui::SameLine();
-  }
-  ImGui::Checkbox("Verdict anchors##map", &state.analysis.verdict_anchor_shown);
-  InfoIcon("map_verdict_anchors_help",
-           "Draw the class answer's colour verdict on the map: hovering its rows shows "
-           "the anchor temporarily, this switch keeps it.\nHidden together with Overlays.");
+  InfoIcon("map_overlays_help",
+           "Show survey objects, dispersion circles and qualified colour-verdict anchors. "
+           "Hover Profile edge, Profile peak or Peak–edge separation in the class answer "
+           "to locate the reading on its reference profile (not an all-sky peak). "
+           "Overlays must be on for these temporary markers. Sun, horizon and your sky point stay visible.");
 
   const float canvas_avail_w = ImGui::GetContentRegionAvail().x;
   const float canvas_avail_h = ImGui::GetContentRegionAvail().y;

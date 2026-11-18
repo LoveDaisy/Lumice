@@ -47,6 +47,11 @@ Render/Analyze 的纯文字双格是 T-session 工作区选择：当前格实填
 
 **Look At 跟随（as-built）**：`GuiState::look_at` 只保存目标（具名方向或真实无目标 `None`）与跟随意图，是 T-session，不是相机姿态的第二份副本，也不从角度反推目标。初始为 `None + unlocked`，None 无可解析方向，不能开启 Lock；控件禁用并提示先选择目标。具名方向、约束与状态转换由 `view_look_at` 单一 owner 解析；`RenderPreviewPanel` 在装配本帧 view 输入之前调用 `UpdateLockedLookAt`，且不受 View 折叠、是否已有纹理或 Run 状态影响。被接受的 `Elevation` / `Azimuth` 编辑与 preview camera drag 先解除 Lock，保留本次输入及旧目标供重锁；`Roll` / `FOV` / zoom 不解除。切到不同 lens 或进入 full-sky 禁用态会解除而不暂停旧锁、仍保留目标。选择 None 只清目标与 Lock、不改相机；`Reset` 还按当前 lens 恢复 FOV/Az/El/Roll。`ResetFrontendState` 对 New / 成功 Open / 有效 Revert 都恢复 `None + unlocked`，不额外覆盖该流程安装或保留的相机；失败或取消的 Open、无快照的 Revert 不调用它，因而不清现有意图。该块不进 `.lmc`、用户默认值或 `ConfigSnapshot`，也不产生 dirty、epoch、display push 或额外 re-sim / 查询；太阳高度本身原有的 sim effect 不变。
 
+**Raypath view 的 Overlays** 沿用窗口 `ImGuiStorage` 显示开关（默认开），统一管理对象、色散和合格
+verdict 常驻墨迹；没有 verdict-only 会话开关。profile hover 是逐帧覆写并在答案缺席/关窗时清除的
+T-session 瞬态，Overlays 关闭只阻止其地图墨迹，不阻止行反馈。标签避让/紧凑读回与 sky point 暗底笔
+纯属本帧显示，不写选点、样本、播放或查询，不进配置/快照/用户默认值；sky point 仍不受 Overlays 控制。
+
 > **Raypath view 的共享相机机制**：唯一合同见 [raypath-view-camera.md](raypath-view-camera.md) §6–8，验证边界见§10。
 > map已移除私有圆盘与相机副本互抄；两个画面消费上述T-view的同一有效帧输入，Look At仍由既有owner解析，空主图也reconcile。
 > 单一全天空map的计算意图、完成代门与句柄归T-session；原格/frame/前缀是冻结结果，不是live renderer的副本。

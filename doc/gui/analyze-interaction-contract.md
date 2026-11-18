@@ -771,17 +771,12 @@ dispersion 双圈与 verdict 锚定同走线同措辞）；②弧 = 带方位向
 - **虚线弱化（画出）**：`coverage_complete=0` 且 verdict 带位——有限计算进视觉语法而非缺席；
   文字层同名限定行（"Coverage incomplete — …"）与虚线形态同源。owner 可推翻（缺席派读法）。
 
-**密度交互两档（宿主 = Raypath view 图侧）**：
-- **hover 联动（默认态）**：联动行集 = 类答案区内承载被锚定 verdict 的两行（verdict 行 +
-  Position 行）。行集判定（正面式，后续 verdict 接入时机械可循）：**限定语义已被图形形态
-  承载的限定行不入集**（本片的 coverage 限定行——其限定由虚线形态同源承载），**其余 L1
-  限定行入集**；处置账其余行（无对应标注设备）不联动。主窗摘要零联动（§16.3 范围）。
-- **toggle 常驻**："Verdict anchors" checkbox 落图区头部行（与 Overlays 同行，固定操作栈，
-  不入随报告增长的滚动流）；锚定绘制嵌套于 Overlays 总闸之内。默认 off——默认帧画布零像素
-  变化。
-- **帧序与复位**：hover 经会话字段跨 region 传递，画布消费上一帧写入（一帧延迟，hover 语义
-  下不可感知）。覆写契约 = 类答案区渲染路径每帧覆写（无 hover 显式 false）；复位接缝两处 =
-  类答案缺席分支 + 关窗/被裁剪分支——标志只在写它的 region 在屏期间为真。
+**常驻管理（2026-11-18 上手反馈修订）**：Raypath view 图侧只有 **Overlays** 总门（默认开，
+沿用窗口 storage 寿命）；合格 verdict 与对象/色散一起常显，不再有独立开关或隐藏抑制位。
+关总门也不画 profile 临时设备；太阳/天顶/地平线和用户 sky point 不属此门。
+verdict/Position 行保留 hover 面与本地高亮；它们不再决定常驻锚的出墨权限。
+profile 行仍逐帧覆写瞬态身份，地图消费上一帧（一帧延迟）；类答案缺席、关闭/裁剪窗口清身份。
+开关、hover 和标签避让不改冻结结果、共享相机或查询身份，不发新请求。
 
 **行可寻址化的交互面增量（as-built 形态；2026-11-12 反馈波推翻高亮形态）**：联动行保留
 `Bullet + TextWrapped` 逐字节渲染（wrap 纪律：Selectable 的 RenderTextClipped 不换行，弃用）；
@@ -824,11 +819,17 @@ nav 焦点无（InvisibleButton 默认 NoNav）。主窗路径不传读出参数
   透明度是图例自身可辨性），verdict = 实际画法所在调色板条目的圆圈，虚线形态按 walk 的
   dash 相位画。verdict 图标的事实（颜色 + 虚线）随 drawn bit 一并记录（`OverlayLegendState`
   扩展两字段）。
-- **readout 标签 clamp**：贴边 readout 经 `src/util/label_viewport_clamp.hpp` 的共享
-  `ClampLabelPosToViewport` 压回**画布矩形与 draw-list 有效 clip（祖先裁剪）的交集**——窗口或
-  宿主视口部分遮挡画布时，约束标签的是可见交集，不是名义矩形；文字与底衬同移、尺寸不缩、
-  退化轴不动（共享规则原文）；dispersion 与 verdict 两个消费面同 helper，不为本窗写第二份 clamp。
-  marker 自然裁剪与 iso 圈 in-disk 物理边界不变，不开边缘指示通道。
+- **readout 标签共同布局（2026-11-18 修订）**：dispersion 红/蓝与 verdict 的完整文字先集中，
+  曲线全部绘制后才放标签，避免后画的曲线/标签覆盖前者。约束域仍为画布与有效 clip 的交集，
+  复用 `ClampLabelPosToViewport`，但调用侧拒绝共享 clamp 的“不容纳轴不动”作为合格标签布局。
+  普通单行标签共同避让，位移后有同色引线连接原曲线采样点；原波长、角度、`arc in view` 不丢。
+  容不下单行时转完整换行栈，标明 `Readouts (stacked)`；连栈也容不下时显式显示
+  `Readouts: hover for all`，hover 全文并说明放大地图可恢复，不缩字、不藏圈、不静默丢读数。
+  这是当前三份读数的显示集合，不改变全局 annotation placement 或物理可见域。
+- **profile 操作发现**：三行上方有轻量 hover 说明；Overlays 的共享 info icon 解释参考剖线与总门。
+  只在可联动的完整答案宿主出现说明，不给无位置量补标记，也不把剖线峰扩成全天峰圈。
+- **sky point 对比**：单一有效意图的白色圈/准星增加暗色底笔，亮暗底均保留对比线索；拾取、拖动与
+  typed Set 共一绘制点。投影中心、命中半径、来源语义和 Overlays 独立性不变。
 
 ### 16.2 诊断归属：主窗摘要＋Raypath view 完整答案（as-built 2026-11-10）
 

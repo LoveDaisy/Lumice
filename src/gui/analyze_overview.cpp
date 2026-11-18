@@ -686,6 +686,10 @@ void RenderSurveyDefaultLayer(const SurveyOverviewModel& model, SurveyRowHoverRe
     // carries its hover surface and highlight; the standing is EXCLUSIVE — one pointer, one row
     // — and lands in the readout as the canvas's next-frame identity. The rows' own words stay
     // byte-identical: only the interaction surfaces are new.
+    if (row_readout != nullptr &&
+        (model.probe.edge_available || model.probe.peak_available || model.probe.separation_available)) {
+      DisabledWrappedText("Hover profile readings to locate them on the map (Overlays on).");
+    }
     if (model.probe.edge_available) {
       ImGui::Bullet();
       ImGui::TextWrapped("Profile edge %s", FormatDeg(model.probe.edge_deg).c_str());

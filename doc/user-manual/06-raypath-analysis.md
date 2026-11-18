@@ -193,16 +193,12 @@ implicitly. The report scroll never zooms either camera. **Overlays** still cons
 survey's own located objects and dispersion circles, with one grouped tooltip and a legend
 of what was actually drawn; geometry positions are not whole-circle contribution claims.
 
-**Verdict anchors.** The class answer's colour verdict ("Weight colour: …" / "Position: …") is a
-spatial conclusion: hovering either row in the class answer draws a circle on the map at the
-deviation the verdict names, and moving the mouse away removes it. The **Verdict anchors**
-switch beside **Overlays** keeps the circle on without hovering; both nest under Overlays —
-turning Overlays off hides the anchor too. The circle reuses the dispersion circles' colour and
-readout label, quoted with the verdict's own delta. The honesty rules are visual: a verdict that
-names itself **not visible**, and one the class answer carries no position for, draw nothing
-(the text is the answer there, not a missing marker), and a verdict with **incomplete coverage**
-draws its circle dashed. The legend lists "verdict anchor" only on frames where one actually
-drew — its absence means no anchor is on the map, not that the verdict is gone.
+**Verdict anchors.** **Overlays** includes qualified colour-verdict circles by default, at the
+verdict's own deviation. There is no separate switch. Verdict and Position rows still highlight
+on hover; they do not need to be hovered to keep the circle visible. Turning Overlays off hides
+these analysis circles, not your sky point or the sun/horizon references. A verdict that names
+itself **not visible**, has no position, or is not a supported positioned kind draws nothing;
+**incomplete coverage** draws a dashed circle. The legend only lists anchors actually drawn.
 
 **Row highlights and the reference profile's readings.** Every hoverable row in the class answer
 highlights while the pointer stands on it — the theme's own hover colour under the row's text —
@@ -218,11 +214,13 @@ Blue/red ratio row highlights too but names no position, so it drives no map geo
 profile drawings are hover-transient: no row standing, no ink, and Overlays off holds them back
 while the row highlight stays.
 
-**Readout labels stay inside the view.** The delta labels on the dispersion circles and the
-verdict anchor move inside the map's bounds when their anchor sits near an edge — the word stays
-whole (text and backing move together), and a view too small to hold a label keeps that label
-where the curve put it. The map's other drawings are unchanged: the sun marker may still be
-cut by the view's edge, and the circles still end at the view's own physical boundary.
+**Readout labels stay readable together.** The dispersion pair and verdict share one layout
+inside the visible map. Full wavelength/deviation/arc qualifiers stay with their readings;
+moved labels have leaders to their curves. Narrow maps use a marked, wrapped reading stack.
+If even that cannot fit, **Readouts: hover for all** opens all full readings and explains how to
+restore inline labels by enlarging the map. Fonts and circles are not reduced or hidden.
+Your sky-point ring/crosshair has a light core and dark outline for both bright and dark maps,
+with the same shape for a pick, drag or typed **Set sky point**.
 
 ## 8. The point inspector (the Pose & trace window, point detail)
 
