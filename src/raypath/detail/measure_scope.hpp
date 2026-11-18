@@ -18,6 +18,9 @@ struct FamilyMeasureReading {
   bool ok = false;
   std::string refusal_mode;  // kMeasureOutsideDomainPrefix + the named shape, when !ok
   bool single_pose = false;  // all three dimensions fixed — the 0D arm (in the domain)
+  // Populated even on refusal: fixed dimensions remain exact; every other kind
+  // may be treated as free for a conservative kinematic invariance proof only.
+  // Routing and integration still require ok; refusal never authorizes a surrogate density.
   FamilyRoutingMeasure measure;
 };
 

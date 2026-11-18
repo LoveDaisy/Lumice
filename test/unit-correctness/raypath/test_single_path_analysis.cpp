@@ -180,6 +180,11 @@ TEST(SingleFacePoint, FixedNormalMassLandsAtReflectionNotSun) {
   EXPECT_FALSE(point.Data().Mass().orbit_factors.available);
   EXPECT_EQ(point.Data().Mass().orbit_factors.reason, "external_reflection_mass_not_integrated");
   axis.azimuth_dist = Fixed(37.0f);
+  // A frozen azimuth is outside the survey routing domain, but that numerical
+  // limitation cannot invalidate a direct proof that this basal normal is fixed.
+  ASSERT_TRUE(AnalyzePathPointValue(config, Request({ 1 }, -20.0, 0.0), false, &point).Ok());
+  ASSERT_EQ(point.Data().OutcomeValue(), Outcome::kPointMass);
+  EXPECT_NEAR(point.Data().Mass().altitude_deg, -20.0, 1e-12);
   axis.roll_dist = Fixed(19.0f);
   ASSERT_TRUE(AnalyzePathPointValue(config, Request({ 1 }, -20.0, 0.0), false, &point).Ok());
   ASSERT_EQ(point.Data().OutcomeValue(), Outcome::kPointMass);

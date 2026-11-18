@@ -215,9 +215,6 @@ void SunInCrystal(const double pose[9], const double incident[3], double u[3]) {
 // R=Z(az-pi)Y(-zenith)Z(roll): a free rotation fixes a vector only on its axis.
 // The tolerance only absorbs sin(pi)'s rounding on unit normals (the pose's 1e-12 calibre).
 bool ConstantReflectionPose(const double normal[3], const survey::FamilyMeasureReading& reading, double pose[9]) {
-  if (!reading.ok) {
-    return false;
-  }
   const auto& m = reading.measure;
   constexpr double kAxisTolerance = 1e-12;
   if (m.roll.kind != survey::FamilyDimKind::kFixed && std::hypot(normal[0], normal[1]) > kAxisTolerance) {
@@ -255,9 +252,9 @@ class PathContext {
     if (slots_.size() == 1) {
       const auto reading = survey::ReadFamilyMeasure(axis_);
       const auto& measure = reading.measure;
-      density_available_ = !reading.ok || (measure.zenith.kind != survey::FamilyDimKind::kFixed &&
-                                           measure.azimuth.kind != survey::FamilyDimKind::kFixed &&
-                                           measure.roll.kind != survey::FamilyDimKind::kFixed);
+      density_available_ = measure.zenith.kind != survey::FamilyDimKind::kFixed &&
+                           measure.azimuth.kind != survey::FamilyDimKind::kFixed &&
+                           measure.roll.kind != survey::FamilyDimKind::kFixed;
     }
   }
 
