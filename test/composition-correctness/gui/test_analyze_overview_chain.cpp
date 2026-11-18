@@ -148,15 +148,15 @@ TEST_P(ParryContextChain, SurveyThenPoseUsesTheSelectedScope) {
   EXPECT_EQ(point_info.faces[1], exit_face);
   LUMICE_PathContext context{};
   context.struct_size = sizeof(context);
-  ASSERT_EQ(LUMICE_PathPointGetContext(state.analysis.point.adopted_result.get(), &context), LUMICE_PATH_READ_OK);
-  if (survey_info.execution == LUMICE_PATH_OUTCOME_COMPLETED) {
-    EXPECT_EQ(context.source, LUMICE_PATH_CONTEXT_WARM);
-  }
+  // Pose deliberately does not request a context block. The Workspace/C tests exercise
+  // actual context/profile consumption; automatic warm still supplies validated solver starts.
+  EXPECT_EQ(LUMICE_PathPointGetContext(state.analysis.point.adopted_result.get(), &context),
+            LUMICE_PATH_READ_NOT_AVAILABLE);
   std::printf(
       "Parry reconstruction path=%s PBD=%d context_selection=%d survey_execution=%d members=%zu "
-      "point_execution=%d context_source=%d\n",
+      "point_execution=%d context_requested=0\n",
       display.c_str(), bits, state.analysis.point.key.selection.symmetry_bits_plus_one, survey_info.execution,
-      scope.routing_member_count, point_info.execution, context.source);
+      scope.routing_member_count, point_info.execution);
 
   // Change only symmetry while a point is in flight. The old identity must not land
   // under the new selection, even though the literal fiber path and target did not move.

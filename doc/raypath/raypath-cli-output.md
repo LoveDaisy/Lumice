@@ -351,6 +351,15 @@ own copy of the non-finite-to-`null` mapping or the sun-grid rounding again.
 
 `--warm <file>` reads what a previous document is worth. The document's family decides:
 
+This flag supplies **explicit** input: incompatible identity remains a refusal. A long-lived
+Workspace's automatic survey slot instead treats failed admission as a cache miss before
+injecting any seeds or facts; it does not change the request's scope. Both paths use the same
+admission authority and then the same per-fact qualification. Point fibers remain literal even
+when their optional survey context is physical-class scoped. C v4.62 additionally lets Point
+and Probe callers explicitly request literal context; zero and old request extents preserve
+physical-class context by default. Probe quantities remain representative-member profiles,
+not a class sum. CLI defaults and JSON schema versions are unchanged.
+
 **A schema-1 `point` output** — the seed sheet. Its `components[*].seed` and then
 `incomplete[*].seed` (9 row-major doubles each) start the search as extra starting poses.
 Densifying the search is not monotone — a denser sample can lose a component a sparser one found —

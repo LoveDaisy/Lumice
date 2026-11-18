@@ -466,7 +466,7 @@ TEST(Workspace, BothContextScopesReuseOnlyTheirOwnMembers) {
 
     // An explicit incompatible candidate must not fall back to the compatible automatic slot.
     WarmCandidate wrong = HarvestSurveyResult(source);
-    point_request.symmetry_bits = scope == 0 ? 7u : 0u;
+    wrong.config_fingerprint.clear();
     point_request.warm_candidate = wrong;
     PointResult refused;
     EXPECT_FALSE(workspace->QueryPoint(point_request, true, &refused).Ok());

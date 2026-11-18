@@ -99,6 +99,20 @@ per-leg legacy windows and the old zero/default behavior. A point Workspace quer
 its request's `interrupted` pointer when the request extent contains that field; an older prefix
 cannot be read past its boundary.
 
+From v4.62, `LUMICE_SinglePathRequest` and `LUMICE_PathProbeRequest` append
+`context_symmetry_bits_plus_one`: 0 selects the physical P|B|D context (also the old-extent
+and zero-initialized default), 1 selects the literal requested sequence; other values are
+invalid. Older published complete request extents remain accepted by Workspace queries and
+legacy Analyze calls. Intermediate Workspace extents are rejected. The Point fiber itself
+always remains literal, and Probe profiles remain representative-member quantities.
+The GUI carries the selected row's scope to Point: all P/B/D checked uses physical context
+identity, every other combination uses the row's literal representative. Pose still requests
+no context block, but this identity also governs admission of automatic solver starts.
+A Workspace only injects an automatic warm candidate after shared admission succeeds;
+incompatible candidates are misses, not query errors. Explicit warm input is never replaced
+by the automatic slot, and incompatible explicit input still fails admission. The per-fact
+numeric qualification and independent result/warm lifetimes are unchanged. No export was added.
+
 Each result family has `GetInfo` plus named semantic-block and indexed getters. The caller sets an
 output record's `struct_size` to its compiled extent. A published complete extent or a larger
 future tail is accepted; an unpublished intermediate or undersized extent is rejected without

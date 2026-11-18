@@ -278,10 +278,9 @@ LUMICE_API void LUMICE_PathSurveyDestroy(LUMICE_PathSurvey* result);
 #define LUMICE_PATH_PROBE_ALONG_ARC 2
 #define LUMICE_PATH_PROBE_ALONG_TANGENTIAL 3
 
-// Request. `struct_size` MUST be set to sizeof(LUMICE_PathProbeRequest) of the header the caller
-// compiled against: fields are only ever appended, and a size smaller than this version's is
-// rejected (LUMICE_ERR_INVALID_VALUE). A new struct: the budget fields are first-class from the
-// first version (no legacy size baggage).
+// Request. Set struct_size to sizeof(LUMICE_PathProbeRequest) of the compiled header.
+// Published older complete extents retain their defaults. Workspace queries reject
+// intermediate extents and accept larger future tails; legacy Analyze retains prefix reading.
 typedef struct LUMICE_PathProbeRequest {
   size_t struct_size;
   int crystal_id;  // a crystal entry of the scene

@@ -23,9 +23,10 @@
 // results are the supported shapes. The cancel token is the one deliberately thread-safe piece.
 //
 // The reuse criterion is not the workspace's to invent: the slot is addressed by the request's
-// selection (crystal + path class — storage addressing, not a judgment), and every reuse
+// selection (crystal + path — storage addressing, not admission), and every reuse
 // decision runs through the existing single authority (ValidateWarmCandidate's admission, then
-// EvaluateSurveyReuse's per-fact dependency evaluation — 738/739.1's criterion). A cancelled or
+// EvaluateSurveyReuse's per-fact dependency evaluation). Automatic admission failures are
+// misses; explicit candidates retain the query's strict refusal behavior. A cancelled or
 // cut survey never fills the slot: only a run the workspace saw complete does.
 
 #include <memory>
