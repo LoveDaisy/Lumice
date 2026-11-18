@@ -20,6 +20,7 @@
 #include "gui/file_io.hpp"  // SceneDeleter's complete type — the survey tests' include
 #include "gui/gui_state.hpp"
 #include "gui/preview_renderer.hpp"  // ViewProjection's full shape — the anchor tests' camera
+#include "gui/theme.hpp"
 #include "imgui.h"
 #include "include/lumice_base.h"
 #include "include/lumice_raypath.h"
@@ -1357,7 +1358,7 @@ TEST_F(VerdictAnchorDraw, EdgeAnchorKeepsTheLabelInsideTheCanvas) {
       EXPECT_LE(gmax_x, max_x + 0.5f) << poke.what << ": glyph right of backing";
       EXPECT_GE(gmin_y, min_y - 0.5f) << poke.what << ": glyph above backing";
       EXPECT_LE(gmax_y, max_y + 0.5f) << poke.what << ": glyph below backing";
-      EXPECT_NEAR(max_x - min_x, (gmax_x - gmin_x) + 6.0f, 4.0f) << poke.what << ": backing wraps the text";
+      EXPECT_NEAR(max_x - min_x, (gmax_x - gmin_x) + UiPx(6.0f), 4.0f) << poke.what << ": backing wraps the text";
     }
   }
 }
