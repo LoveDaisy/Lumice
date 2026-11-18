@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794967139925,
+  "lastUpdate": 1794967144017,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -4818,54 +4818,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "7578ffac709fd28e350dc9de11f7cd14c68c6bd0",
-          "message": "Merge pull request #501 from LoveDaisy/fix/xyz-stats-current-capi\n\nFix dump_xyz_stats.py: consume current C API contract via CLI npy export",
-          "timestamp": "2026-10-17T15:52:48+08:00",
-          "tree_id": "b76c99c2e7759bc60276b944ee897ddb60ef96a4",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/7578ffac709fd28e350dc9de11f7cd14c68c6bd0"
-        },
-        "date": 1792223721829,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 892240.8,
-            "unit": "rays/sec",
-            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 1010413.8,
-            "unit": "rays/sec",
-            "extra": "CPU: Neoverse-N2\\nCores: 4"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 945153.9,
-            "unit": "rays/sec",
-            "extra": "CPU: Intel(R) Xeon(R) 6973P-C\\nCores: 4"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 901635.7,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 9V45 96-Core Processor                \\nCores: 4"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "2d8b602f597c2077eef981ad5ed97922620caecc",
           "message": "Merge pull request #502 from LoveDaisy/fix/cli-verbose-help-level\n\nfix(cli): describe -v as verbose level in help text",
           "timestamp": "2026-10-17T16:38:00+08:00",
@@ -9602,6 +9554,54 @@ window.BENCHMARK_DATA = {
             "value": 910329.2,
             "unit": "rays/sec",
             "extra": "CPU: AMD EPYC 9V45 96-Core Processor                \\nCores: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "a8533ca7a68228cf2eed6d461ae87db2ea03f822",
+          "message": "Merge pull request #617 from LoveDaisy/feat/gui-feedback-1117\n\nGUI feedback wave 2026-11-17: tooltip two-tier rule, Ray3D region rework, globe Fit/Full views",
+          "timestamp": "2026-11-18T09:53:57+08:00",
+          "tree_id": "8cb29f609a7727ad38280d90429697f273fe4803",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/a8533ca7a68228cf2eed6d461ae87db2ea03f822"
+        },
+        "date": 1794967143716,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 1180739.4,
+            "unit": "rays/sec",
+            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 1010318.3,
+            "unit": "rays/sec",
+            "extra": "CPU: Neoverse-N2\\nCores: 4"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 1037174.6,
+            "unit": "rays/sec",
+            "extra": "CPU: Intel(R) Xeon(R) 6975P-C\\nCores: 4"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 586077.2,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
           }
         ]
       }
