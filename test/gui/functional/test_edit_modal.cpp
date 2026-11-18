@@ -56,6 +56,7 @@
 #include "imgui_internal.h"
 #include "support/scene_json_helpers.hpp"  // CommitSceneJson / PrismFacePlaneOffsets / CountDistinct
 #include "test_gui_shared.hpp"
+#include "tooltip_observation.hpp"
 
 using lumice::test::CommitSceneJson;
 using lumice::test::CountDistinct;
@@ -545,6 +546,54 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
   // case shaped for Immediate runs on the factory default and sets nothing. Neither pins the
   // session field: every open adopts the holder at the close→open boundary.
   //
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "edit_modal", "axis_label_tooltips_keep_full_text_and_chip_clicks");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      const ScopedPopups popups(ctx);
+      const ScopedTooltipUiScale scale(ctx);
+      ctx->Yield(2);
+      OpenCardEditor(ctx, 0, kCrystalTabRef);
+      ctx->ItemClick("**/###axis_tab");
+      ctx->Yield(3);
+      constexpr const char* kText =
+          "Switches to this label: remembers the current parameters under the one you leave, then "
+          "loads this label's memory — or its definition when nothing is remembered. The preview "
+          "pose follows, re-seating on this label's typical view.";
+      const auto exercise = [&](float multiplier) -> bool {
+        gui::SetUiScaleMultiplierImmediate(multiplier);
+        ctx->Yield(4);
+        const auto first = ctx->ItemInfo("**/Random##axis_label_chip");
+        IM_CHECK_RETV(first.ID != 0, false);
+        // The id-zero caption precedes the first chip on this same line; no production test ID.
+        const ImVec2 caption(
+            first.RectFull.Min.x - ImGui::GetStyle().ItemSpacing.x - ImGui::CalcTextSize("Label:").x * 0.5f,
+            first.RectFull.GetCenter().y);
+        IM_CHECK_RETV(ObserveTooltip(ctx, caption, kText, true,
+                                     multiplier == 1.0f ? "axis-caption-1x.png" : "axis-caption-15x.png"),
+                      false);
+        const auto chip = [&](const gui::AxisPresetEntry& entry) -> bool {
+          const std::string ref = std::string("**/") + entry.label + "##axis_label_chip";
+          const auto item = ctx->ItemInfo(ref.c_str());
+          IM_CHECK_RETV(item.ID != 0 && item.Window->InnerClipRect.Contains(item.RectFull), false);
+          IM_CHECK_RETV(ObserveTooltip(ctx, item.RectFull.GetCenter(), kText), false);
+          ctx->ItemClick(ref.c_str());
+          ctx->Yield(2);
+          IM_CHECK_RETV(gui::GetEditModalBuffers().axis_preset == entry.id, false);
+          return true;
+        };
+        for (const auto& entry : gui::kAxisPresets) {
+          if (!chip(entry)) {
+            return false;
+          }
+        }
+        return true;
+      };
+      IM_CHECK(exercise(1.0f));
+      IM_CHECK(exercise(1.5f));
+      ctx->ItemClick(kCancel);
+    };
+  }
   // ===================================================================================
   // The container: what kind of window each mode opens, and how it closes.
   // ===================================================================================
