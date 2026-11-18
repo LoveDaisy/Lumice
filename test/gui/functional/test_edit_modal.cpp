@@ -441,7 +441,16 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
           "pose follows, re-seating on this label's typical view.";
       const auto exercise = [&](float multiplier) -> bool {
         gui::SetUiScaleMultiplierImmediate(multiplier);
+        // Hold the logical client basis constant while changing UI scale.
+        g_window_size_test.width = static_cast<int>(gui::kInitWindowWidth * multiplier);
+        g_window_size_test.height = static_cast<int>(gui::kInitWindowHeight * multiplier);
+        g_window_size_test.done.store(false);
+        g_window_size_test.requested.store(true);
+        for (int i = 0; i < 20 && !g_window_size_test.done.load(); ++i) {
+          ctx->Yield();
+        }
         ctx->Yield(4);
+        IM_CHECK_RETV(g_window_size_test.done.load(), false);
         const auto first = ctx->ItemInfo("**/Random##axis_label_chip");
         IM_CHECK_RETV(first.ID != 0, false);
         // The id-zero caption precedes the first chip on this same line; no production test ID.
@@ -454,6 +463,11 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
         const auto chip = [&](const gui::AxisPresetEntry& entry) -> bool {
           const std::string ref = std::string("**/") + entry.label + "##axis_label_chip";
           const auto item = ctx->ItemInfo(ref.c_str());
+          IM_CHECK_RETV(item.ID != 0 && item.Window != nullptr, false);
+          ctx->LogInfo("Axis chip %s: rect=(%.1f,%.1f)-(%.1f,%.1f) clip=(%.1f,%.1f)-(%.1f,%.1f)", entry.label,
+                       item.RectFull.Min.x, item.RectFull.Min.y, item.RectFull.Max.x, item.RectFull.Max.y,
+                       item.Window->InnerClipRect.Min.x, item.Window->InnerClipRect.Min.y,
+                       item.Window->InnerClipRect.Max.x, item.Window->InnerClipRect.Max.y);
           IM_CHECK_RETV(item.ID != 0 && item.Window->InnerClipRect.Contains(item.RectFull), false);
           IM_CHECK_RETV(ObserveTooltip(ctx, item.RectFull.GetCenter(), kText), false);
           ctx->ItemClick(ref.c_str());

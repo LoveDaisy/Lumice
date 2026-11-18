@@ -34,6 +34,9 @@ inline bool ObserveTooltip(ImGuiTestContext* ctx, const ImVec2& target, const ch
   ImGui::LogFinish();
   ImGuiWindow* tooltip = ActiveTooltipWindow();
   IM_CHECK_RETV(tooltip != nullptr, false);
+  if (rendered.find(expected) == std::string::npos) {
+    ctx->LogInfo("Expected tooltip text missing; frame text: %s", rendered.c_str());
+  }
   IM_CHECK_RETV(rendered.find(expected) != std::string::npos, false);
   ctx->LogInfo("Tooltip: scale=%.2f window=%.1fx%.1f content=%.1fx%.1f text=%s", gui::CurrentUiScale(), tooltip->Size.x,
                tooltip->Size.y, tooltip->ContentSize.x, tooltip->ContentSize.y, expected);
@@ -45,8 +48,10 @@ inline bool ObserveTooltip(ImGuiTestContext* ctx, const ImVec2& target, const ch
   } else {
     IM_CHECK_RETV(tooltip->Size.x < text_limit * 0.75f, false);
   }
-  // Full content must fit the actual clip, not just a size-constrained outer window.
-  IM_CHECK_RETV(tooltip->ContentSize.y <= tooltip->InnerClipRect.GetHeight() + 1.0f, false);
+  // Compare the layout footprint to the inner window, not the border-inset raster clip:
+  // a zero-padding footer inherits zero tooltip padding, while glyph ink is shorter than its advance.
+  IM_CHECK_RETV(tooltip->ContentSize.y <= tooltip->InnerRect.GetHeight() + 1.0f, false);
+  IM_CHECK_RETV(tooltip->ScrollMax.y == 0.0f, false);
   IM_CHECK_RETV(tooltip->Pos.x >= 0.0f && tooltip->Pos.y >= 0.0f, false);
   IM_CHECK_RETV(tooltip->Pos.x + tooltip->Size.x <= ImGui::GetIO().DisplaySize.x + 1.0f, false);
   IM_CHECK_RETV(tooltip->Pos.y + tooltip->Size.y <= ImGui::GetIO().DisplaySize.y + 1.0f, false);

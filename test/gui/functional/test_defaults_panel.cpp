@@ -63,6 +63,7 @@
 #include "imgui_te_utils.h"
 #include "support/user_defaults_test_env.hpp"
 #include "test_gui_shared.hpp"
+#include "tooltip_observation.hpp"
 
 namespace {
 
@@ -266,65 +267,16 @@ void FilterTo(ImGuiTestContext* ctx, const char* text) {
   ctx->Yield(3);
 }
 
-// Read the live tooltip rather than an item label: TextV submits an id-zero item, but ImGui's
-// rendered-text log retains its full formatted text. The log is stopped before any assertion.
-ImGuiWindow* ActiveTooltip() {
-  for (ImGuiWindow* window : GImGui->Windows) {
-    if ((window->Flags & ImGuiWindowFlags_Tooltip) && window->Active && !window->Hidden &&
-        window->LastFrameActive == GImGui->FrameCount) {
-      return window;
-    }
-  }
-  return nullptr;
-}
-
+// Settings keeps its original callers and expectations; all tooltip hosts share one observer.
 bool ObserveSettingsTooltip(ImGuiTestContext* ctx, const ImVec2& target, const char* expected) {
-  ImGuiWindow* settings = ImGui::FindWindowByName(gui::kDefaultsPanelTitle);
-  IM_CHECK_RETV(settings != nullptr, false);
-  ctx->MouseMoveToPos(ImVec2(settings->Pos.x + gui::UiPx(20.0f), settings->Pos.y + gui::UiPx(10.0f)));
-  ctx->Yield(3);
-  IM_CHECK_RETV(ActiveTooltip() == nullptr, false);
-  ctx->MouseMoveToPos(target);
-  ctx->Yield(3);
-  ImGui::LogToBuffer(0);
-  // Between-frame logging would otherwise finish at End() of the implicit fallback window,
-  // clearing the buffer before the test coroutine can read it.
-  GImGui->LogWindow = nullptr;
-  ctx->Yield();
-  const std::string rendered = GImGui->LogBuffer.c_str();
-  ImGui::LogFinish();
-  ImGuiWindow* tooltip = ActiveTooltip();
-  IM_CHECK_RETV(tooltip != nullptr, false);
-  IM_CHECK_RETV(rendered.find(expected) != std::string::npos, false);
-  ctx->LogInfo("Settings tooltip: scale=%.2f window=%.1fx%.1f content=%.1fx%.1f font=%.1f text=%s",
-               gui::CurrentUiScale(), tooltip->Size.x, tooltip->Size.y, tooltip->ContentSize.x, tooltip->ContentSize.y,
-               ImGui::GetFontSize(), expected);
-  // Independent design anchor: do not get the expected bound from the tooltip implementation.
-  const float text_limit = gui::UiPx(400.0f);
-  IM_CHECK_RETV(tooltip->Size.x <= text_limit + 2.0f * tooltip->WindowPadding.x + 1.0f, false);
-  IM_CHECK_RETV(tooltip->ContentSize.x <= text_limit + 1.0f, false);
-  IM_CHECK_RETV(tooltip->ContentSize.y >= 2.0f * ImGui::GetFontSize(), false);
-  return true;
+  return ObserveTooltip(ctx, target, expected);
 }
 
 bool ObserveSettingsTooltip(ImGuiTestContext* ctx, ImGuiTestRef ref, const char* expected) {
   return ObserveSettingsTooltip(ctx, ctx->ItemInfo(ref).RectFull.GetCenter(), expected);
 }
 
-// Restore the dial before restoring the window basis, including on a fatal assertion's return.
-class ScopedTooltipScale {
- public:
-  explicit ScopedTooltipScale(ImGuiTestContext* ctx) : ctx_(ctx), previous_(gui::g_ui_scale_multiplier), basis_(ctx) {}
-  ~ScopedTooltipScale() {
-    gui::SetUiScaleMultiplierImmediate(previous_);
-    ctx_->Yield(4);
-  }
-
- private:
-  ImGuiTestContext* ctx_;
-  float previous_;
-  ScopedWindowBasis basis_;
-};
+using ScopedTooltipScale = ScopedTooltipUiScale;
 
 // Whether a row's checkbox is ticked, asked of the REAL widget rather than of the panel's internal
 // set (which is TU-private, and which a panel could keep correct while rendering something else).

@@ -55,6 +55,7 @@
 #include "gui/gui_state.hpp"
 #include "gui/mono_exposure_scale.hpp"
 #include "gui/user_defaults.hpp"
+#include "gui/view_look_at.hpp"
 #include "support/user_defaults_test_env.hpp"
 #include "test_gui_shared.hpp"
 #include "tooltip_observation.hpp"
@@ -358,6 +359,8 @@ void RegisterViewDisplayControlTests(ImGuiTestEngine* engine) {
       const ScopedTooltipUiScale scale(ctx);
       gui::SelectLensType(gui::g_state, gui::kLensTypeGlobe);
       gui::g_state.renderer.front = false;
+      gui::g_state.renderer.visible = gui::kVisibleFull;
+      gui::g_state.renderer.globe_back_fade = 1.0f;
       gui::g_state.analyze_raypath_view_open = true;
       ctx->Yield(4);
       const auto canvas = ctx->ItemInfo("**/##map_canvas");
