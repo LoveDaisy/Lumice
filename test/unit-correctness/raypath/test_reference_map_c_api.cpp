@@ -161,6 +161,39 @@ TEST(MapCApi, RequestEvaluatesAndReadersCarryTheDocument) {
   EXPECT_EQ(LUMICE_PathMapGetPointMass(map.get(), &mass), LUMICE_PATH_READ_NOT_AVAILABLE);
 }
 
+// A real simulator list contains the complete one-face external-reflection path. The
+// same request shape the GUI submits must produce a finite, non-empty reference map.
+TEST(MapCApi, SingleFaceReflectionProducesPositiveMap) {
+  LUMICE_Scene* raw_scene = nullptr;
+  ASSERT_EQ(LUMICE_SceneFromJson(kRandomPrismScene, &raw_scene), LUMICE_OK);
+  ScenePtr scene(raw_scene);
+  LUMICE_PathMapRequest request = RingRequest();
+  const int face = 3;
+  const int count = 1;
+  request.faces = &face;
+  request.face_count = 1;
+  request.layer_face_counts = &count;
+  request.full_sky = 1;
+  request.view_rows = 18;
+  request.view_cols = 36;
+  LUMICE_PathMap* raw_map = nullptr;
+  ASSERT_EQ(LUMICE_AnalyzePathMap(scene.get(), &request, &raw_map, g_err, sizeof(g_err)), LUMICE_OK) << g_err;
+  MapPtr map(raw_map);
+  LUMICE_PathMapInfo info{};
+  info.struct_size = sizeof(info);
+  ASSERT_EQ(LUMICE_PathMapGetInfo(map.get(), &info), LUMICE_PATH_READ_OK);
+  ASSERT_EQ(info.state, LUMICE_PATH_STATE_FINITE);
+  EXPECT_GT(info.members_evaluated, 0);
+  LUMICE_PathMapPixels pixels{};
+  pixels.struct_size = sizeof(pixels);
+  ASSERT_EQ(LUMICE_PathMapGetPixels(map.get(), &pixels), LUMICE_PATH_READ_OK);
+  int positive = 0;
+  for (size_t p = 0; p < pixels.pixel_count; ++p) {
+    positive += pixels.status[p] == LUMICE_PATH_MAP_PIXEL_OK && pixels.values[p] > 0.0;
+  }
+  EXPECT_GT(positive, 0);
+}
+
 // AC5's rank-0 shape over the C face: the plate identity class reads the mass arm, and its
 // zero cells are a zero texture, not a refusal.
 TEST(MapCApi, RankZeroClassReadsThePointMass) {
