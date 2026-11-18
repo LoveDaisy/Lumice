@@ -207,6 +207,8 @@ EntryMeasure Corridor::Evaluate(const double s_body[3], double refractive_index,
     *diagnostics = {};
     diagnostics->area_threshold = eps_;
   }
+  // offsets_ delimits the actual face polygons: one face has exactly [0, end].
+  // No diagnostic or ghost polygon is appended for an external-reflection path.
   const bool external = offsets_.size() == 2;
   if (external) {
     m.area_perp_internal = std::numeric_limits<double>::quiet_NaN();

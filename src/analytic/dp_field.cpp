@@ -36,7 +36,11 @@ void FoldMatrixOf(const FaceNormalTable& table, const int* slots, int slot_count
   // One Householder reflection S(n) = I - 2 n n^T per internal face, left-multiplied onto the
   // running product in path order (LI geometry.fold_matrix; a prefix call with slot_count = k + 1
   // yields R_k, the fold of the first k - 1 reflections).
-  for (int k = slot_count == 1 ? 0 : 1; k < (slot_count == 1 ? 1 : slot_count - 1); k++) {
+  // A complete one-face external path instead has exactly S(n_0), the mirror
+  // itself; the same product body serves both domains without a second formula.
+  const int first_reflection = slot_count == 1 ? 0 : 1;
+  const int end_reflection = slot_count == 1 ? 1 : slot_count - 1;
+  for (int k = first_reflection; k < end_reflection; k++) {
     const double* n = table.normal[slots[k]];
     double s[9];
     for (int i = 0; i < 3; i++) {

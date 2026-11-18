@@ -327,6 +327,21 @@ TEST(MapCApi, MeasureRefusalRidesTheDocument) {
   LUMICE_PathMapPointMass mass{};
   mass.struct_size = sizeof(mass);
   EXPECT_EQ(LUMICE_PathMapGetPointMass(map.get(), &mass), LUMICE_PATH_READ_NOT_AVAILABLE);
+
+  // A fixed basal normal reflects to a non-solar mass. Do not send this through
+  // the identity arm's sun placement or pretend the singular measure is per-sr.
+  const int single_count = 1;
+  request.face_count = 1;
+  request.layer_face_counts = &single_count;
+  raw_map = nullptr;
+  ASSERT_EQ(LUMICE_AnalyzePathMap(scene.get(), &request, &raw_map, g_err, sizeof(g_err)), LUMICE_OK) << g_err;
+  map.reset(raw_map);
+  ASSERT_EQ(LUMICE_PathMapGetInfo(map.get(), &info), LUMICE_PATH_READ_OK);
+  EXPECT_EQ(info.state, LUMICE_PATH_STATE_REFUSED);
+  const std::string single_reason(info.reason.data, info.reason.length);
+  EXPECT_EQ(single_reason.substr(0, single_reason.find(':')), "measure_not_expressible");
+  EXPECT_EQ(LUMICE_PathMapGetPixels(map.get(), &pixels), LUMICE_PATH_READ_NOT_AVAILABLE);
+  EXPECT_EQ(LUMICE_PathMapGetPointMass(map.get(), &mass), LUMICE_PATH_READ_NOT_AVAILABLE);
 }
 
 // The request refusals and reader contracts, on the C surface's own vocabulary.

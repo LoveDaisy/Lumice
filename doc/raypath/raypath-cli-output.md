@@ -1142,7 +1142,9 @@ sub-block (the refused-support arm is the degenerate case: no leg runs, the bloc
   row exists** — a corner-bounded support (C06) or one ending at an interior maximum (C09) has
   no minimum, and the followed rows are the leg's data instead of a refusal: keys exist exactly
   when the readings they describe do. Either way the block carries `red_label`/`blue_label`,
-  `n_red`/`n_blue` and its own `evidence`.
+  `n_red`/`n_blue` and its own `evidence`. A one-face external reflection instead
+  spells `direction: "none"`: its red/blue `values_deg` coincide and displacement is zero.
+  This is no geometric colour edge, not a claim that its Fresnel weight has no colour dependence.
 - `diagnose` — the kernel's weight-kink and gate-edge analysis as a **separate sub-block**
   (a different kernel path than the dispersion table): `verdict_kind`, `color`, `visible`,
   `position_deg`, `coverage_complete`, `notes`, the declared `n_red`/`n_blue`, `features[]`

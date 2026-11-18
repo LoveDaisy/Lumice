@@ -1065,7 +1065,8 @@ Error RunPointExecution(const ConfigManager& config, const SinglePathRequest& in
     return { ErrorCode::kPathInfeasible, "no pose realises this face sequence (none of " +
                                              std::to_string(kRankProbeCount) + " probed sun directions is valid)" };
   }
-  if (!rank.rank_zero && !reflection_mass && !(delta > 0.0 && delta < math::kPiD)) {
+  const bool external_antipode = slots.size() == 1 && delta == math::kPiD;
+  if (!rank.rank_zero && !reflection_mass && !(delta > 0.0 && (delta < math::kPiD || external_antipode))) {
     return { ErrorCode::kInvalidTarget,
              "the target coincides with the sun or its antipode; no fiber is defined there" };
   }
@@ -1121,10 +1122,23 @@ Error RunPointExecution(const ConfigManager& config, const SinglePathRequest& in
     meta.interrupted = true;
   }
   analytic::IceDiscovery discovery(table, polygons, ctx.Slots().data(), ctx.SlotCount(), ctx.Index(), ctx.Incident());
-  const analytic::DiscoveryOutput found =
-      discovery.Discover(meta.target_direction, request.sample_count, meta.band_half_width_rad,
-                         request.warm_seeds.empty() ? nullptr : request.warm_seeds.data(), warm_count,
-                         meta.cluster_radius_rad, meta.distance_threshold_rad, params, &stop);
+  analytic::DiscoveryOutput found;
+  if (external_antipode) {
+    // The event-to-pose band chart divides by sin(delta); only that chart is
+    // singular at pi. The reflection fiber itself is regular (J=4): align the
+    // real outward normal with -incident and let the shared corrector/continuation
+    // validate and trace it. No approximate band candidates or fake mass are needed.
+    std::vector<double> seeds = request.warm_seeds;
+    double seed[9];
+    RotationTaking(table.normal[slots[0]], sun_hat, seed);
+    seeds.insert(seeds.end(), seed, seed + 9);
+    found = discovery.DiscoverOnBand(meta.target_direction, {}, seeds.data(), warm_count + 1, meta.cluster_radius_rad,
+                                     meta.distance_threshold_rad, params, &stop);
+  } else {
+    found = discovery.Discover(meta.target_direction, request.sample_count, meta.band_half_width_rad,
+                               request.warm_seeds.empty() ? nullptr : request.warm_seeds.data(), warm_count,
+                               meta.cluster_radius_rad, meta.distance_threshold_rad, params, &stop);
+  }
   if (stopped()) {
     // The honest stop marker is meta.interrupted; discovery.complete below keeps its procedural
     // candidate-conversion semantics — a band stopped mid-way may still read complete, because

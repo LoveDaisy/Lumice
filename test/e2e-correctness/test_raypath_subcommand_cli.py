@@ -90,6 +90,15 @@ def test_single_face_external_reflection_point_context_and_probe():
     assert profile["spec"]["representative"] == [3]
     assert profile["samples"]
     assert any(row["value"] is not None and row["value"] > 0 for row in profile["samples"])
+    survey = run_lumice(["raypath", "survey", "-f", str(reflection_config), "--crystal", "1", "--path", "3",
+                         "--literal", "--lambda", "550", "--budget", "30s"])
+    assert survey.returncode == 0, survey.stderr
+    onsets = json.loads(survey.stdout)["chromatic"]["positional_dispersion"]["followed_onsets"]
+    assert onsets
+    for onset in onsets:
+        assert onset["direction"] == "none"
+        assert onset["displacement_deg"] == 0
+        assert onset["values_deg"][0] == onset["values_deg"][1]
 
 
 def test_help_names_the_request_options():

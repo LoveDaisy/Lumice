@@ -28,6 +28,7 @@
 #include "core/simulator.hpp"
 #include "raypath/detail/measure/declared_density.hpp"
 #include "raypath/detail/survey/config_fingerprint.hpp"
+#include "raypath/representative_ray.hpp"
 #include "raypath/scene_to_analytic.hpp"
 #include "raypath/single_path_analysis.hpp"
 
@@ -187,6 +188,18 @@ TEST(SingleFacePoint, AntisolarTargetHasRegularReflectionFiber) {
       EXPECT_NEAR(sample.outgoing_direction[k], -point.Data().meta.incident_direction[k], 1e-8);
     }
   }
+  RepresentativeRayRequest ray_request;
+  ray_request.crystal_id = 1;
+  ray_request.path_layers = { { 3 } };
+  std::copy(component.points.front().pose, component.points.front().pose + 9, ray_request.pose);
+  RepresentativeRayResult ray;
+  ASSERT_TRUE(AnalyzeRepresentativeRay(config, ray_request, &ray).Ok());
+  ASSERT_TRUE(ray.Data().Produced());
+  EXPECT_EQ(ray.Data().Path().contacts.size(), 1u);
+  ASSERT_EQ(ray.Data().Path().legs.size(), 2u);
+  for (int k = 0; k < 3; ++k) {
+    EXPECT_NEAR(ray.Data().Path().legs[1].direction[k], -point.Data().meta.incident_direction[k], 1e-8);
+  }
 }
 
 TEST(SingleFacePoint, FixedNormalMassLandsAtReflectionNotSun) {
@@ -202,6 +215,10 @@ TEST(SingleFacePoint, FixedNormalMassLandsAtReflectionNotSun) {
   EXPECT_NEAR(point.Data().Mass().target_separation_deg, 0.0, 1e-12);
   EXPECT_FALSE(point.Data().Mass().orbit_factors.available);
   EXPECT_EQ(point.Data().Mass().orbit_factors.reason, "external_reflection_mass_not_integrated");
+  axis.latitude_dist = { DistributionType::kGaussian, 90, 0 };
+  ASSERT_TRUE(AnalyzePathPointValue(config, Request({ 1 }, -20.0, 0.0), false, &point).Ok());
+  ASSERT_EQ(point.Data().OutcomeValue(), Outcome::kPointMass);  // zero-width Gaussian is fixed, not a density
+  axis.latitude_dist = Fixed(90.0f);
   axis.azimuth_dist = Fixed(37.0f);
   // A frozen azimuth is outside the survey routing domain, but that numerical
   // limitation cannot invalidate a direct proof that this basal normal is fixed.
@@ -213,6 +230,9 @@ TEST(SingleFacePoint, FixedNormalMassLandsAtReflectionNotSun) {
   ASSERT_EQ(point.Data().OutcomeValue(), Outcome::kPointMass);
   EXPECT_NEAR(point.Data().Mass().altitude_deg, -20.0, 1e-12);
   EXPECT_EQ(point.Data().Mass().orbit_factors.measure_support, "single_pose");
+  const auto backface = AnalyzePathPointValue(config, Request({ 2 }, 20.0, 0.0), false, &point);
+  EXPECT_EQ(backface.code, ErrorCode::kPathInfeasible);
+  EXPECT_EQ(backface.message, "external_reflection_backface_on_actual_family");
 }
 
 TEST(SingleFacePoint, VaryingNormalFamilyIsNotMassAndHasNoFakeContinuousDensity) {

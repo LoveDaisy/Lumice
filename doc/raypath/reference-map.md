@@ -49,6 +49,14 @@ Map and Probe retain their `measure_not_expressible` refusal for singular orient
 measures; they do not place this reflection mass through the sun-only identity arm. A
 nonconstant restricted image is not labelled a mass merely because a dimension is fixed.
 
+For Point, an exact antisolar target is a **regular** one-face reflection fiber (`c=1`,
+`J=4`), although the map estimator still marks polar cells singular by its existing chart
+contract. Point aligns the actual face normal with `-incident`, then runs the shared
+corrector and continuation on that seed; it does not use the band-to-pose chart that divides
+by `sin(delta)`. The pool count is zero and the aligned pose is an extra solver seed, not a
+fabricated lattice event or a point mass. The solar target is grazing, with no positive-area
+external-reflection fiber.
+
 ## The view and its mapping
 
 A view is a (deviation x azimuth-about-sun) grid in the probe frame — the line probe's own frame
