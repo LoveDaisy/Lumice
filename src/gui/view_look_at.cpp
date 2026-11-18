@@ -64,6 +64,9 @@ float WrapAzDeg(float az_deg) {
 }  // namespace
 
 const char* LookAtDisplayName(LookAtId id) {
+  if (id == LookAtId::kNone) {
+    return "None";
+  }
   if (IsMarkerLookAt(id)) {
     return kMarkerDisplayNames[static_cast<int>(id)];
   }
@@ -178,6 +181,10 @@ bool ApplyLookAtTarget(GuiState& state, LookAtId target) {
 }  // namespace
 
 bool SelectLookAtTarget(GuiState& state, LookAtId target) {
+  if (target == LookAtId::kNone) {
+    state.look_at = LookAtSession{};
+    return true;
+  }
   if (!IsValidLookAtId(target) || !ApplyLookAtTarget(state, target)) {
     return false;
   }
