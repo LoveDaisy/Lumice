@@ -62,6 +62,7 @@
 #include "support/env_var.hpp"  // SetEnvVar / UnsetEnvVar — the LUMICE_ANALYZE_DEBUG_DETAILS legs
 #include "support/gui_server_lifetime.hpp"
 #include "test_gui_shared.hpp"
+#include "tooltip_observation.hpp"
 #include "util/raypath_analysis_display.hpp"
 #include "util/sky_direction.hpp"
 
@@ -4395,8 +4396,7 @@ bool TraceAxesFootprints(ImGuiTestContext* ctx, bool direction_anchor = false) {
     IM_CHECK_RETV(legend_apart, false);
     ctx->LogInfo("[ray3d legend] reserved %.1fx%.1f at the canvas's left edge", legend.GetWidth(), legend.GetHeight());
   }
-  auto* report = TraceReportWindow();
-  IM_CHECK_RETV(report != nullptr && !reserved.Overlaps(report->InnerClipRect), false);
+  IM_CHECK_RETV(TraceReportWindow() == nullptr, false);
   const auto reset = ctx->ItemInfo("**/Reset View##r3d_reset", ImGuiTestOpFlags_NoError);
   IM_CHECK_RETV(reset.ID != 0 && region->InnerClipRect.Contains(reset.RectFull), false);
   ctx->LogInfo("[ray3d axes] canvas %.1fx%.1f compass %.1fx%.1f anchor=%d", frame.canvas_size.x, frame.canvas_size.y,
@@ -4435,9 +4435,9 @@ bool TraceResetAndAxesTakeRealInput(ImGuiTestContext* ctx) {
   const gui::Ray3DFrameInfo before = gui::LastRay3DFrameInfo();
   IM_CHECK_RETV(before.crystal_frame != world.crystal_frame, false);
   const ImVec2 origin = before.axes_origin;
-  auto* report = TraceReportWindow();
-  IM_CHECK_RETV(report != nullptr, false);
-  const float scroll = report->Scroll.y;
+  auto* region = PoseRegionWindow("##AnalyzeRaypath3D");
+  IM_CHECK_RETV(region != nullptr, false);
+  const float scroll = region->Scroll.y;
   ctx->MouseMoveToPos(origin);
   ctx->Yield(2);
   ctx->MouseDown(ImGuiMouseButton_Left);
@@ -4456,7 +4456,7 @@ bool TraceResetAndAxesTakeRealInput(ImGuiTestContext* ctx) {
   const float zoom = view.orbit_zoom;
   ctx->MouseWheelY(1);
   ctx->Yield(2);
-  IM_CHECK_RETV(view.orbit_zoom == zoom * 1.12f && report->Scroll.y == scroll, false);
+  IM_CHECK_RETV(view.orbit_zoom == zoom * 1.12f && region->Scroll.y == scroll, false);
   const auto state_before = view;
   const auto point_id = gui::g_state.analysis.point.intent_id;
   const auto ray_id = gui::g_state.analysis.trace.intent_id;
@@ -5450,76 +5450,52 @@ bool RefusedTraceKeepsCrystalVisible(ImGuiTestContext* ctx, const gui::SelectedC
   const bool has_segments = std::any_of(std::begin(gui::kRayTraceSegmentColors), std::end(gui::kRayTraceSegmentColors),
                                         [](ImU32 color) { return !TraceCanvasVertices(color).empty(); });
   IM_CHECK_RETV(!has_segments, false);
-  // The plan's scroll-reach obligation (§3.1 "长错误有至少完整可读的一行、可滚达全文首尾"):
-  // the head is readable at scroll 0 (the report reads from its top — the first content line),
-  // and the full tail stays reachable at the end of the native scroll. The frame-text capture
-  // records only what a window actually shows (ItemUnclipByLog is off — clipped rows never
-  // reach the log buffer), so the two captures bracket the real scroll span; the ScrollMax is
-  // logged because "fits without scrolling" is the stronger form, not a skipped check.
-  ImGuiWindow* report = TraceReportWindow();
-  IM_CHECK_RETV(report != nullptr, false);
-  report->Scroll.y = 0.0f;
-  ctx->Yield(1);
-  const std::string head_text = CaptureWindowFrameText(ctx, "Pose & trace");
-  IM_CHECK_RETV(head_text.find("No legal path for this pose:") != std::string::npos, false);
-  report->Scroll.y = report->ScrollMax.y;
-  ctx->Yield(1);
-  const std::string text = CaptureWindowFrameText(ctx, "Pose & trace");
-  IM_CHECK_RETV(text.find("No legal path for this pose:") != std::string::npos, false);
-  IM_CHECK_RETV(text.find(reason) != std::string::npos, false);
-  ctx->LogInfo("[trace refusal] report ScrollMax %.1f (content %.1f, viewport %.1f) — head readable at 0, tail at end",
-               report->ScrollMax.y, report->ContentSize.y, report->Size.y);
-  // The retention discipline's capture half: the refusal is a persistent fact, so the report
-  // captured its formatted details (head + body) — the next sample switch's transient retains
-  // exactly these as its source-named previous result.
-  const gui::Ray3DReportRecord refused_record = gui::g_state.analysis.ray3d_report_record;
-  IM_CHECK_RETV(refused_record.valid && refused_record.kind == gui::Ray3DReportRecord::Kind::kRefused, false);
-  IM_CHECK_RETV(refused_record.detail_head == "No legal path for this pose:", false);
-  IM_CHECK_RETV(refused_record.detail_body.find(reason) != std::string::npos, false);
-  IM_CHECK_RETV(!refused_record.source_line.empty(), false);
-  // The retained-failure arm itself (r2 Suggestion 3): within the SAME component, a sample
-  // switch's transient renders the retained refusal head + details — source-named, height
-  // stable — instead of cycling a computing line through the report.
-  {
-    const int refusal_valid_count = gui::PointValidSampleCount(*gui::g_state.analysis.point.adopted_result, 0);
-    if (refusal_valid_count >= 2) {
-      const float refused_h = report->ContentSize.y;
-      const int refusal_saved_sample = gui::g_state.analysis.point_view.sample_index;
-      ScopedPointPickupHold hold_ret(gui::QueryFace::kRay);
-      gui::g_state.analysis.point_view.sample_index = (refusal_saved_sample + 1) % refusal_valid_count;
-      ctx->Yield(2);
-      IM_CHECK_RETV(!hold_ret.Voided(), false);
-      IM_CHECK_RETV(gui::g_state.analysis.point_view.sample_index != refusal_saved_sample, false);
-      const std::string retained_text = CaptureWindowFrameText(ctx, "Pose & trace");
-      IM_CHECK_RETV(retained_text.find("No legal path for this pose:") != std::string::npos, false);
-      IM_CHECK_RETV(retained_text.find(reason) != std::string::npos, false);
-      ImGuiWindow* report_ret = TraceReportWindow();
-      ctx->LogInfo("[trace refusal] sample-switch transient retains the failure: content %.1f -> %.1f",
-                   static_cast<double>(refused_h), static_cast<double>(report_ret->ContentSize.y));
-      IM_CHECK_RETV(std::fabs(report_ret->ContentSize.y - refused_h) <= 1.0f, false);
-      gui::g_state.analysis.point_view.sample_index = refusal_saved_sample;
-      ctx->Yield(1);
-    } else {
-      ctx->LogInfo("[trace refusal] single valid sample: retained-failure transient leg not reachable here");
-    }
+  auto* host = ctx->GetWindowByRef("//Pose & trace");
+  IM_CHECK_RETV(host != nullptr, false);
+  const auto canvas = gui::LastRay3DFrameInfo();
+  IM_CHECK_RETV(TraceReportWindow() == nullptr, false);
+  const std::string visible = CaptureWindowFrameText(ctx, "Pose & trace");
+  IM_CHECK_RETV(visible.find("representative path refused") != std::string::npos, false);
+  ImGuiWindow* bar = nullptr;
+  for (auto* w : GImGui->Windows) {
+    if (w->Active && w->ParentWindow == host && std::strstr(w->Name, "##QueryStatusBar"))
+      bar = w;
   }
-  // The domain leg on this two-component document (the switch_leg pair above proved both exist):
-  // the retained refusal is the OLD component's source — the other component's transient must
-  // not show it (the honest empty line instead).
+  IM_CHECK_RETV(bar != nullptr, false);
+  std::string full;
+  IM_CHECK_RETV(ObserveTooltip(ctx, bar->InnerRect.GetCenter(), "No legal path for this pose:", true,
+                               "trace_refused_full.png", &full),
+                false);
+  IM_CHECK_RETV(full.find(reason) != std::string::npos && full.find("entry status:") != std::string::npos &&
+                    full.find("corridor area") != std::string::npos && full.find("threshold") != std::string::npos,
+                false);
+  IM_CHECK_RETV(SaveWindowPng(ctx, "//Pose & trace", GuiTestTempPath("analyze_c03_trace_refused.png").string()), false);
+  const int refusal_valid_count = gui::PointValidSampleCount(*gui::g_state.analysis.point.adopted_result, 0);
+  IM_CHECK_RETV(refusal_valid_count >= 2, false);
+  const int saved_sample = gui::g_state.analysis.point_view.sample_index;
   {
-    ScopedPointPickupHold hold_ray(gui::QueryFace::kRay);
+    ScopedPointPickupHold hold(gui::QueryFace::kRay);
+    gui::g_state.analysis.point_view.sample_index = (saved_sample + 1) % refusal_valid_count;
+    ctx->MouseMoveToPos(ImVec2(2, 2));
+    ctx->Yield(2);
+    IM_CHECK_RETV(!hold.Voided(), false);
+    const std::string computing = CaptureWindowFrameText(ctx, "Pose & trace");
+    IM_CHECK_RETV(computing.find("representative path computing") != std::string::npos, false);
+    IM_CHECK_RETV(computing.find("No legal path for this pose:") == std::string::npos, false);
+    const auto next = gui::LastRay3DFrameInfo();
+    IM_CHECK_RETV(next.frame_count > canvas.frame_count && next.canvas_size.x == canvas.canvas_size.x &&
+                      next.canvas_size.y == canvas.canvas_size.y && !next.legend_drawn,
+                  false);
+  }
+  {
+    ScopedPointPickupHold hold(gui::QueryFace::kRay);
     gui::g_state.analysis.point_view.component_index = 1;
     ctx->Yield(2);
-    IM_CHECK_RETV(!hold_ray.Voided(), false);
-    const gui::Ray3DReportRecord stale = gui::g_state.analysis.ray3d_report_record;
-    IM_CHECK_RETV(stale.valid && stale.kind == gui::Ray3DReportRecord::Kind::kRefused && stale.component == 0, false);
-    const std::string domain_text = CaptureWindowFrameText(ctx, "Pose & trace");
-    IM_CHECK_RETV(domain_text.find(stale.source_line) == std::string::npos, false);
-    IM_CHECK_RETV(domain_text.find("No legal path for this pose:") == std::string::npos, false);
-    ctx->LogInfo("[trace refusal] domain switch: the retained refusal does not follow into component 1");
+    IM_CHECK_RETV(!hold.Voided(), false);
+    const std::string domain = CaptureWindowFrameText(ctx, "Pose & trace");
+    IM_CHECK_RETV(domain.find("No legal path for this pose:") == std::string::npos, false);
+    IM_CHECK_RETV(domain.find("representative path computing") != std::string::npos, false);
   }
-  ctx->Yield(2);
-  IM_CHECK_RETV(SaveWindowPng(ctx, "//Pose & trace", GuiTestTempPath("analyze_c03_trace_refused.png").string()), false);
   ctx->LogInfo("[trace refusal] %s: mesh visible, no segments or markers, named refusal text", reason.c_str());
   return true;
 }
@@ -6810,16 +6786,7 @@ struct ScopedUiScaleAndBasisLease {
   }
 };
 
-// The 2026-11-17 region-rework's own acceptance legs (scrum 800 / task r3d-region-rework):
-// AC1's canvas gain and AC2's title band. AC1 measures the canvas item rect at the default
-// 960x720pt / UI 1x against the recorded pre-change baseline — canvas 608x117, measured at
-// d6ad263e4 by the same probe (the quota test's TraceAxesFootprints log line, archived in the
-// task's baseline-evidence.md) — the gain must be the plan's +64pt or better at the SAME
-// window, scale and defaults, not a bigger window or a moved split. AC2 pins the title band:
-// the Fresnel toggle is a control-band item, default ON for a fresh session, every band
-// control wraps by its complete footprint and stays really operable in the empty state AND at
-// the narrowest window, and the band's help icon carries the usage/semantics prose in a
-// wrapped tooltip whose laid-out height proves the long form (not a one-line stub).
+// Real title controls and before/after canvas budgets at the same host, scale and user splits.
 bool Ray3DTitleBandAndCanvasGainHold(ImGuiTestContext* ctx) {
   ScopedServerGuard guard;
   const ScopedUiScaleAndBasisLease geometry_lease(ctx);
@@ -6936,7 +6903,7 @@ bool Ray3DTitleBandAndCanvasGainHold(ImGuiTestContext* ctx) {
     return true;
   };
   const float default_h = canvas_rect("default 960x720");
-  IM_CHECK_RETV(default_h >= 117.0f + 64.0f, false);
+  IM_CHECK_RETV(default_h >= 207.0f + 54.0f, false);
   IM_CHECK_RETV(readout_budget("default"), false);
   const std::string success_text = CaptureWindowFrameText(ctx, "Pose & trace");
   IM_CHECK_RETV(success_text.find("Sun direction globe") != std::string::npos, false);
@@ -6973,13 +6940,9 @@ bool Ray3DTitleBandAndCanvasGainHold(ImGuiTestContext* ctx) {
   return true;
 }
 
-// The 2026-11-17 rework's transient legs (AC4): a real sample-slider click moves the cursor,
-// the trace re-keys and its computing frames are HELD deterministic (the pickup hold), and
-// across drawn→computing→drawn the report's content height stays put — the retained source
-// line names the sample it belongs to, the status bar reads the transient, and the canvas
-// rectangle never moves. A component switch is a domain change: the retained record must NOT
-// show across it (the honest empty line instead).
-bool Ray3DTransientHoldsTheReportAndReadsTheBar(ImGuiTestContext* ctx) {
+// A real slider move re-keys the trace. Held computing frames must not draw the previous
+// path, retain a success report, or move either canvas or the user's split boundaries.
+bool Ray3DTransientKeepsTheCanvasesAndReadsTheBar(ImGuiTestContext* ctx) {
   ScopedServerGuard guard;
   IM_CHECK_RETV(BringUpHaloScene(ctx, /*infinite=*/false), false);
   OpenWindow(ctx);
@@ -6999,18 +6962,11 @@ bool Ray3DTransientHoldsTheReportAndReadsTheBar(ImGuiTestContext* ctx) {
   const int valid_count = gui::PointValidSampleCount(*gui::g_state.analysis.point.adopted_result, view.component_index);
   IM_CHECK_RETV(valid_count >= 2, false);
 
-  ImGuiWindow* report = TraceReportWindow();
-  IM_CHECK_RETV(report != nullptr, false);
-  ImGuiWindow* region = PoseRegionWindow("##AnalyzeRaypath3D");
-  IM_CHECK_RETV(region != nullptr, false);
-  // By-value snapshots: the record and the frame info are mutable globals the renderer updates
-  // in place — two references would alias (the learnings' state-transition trap).
-  const float drawn_content_h = report->ContentSize.y;
+  IM_CHECK_RETV(TraceReportWindow() == nullptr, false);
+  const auto same_point = [](const ImVec2& a, const ImVec2& b) { return a.x == b.x && a.y == b.y; };
   const gui::Ray3DFrameInfo drawn_frame = gui::LastRay3DFrameInfo();
-  const gui::Ray3DReportRecord drawn_record = gui::g_state.analysis.ray3d_report_record;
-  IM_CHECK_RETV(drawn_record.valid && !drawn_record.source_line.empty(), false);
+  const auto globe_before = ctx->ItemInfo("**/##globe_canvas", ImGuiTestOpFlags_NoError).RectFull;
   IM_CHECK_RETV(drawn_frame.legend_drawn, false);
-
   // REAL input: the globe sample slider's track clicks move the shared cursor (the slider's
   // own input contract; the probe position round-trips through the widget, so the assertions
   // read back the ACTUAL sample the slider set). The hold is armed FIRST so the superseded
@@ -7043,22 +6999,19 @@ bool Ray3DTransientHoldsTheReportAndReadsTheBar(ImGuiTestContext* ctx) {
                     gui::RayTraceDisplayState::kComputing,
                 false);
 
-  // The transient's two faces: the bar reads computing; the report holds the retained source
-  // line at the SAME content height, and the canvas rectangle does not move.
   const std::string bar_text = CaptureWindowFrameText(ctx, "Pose & trace");
   IM_CHECK_RETV(bar_text.find("representative path computing") != std::string::npos, false);
-  const gui::Ray3DReportRecord computing_record = gui::g_state.analysis.ray3d_report_record;
-  IM_CHECK_RETV(computing_record.valid && computing_record.source_line == drawn_record.source_line, false);
-  IM_CHECK_RETV(computing_record.point_id == gui::g_state.analysis.point.intent_id, false);
-  IM_CHECK_RETV(computing_record.component == drawn_record.component, false);
-  const float computing_content_h = report->ContentSize.y;
-  ctx->LogInfo("[r3d transient] report content drawn %.1f -> computing %.1f", drawn_content_h, computing_content_h);
-  IM_CHECK_RETV(std::fabs(computing_content_h - drawn_content_h) <= 1.0f, false);
+  IM_CHECK_RETV(bar_text.find("Component 1 · sample") == std::string::npos, false);
+  IM_CHECK_RETV(TraceReportWindow() == nullptr, false);
   const gui::Ray3DFrameInfo computing_frame = gui::LastRay3DFrameInfo();
   IM_CHECK_RETV(computing_frame.valid && computing_frame.canvas_min.x == drawn_frame.canvas_min.x &&
                     computing_frame.canvas_min.y == drawn_frame.canvas_min.y &&
                     computing_frame.canvas_size.x == drawn_frame.canvas_size.x &&
                     computing_frame.canvas_size.y == drawn_frame.canvas_size.y,
+                false);
+  IM_CHECK_RETV(computing_frame.frame_count > drawn_frame.frame_count, false);
+  const auto globe_computing = ctx->ItemInfo("**/##globe_canvas", ImGuiTestOpFlags_NoError).RectFull;
+  IM_CHECK_RETV(same_point(globe_before.Min, globe_computing.Min) && same_point(globe_before.Max, globe_computing.Max),
                 false);
   IM_CHECK_RETV(!computing_frame.legend_drawn, false);  // no colour vocabulary over an empty canvas
   ctx->LogInfo("[r3d transient] bar: '%s'", bar_text.substr(0, 160).c_str());
@@ -7076,42 +7029,17 @@ bool Ray3DTransientHoldsTheReportAndReadsTheBar(ImGuiTestContext* ctx) {
                     60),
                 false);
   ctx->Yield(2);
-  const gui::Ray3DReportRecord drawn2_record = gui::g_state.analysis.ray3d_report_record;
-  IM_CHECK_RETV(drawn2_record.valid && drawn2_record.source_line != drawn_record.source_line, false);
-  const float drawn2_content_h = report->ContentSize.y;
-  ctx->LogInfo("[r3d transient] report content computing %.1f -> drawn %.1f ('%s' -> '%s')", computing_content_h,
-               drawn2_content_h, drawn_record.source_line.c_str(), drawn2_record.source_line.c_str());
-  IM_CHECK_RETV(std::fabs(drawn2_content_h - drawn_content_h) <= 1.0f, false);  // AC4's bounded flip
+  const gui::Ray3DFrameInfo after = gui::LastRay3DFrameInfo();
+  IM_CHECK_RETV(after.frame_count > computing_frame.frame_count && after.legend_drawn, false);
+  IM_CHECK_RETV(
+      same_point(after.canvas_min, drawn_frame.canvas_min) && same_point(after.canvas_size, drawn_frame.canvas_size),
+      false);
+  const auto globe_after = ctx->ItemInfo("**/##globe_canvas", ImGuiTestOpFlags_NoError).RectFull;
+  IM_CHECK_RETV(same_point(globe_before.Min, globe_after.Min) && same_point(globe_before.Max, globe_after.Max), false);
   const std::string bar_after = CaptureWindowFrameText(ctx, "Pose & trace");
-  IM_CHECK_RETV(bar_after.find("representative path computing") == std::string::npos, false);  // the transient left
-  IM_CHECK_RETV(bar_after.find(drawn2_record.source_line) != std::string::npos, false);        // the report shows it
-
-  // DOMAIN leg: a component switch invalidates the retained record — the computing report
-  // must not carry the old domain's source line (the honest empty line instead). The write is
-  // the same one the answer rows make; the display gate is what is under test. The leg needs
-  // a document with two discovered components; on a single-component one the C03 flow's own
-  // scene covers the two-domain shape, and the leg says so instead of asserting nothing.
-  {
-    LUMICE_PathPointInfo domain_info{};
-    domain_info.struct_size = sizeof(domain_info);
-    IM_CHECK_RETV(
-        LUMICE_PathPointGetInfo(gui::g_state.analysis.point.adopted_result.get(), &domain_info) == LUMICE_PATH_READ_OK,
-        false);
-    if (domain_info.component_count >= 2) {
-      ScopedPointPickupHold hold2(gui::QueryFace::kRay);
-      view.component_index = view.component_index == 0 ? 1 : 0;
-      ctx->Yield(2);
-      IM_CHECK_RETV(!hold2.Voided(), false);
-      const gui::Ray3DReportRecord stale = gui::g_state.analysis.ray3d_report_record;  // the old record persists
-      IM_CHECK_RETV(stale.valid && stale.component != view.component_index, false);
-      const std::string domain_text = CaptureWindowFrameText(ctx, "Pose & trace");
-      IM_CHECK_RETV(domain_text.find(stale.source_line) == std::string::npos, false);
-      ctx->LogInfo("[r3d transient] component switch: stale '%s' not shown", stale.source_line.c_str());
-    } else {
-      ctx->LogInfo("[r3d transient] single-component document (%d): two-domain leg covered by the C03 flow",
-                   domain_info.component_count);
-    }
-  }
+  IM_CHECK_RETV(bar_after.find("representative path computing") == std::string::npos, false);
+  IM_CHECK_RETV(bar_after.find("— zenith") == std::string::npos, false);
+  IM_CHECK_RETV(bar_after.find("Current pose factors") != std::string::npos, false);
   ctx->Yield(2);
   return true;
 }
@@ -9484,23 +9412,16 @@ bool PoseViewResizeStrategyDistributesByRatioAndQuota(ImGuiTestContext* ctx) {
   const float d7_saved = gui::g_state.analyze_pose_view_curve_canvas_ratio;
   const float c3d_0 = canvas_h("**/##r3d_canvas");
   const float cc_0 = canvas_h("**/##pose_curve_canvas");
-  ImGuiWindow* rep3d_0 = PoseRegionScrollChild("##AnalyzeRaypath3D", "##Ray3DReport");
   ImGuiWindow* comp_0 = PoseRegionScrollChild("##AnalyzePoseCurve", "##PoseCurveScroll");
-  IM_CHECK_RETV(rep3d_0 != nullptr && comp_0 != nullptr, false);
-  const float rep3d_h0 = rep3d_0->Size.y;
+  IM_CHECK_RETV(TraceReportWindow() == nullptr && comp_0 != nullptr, false);
   const float comp_h0 = comp_0->Size.y;
-  ctx->LogInfo("[resize stretch] canvas 3d %.0f curve %.0f | quota 3d-report %.0f companion %.0f | D5 %.3f",
-               static_cast<double>(c3d_0), static_cast<double>(cc_0), static_cast<double>(rep3d_h0),
-               static_cast<double>(comp_h0), static_cast<double>(d5_saved));
+  ctx->LogInfo("[resize stretch] canvas 3d %.0f curve %.0f | companion quota %.0f | D5 %.3f", c3d_0, cc_0, comp_h0,
+               d5_saved);
   pin_size(960.0f, 880.0f);
   const float c3d_1 = canvas_h("**/##r3d_canvas");
   const float cc_1 = canvas_h("**/##pose_curve_canvas");
-  ImGuiWindow* rep3d_1 = PoseRegionScrollChild("##AnalyzeRaypath3D", "##Ray3DReport");
   ImGuiWindow* comp_1 = PoseRegionScrollChild("##AnalyzePoseCurve", "##PoseCurveScroll");
-  IM_CHECK_RETV(rep3d_1 != nullptr && comp_1 != nullptr, false);
-  ctx->LogInfo("[resize stretch] stretched: canvas 3d %.0f curve %.0f | quota %.0f / %.0f", static_cast<double>(c3d_1),
-               static_cast<double>(cc_1), static_cast<double>(rep3d_1->Size.y), static_cast<double>(comp_1->Size.y));
-  IM_CHECK_RETV(fabsf(rep3d_1->Size.y - rep3d_h0) < 2.0f, false);      // the 3D report's quota held
+  IM_CHECK_RETV(TraceReportWindow() == nullptr && comp_1 != nullptr, false);
   IM_CHECK_RETV(fabsf(comp_1->Size.y - comp_h0) < 2.0f, false);        // the companion's quota held
   IM_CHECK_RETV(c3d_1 > c3d_0 + 20.0f && cc_1 > cc_0 + 20.0f, false);  // both canvases ate delta
   const float d3 = c3d_1 - c3d_0;
@@ -9884,60 +9805,8 @@ bool PoseViewNarrowestWindowKeepsTheFixedStackOperable(ImGuiTestContext* ctx) {
     ctx->ItemClick("**/Stop##globe_play");
     ctx->Yield(2);
     IM_CHECK_RETV(!gui::g_state.analysis.point_view.playing, false);
-    // The state area's two honest forms at this geometry: BOUNDED (a scrolling child under the
-    // fixed stack — its parent is the globe region child, not the top level) or, when even the
-    // stack cannot share the cell, UNBOUNDED (the lines render direct in the region and the
-    // REGION's own scroll is the reachability — the degradation ladder's last rung). Either way
-    // the informational lines scroll to, they are not deleted.
-    ImGuiWindow* state_area = nullptr;
-    for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows) {
-      if (w != nullptr && w->Active && w->ParentWindow != nullptr &&
-          std::strstr(w->ParentWindow->Name, "##AnalyzeSunGlobe") != nullptr &&
-          std::strstr(w->Name, "##AnalyzeGlobeState") != nullptr) {
-        state_area = w;
-        break;
-      }
-    }
-    if (state_area != nullptr) {
-      // The bounded area's two honest shapes at this geometry: it FITS ENTIRELY (ScrollMax == 0
-      // — the fixed stack is one control shorter since the toggle retired to the factors
-      // region, so the narrowest face can now hold the whole report) or it SCROLLS, and then
-      // the reviewer's wheel legs hold: the wheel did the scrolling, the end is in view,
-      // nothing was deleted to fit. Both are reachability; neither deletes a line.
-      if (state_area->ScrollMax.y > 0.0f) {
-        const float sm0 = state_area->ScrollMax.y;
-        const float scroll0 = state_area->Scroll.y;
-        const ImVec2 area_centre = state_area->Rect().GetCenter();
-        ctx->MouseMoveToPos(area_centre);
-        ctx->Yield(2);
-        for (int i = 0; i < 24 && state_area->Scroll.y < state_area->ScrollMax.y - 0.5f; ++i) {
-          ctx->MouseWheelY(-1.0f);
-          ctx->Yield(1);
-        }
-        IM_CHECK_RETV(state_area->Scroll.y > scroll0 + 0.5f, false);                   // the wheel did the scrolling
-        IM_CHECK_RETV(state_area->Scroll.y >= state_area->ScrollMax.y - 1.0f, false);  // the end is in view
-        IM_CHECK_RETV(state_area->ScrollMax.y >= sm0 - 0.5f, false);                   // nothing was deleted to fit
-        ctx->LogInfo("[pose narrowest %.1fx] state area bounded, wheeled %.0f -> %.0f of SM %.0f; end in view",
-                     (double)scale, (double)scroll0, (double)state_area->Scroll.y, (double)state_area->ScrollMax.y);
-        // The fixed stack answers with the state area parked at its end.
-        ctx->ItemClick("**/Play##globe_play");
-        ctx->Yield(2);
-        IM_CHECK_RETV(gui::g_state.analysis.point_view.playing, false);
-        ctx->ItemClick("**/Stop##globe_play");
-        ctx->Yield(2);
-        IM_CHECK_RETV(!gui::g_state.analysis.point_view.playing, false);
-        ctx->LogInfo("[pose narrowest %.1fx] fixed stack operated with the state area at its end", (double)scale);
-      } else {
-        ctx->LogInfo("[pose narrowest %.1fx] state area fits entirely (SM 0) — reachable by construction",
-                     (double)scale);
-      }
-    } else {
-      ImGuiWindow* globe_scroll = PoseRegionWindow("##AnalyzeSunGlobe");
-      IM_CHECK_RETV(globe_scroll != nullptr, false);
-      ctx->LogInfo("[pose narrowest %.1fx] state area unbounded (the region's own scroll), region SM %.0f",
-                   (double)scale, (double)globe_scroll->ScrollMax.y);
-      IM_CHECK_RETV(globe_scroll->ScrollMax.y >= 0.0f, false);  // fits or scrolls; no clip without a scroll exists
-    }
+    IM_CHECK_RETV(PoseRegionScrollChild("##AnalyzeSunGlobe", "##AnalyzeGlobeState") == nullptr, false);
+    ctx->LogInfo("[pose narrowest %.1fx] no report container; component/sample/play remain operable", scale);
 
     gui::g_state.analyze_pose_view_open = false;
     ctx->Yield(2);
@@ -10596,18 +10465,14 @@ bool PoseCurveReportQuotasTrackContent(ImGuiTestContext* ctx) {
                              ImGuiCond_Always);
         gui::g_state.analyze_pose_view_curve_canvas_ratio = gui::kPoseViewCurveCanvasRatioUndragged;
         ctx->Yield(4);
-        auto* report = PoseRegionScrollChild("##AnalyzeRaypath3D", "##Ray3DReport");
         auto* companion = PoseRegionScrollChild("##AnalyzePoseCurve", "##PoseCurveScroll");
-        IM_CHECK_RETV(report && companion, false);
-        ImGui::SetScrollY(report, 0);
+        IM_CHECK_RETV(TraceReportWindow() == nullptr && companion, false);
         ImGui::SetScrollY(companion, 0);
         ctx->MouseMoveToPos(ImVec2(2, 2));
         ctx->Yield(3);
-        ctx->LogInfo(
-            "[curve quota] %.1fx %s host %.0fx%.0f: report %.1f content %.1f SM %.1f | companion %.1f content %.1f SM "
-            "%.1f",
-            scale, narrow ? "minimum" : "default", host->Size.x, host->Size.y, report->Size.y, report->ContentSize.y,
-            report->ScrollMax.y, companion->Size.y, companion->ContentSize.y, companion->ScrollMax.y);
+        ctx->LogInfo("[curve quota] %.1fx %s host %.0fx%.0f: companion %.1f content %.1f SM %.1f", scale,
+                     narrow ? "minimum" : "default", host->Size.x, host->Size.y, companion->Size.y,
+                     companion->ContentSize.y, companion->ScrollMax.y);
         const auto contains_ink = [&](ImGuiWindow* owner, const ImRect& rect) {
           const auto* dl = owner->DrawList;
           const ImU32 normal = ImGui::GetColorU32(ImGuiCol_Text);
@@ -10661,8 +10526,7 @@ bool PoseCurveReportQuotasTrackContent(ImGuiTestContext* ctx) {
           IM_CHECK_RETV(full_item("**/Show Fresnel ratios##r3d_fresnel", region_3d), false);
           IM_CHECK_RETV(full_item("**/" ICON_FA_CIRCLE_INFO "##r3d_help", region_3d), false);
           IM_CHECK_RETV(full_item("**/Reset View##r3d_reset", region_3d), false);
-          IM_CHECK_RETV(full_item("**/##r3d_source", report), false);
-          IM_CHECK_RETV(report->ScrollMax.y == 0, false);
+          IM_CHECK_RETV(TraceReportWindow() == nullptr, false);
           // The colour legend is canvas ink now: its three complete unit footprints sit inside
           // the canvas (the report child carries the source line only).
           {
@@ -10708,7 +10572,6 @@ bool PoseCurveReportQuotasTrackContent(ImGuiTestContext* ctx) {
           IM_CHECK_RETV(window->Scroll.y >= window->ScrollMax.y - .5f, false);
           return true;
         };
-        IM_CHECK_RETV(wheel_tail(report), false);
         IM_CHECK_RETV(wheel_tail(companion), false);
         char capture[80];
         std::snprintf(capture, sizeof(capture), "curve_quota_%.1fx_%s.png", scale, narrow ? "minimum" : "default");
@@ -15100,8 +14963,8 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
   }
 
   {
-    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "r3d_transient_holds_the_report_and_reads_the_bar");
-    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(Ray3DTransientHoldsTheReportAndReadsTheBar(ctx)); };
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "r3d_transient_keeps_the_canvases_and_reads_the_bar");
+    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(Ray3DTransientKeepsTheCanvasesAndReadsTheBar(ctx)); };
   }
 
   {

@@ -163,10 +163,6 @@ constexpr float kPoseViewCurveCanvasRatioUndragged = 0.0f;
 constexpr float kPoseViewCurveCanvasFloor = 40.0f;
 constexpr float kPoseViewCurveCompanionFloor = 32.0f;
 constexpr int kPoseViewCurveCompanionLines = 3;
-// The Ray3D report has no constant quota here: its budget is the LIVE-FONT two-line amount
-// computed at its use site (analyze_point_view.cpp Ray3DReportQuota — two text lines over the
-// child's real padding/border). A frozen pt constant would pin one tier's line height and
-// misreserve every other; the canvas eats whatever the budget does not reserve.
 // The two analysis windows' title display spellings, the ONE source for every consumer of those
 // spellings: the windows' own Begin calls, the Raypath view window's in-place Pose button (the
 // constant plus the button's `###pose_open` addressing suffix), and the main window's Selection

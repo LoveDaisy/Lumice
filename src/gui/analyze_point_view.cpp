@@ -1701,7 +1701,7 @@ ImU32 SegmentColor(int kind, float alpha) {
 // The Ray3D region's one conceptual help text (the two-tier tooltip rule): the usage note and
 // the display semantics' legend — the width mapping's honesty note (visual sqrt scaling, no
 // absorption — the ratio numbers carry the exact values), the contact shapes' vocabulary, and
-// the unusable-factor boundary. Status reasons and real errors stay in the report: they are
+// the unusable-factor boundary. Status reasons and real errors stay in the footer: they are
 // facts of a state, not concepts.
 constexpr const char* kRay3DHelpText =
     "One pose's real path in the crystal: drag orbits, wheel zooms. Same physical state, two "
@@ -1710,25 +1710,6 @@ constexpr const char* kRay3DHelpText =
     "ratio numbers, when shown, carry the exact values. Contacts: solid = facing the camera, "
     "hollow = back-facing or facing unknown. A segment past an unusable interface factor draws "
     "neutral (n/a).";
-
-// The Ray3D report's fixed budget: two text lines over the child's real chrome (its padding and
-// border), computed from the LIVE font every call — never from content, last frame's height or
-// the trace state. The canvas eats whatever this does not reserve; narrower columns scroll their
-// longer wraps (an error's full text stays reachable by native scrolling).
-float Ray3DReportQuota() {
-  const ImGuiStyle& style = ImGui::GetStyle();
-  return 2.0f * ImGui::GetTextLineHeightWithSpacing() + 2.0f * style.WindowPadding.y + UiPx(6.0f);
-}
-
-// The report's stable source label: the component/sample identity the shown content belongs to
-// (1-based, the component list's and the curve readout's vocabulary). It is the honesty marker
-// that lets the report hold still across a sample switch's transient: the retained line names
-// its own sample, never masquerading as the cursor's.
-std::string Ray3DReportSourceLine(int component, int sample_position, int valid_count) {
-  char buf[64];
-  std::snprintf(buf, sizeof(buf), "Component %d \xc2\xb7 sample %d/%d", component + 1, sample_position, valid_count);
-  return std::string(buf);
-}
 
 // The canvas legend's drawing vocabulary — ONE source for the footprint decision, the Fresnel
 // ladder's exclusion extents and the ink emission (a56: the ink can never drift from the rects
@@ -1872,9 +1853,6 @@ void RenderAnalyzeSunGlobeRegion(GuiState& state, const ImVec2& size) {
   PointQuerySession& point = state.analysis.point;
   PointViewState& view = state.analysis.point_view;
 
-  // Every result branch writes only the report after the fixed component/canvas/sample stack.
-  const auto render_state_area = [](auto&& draw_lines) { draw_lines(); };
-
   // ---- The fixed interaction stack (R4): the controls a hand must reach are submitted outside
   // any scrolling region at every cell the window's minimum admits — the title with the view
   // control and its info icon here (the deviation-grid toggle lives in the factors region's
@@ -1954,9 +1932,7 @@ void RenderAnalyzeSunGlobeRegion(GuiState& state, const ImVec2& size) {
   // the row — the square canvas is what remains.
   const float controls_h = ImGui::GetFrameHeightWithSpacing() * (shared_line ? 1.0f : 2.0f);
   const float legend_w = have_grid ? SunGridLegendColumnWidth() + ImGui::GetStyle().ItemSpacing.x : 0.0f;
-  const float graph_side =
-      std::min(available.x - legend_w,
-               CanvasHeightBeforeReport(available.y, controls_h, UiPx(64.0f), ImGui::GetStyle().ItemSpacing.y));
+  const float graph_side = std::min(available.x - legend_w, std::max(0.0f, available.y - controls_h));
   const ImVec2 graph_min = ImGui::GetCursorScreenPos();
   ImDrawList* graph_draw_list = ImGui::GetWindowDrawList();
   if (graph_side > 0.0f) {
@@ -1988,85 +1964,11 @@ void RenderAnalyzeSunGlobeRegion(GuiState& state, const ImVec2& size) {
     view.last_play_step_s = ImGui::GetTime();
   }
   ImGui::EndDisabled();
-  ImGui::BeginChild("##AnalyzeGlobeState", RemainingReportSize(), ImGuiChildFlags_Borders);
   const auto render_content = [&] {
-    const PointQueryState st = PointQueryStateFor(point);
-    if (st == PointQueryState::kNoIntent) {
-      render_state_area([&] {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-        if (!state.analysis.sky_point.valid) {
-          ImGui::TextWrapped(
-              "Pick a sky point on the raypath view (or type coordinates there); the fiber of poses "
-              "that light it takes this region.");
-        } else {
-          ImGui::TextWrapped("The fiber takes this region once a class is selected.");
-        }
-        ImGui::PopStyleColor();
-      });
-      return;
-    }
-    if (st == PointQueryState::kWaiting || st == PointQueryState::kCancelled || st == PointQueryState::kRefused) {
-      // Empty by design: query progress and refusal reasons have one owner, the window's fixed
-      // footer — the pose projection's concept text rides the title's info icon.
-      return;
-    }
-
-    // Completed. Either arm reads through the document's own Info.
-    if (!info.has_value()) {
-      render_state_area([&] { DisabledWrappedText("The adopted point document did not answer its Info reader."); });
-      return;
-    }
-    if (info->outcome == LUMICE_PATH_POINT_MASS) {
-      render_state_area([&] {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-        ImGui::TextWrapped("A rank-0 point mass has no fiber to project — the details carry the mass numbers.");
-        ImGui::PopStyleColor();
-      });
-      return;
-    }
-
-    // The discovered arm: the selected component's fiber, the current sample marker, the weight
-    // bar, the slider and playback. The partial-document note rides EVERY state area this arm can
-    // show — including the empty-payload early returns below: a deadline stopped before the
-    // component walk can legitimately return zero components, and a window open on its own (the
-    // diagnostics region may be off screen or on another workspace) must not present an
-    // unfinished document as a definite physical absence.
-    const bool partial_document = info->execution != LUMICE_PATH_OUTCOME_COMPLETED;
-    const auto draw_partial_note = [&] {
-      if (partial_document) {
-        WarningTextWrapped(
-            "Partial document (%s) — what arrived is on show; emptiness here is the run's "
-            "stop, not a physical absence.",
-            ExecutionText(info->execution));
-      }
-    };
-    if (component_total == 0) {
-      LUMICE_PathPointReach reach{};
-      reach.struct_size = sizeof(reach);
-      const bool have_reach = LUMICE_PathPointGetReach(point.adopted_result.get(), &reach) == LUMICE_PATH_READ_OK;
-      render_state_area([&] {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-        draw_partial_note();
-        if (have_reach && !reach.target_in_range) {
-          ImGui::TextWrapped(
-              "No fiber here: the target's deviation is outside the range of this path's deflection field "
-              "(the reach probe excludes it at its resolution).");
-        } else {
-          ImGui::TextWrapped(
-              "No fiber component at this point: the finite crystal passes no pose along the queried "
-              "deflection.");
-        }
-        ImGui::PopStyleColor();
-      });
-      return;
-    }
-    if (valid_count == 0) {
-      render_state_area([&] {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-        draw_partial_note();
-        ImGui::TextWrapped("This component carries no valid sample — nothing to project.");
-        ImGui::PopStyleColor();
-      });
+    // Empty/partial/error facts belong to the fixed window footer, never a second report
+    // below the controls. The canvas allocation is identical in every query state.
+    if (PointQueryStateFor(point) != PointQueryState::kCompleted || !info || info->outcome == LUMICE_PATH_POINT_MASS ||
+        valid_count == 0) {
       return;
     }
     if (graph_side > 0.0f) {
@@ -2149,42 +2051,21 @@ void RenderAnalyzeSunGlobeRegion(GuiState& state, const ImVec2& size) {
       // is the curve region's product arm now, on the true arclength axis instead of the sample
       // index; the same window drawing it twice was a duplication, not a redundancy.)
     }
-    // ---- The state area (R4's scroll set): the description, the partial note, the weight note
-    // and the sample readout — all reachable by scrolling, none deleted. The grid-absence note
-    // moved with the toggle to the factors region's diagnostics group (§16.4); the
-    // readout's old fits_on_line join is gone with the form: the state area is where these
-    // lines live at every width. ----
-    const std::optional<CurrentSample> current = CurrentSampleOf(*point.adopted_result, view, valid_indices);
-    render_state_area([&] {
-      if (partial_document) {
-        WarningTextWrapped("Partial document (%s) — the fiber on show is what arrived.",
-                           ExecutionText(info->execution));
-      }
-      if (current.has_value()) {
-        char readout[128];
-        std::snprintf(readout, sizeof(readout), "sample %d/%d — zenith %.1f, az %.1f, roll %.1f%s",
-                      std::clamp(view.sample_index, 0, valid_count - 1) + 1, valid_count, current->sample.zenith_deg,
-                      current->sample.azimuth_deg, current->sample.roll_deg,
-                      current->sample.angles_degenerate != 0 ? " (degenerate)" : "");
-        DisabledWrappedText("%s", readout);
-      }
-    });
   };
   render_content();
-  ImGui::EndChild();
   ImGui::EndChild();
 }
 
 // ---- The raypath 3D view -----------------------------------------------------------------------------
 
-void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
+std::string RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
+  std::string canvas_problem;
   g_ray3d_frame.valid = false;
   g_ray3d_frame.axes_drawn = false;
   g_ray3d_frame.legend_drawn = false;
   state.analysis.ray3d_fresnel_labels.clear();
   state.analysis.ray3d_fresnel_label_rects.clear();
-  // The canvas and frame controls never scroll with result prose. The report scrolls
-  // natively; only the actual canvas registers the orbit wheel claim.
+  // No prose container or quota: only the actual canvas registers the orbit wheel claim.
   ImGui::BeginChild("##AnalyzeRaypath3D", size, ImGuiChildFlags_Borders, ImGuiWindowFlags_NoScrollWithMouse);
   PointQuerySession& point = state.analysis.point;
   RayTraceSession& trace = state.analysis.trace;
@@ -2216,8 +2097,7 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
   if (ImGui::Button("Reset View##r3d_reset")) {
     view.ResetOrbitOrientation();
   }
-  // The Fresnel toggle: a title-band session preference (moved out of the report head — the
-  // report's fixed two-line budget carries status/qualifying facts only). The same survival
+  // The Fresnel toggle: a title-band session preference. The same survival
   // set as the other toggles (kept across sample/component switches, point adoptions and
   // window reopen; reset only by the whole-state new-document paths; never persisted, never
   // in a query key); default on — the ratio numbers are the trace's exact-value face. It sits
@@ -2238,8 +2118,7 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
     InfoIconLine("r3d_help", kRay3DHelpText);
   }
   const ImVec2 remaining = ImGui::GetContentRegionAvail();
-  const float graph_h =
-      CanvasHeightBeforeReport(remaining.y, 0.0f, Ray3DReportQuota(), ImGui::GetStyle().ItemSpacing.y);
+  const float graph_h = std::max(0.0f, remaining.y);
   const ImVec2 canvas_size(remaining.x, graph_h);
   const ImVec2 graph_min = ImGui::GetCursorScreenPos();
   ImDrawList* graph_draw_list = ImGui::GetWindowDrawList();
@@ -2253,47 +2132,18 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
                                    IM_COL32(16, 18, 22, 255));
   }
   AnalyzeRegionWheelClaim(graph_hovered, AnalyzeRay3DWheelOwnerId());
-  ImGui::BeginChild("##Ray3DReport", RemainingReportSize());
   const auto render_content = [&] {
-    const PointQueryState st = PointQueryStateFor(point);
-    if (st == PointQueryState::kNoIntent) {
-      ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-      ImGui::TextWrapped("Pick a class and a sky point; the current pose's crystal-interior path takes this region.");
-      ImGui::PopStyleColor();
-      return;
-    }
-    if (st == PointQueryState::kWaiting || st == PointQueryState::kCancelled || st == PointQueryState::kRefused) {
-      DisabledWrappedText("No path on show.");
+    if (PointQueryStateFor(point) != PointQueryState::kCompleted) {
       return;
     }
     const std::optional<LUMICE_PathPointInfo> info = ReadPointInfo(*point.adopted_result);
-    if (!info.has_value()) {
-      DisabledWrappedText("The adopted point document did not answer its Info reader.");
-      return;
-    }
-    if (info->outcome == LUMICE_PATH_POINT_MASS) {
-      ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-      ImGui::TextWrapped(
-          "A rank-0 point mass has no crystal-interior path — nothing to draw here (the details carry "
-          "the mass numbers).");
-      ImGui::PopStyleColor();
-      return;
-    }
-
-    // The partial-document note, the globe's sibling: the path on show is what a stopped run
-    // delivered.
-    if (info->execution != LUMICE_PATH_OUTCOME_COMPLETED) {
-      WarningTextWrapped("Partial document (%s) — the path on show is what arrived.", ExecutionText(info->execution));
-    }
-    if (info->component_count == 0) {
-      DisabledWrappedText("No fiber component — no crystal-interior path to draw.");
+    if (!info || info->outcome == LUMICE_PATH_POINT_MASS || info->component_count == 0) {
       return;
     }
     const std::vector<int> valid_indices = CollectValidSampleIndices(
         *point.adopted_result, std::clamp(view.component_index, 0, static_cast<int>(info->component_count) - 1));
     const std::optional<CurrentSample> current = CurrentSampleOf(*point.adopted_result, view, valid_indices);
-    if (!current.has_value()) {
-      DisabledWrappedText("No valid sample on show — nothing to draw.");
+    if (!current) {
       return;
     }
     const RayTraceKey current_key = RayTraceKeyFor(point.intent_id, *current);
@@ -2306,13 +2156,13 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
     const std::map<int, int> core_to_pool = AnalysisCoreToPoolMap(state);
     const auto pool_it = core_to_pool.find(info->crystal_id);
     if (pool_it == core_to_pool.end() || pool_it->second < 0) {
-      DisabledWrappedText("The analyzed crystal is not in the snapshot's pool map — no mesh to draw it with.");
+      canvas_problem = "The analyzed crystal is not in the snapshot's pool map — no mesh to draw it with.";
       return;
     }
     const int pool = pool_it->second;
     const CrystalConfig* frozen = FrozenCrystalForPool(state, pool);
     if (frozen == nullptr) {
-      DisabledWrappedText("The frozen binding carries no crystal for this pool slot — no mesh to draw it with.");
+      canvas_problem = "The frozen binding carries no crystal for this pool slot — no mesh to draw it with.";
       return;
     }
     CachedCrystalMesh& cache = PointMeshCache();
@@ -2325,13 +2175,13 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
       cache.valid = BuildPointCrystalMesh(*frozen, &cache.mesh);
     }
     if (!cache.valid || cache.mesh.vertex_count <= 0) {
-      DisabledWrappedText("The crystal mesh came back empty for this configuration.");
+      canvas_problem = "The crystal mesh came back empty for this configuration.";
       return;
     }
     RayTracePolyline line;
     if (display_state == RayTraceDisplayState::kDrawn &&
         !BuildRayTracePolyline(*trace.adopted_result, /*extension=*/1.1f, &line)) {
-      DisabledWrappedText("The path's readers answered empty — nothing to draw.");
+      canvas_problem = "The path's readers answered empty — nothing to draw.";
       return;
     }
     // The request's face sequence (the Info reader's own): one face number per contact by
@@ -2420,7 +2270,7 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
     if (canvas_h > 0.0f && avail.x > 0.0f) {
       const ImVec2 canvas_max(canvas_min.x + avail.x, canvas_min.y + canvas_h);
       const bool active = graph_active;
-      // Consume only the standing canvas claim; the report retains native wheel scrolling.
+      // Consume only the standing canvas claim.
       if (active && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
         const ImVec2 delta = ImGui::GetIO().MouseDelta;
         // Grab convention — the project's one drag metaphor (Render main view inside-out and Globe
@@ -2435,7 +2285,7 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
             std::clamp(view.orbit_zoom * (ImGui::GetIO().MouseWheel > 0.0f ? 1.12f : 1.0f / 1.12f), 0.25f, 8.0f);
       }
 
-      // Canvas failures must not suppress the independent status/legend report below.
+      // Canvas failures flow to the fixed footer independently of the trace answer.
       const auto render_canvas = [&] {
         PointCrystalRenderer& gl = PointRenderer();
         const ImVec2 fb_scale = ImGui::GetIO().DisplayFramebufferScale;
@@ -2455,7 +2305,7 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
           }
         }
         if (!gl.ready) {
-          DisabledWrappedText("The crystal renderer could not initialize — no 3D canvas available.");
+          canvas_problem = "The crystal renderer could not initialize — no 3D canvas available.";
           return;
         }
         // Zoom is the focal-plane half-height shared by Render, ComputeMvp and the frame info
@@ -2849,88 +2699,10 @@ void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size) {
       };
       render_canvas();
     }
-    // The current pose's crystal remains visible even when its trace has no drawable path.
-    // Transient vs persistent (2026-11-17 feedback): computing and hidden never cycle through
-    // the report — the status bar owns the transient words. Computing shows the RETAINED
-    // record (the identity-checked source line and, for a retained failure, its details) so
-    // the report's content and height hold still while the trace re-arms; without a retained
-    // source in THIS domain, the honest empty line. Hidden means the session itself was
-    // dropped — a reset or a withdrawn intent, exactly the source-invalidating events — so it
-    // shows the honest empty line, never a stale report. Error/refused are the current key's
-    // persistent facts: the live details render here AND are captured into the record, so the
-    // next sample switch's transient retains them as the named previous result. The drawn arm
-    // captures its own source line the same way.
-    const auto capture_record = [&](Ray3DReportRecord::Kind kind, const char* detail_head, std::string detail_body) {
-      Ray3DReportRecord& record = state.analysis.ray3d_report_record;
-      record.valid = true;
-      record.point_id = point.intent_id;
-      record.component = current->component;
-      record.kind = kind;
-      record.source_line = Ray3DReportSourceLine(
-          current->component, std::clamp(view.sample_index, 0, current->valid_count - 1) + 1, current->valid_count);
-      record.detail_head = detail_head == nullptr ? std::string() : std::string(detail_head);
-      record.detail_body = std::move(detail_body);
-    };
-    const auto render_record = [&](const Ray3DReportRecord& record) {
-      ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-      ImGui::TextWrapped("%s", record.source_line.c_str());
-      ImGui::PopStyleColor();
-      RegisterPointTextItem("##r3d_source");
-      if (!record.detail_head.empty()) {
-        ImGui::TextUnformatted(record.detail_head.c_str());
-        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-        ImGui::TextWrapped("%s", record.detail_body.c_str());
-        ImGui::PopStyleColor();
-      }
-    };
-    switch (display_state) {
-      case RayTraceDisplayState::kHidden:
-        DisabledWrappedText("No representative path asked for yet.");
-        return;
-      case RayTraceDisplayState::kComputing: {
-        const Ray3DReportRecord& record = state.analysis.ray3d_report_record;
-        if (record.valid && record.point_id == point.intent_id && record.component == current->component) {
-          render_record(record);  // the retained form — stale-honest, source-named
-        } else {
-          DisabledWrappedText("No representative path shown yet.");
-        }
-        return;
-      }
-      case RayTraceDisplayState::kError: {
-        capture_record(Ray3DReportRecord::Kind::kError, "Path query failed:", trace.adopted_error);
-        render_record(state.analysis.ray3d_report_record);
-        return;
-      }
-      case RayTraceDisplayState::kRefused: {
-        LUMICE_RepresentativeRayInfo rinfo{};
-        rinfo.struct_size = sizeof(rinfo);
-        LUMICE_RepresentativeRayGetInfo(trace.adopted_result.get(), &rinfo);
-        std::string refused_detail =
-            "reason: " + PathTextToString(rinfo.reason) + " | entry status: " + PathTextToString(rinfo.entry_status);
-        if (rinfo.chain_failure.length > 0) {
-          refused_detail += " | chain: " + PathTextToString(rinfo.chain_failure);
-        }
-        char area_buf[96];
-        if (rinfo.face_count == 1) {
-          refused_detail += " | internal corridor: not applicable (external reflection)";
-        } else {
-          std::snprintf(area_buf, sizeof(area_buf), " | corridor area %.3e (threshold %.3e)", rinfo.area_perp_internal,
-                        rinfo.area_threshold);
-          refused_detail += area_buf;
-        }
-        capture_record(Ray3DReportRecord::Kind::kRefused, "No legal path for this pose:", std::move(refused_detail));
-        render_record(state.analysis.ray3d_report_record);
-        return;
-      }
-      case RayTraceDisplayState::kDrawn:
-        capture_record(Ray3DReportRecord::Kind::kDrawn, nullptr, std::string());
-        render_record(state.analysis.ray3d_report_record);
-        return;
-    }
   };
   render_content();
   ImGui::EndChild();
-  ImGui::EndChild();
+  return canvas_problem;
 }
 
 // ---- The Pose & trace window (contract §7) -----------------------------------------------------------
@@ -3483,35 +3255,79 @@ void RenderPoseFactorsRegion(GuiState& state, const ImVec2& size) {
   ImGui::EndChild();
 }
 
-// The trace face's display state for the CURRENT selection, read for the status bar's transient
-// segment. nullopt = no valid current point/sample — no trace fact to state, the point's own
-// words own the bar. Otherwise the same named state the 3D region's gate computes: the pump is
-// the session's writer, this is a read over the same public state, and the key comes from the
-// ONE shared constructor (RayTraceKeyFor) the region's gate uses — the report and the bar
-// cannot disagree about which state the trace is in. The derivation deliberately is NOT
-// extracted into one shared CurrentSampleForSelection for both sites: the region's walk
-// interleaves a distinct honest render per failure arm (unreadable Info / mass / no components
-// / no valid sample / unreadable sample), which a combined optional helper would collapse into
-// one generic failure. The shared layer is the four primitives both sites call, plus the key
-// constructor above; the guard sequences stay each site's own.
-std::optional<RayTraceDisplayState> TraceDisplayStateForSelection(const GuiState& state) {
+// Current point/trace facts have one non-geometric carrier: the fixed footer. Nothing here
+// retains a previous sample's formatted failure or changes a canvas allocation.
+std::string PoseSelectionStatus(const GuiState& state, bool* warning) {
   const PointQuerySession& point = state.analysis.point;
-  if (!point.adopted_result || PointQueryStateFor(point) != PointQueryState::kCompleted) {
-    return std::nullopt;
+  if (PointQueryStateFor(point) == PointQueryState::kNoIntent) {
+    return "Pick a class and a sky point on the raypath view (or type coordinates there).";
   }
-  const std::optional<LUMICE_PathPointInfo> info = ReadPointInfo(*point.adopted_result);
-  if (!info.has_value() || info->outcome != LUMICE_PATH_POINT_DISCOVERED || info->component_count == 0) {
-    return std::nullopt;
+  if (PointQueryStateFor(point) != PointQueryState::kCompleted) {
+    return {};
   }
-  const std::vector<int> valid_indices = CollectValidSampleIndices(
+  const auto info = ReadPointInfo(*point.adopted_result);
+  if (!info) {
+    *warning = true;
+    return "The adopted point document did not answer its Info reader.";
+  }
+  if (info->outcome == LUMICE_PATH_POINT_MASS) {
+    return "A rank-0 point mass has no fiber or crystal-interior path; the details carry the mass numbers.";
+  }
+  if (info->component_count == 0) {
+    if (info->execution != LUMICE_PATH_OUTCOME_COMPLETED) {
+      return "No fiber component arrived before the run stopped; not a physical absence.";
+    }
+    LUMICE_PathPointReach reach{};
+    reach.struct_size = sizeof(reach);
+    if (LUMICE_PathPointGetReach(point.adopted_result.get(), &reach) == LUMICE_PATH_READ_OK && !reach.target_in_range) {
+      return "No fiber here: the target's deviation is outside the path's deflection range (at the reach probe's "
+             "resolution).";
+    }
+    return "No fiber component at this point: the finite crystal passes no pose along the queried deflection.";
+  }
+  const auto valid_indices = CollectValidSampleIndices(
       *point.adopted_result,
       std::clamp(state.analysis.point_view.component_index, 0, static_cast<int>(info->component_count) - 1));
-  const std::optional<CurrentSample> current =
-      CurrentSampleOf(*point.adopted_result, state.analysis.point_view, valid_indices);
-  if (!current.has_value()) {
-    return std::nullopt;
+  const auto current = CurrentSampleOf(*point.adopted_result, state.analysis.point_view, valid_indices);
+  if (!current) {
+    return "No valid sample on show — nothing to project or draw.";
   }
-  return RayTraceDisplayStateFor(state.analysis.trace, RayTraceKeyFor(point.intent_id, *current));
+  const RayTraceSession& trace = state.analysis.trace;
+  switch (RayTraceDisplayStateFor(trace, RayTraceKeyFor(point.intent_id, *current))) {
+    case RayTraceDisplayState::kHidden:
+      return "representative path not requested";
+    case RayTraceDisplayState::kComputing:
+      return "representative path computing";
+    case RayTraceDisplayState::kError:
+      *warning = true;
+      return "representative path error — Path query failed: " + trace.adopted_error;
+    case RayTraceDisplayState::kRefused: {
+      *warning = true;
+      LUMICE_RepresentativeRayInfo ray{};
+      ray.struct_size = sizeof(ray);
+      if (LUMICE_RepresentativeRayGetInfo(trace.adopted_result.get(), &ray) != LUMICE_PATH_READ_OK) {
+        return "representative path refused — its Info reader failed.";
+      }
+      std::string detail =
+          "representative path refused — No legal path for this pose: reason: " + PathTextToString(ray.reason) +
+          " | entry status: " + PathTextToString(ray.entry_status);
+      if (ray.chain_failure.length > 0) {
+        detail += " | chain: " + PathTextToString(ray.chain_failure);
+      }
+      if (ray.face_count == 1) {
+        detail += " | internal corridor: not applicable (external reflection)";
+      } else {
+        char area[96];
+        std::snprintf(area, sizeof(area), " | corridor area %.3e (threshold %.3e)", ray.area_perp_internal,
+                      ray.area_threshold);
+        detail += area;
+      }
+      return detail;
+    }
+    case RayTraceDisplayState::kDrawn:
+      return {};
+  }
+  return {};
 }
 
 }  // namespace
@@ -3636,7 +3452,7 @@ void RenderAnalyzePoseViewWindow(GuiState& state) {
   }
   const float left_curve_h = std::max(0.0f, denom_h - left_3d_h);
 
-  RenderAnalyzeRay3DRegion(state, ImVec2(left_w, left_3d_h));
+  const std::string canvas_problem = RenderAnalyzeRay3DRegion(state, ImVec2(left_w, left_3d_h));
   ImGui::SetCursorScreenPos(ImVec2(body_min.x + left_w, body_min.y));
   // The drag writes from the displayed boundary the frame derived (right_w), bounded where the
   // layout's own clamp stops; the overflow pin is what the clamp's lo==hi band writes (the
@@ -3691,20 +3507,19 @@ void RenderAnalyzePoseViewWindow(GuiState& state) {
     default:
       break;
   }
-  // The trace's transient words ride the same single-line bar, AFTER the point's own words
-  // (point first; the segment exists only while the point answer is in and the current sample
-  // is valid — the helper's nullopt arms). Computing and not-requested are the transients the
-  // report no longer cycles; drawn/error/refused are answers — the report owns those, and the
-  // bar says nothing about the trace. The point's partial flag and wait field keep their own
-  // writers: this append never overwrites them.
-  if (const std::optional<RayTraceDisplayState> trace_state = TraceDisplayStateForSelection(state)) {
-    if (*trace_state == RayTraceDisplayState::kComputing) {
-      status += " — representative path computing";
-    } else if (*trace_state == RayTraceDisplayState::kHidden) {
-      status += " — representative path not requested";
-    }
+  bool warning = partial || PointQueryStateFor(point) == PointQueryState::kRefused;
+  const std::string selection_status = PoseSelectionStatus(state, &warning);
+  if (!selection_status.empty()) {
+    status += " — " + selection_status;
   }
-  RenderAnalyzeStatusBar(status_layout, status, partial || PointQueryStateFor(point) == PointQueryState::kRefused);
+  if (partial) {
+    status += " — Partial document: what arrived is on show; emptiness is the run's stop, not a physical absence.";
+  }
+  if (!canvas_problem.empty()) {
+    status += " — 3D display: " + canvas_problem;
+    warning = true;
+  }
+  RenderAnalyzeStatusBar(status_layout, status, warning);
   ImGui::End();
 }
 
