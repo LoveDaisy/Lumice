@@ -364,7 +364,7 @@ void RenderImportFromFilterUI(GuiState& state) {
   }
   if (disabled) {
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-      ImGui::SetTooltip("No entries with a filter in the scene.");
+      SetWrappedTooltip("No entries with a filter in the scene.");
     }
     return;
   }
@@ -492,7 +492,7 @@ void RenderRefRow(GuiState& state, ColorClassConfig& cls, size_t ref_idx, bool& 
     ImGui::EndCombo();
   }
   if (layer_broken && layer_hovered) {
-    ImGui::SetTooltip("This class still points at layer %d, which no longer exists.\nPick a layer to repair it.",
+    SetWrappedTooltip("This class still points at layer %d, which no longer exists.\nPick a layer to repair it.",
                       DisplayLayerNumber(ref.layer_idx));
   }
   ImGui::PopItemWidth();
@@ -532,7 +532,7 @@ void RenderRefRow(GuiState& state, ColorClassConfig& cls, size_t ref_idx, bool& 
       ImGui::EndCombo();
     }
     if (crystal_broken && crystal_hovered) {
-      ImGui::SetTooltip("No crystal in this layer is %s.\nPick one to repair the reference.",
+      SetWrappedTooltip("No crystal in this layer is %s.\nPick one to repair the reference.",
                         FormatCrystalIdentity(state, ref.crystal_pool_id).c_str());
     }
   }
@@ -596,7 +596,7 @@ void RenderRefRow(GuiState& state, ColorClassConfig& cls, size_t ref_idx, bool& 
   // merged tooltip. AllowWhenDisabled so the error stays readable while whole freezes the field
   // (mirrors the up/down arrow tooltips that also survive their at_top / at_bot disabled states).
   if (invalid && !validation.message.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-    ImGui::SetTooltip("%s", validation.message.c_str());
+    SetWrappedTooltip("%s", validation.message.c_str());
   }
   InfoIcon("color_ref_predicate_syntax_help",
            "Same token syntax as the filter editor (e.g. 3-5, entry:2, exit:4, len:2-3).\n"
@@ -905,7 +905,7 @@ void RenderColorWindow(GuiState& state, LUMICE_Server* server) {
     ImGui::EndDisabled();
   }
   if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-    ImGui::SetTooltip("Remove every raypath-color class in one click.");
+    SetWrappedTooltip("Remove every raypath-color class in one click.");
   }
 
   // task-349.3 (#3): "Enable colors" mirrors the top-bar Colored toggle inside
@@ -945,13 +945,13 @@ void RenderColorWindow(GuiState& state, LUMICE_Server* server) {
     }
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
       if (print_disabled) {
-        ImGui::SetTooltip("%s", kColorsDisabledPrintModeTooltip);
+        SetWrappedTooltip("%s", kColorsDisabledPrintModeTooltip);
       } else if (channel_disabled) {
-        ImGui::SetTooltip("%s", kColorsDisabledChannelBrTooltip);
+        SetWrappedTooltip("%s", kColorsDisabledChannelBrTooltip);
       } else if (composite_empty) {
-        ImGui::SetTooltip("%s", kColorsDisabledNoMatchTooltip);
+        SetWrappedTooltip("%s", kColorsDisabledNoMatchTooltip);
       } else {
-        ImGui::SetTooltip(
+        SetWrappedTooltip(
             "Toggle colored composite / full-spectrum preview.\n"
             "Synced with the top-bar toggle -- same display-time preference.");
       }
@@ -1024,7 +1024,7 @@ void RenderColorWindow(GuiState& state, LUMICE_Server* server) {
       ImGui::EndDisabled();
     }
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-      ImGui::SetTooltip("Raise priority -- wins ties in Dominant mode and paints over lower classes in Painter mode.");
+      SetWrappedTooltip("Raise priority -- wins ties in Dominant mode and paints over lower classes in Painter mode.");
     }
     ImGui::SameLine();
     if (at_bot) {
@@ -1037,7 +1037,7 @@ void RenderColorWindow(GuiState& state, LUMICE_Server* server) {
       ImGui::EndDisabled();
     }
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-      ImGui::SetTooltip("Lower priority (opposite of the arrow above).");
+      SetWrappedTooltip("Lower priority (opposite of the arrow above).");
     }
 
     // Color swatch.
@@ -1065,7 +1065,7 @@ void RenderColorWindow(GuiState& state, LUMICE_Server* server) {
     }
     ImGui::PopStyleVar();
     if (ImGui::IsItemHovered()) {
-      ImGui::SetTooltip(
+      SetWrappedTooltip(
           "Click: show/hide this class in the composite (display-time only).\n"
           "Alt+Click: solo this class (hide all others); Alt+Click again to restore all.");
     }
@@ -1077,7 +1077,7 @@ void RenderColorWindow(GuiState& state, LUMICE_Server* server) {
       ImGui::TextUnformatted(ICON_FA_TRIANGLE_EXCLAMATION);
       ImGui::PopStyleColor();
       if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("No rays matched this class (a physical filter may be blocking them).");
+        SetWrappedTooltip("No rays matched this class (a physical filter may be blocking them).");
       }
     }
 

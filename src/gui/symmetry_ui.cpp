@@ -118,7 +118,7 @@ void RenderSymmetryCheckboxes(bool& sym_p, bool& sym_b, bool& sym_d, const Symme
   std::snprintf(id_buf, sizeof(id_buf), "P##%s", id_suffix);
   Checkbox(id_buf, &sym_p);
   if (ImGui::IsItemHovered()) {
-    ImGui::SetTooltip("%s", physical ? kPAnalysisHover : kPFilterHover);
+    SetWrappedTooltip("%s", physical ? kPAnalysisHover : kPFilterHover);
   }
   const bool p_icon = !physical && (!avail.p_axis || avail.rotation_step != 1);
   if (!physical && !avail.p_axis) {
@@ -145,7 +145,7 @@ void RenderSymmetryCheckboxes(bool& sym_p, bool& sym_b, bool& sym_d, const Symme
   std::snprintf(id_buf, sizeof(id_buf), "B##%s", id_suffix);
   Checkbox(id_buf, &sym_b);
   if (ImGui::IsItemHovered()) {
-    ImGui::SetTooltip("%s", physical ? kBAnalysisHover : kBFilterHover);
+    SetWrappedTooltip("%s", physical ? kBAnalysisHover : kBFilterHover);
   }
   if (!physical && !avail.b) {
     std::snprintf(id_buf, sizeof(id_buf), "b_tooltip_icon_%s", id_suffix);
@@ -157,7 +157,7 @@ void RenderSymmetryCheckboxes(bool& sym_p, bool& sym_b, bool& sym_d, const Symme
   std::snprintf(id_buf, sizeof(id_buf), "D##%s", id_suffix);
   Checkbox(id_buf, &sym_d);
   if (ImGui::IsItemHovered()) {
-    ImGui::SetTooltip("%s", physical ? kDAnalysisHover : kDFilterHover);
+    SetWrappedTooltip("%s", physical ? kDAnalysisHover : kDFilterHover);
   }
   if (!physical && !avail.d) {
     std::snprintf(id_buf, sizeof(id_buf), "d_tooltip_icon_%s", id_suffix);

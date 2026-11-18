@@ -8,6 +8,10 @@ namespace lumice::gui {
 // text width. Call inside the existing hover predicate; short text still auto-sizes.
 void SetWrappedTooltip(const char* fmt, ...) IM_FMTARGS(1);
 
+// A prose item inside an already-open structured tooltip. Uses the same text layout as
+// SetWrappedTooltip, without replacing the tooltip or disturbing its other items/data rows.
+void WrappedTooltipText(const char* fmt, ...) IM_FMTARGS(1);
+
 // The GUI's one explicit help carrier for stable functional/conceptual explanations (the
 // two-tier tooltip rule in doc/gui/gui-visual-language.md): a transparent, borderless FontAwesome
 // circle-info SmallButton in TextDisabled that joins the previous item (SameLine) and shows its

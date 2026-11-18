@@ -518,7 +518,7 @@ void RenderTopBar(float window_width) {
     PopGoodButtonStyle();
     ImGui::EndDisabled();
     if (g_state.analysis_run_in_progress && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-      ImGui::SetTooltip("A raypath analysis is running. Wait for it, or stop it from the Analyze workspace's bar.");
+      SetWrappedTooltip("A raypath analysis is running. Wait for it, or stop it from the Analyze workspace's bar.");
     }
   }
 
@@ -542,11 +542,11 @@ void RenderTopBar(float window_width) {
     ImGui::EndDisabled();
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
       if (const char* why = ContinueBlockerTooltip(blocker)) {
-        ImGui::SetTooltip("%s", why);
+        SetWrappedTooltip("%s", why);
       } else if (g_state.sim.infinite) {
-        ImGui::SetTooltip("Keep adding rays to this picture until stopped.");
+        SetWrappedTooltip("Keep adding rays to this picture until stopped.");
       } else {
-        ImGui::SetTooltip("Add %.6g million more rays to this picture, keeping everything traced so far.",
+        SetWrappedTooltip("Add %.6g million more rays to this picture, keeping everything traced so far.",
                           static_cast<double>(g_state.sim.ray_num_millions));
       }
     }
@@ -565,14 +565,14 @@ void RenderTopBar(float window_width) {
     CheckUnsavedAndDo(PendingAction::kNew);
   }
   if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-    ImGui::SetTooltip("New: start a new document.");
+    SetWrappedTooltip("New: start a new document.");
   }
   ImGui::SameLine();
   if (ImGui::Button(kToolbarOpen.Label(show_command_text), ImVec2(file_op_width, 0))) {
     CheckUnsavedAndDo(PendingAction::kOpen);
   }
   if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-    ImGui::SetTooltip("Open: load a document from a file.");
+    SetWrappedTooltip("Open: load a document from a file.");
   }
   ImGui::EndDisabled();
   ImGui::SameLine();
@@ -581,7 +581,7 @@ void RenderTopBar(float window_width) {
       ImGui::OpenPopup("SaveMenu");
     }
     if (ImGui::IsItemHovered()) {
-      ImGui::SetTooltip("Save: document, copy, image exports, and config JSON.");
+      SetWrappedTooltip("Save: document, copy, image exports, and config JSON.");
     }
     if (ImGui::BeginPopup("SaveMenu")) {
       bool has_server = g_server != nullptr && g_state.sim_state != GuiState::SimState::kIdle;
@@ -667,7 +667,7 @@ void RenderTopBar(float window_width) {
     ImGui::PopStyleColor(3);
   }
   if (ImGui::IsItemHovered()) {
-    ImGui::SetTooltip("Colors: the raypath colour classes. Opens the Colors window.");
+    SetWrappedTooltip("Colors: the raypath colour classes. Opens the Colors window.");
   }
   // The read-only Summary window has no state of its own to set on open.
   ImGui::SameLine();
@@ -675,7 +675,7 @@ void RenderTopBar(float window_width) {
     g_state.config_summary_window_open = !g_state.config_summary_window_open;
   }
   if (ImGui::IsItemHovered()) {
-    ImGui::SetTooltip("Summary: one page of the current configuration, for a screenshot. Opens the Summary window.");
+    SetWrappedTooltip("Summary: one page of the current configuration, for a screenshot. Opens the Summary window.");
   }
 
   // task-colored-toggle-to-topbar (346.3): colored/full-spectrum display-time
@@ -752,13 +752,13 @@ void RenderTopBar(float window_width) {
     // when enabled, show the existing "Currently: Colored / Full Spectrum" hint.
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
       if (print_disabled) {
-        ImGui::SetTooltip("%s", kColorsDisabledPrintModeTooltip);
+        SetWrappedTooltip("%s", kColorsDisabledPrintModeTooltip);
       } else if (channel_disabled) {
-        ImGui::SetTooltip("%s", kColorsDisabledChannelBrTooltip);
+        SetWrappedTooltip("%s", kColorsDisabledChannelBrTooltip);
       } else if (composite_empty) {
-        ImGui::SetTooltip("%s", kColorsDisabledNoMatchTooltip);
+        SetWrappedTooltip("%s", kColorsDisabledNoMatchTooltip);
       } else {
-        ImGui::SetTooltip(
+        SetWrappedTooltip(
             "Toggle colored composite / full-spectrum preview.\n"
             "Display-time only -- does not re-simulate or discard color classes.\n"
             "%s",
@@ -786,7 +786,7 @@ void RenderTopBar(float window_width) {
       ImGui::TextUnformatted(ICON_FA_TRIANGLE_EXCLAMATION);
       ImGui::PopStyleColor();
       if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip(
+        SetWrappedTooltip(
             "No visible color class currently matches any rays -- the composite would be empty.\n"
             "Either no rays match (they may be blocked by a physical filter), or every matching\n"
             "class is currently hidden. Open the Colors window to inspect per-class details.");
@@ -822,7 +822,7 @@ void RenderTopBar(float window_width) {
       ImGui::PopStyleColor(4);
     }
     if (ImGui::IsItemHovered()) {
-      ImGui::SetTooltip(analyze ? "Switch back to the Render workspace." : "The Render workspace is current.");
+      SetWrappedTooltip(analyze ? "Switch back to the Render workspace." : "The Render workspace is current.");
     }
     ImGui::SameLine(0.0f, 0.0f);
     if (analyze) {
@@ -842,7 +842,7 @@ void RenderTopBar(float window_width) {
       ImGui::PopStyleColor(4);
     }
     if (ImGui::IsItemHovered()) {
-      ImGui::SetTooltip(analyze ?
+      SetWrappedTooltip(analyze ?
                             "The Analyze workspace is current." :
                             "Which raypaths make the light in a region of the sky. Switches to the Analyze workspace.");
     }
@@ -867,7 +867,7 @@ void RenderTopBar(float window_width) {
     OpenDefaultsPanel(g_state, DefaultsPanelSection::kSettings);
   }
   if (ImGui::IsItemHovered()) {
-    ImGui::SetTooltip("Settings: personal defaults -- what a new document starts from. Opens the Settings panel.");
+    SetWrappedTooltip("Settings: personal defaults -- what a new document starts from. Opens the Settings panel.");
   }
 
   // The right toggle's width is needed before it is drawn: the ⚠ + Revert pair below is placed
@@ -905,7 +905,7 @@ void RenderTopBar(float window_width) {
     // rather than the button so the button's own hover action (click to revert) is not shadowed.
     // Only shown when modified, since the pair is BeginDisabled(alpha=0) otherwise.
     if (modified && ImGui::IsItemHovered()) {
-      ImGui::SetTooltip(
+      SetWrappedTooltip(
           "Configuration changed since the last run.\n"
           "Click Run to re-simulate, or Revert to discard the changes.");
     }
@@ -1168,7 +1168,7 @@ void RenderCircleAnglePopup(AngularDistFamily family, const float* presets, size
     }
     ImGui::EndDisabled();
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-      ImGui::SetTooltip("%s", at_limit               ? "The list is full." :
+      SetWrappedTooltip("%s", at_limit               ? "The list is full." :
                               !PreviewShowsPicture() ? "Needs a picture on the preview to point at." :
                                                        "Pick on preview: a ring follows the cursor; click to add it.\n"
                                                        "Esc or right click cancels.");
@@ -1328,7 +1328,7 @@ void RenderOverlayRowsTable(const char* table_id, const OverlayRowSpec* rows, in
     // the "not consumed right now" sentence rides inactive_note — the same sentence the defaults
     // panel's cell shows for the same key.
     if (color_c.inactive_note != nullptr && ImGui::IsItemHovered()) {
-      ImGui::SetTooltip("%s", color_c.inactive_note);
+      SetWrappedTooltip("%s", color_c.inactive_note);
     }
 
     ImGui::TableSetColumnIndex(1);
@@ -1372,7 +1372,7 @@ void RenderOverlayRowsTable(const char* table_id, const OverlayRowSpec* rows, in
       ImGui::OpenPopup(row.fold_id);
     }
     if (ImGui::IsItemHovered()) {
-      ImGui::SetTooltip("Edit angles");
+      SetWrappedTooltip("Edit angles");
     }
     if (ImGui::BeginPopup(row.fold_id)) {
       RenderCircleAnglePopup(*row.fold_family, row.fold_presets, row.fold_presets_count);
@@ -1551,7 +1551,7 @@ void RenderMarkersSection() {
       ImGui::OpenPopup(kFamilyFoldId);
     }
     if (ImGui::IsItemHovered()) {
-      ImGui::SetTooltip("Marker radius");
+      SetWrappedTooltip("Marker radius");
     }
     if (ImGui::BeginPopup(kFamilyFoldId)) {
       RenderMarkersFamilyPopup();
@@ -1574,7 +1574,7 @@ void RenderMarkersSection() {
     ImGui::EndDisabled();
     // Same stored-choice shape as the family rows above: live swatch, note under print.
     if (marker_color_c.inactive_note != nullptr && ImGui::IsItemHovered()) {
-      ImGui::SetTooltip("%s", marker_color_c.inactive_note);
+      SetWrappedTooltip("%s", marker_color_c.inactive_note);
     }
 
     ImGui::TableSetColumnIndex(1);
@@ -1593,7 +1593,7 @@ void RenderMarkersSection() {
     if (clipped) {
       ImGui::TextDisabled("%s", kMarkerDisplayNames[i]);
       if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("Not in this view — the lens or the visible-hemisphere setting crops it out.");
+        SetWrappedTooltip("Not in this view — the lens or the visible-hemisphere setting crops it out.");
       }
     } else {
       ImGui::TextUnformatted(kMarkerDisplayNames[i]);
@@ -1732,7 +1732,7 @@ void RenderViewControlsGroup(GuiState& state) {
   // Two-branch hover, not an info icon: this row lives in the right panel's width-exact column,
   // where no per-control icon fits.
   if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-    ImGui::SetTooltip("%s", front_c.enabled ? "Show front hemisphere only\n(combine with Upper/Full/Lower)" :
+    SetWrappedTooltip("%s", front_c.enabled ? "Show front hemisphere only\n(combine with Upper/Full/Lower)" :
                                               front_c.disabled_reason);
   }
   ImGui::EndDisabled();
@@ -1749,7 +1749,7 @@ void RenderViewControlsGroup(GuiState& state) {
     // Hover tooltip, not an info icon — the right panel's rows are width-exact: no per-control
     // icon fits without breaking the column budget.
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-      ImGui::SetTooltip(
+      SetWrappedTooltip(
           "Let the far side of the sphere, its light and its grid lines, show\n"
           "through, fading like fog with distance from the camera.\n"
           "The value is the fog length: larger fades more slowly.\n"
@@ -1875,7 +1875,7 @@ void RenderViewControlsGroup(GuiState& state) {
   // column-aligned right edge is pinned by look_at_controls_share_one_unclipped_row, the combo
   // floor already binds, and the only free variable left is the owner-owned kRightPanelWidth.
   if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-    ImGui::SetTooltip(
+    SetWrappedTooltip(
         "%s", el_c.enabled ? "Choose a named direction; Lock follows it as the scene changes." : el_c.disabled_reason);
   }
   ImGui::SameLine();
@@ -1908,7 +1908,7 @@ void RenderDisplayTimeControlsGroup(GuiState& state, bool host_bg_pick) {
   // icon fits without breaking the column budget. The same shared group hosts in the Analyze
   // left column, equally narrow.
   if (ImGui::IsItemHovered()) {
-    ImGui::SetTooltip(
+    SetWrappedTooltip(
         "Which anchor display brightness is measured against.\n\n"
         "Relative: each snapshot is re-anchored to its own brightest pixels. This is the "
         "default and what the preview has always done. Good for looking at one document; "
@@ -1931,14 +1931,14 @@ void RenderDisplayTimeControlsGroup(GuiState& state, bool host_bg_pick) {
       // out would be quieter and worse: in a sparse scene it drifts by many stops, and a
       // number that moves while the picture does not is what made the old relative-only
       // readout misleading in the first place.
-      ImGui::SetTooltip(
+      SetWrappedTooltip(
           "Exposure in absolute mode: %+.2f stops above physical.\n\n"
           "This offset is the whole exposure. Brightness is anchored to emitted energy, so two "
           "documents at the same EV are directly comparable.\n\n"
           "The auto anchor is NOT applied here (it would read %+.2f EV in relative mode).",
           r.exposure_offset, state.ev_auto);
     } else {
-      ImGui::SetTooltip(
+      SetWrappedTooltip(
           "Exposure value offset for display brightness.\n\n"
           "In relative mode this offset sits on top of an auto anchor that re-measures every "
           "snapshot, currently %+.2f EV, for an effective %+.2f EV. The anchor moves with the "
@@ -1996,7 +1996,7 @@ void RenderDisplayTimeControlsGroup(GuiState& state, bool host_bg_pick) {
   // Hover tooltip, not an info icon — the right panel's rows are width-exact: no per-control
   // icon fits without breaking the column budget.
   if (ImGui::IsItemHovered()) {
-    ImGui::SetTooltip(
+    SetWrappedTooltip(
         "Which operator turns the simulated light into pixels.\n\n"
         "Screen: light is ADDED to the sky colour. This is the default and what the preview "
         "has always done. A light sky can only stay light, which is why a white sky shows no "
@@ -2033,7 +2033,7 @@ void RenderDisplayTimeControlsGroup(GuiState& state, bool host_bg_pick) {
     // Hover tooltip, not an info icon — the right panel's rows are width-exact: no per-control
     // icon fits without breaking the column budget.
     if (ImGui::IsItemHovered()) {
-      ImGui::SetTooltip(
+      SetWrappedTooltip(
           "Colour of the empty sky, added to the halo in linear RGB before the\n"
           "gamma curve — so an empty pixel renders exactly the colour picked here.\n"
           "Only where the lens images something: outside the image circle, and\n"
@@ -2069,11 +2069,11 @@ void RenderDisplayTimeControlsGroup(GuiState& state, bool host_bg_pick) {
       // AllowWhenDisabled: the disabled case is the one that most needs to say why.
       if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
         if (!g_preview.HasBackground()) {
-          ImGui::SetTooltip("No background photo loaded — use Load Bg under Background first.");
+          SetWrappedTooltip("No background photo loaded — use Load Bg under Background first.");
         } else if (!state.bg_show) {
-          ImGui::SetTooltip("The background photo is hidden. Tick Show under Background to sample it.");
+          SetWrappedTooltip("The background photo is hidden. Tick Show under Background to sample it.");
         } else {
-          ImGui::SetTooltip(
+          SetWrappedTooltip(
               "Pick the sky colour off the background photo.\n"
               "The preview shows the photo alone while picking; click a patch of\n"
               "SKY (the halo is composited over the sky, not the ground), or press\n"
@@ -2090,7 +2090,7 @@ void RenderDisplayTimeControlsGroup(GuiState& state, bool host_bg_pick) {
     // Hover tooltip, not an info icon — the right panel's rows are width-exact: no per-control
     // icon fits without breaking the column budget.
     if (ImGui::IsItemHovered()) {
-      ImGui::SetTooltip(
+      SetWrappedTooltip(
           "Colour of the paper the ink is laid on under Print mode.\n\n"
           "A separate field from Sky Color, and white rather than black by default: ink\n"
           "only ever darkens what is beneath it, so black paper would render a black page.\n"
@@ -2121,7 +2121,7 @@ void RenderDisplayTimeControlsGroup(GuiState& state, bool host_bg_pick) {
                        print_tone ? " Paper is nearly black — ink has nowhere to darken" :
                                     " Sky is nearly white — the halo has nowhere to brighten");
     if (ImGui::IsItemHovered()) {
-      ImGui::SetTooltip("%s", print_tone ?
+      SetWrappedTooltip("%s", print_tone ?
                                   "Ink only ever darkens the paper, and never reaches black. With the paper "
                                   "this dark\nevery feature lands within a few 8-bit levels of the page, so "
                                   "the image reads as blank.\n\nLighten the paper, or switch Mode back to "
@@ -2190,7 +2190,7 @@ void RenderRightPanel(GLFWwindow* window, float window_width, float window_heigh
     ImGui::Combo(PanelLabel("renderer.sim_resolution", "display").c_str(), &r.sim_resolution_index,
                  kSimResolutionLabels, kSimResolutionCount);
     if (ImGui::IsItemHovered()) {
-      ImGui::SetTooltip("Re-runs simulation; accumulated rays reset");
+      SetWrappedTooltip("Re-runs simulation; accumulated rays reset");
     }
     // The display-time rows below are the shared group — the same function the Analyze left
     // column hosts (the exposure/ground fields both faces show).
@@ -2221,7 +2221,7 @@ void RenderRightPanel(GLFWwindow* window, float window_width, float window_heigh
     // AllowWhenDisabled: no_bg is exactly when the box is disabled, which is when the sentence
     // has to be readable — the same flag every other disabled-control tooltip here carries.
     if (no_bg && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-      ImGui::SetTooltip("No background image is loaded (Load Bg above).");
+      SetWrappedTooltip("No background image is loaded (Load Bg above).");
     }
     ImGui::EndDisabled();
 
@@ -2411,7 +2411,7 @@ bool RenderDisplayModeControl() {
   // associated info icon per the two-tier rule; what stays on the control's hover is the
   // current-state note (inactive_note) only.
   if (dm_c.inactive_note != nullptr && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-    ImGui::SetTooltip("%s", dm_c.inactive_note);
+    SetWrappedTooltip("%s", dm_c.inactive_note);
   }
   InfoIcon("preview_display_mode_help",
            "Normal: the rendered image.\n\n"
@@ -3138,7 +3138,7 @@ void RenderStatusBar(float window_width, float window_height) {
         FormatSamplingSegment(g_state.stats_crystal_num, g_state.stats_orientation_num, g_state.stats_sim_ray_num);
     ImGui::TextUnformatted(sampling.c_str());
     if (ImGui::IsItemHovered()) {
-      ImGui::SetTooltip("%s", FormatSamplingTooltip(g_state.stats_crystal_num, g_state.stats_orientation_num,
+      SetWrappedTooltip("%s", FormatSamplingTooltip(g_state.stats_crystal_num, g_state.stats_orientation_num,
                                                     g_state.stats_sim_ray_num)
                                   .c_str());
     }
@@ -3296,7 +3296,7 @@ void ScreenshotOptionCheckbox(const char* id, bool* sel, bool on) {
   }
   ImGui::EndDisabled();
   if (!on && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-    ImGui::SetTooltip("%s", kScreenshotOptionOffReason);
+    SetWrappedTooltip("%s", kScreenshotOptionOffReason);
   }
 }
 
@@ -3368,9 +3368,9 @@ void RenderScreenshotExportOptionsPopup() {
     ImGui::EndDisabled();
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
       if (dm_c.inactive_note != nullptr) {
-        ImGui::SetTooltip("%s", dm_c.inactive_note);
+        SetWrappedTooltip("%s", dm_c.inactive_note);
       } else if (!renderable) {
-        ImGui::SetTooltip(
+        SetWrappedTooltip(
             "With the Colored raypath composite on, Normal and Channel B-R are drawn from two different\n"
             "pictures, and only the one on screen is loaded. Switch the mode on screen to export it.");
       }

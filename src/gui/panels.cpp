@@ -25,6 +25,7 @@
 #include "gui/slider_mapping.hpp"
 #include "gui/table_focus_ring.hpp"
 #include "gui/theme.hpp"
+#include "gui/tooltip.hpp"
 #include "gui/user_defaults.hpp"  // DescribeAxisPresetDomain — the badge tooltip's second line
 #include "imgui.h"
 // imgui_internal.h for two things. ReloadInputTextIfActive: GetActiveID / GetInputTextState /
@@ -1582,7 +1583,7 @@ EntryCardAction RenderEntryCard(GuiState& state, int layer_idx, int entry_idx) {
       ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
     }
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal) && !ImGui::IsItemActive()) {
-      ImGui::SetTooltip("Drag to reorder this card within its layer. Click to edit.");
+      SetWrappedTooltip("Drag to reorder this card within its layer. Click to edit.");
     }
     if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_None)) {
       const CardDragPayload payload{ layer_idx, entry_idx };
@@ -1677,7 +1678,7 @@ EntryCardAction RenderEntryCard(GuiState& state, int layer_idx, int entry_idx) {
       ImGui::TextUnformatted(text_content);
     }
     if (tooltip != nullptr && ImGui::IsItemHovered()) {
-      ImGui::SetTooltip("%s", tooltip);
+      SetWrappedTooltip("%s", tooltip);
     }
   };
 
@@ -1743,7 +1744,7 @@ EntryCardAction RenderEntryCard(GuiState& state, int layer_idx, int entry_idx) {
                   nullptr, nullptr, row_w);
   ImGui::EndDisabled();
   if (!entry.enabled && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-    ImGui::SetTooltip("%s", kWeightInertTooltip);
+    SetWrappedTooltip("%s", kWeightInertTooltip);
   }
 
   // ---- Icon rail: four always-visible slots down the right edge ----
@@ -1795,7 +1796,7 @@ EntryCardAction RenderEntryCard(GuiState& state, int layer_idx, int entry_idx) {
       entry.enabled = !entry.enabled;
     }
     if (ImGui::IsItemHovered()) {
-      ImGui::SetTooltip("%s", ParticipationToggleTooltip(entry.enabled));
+      SetWrappedTooltip("%s", ParticipationToggleTooltip(entry.enabled));
     }
   }
 
@@ -1845,7 +1846,7 @@ EntryCardAction RenderEntryCard(GuiState& state, int layer_idx, int entry_idx) {
         }
         tip += "\n\nShared with:\n" + list;
       }
-      ImGui::SetTooltip("%s", tip.c_str());
+      SetWrappedTooltip("%s", tip.c_str());
     }
   }
 
@@ -1855,7 +1856,7 @@ EntryCardAction RenderEntryCard(GuiState& state, int layer_idx, int entry_idx) {
   ImGui::SetCursorScreenPos(rail_slot_pos(2));
   bool dup_clicked = ImGui::Button(dup_id, ImVec2(rail_btn_w, rail_btn_h));
   if (ImGui::IsItemHovered()) {
-    ImGui::SetTooltip("Duplicate this card into an independent copy.");
+    SetWrappedTooltip("Duplicate this card into an independent copy.");
   }
 
   // Slot 3 — Delete: red when enabled (destructive action); auto-greyed when
@@ -1876,7 +1877,7 @@ EntryCardAction RenderEntryCard(GuiState& state, int layer_idx, int entry_idx) {
     ImGui::EndDisabled();
   }
   if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-    ImGui::SetTooltip("%s", can_delete_entry ? "Delete this card." : "A layer must keep at least one crystal.");
+    SetWrappedTooltip("%s", can_delete_entry ? "Delete this card." : "A layer must keep at least one crystal.");
   }
 
   // Persist hover state for next frame (computed while still inside the child
@@ -2068,14 +2069,14 @@ void RenderLayer(GuiState& state, int layer_idx) {
       prob_tip = "Fraction of rays continuing to the next layer.";
     }
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-      ImGui::SetTooltip("%s", prob_tip);
+      SetWrappedTooltip("%s", prob_tip);
     }
     bool show_warning_icon = (is_last_layer && !prob_is_zero) || (!is_last_layer && prob_is_zero);
     if (show_warning_icon) {
       ImGui::SameLine();
       ImGui::TextColored(WarningTextColor(), ICON_FA_CIRCLE_EXCLAMATION);
       if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("%s", prob_tip);
+        SetWrappedTooltip("%s", prob_tip);
       }
     }
 
@@ -2283,7 +2284,7 @@ void RenderSunControls(GuiState& state) {
                   static_cast<float>(alt_c.max_value), alt_c.fmt, alt_c.scale);
   ImGui::EndGroup();
   if (ImGui::IsItemHovered()) {
-    ImGui::SetTooltip("Sun elevation angle above the horizon");
+    SetWrappedTooltip("Sun elevation angle above the horizon");
   }
   ImGui::BeginGroup();
   // AC2 migration path: same rationale as sun.altitude above.
@@ -2292,7 +2293,7 @@ void RenderSunControls(GuiState& state) {
                   static_cast<float>(dia_c.max_value), dia_c.fmt, dia_c.scale);
   ImGui::EndGroup();
   if (ImGui::IsItemHovered()) {
-    ImGui::SetTooltip("Angular diameter of the sun disk. 0 = point source.");
+    SetWrappedTooltip("Angular diameter of the sun disk. 0 = point source.");
   }
   PushLabelColumnItemWidth();
   // Combo carries kSpectrumCount presets + "Custom..." tail (item count = kSpectrumComboItemCount).
@@ -2320,7 +2321,7 @@ void RenderSunControls(GuiState& state) {
     }
   }
   if (ImGui::IsItemHovered()) {
-    ImGui::SetTooltip(
+    SetWrappedTooltip(
         "Light source spectrum for wavelength-dependent refraction.\n"
         "\"Custom...\" opens an editor for a discrete wavelength/weight list.");
   }
@@ -2336,7 +2337,7 @@ void RenderSimulationControls(GuiState& state) {
   ImGui::SeparatorText("Simulation");
   Checkbox(PanelLabel("sim.infinite").c_str(), &state.sim.infinite);
   if (ImGui::IsItemHovered()) {
-    ImGui::SetTooltip("Run simulation continuously until manually stopped");
+    SetWrappedTooltip("Run simulation continuously until manually stopped");
   }
   ImGui::BeginGroup();
   // One call, not one per branch. The two branches were identical apart from the BeginDisabled
@@ -2350,7 +2351,7 @@ void RenderSimulationControls(GuiState& state) {
   ImGui::EndDisabled();
   ImGui::EndGroup();
   if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-    ImGui::SetTooltip(
+    SetWrappedTooltip(
         "Total rays across all spectrum wavelengths, in millions.\n"
         "The server distributes the total to each wavelength as\n"
         "ceil(total / N_wavelengths) per wavelength.");
@@ -2362,7 +2363,7 @@ void RenderSimulationControls(GuiState& state) {
                      static_cast<int>(hits_c.max_value));
   ImGui::EndGroup();
   if (ImGui::IsItemHovered()) {
-    ImGui::SetTooltip("Maximum number of crystal face hits per ray path");
+    SetWrappedTooltip("Maximum number of crystal face hits per ray path");
   }
 
   // GPU backend toggle (Metal on Apple, CUDA on NVIDIA). Marked dirty explicitly so
@@ -2392,7 +2393,7 @@ void RenderSimulationControls(GuiState& state) {
       state.MarkDirty();
     }
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-      ImGui::SetTooltip("Use the GPU for simulation (falls back to CPU if incompatible)");
+      SetWrappedTooltip("Use the GPU for simulation (falls back to CPU if incompatible)");
     }
     if (busy) {
       ImGui::EndDisabled();

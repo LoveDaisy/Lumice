@@ -1052,7 +1052,7 @@ void DrawSurveyOverlays(ImDrawList* dl, GuiState& state, const MapCanvasProjecti
       }
       ImGui::TextDisabled("%s", pos_line);
       if (!row.reason.empty()) {
-        ImGui::TextWrapped("%s", row.reason.c_str());
+        WrappedTooltipText("%s", row.reason.c_str());
       }
     }
     ImGui::EndTooltip();
@@ -1616,7 +1616,7 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
                                      static_cast<float>(travel[2]) };
         float alt = 0.0f, az = 0.0f;
         DirToAltAz(direction, &alt, &az);
-        ImGui::Text("%s · alt %.4f° az %.4f°", label, alt, az);
+        WrappedTooltipText("%s · alt %.4f° az %.4f°", label, alt, az);
         const auto cell = ReadFrozenMapDirection(map, travel);
         if (cell) {
           const auto i = cell->index;
@@ -1629,13 +1629,13 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
                       (info.view_az_max_deg - info.view_az_min_deg) / info.view_cols, info.members_evaluated,
                       info.member_count, info.wavelength_nm, info.sample_count);
         } else
-          ImGui::TextUnformatted("Outside selected source coverage — unknown, not zero");
+          WrappedTooltipText("Outside selected source coverage — unknown, not zero");
       };
       if (near_sample) {
         const double d[3] = { (*near_sample)[0], (*near_sample)[1], (*near_sample)[2] };
         show_reading("Near / pick direction", d);
       } else
-        ImGui::TextUnformatted("Near side clipped — no point selection here");
+        WrappedTooltipText("Near side clipped — no point selection here");
       if (far_sample) {
         ImGui::Separator();
         show_reading("Far-side hint — separate direction, not a sum", far_sample->data());
@@ -1695,11 +1695,11 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   ImGui::EndDisabled();
   if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
     if (quality_busy)
-      ImGui::SetTooltip("Cancel only this map calculation; keep the current frozen map.");
+      SetWrappedTooltip("Cancel only this map calculation; keep the current frozen map.");
     else if (quality_retry)
-      ImGui::SetTooltip("Retry the current full-sky request, independent of the observation camera.");
+      SetWrappedTooltip("Retry the current full-sky request, independent of the observation camera.");
     else
-      ImGui::SetTooltip(
+      SetWrappedTooltip(
           "Observation never recomputes: the map answers only an explicit full-sky request, independent of the "
           "observation camera.");
   }
@@ -1749,7 +1749,7 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   // (the ledger: 真实来源进 λ tooltip — an explicit value asks itself, the engine's reference
   // answers until one is set). Editing asks a key change the pump turns into a real recompute.
   if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-    ImGui::SetTooltip(
+    SetWrappedTooltip(
         state.analysis.map_wavelength_nm > 0.0 ?
             "The wavelength this map answers at — an explicit value; editing it asks a new computation." :
             "The wavelength this map answers at — the engine's reference; editing the slider asks an explicit one.");
@@ -1856,7 +1856,7 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
     ImGui::TextWrapped("target: alt %.2f° az %.2f°", target_alt, target_az);
     ImGui::PopStyleColor();
     if (ImGui::IsItemHovered()) {
-      ImGui::SetTooltip(intent.from_map_pick ? "Set from a map pick." : "Set from typed coordinates.");
+      SetWrappedTooltip(intent.from_map_pick ? "Set from a map pick." : "Set from typed coordinates.");
     }
   } else {
     // The row is reserved at every tier (the stable-space contract: setting a first target
@@ -1878,7 +1878,7 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
     state.analyze_pose_view_open = true;
   }
   if (ImGui::IsItemHovered()) {
-    ImGui::SetTooltip("%s", PoseButtonTooltip());
+    SetWrappedTooltip("%s", PoseButtonTooltip());
   }
   // The constant purpose text moved into the tooltip (the disposition ledger's slot 6 — a fixed
   // explanation must not occupy operation area); the column carries instead only a next step

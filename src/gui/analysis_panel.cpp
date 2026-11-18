@@ -1358,7 +1358,7 @@ void RenderRunControls(GuiState& state, LUMICE_Server* server, bool join_line) {
       } else if (needs_centre) {
         why = "Pick the point on the preview first.";
       }
-      ImGui::SetTooltip("%s", why);
+      SetWrappedTooltip("%s", why);
     }
   }
 }
@@ -1394,7 +1394,7 @@ void RenderRadiusSlider(GuiState& state, float width) {
   // The what-it-means half moved to the associated info icon below; what stays here is the
   // current-state branch (whether the slider re-sums an existing result or only sizes the ring).
   if (cone_result && ImGui::IsItemHovered()) {
-    ImGui::SetTooltip("Re-sums the result on hand; does not re-run.");
+    SetWrappedTooltip("Re-sums the result on hand; does not re-run.");
   }
   ImGui::EndDisabled();
   InfoIcon("analysis_radius_help",
@@ -1470,7 +1470,7 @@ void RenderResultSearchBox() {
   if (narrow) {
     g_analysis_search_filter.Draw("###analysis_search", ImGui::GetContentRegionAvail().x);
     if (ImGui::IsItemHovered()) {
-      ImGui::SetTooltip("Search");
+      SetWrappedTooltip("Search");
     }
   } else {
     g_analysis_search_filter.Draw(kFullLabel, UiPx(kSearchInputWidthPt));
@@ -1643,7 +1643,7 @@ void RenderResultList(GuiState& state) {
     if (e.error_bound > 0.0 && e.energy > 0.0) {
       ImGui::Text("%.0f%% (-%.0f%%)", rel * 100.0, e.error_bound / e.energy * 100.0);
       if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip(
+        SetWrappedTooltip(
             "Up to this share of the row may belong to another raypath: the record was full and this\n"
             "raypath took over the smallest row's energy when it first appeared.");
       }
@@ -1679,7 +1679,7 @@ void RenderResultList(GuiState& state) {
     ImGui::PopStyleColor();
     RowLabelTextTooltip(label);
     if (ImGui::IsItemHovered()) {
-      ImGui::SetTooltip(
+      SetWrappedTooltip(
           "Excluded by filter \"%s\" on this crystal. Not in this result; the Energy cell is the\n"
           "share it had when it was excluded (\xe2\x80\x94 when that was not seen in this session).",
           state.filters[static_cast<size_t>(x.filter_slot)].name.c_str());
@@ -1701,9 +1701,9 @@ void RenderResultList(GuiState& state) {
     if (ImGui::IsItemHovered()) {
       const FilterConfig& f = state.filters[static_cast<size_t>(x.filter_slot)];
       if (f.param.size() > 1) {
-        ImGui::SetTooltip("Include again: remove this raypath from filter \"%s\".", f.name.c_str());
+        SetWrappedTooltip("Include again: remove this raypath from filter \"%s\".", f.name.c_str());
       } else {
-        ImGui::SetTooltip(
+        SetWrappedTooltip(
             "Include again: remove this raypath from filter \"%s\" \xe2\x80\x94 its only row, so the "
             "filter is removed from the crystal.",
             f.name.c_str());
@@ -1727,7 +1727,7 @@ void RenderResultList(GuiState& state) {
     ImGui::Selectable(kAnalysisOtherRowLabel, false,
                       ImGuiSelectableFlags_Disabled | ImGuiSelectableFlags_SpanAllColumns);
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-      ImGui::SetTooltip(
+      SetWrappedTooltip(
           "Rays whose raypath the record had no room for (%d hits on the full record); their energy\n"
           "is counted here as one, so the column above closes at 100.",
           view.payload->truncated_chain_count);
@@ -1794,9 +1794,9 @@ void RenderActionButtons(GuiState& state) {
       if (!notice.empty()) {
         tip += "\n" + notice;
       }
-      ImGui::SetTooltip("%s", tip.c_str());
+      SetWrappedTooltip("%s", tip.c_str());
     } else {
-      ImGui::SetTooltip("%s", why.c_str());
+      SetWrappedTooltip("%s", why.c_str());
     }
   }
   if (!stack) {
@@ -1828,7 +1828,7 @@ void RenderActionButtons(GuiState& state) {
   }
   ImGui::EndDisabled();
   if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-    ImGui::SetTooltip(has_rows ?
+    SetWrappedTooltip(has_rows ?
                           "Save the list as shown \xe2\x80\x94 this radius, this symmetry \xe2\x80\x94 as a CSV file\n"
                           "with a header that records the region, the symmetry and the ray total." :
                           "Nothing to export yet.");
@@ -1841,7 +1841,7 @@ void RenderActionButtons(GuiState& state) {
 // analysis_panel.hpp; this is the one implementation both consumers share.
 void RowLabelTextTooltip(const std::string& label) {
   if (ImGui::IsItemHovered() && ImGui::CalcTextSize(label.c_str()).x > ImGui::GetColumnWidth(-1)) {
-    ImGui::SetTooltip("%s", label.c_str());
+    SetWrappedTooltip("%s", label.c_str());
   }
 }
 
@@ -1942,10 +1942,10 @@ void RenderPanoramaRoiControls(GuiState& state, bool join_point) {
   ImGui::RadioButton("Point", &a.roi_mode, LUMICE_RAYPATH_ROI_CONE);
   ImGui::EndDisabled();
   if (!has_picture && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-    ImGui::SetTooltip("Needs a picture of this document to pick a point on: press Run once first.");
+    SetWrappedTooltip("Needs a picture of this document to pick a point on: press Run once first.");
   }
   if (has_picture && ImGui::IsItemHovered()) {
-    ImGui::SetTooltip(
+    SetWrappedTooltip(
         "Drag the marker to move the centre.\n%s+click on the picture to set it directly, even off-marker.\n"
         "Then press Analyze to update the result.",
         kBgModifierName);
@@ -2027,7 +2027,7 @@ void RenderAnalyzeOperationBar(GuiState& state, LUMICE_Server* server) {
   }
   Checkbox("Infinite rays", &state.analysis.infinite);
   if (ImGui::IsItemHovered()) {
-    ImGui::SetTooltip("Trace until stopped.");
+    SetWrappedTooltip("Trace until stopped.");
   }
   // Rays(M) closes the bar; the two-row template keeps it alone on row 2.
   if (single) {
