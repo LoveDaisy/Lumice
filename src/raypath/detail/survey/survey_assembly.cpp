@@ -28,7 +28,7 @@ namespace {
 
 bool ValidPathLayers(const std::vector<std::vector<int>>& layers) {
   return !layers.empty() && std::all_of(layers.begin(), layers.end(), [](const auto& layer) {
-    return layer.size() >= 2 && layer.size() <= 64 &&
+    return !layer.empty() && layer.size() <= 64 &&
            std::all_of(layer.begin(), layer.end(), [](int face) { return face > 0; });
   });
 }
@@ -187,7 +187,7 @@ Error AssembleSurveyData(const ConfigManager& config, const SurveyRequest& reque
   const auto begin = std::chrono::steady_clock::now();
 
   if (!ValidPathLayers(request.path_layers)) {
-    return { ErrorCode::kInvalidPath, "non-empty layers with 2..64 positive face numbers are required" };
+    return { ErrorCode::kInvalidPath, "non-empty layers with 1..64 positive face numbers are required" };
   }
   if (request.symmetry_bits > 7 || request.budget_ms < 0 || (request.budget_ms == 0 && !request.query_deadline) ||
       request.budget_ms > kMaxSurveyBudgetMs) {

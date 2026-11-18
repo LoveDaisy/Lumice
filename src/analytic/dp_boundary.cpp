@@ -67,6 +67,9 @@ std::string PathIdOf(const FaceNormalTable& table, const int* slots, int slot_co
 
 void IncidenceNormals(const FaceNormalTable& table, const int* slots, int slot_count, double out[kMaxFaceCount][3]) {
   so3::Copy3(table.normal[slots[0]], out[0]);
+  if (slot_count == 1) {
+    return;
+  }
   for (int k = 1; k < slot_count - 1; k++) {
     // R_{k-1}: the fold of the reflections before step k — FoldMatrixOf over the (k + 1)-prefix
     // (LI incidence_normals: fold_matrix(crystal, faces[:k + 1])).
@@ -208,7 +211,7 @@ const char* WalkStatusName(WalkStatus status) {
 
 BoundaryWalker::BoundaryWalker(const DeviationField& field) : field_(field) {
   slot_count_ = field.SlotCount();
-  margin_count_ = 2 * slot_count_;
+  margin_count_ = slot_count_ == 1 ? 1 : 2 * slot_count_;
   identical_ = IdenticalMargins(field.table(), field.slots(), slot_count_);
   for (const auto& [dropped, kept] : identical_) {
     kept_of_[dropped] = kept;

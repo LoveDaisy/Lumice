@@ -268,7 +268,9 @@ TEST(SinglePathConvert, PathResolution) {
   EXPECT_TRUE(ResolveSingleLayerPath({ { 3, 5 } }, table, &slots).Ok());
   EXPECT_EQ(slots.size(), 2u);
   EXPECT_EQ(ResolveSingleLayerPath({}, table, &slots).code, ErrorCode::kInvalidPath);
-  EXPECT_EQ(ResolveSingleLayerPath({ { 3 } }, table, &slots).code, ErrorCode::kInvalidPath);
+  EXPECT_TRUE(ResolveSingleLayerPath({ { 3 } }, table, &slots).Ok());
+  EXPECT_EQ(slots.size(), 1u);
+  EXPECT_EQ(ResolveSingleLayerPath({ {} }, table, &slots).code, ErrorCode::kInvalidPath);
   EXPECT_EQ(ResolveSingleLayerPath({ std::vector<int>(65, 3) }, table, &slots).code, ErrorCode::kInvalidPath);
   EXPECT_EQ(ResolveSingleLayerPath({ { 3, 5 }, { 1, 2 } }, table, &slots).code, ErrorCode::kMultiLayerUnsupported);
   const Error missing = ResolveSingleLayerPath({ { 3, 13 } }, table, &slots);

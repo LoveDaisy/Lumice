@@ -27,6 +27,9 @@ void IcePathMap::Domain(const double r[9], DomainEvaluation* out) const {
     }
     return;
   }
+  if (slot_count_ == 1) {
+    return;  // no Snell event exists on an external-reflection branch
+  }
   // A valid chain recorded every validity margin: the entry Snell discriminant is the second, the
   // exit one the last. The smaller one (the entry on a tie, as LI's min over its name list) is the
   // event margin.

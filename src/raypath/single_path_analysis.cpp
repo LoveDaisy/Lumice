@@ -9,6 +9,7 @@
 
 #include "analytic/discovery.hpp"
 #include "analytic/entry_measure.hpp"
+#include "analytic/family_rank.hpp"
 #include "analytic/fiber_continuation.hpp"
 #include "analytic/path_chain.hpp"
 #include "analytic/path_fiber.hpp"
