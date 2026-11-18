@@ -1206,10 +1206,9 @@ void DrawSurveyOverlays(ImDrawList* dl, GuiState& state, const MapCanvasProjecti
   // The reference profile's hover device (§16.1.3's extension): the hovered profile row's
   // reading, drawn on the radial line the probe sampled — the SURVEY document's own sun echo and
   // its own azimuth frame (the probe's premise; not the map's anchor fallback, which may carry
-  // another generation's sun). Consumes LAST frame's row standing (the same one-frame lag the
-  // verdict hover owns). Under the Overlays gate by construction: this whole pass runs behind it,
-  // so the default frame adds no profile ink. The profile device never joins the persistent
-  // set. No legend entry: the device
+  // another generation's sun). Consumes LAST frame's profile row standing. Under the Overlays
+  // gate by construction: this whole pass runs behind it, so the default frame adds no profile
+  // ink. The profile device never joins the persistent set. No legend entry: the device
   // is hover-transient and the driving row is its explanation (the contract's sync records it).
   if (state.analysis.profile_row_hover != SurveyProfileHover::kNone && model.sun_available) {
     ProfileHoverInput profile;
