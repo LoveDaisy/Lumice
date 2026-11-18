@@ -2109,7 +2109,13 @@ void RegisterViewDisplayControlTests(ImGuiTestEngine* engine) {
         ctx->ItemClick("**/Reset##view");
         ctx->Yield(3);
         IM_CHECK_RETV(LookAtPreviewShown(ctx, "None"), false);
-        IM_CHECK_RETV(IsDisabled(ctx->ItemInfo(kLookAtLock)), false);
+        const auto lock = ctx->ItemInfo(kLookAtLock);
+        IM_CHECK_RETV(IsDisabled(lock), false);
+        char capture_name[64];
+        std::snprintf(capture_name, sizeof(capture_name), "look-at-none-%d.png", static_cast<int>(scale * 100));
+        IM_CHECK_RETV(ObserveTooltip(ctx, lock.RectFull.GetCenter(), "Choose a Look At target before enabling Lock.",
+                                     false, capture_name),
+                      false);
         return true;
       };
       for (const float scale : { 1.0f, 1.5f, 2.0f, 1.0f }) {
