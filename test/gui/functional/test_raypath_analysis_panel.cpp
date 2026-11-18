@@ -6897,6 +6897,12 @@ bool Ray3DTitleBandAndCanvasGainHold(ImGuiTestContext* ctx) {
         globe_region->InnerClipRect.Min.y, globe_region->InnerClipRect.Max.x, globe_region->InnerClipRect.Max.y,
         slider.RectFull.Max.y, TraceReportWindow() != nullptr);
     IM_CHECK_RETV(std::fabs(globe.RectFull.GetWidth() - globe.RectFull.GetHeight()) < .5f, false);
+    IM_CHECK_RETV(ray_region->InnerClipRect.Max.y - ray.RectFull.Max.y <= gui::UiPx(8), false);
+    IM_CHECK_RETV(PoseRegionScrollChild("##AnalyzeSunGlobe", "##AnalyzeGlobeState") == nullptr, false);
+    if (std::strcmp(name, "height_limited") == 0) {
+      IM_CHECK_RETV(globe.RectFull.GetHeight() >= 140.0f, false);
+      IM_CHECK_RETV(globe_region->InnerClipRect.Max.y - slider.RectFull.Max.y <= gui::UiPx(8), false);
+    }
     char filename[96];
     std::snprintf(filename, sizeof(filename), "readout_budget_%s.png", name);
     IM_CHECK_RETV(SaveWindowPng(ctx, "//Pose & trace", GuiTestTempPath(filename).string()), false);
@@ -7041,6 +7047,116 @@ bool Ray3DTransientKeepsTheCanvasesAndReadsTheBar(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(bar_after.find("— zenith") == std::string::npos, false);
   IM_CHECK_RETV(bar_after.find("Current pose factors") != std::string::npos, false);
   ctx->Yield(2);
+  return true;
+}
+
+bool PoseFooterKeepsErrorsAndPartialHonest(ImGuiTestContext* ctx) {
+  ScopedServerGuard guard;
+  const ScopedUiScaleAndBasisLease geometry_lease(ctx);
+  IM_CHECK_RETV(BringUpHaloScene(ctx, false), false);
+  OpenWindow(ctx);
+  IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
+  IM_CHECK_RETV(SelectRowByDisplay(ctx, TopChainDisplay().c_str()) != std::nullopt, false);
+  gui::g_state.analyze_pose_view_open = true;
+  PinPoseViewOnScreen(ctx);
+  SetSkyPointTarget(42.0, 0.0);
+  IM_CHECK_RETV(DriveUntil(ctx, [] { return CurrentTraceIsDrawn(); }, 60), false);
+  struct Restore {
+    gui::GuiState::WorkspaceMode mode = gui::g_state.workspace.mode;
+    gui::PointQuerySession point = gui::g_state.analysis.point;
+    gui::RayTraceSession trace = gui::g_state.analysis.trace;
+    ~Restore() {
+      gui::g_state.workspace.mode = mode;
+      gui::g_state.analysis.point = std::move(point);
+      gui::g_state.analysis.trace = std::move(trace);
+    }
+  } restore;
+  // The request-error fixture only proves presentation, not engine error reachability.
+  std::string error = "ERROR_BEGIN: ";
+  for (int i = 0; i < 12; ++i)
+    error += "The representative path request could not be evaluated at this pose. ";
+  error += "ERROR_END";
+  const auto tier = [&](float scale) -> bool {
+    gui::SetUiScaleMultiplierImmediate(scale);
+    IM_CHECK_RETV(
+        DriveUntil(ctx, [scale] { return !gui::g_ui_scale_dirty && gui::CurrentUiScale() == scale; }, 5), false);
+    auto* host = ctx->GetWindowByRef("//Pose & trace");
+    IM_CHECK_RETV(host != nullptr, false);
+    ImGui::SetWindowPos(host, ImVec2(8, 40), ImGuiCond_Always);
+    ImGui::SetWindowSize(host, ImVec2(gui::UiPx(640), gui::UiPx(680)), ImGuiCond_Always);
+    gui::g_state.analysis.trace = restore.trace;
+    ctx->MouseMoveToPos(ImVec2(2, 2));
+    ctx->Yield(4);
+    const auto before = gui::LastRay3DFrameInfo();
+    const auto globe_before = ctx->ItemInfo("**/##globe_canvas", ImGuiTestOpFlags_NoError);
+    const auto split_before = ctx->ItemInfo("**/##PoseViewRowsSplitter", ImGuiTestOpFlags_NoError);
+    IM_CHECK_RETV(before.valid && before.legend_drawn && globe_before.ID && split_before.ID, false);
+    gui::g_state.analysis.trace.adopted_result.reset();
+    gui::g_state.analysis.trace.adopted_error = error;
+    ctx->Yield(2);
+    const std::string visible = CaptureWindowFrameText(ctx, "Pose & trace");
+    IM_CHECK_RETV(visible.find("representative path error") != std::string::npos, false);
+    auto* bar = PoseRegionScrollChild("Pose & trace", "##QueryStatusBar");
+    IM_CHECK_RETV(bar != nullptr, false);
+    IM_CHECK_RETV(host->InnerClipRect.Contains(bar->Rect()), false);
+    std::string full;
+    char screenshot[80];
+    std::snprintf(screenshot, sizeof(screenshot), "pose_error_%.1fx.png", scale);
+    IM_CHECK_RETV(ObserveTooltip(ctx, bar->InnerRect.GetCenter(), error.c_str(), true, screenshot, &full), false);
+    IM_CHECK_RETV(full.find("ERROR_BEGIN") != std::string::npos && full.find("ERROR_END") != std::string::npos, false);
+    const auto failed = gui::LastRay3DFrameInfo();
+    const auto globe_failed = ctx->ItemInfo("**/##globe_canvas", ImGuiTestOpFlags_NoError);
+    const auto split_failed = ctx->ItemInfo("**/##PoseViewRowsSplitter", ImGuiTestOpFlags_NoError);
+    IM_CHECK_RETV(failed.frame_count > before.frame_count && !failed.legend_drawn, false);
+    IM_CHECK_RETV(failed.canvas_min.x == before.canvas_min.x && failed.canvas_min.y == before.canvas_min.y &&
+                      failed.canvas_size.x == before.canvas_size.x && failed.canvas_size.y == before.canvas_size.y,
+                  false);
+    IM_CHECK_RETV(globe_failed.RectFull.Min.y == globe_before.RectFull.Min.y &&
+                      globe_failed.RectFull.GetHeight() == globe_before.RectFull.GetHeight() &&
+                      split_failed.RectFull.Min.y == split_before.RectFull.Min.y,
+                  false);
+    return true;
+  };
+  IM_CHECK_RETV(tier(1), false);
+  IM_CHECK_RETV(tier(1.5f), false);
+  gui::SetUiScaleMultiplierImmediate(1);
+  IM_CHECK_RETV(DriveUntil(ctx, [] { return !gui::g_ui_scale_dirty && gui::CurrentUiScale() == 1; }, 5), false);
+  PinPoseViewOnScreen(ctx);
+  // Reuse the public interrupted-request fixture: an actual stopped document with no
+  // components, independent of timing and of the application's normal query budget.
+  const auto scene = gui::BuildScene(gui::g_state, gui::SceneIntent::kSimCommit);
+  IM_CHECK_RETV(scene != nullptr, false);
+  std::vector<int> faces;
+  std::vector<int> counts;
+  auto request = gui::MakePointRequestForKey(restore.point.key, &faces, &counts);
+  volatile int interrupted = 1;
+  request.interrupted = &interrupted;
+  LUMICE_SinglePathResult* raw_partial = nullptr;
+  char message[256] = {};
+  IM_CHECK_RETV(LUMICE_AnalyzeSinglePath(scene.get(), &request, &raw_partial, message, sizeof(message)) == LUMICE_OK,
+                false);
+  const gui::PointHandle partial(raw_partial, gui::PointDeleter{});
+  LUMICE_PathPointInfo info{};
+  info.struct_size = sizeof(info);
+  IM_CHECK_RETV(LUMICE_PathPointGetInfo(partial.get(), &info) == LUMICE_PATH_READ_OK, false);
+  IM_CHECK_RETV(info.execution != LUMICE_PATH_OUTCOME_COMPLETED && info.component_count == 0, false);
+  gui::g_state.analysis.point.adopted_result = partial;
+  gui::g_state.analysis.point.adopted_error.clear();
+  // Pose stands on its own in Render mode; no sibling diagnostics window explains partial.
+  gui::g_state.workspace.mode = gui::GuiState::WorkspaceMode::kRender;
+  ctx->MouseMoveToPos(ImVec2(2, 2));
+  ctx->Yield(3);
+  const std::string visible = CaptureWindowFrameText(ctx, "Pose & trace");
+  IM_CHECK_RETV(
+      visible.find("Partial") != std::string::npos && visible.find("No fiber component arrived") != std::string::npos,
+      false);
+  auto* bar = PoseRegionScrollChild("Pose & trace", "##QueryStatusBar");
+  IM_CHECK_RETV(bar != nullptr, false);
+  IM_CHECK_RETV(ObserveTooltip(ctx, bar->InnerRect.GetCenter(),
+                               "what arrived is on show; emptiness is the run's stop, not a physical absence.", true,
+                               "pose_partial_full.png"),
+                false);
+  IM_CHECK_RETV(SaveWindowPng(ctx, "//Pose & trace", GuiTestTempPath("pose_partial_alone.png").string()), false);
   return true;
 }
 
@@ -9383,8 +9499,8 @@ bool PoseViewDoNewClosesAndReopensHonest(ImGuiTestContext* ctx) {
 
 // AC2 — the resize strategy's red/green evidence (the decisions file §4, contract §16.4
 // as-built): stretch, shrink and drag-then-resize, each asserting the ALLOCATION, not just
-// survival — the quota members (the 3D report viewport, the curve companion) hold their fixed
-// budgets while the elastic members take the delta by the split's ratio, and after a drag the
+// survival — the curve companion holds its fixed budget while the canvases take the delta
+// by the split's ratio, and after a drag the
 // dragged ratio governs (user intent overrides the strategy). Geometry-only: no document —
 // the canvases and the quota children derive from the region shapes alone.
 bool PoseViewResizeStrategyDistributesByRatioAndQuota(ImGuiTestContext* ctx) {
@@ -10518,17 +10634,15 @@ bool PoseCurveReportQuotasTrackContent(ImGuiTestContext* ctx) {
         auto* region_3d = PoseRegionWindow("##AnalyzeRaypath3D");
         IM_CHECK_RETV(region_3d != nullptr, false);
         // Full default rectangles, not the bbox of only those glyphs clipping happened to emit.
-        // The Ray3D report's quota carries the legend row only: the usage/semantics prose lives
-        // in the title band's help icon (hover-time, no layout item) and the Fresnel toggle sits
-        // in the fixed control band — the toggle and the icon are asserted against the REGION
-        // child, the legend against the report child.
+        // The title controls belong to the region; the legend and XYZ belong to the canvas.
+        // No lower report or source-line quota survives.
         if (!narrow) {
           IM_CHECK_RETV(full_item("**/Show Fresnel ratios##r3d_fresnel", region_3d), false);
           IM_CHECK_RETV(full_item("**/" ICON_FA_CIRCLE_INFO "##r3d_help", region_3d), false);
           IM_CHECK_RETV(full_item("**/Reset View##r3d_reset", region_3d), false);
           IM_CHECK_RETV(TraceReportWindow() == nullptr, false);
           // The colour legend is canvas ink now: its three complete unit footprints sit inside
-          // the canvas (the report child carries the source line only).
+          // the canvas, with no report child below it.
           {
             const gui::Ray3DFrameInfo frame_now = gui::LastRay3DFrameInfo();
             IM_CHECK_RETV(frame_now.valid && frame_now.legend_drawn, false);
@@ -14965,6 +15079,10 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
   {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "r3d_transient_keeps_the_canvases_and_reads_the_bar");
     t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(Ray3DTransientKeepsTheCanvasesAndReadsTheBar(ctx)); };
+  }
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "pose_footer_keeps_errors_and_partial_honest");
+    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(PoseFooterKeepsErrorsAndPartialHonest(ctx)); };
   }
 
   {

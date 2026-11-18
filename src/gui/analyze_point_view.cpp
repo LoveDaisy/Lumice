@@ -3260,7 +3260,7 @@ void RenderPoseFactorsRegion(GuiState& state, const ImVec2& size) {
 std::string PoseSelectionStatus(const GuiState& state, bool* warning) {
   const PointQuerySession& point = state.analysis.point;
   if (PointQueryStateFor(point) == PointQueryState::kNoIntent) {
-    return "Pick a class and a sky point on the raypath view (or type coordinates there).";
+    return "Pick a sky point on the raypath view (or type coordinates there) and select a class.";
   }
   if (PointQueryStateFor(point) != PointQueryState::kCompleted) {
     return {};
@@ -3490,7 +3490,8 @@ void RenderAnalyzePoseViewWindow(GuiState& state) {
   RenderPoseFactorsRegion(state, ImVec2(right_w, factors_h));
   const PointQuerySession& point = state.analysis.point;
   bool partial = false;
-  std::string status = PointStatusLabelFor(point, &partial);
+  LUMICE_PathPointInfo completed_info{};
+  std::string status = PointStatusLabelFor(point, &partial, &completed_info);
   switch (PointQueryStateFor(point)) {
     case PointQueryState::kWaiting: {
       const std::string wait_line = PointWaitLineFor(point, ImGui::GetTime(), g_survey_executor.InflightPollSnapshot());
@@ -3513,7 +3514,8 @@ void RenderAnalyzePoseViewWindow(GuiState& state) {
     status += " — " + selection_status;
   }
   if (partial) {
-    status += " — Partial document: what arrived is on show; emptiness is the run's stop, not a physical absence.";
+    status += std::string(" — Partial document (") + ExecutionText(completed_info.execution) +
+              "): what arrived is on show; emptiness is the run's stop, not a physical absence.";
   }
   if (!canvas_problem.empty()) {
     status += " — 3D display: " + canvas_problem;

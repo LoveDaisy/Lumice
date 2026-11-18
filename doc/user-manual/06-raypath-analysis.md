@@ -270,9 +270,11 @@ removes (the curve's reading strip holds an eight-line budget until you drag its
 yourself).
 
 Waiting, cancelled, refused and sample changes retain the same canvas and control slots. Missing
-components or samples disable the corresponding controls instead of inventing data. Each graph's
-report below it scrolls; it does not squeeze the graph when its content grows. Resize and divider
-changes still resize the graph normally.
+components or samples disable the corresponding controls instead of inventing data. Raypath 3D and the globe have no duplicate sample/angle report below them: that space belongs
+to the canvases. The current pose's exact values remain in the factors region. The fixed window
+status bar names errors, refused paths, empty samples and partial results; hover a shortened
+line to read the full reason. These states do not squeeze the graphs. Resize and divider
+changes still resize them normally.
 
 **The sun direction globe** (the window's upper right) draws the selected component's fiber:
 each valid sample is one pose where the sun sits somewhere in the crystal (the `u` arrow), the
@@ -296,9 +298,10 @@ left edge, contacts marked. **World** and **Crystal** are the same physical path
 Fresnel ratios** toggle (on by default — the per-segment ratio numbers are the path's
 exact-value face; switching it never moves the canvas) and an ⓘ help icon carrying the usage
 and display-semantics notes. While the path for a fresh pose is computing, the window's status
-bar says so and the report keeps the previous sample's named source line; a pose with no legal
-path names why in the report (the corridor's refusal and its measured area); a rank-0 point
-mass has no path and says that instead of drawing one.
+bar says so without showing the previous sample's path or report. A pose with no legal path
+names the representative-path refusal in that same bar; hover a shortened line for the complete
+reason and corridor measurements. A rank-0 point mass has no path and says that instead of
+drawing one. Partial results are explicitly incomplete even with this window open on its own.
 
 **Contribution curve** (the window's left column, lower region) draws the selected component's
 five named
