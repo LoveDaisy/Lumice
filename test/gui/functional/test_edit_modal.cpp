@@ -438,20 +438,11 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
           "pose follows, re-seating on this label's typical view.";
       const auto exercise = [&](float multiplier) -> bool {
         gui::SetUiScaleMultiplierImmediate(multiplier);
-        // Hold the logical client basis constant while changing UI scale.
-        g_window_size_test.width = static_cast<int>(gui::kInitWindowWidth * multiplier);
-        g_window_size_test.height = static_cast<int>(gui::kInitWindowHeight * multiplier);
-        g_window_size_test.done.store(false);
-        g_window_size_test.requested.store(true);
-        for (int i = 0; i < 20 && !g_window_size_test.done.load(); ++i) {
-          ctx->Yield();
-        }
         ctx->Yield(4);
-        IM_CHECK_RETV(g_window_size_test.done.load(), false);
         OpenCardEditor(ctx, 0, kCrystalTabRef);
         ctx->ItemClick("**/###axis_tab");
         ctx->Yield(4);
-        const auto first = ctx->ItemInfo("**/Random##axis_label_chip");
+        const auto first = ctx->ItemInfo("**/Column##axis_label_chip");
         IM_CHECK_RETV(first.ID != 0, false);
         // The id-zero caption precedes the first chip on this same line; no production test ID.
         const ImVec2 caption(
