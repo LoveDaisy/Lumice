@@ -2659,6 +2659,8 @@ bool PointInspectorShowsThePointFiberAndThePath(ImGuiTestContext* ctx) {
   return true;
 }
 
+std::string CaptureWindowFrameText(ImGuiTestContext* ctx, const char* window_name);
+
 // The rank-0 arm (AC5) on the corpus plate scene (C14's shape: the horizontal plate whose 1-2
 // chain sends the sun's image straight through — the point at the sun itself is a point mass,
 // not a fiber). Fixed-dt pool: the mass arm answers in milliseconds.
@@ -2699,6 +2701,17 @@ bool PointMassArmIsHonestAndForcesNoFiber(ImGuiTestContext* ctx) {
   ctx->LogInfo("[point view] rank-0 mass at (alt %.3f, az %.3f), separation %.2e deg", mass.altitude_deg,
                mass.azimuth_deg, mass.target_separation_deg);
   IM_CHECK_RETV(SaveWindowPng(ctx, "//##AnalyzeDetails", GuiTestTempPath("analyze_point_mass.png").string()), false);
+  gui::g_state.analyze_pose_view_open = true;
+  PinPoseViewOnScreen(ctx);
+  ctx->WindowFocus("//Pose & trace");
+  ctx->Yield(3);
+  const std::string pose_text = CaptureWindowFrameText(ctx, "Pose & trace");
+  IM_CHECK_RETV(pose_text.find("A rank-0 point mass has no fiber or crystal-interior path") != std::string::npos,
+                false);
+  IM_CHECK_RETV(pose_text.find("mass numbers.") != std::string::npos, false);
+  ctx->SetRef("//Pose & trace");
+  IM_CHECK_RETV(IsDisabled(ctx->ItemInfo("**/##globe_sample")), false);
+  IM_CHECK_RETV(SaveWindowPng(ctx, "//Pose & trace", GuiTestTempPath("pose_rank_zero.png").string()), false);
   return true;
 }
 
@@ -6938,6 +6951,10 @@ bool Ray3DTitleBandAndCanvasGainHold(ImGuiTestContext* ctx) {
   canvas_rect("narrowest 640x680");
   IM_CHECK_RETV(SaveWindowPng(ctx, "//Pose & trace", GuiTestTempPath("r3d_title_band_narrow.png").string()), false);
   IM_CHECK_RETV(readout_budget("minimum"), false);
+  const std::string minimum_text = CaptureWindowFrameText(ctx, "Pose & trace");
+  IM_CHECK_RETV(minimum_text.find("Current pose factors") != std::string::npos, false);
+  IM_CHECK_RETV(minimum_text.find("Component 1 · sample") == std::string::npos, false);
+  IM_CHECK_RETV(minimum_text.find("— zenith") == std::string::npos, false);
   IM_CHECK_RETV(TraceReportWindow() == nullptr, false);
   IM_CHECK_RETV(success_text.find("Component 1 · sample") == std::string::npos, false);
   IM_CHECK_RETV(success_text.find("— zenith") == std::string::npos, false);
@@ -7160,6 +7177,45 @@ bool PoseFooterKeepsErrorsAndPartialHonest(ImGuiTestContext* ctx) {
                                "pose_partial_full.png"),
                 false);
   IM_CHECK_RETV(SaveWindowPng(ctx, "//Pose & trace", GuiTestTempPath("pose_partial_alone.png").string()), false);
+  // A real off-arc pick has no valid sample. Read the document's exact empty shape rather
+  // than assuming it contains an all-invalid component: these are distinct refusal facts.
+  gui::g_state.workspace.mode = gui::GuiState::WorkspaceMode::kAnalyze;
+  const auto previous_point = gui::g_state.analysis.point.intent_id;
+  SetSkyPointTarget(0.0, 0.0);
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [&] {
+                      const auto& point = gui::g_state.analysis.point;
+                      return point.intent_id != previous_point &&
+                             gui::PointQueryStateFor(point) == gui::PointQueryState::kCompleted;
+                    },
+                    60),
+                false);
+  const auto& empty = *gui::g_state.analysis.point.adopted_result;
+  LUMICE_PathPointInfo empty_info{};
+  empty_info.struct_size = sizeof(empty_info);
+  IM_CHECK_RETV(LUMICE_PathPointGetInfo(&empty, &empty_info) == LUMICE_PATH_READ_OK, false);
+  IM_CHECK_RETV(empty_info.outcome == LUMICE_PATH_POINT_DISCOVERED && empty_info.component_count == 0, false);
+  IM_CHECK_RETV(gui::PointValidSampleCount(empty, 0) == 0, false);
+  auto* host = ctx->GetWindowByRef("//Pose & trace");
+  ImGui::SetWindowSize(host, ImVec2(gui::UiPx(640), gui::UiPx(680)), ImGuiCond_Always);
+  ctx->WindowFocus("//Pose & trace");
+  ctx->MouseMoveToPos(ImVec2(2, 2));
+  ctx->Yield(3);
+  const std::string empty_text = CaptureWindowFrameText(ctx, "Pose & trace");
+  IM_CHECK_RETV(empty_text.find("No fiber here:") != std::string::npos, false);
+  IM_CHECK_RETV(IsDisabled(ctx->ItemInfo("**/##globe_sample")), false);
+  bar = PoseRegionScrollChild("Pose & trace", "##QueryStatusBar");
+  IM_CHECK_RETV(bar != nullptr, false);
+  IM_CHECK_RETV(
+      ObserveTooltip(ctx, bar->InnerRect.GetCenter(),
+                     "the target's deviation is outside the path's deflection range (at the reach probe's resolution).",
+                     true, "pose_no_samples_full.png"),
+      false);
+  ctx->LogInfo(
+      "[pose empty witness] real off-arc: components=%zu valid_samples=%d; reach-excluded, not an all-invalid "
+      "component",
+      empty_info.component_count, gui::PointValidSampleCount(empty, 0));
   return true;
 }
 

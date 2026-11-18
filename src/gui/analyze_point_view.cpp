@@ -3260,6 +3260,9 @@ void RenderPoseFactorsRegion(GuiState& state, const ImVec2& size) {
 std::string PoseSelectionStatus(const GuiState& state, bool* warning) {
   const PointQuerySession& point = state.analysis.point;
   if (PointQueryStateFor(point) == PointQueryState::kNoIntent) {
+    if (state.analysis.sky_point.valid) {
+      return "Select a class to inspect the fiber at the picked sky point.";
+    }
     return "Pick a sky point on the raypath view (or type coordinates there) and select a class.";
   }
   if (PointQueryStateFor(point) != PointQueryState::kCompleted) {
