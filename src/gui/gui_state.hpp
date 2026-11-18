@@ -1924,21 +1924,12 @@ struct GuiState {
     // site drew this frame, for the gui_test layer to read (ImGui text has no ID to address).
     // Cleared at the Analyze workspace's frame entry; the render sites are the only writers.
     WaitFeedbackTexts wait_feedback_texts;
-    // The class answer's verdict-row hover standing: overwritten every rendered frame and
-    // cleared when the answer/window is absent. It is row feedback, not another drawing gate:
-    // qualified verdict anchors are always part of Overlays. The canvas and report retain the
-    // same one-frame ordering as the profile standing below. Document reset drops the session;
-    // neither field is persisted, dirty, or part of ConfigSnapshot.
-    // WRITERS: the map report's class-answer path and absent branch, plus the closed/Begin-false
-    // Raypath view seams. No persistent verdict-only toggle exists.
-    bool verdict_anchor_hover = false;
     // The reference profile's hover standing (§16.1.3's extension): which of the class answer's
     // three profile reading rows the pointer stood on — the profile device's read, written by the
-    // same class-answer render path that owns the verdict hover above, consumed by the canvas the
-    // NEXT frame (the same one-frame lag), and reset by the same three seams (the absent branch,
-    // the closed early-return, the Begin-false branch). Session tier like its sibling: never
-    // persisted, not in ConfigSnapshot or the dirty diff, Revert keeps them. The ratio row keeps
-    // its feedback local and never enters this identity (it names no spatial payload).
+    // class-answer render path and consumed by the canvas the NEXT frame. Reset by three seams:
+    // the absent branch, the closed early-return and the Begin-false branch. Session tier: never
+    // persisted, not in ConfigSnapshot or the dirty diff, Revert keeps it. Verdict, Position and
+    // ratio rows keep their highlight feedback local and never enter this identity.
     // WRITERS (the audit set): RenderAnalyzeMapRegion's ##MapReport class-answer host (the
     // overwrite, and the absent branch's reset); RenderAnalyzeRaypathViewWindow's closed-window
     // seams (both the closed early-return and the Begin-false branch). No other write path by

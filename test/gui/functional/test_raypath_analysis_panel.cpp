@@ -2878,6 +2878,9 @@ bool SurveyOverviewShowsDispersionAndProfile(ImGuiTestContext* ctx) {
   return true;
 }
 
+bool ReportHighlightBBox(ImU32 colour, ImVec2* out_min, ImVec2* out_max);
+bool RowRectsIntersect(const ImRect& a, const ImRect& b);
+
 // Real blue positioned verdict: the Overlays gate is sufficient, row hover retains its
 // feedback without becoming another permission. The 1-3-2 document has no dispersion minimum,
 // so this frame's blue map ink unambiguously belongs to the verdict anchor.
@@ -2921,36 +2924,52 @@ bool VerdictAnchorHoverAndToggleOnTheMap(ImGuiTestContext* ctx) {
   ctx->Yield(3);
   ctx->Yield(3);
   // Qualified verdicts draw by default, with no second toggle and no row hover.
-  IM_CHECK_RETV(ctx->ItemInfo("**/Verdict anchors##map", ImGuiTestOpFlags_NoError).ID == 0, false);
-  IM_CHECK_RETV(!gui::g_state.analysis.verdict_anchor_hover, false);
-  IM_CHECK_RETV(gui::LastMapOverlayLegend().verdict_anchor, false);
-  IM_CHECK_RETV(MapWindowIndexCountForColour(gui::kChromaticColourBlue) > 0, false);
-  // Hover the verdict row: the row's overlay takes the pointer, the info column writes the
-  // standing, the canvas draws it the NEXT frame — three frames carry the whole chain (the
-  // frame lag the contract accepts for hover semantics).
-  ctx->ScrollToItem("**/###diagnose_verdict_row", ImGuiAxis_Y);
-  ctx->Yield(1);
-  const ImVec2 verdict_center = ctx->ItemInfo("**/###diagnose_verdict_row").RectFull.GetCenter();
-  ctx->MouseMoveToPos(verdict_center);
-  ctx->Yield(3);
-  IM_CHECK_RETV(gui::g_state.analysis.verdict_anchor_hover, false);
-  IM_CHECK_RETV(gui::LastMapOverlayLegend().verdict_anchor, false);
-  IM_CHECK_RETV(MapWindowIndexCountForColour(gui::kChromaticColourBlue) > 0, false);
-  // Hover the Position row: the second linked row, the same anchor.
-  ctx->ScrollToItem("**/###diagnose_position_row", ImGuiAxis_Y);
-  ctx->Yield(1);
-  const ImVec2 position_center = ctx->ItemInfo("**/###diagnose_position_row").RectFull.GetCenter();
-  ctx->MouseMoveToPos(position_center);
-  ctx->Yield(3);
-  IM_CHECK_RETV(gui::LastMapOverlayLegend().verdict_anchor, false);
-  // Leaving the row keeps qualified persistent ink; only Overlays can turn it off.
   ctx->MouseMoveToPos(ImVec2(-100.0f, -100.0f));
   ctx->Yield(3);
-  IM_CHECK_RETV(!gui::g_state.analysis.verdict_anchor_hover, false);
+  IM_CHECK_RETV(ctx->ItemInfo("**/Verdict anchors##map", ImGuiTestOpFlags_NoError).ID == 0, false);
+  const ImU32 hovered_ink = ImGui::GetColorU32(ImGuiCol_HeaderHovered);
+  ImVec2 hmin(0.0f, 0.0f);
+  ImVec2 hmax(0.0f, 0.0f);
+  IM_CHECK_RETV(!ReportHighlightBBox(hovered_ink, &hmin, &hmax), false);
   IM_CHECK_RETV(gui::LastMapOverlayLegend().verdict_anchor, false);
+  IM_CHECK_RETV(MapWindowIndexCountForColour(gui::kChromaticColourBlue) > 0, false);
+  // Read the actual report draw-list after moving onto each row, not a session echo of hover.
+  const auto hover_row = [&](const char* id) -> bool {
+    ctx->ScrollToItem(id, ImGuiAxis_Y);
+    ctx->Yield(1);
+    ctx->MouseMoveToPos(ctx->ItemInfo(id).RectFull.GetCenter());
+    ctx->Yield(3);
+    const ImRect row = ctx->ItemInfo(id).RectFull;
+    if (!ReportHighlightBBox(hovered_ink, &hmin, &hmax) || !RowRectsIntersect(ImRect(hmin, hmax), row)) {
+      ctx->LogError("[verdict hover] %s: no row-local highlight ink", id);
+      return false;
+    }
+    ctx->LogInfo("[verdict hover] %s: row (%.0f,%.0f)-(%.0f,%.0f), highlight (%.0f,%.0f)-(%.0f,%.0f), blue indices=%d",
+                 id, row.Min.x, row.Min.y, row.Max.x, row.Max.y, hmin.x, hmin.y, hmax.x, hmax.y,
+                 MapWindowIndexCountForColour(gui::kChromaticColourBlue));
+    return true;
+  };
+  IM_CHECK_RETV(hover_row("**/###diagnose_verdict_row"), false);
+  IM_CHECK_RETV(gui::LastMapOverlayLegend().verdict_anchor, false);
+  IM_CHECK_RETV(MapWindowIndexCountForColour(gui::kChromaticColourBlue) > 0, false);
+  IM_CHECK_RETV(SaveWindowPng(ctx, "//Raypath view", GuiTestTempPath("map_verdict_row_hover.png").string()), false);
+  // The Position row has the same local feedback, independently of the persistent anchor.
+  IM_CHECK_RETV(hover_row("**/###diagnose_position_row"), false);
+  IM_CHECK_RETV(gui::LastMapOverlayLegend().verdict_anchor, false);
+  IM_CHECK_RETV(MapWindowIndexCountForColour(gui::kChromaticColourBlue) > 0, false);
+  IM_CHECK_RETV(SaveWindowPng(ctx, "//Raypath view", GuiTestTempPath("map_position_row_hover.png").string()), false);
+  // Leaving the row removes its highlight, not the qualified persistent map ink.
+  ctx->MouseMoveToPos(ImVec2(-100.0f, -100.0f));
+  ctx->Yield(3);
+  IM_CHECK_RETV(!ReportHighlightBBox(hovered_ink, &hmin, &hmax), false);
+  IM_CHECK_RETV(gui::LastMapOverlayLegend().verdict_anchor, false);
+  IM_CHECK_RETV(MapWindowIndexCountForColour(gui::kChromaticColourBlue) > 0, false);
   IM_CHECK_RETV(SaveWindowPng(ctx, "//Raypath view", GuiTestTempPath("map_verdict_overlays_on.png").string()), false);
   ctx->ItemClick("**/Overlays##map");
   ctx->Yield(3);
+  IM_CHECK_RETV(!gui::LastMapOverlayLegend().verdict_anchor, false);
+  IM_CHECK_RETV(MapWindowIndexCountForColour(gui::kChromaticColourBlue) == 0, false);
+  IM_CHECK_RETV(hover_row("**/###diagnose_position_row"), false);
   IM_CHECK_RETV(!gui::LastMapOverlayLegend().verdict_anchor, false);
   IM_CHECK_RETV(MapWindowIndexCountForColour(gui::kChromaticColourBlue) == 0, false);
   ctx->ItemClick("**/Overlays##map");

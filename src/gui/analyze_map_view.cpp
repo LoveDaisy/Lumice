@@ -1987,19 +1987,17 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   if (state.analysis.survey.adopted_result) {
     const SurveyOverviewModel survey_model = BuildSurveyOverviewModel(*state.analysis.survey.adopted_result);
     ImGui::TextDisabled("Class answer");
-    // The hover rows' read (§16.1's A2 pilot + §16.1.3's extension): the class answer is the only
-    // site the linked rows render at, so this is the overwrite's owner — the row path writes the
-    // standing every frame (hover or explicit none), the canvas consumes it next frame.
+    // The profile rows' read (§16.1.3): this class-answer host owns the standing's overwrite
+    // every frame (hover or explicit none); the canvas consumes it next frame. The verdict and
+    // Position rows keep their highlight feedback local, without a session standing.
     SurveyRowHoverReadout row_readout;
     RenderSurveyOverviewModel(survey_model, &row_readout);
-    state.analysis.verdict_anchor_hover = row_readout.verdict;
     state.analysis.profile_row_hover = row_readout.profile;
     ImGui::Separator();
   } else {
     // The class answer's absent frame (no adopted document): no rows render, so the overwrite
     // has no site — this branch is the reset's owner instead. Without it a document's last
     // hover standing would outlive the rows that carried it.
-    state.analysis.verdict_anchor_hover = false;
     state.analysis.profile_row_hover = SurveyProfileHover::kNone;
   }
   // The sky-point answer (contract §16.2): the adopted point document read in full, sorted
@@ -2252,7 +2250,6 @@ void RenderAnalyzeRaypathViewWindow(GuiState& state) {
     // The window's closed frames: the class answer's rows do not render, so the hover standing's
     // overwrite has no site — this seam owns the reset, and the first frame after a reopen reads
     // false instead of whatever the mouse was on when the window closed.
-    state.analysis.verdict_anchor_hover = false;
     state.analysis.profile_row_hover = SurveyProfileHover::kNone;
     if (state.workspace.map_press_owner != GuiState::AnalyzeWorkspaceSession::PanoramaPressOwner::kNone)
       state.workspace.map_press_owner = GuiState::AnalyzeWorkspaceSession::PanoramaPressOwner::kCancelled;
@@ -2310,7 +2307,6 @@ void RenderAnalyzeRaypathViewWindow(GuiState& state) {
                         ImGuiWindowFlags_NoScrollWithMouse)) {
     // The Begin-false frame (the window fully clipped): neither region renders, so the hover
     // standing's overwrite has no site here either — the same reset the closed seam owns.
-    state.analysis.verdict_anchor_hover = false;
     state.analysis.profile_row_hover = SurveyProfileHover::kNone;
     ImGui::End();
     if (state.workspace.map_press_owner != GuiState::AnalyzeWorkspaceSession::PanoramaPressOwner::kNone)
