@@ -3232,6 +3232,8 @@ bool ProfileRowsHighlightAndDrawOnTheMap(ImGuiTestContext* ctx) {
   const auto point_id = gui::g_state.analysis.point.intent_id;
   const auto trace_id = gui::g_state.analysis.trace.intent_id;
   const auto original_map = gui::g_state.analysis.map.adopted_result;
+  ctx->LogInfo("[profile display baseline] map_present=%d map_state=%d", original_map != nullptr,
+               static_cast<int>(gui::MapQueryStateFor(gui::g_state.analysis.map)));
   const auto sky = gui::g_state.analysis.sky_point;
   const auto roi_mode = gui::g_state.analysis.roi_mode;
   const auto sample = gui::g_state.analysis.point_view.sample_index;
@@ -3365,6 +3367,13 @@ bool ProfileRowsHighlightAndDrawOnTheMap(ImGuiTestContext* ctx) {
                     gui::g_state.analysis.point.intent_id == point_id &&
                     gui::g_state.analysis.trace.intent_id == trace_id,
                 false);
+  ctx->LogInfo(
+      "[profile display baseline] map_present=%d map_same=%d sky_valid_same=%d sky_dir_same=%d roi_same=%d "
+      "sample_same=%d playing_same=%d",
+      original_map != nullptr, gui::g_state.analysis.map.adopted_result == original_map,
+      gui::g_state.analysis.sky_point.valid == sky.valid,
+      std::equal(sky.dir, sky.dir + 3, gui::g_state.analysis.sky_point.dir), gui::g_state.analysis.roi_mode == roi_mode,
+      gui::g_state.analysis.point_view.sample_index == sample, gui::g_state.analysis.point_view.playing == playing);
   IM_CHECK_RETV(
       gui::g_state.analysis.map.adopted_result == original_map && gui::g_state.analysis.sky_point.valid == sky.valid &&
           std::equal(sky.dir, sky.dir + 3, gui::g_state.analysis.sky_point.dir) &&
