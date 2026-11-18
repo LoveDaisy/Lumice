@@ -53,6 +53,7 @@
 #include "gui/user_defaults.hpp"
 #include "support/user_defaults_test_env.hpp"
 #include "test_gui_shared.hpp"
+#include "tooltip_observation.hpp"
 
 namespace {
 
@@ -299,6 +300,57 @@ void PickLens(ImGuiTestContext* ctx, int lens) {
 }  // namespace
 
 void RegisterViewDisplayControlTests(ImGuiTestEngine* engine) {
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "view_display_controls", "retained_display_tooltips_wrap_in_both_hosts");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      const ScopedTooltipUiScale scale(ctx);
+      ctx->Yield(3);
+      constexpr const char* kAnchorText =
+          "Which anchor display brightness is measured against.\n\n"
+          "Relative: each snapshot is re-anchored to its own brightest pixels. This is the "
+          "default and what the preview has always done. Good for looking at one document; "
+          "brightness carries no meaning when compared with another.\n\n"
+          "Absolute: anchored to the energy the light source emitted. EV then reads as stops "
+          "above or below physical, and two scenes at the same EV are directly comparable.\n\n"
+          "Switching only changes how the pixels already simulated are converted. It does not "
+          "re-run the simulation.";
+      const auto exercise = [&](float multiplier, bool analyze) -> bool {
+        gui::SetUiScaleMultiplierImmediate(multiplier);
+        gui::g_state.workspace.mode =
+            analyze ? gui::GuiState::WorkspaceMode::kAnalyze : gui::GuiState::WorkspaceMode::kRender;
+        ctx->Yield(4);
+        const std::string host = analyze ? "//##AnalyzeLeftPanel" : "//##RightPanel";
+        if (analyze) {
+          ctx->ItemOpen((host + "/Display").c_str());
+        }
+        const std::string anchor = host + "/EV Anchor##display";
+        ctx->ScrollToItem(anchor.c_str(), ImGuiAxis_Y);
+        ctx->Yield(3);
+        const auto item = ctx->ItemInfo(anchor.c_str());
+        IM_CHECK_RETV(item.ID != 0 && item.Window->InnerClipRect.Contains(item.RectFull), false);
+        IM_CHECK_RETV(ObserveTooltip(ctx, item.RectFull.GetCenter(), kAnchorText, true,
+                                     multiplier == 1.0f ? "ev-anchor-1x.png" : "ev-anchor-15x.png"),
+                      false);
+        ctx->ItemClick(anchor.c_str());
+        ctx->SetRef("//$FOCUSED");
+        ctx->ItemClick("**/Absolute");
+        ctx->SetRef("");
+        ctx->Yield(2);
+        IM_CHECK_RETV(gui::g_state.renderer.ev_mode == 1, false);
+        return true;
+      };
+      IM_CHECK(exercise(1.0f, false));
+      IM_CHECK(exercise(1.5f, false));
+      IM_CHECK(exercise(1.0f, true));
+      IM_CHECK(exercise(1.5f, true));
+      gui::g_state.workspace.mode = gui::GuiState::WorkspaceMode::kRender;
+      gui::SetUiScaleMultiplierImmediate(1.0f);
+      ctx->Yield(4);
+      IM_CHECK(ObserveTooltip(ctx, ctx->ItemInfo("##TopBar/###toolbar_new").RectFull.GetCenter(),
+                              "New: start a new document.", false));
+    };
+  }
   // The positive branch: a clamped window on a real preset says so.
   {
     ImGuiTest* t =
