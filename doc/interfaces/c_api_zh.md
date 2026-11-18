@@ -86,6 +86,16 @@ tick 并覆写阶段——按查询一枚令牌。过小 `struct_size` 拒绝且
 CLI 的正数预算现在约束整个 workspace 查询；旧 C 调用仍保持逐腿窗口和旧零值/默认值合同。
 point 的 Workspace 查询还会读取请求中已发布 extent 覆盖的 `interrupted` 指针；旧前缀不得越界读取。
 
+v4.62 在 `LUMICE_SinglePathRequest` 和 `LUMICE_PathProbeRequest` 尾部追加
+`context_symmetry_bits_plus_one`：0 为物理 P|B|D context（旧尺寸和零初始化的既有默认），
+1 为 literal 请求链，其余值拒绝。Workspace 和 legacy Analyze 仍接受旧的已发布完整请求尺寸；
+Workspace 拒绝未发布的中间尺寸。Point fiber 本身始终为 literal，Probe profile 仍是代表成员量，
+不按类成员数暗乘。GUI 将选中行的口径传给 Point：P/B/D 全选为物理类，其余组合为该行 literal
+代表链。Pose 仍不请求 context 块，但该身份同样用于自动 solver starts 的准入。
+Workspace 只在共享准入通过后注入自动 warm 候选；不兼容自动候选视为 miss，不误拒查询。
+显式 warm 不被自动槽覆盖，失配仍严格拒绝。逐事实数值资格、结果/warm 独立寿命保持不变，
+没有新增导出符号。
+
 四种结果各有 `GetInfo` 与按语义块命名的 indexed getter。调用方把输出记录的 `struct_size`
 设为编译时的完整 extent：已发布的完整 extent 或更大的未来尾部可接受；未发布的中间尺寸与
 过小尺寸被拒绝，未知尾部不写。可增长的复杂记录逐项读取，而不是把当前库的 struct stride
