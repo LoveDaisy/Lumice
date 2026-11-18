@@ -537,6 +537,75 @@ bool ResetRestoresTheNaturalHeight(ImGuiTestContext* ctx, bool compact) {
   return true;
 }
 
+// Match every ASCII label glyph to a full atlas quad in the actual draw command, then check
+// that command's raster clip. Submitted text/vertices alone cannot prove unclipped lettering.
+bool ChipGlyphsAreUnclipped(ImGuiTestContext* ctx, const ImGuiTestItemInfo& item, const char* label) {
+  const ImDrawList& draw = *item.Window->DrawList;
+  ImFont* font = ImGui::GetFont();
+  const float font_scale = ImGui::GetFontSize() / font->FontSize;
+  float previous_x = item.RectFull.Min.x - 1.0f;
+  for (const char* ch = label; *ch != '\0'; ++ch) {
+    const ImFontGlyph* glyph = font->FindGlyphNoFallback(static_cast<ImWchar>(*ch));
+    if (glyph == nullptr || !glyph->Visible) {
+      return false;
+    }
+    bool found = false;
+    for (const ImDrawCmd& cmd : draw.CmdBuffer) {
+      const ImRect clip(ImVec2(cmd.ClipRect.x, cmd.ClipRect.y), ImVec2(cmd.ClipRect.z, cmd.ClipRect.w));
+      for (unsigned int i = cmd.IdxOffset; i < cmd.IdxOffset + cmd.ElemCount; ++i) {
+        const unsigned int v = cmd.VtxOffset + draw.IdxBuffer[i];
+        if (v + 3 >= static_cast<unsigned int>(draw.VtxBuffer.Size)) {
+          continue;
+        }
+        const auto& a = draw.VtxBuffer[v];
+        const auto& b = draw.VtxBuffer[v + 2];
+        if (a.uv.x == glyph->U0 && a.uv.y == glyph->V0 && a.pos.x > previous_x && item.RectFull.Contains(a.pos) &&
+            (b.uv.x != glyph->U1 || b.uv.y != glyph->V1)) {
+          ctx->LogInfo(
+              "Glyph %c candidate: pos=(%.2f,%.2f)-(%.2f,%.2f) UV=(%.6f,%.6f)-(%.6f,%.6f) "
+              "expected UV=(%.6f,%.6f)-(%.6f,%.6f) glyph bounds=(%.1f,%.1f)-(%.1f,%.1f)",
+              *ch, a.pos.x, a.pos.y, b.pos.x, b.pos.y, a.uv.x, a.uv.y, b.uv.x, b.uv.y, glyph->U0, glyph->V0, glyph->U1,
+              glyph->V1, glyph->X0, glyph->Y0, glyph->X1, glyph->Y1);
+          unsigned char* pixels = nullptr;
+          int atlas_width = 0;
+          int atlas_height = 0;
+          font->ContainerAtlas->GetTexDataAsAlpha8(&pixels, &atlas_width, &atlas_height);
+          int lost_alpha = 0;
+          for (int y = static_cast<int>(std::round(b.uv.y * atlas_height));
+               y < static_cast<int>(std::round(glyph->V1 * atlas_height)); ++y) {
+            for (int x = static_cast<int>(std::round(glyph->U0 * atlas_width));
+                 x < static_cast<int>(std::round(glyph->U1 * atlas_width)); ++x) {
+              lost_alpha = ImMax(lost_alpha, static_cast<int>(pixels[y * atlas_width + x]));
+            }
+          }
+          ctx->LogInfo("Cropped atlas tail maximum alpha=%d", lost_alpha);
+        }
+        if (a.uv.x != glyph->U0 || a.uv.y != glyph->V0 || b.uv.x != glyph->U1 || b.uv.y != glyph->V1 ||
+            a.pos.x <= previous_x || !item.RectFull.Contains(a.pos) || b.pos.x > item.RectFull.Max.x) {
+          continue;
+        }
+        const ImRect ink(a.pos, b.pos);
+        if (std::abs(ink.GetWidth() - (glyph->X1 - glyph->X0) * font_scale) >= 0.1f ||
+            std::abs(ink.GetHeight() - (glyph->Y1 - glyph->Y0) * font_scale) >= 0.1f || !clip.Contains(ink)) {
+          return false;
+        }
+        previous_x = a.pos.x;
+        found = true;
+        break;
+      }
+      if (found) {
+        break;
+      }
+    }
+    if (!found) {
+      ctx->LogInfo("Axis %s: full glyph %c not found in the raster-clipped draw commands", label, *ch);
+      return false;
+    }
+  }
+  ctx->LogInfo("Axis %s: every glyph has a full atlas quad inside its actual raster clip", label);
+  return true;
+}
+
 }  // namespace
 
 void RegisterEditModalTests(ImGuiTestEngine* engine) {
@@ -575,8 +644,29 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
         const auto chip = [&](const gui::AxisPresetEntry& entry) -> bool {
           const std::string ref = std::string("**/") + entry.label + "##axis_label_chip";
           const auto item = ctx->ItemInfo(ref.c_str());
-          IM_CHECK_RETV(item.ID != 0 && item.Window->InnerClipRect.Contains(item.RectFull), false);
-          IM_CHECK_RETV(ObserveTooltip(ctx, item.RectFull.GetCenter(), kText), false);
+          IM_CHECK_RETV(item.ID != 0 && item.Window != nullptr, false);
+          ctx->LogInfo("Axis chip %s: rect=(%.1f,%.1f)-(%.1f,%.1f) clip=(%.1f,%.1f)-(%.1f,%.1f)", entry.label,
+                       item.RectFull.Min.x, item.RectFull.Min.y, item.RectFull.Max.x, item.RectFull.Max.y,
+                       item.Window->InnerClipRect.Min.x, item.Window->InnerClipRect.Min.y,
+                       item.Window->InnerClipRect.Max.x, item.Window->InnerClipRect.Max.y);
+          const ImRect clip = item.Window->InnerClipRect;
+          // Compact's scaled scrollbar already trims 5px of Custom's right padding. It must
+          // not trim more, touch any lettering, or make the chip unclickable.
+          const float allowed_padding_clip = multiplier == 1.5f && entry.id == gui::AxisPreset::kCustom ? 5.0f : 0.0f;
+          IM_CHECK_RETV(item.RectFull.Min.x >= clip.Min.x && item.RectFull.Min.y >= clip.Min.y &&
+                            item.RectFull.Max.y <= clip.Max.y &&
+                            item.RectFull.Max.x <= clip.Max.x + allowed_padding_clip,
+                        false);
+          IM_CHECK_RETV(ChipGlyphsAreUnclipped(ctx, item, entry.label), false);
+          ctx->LogInfo(
+              "Axis relative geometry: client=%.0fx%.0f host=%.0fx%.0f clip=%.0fx%.0f offset=%.0f,%.0f width=%.0f "
+              "overflow=%.0f",
+              ImGui::GetIO().DisplaySize.x, ImGui::GetIO().DisplaySize.y, item.Window->Size.x, item.Window->Size.y,
+              clip.GetWidth(), clip.GetHeight(), item.RectFull.Min.x - clip.Min.x, item.RectFull.Min.y - clip.Min.y,
+              item.RectFull.GetWidth(), ImMax(0.0f, item.RectFull.Max.x - clip.Max.x));
+          const std::string capture =
+              std::string("axis-") + entry.label + (multiplier == 1.0f ? "-1x.png" : "-15x.png");
+          IM_CHECK_RETV(ObserveTooltip(ctx, item.RectFull.GetCenter(), kText, true, capture.c_str()), false);
           ctx->ItemClick(ref.c_str());
           ctx->Yield(2);
           IM_CHECK_RETV(gui::GetEditModalBuffers().axis_preset == entry.id, false);
