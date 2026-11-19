@@ -405,11 +405,11 @@ TEST(Workspace, AutomaticScopeMismatchIsAMissButExplicitMismatchIsRefused) {
 }
 
 TEST(Workspace, BothContextScopesReuseOnlyTheirOwnMembers) {
-  // A regular prism's 60-degree side-face wedge has these twelve physical members.
-  // This list is a face-geometry oracle, not the production fingerprint.
-  const std::vector<std::vector<int>> literal_members{ { 3, 5 } };
-  const std::vector<std::vector<int>> class_members{ { 3, 5 }, { 3, 7 }, { 4, 6 }, { 4, 8 }, { 5, 3 }, { 5, 7 },
-                                                     { 6, 4 }, { 6, 8 }, { 7, 3 }, { 7, 5 }, { 8, 4 }, { 8, 6 } };
+  // On a regular prism with a full-sphere uniform orientation, P and D fix each basal
+  // face; B exchanges the two. Thus reflection off face 1 has exactly these two physical
+  // members, independently of the production fingerprint and member-expansion algorithm.
+  const std::vector<std::vector<int>> literal_members{ { 1 } };
+  const std::vector<std::vector<int>> class_members{ { 1 }, { 2 } };
   const auto sorted = [](std::vector<std::vector<int>> members) {
     std::sort(members.begin(), members.end());
     return members;
@@ -419,7 +419,7 @@ TEST(Workspace, BothContextScopesReuseOnlyTheirOwnMembers) {
     const ConfigManager config = survey::RandomPrismScene();
     std::unique_ptr<AnalysisWorkspace> workspace;
     ASSERT_TRUE(AnalysisWorkspace::Create(config, &workspace).Ok());
-    SurveyRequest survey_request = SurveyOf({ 3, 5 });
+    SurveyRequest survey_request = SurveyOf(literal_members.front());
     survey_request.symmetry_bits = scope;
     // Build the real structure and a small, real probe through their existing producers.
     // This completed value tests explicit consumption, NOT automatic survey-slot insertion;
@@ -455,7 +455,7 @@ TEST(Workspace, BothContextScopesReuseOnlyTheirOwnMembers) {
     EXPECT_EQ(workspace->OccupiedSlotCount(), 0);
     const long runs = workspace->StructureRunCount();
 
-    SinglePathRequest point_request = PointOf({ 3, 5 });
+    SinglePathRequest point_request = PointOf(literal_members.front());
     point_request.symmetry_bits = scope;
     point_request.warm_candidate = HarvestSurveyResult(source);
     PointResult warm_point;
@@ -469,7 +469,7 @@ TEST(Workspace, BothContextScopesReuseOnlyTheirOwnMembers) {
 
     ProbeRequest probe_request;
     probe_request.crystal_id = 1;
-    probe_request.path_layers = { { 3, 5 } };
+    probe_request.path_layers = literal_members;
     probe_request.symmetry_bits = scope;
     probe_request.at_altitude_deg = -30;
     probe_request.sample_count = kProfileSamples;
@@ -484,7 +484,7 @@ TEST(Workspace, BothContextScopesReuseOnlyTheirOwnMembers) {
     EXPECT_EQ(workspace->StructureRunCount(), runs);
 
     // The numerical oracle recomputes its profile independently, but shares the immutable
-    // structure: re-solving the twelve-member T0/T1 context proves no additional numeric fact.
+    // structure: re-solving the same T0/T1 context proves no additional numeric fact.
     // No profile facts are available on this candidate, so WarmReused cannot answer this leg.
     WarmCandidate structure_only = HarvestSurveyResult(source);
     structure_only.facts.has_probe = false;
