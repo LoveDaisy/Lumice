@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795086412491,
+  "lastUpdate": 1795086414136,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9620,50 +9620,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "2d8b602f597c2077eef981ad5ed97922620caecc",
-          "message": "Merge pull request #502 from LoveDaisy/fix/cli-verbose-help-level\n\nfix(cli): describe -v as verbose level in help text",
-          "timestamp": "2026-10-17T16:38:00+08:00",
-          "tree_id": "ee41ffe66d42cacfc9fedf0ceb7e26dc02a0ea97",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/2d8b602f597c2077eef981ad5ed97922620caecc"
-        },
-        "date": 1792226466095,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 98.7,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 100.1,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 99,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 94.9,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "d18ef073971c4a72f49515f970489327eb2d6464",
           "message": "Merge pull request #503 from LoveDaisy/fix/cli-verbose-help-level\n\nfix(cli): describe -v as verbose level in help text, pin -v/-d level mapping",
           "timestamp": "2026-10-17T16:55:44+08:00",
@@ -14003,6 +13959,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 95.4,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "14c782141958dfa028fa7a884b6858d45753a67b",
+          "message": "Merge pull request #618 from LoveDaisy/feat/gui-feedback-1118\n\nfix: address GUI raypath analysis feedback from November 18",
+          "timestamp": "2026-11-19T19:03:16+08:00",
+          "tree_id": "66ecc42f7e82780ba7e0c083dae012cfa0c90fa8",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/14c782141958dfa028fa7a884b6858d45753a67b"
+        },
+        "date": 1795086413775,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 97.2,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 99.8,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 97.9,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 93.4,
             "unit": "%"
           }
         ]
