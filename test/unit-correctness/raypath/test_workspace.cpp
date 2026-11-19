@@ -15,6 +15,7 @@
 #include "config/config_manager.hpp"
 #include "core/crystal_param.hpp"
 #include "raypath/detail/survey/survey_assembly.hpp"
+#include "raypath/detail/survey/survey_probe.hpp"
 #include "raypath/prepared_geometry.hpp"
 #include "raypath/probe_analysis.hpp"
 #include "raypath/query_control.hpp"
@@ -387,6 +388,20 @@ TEST(Workspace, AutomaticScopeMismatchIsAMissButExplicitMismatchIsRefused) {
   EXPECT_FALSE(workspace->QueryPoint(point_request, true, &point).Ok());
   probe_request.warm_candidate = HarvestSurveyResult(survey);
   EXPECT_FALSE(workspace->QueryProbe(probe_request, &probe).Ok());
+
+  // The literal automatic slot is compatible now, but cannot override bad explicit input.
+  point_request.symmetry_bits = probe_request.symmetry_bits = 0;
+  point_request.warm_candidate.reset();
+  probe_request.warm_candidate.reset();
+  ASSERT_TRUE(workspace->QueryPoint(point_request, true, &point).Ok());
+  EXPECT_EQ(point.Data().survey_context.source, ContextSource::kWarm);
+  ASSERT_TRUE(workspace->QueryProbe(probe_request, &probe).Ok());
+  EXPECT_EQ(probe.Data().context.source, ContextSource::kWarm);
+  WarmCandidate wrong = HarvestSurveyResult(survey);
+  wrong.config_fingerprint.clear();
+  point_request.warm_candidate = probe_request.warm_candidate = wrong;
+  EXPECT_FALSE(workspace->QueryPoint(point_request, true, &point).Ok());
+  EXPECT_FALSE(workspace->QueryProbe(probe_request, &probe).Ok());
 }
 
 TEST(Workspace, BothContextScopesReuseOnlyTheirOwnMembers) {
@@ -406,16 +421,46 @@ TEST(Workspace, BothContextScopesReuseOnlyTheirOwnMembers) {
     ASSERT_TRUE(AnalysisWorkspace::Create(config, &workspace).Ok());
     SurveyRequest survey_request = SurveyOf({ 3, 5 });
     survey_request.symmetry_bits = scope;
-    survey::SurveyResult source;
-    ASSERT_TRUE(workspace->QuerySurvey(survey_request, &source).Ok());
+    // Build the real structure and a small, real probe through their existing producers.
+    // This completed value tests explicit consumption, NOT automatic survey-slot insertion;
+    // ContextScopePreservesAutomaticExplicitAndLegacyContracts covers both automatic scopes.
+    constexpr int kProfileSamples = 20000;
+    PreparedGeometry geometry;
+    ASSERT_TRUE(PrepareGeometry(config.crystals_.at(1), &geometry).Ok());
+    survey::SurveyAssemblyOptions options;
+    options.context_only = true;
+    options.geometry = &geometry;
+    survey::SurveyData data;
+    ASSERT_TRUE(survey::AssembleSurveyData(config, survey_request, &data, options).Ok());
+    survey::CrystalSceneScope producer_scope;
+    ASSERT_TRUE(survey::ResolveCrystalSceneScope(config, survey_request, &producer_scope).Ok());
+    survey::ProbeInput producer;
+    producer.table = &geometry.table;
+    producer.polygons = &geometry.polygons;
+    producer.representative = &survey_request.path_layers.front();
+    producer.density = &producer_scope.density;
+    producer.wavelength_nm = data.wavelength_nm;
+    producer.refractive_index = data.refractive_index;
+    producer.member_count = static_cast<int>(data.members.size());
+    producer.sample_count = kProfileSamples;
+    SunIncidentDirection(config.scene_.light_source_.param_, producer.incident);
+    survey::RunSolarRadialProbe(producer, &data);
+    survey::SurveyResult source(std::move(data));
+    ASSERT_EQ(source.Data().execution, ExecutionOutcome::kCompleted);
+    ASSERT_EQ(source.Data().probes.size(), 1u);
+    ASSERT_EQ(source.Data().probes.front().State(), survey::EvidenceState::kFinite);
+    EXPECT_EQ(source.Data().probes.front().spec.sample_count, kProfileSamples);
     const auto& expected = scope == 0 ? literal_members : class_members;
     EXPECT_EQ(sorted(source.Data().members), expected);
+    EXPECT_EQ(workspace->OccupiedSlotCount(), 0);
     const long runs = workspace->StructureRunCount();
 
     SinglePathRequest point_request = PointOf({ 3, 5 });
     point_request.symmetry_bits = scope;
+    point_request.warm_candidate = HarvestSurveyResult(source);
     PointResult warm_point;
     ASSERT_TRUE(workspace->QueryPoint(point_request, true, &warm_point).Ok());
+    EXPECT_EQ(warm_point.Data().meta.execution, ExecutionOutcome::kCompleted);
     EXPECT_EQ(warm_point.Data().members.members, literal_members);
     ASSERT_TRUE(warm_point.Data().survey_context.structure.has_value());
     EXPECT_EQ(sorted(warm_point.Data().survey_context.structure->Members().members), expected);
@@ -427,25 +472,30 @@ TEST(Workspace, BothContextScopesReuseOnlyTheirOwnMembers) {
     probe_request.path_layers = { { 3, 5 } };
     probe_request.symmetry_bits = scope;
     probe_request.at_altitude_deg = -30;
-    probe_request.sample_count = 2000000;  // the producing survey's actual lattice
+    probe_request.sample_count = kProfileSamples;
     probe_request.budget_ms = 120000;
+    probe_request.warm_candidate = HarvestSurveyResult(source);
     ProbeResult warm_probe;
     ASSERT_TRUE(workspace->QueryProbe(probe_request, &warm_probe).Ok());
+    EXPECT_EQ(warm_probe.Data().meta.execution, ExecutionOutcome::kCompleted);
     EXPECT_EQ(warm_probe.Data().context.source, ContextSource::kWarm);
     ASSERT_TRUE(warm_probe.Data().context.structure.has_value());
     EXPECT_EQ(sorted(warm_probe.Data().context.structure->Members().members), expected);
     EXPECT_EQ(workspace->StructureRunCount(), runs);
 
+    // The numerical oracle recomputes its profile independently, but shares the immutable
+    // structure: re-solving the twelve-member T0/T1 context proves no additional numeric fact.
+    // No profile facts are available on this candidate, so WarmReused cannot answer this leg.
+    WarmCandidate structure_only = HarvestSurveyResult(source);
+    structure_only.facts.has_probe = false;
+    structure_only.facts.probe_samples.clear();
+    probe_request.warm_candidate = std::move(structure_only);
     std::unique_ptr<AnalysisWorkspace> cold;
     ASSERT_TRUE(AnalysisWorkspace::Create(config, &cold).Ok());
-    PointResult cold_point;
-    ASSERT_TRUE(cold->QueryPoint(point_request, true, &cold_point).Ok());
-    ASSERT_TRUE(cold_point.Data().survey_context.structure.has_value());
-    EXPECT_EQ(sorted(cold_point.Data().survey_context.structure->Members().members), expected);
-    EXPECT_EQ(cold_point.Data().members.members, warm_point.Data().members.members);
-    EXPECT_EQ(cold_point.Data().survey_context.object.state, warm_point.Data().survey_context.object.state);
     ProbeResult cold_probe;
     ASSERT_TRUE(cold->QueryProbe(probe_request, &cold_probe).Ok());
+    EXPECT_EQ(cold_probe.Data().meta.execution, ExecutionOutcome::kCompleted);
+    EXPECT_EQ(cold_probe.Data().context.source, ContextSource::kWarm);
     ASSERT_TRUE(cold_probe.Data().context.structure.has_value());
     EXPECT_EQ(sorted(cold_probe.Data().context.structure->Members().members), expected);
     ASSERT_EQ(warm_probe.Data().profiles.size(), 1u);
@@ -457,19 +507,27 @@ TEST(Workspace, BothContextScopesReuseOnlyTheirOwnMembers) {
     EXPECT_EQ(warm_profile.Reading().source, ProbeProfileSource::kWarmReused);
     EXPECT_EQ(cold_profile.Reading().source, ProbeProfileSource::kRecomputed);
     EXPECT_EQ(warm_profile.Scope().members.members, literal_members);
+    EXPECT_EQ(cold_profile.Scope().members.members, literal_members);
+    EXPECT_EQ(warm_profile.sample_count, kProfileSamples);
+    EXPECT_EQ(cold_profile.sample_count, kProfileSamples);
+    ASSERT_FALSE(warm_profile.Reading().samples.empty());
     ASSERT_EQ(warm_profile.Reading().samples.size(), cold_profile.Reading().samples.size());
+    size_t positive_bins = 0;
     for (size_t i = 0; i < warm_profile.Reading().samples.size(); ++i) {
-      const double a = warm_profile.Reading().samples[i].value;
-      const double b = cold_profile.Reading().samples[i].value;
-      EXPECT_TRUE((std::isnan(a) && std::isnan(b)) || a == b);
+      const auto& warm_sample = warm_profile.Reading().samples[i];
+      const auto& cold_sample = cold_profile.Reading().samples[i];
+      EXPECT_EQ(warm_sample.delta_deg, cold_sample.delta_deg);
+      EXPECT_TRUE((std::isnan(warm_sample.value) && std::isnan(cold_sample.value)) ||
+                  warm_sample.value == cold_sample.value);
+      EXPECT_EQ(warm_sample.k, cold_sample.k);
+      if (std::isfinite(cold_sample.value)) {
+        EXPECT_TRUE(std::isfinite(warm_sample.value));
+        EXPECT_EQ(warm_sample.k_eff, cold_sample.k_eff);
+        positive_bins += cold_sample.value > 0.0 && cold_sample.k > 0;
+      }
     }
+    EXPECT_GT(positive_bins, 0u);  // all-empty/all-NaN profiles cannot pass the numeric oracle
 
-    // An explicit incompatible candidate must not fall back to the compatible automatic slot.
-    WarmCandidate wrong = HarvestSurveyResult(source);
-    wrong.config_fingerprint.clear();
-    point_request.warm_candidate = wrong;
-    PointResult refused;
-    EXPECT_FALSE(workspace->QueryPoint(point_request, true, &refused).Ok());
     workspace.reset();
     source = survey::SurveyResult{};
     EXPECT_EQ(sorted(warm_point.Data().survey_context.structure->Members().members), expected);
