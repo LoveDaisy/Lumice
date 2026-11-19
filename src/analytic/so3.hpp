@@ -184,9 +184,9 @@ inline void TangentBasis(const double direction[3], double basis[2][3]) {
 }
 
 // Singular values and null vector of a 2x3 matrix with rows r0, r1 (the residual Jacobian A).
-// sigma1 * sigma2 = |r0 x r1| (Lagrange's identity: no cancellation), sigma1^2 the larger
-// eigenvalue of the Gram matrix G = A A^T, sigma2 = product / sigma1 — so a sigma2 near the 1e-8
-// rank gate keeps its relative precision, which det = |r0|^2 |r1|^2 - (r0.r1)^2 would not. The
+// sigma1 * sigma2 = |r0 x r1| (Lagrange's identity), sigma1^2 the larger eigenvalue of the Gram
+// matrix G = A A^T, sigma2 = product / sigma1. This avoids subtracting Gram products to recover
+// a small sigma2, but nearly parallel rows can still cancel within the cross product. The
 // eigenvalue is written as (g00 + g11) / 2 + hypot((g00 - g11) / 2, g01), not through the
 // characteristic polynomial's discriminant trace^2 - 4 det: that difference cancels when
 // sigma1 ~ sigma2 and its square root then carries ~sqrt(eps) = 1e-8 relative error into sigma1

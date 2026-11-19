@@ -303,9 +303,9 @@ inline NormalJacobian NormalJacobianOf(const Jet<3> direction[3]) {
   return out;
 }
 
-// NormalJacobian at pose `r`: the one definition EvaluateRegularState records for an accepted pose
-// and the single-pose diagnostics (path_fiber.hpp EvaluatePathDiagnostics) report, so a trace's
-// per-pose arrays and a fresh evaluation at the same pose are the same numbers.
+// NormalJacobian at pose `r`: the same mathematical definition EvaluateRegularState records
+// for an accepted pose. A fresh single-pose evaluation recomputes the Jet/projection/SVD; separate
+// optimized evaluations need not be bit-identical. State-to-array writes, in contrast, are copies.
 template <class Map>
 NormalJacobian NormalJacobianAt(const Map& map, const double r[9]) {
   Jet<3> direction[3];

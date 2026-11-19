@@ -9,8 +9,8 @@
 // fails to compile rather than silently dropping a derivative term.
 //
 // The value part of every operation is the double operation itself. It is not promised to be
-// bit-identical to the double instantiation of the same code: the compiler may fuse a double
-// `a * b + c` into one FMA, which it cannot do across the separate Jet operators.
+// bit-identical to the double instantiation of the same code: inlining and contraction may expose
+// different multiply/add boundaries in the two instantiations or in different calling contexts.
 
 #include <cmath>
 
