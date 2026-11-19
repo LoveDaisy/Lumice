@@ -1,56 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794967145896,
+  "lastUpdate": 1795086409335,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "2d8b602f597c2077eef981ad5ed97922620caecc",
-          "message": "Merge pull request #502 from LoveDaisy/fix/cli-verbose-help-level\n\nfix(cli): describe -v as verbose level in help text",
-          "timestamp": "2026-10-17T16:38:00+08:00",
-          "tree_id": "ee41ffe66d42cacfc9fedf0ceb7e26dc02a0ea97",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/2d8b602f597c2077eef981ad5ed97922620caecc"
-        },
-        "date": 1792226460167,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 342140.9,
-            "unit": "rays/sec",
-            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 504809.8,
-            "unit": "rays/sec",
-            "extra": "CPU: Neoverse-N2\\nCores: 4"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 364247.8,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 7763 64-Core Processor\\nCores: 4"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 484073.5,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 9V45 96-Core Processor                \\nCores: 4"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -4800,6 +4752,54 @@ window.BENCHMARK_DATA = {
             "value": 307327.2,
             "unit": "rays/sec",
             "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "14c782141958dfa028fa7a884b6858d45753a67b",
+          "message": "Merge pull request #618 from LoveDaisy/feat/gui-feedback-1118\n\nfix: address GUI raypath analysis feedback from November 18",
+          "timestamp": "2026-11-19T19:03:16+08:00",
+          "tree_id": "66ecc42f7e82780ba7e0c083dae012cfa0c90fa8",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/14c782141958dfa028fa7a884b6858d45753a67b"
+        },
+        "date": 1795086408103,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 285453,
+            "unit": "rays/sec",
+            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 505742.5,
+            "unit": "rays/sec",
+            "extra": "CPU: Neoverse-N2\\nCores: 4"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 527203.4,
+            "unit": "rays/sec",
+            "extra": "CPU: Intel(R) Xeon(R) 6975P-C\\nCores: 4"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 373265.4,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 9V74 80-Core Processor                \\nCores: 4"
           }
         ]
       }
