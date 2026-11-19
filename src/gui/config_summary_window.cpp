@@ -11,6 +11,7 @@
 #include "gui/secondary_window_sizing.hpp"
 #include "gui/semantic_colors.hpp"  // WarningFillColor — the badge dot's tone
 #include "gui/theme.hpp"
+#include "gui/tooltip.hpp"
 #include "imgui.h"
 
 namespace lumice::gui {
@@ -131,7 +132,7 @@ void DrawDocumentTable(const char* table_id, const ConfigSummaryTable& table) {
                                 (text_max.y + ImGui::GetItemRectMin().y) * 0.5f);
         ImGui::GetWindowDrawList()->AddCircleFilled(dot_center, dot_radius, ImGui::GetColorU32(WarningFillColor(0.9f)));
         if (ImGui::IsItemHovered()) {
-          ImGui::SetTooltip("%s", row.badge_tooltip.c_str());
+          SetWrappedTooltip("%s", row.badge_tooltip.c_str());
         }
       }
     }

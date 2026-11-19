@@ -24,26 +24,27 @@
 
 #include <gtest/gtest.h>
 
+#include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <memory>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "core/optics.hpp"  // IceRefractiveIndex: the engine's dispersion table, independent of any document echo
+#include "gui/analysis_panel.hpp"
 #include "gui/analyze_overview.hpp"
+#include "gui/analyze_point_view.hpp"
+#include "gui/file_io.hpp"
+#include "gui/gui_state.hpp"
 #include "include/lumice_base.h"
 #include "include/lumice_raypath.h"
 #include "include/lumice_scene.h"
+#include "util/sky_direction.hpp"
 
 namespace lumice::gui {
 namespace {
-
-struct SceneDeleter {
-  void operator()(LUMICE_Scene* s) const { LUMICE_SceneDestroy(s); }
-};
-struct SurveyDeleter {
-  void operator()(LUMICE_PathSurvey* r) const { LUMICE_PathSurveyDestroy(r); }
-};
 
 std::unique_ptr<LUMICE_Scene, SceneDeleter> SceneFromConfig(const char* name) {
   const std::string path = std::string(LUMICE_E2E_CONFIG_DIR) + "/" + name;
@@ -81,6 +82,102 @@ bool HasLine(const std::vector<std::string>& lines, const std::string& needle) {
 }
 
 }  // namespace
+
+// Reconstructs the reported sun/ROI/path using the existing Parry fixture (h=1.2,
+// zenith/roll sigma=1 degree), NOT the unavailable original scene. Only two context
+// scopes exist: all checked is physical; none and P-only both request literal.
+class ParryContextChain : public ::testing::TestWithParam<std::pair<int, int>> {};
+
+TEST_P(ParryContextChain, SurveyThenPoseUsesTheSelectedScope) {
+  auto scene = SceneFromConfig("raypath_symmetry_parry.json");
+  ASSERT_NE(scene, nullptr);
+  SurveyExecutor executor;
+  executor.SetScene(std::move(scene));
+  GuiState state;
+  const auto [entry_face, bits] = GetParam();
+  const int exit_face = entry_face == 8 ? 1 : 2;
+  const std::string display = std::to_string(entry_face) + "-" + std::to_string(exit_face);
+  auto payload = std::make_shared<AnalysisPayload>();
+  payload->snapshot_generation = 7;
+  LUMICE_RaypathHistogramEntry row{};
+  row.chain_len = 1;
+  row.chain[0].crystal_id = 1;
+  row.chain[0].segment_len = 2;
+  row.chain[0].segment[0] = entry_face;
+  row.chain[0].segment[1] = exit_face;
+  std::snprintf(row.display, sizeof(row.display), "%s", display.c_str());
+  payload->entries.push_back(row);
+  state.analysis_result.payload = payload;
+  state.analysis.selected_entry = display;
+  state.analysis.symmetry_p = (bits & 1) != 0;
+  state.analysis.symmetry_b = (bits & 2) != 0;
+  state.analysis.symmetry_d = (bits & 4) != 0;
+  AltAzToDir(36.0f, 52.0f, state.analysis.sky_point.dir);
+  state.analysis.sky_point.valid = true;
+  const auto wait_for = [&](auto pump, auto ready) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(45);
+    while (!ready() && std::chrono::steady_clock::now() < deadline) {
+      pump();
+      std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    return ready();
+  };
+  ASSERT_TRUE(
+      wait_for([&] { PumpSurveyQuery(state, executor, 100.0); },
+               [&] { return state.analysis.survey.adopted_result || !state.analysis.survey.adopted_error.empty(); }));
+  ASSERT_TRUE(state.analysis.survey.adopted_error.empty()) << state.analysis.survey.adopted_error;
+  LUMICE_PathSurveyScope scope{};
+  scope.struct_size = sizeof(scope);
+  ASSERT_EQ(LUMICE_PathSurveyGetScope(state.analysis.survey.adopted_result.get(), &scope), LUMICE_PATH_READ_OK);
+  EXPECT_EQ(scope.member_kind, bits == 7 ? LUMICE_PATH_MEMBER_PHYSICAL_L2 : LUMICE_PATH_MEMBER_LITERAL);
+  EXPECT_DOUBLE_EQ(scope.sun_altitude_deg, 20.0);
+  LUMICE_PathSurveyInfo survey_info{};
+  survey_info.struct_size = sizeof(survey_info);
+  ASSERT_EQ(LUMICE_PathSurveyGetInfo(state.analysis.survey.adopted_result.get(), &survey_info), LUMICE_PATH_READ_OK);
+  ASSERT_TRUE(
+      wait_for([&] { PumpPointQuery(state, executor, 100.0); },
+               [&] { return state.analysis.point.adopted_result || !state.analysis.point.adopted_error.empty(); }));
+  ASSERT_TRUE(state.analysis.point.adopted_error.empty()) << state.analysis.point.adopted_error;
+  LUMICE_PathPointInfo point_info{};
+  point_info.struct_size = sizeof(point_info);
+  ASSERT_EQ(LUMICE_PathPointGetInfo(state.analysis.point.adopted_result.get(), &point_info), LUMICE_PATH_READ_OK);
+  EXPECT_NEAR(point_info.target_altitude_deg, 36.0, 1e-4);
+  EXPECT_NEAR(point_info.target_azimuth_deg, 52.0, 1e-4);
+  ASSERT_EQ(point_info.face_count, 2);
+  EXPECT_EQ(point_info.faces[0], entry_face);
+  EXPECT_EQ(point_info.faces[1], exit_face);
+  LUMICE_PathContext context{};
+  context.struct_size = sizeof(context);
+  // Pose deliberately does not request a context block. The Workspace/C tests exercise
+  // actual context/profile consumption; automatic warm still supplies validated solver starts.
+  EXPECT_EQ(LUMICE_PathPointGetContext(state.analysis.point.adopted_result.get(), &context),
+            LUMICE_PATH_READ_NOT_AVAILABLE);
+  std::printf(
+      "Parry reconstruction path=%s PBD=%d context_selection=%d survey_execution=%d members=%zu "
+      "point_execution=%d context_requested=0\n",
+      display.c_str(), bits, state.analysis.point.key.selection.symmetry_bits_plus_one, survey_info.execution,
+      scope.routing_member_count, point_info.execution);
+
+  // Change only symmetry while a point is in flight. The old identity must not land
+  // under the new selection, even though the literal fiber path and target did not move.
+  state.analysis.symmetry_p = state.analysis.symmetry_b = state.analysis.symmetry_d = bits != 7;
+  PumpPointQuery(state, executor, 101.0);
+  const auto first = state.analysis.point.intent_id;
+  state.analysis.symmetry_p = state.analysis.symmetry_b = state.analysis.symmetry_d = bits == 7;
+  PumpPointQuery(state, executor, 102.0);
+  EXPECT_NE(state.analysis.point.intent_id, first);
+  EXPECT_EQ(state.analysis.point.adopted_result, nullptr);
+  ASSERT_TRUE(
+      wait_for([&] { PumpPointQuery(state, executor, 103.0); },
+               [&] { return state.analysis.point.adopted_result || !state.analysis.point.adopted_error.empty(); }));
+  EXPECT_TRUE(state.analysis.point.adopted_error.empty()) << state.analysis.point.adopted_error;
+  EXPECT_EQ(state.analysis.point.key.selection.symmetry_bits_plus_one, bits == 7 ? 0 : 1);
+  executor.ShutdownAndJoin();
+}
+
+INSTANTIATE_TEST_SUITE_P(ReportedPaths, ParryContextChain,
+                         ::testing::Values(std::make_pair(8, 7), std::make_pair(8, 0), std::make_pair(8, 1),
+                                           std::make_pair(4, 7), std::make_pair(4, 0), std::make_pair(4, 1)));
 
 // The C01 anchor: the 3-5 class on the fully random prism, read into the overview model, with
 // the dispersion restated from the document's own quantities against the closed-form slab

@@ -536,8 +536,9 @@ void RenderAnalyzeSunGlobeRegion(GuiState& state, const ImVec2& size);
 // The raypath 3D region — the ##AnalyzeRaypath3D placeholder's replacement: the crystal's
 // true-scale crystal rendered with the shared perspective/x-ray renderer + the current sample's
 // trace polyline, the world/crystal frame switch, the orbit camera, and the named
-// computing/refused/empty states.
-void RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size);
+// computing/refused/empty states in the window footer. Returns a current display failure for
+// that same footer, without allocating prose space in the canvas region.
+std::string RenderAnalyzeRay3DRegion(GuiState& state, const ImVec2& size);
 
 // The Pose & trace window (analyze-interaction-contract.md §7, 755.5): the free-floating
 // non-modal window that gathers the sky point's three faces — the sun-direction globe, the

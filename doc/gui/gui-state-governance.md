@@ -45,7 +45,12 @@ Render/Analyze 的纯文字双格是 T-session 工作区选择：当前格实填
 分量/样本切换与关开窗口保留；New/成功 Open 随整体文档重置回 Full；Revert 沿既有保留规则。
 切档不写共享样本游标、播放或查询身份，不进快照/配置/默认值，不 dirty、不发显示推送。
 
-**Look At 跟随（as-built）**：`GuiState::look_at` 只保存所选具名目标与跟随意图，是 T-session，不是相机姿态的第二份副本。具名方向、约束与状态转换由 `view_look_at` 单一 owner 解析；`RenderPreviewPanel` 在装配本帧 view 输入之前调用 `UpdateLockedLookAt`，且不受 View 折叠、是否已有纹理或 Run 状态影响。被接受的 `Elevation` / `Azimuth` 编辑与 preview camera drag 先解除 Lock，再保留本次输入；`Roll` / `FOV` / zoom 不解除。切到不同 lens 或进入 full-sky 禁用态会解除而不暂停旧锁；`Reset` 解除 Lock 但保留目标。`ResetFrontendState` 对 New / 成功 Open / Revert 都恢复 `Sun + unlocked`，失败或取消的 Open 不调用它，因而不清现有意图。该块不进 `.lmc`、用户默认值或 `ConfigSnapshot`，也不产生 dirty、epoch、display push 或额外 re-sim；太阳高度本身原有的 sim effect 不变。
+**Look At 跟随（as-built）**：`GuiState::look_at` 只保存目标（具名方向或真实无目标 `None`）与跟随意图，是 T-session，不是相机姿态的第二份副本，也不从角度反推目标。初始为 `None + unlocked`，None 无可解析方向，不能开启 Lock；控件禁用并提示先选择目标。具名方向、约束与状态转换由 `view_look_at` 单一 owner 解析；`RenderPreviewPanel` 在装配本帧 view 输入之前调用 `UpdateLockedLookAt`，且不受 View 折叠、是否已有纹理或 Run 状态影响。被接受的 `Elevation` / `Azimuth` 编辑与 preview camera drag 先解除 Lock，保留本次输入及旧目标供重锁；`Roll` / `FOV` / zoom 不解除。切到不同 lens 或进入 full-sky 禁用态会解除而不暂停旧锁、仍保留目标。选择 None 只清目标与 Lock、不改相机；`Reset` 还按当前 lens 恢复 FOV/Az/El/Roll。`ResetFrontendState` 对 New / 成功 Open / 有效 Revert 都恢复 `None + unlocked`，不额外覆盖该流程安装或保留的相机；失败或取消的 Open、无快照的 Revert 不调用它，因而不清现有意图。该块不进 `.lmc`、用户默认值或 `ConfigSnapshot`，也不产生 dirty、epoch、display push 或额外 re-sim / 查询；太阳高度本身原有的 sim effect 不变。
+
+**Raypath view 的 Overlays** 沿用窗口 `ImGuiStorage` 显示开关（默认开），统一管理对象、色散和合格
+verdict 常驻墨迹；没有 verdict-only 会话开关。profile hover 是逐帧覆写并在答案缺席/关窗时清除的
+T-session 瞬态，Overlays 关闭只阻止其地图墨迹，不阻止行反馈。标签避让/紧凑读回与 sky point 暗底笔
+纯属本帧显示，不写选点、样本、播放或查询，不进配置/快照/用户默认值；sky point 仍不受 Overlays 控制。
 
 > **Raypath view 的共享相机机制**：唯一合同见 [raypath-view-camera.md](raypath-view-camera.md) §6–8，验证边界见§10。
 > map已移除私有圆盘与相机副本互抄；两个画面消费上述T-view的同一有效帧输入，Look At仍由既有owner解析，空主图也reconcile。
@@ -519,7 +524,8 @@ GUI 的网格由 overlay 状态 + FOV 派生，核心文档的逐行角度表在
 
 Raypath view 的 map 状态、Pose & trace 的 point 状态各由自己的会话派生，使用
 `analyze_ui_widgets.hpp` 同一固定单行底栏机制。它们不是新的生命周期、持久态或文档字段；
-不 dirty、不重发查询，不把右侧独立答案或代表轨迹的在途状态混入本窗查询状态。
+不 dirty、不重发查询；Pose 底栏把当前 point 与 representative path 事实具名拼接，
+不把两者合成新的生命周期或覆盖 point 的 partial/wait 反馈。
 
 `WaitFeedbackTexts` 是绘制反馈，而非后台状态副本：`map_wait_line` / `map_superseding_note`
 由 Raypath view 底栏写入；历史字段名 `point_wait_line_fiber` 保留，唯一写点迁至 Pose 底栏；
@@ -528,21 +534,20 @@ Raypath view 的 map 状态、Pose & trace 的 point 状态各由自己的会话
 等待结束后清空；Analyze 帧仍由 workspace 入口先清，Render 帧由各开窗宿主先清再画，
 关窗字段沿用既有寿命、不冒充新鲜绘制。主窗活跃段与 survey 字段不受此迁移影响。
 
-### 10.5 Ray3D 报告的 stale-honest 保留与底栏 trace 瞬态（2026-11-17）
+### 10.5 Pose 两图去报告与当前状态归属（2026-11-19）
 
-`Ray3DReportRecord`（`analyze_survey.hpp`，挂在 analysis struct 的 trace 会话旁）是 session-tier
-显示保留：Ray3D 报告最后真正展示过的**持久**内容（drawn 的来源行、error/refused 的已格式化详情）
-及其来源身份（point 采纳 id + 分量）。样本切换的在途窗口里报告渲染它，而不是让 computing 文案
-反复进出（报告内容高度不动）。清理由读取点按身份核对完成——新点采纳 / 换分量 / 文档重置使
-`point_id`+`component` 不匹配即失效，整体 struct 重置随会话一起清；kHidden（reset/撤回，恰为
-失效事件族）显诚实空态，不显保留。记录只在持久臂捕获、瞬态臂只读；详情文本捕获时已格式化
-（瞬态期 handle 可能已被丢弃，不得回读）。不持久化、不 dirty、不进快照/查询键；关窗保留（同相机），
-重开先核身份再显。
+两图下方成功态来源行/姿态角与专用报告预算退役，`Ray3DReportRecord` 的显示保留副本随唯一
+消费者一起删除。冻结 point/trace 文档、当前 `RayTraceKeyFor` / `RayTraceDisplayStateFor` 绘制门
+不变；关闭窗口保留原查询/相机/档位，重开不发查询。新点/分量/撤回沿原会话治理，不新增失效写者。
 
-Pose 底栏的 trace 瞬态段（computing / not requested）：只在 point 已完成且当前样本有效时附在
-point 自己的词之后（point 优先，partial 旗标与 wait 字段的原写者不动）；drawn/error/refused 是
-答案、归报告，底栏不提。无新增反馈字段——底栏可见文案由窗口帧文本承载验证，绘制写者仍是
-底栏唯一站点。
+Pose 固定底栏同时表达 point 的 No target/Waiting/Cancelled/Refused/Ready/Partial 与当前
+representative path 的 computing/not requested/error/refused；健康路径不重复样本号。失败详情
+每帧从当前合法 key 的结果读取（含 reason/entry status/chain/corridor 适用性），不保留过去失败
+冒充当前状态；显示器/mesh 失败是同帧返回的展示事实，不建立缓存。partial 限定及空分量/无有效
+样本说明也归底栏，长文省略、hover 恢复原文，几何不随文字状态变化。
+
+底栏仍是唯一绘制站点，原 wait 字段的清理/写入合同不变，无新增反馈字段。不持久、不 dirty、
+不进配置快照或查询键。历史两行报告的 stale-honest retention 不再是当前寿命规则。
 
 ## 11. 视图侧副本与位置引用的重同步不变量
 

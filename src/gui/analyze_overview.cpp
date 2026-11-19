@@ -586,11 +586,10 @@ bool HoverableRow(const char* id, bool highlight_armed) {
 //
 // `row_readout` is the interactive host's read: non-null, the hoverable rows (the two linked
 // diagnose rows, the three profile reading rows and the ratio row) carry their addressable
-// surfaces and their THIS-frame highlight feedback, and every standing lands in the readout —
-// the verdict rows OR theirs, the profile rows write an exclusive standing the canvas consumes
-// next frame; the ratio row's feedback is local only (it names no spatial payload). The
-// highlight channel split wraps exactly the row-carrying body; the main-window summary passes
-// null and renders byte-identically to its previous shape.
+// surfaces and their THIS-frame highlight feedback. Only the profile rows write an exclusive
+// standing the canvas consumes next frame; verdict/Position and ratio feedback stays local.
+// The highlight channel split wraps exactly the row-carrying body; the main-window summary
+// passes null and renders byte-identically to its previous shape.
 void RenderSurveyDefaultLayer(const SurveyOverviewModel& model, SurveyRowHoverReadout* row_readout = nullptr) {
   // The interactive host's highlight channel: the window's own splitter, channel 1 carrying all
   // normal content, the hover backgrounds landing in channel 0 — the merge below puts them under
@@ -636,21 +635,20 @@ void RenderSurveyDefaultLayer(const SurveyOverviewModel& model, SurveyRowHoverRe
   // The colour verdict's main conclusion, default (the Dispersion/Diagnose row: 边位置、可见性/
   // 色彩主结论默认；coverage 不完整默认). Its notes and evidence basis stay in the evidence
   // group.
-  // The two linked rows (the verdict line and the Position line) are the verdict anchor's hover
-  // read (§16.1's A2 pilot): with a readout they carry their invisible hover surface, without
-  // one they are plain text and nothing else changes — the coverage qualifier line is NOT
-  // linked: its limit is carried by the anchor's own dashed form, hovering it adds nothing.
+  // The verdict and Position rows keep addressable hover surfaces and local highlights in the
+  // interactive host. They do not gate the persistent verdict anchor or write a session identity.
+  // The coverage qualifier remains plain text; the anchor carries that limit in its dashed form.
   if (model.diagnose.available) {
     ImGui::Bullet();
     ImGui::TextWrapped("Weight colour: %s, %s, %s.", model.diagnose.verdict_kind.c_str(), model.diagnose.color.c_str(),
                        model.diagnose.visible ? "visible" : "not visible");
     if (row_readout != nullptr) {
-      row_readout->verdict |= HoverableRow("###diagnose_verdict_row", true);
+      HoverableRow("###diagnose_verdict_row", true);
     }
     if (model.diagnose.position_available) {
       TextDeg("Position:", model.diagnose.position_deg);
       if (row_readout != nullptr) {
-        row_readout->verdict |= HoverableRow("###diagnose_position_row", true);
+        HoverableRow("###diagnose_position_row", true);
       }
     }
     if (!model.diagnose.coverage_complete) {
@@ -686,6 +684,10 @@ void RenderSurveyDefaultLayer(const SurveyOverviewModel& model, SurveyRowHoverRe
     // carries its hover surface and highlight; the standing is EXCLUSIVE — one pointer, one row
     // — and lands in the readout as the canvas's next-frame identity. The rows' own words stay
     // byte-identical: only the interaction surfaces are new.
+    if (row_readout != nullptr &&
+        (model.probe.edge_available || model.probe.peak_available || model.probe.separation_available)) {
+      DisabledWrappedText("Hover profile readings to locate them on the map (Overlays on).");
+    }
     if (model.probe.edge_available) {
       ImGui::Bullet();
       ImGui::TextWrapped("Profile edge %s", FormatDeg(model.probe.edge_deg).c_str());

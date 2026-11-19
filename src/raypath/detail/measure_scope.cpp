@@ -83,6 +83,13 @@ FamilyMeasureReading ReadFamilyMeasure(const AxisDistribution& axis) {
     classes[i] = ClassifyDim(*dims[i]);
   }
 
+  // Retain the exact fixed dimensions even when the routing domain refuses. A
+  // consumer may prove kinematic invariance over the non-fixed freedom envelope;
+  // it must still require ok before using this reading for routing or integration.
+  out.measure.zenith = MeasureOf(classes[0], *dims[0], true);
+  out.measure.azimuth = MeasureOf(classes[1], *dims[1], false);
+  out.measure.roll = MeasureOf(classes[2], *dims[2], false);
+
   // The all-fixed axis is the single pose — the one legal shape with a frozen azimuth (the 0D
   // arm; the ladder never freezes azimuth, the rank entry's kRefusedAzimuthFrozen semantics).
   out.single_pose = classes[0] == DimClass::kFixed && classes[1] == DimClass::kFixed && classes[2] == DimClass::kFixed;
@@ -124,9 +131,6 @@ FamilyMeasureReading ReadFamilyMeasure(const AxisDistribution& axis) {
     }
   }
 
-  out.measure.zenith = MeasureOf(classes[0], *dims[0], true);
-  out.measure.azimuth = MeasureOf(classes[1], *dims[1], false);
-  out.measure.roll = MeasureOf(classes[2], *dims[2], false);
   out.ok = true;
   return out;
 }

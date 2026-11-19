@@ -23,9 +23,10 @@
 // results are the supported shapes. The cancel token is the one deliberately thread-safe piece.
 //
 // The reuse criterion is not the workspace's to invent: the slot is addressed by the request's
-// selection (crystal + path class — storage addressing, not a judgment), and every reuse
+// selection (crystal + path — storage addressing, not admission), and every reuse
 // decision runs through the existing single authority (ValidateWarmCandidate's admission, then
-// EvaluateSurveyReuse's per-fact dependency evaluation — 738/739.1's criterion). A cancelled or
+// EvaluateSurveyReuse's per-fact dependency evaluation). Automatic admission failures are
+// misses; explicit candidates retain the query's strict refusal behavior. A cancelled or
 // cut survey never fills the slot: only a run the workspace saw complete does.
 
 #include <memory>
@@ -50,10 +51,10 @@ class AnalysisWorkspace {
 
   const ConfigManager& Scene() const { return snapshot_; }
 
-  // The four faces, on the snapshot. A point/probe query whose selection matches the warm
-  // slot's carries the slot as its warm candidate (the typed chain — no JSON); the faces' own
-  // admission and per-fact evaluation stay the reuse authority. `cancel` (optional, every
-  // face) is the query's one-way token — the same single stop authority the faces poll.
+  // The four faces, on the snapshot. A point/probe query carries the automatic warm candidate
+  // only when the shared admission authority accepts it; otherwise it runs the same request
+  // cold. Explicit candidates are never replaced or silently ignored. Per-fact qualification
+  // remains the faces' responsibility. `cancel` is the one-way token the faces poll.
   Error QueryPoint(const SinglePathRequest& request, bool include_context, PointResult* out,
                    const analytic::StopToken* cancel = nullptr);
   Error QueryProbe(const ProbeRequest& request, ProbeResult* out, const analytic::StopToken* cancel = nullptr);

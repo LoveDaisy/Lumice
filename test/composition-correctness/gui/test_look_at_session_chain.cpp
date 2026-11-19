@@ -3,6 +3,7 @@
 #include <gtest/gtest.h>
 
 #include <filesystem>
+#include <fstream>
 #include <nlohmann/json.hpp>
 #include <string>
 
@@ -31,7 +32,7 @@ class LookAtSessionChain : public ::testing::Test {
   static void ExpectReset(FrontendResetReason reason) {
     const RenderConfig camera_before = g_state.renderer;
     ResetFrontendState(g_state, reason);
-    EXPECT_EQ(g_state.look_at.target, LookAtId::kSun);
+    EXPECT_EQ(g_state.look_at.target, LookAtId::kNone);
     EXPECT_FALSE(g_state.look_at.locked);
     EXPECT_FLOAT_EQ(g_state.renderer.fov, camera_before.fov);
     EXPECT_FLOAT_EQ(g_state.renderer.azimuth, camera_before.azimuth);
@@ -70,6 +71,64 @@ TEST_F(LookAtSessionChain, RevertClearsIntentWithoutRevertingTheView) {
   ExpectReset(FrontendResetReason::kRevert);
 }
 
+TEST_F(LookAtSessionChain, AcceptedDocumentCommandsInstallNoneAndKeepTheLoadedCamera) {
+  DoNew();
+  EXPECT_EQ(g_state.look_at.target, LookAtId::kNone);
+  EXPECT_FALSE(g_state.look_at.locked);
+
+  const auto json_path = std::filesystem::temp_directory_path() / "lumice_look_at_session.json";
+  const auto lmc_path = std::filesystem::temp_directory_path() / "lumice_look_at_session.lmc";
+  struct Cleanup {
+    std::filesystem::path json_path;
+    std::filesystem::path lmc_path;
+    ~Cleanup() {
+      std::error_code ec;
+      std::filesystem::remove(json_path, ec);
+      std::filesystem::remove(lmc_path, ec);
+    }
+  } cleanup{ json_path, lmc_path };
+  GuiState loaded = MakeNewDocumentState();
+  loaded.renderer.azimuth = 41.0f;
+  loaded.renderer.elevation = -19.0f;
+  std::string json;
+  ASSERT_TRUE(BuildExportJsonOrWarn(loaded, &json, nullptr));
+  {
+    std::ofstream file(json_path);
+    file << json;
+    ASSERT_TRUE(file.good());
+  }
+  ASSERT_TRUE(SaveLmcFile(lmc_path, loaded, g_preview, false));
+  const auto check_open = [](const std::filesystem::path& path) {
+    SeedLockedSession();
+    DoOpen(path);
+    EXPECT_EQ(g_state.current_file_path, path.extension() == ".lmc" ? path.u8string() : "");
+    EXPECT_EQ(g_state.look_at.target, LookAtId::kNone);
+    EXPECT_FALSE(g_state.look_at.locked);
+    EXPECT_FLOAT_EQ(g_state.renderer.azimuth, 41.0f);
+    EXPECT_FLOAT_EQ(g_state.renderer.elevation, -19.0f);
+  };
+  check_open(json_path);
+  check_open(lmc_path);
+}
+
+TEST_F(LookAtSessionChain, RevertWithoutSnapshotLeavesIntentAlone) {
+  g_state.last_committed_state.reset();
+  DoRevert();
+  EXPECT_EQ(g_state.look_at.target, LookAtId::kSubsun);
+  EXPECT_TRUE(g_state.look_at.locked);
+}
+
+TEST_F(LookAtSessionChain, RevertWithSnapshotClearsIntentButKeepsTheLiveCamera) {
+  g_state.last_committed_state = GuiState::ConfigSnapshot::From(g_state);
+  g_state.renderer.azimuth = 37.0f;
+  g_state.renderer.elevation = -22.0f;
+  DoRevert();
+  EXPECT_EQ(g_state.look_at.target, LookAtId::kNone);
+  EXPECT_FALSE(g_state.look_at.locked);
+  EXPECT_FLOAT_EQ(g_state.renderer.azimuth, 37.0f);
+  EXPECT_FLOAT_EQ(g_state.renderer.elevation, -22.0f);
+}
+
 TEST_F(LookAtSessionChain, CancelledAndFailedOpenLeaveTheCurrentIntentAlone) {
   DoOpen(std::filesystem::path{});
   EXPECT_EQ(g_state.look_at.target, LookAtId::kSubsun);
@@ -93,7 +152,7 @@ TEST(LookAtSessionPersistenceChain, DocumentJsonAndSnapshotDoNotCarryFollowInten
   GuiState loaded;
   loaded.look_at = { LookAtId::kZenith, true };
   ASSERT_TRUE(DeserializeGuiStateJson(serialized, loaded));
-  EXPECT_EQ(loaded.look_at.target, LookAtId::kSun);
+  EXPECT_EQ(loaded.look_at.target, LookAtId::kNone);
   EXPECT_FALSE(loaded.look_at.locked);
 
   const GuiState::ConfigSnapshot snapshot = GuiState::ConfigSnapshot::From(state);
@@ -119,6 +178,7 @@ TEST(LookAtSessionEffectsChain, LockedAndUnlockedSunEditsHaveTheSameExistingSimu
   unlocked.last_committed_state = GuiState::ConfigSnapshot::From(unlocked);
   GuiState locked = unlocked;
 
+  ASSERT_TRUE(SelectLookAtTarget(locked, LookAtId::kSun));
   ASSERT_TRUE(SetLookAtLocked(locked, true));
   unlocked.sun.altitude = 42.0f;
   locked.sun.altitude = 42.0f;

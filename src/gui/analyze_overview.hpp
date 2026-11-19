@@ -259,12 +259,11 @@ inline bool FoldOpen(const char* label, const char* suffix_id) {
 // §16.1, both closed by default). Assumes the region's four-state shell already dispatched
 // here (a completed, adopted document). This is the Raypath view's class-answer host.
 //
-// `verdict_hover_readout` is the verdict anchor's hover read (§16.1's A2 pilot): when non-null,
-// the diagnose block's two linked rows (the verdict line and the Position line) gain an
-// addressable hover surface and the pointer receives the row-hover standing — true when either
-// row is under the pointer this frame, false otherwise (the caller writes it to the session
-// every frame). Null (the default) submits the same rows as plain text, no extra items, zero
-// interaction state — the main window's summary path passes nothing and renders byte-identically.
+// Non-null `row_readout` enables addressable hover surfaces and local row highlights. Only the
+// profile rows return a hover standing for the caller's session copy and next-frame map device;
+// verdict/Position and ratio rows keep their feedback local. Null (the default) submits the same
+// rows as plain text, no extra items or interaction state — the main window's summary path
+// passes nothing and renders byte-identically.
 void RenderSurveyOverviewModel(const SurveyOverviewModel& model, SurveyRowHoverReadout* row_readout = nullptr);
 
 // The main window's summary projection (contract §16.2): the SAME model read through the SAME

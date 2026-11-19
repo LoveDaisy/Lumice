@@ -450,8 +450,9 @@ left its output identical bit for bit (a hash over 24000 poses on six paths).
   bordered Newton system (at the current iterate's `delta`, as LI's `jax.jacfwd`); the closure
   corrector's border, the section coordinate, is differentiated the same way. No derivative is
   written by hand. The small linear algebra is in `so3.hpp`: `A`'s singular values from Lagrange's
-  identity (`sigma1 sigma2 = |r0 x r1|`, so a `sigma2` at the `1e-8` rank gate keeps its relative
-  precision) with `sigma1^2` the Gram matrix's larger eigenvalue in the `hypot` form — the
+  identity (`sigma1 sigma2 = |r0 x r1|`, avoiding the subtraction of Gram products when recovering
+  a small `sigma2`; nearly parallel rows can still cancel within the cross product) with `sigma1^2`
+  the Gram matrix's larger eigenvalue in the `hypot` form — the
   characteristic polynomial's discriminant cancels when `sigma1 ~ sigma2` and put `1e-8` relative
   error into both on the analytic circle, whose values are `(1, 1)`; fixed in version 5, when the
   singular values became output — the bordered system's 2-norm condition number from a one-sided
@@ -508,9 +509,26 @@ LI `docs/analytic-parity-fixtures.md` §3.1 gives the same fields of `evaluate_p
   target's, which a sample misses by its residual. `EvaluateRegularState` already evaluates the
   direction once as a `Jet<3>` for the rank gate and the tangent; the same jet is projected on both
   charts, so recording the diagnostics adds no evaluation (the parity suite's time did not move).
-  `NormalJacobianAt` is the one definition: the trace records it at each accepted pose (the
-  closure-replaced last one included), and `EvaluatePathDiagnostics` — the kernel's single-pose
-  entry, which also names the failed gate of an invalid pose — returns the same numbers bit for bit.
+  `NormalJacobianOf` owns this mathematical definition. The trace records its result at each
+  accepted pose (the closure-replaced last one included); `NormalJacobianAt`, used by the kernel's
+  single-pose `EvaluatePathDiagnostics`, independently recomputes the Jet and calls that definition.
+  The State-to-array writes are exact copies; fresh evaluations are **not** promised bit-identical:
+  inlining/contraction can change multiply/add rounding in the Jet, projection and SVD.
+  The diagnostic agreement tests use an operation-derived absolute error budget, not a fitted ULP
+  count: exact input doubles propagate value/derivative rounding radii through the same physical
+  chain, including Snell square roots/divisions and the own-direction basis. If `E` is the resulting
+  2 × 3 matrix's Frobenius radius and `M` its Frobenius scale, Weyl's singular-value perturbation bound
+  plus the cross/norm and Gram/hypot/sqrt/division rounding allowance gives
+  `e_sigma = 2 * (E + gamma64 * M)`, with `gamma64 = 64*eps/(1-64*eps)` and double `eps`.
+  For `J = sigma1*sigma2`, the comparison budget is
+  `(sigma1+sigma2)*e_sigma + e_sigma² + 2*eps*|J|`, using the larger compared scales.
+  These are normal-finite-arithmetic budgets for the tested regular two-/four-interface witnesses,
+  not a precision guarantee for arbitrary 64-face paths or near-critical inputs. The tests require
+  the budget to resolve the rank gap (`e_sigma < (sigma2-rank_tolerance)/4`); insufficient resolution
+  fails rather than relaxing validity, availability or regularity. Margins retain exact comparisons
+  on these witnesses, and append/closure-replace copies have separate exact payload checks.
+  The test-side calculator is `test/support/analytic_diagnostic_roundoff.hpp`; the independent
+  central-difference and analytic closed-form oracles below still arbitrate mathematical correctness.
 - **Availability.** `jacobian_available` is 1 exactly where the normal Jacobian exists, which LI
   defines as "the path is valid"; every accepted pose is, so a trace's flags are all 1 and 0 would
   mean the derivative could not be formed. Unavailable values are NaN, never a plausible 0 or 1.
@@ -526,7 +544,8 @@ Checked by: `test_fiber_continuation.cpp` (the circle's closed form `J = 1`, `(1
 against target chart off the fiber, `cos 0.3`; NaN when unavailable; array shapes on every trace),
 `test_path_fiber.cpp` (names letter for letter; margins against the chain's own cosines and
 discriminants; `J_perp` and `sigma1` against a Richardson central difference; the failed gate of
-invalid poses; a trace's arrays equal to fresh single-pose evaluations bit for bit), `test_so3.cpp`
+invalid poses; a trace's arrays agree with fresh single-pose evaluations within the operation-derived
+budget above, with separate exact State append/replacement checks), `test_so3.cpp`
 (equal and nearly equal singular values to `1e-15`), the parity suite (§10.1: every `evaluate_path`
 fixture's wave 2 fields against LI's values, every `trace_fiber` pose against this library's own
 single-pose evaluation), and the ctypes cases — a version 4, a partial, a current and a newer
@@ -1199,6 +1218,16 @@ different implementations compared as one thing is the recorded false-red/false-
 re-derives; (d) end-state convergence follows the shared criteria — LI consumes
 `liblumice_analytic` through a binding and the JAX version retires. The wave-2 hold ledger counts
 this entry (+1) and stays as it is; the 2026-10-07 ruling is not reopened by it.
+
+### Engine-only external-reflection extension
+
+The shared C++ optical chain and finite-path geometry also accept a single face as air-side
+external reflection. Its scalar/Jet/Jet2 direction is the same reflection map, its sole path
+factor is Fresnel R, and its finite entry measure is projected face area; there is no internal
+footprint or transmitted exit. The engine raypath capabilities consume this extension. The
+published analytic C requests retain their documented 2..64-face domain in API 8; they do not
+silently acquire a new diagnostic-interface or corridor-payload convention. Their existing
+multi-face results and LI parity fixtures are unchanged.
 
 ## 5. Conventions, errors, threading **(design)**
 

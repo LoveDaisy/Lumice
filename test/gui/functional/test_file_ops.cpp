@@ -1022,7 +1022,7 @@ void RegisterFileOpsTests(ImGuiTestEngine* engine) {
       IM_CHECK(ImGui::IsPopupOpen("Load Notice"));
       IM_CHECK(gui::PeekLoadNotice().empty());
       IM_CHECK_EQ(static_cast<int>(gui::g_state.run_intent), static_cast<int>(gui::RunIntent::kLoaded));
-      IM_CHECK_EQ(gui::g_state.look_at.target, gui::LookAtId::kSun);
+      IM_CHECK_EQ(gui::g_state.look_at.target, gui::LookAtId::kNone);
       IM_CHECK(!gui::g_state.look_at.locked);
       ctx->ItemClick("Load Notice/OK");
       ctx->Yield(2);

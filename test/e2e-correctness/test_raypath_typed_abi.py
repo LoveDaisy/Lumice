@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[2]
 pytestmark = pytest.mark.slow
 
 
-class PointRequest(C.Structure):
+class PointRequestV461(C.Structure):
     _fields_ = [
         ("struct_size", C.c_size_t), ("crystal_id", C.c_int),
         ("faces", C.POINTER(C.c_int)), ("face_count", C.c_int),
@@ -27,6 +27,10 @@ class PointRequest(C.Structure):
         ("warm_json_len", C.c_size_t), ("deadline_ms", C.c_int),
         ("interrupted", C.c_void_p),
     ]
+
+
+class PointRequest(C.Structure):
+    _fields_ = PointRequestV461._fields_ + [("context_symmetry_bits_plus_one", C.c_int)]
 
 
 class ReportRequest(C.Structure):
@@ -54,7 +58,7 @@ class SurveyRequest(C.Structure):
     ]
 
 
-class ProbeRequest(C.Structure):
+class ProbeRequestV461(C.Structure):
     _fields_ = [
         ("struct_size", C.c_size_t), ("crystal_id", C.c_int),
         ("faces", C.POINTER(C.c_int)), ("face_count", C.c_int),
@@ -65,6 +69,10 @@ class ProbeRequest(C.Structure):
         ("warm_json", C.c_void_p), ("warm_json_len", C.c_size_t),
         ("budget_ms", C.c_int), ("interrupted", C.c_void_p),
     ]
+
+
+class ProbeRequest(C.Structure):
+    _fields_ = ProbeRequestV461._fields_ + [("context_symmetry_bits_plus_one", C.c_int)]
 
 
 class QueryOptions(C.Structure):
@@ -259,7 +267,10 @@ def _product_library_path():
 
 def _check_published_request_extents_and_future_tail_keep_borrowed_result_alive():
     assert (C.sizeof(PointRequest), C.sizeof(ReportRequest), C.sizeof(SurveyRequest),
-            C.sizeof(ProbeRequest)) == (112, 120, 72, 112)
+            C.sizeof(ProbeRequest)) == (120, 120, 72, 120)
+    assert (C.sizeof(PointRequestV461), C.sizeof(ProbeRequestV461)) == (112, 112)
+    assert PointRequest.context_symmetry_bits_plus_one.offset == 112
+    assert ProbeRequest.context_symmetry_bits_plus_one.offset == 112
     assert (PointRequest.warm_json_len.offset + C.sizeof(C.c_size_t),
             ReportRequest.sample_count.offset + C.sizeof(C.c_int),
             SurveyRequest.symmetry_bits_plus_one.offset + C.sizeof(C.c_int)) == (96, 72, 64)
@@ -316,7 +327,13 @@ def _check_published_request_extents_and_future_tail_keep_borrowed_result_alive(
         assert lib.LUMICE_PathWorkspaceQueryPoint(workspace, C.byref(request), C.byref(options),
                                                   C.byref(result), err, len(err)) == 0, err.value
         lib.LUMICE_SinglePathResultDestroy(result)
-        for invalid in (95, 104):
+        # A separately allocated old layout has no new tail to read.
+        old = PointRequestV461.from_buffer_copy(request)
+        old.struct_size = C.sizeof(old)
+        assert lib.LUMICE_PathWorkspaceQueryPoint(workspace, C.byref(old), C.byref(options),
+                                                  C.byref(result), err, len(err)) == 0, err.value
+        lib.LUMICE_SinglePathResultDestroy(result)
+        for invalid in (95, 104, 113, 119):
             request.struct_size = invalid
             result = C.c_void_p(1)
             assert lib.LUMICE_PathWorkspaceQueryPoint(workspace, C.byref(request), C.byref(options),
@@ -327,11 +344,11 @@ def _check_published_request_extents_and_future_tail_keep_borrowed_result_alive(
         future = FuturePointRequest()
         future.base = request
         C.memset(C.addressof(future) + C.sizeof(PointRequest), 0xA5, 32)
-        future.base.struct_size = 128
+        future.base.struct_size = C.sizeof(PointRequest) + 16
         result = C.c_void_p()
         assert lib.LUMICE_PathWorkspaceQueryPoint(workspace, C.byref(future), C.byref(options),
                                                   C.byref(result), err, len(err)) == 0, err.value
-        assert C.string_at(C.addressof(future) + 112, 32) == bytes([0xA5] * 32)
+        assert C.string_at(C.addressof(future) + C.sizeof(PointRequest), 32) == bytes([0xA5] * 32)
     finally:
         lib.LUMICE_PathWorkspaceDestroy(workspace)
 
@@ -431,6 +448,11 @@ def _check_other_request_families_accept_published_extents_and_preserve_future_t
             result = C.c_void_p()
             assert query(workspace, C.byref(request), C.byref(options), C.byref(result), err, len(err)) == 0, err.value
             destroy(result)
+            if typ is ProbeRequest:
+                old = ProbeRequestV461.from_buffer_copy(request)
+                old.struct_size = C.sizeof(old)
+                assert query(workspace, C.byref(old), C.byref(options), C.byref(result), err, len(err)) == 0, err.value
+                destroy(result)
             request.struct_size = invalid_extent
             result = C.c_void_p(1)
             assert query(workspace, C.byref(request), C.byref(options), C.byref(result), err, len(err)) == 5
@@ -557,7 +579,7 @@ def _check_map_family_published_extents_and_cross_destroy_reads():
     lib.LUMICE_PathMapDestroy(owned)
 
 
-def _check_representative_ray_published_extents_and_cross_destroy_reads():
+def _check_representative_ray_published_extents_and_cross_destroy_reads(face_sequence=(3, 5)):
     # The I4 consumer leg: the pose comes from the point query's own output (no fabricated
     # poses), the ray's readers are read back through ctypes, and the leg directions are checked
     # against the point sample's own segment directions — then the workspace and scene die and
@@ -601,13 +623,14 @@ def _check_representative_ray_published_extents_and_cross_destroy_reads():
     assert lib.LUMICE_PathWorkspaceCreate(scene, C.byref(workspace), err, len(err)) == 0, err.value
 
     # A valid pose from the discovered fiber: iterate the first component's samples.
-    faces = (C.c_int * 2)(3, 5)
-    counts = (C.c_int * 1)(2)
+    face_count = len(face_sequence)
+    faces = (C.c_int * face_count)(*face_sequence)
+    counts = (C.c_int * 1)(face_count)
     point_request = PointRequest()
     point_request.struct_size = C.sizeof(PointRequest)
     point_request.crystal_id = 1
     point_request.faces = faces
-    point_request.face_count = 2
+    point_request.face_count = face_count
     point_request.layer_face_counts = counts
     point_request.layer_count = 1
     point_request.target_altitude_deg = 20
@@ -639,7 +662,7 @@ def _check_representative_ray_published_extents_and_cross_destroy_reads():
     assert pose is not None, "the fiber carried no valid pose"
     sample_segments = list(C.cast(sample.segment_directions, C.POINTER(C.c_double))[3:6])
     sample_outgoing = list(sample.outgoing_direction)
-    sample_transmissions = [sample.interface_transmittances[0], sample.interface_transmittances[1]]
+    sample_transmissions = list(sample.interface_transmittances[:face_count])
     lib.LUMICE_SinglePathResultDestroy(point)
 
     # The ray query at that pose, on the workspace face.
@@ -648,7 +671,7 @@ def _check_representative_ray_published_extents_and_cross_destroy_reads():
     ray_request.struct_size = C.sizeof(RepresentativeRayRequest)
     ray_request.crystal_id = 1
     ray_request.faces = faces
-    ray_request.face_count = 2
+    ray_request.face_count = face_count
     ray_request.layer_face_counts = counts
     ray_request.layer_count = 1
     ray_request.pose = pose_buf
@@ -660,28 +683,42 @@ def _check_representative_ray_published_extents_and_cross_destroy_reads():
     ray_info.struct_size = C.sizeof(ray_info)
     assert lib.LUMICE_RepresentativeRayGetInfo(ray, C.byref(ray_info)) == 0
     assert ray_info.produced == 1
-    assert ray_info.face_count == 2
+    assert ray_info.face_count == face_count
     assert ray_info.entry_measure > 0.0
 
     contacts = RayContacts()
     contacts.struct_size = C.sizeof(contacts)
     assert lib.LUMICE_RepresentativeRayGetContacts(ray, C.byref(contacts)) == 0
-    assert contacts.contact_count == 2
+    assert contacts.contact_count == face_count
     legs = RayLegs()
     legs.struct_size = C.sizeof(legs)
     assert lib.LUMICE_RepresentativeRayGetLegs(ray, C.byref(legs)) == 0
-    assert legs.leg_count == 3
+    assert legs.leg_count == face_count + 1
 
     # The optics, number for number against the point sample: the outgoing leg, the internal
     # leg (the sample's body-frame segment rotated to world), the interface transmittances.
     for i in range(3):
         assert legs.legs[0].direction[i] == ray_info.incident_direction[i]
-        assert legs.legs[2].direction[i] == sample_outgoing[i]
-        expected = sum(pose[3 * i + j] * sample_segments[j] for j in range(3))
-        # The C++ side may contract to FMA, so the independently computed product may differ in
-        # the last bit (the recorded 1-ULP FMA contraction): compare at 1e-14, not bit-equality.
-        assert abs(legs.legs[1].direction[i] - expected) <= 1e-14
-    for k in range(2):
+        assert legs.legs[face_count].direction[i] == sample_outgoing[i]
+        if face_count > 1:
+            expected = sum(pose[3 * i + j] * sample_segments[j] for j in range(3))
+            # Independently multiplied frame transforms can differ by an FMA rounding.
+            assert abs(legs.legs[1].direction[i] - expected) <= 1e-14
+    if face_count == 1:
+        assert math.isnan(ray_info.area_perp_internal)
+        # Face 3's body normal is +x. This consumer derives the reflected direction
+        # and s/p Fresnel from that geometric fact, not from another engine reader.
+        normal = [pose[0], pose[3], pose[6]]
+        incident = list(ray_info.incident_direction[:3])
+        cosine = -sum(a * b for a, b in zip(normal, incident))
+        n = ray_info.refractive_index
+        ct = math.sqrt(1.0 - (1.0 - cosine * cosine) / (n * n))
+        rs = (cosine - n * ct) / (cosine + n * ct)
+        rp = (n * cosine - ct) / (n * cosine + ct)
+        assert contacts.contacts[0].transmittance == pytest.approx((rs * rs + rp * rp) / 2, abs=1e-12)
+        for i in range(3):
+            assert legs.legs[1].direction[i] == pytest.approx(incident[i] + 2 * cosine * normal[i], abs=1e-12)
+    for k in range(face_count):
         assert contacts.contacts[k].transmittance == sample_transmissions[k]
         assert all(math.isfinite(contacts.contacts[k].point[i]) for i in range(3))
     # The second read hands out the same borrowed pointers.
@@ -836,6 +873,10 @@ def test_map_family_published_extents_and_cross_destroy_reads():
 
 def test_representative_ray_published_extents_and_cross_destroy_reads():
     _run_independent_client("ray")
+
+
+def test_external_reflection_with_published_layout_and_independent_optics():
+    _run_independent_client("external_ray")
 
 
 def test_cancel_token_poll_snapshot_shapes_and_live_ticks():
@@ -1139,4 +1180,5 @@ if __name__ == "__main__":
      "other": _check_other_request_families_accept_published_extents_and_preserve_future_tails,
      "map": _check_map_family_published_extents_and_cross_destroy_reads,
      "ray": _check_representative_ray_published_extents_and_cross_destroy_reads,
+     "external_ray": lambda: _check_representative_ray_published_extents_and_cross_destroy_reads((3,)),
      "poll": _check_cancel_token_poll_snapshot}[sys.argv[1]]()

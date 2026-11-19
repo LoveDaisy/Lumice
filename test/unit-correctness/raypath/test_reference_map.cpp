@@ -86,6 +86,48 @@ survey::MapViewDescription RingView(const ClassFixture& fix) {
   return view;
 }
 
+// A uniform mirror normal gives dOmega_out = 4*c*dOmega_normal. With
+// A_inc=A_face*c the literal density is A_face*R(c)/(16*pi). Integrate that
+// independent formula over the estimator's angular band (not a centre-value proxy).
+TEST(ReferenceMap, ExternalReflectionHasAbsolutePhysicalScale) {
+  const ClassFixture fix = ClassFixture::Make();
+  auto view = RingView(fix);
+  view.delta_min_deg = 30.0;
+  view.delta_max_deg = 150.0;
+  view.rows = 12;
+  const auto map = survey::EvaluateReferenceMap(fix.table, fix.polygons, { { 3 } }, fix.density,
+                                                survey::MakeProbeFrame(fix.incident), view, 550.0, fix.refractive_index,
+                                                fix.incident, 400000);
+  ASSERT_EQ(map.members_evaluated, 1);
+  auto band_truth = [&](double lo, double hi, double centre, int panels) {
+    double sum = 0.0;
+    for (int i = 0; i < panels; ++i) {
+      const double delta = lo + (i + 0.5) * (hi - lo) / panels;
+      const double c = std::sin(0.5 * delta);
+      const double n = fix.refractive_index;
+      const double ct = std::sqrt(1.0 - (1.0 - c * c) / (n * n));
+      const double rs = (c - n * ct) / (c + n * ct);
+      const double rp = (n * c - ct) / (n * c + ct);
+      sum += 0.5 * (rs * rs + rp * rp) * std::sin(delta);
+    }
+    // Diameter 1, side length 1/2, height 1: A_face=1/2.
+    return 0.5 * sum / panels / (16.0 * kPi * std::sin(centre));
+  };
+  ASSERT_FALSE(map.pixels.empty());
+  for (size_t i = 0; i < map.pixels.size(); ++i) {
+    const auto& pixel = map.pixels[i];
+    const double lo = (30.0 + 10.0 * (i / view.cols)) * kPi / 180.0;
+    const double hi = lo + 10.0 * kPi / 180.0;
+    const double centre = 0.5 * (lo + hi);
+    const double truth = band_truth(lo, hi, centre, 2048);
+    EXPECT_NEAR(truth, band_truth(lo, hi, centre, 4096), truth * 1e-8);
+    // The deterministic normal lattice, not the independent quadrature, limits this
+    // comparison. A 2% relative envelope over 10-degree bands resolves wrong R/T,
+    // area factors and a representative-times-member-count error by wide margins.
+    EXPECT_NEAR(pixel.value, truth, truth * 0.02);
+  }
+}
+
 // INV1 (AC2): the class map IS the sum of the member maps — same lattice, same cells, values
 // summed member-by-member bit for bit. The reconciliation is the class-sum's own identity (the
 // plan states it is not an independent physical oracle).

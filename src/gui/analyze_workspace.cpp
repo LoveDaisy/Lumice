@@ -25,6 +25,7 @@
 #include "gui/semantic_colors.hpp"
 #include "gui/sim_state_rules.hpp"
 #include "gui/theme.hpp"
+#include "gui/tooltip.hpp"
 #include "gui/view_look_at.hpp"  // UpdateLockedLookAt — the camera reconciliation the picture is built from
 #include "imgui.h"
 #include "imgui_internal.h"  // FindWindowByName + FocusWindow — the already-open entry click's focus-and-raise (§16.3)
@@ -314,7 +315,7 @@ void RenderAnalyzeMainPicture(GLFWwindow* window, float picture_h) {
          g_state.workspace.panorama_press_owner == GuiState::AnalyzeWorkspaceSession::PanoramaPressOwner::kMarker) &&
         !angular_pick_owns) {
       ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-      ImGui::SetTooltip("Drag the marker to move the centre.\n%s+click on the picture to set it directly.",
+      SetWrappedTooltip("Drag the marker to move the centre.\n%s+click on the picture to set it directly.",
                         kBgModifierName);
     }
     DrawPanoramaRoiRing(g_state, view, region_min, g_panorama_vp.dpi_scale_x, g_panorama_vp.dpi_scale_y);

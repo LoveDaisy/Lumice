@@ -94,7 +94,7 @@ Status BuildFaceNormals(const CrystalShape& shape, FaceNormalTable* out, FacePol
 // The kernel's interface version, for in-tree callers that record which kernel produced a result.
 constexpr int kApiVersion = LUMICE_ANALYTIC_API_VERSION;
 
-// Face numbers -> slots. kInvalidValue when face_count < 2 or any number is not a present face of
+// Face numbers -> slots. kInvalidValue when face_count is outside 1..64 or any number is not a present face of
 // `table`. Consecutive repeats are not rejected: LI's evaluator accepts them, and the geometry
 // decides — a repeated face fails the "reaches the face from inside" gate, so the pose is simply
 // not valid.
@@ -142,7 +142,9 @@ struct PathOutputs {
 // Frames: `incident_direction` and `outgoing_direction` are world-frame propagation directions,
 // `pose` is row-major body -> world, and the segments (incident, each internal leg, outgoing) are
 // in the body frame. Transmittances: T at entry and exit, R at each internal face (1 under TIR),
-// unpolarised s/p average; `fresnel_transmission` is their product.
+// unpolarised s/p average; `fresnel_transmission` is their product. A single face is
+// external reflection: one positive incidence gate, two air-side segments, one R factor.
+// No entry/exit Snell gate or internal segment is invented for it.
 bool EvaluatePath(const FaceNormalTable& table, const int* slots, int slot_count, double refractive_index,
                   const double incident_direction[3], const double pose[9], PathOutputs* out);
 
@@ -150,7 +152,8 @@ bool EvaluatePath(const FaceNormalTable& table, const int* slots, int slot_count
 // ChainDomain): entry_incidence_cosine, entry_snell_discriminant, internal_<k>_incidence_cosine for
 // k = 1 .. face_count - 2, exit_incidence_cosine, exit_snell_discriminant — LI's
 // validity_margin_names (LI docs/analytic-parity-fixtures.md section 3.1, `branch_margins`). The
-// spelling is a cross-repository contract: LI reads these names. BranchMarginCount is face_count + 2.
+// spelling is a cross-repository contract: LI reads these names. BranchMarginCount is face_count + 2
+// for internal paths; a one-face external reflection has only entry_incidence_cosine (count 1).
 int BranchMarginCount(int face_count);
 std::string BranchMarginName(int index, int face_count);
 

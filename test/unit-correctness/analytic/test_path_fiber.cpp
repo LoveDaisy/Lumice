@@ -21,6 +21,7 @@
 #include "analytic/path_evaluation.hpp"
 #include "analytic/path_fiber.hpp"
 #include "analytic/so3.hpp"
+#include "support/analytic_diagnostic_roundoff.hpp"
 #include "support/portable_random.hpp"
 
 namespace lumice::analytic {
@@ -496,9 +497,9 @@ TEST(PathFiber, DiagnosticsOfAnInvalidPoseNameTheFirstFailedGate) {
   EXPECT_GT(later_failures, 0);
 }
 
-// A trace's per-pose arrays are what a fresh single-pose evaluation returns at its poses, bit for
-// bit (one chain, one NormalJacobianAt), including the closure-replaced last pose, and every
-// accepted pose is regular (LI section 4, accepted_pose_regularity).
+// Independent evaluations agree within an operation-derived budget, not necessarily bit for bit.
+// State-to-array copies have a separate exact append/closure-replace witness. Every accepted pose
+// remains regular (LI section 4), including the closure-replaced last pose.
 TEST(PathFiber, TracePerPoseArraysAreFreshDiagnosticsAtItsPoses) {
   const Synthetic35 s;
   const TraceResult closed = s.Trace(ContinuationParams{});
@@ -528,6 +529,12 @@ TEST(PathFiber, TracePerPoseArraysAreFreshDiagnosticsAtItsPoses) {
   for (const auto& c : cases) {
     const int count = static_cast<int>(c.path->slots.size());
     const TraceResult& r = *c.trace;
+    if (r.jacobian_available.size() != static_cast<size_t>(r.PoseCount()) ||
+        r.normal_jacobian.size() != static_cast<size_t>(r.PoseCount()) ||
+        r.singular_values.size() != static_cast<size_t>(2 * r.PoseCount())) {
+      ADD_FAILURE() << "per-pose diagnostic array shape";
+      continue;
+    }
     if (r.branch_margin_count != BranchMarginCount(count) ||
         r.branch_margins.size() != static_cast<size_t>(r.branch_margin_count * r.PoseCount())) {
       ADD_FAILURE() << "branch_margin_count " << r.branch_margin_count << ", " << r.branch_margins.size() << " margins";
@@ -544,11 +551,30 @@ TEST(PathFiber, TracePerPoseArraysAreFreshDiagnosticsAtItsPoses) {
         EXPECT_EQ(r.branch_margins[r.branch_margin_count * i + k], d.margins[k]) << i << " " << k;
         EXPECT_GT(r.branch_margins[r.branch_margin_count * i + k], 0.0);
       }
+      SCOPED_TRACE(i);
       EXPECT_EQ(r.jacobian_available[i], 1);
-      EXPECT_EQ(r.normal_jacobian[i], d.jacobian.value) << i;
-      EXPECT_EQ(r.singular_values[2 * i], d.jacobian.singular_values[0]) << i;
-      EXPECT_EQ(r.singular_values[2 * i + 1], d.jacobian.singular_values[1]) << i;
-      EXPECT_GT(r.normal_jacobian[i], 0.0);
+      EXPECT_TRUE(d.jacobian.available);
+      EXPECT_EQ(d.failed_gate, -1);
+      const double allowance = test_roundoff::SingularValueAllowance(c.path->Map(), &r.poses[9 * i]);
+      const double s1 = std::fmax(r.singular_values[2 * i], d.jacobian.singular_values[0]);
+      const double s2 = std::fmax(r.singular_values[2 * i + 1], d.jacobian.singular_values[1]);
+      EXPECT_TRUE(std::isfinite(allowance));
+      // No budget may mask rank loss: retain at least 3/4 of the distance to the rank gate.
+      EXPECT_LT(allowance, (d.jacobian.singular_values[1] - ContinuationParams{}.singular_value_tolerance) / 4.0);
+      EXPECT_NEAR(r.singular_values[2 * i], d.jacobian.singular_values[0], allowance);
+      EXPECT_NEAR(r.singular_values[2 * i + 1], d.jacobian.singular_values[1], allowance);
+      const double j_scale = std::fmax(r.normal_jacobian[i], d.jacobian.value);
+      const double j_allowance = (s1 + s2) * allowance + allowance * allowance + 2.0 * test_roundoff::kEps * j_scale;
+      EXPECT_NEAR(r.normal_jacobian[i], d.jacobian.value, j_allowance);
+      for (double value :
+           { r.normal_jacobian[i], d.jacobian.value, r.singular_values[2 * i], r.singular_values[2 * i + 1],
+             d.jacobian.singular_values[0], d.jacobian.singular_values[1] }) {
+        EXPECT_TRUE(std::isfinite(value));
+        EXPECT_GT(value, 0.0);
+      }
+      EXPECT_GE(r.singular_values[2 * i], r.singular_values[2 * i + 1]);
+      EXPECT_GT(r.singular_values[2 * i + 1], ContinuationParams{}.singular_value_tolerance);
+      EXPECT_LE(r.singular_values[2 * i] / r.singular_values[2 * i + 1], ContinuationParams{}.condition_limit);
     }
   }
 }

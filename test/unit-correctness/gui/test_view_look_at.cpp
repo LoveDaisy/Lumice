@@ -67,7 +67,7 @@ std::array<float, 3> ForwardOfPreset(LookAtId id, float sun_altitude_deg, bool* 
 
 TEST(CameraWheelZoom, UsesNotchesAndLensBoundsWithoutChangingLookAtOrLifecycle) {
   lumice::gui::GuiState state;
-  state.look_at.locked = true;
+  state.look_at = { LookAtId::kSun, true };
   // Each lens has a user-facing FOV bound; the full-sky ids are an independent explicit list
   // here, so changing the production gate alone cannot make this expectation follow it.
   for (int lens = 0; lens <= 10; ++lens) {
@@ -532,12 +532,54 @@ TEST(ViewLookAtPose, EveryPresetLandsInsideTheBoundsUnderEveryLens) {
   }
 }
 
-TEST(ViewLookAtSession, DefaultsToAnUnlockedSunWithoutChangingTheCamera) {
+TEST(ViewLookAtSession, DefaultsToNoneWithoutChangingTheCamera) {
   lumice::gui::GuiState state;
-  EXPECT_EQ(state.look_at.target, LookAtId::kSun);
+  EXPECT_EQ(state.look_at.target, LookAtId::kNone);
   EXPECT_FALSE(state.look_at.locked);
   EXPECT_FLOAT_EQ(state.renderer.azimuth, 0.0f);
   EXPECT_FLOAT_EQ(state.renderer.elevation, 0.0f);
+}
+
+TEST(ViewLookAtSession, NoneHasALabelButCannotResolveLockOrFollow) {
+  lumice::gui::GuiState state;
+  ASSERT_TRUE(lumice::gui::SelectLookAtTarget(state, LookAtId::kNone));
+  state.renderer.azimuth = 12.0f;
+  state.renderer.elevation = 34.0f;
+  EXPECT_STREQ(lumice::gui::LookAtDisplayName(state.look_at.target), "None");
+  EXPECT_FALSE(lumice::gui::IsValidLookAtId(LookAtId::kNone));
+  EXPECT_FALSE(lumice::gui::IsMarkerLookAt(LookAtId::kNone));
+  float az = 42.0f;
+  float el = 43.0f;
+  EXPECT_FALSE(lumice::gui::ResolveLookAtAzEl(LookAtId::kNone, 20.0f, &az, &el));
+  EXPECT_FLOAT_EQ(az, 42.0f);
+  EXPECT_FLOAT_EQ(el, 43.0f);
+  EXPECT_FALSE(lumice::gui::SetLookAtLocked(state, true));
+  EXPECT_FALSE(state.look_at.locked);
+  // A stale follow request must fail closed too, not just the checkbox's entry point.
+  state.look_at.locked = true;
+  EXPECT_FALSE(lumice::gui::UpdateLockedLookAt(state));
+  EXPECT_FALSE(state.look_at.locked);
+  EXPECT_EQ(state.look_at.target, LookAtId::kNone);
+  EXPECT_FLOAT_EQ(state.renderer.azimuth, 12.0f);
+  EXPECT_FLOAT_EQ(state.renderer.elevation, 34.0f);
+}
+
+TEST(ViewLookAtSession, SelectingNoneClearsIntentButPreservesAllCameraFields) {
+  lumice::gui::GuiState state;
+  ASSERT_TRUE(lumice::gui::SelectLookAtTarget(state, LookAtId::kSubsun));
+  ASSERT_TRUE(lumice::gui::SetLookAtLocked(state, true));
+  state.renderer.fov = 47.0f;
+  state.renderer.roll = 9.0f;
+  const auto camera = state.renderer;
+  ASSERT_TRUE(lumice::gui::SelectLookAtTarget(state, LookAtId::kNone));
+  EXPECT_EQ(state.look_at.target, LookAtId::kNone);
+  EXPECT_FALSE(state.look_at.locked);
+  EXPECT_FLOAT_EQ(state.renderer.azimuth, camera.azimuth);
+  EXPECT_FLOAT_EQ(state.renderer.elevation, camera.elevation);
+  EXPECT_FLOAT_EQ(state.renderer.fov, camera.fov);
+  EXPECT_FLOAT_EQ(state.renderer.roll, camera.roll);
+  EXPECT_FALSE(lumice::gui::SetLookAtLocked(state, true));
+  EXPECT_FALSE(lumice::gui::UpdateLockedLookAt(state));
 }
 
 TEST(ViewLookAtSession, SelectionLockAndFollowUseOneAtomicTransition) {
@@ -592,10 +634,11 @@ TEST(ViewLookAtSession, UnlockKeepsTheTargetAndCurrentPose) {
 
 TEST(ViewLookAtSession, RejectedTransitionsDoNotPartiallyChangeState) {
   lumice::gui::GuiState state;
+  ASSERT_TRUE(lumice::gui::SelectLookAtTarget(state, LookAtId::kSun));
   state.renderer.azimuth = 12.0f;
   state.renderer.elevation = 34.0f;
 
-  EXPECT_FALSE(lumice::gui::SelectLookAtTarget(state, static_cast<LookAtId>(-1)));
+  EXPECT_FALSE(lumice::gui::SelectLookAtTarget(state, static_cast<LookAtId>(-2)));
   EXPECT_EQ(state.look_at.target, LookAtId::kSun);
   EXPECT_FLOAT_EQ(state.renderer.azimuth, 12.0f);
   EXPECT_FLOAT_EQ(state.renderer.elevation, 34.0f);

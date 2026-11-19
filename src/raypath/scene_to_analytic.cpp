@@ -121,8 +121,8 @@ Error ResolveSingleLayerPath(const std::vector<std::vector<int>>& layers, const 
                                                     " scattering layers; only single-layer raypaths can be analysed" };
   }
   const std::vector<int>& faces = layers.front();
-  if (faces.size() < 2 || faces.size() > static_cast<size_t>(analytic::kMaxFaceCount)) {
-    return { ErrorCode::kInvalidPath, "a raypath has 2 to " + std::to_string(analytic::kMaxFaceCount) + " faces; got " +
+  if (faces.empty() || faces.size() > static_cast<size_t>(analytic::kMaxFaceCount)) {
+    return { ErrorCode::kInvalidPath, "a raypath has 1 to " + std::to_string(analytic::kMaxFaceCount) + " faces; got " +
                                           std::to_string(faces.size()) };
   }
   for (int fn : faces) {

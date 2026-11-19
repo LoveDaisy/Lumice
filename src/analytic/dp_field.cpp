@@ -1,6 +1,7 @@
 #include "analytic/dp_field.hpp"
 
 #include <cmath>
+#include <limits>
 
 #include "analytic/jet2.hpp"
 #include "analytic/so3.hpp"
@@ -35,7 +36,11 @@ void FoldMatrixOf(const FaceNormalTable& table, const int* slots, int slot_count
   // One Householder reflection S(n) = I - 2 n n^T per internal face, left-multiplied onto the
   // running product in path order (LI geometry.fold_matrix; a prefix call with slot_count = k + 1
   // yields R_k, the fold of the first k - 1 reflections).
-  for (int k = 1; k < slot_count - 1; k++) {
+  // A complete one-face external path instead has exactly S(n_0), the mirror
+  // itself; the same product body serves both domains without a second formula.
+  const int first_reflection = slot_count == 1 ? 0 : 1;
+  const int end_reflection = slot_count == 1 ? 1 : slot_count - 1;
+  for (int k = first_reflection; k < end_reflection; k++) {
     const double* n = table.normal[slots[k]];
     double s[9];
     for (int i = 0; i < 3; i++) {
@@ -125,6 +130,10 @@ FoldScreen BuildFoldScreen(const FaceNormalTable& table, const int* slots, int s
 
 template <class S>
 int DomainMargins(const ChainInterfaceDiagnostics<S>& interfaces, int slot_count, S out[2 * kMaxFaceCount]) {
+  if (slot_count == 1) {
+    out[0] = interfaces.incidence[0];
+    return 1;  // external reflection has no Snell gate or internal TIR diagnostic
+  }
   int count = 0;
   for (int k = 0; k < slot_count; k++) {
     out[count++] = interfaces.incidence[k];
@@ -279,6 +288,12 @@ FieldSample DeviationField::SampleOptical(const double u[3]) const {
 
   sample.d_value = fold_.degenerate ? DSlab(u) : sample.d_p;
 
+  if (slot_count_ == 1) {
+    sample.d_p_grazing = std::numeric_limits<double>::quiet_NaN();
+    sample.d_p_exit_limit = std::numeric_limits<double>::quiet_NaN();
+    sample.location = LocateByValidityMargins(sample.validity_margins, sample.validity_count);
+    return sample;
+  }
   const int last = slot_count_ - 1;
   // d_p_grazing: the exit root dropped after the fact — NaN wherever the direction already is
   // (disc < 0), exactly the situation it exists to sit next to. The exit face's outward normal:

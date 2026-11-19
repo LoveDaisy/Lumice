@@ -135,7 +135,7 @@ IceDiscovery::IceDiscovery(const FaceNormalTable& table, const FacePolygonTable&
       map_(table, slots_.data(), slot_count, refractive_index, incident_direction),
       corridor_(table, polygons, slots, slot_count), segments_(3 * (static_cast<size_t>(slot_count) + 1)),
       transmittances_(static_cast<size_t>(slot_count)) {
-  assert(slot_count >= 2 && slot_count <= kMaxFaceCount);
+  assert(slot_count >= 1 && slot_count <= kMaxFaceCount);
 }
 
 bool IceDiscovery::EvaluateLatticePoint(int sample_count, int i, BandEvent* event, double* transmission) {

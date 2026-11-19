@@ -15,7 +15,7 @@ Error ResolvePhysicalMemberScope(const PhysicalMemberRequest& request, PhysicalM
     return { ErrorCode::kInvalidArgument,
              "physical scope requires identity, explicit physical semantics and P/B/D bits" };
   }
-  if (request.representative.size() < 2 || request.representative.size() > analytic::kMaxFaceCount) {
+  if (request.representative.empty() || request.representative.size() > analytic::kMaxFaceCount) {
     return { ErrorCode::kInvalidPath, "invalid representative length" };
   }
   std::vector<IdType> path;

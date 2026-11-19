@@ -11,18 +11,21 @@ namespace lumice::gui {
 
 namespace {
 
-// The one formatting / wrap-width / override body behind both text entry points. The va_list
-// form stays TU-local: there is no external forwarding consumer yet, so the formatting authority
-// is not part of the public contract (promote it only when one appears).
+// Shared text layout for a standalone tooltip and prose inside a structured tooltip.
+void WrappedTextBody(const char* fmt, va_list args) {
+  constexpr float kTextWidth = 400.0f;
+  ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + UiPx(kTextWidth));
+  ImGui::TextV(fmt, args);
+  ImGui::PopTextWrapPos();
+}
+
+// Keep formatting / width on one body, including the icon consumers.
 void WrappedTooltipBody(const char* fmt, va_list args) {
   // Match SetTooltipV, including hiding a previous tooltip submitted on the same frame.
   if (!ImGui::BeginTooltipEx(ImGuiTooltipFlags_OverridePrevious, ImGuiWindowFlags_None)) {
     return;
   }
-  constexpr float kTextWidth = 400.0f;
-  ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + UiPx(kTextWidth));
-  ImGui::TextV(fmt, args);
-  ImGui::PopTextWrapPos();
+  WrappedTextBody(fmt, args);
   ImGui::EndTooltip();
 }
 
@@ -59,6 +62,13 @@ void SetWrappedTooltip(const char* fmt, ...) {
   va_list args;
   va_start(args, fmt);
   WrappedTooltipBody(fmt, args);
+  va_end(args);
+}
+
+void WrappedTooltipText(const char* fmt, ...) {
+  va_list args;
+  va_start(args, fmt);
+  WrappedTextBody(fmt, args);
   va_end(args);
 }
 

@@ -5,6 +5,9 @@
 namespace lumice::analytic {
 
 bool IsRankZeroPath(const FaceNormalTable& table, const int* slots, int slot_count) {
+  if (slot_count == 1) {
+    return false;  // a mirror is not the identity on SO(3), even if a restricted family is pinned
+  }
   // M = S_(m_k) ... S_(m_1), applied in path order: M <- S_n M.
   double m[3][3] = { { 1.0, 0.0, 0.0 }, { 0.0, 1.0, 0.0 }, { 0.0, 0.0, 1.0 } };
   for (int k = 1; k + 1 < slot_count; k++) {

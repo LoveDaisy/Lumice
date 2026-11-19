@@ -75,6 +75,10 @@ typedef struct LUMICE_SinglePathRequest {
   const volatile int* interrupted;  // the caller's one-way stop flag: 0 runs, non-zero stops at the
                                     // next loop boundary (a signal handler's sig_atomic_t; the
                                     // engine only reads it, never writes). NULL = no flag.
+  // Appended v4.62. Context only: 0 = physical P|B|D class (also the default for older
+  // request extents); 1 = literal requested sequence. Other values are invalid. The point's
+  // fiber and members always remain literal, independent of this context selection.
+  int context_symmetry_bits_plus_one;
 } LUMICE_SinglePathRequest;
 
 typedef struct LUMICE_SinglePathResult_ LUMICE_SinglePathResult;
@@ -274,10 +278,9 @@ LUMICE_API void LUMICE_PathSurveyDestroy(LUMICE_PathSurvey* result);
 #define LUMICE_PATH_PROBE_ALONG_ARC 2
 #define LUMICE_PATH_PROBE_ALONG_TANGENTIAL 3
 
-// Request. `struct_size` MUST be set to sizeof(LUMICE_PathProbeRequest) of the header the caller
-// compiled against: fields are only ever appended, and a size smaller than this version's is
-// rejected (LUMICE_ERR_INVALID_VALUE). A new struct: the budget fields are first-class from the
-// first version (no legacy size baggage).
+// Request. Set struct_size to sizeof(LUMICE_PathProbeRequest) of the compiled header.
+// Published older complete extents retain their defaults. Workspace queries reject
+// intermediate extents and accept larger future tails; legacy Analyze retains prefix reading.
 typedef struct LUMICE_PathProbeRequest {
   size_t struct_size;
   int crystal_id;  // a crystal entry of the scene
@@ -313,6 +316,10 @@ typedef struct LUMICE_PathProbeRequest {
   int budget_ms;
   const volatile int* interrupted;  // the caller's one-way stop flag (the engine only reads it,
                                     // never writes). NULL = no flag.
+  // Appended v4.62. Same context selection as LUMICE_SinglePathRequest: 0 = physical
+  // P|B|D default (including older extents), 1 = literal; all other values are invalid.
+  // Profiles remain representative-member quantities, never multiplied by the class size.
+  int context_symmetry_bits_plus_one;
 } LUMICE_PathProbeRequest;
 
 typedef struct LUMICE_PathProbe_ LUMICE_PathProbe;
@@ -2638,7 +2645,7 @@ typedef struct LUMICE_RepresentativeRayInfo {
   LUMICE_PathText entry_status;   // the corridor gate's status name, always spelled
   LUMICE_PathText chain_failure;  // the chain's failure name when it refused; empty otherwise
   int geometry_evaluated;         // whether the corridor cut an intersection at all
-  double area_perp_internal;      // the measured corridor area
+  double area_perp_internal;      // measured internal footprint; NaN for one-face external reflection (not applicable)
   double area_threshold;          // the corridor's own area gate
   double entry_measure;           // A_P at the pose; 0 on a refusal
   int crystal_id;
@@ -2658,7 +2665,7 @@ typedef struct LUMICE_RepresentativeRayInfo {
 } LUMICE_RepresentativeRayInfo;
 
 // One collision point: the world-frame point on its original finite face and the Fresnel factor
-// of the interface it sits on (T at entry and exit, R at internal faces).
+// of the interface it sits on (T at entry and exit, R at internal faces; a one-face path is external R).
 typedef struct LUMICE_PathRayContact {
   double point[3];
   double transmittance;

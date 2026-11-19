@@ -349,7 +349,18 @@ own copy of the non-finite-to-`null` mapping or the sun-grid rounding again.
 
 ## 5. `--warm`: two document families, one flag
 
-`--warm <file>` reads what a previous document is worth. The document's family decides:
+`--warm <file>` reads what a previous document is worth.
+
+This flag supplies **explicit** input: incompatible identity remains a refusal. A long-lived
+Workspace's automatic survey slot instead treats failed admission as a cache miss before
+injecting any seeds or facts; it does not change the request's scope. Both paths use the same
+admission authority and then the same per-fact qualification. Point fibers remain literal even
+when their optional survey context is physical-class scoped. C v4.62 additionally lets Point
+and Probe callers explicitly request literal context; zero and old request extents preserve
+physical-class context by default. Probe quantities remain representative-member profiles,
+not a class sum. CLI defaults and JSON schema versions are unchanged.
+
+The document's family decides:
 
 **A schema-1 `point` output** — the seed sheet. Its `components[*].seed` and then
 `incomplete[*].seed` (9 row-major doubles each) start the search as extra starting poses.
@@ -1131,7 +1142,9 @@ sub-block (the refused-support arm is the degenerate case: no leg runs, the bloc
   row exists** — a corner-bounded support (C06) or one ending at an interior maximum (C09) has
   no minimum, and the followed rows are the leg's data instead of a refusal: keys exist exactly
   when the readings they describe do. Either way the block carries `red_label`/`blue_label`,
-  `n_red`/`n_blue` and its own `evidence`.
+  `n_red`/`n_blue` and its own `evidence`. A one-face external reflection instead
+  spells `direction: "none"`: its red/blue `values_deg` coincide and displacement is zero.
+  This is no geometric colour edge, not a claim that its Fresnel weight has no colour dependence.
 - `diagnose` — the kernel's weight-kink and gate-edge analysis as a **separate sub-block**
   (a different kernel path than the dispersion table): `verdict_kind`, `color`, `visible`,
   `position_deg`, `coverage_complete`, `notes`, the declared `n_red`/`n_blue`, `features[]`

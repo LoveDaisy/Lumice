@@ -17,9 +17,11 @@
 #include <thread>
 #include <vector>
 
+#include "analytic/entry_measure.hpp"
 #include "analytic/jet.hpp"
 #include "analytic/path_chain.hpp"
 #include "analytic/path_evaluation.hpp"
+#include "analytic/path_fiber.hpp"
 #include "core/crystal.hpp"
 #include "core/optics.hpp"
 #include "support/portable_random.hpp"
@@ -169,6 +171,79 @@ class PathEvaluationTest : public ::testing::Test {
 // ---------------------------------------------------------------------------------------------
 // Face normals
 // ---------------------------------------------------------------------------------------------
+
+TEST(ExternalReflection, IndependentDirectionFresnelAreaAndJacobian) {
+  FaceNormalTable table;
+  FacePolygonTable polygons;
+  ASSERT_EQ(BuildFaceNormals(Prism(1.0), &table, &polygons), Status::kOk);
+  const int face = 3;
+  int slot;
+  ASSERT_EQ(ResolveFaceSequence(table, &face, 1, &slot), Status::kOk);
+  const double angle = 0.4;
+  const double ca = std::cos(angle);
+  const double sa = std::sin(angle);
+  const double pose[9] = { ca, 0, sa, 0, 1, 0, -sa, 0, ca };
+  const double normal[3] = { ca, 0, -sa };  // face 3 is body +x
+  Corridor measure(table, polygons, &slot, 1);
+  for (double cosine : { 1.0, 0.6 }) {
+    const double incident[3] = { -cosine * ca, std::sqrt(1.0 - cosine * cosine), cosine * sa };
+    double last_direction[3]{};
+    double last_weight = 0.0;
+    for (double index : { 1.31, 1.4 }) {
+      [&] {
+        double segments[6];
+        double factor;
+        PathOutputs result{ {}, 0.0, segments, &factor };
+        ASSERT_TRUE(EvaluatePath(table, &slot, 1, index, incident, pose, &result));
+        for (int k = 0; k < 3; ++k) {
+          EXPECT_NEAR(result.outgoing_direction[k], incident[k] + 2.0 * cosine * normal[k], 1e-12);
+          if (index == 1.4) {
+            EXPECT_DOUBLE_EQ(result.outgoing_direction[k], last_direction[k]);
+          }
+          last_direction[k] = result.outgoing_direction[k];
+        }
+        const double ct = std::sqrt(1.0 - (1.0 - cosine * cosine) / (index * index));
+        const double reflectance = 1.0 - TextbookTransmittance(1.0, cosine, index, ct);
+        EXPECT_NEAR(factor, reflectance, 1e-12);
+        EXPECT_DOUBLE_EQ(result.fresnel_transmission, factor);
+        const double body_incident[3] = { -cosine, std::sqrt(1.0 - cosine * cosine), 0.0 };
+        CorridorDiagnostics geometry;
+        const auto area = measure.Evaluate(body_incident, index, &geometry);
+        ASSERT_EQ(area.status, EntryMeasureStatus::kOk);
+        EXPECT_NEAR(area.value, 0.5 * cosine, 1e-12);  // diameter=1: side edge=1/2, h=1
+        EXPECT_TRUE(std::isnan(area.area_perp_internal));
+        EXPECT_NEAR(geometry.raw_area, 0.5 * cosine, 1e-12);
+        RepresentativePath contact;
+        ASSERT_EQ(measure.RecoverRepresentativePath(geometry, &contact), RecoveryStatus::kOk);
+        ASSERT_EQ(contact.contact_count, 1);
+        EXPECT_NEAR(contact.contacts[0][0], std::sqrt(3.0) / 4.0, 1e-12);
+        EXPECT_NEAR(contact.contacts[0][1], 0.0, 1e-12);
+        EXPECT_NEAR(contact.contacts[0][2], 0.0, 1e-12);
+        const auto diagnostic = EvaluatePathDiagnostics(table, &slot, 1, index, incident, pose);
+        ASSERT_TRUE(diagnostic.jacobian.available);
+        EXPECT_NEAR(diagnostic.jacobian.value, 4.0 * cosine, 1e-12);
+        if (index == 1.4) {
+          EXPECT_NE(area.value * factor, last_weight);
+        }
+        last_weight = area.value * factor;
+      }();
+    }
+  }
+  const double backface[3] = { 1, 0, 0 };
+  const double grazing[3] = { 0, 1, 0 };
+  EXPECT_EQ(measure.Evaluate(backface, kN).status, EntryMeasureStatus::kEntryBackface);
+  EXPECT_EQ(measure.Evaluate(grazing, kN).status, EntryMeasureStatus::kEntryBackface);
+  const double identity[9] = { 1, 0, 0, 0, 1, 0, 0, 0, 1 };
+  const double front[3] = { -1, 0, 0 };
+  double segments[6];
+  double factor;
+  PathOutputs zero{ {}, 0.0, segments, &factor };
+  ASSERT_TRUE(EvaluatePath(table, &slot, 1, 1.0, front, identity, &zero));
+  EXPECT_DOUBLE_EQ(factor, 0.0);  // index-matched interface: valid geometry, legal zero energy
+  EXPECT_GT(measure.Evaluate(front, 1.0).value, 0.0);
+  EXPECT_FALSE(EvaluatePath(table, &slot, 1, kN, backface, identity, &zero));
+  EXPECT_FALSE(EvaluatePath(table, &slot, 1, kN, grazing, identity, &zero));
+}
 
 TEST_F(PathEvaluationTest, FaceNormalsMatchTheShapeDescription) {
   for (const auto& [crystal, faces] :
@@ -894,7 +969,8 @@ TEST(PathEvaluationInput, FaceSequenceIsChecked) {
   ASSERT_EQ(BuildFaceNormals(Prism(1.0), &t), Status::kOk);
   int slots[4];
   const int one[] = { 3 };
-  EXPECT_EQ(ResolveFaceSequence(t, one, 1, slots), Status::kInvalidValue);
+  EXPECT_EQ(ResolveFaceSequence(t, one, 1, slots), Status::kOk);
+  EXPECT_EQ(ResolveFaceSequence(t, one, 0, slots), Status::kInvalidValue);
   const int unknown[] = { 3, 13 };
   EXPECT_EQ(ResolveFaceSequence(t, unknown, 2, slots), Status::kInvalidValue);
   const int zero[] = { 0, 3 };

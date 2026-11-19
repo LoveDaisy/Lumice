@@ -233,7 +233,7 @@ std::vector<ChromaticFeature> GateFeatures(const DeviationField& red, const Devi
                                            const BoundaryWalkRecord& red_record, const BoundaryWalkRecord& blue_record,
                                            int slot_count, std::vector<std::string>* unresolved,
                                            std::vector<std::string>* skip_notes, bool* complete) {
-  const int margin_count = 2 * slot_count;
+  const int margin_count = slot_count == 1 ? 1 : 2 * slot_count;
   auto has_curve = [&](const BoundaryWalkRecord& record, int margin) {
     return !PiecesByMargin(record, margin).values.empty();
   };

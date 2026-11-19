@@ -28,6 +28,7 @@
 #include "core/simulator.hpp"
 #include "raypath/detail/measure/declared_density.hpp"
 #include "raypath/detail/survey/config_fingerprint.hpp"
+#include "raypath/representative_ray.hpp"
 #include "raypath/scene_to_analytic.hpp"
 #include "raypath/single_path_analysis.hpp"
 
@@ -166,6 +167,101 @@ TEST(SurveyReuse, StructureAndReadingHaveSeparateScopeDependencies) {
   EXPECT_EQ(context.band_sum.reason, "scope_field_missing");
 }
 
+TEST(SingleFacePoint, AntisolarTargetHasRegularReflectionFiber) {
+  ConfigManager config = Scene(Prism(1.0f));
+  auto& axis = config.crystals_.at(1).axis_;
+  axis.latitude_dist = { DistributionType::kUniform, 90, 360 };
+  axis.azimuth_dist = axis.roll_dist = { DistributionType::kUniform, 0, 360 };
+  PointResult point;
+  const auto error = AnalyzePathPointValue(config, Request({ 3 }, -20.0, 180.0), false, &point);
+  ASSERT_TRUE(error.Ok()) << error.message;
+  ASSERT_EQ(point.Data().OutcomeValue(), Outcome::kDiscovered);
+  ASSERT_EQ(point.Data().Discovered().components.size(), 1u);
+  const auto& component = point.Data().Discovered().components.front();
+  EXPECT_EQ(component.kind, ComponentKind::kClosed);
+  ASSERT_GT(component.points.size(), 4u);
+  for (const auto& sample : component.points) {
+    EXPECT_TRUE(sample.valid);
+    EXPECT_GT(sample.entry_measure, 0.0);
+    EXPECT_NEAR(sample.jacobian, 4.0, 1e-10);
+    for (int k = 0; k < 3; ++k) {
+      EXPECT_NEAR(sample.outgoing_direction[k], -point.Data().meta.incident_direction[k], 1e-8);
+    }
+  }
+  RepresentativeRayRequest ray_request;
+  ray_request.crystal_id = 1;
+  ray_request.path_layers = { { 3 } };
+  std::copy(component.points.front().pose, component.points.front().pose + 9, ray_request.pose);
+  RepresentativeRayResult ray;
+  ASSERT_TRUE(AnalyzeRepresentativeRay(config, ray_request, &ray).Ok());
+  ASSERT_TRUE(ray.Data().Produced());
+  EXPECT_EQ(ray.Data().Path().contacts.size(), 1u);
+  ASSERT_EQ(ray.Data().Path().legs.size(), 2u);
+  for (int k = 0; k < 3; ++k) {
+    EXPECT_NEAR(ray.Data().Path().legs[1].direction[k], -point.Data().meta.incident_direction[k], 1e-8);
+  }
+}
+
+TEST(SingleFacePoint, FixedNormalMassLandsAtReflectionNotSun) {
+  ConfigManager config = Scene(Prism(1.0f));
+  auto& axis = config.crystals_.at(1).axis_;
+  axis.latitude_dist = Fixed(90.0f);  // zenith 0: basal normal stays world +z
+  axis.azimuth_dist = axis.roll_dist = { DistributionType::kUniform, 0, 360 };
+  PointResult point;
+  ASSERT_TRUE(AnalyzePathPointValue(config, Request({ 1 }, -20.0, 0.0), false, &point).Ok());
+  ASSERT_EQ(point.Data().OutcomeValue(), Outcome::kPointMass);
+  EXPECT_NEAR(point.Data().Mass().altitude_deg, -20.0, 1e-12);
+  EXPECT_NEAR(point.Data().Mass().azimuth_deg, 0.0, 1e-12);
+  EXPECT_NEAR(point.Data().Mass().target_separation_deg, 0.0, 1e-12);
+  EXPECT_FALSE(point.Data().Mass().orbit_factors.available);
+  EXPECT_EQ(point.Data().Mass().orbit_factors.reason, "external_reflection_mass_not_integrated");
+  axis.latitude_dist = { DistributionType::kGaussian, 90, 0 };
+  ASSERT_TRUE(AnalyzePathPointValue(config, Request({ 1 }, -20.0, 0.0), false, &point).Ok());
+  ASSERT_EQ(point.Data().OutcomeValue(), Outcome::kPointMass);  // zero-width Gaussian is fixed, not a density
+  axis.latitude_dist = Fixed(90.0f);
+  axis.azimuth_dist = Fixed(37.0f);
+  // A frozen azimuth is outside the survey routing domain, but that numerical
+  // limitation cannot invalidate a direct proof that this basal normal is fixed.
+  ASSERT_TRUE(AnalyzePathPointValue(config, Request({ 1 }, -20.0, 0.0), false, &point).Ok());
+  ASSERT_EQ(point.Data().OutcomeValue(), Outcome::kPointMass);
+  EXPECT_NEAR(point.Data().Mass().altitude_deg, -20.0, 1e-12);
+  axis.roll_dist = Fixed(19.0f);
+  ASSERT_TRUE(AnalyzePathPointValue(config, Request({ 1 }, -20.0, 0.0), false, &point).Ok());
+  ASSERT_EQ(point.Data().OutcomeValue(), Outcome::kPointMass);
+  EXPECT_NEAR(point.Data().Mass().altitude_deg, -20.0, 1e-12);
+  EXPECT_EQ(point.Data().Mass().orbit_factors.measure_support, "single_pose");
+  const auto backface = AnalyzePathPointValue(config, Request({ 2 }, 20.0, 0.0), false, &point);
+  EXPECT_EQ(backface.code, ErrorCode::kPathInfeasible);
+  EXPECT_EQ(backface.message, "external_reflection_backface_on_actual_family");
+}
+
+TEST(SingleFacePoint, VaryingNormalFamilyIsNotMassAndHasNoFakeContinuousDensity) {
+  ConfigManager config = Scene(Prism(1.0f));
+  auto& axis = config.crystals_.at(1).axis_;
+  axis.latitude_dist = Fixed(90.0f);
+  axis.azimuth_dist = axis.roll_dist = { DistributionType::kUniform, 0, 360 };
+  PointResult point;
+  ASSERT_TRUE(AnalyzePathPointValue(config, Request({ 3 }, 20.0, 90.0), false, &point).Ok());
+  ASSERT_EQ(point.Data().OutcomeValue(), Outcome::kDiscovered);
+  ASSERT_FALSE(point.Data().Discovered().components.empty());
+  const auto& sample = point.Data().Discovered().components.front().points.front();
+  ASSERT_TRUE(sample.valid);
+  EXPECT_GT(sample.entry_measure, 0.0);
+  EXPECT_TRUE(std::isnan(sample.rho));
+  EXPECT_TRUE(std::isnan(sample.factor_product));
+  // The returned geometric pose really sends the incident direction to the target.
+  const double* r = sample.pose;
+  const double normal[3] = { r[0], r[3], r[6] };
+  const auto& meta = point.Data().meta;
+  double dot = 0.0;
+  for (int i = 0; i < 3; ++i) {
+    dot += meta.incident_direction[i] * normal[i];
+  }
+  for (int i = 0; i < 3; ++i) {
+    EXPECT_NEAR(meta.incident_direction[i] - 2.0 * dot * normal[i], meta.target_direction[i], 1e-8);
+  }
+}
+
 // ---- conversions ----------------------------------------------------------------------------
 
 TEST(SinglePathConvert, TakesTheCentreSlotOfEveryDistribution) {
@@ -268,7 +364,9 @@ TEST(SinglePathConvert, PathResolution) {
   EXPECT_TRUE(ResolveSingleLayerPath({ { 3, 5 } }, table, &slots).Ok());
   EXPECT_EQ(slots.size(), 2u);
   EXPECT_EQ(ResolveSingleLayerPath({}, table, &slots).code, ErrorCode::kInvalidPath);
-  EXPECT_EQ(ResolveSingleLayerPath({ { 3 } }, table, &slots).code, ErrorCode::kInvalidPath);
+  EXPECT_TRUE(ResolveSingleLayerPath({ { 3 } }, table, &slots).Ok());
+  EXPECT_EQ(slots.size(), 1u);
+  EXPECT_EQ(ResolveSingleLayerPath({ {} }, table, &slots).code, ErrorCode::kInvalidPath);
   EXPECT_EQ(ResolveSingleLayerPath({ std::vector<int>(65, 3) }, table, &slots).code, ErrorCode::kInvalidPath);
   EXPECT_EQ(ResolveSingleLayerPath({ { 3, 5 }, { 1, 2 } }, table, &slots).code, ErrorCode::kMultiLayerUnsupported);
   const Error missing = ResolveSingleLayerPath({ { 3, 13 } }, table, &slots);

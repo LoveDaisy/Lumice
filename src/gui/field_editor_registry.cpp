@@ -14,6 +14,7 @@
 #include "gui/ray_num_domain.hpp"
 #include "gui/slider_format_rules.hpp"
 #include "gui/theme.hpp"
+#include "gui/tooltip.hpp"
 #include "gui/view_look_at.hpp"
 #include "imgui.h"
 #include "include/lumice_render.h"
@@ -690,7 +691,7 @@ FieldEditorEntry AspectPresetField() {
           changed = true;
         }
         if (needs_background && !g_preview.HasBackground() && ImGui::IsItemHovered()) {
-          ImGui::SetTooltip(
+          SetWrappedTooltip(
               "No background image is loaded yet, so Match Background behaves like "
               "Free until one is (Load Bg under Display).");
         }
@@ -727,7 +728,7 @@ FieldEditorEntry CircleAngleListField(AngularDistFamily family) {
       ImGui::OpenPopup(HiddenLabel(id_base).c_str());
     }
     if (ImGui::IsItemHovered()) {
-      ImGui::SetTooltip(
+      SetWrappedTooltip(
           "Edit the angle list: preset rings, a custom angle, per-entry delete. "
           "The list has a cap and angles are clamped to the same band as in the "
           "overlay section.");
@@ -756,7 +757,7 @@ FieldEditorEntry BackgroundPathField() {
       g_background_file_dialog_request = true;
     }
     if (ImGui::IsItemHovered()) {
-      ImGui::SetTooltip(
+      SetWrappedTooltip(
           "Pick an image file. Loading replaces the current background, shows it and "
           "resets its pan/zoom — the same as the Display panel's Load Bg. Cancelling "
           "or a failed load changes nothing.");
@@ -767,7 +768,7 @@ FieldEditorEntry BackgroundPathField() {
     const std::string name = std::filesystem::path(state.bg_path).filename().string();
     ImGui::TextUnformatted(name.empty() ? "(no image)" : name.c_str());
     if (!name.empty() && ImGui::IsItemHovered()) {
-      ImGui::SetTooltip("%s", state.bg_path.c_str());
+      SetWrappedTooltip("%s", state.bg_path.c_str());
     }
     return false;  // the load lands after this frame, through the loader that owns the feedback
   };

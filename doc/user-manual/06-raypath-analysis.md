@@ -193,16 +193,12 @@ implicitly. The report scroll never zooms either camera. **Overlays** still cons
 survey's own located objects and dispersion circles, with one grouped tooltip and a legend
 of what was actually drawn; geometry positions are not whole-circle contribution claims.
 
-**Verdict anchors.** The class answer's colour verdict ("Weight colour: …" / "Position: …") is a
-spatial conclusion: hovering either row in the class answer draws a circle on the map at the
-deviation the verdict names, and moving the mouse away removes it. The **Verdict anchors**
-switch beside **Overlays** keeps the circle on without hovering; both nest under Overlays —
-turning Overlays off hides the anchor too. The circle reuses the dispersion circles' colour and
-readout label, quoted with the verdict's own delta. The honesty rules are visual: a verdict that
-names itself **not visible**, and one the class answer carries no position for, draw nothing
-(the text is the answer there, not a missing marker), and a verdict with **incomplete coverage**
-draws its circle dashed. The legend lists "verdict anchor" only on frames where one actually
-drew — its absence means no anchor is on the map, not that the verdict is gone.
+**Verdict anchors.** **Overlays** includes qualified colour-verdict circles by default, at the
+verdict's own deviation. There is no separate switch. Verdict and Position rows still highlight
+on hover; they do not need to be hovered to keep the circle visible. Turning Overlays off hides
+these analysis circles, not your sky point or the sun/horizon references. A verdict that names
+itself **not visible**, has no position, or is not a supported positioned kind draws nothing;
+**incomplete coverage** draws a dashed circle. The legend only lists anchors actually drawn.
 
 **Row highlights and the reference profile's readings.** Every hoverable row in the class answer
 highlights while the pointer stands on it — the theme's own hover colour under the row's text —
@@ -218,11 +214,15 @@ Blue/red ratio row highlights too but names no position, so it drives no map geo
 profile drawings are hover-transient: no row standing, no ink, and Overlays off holds them back
 while the row highlight stays.
 
-**Readout labels stay inside the view.** The delta labels on the dispersion circles and the
-verdict anchor move inside the map's bounds when their anchor sits near an edge — the word stays
-whole (text and backing move together), and a view too small to hold a label keeps that label
-where the curve put it. The map's other drawings are unchanged: the sun marker may still be
-cut by the view's edge, and the circles still end at the view's own physical boundary.
+**Readout labels stay readable together.** The dispersion pair and verdict share one layout
+inside the visible map. Full wavelength/deviation/arc qualifiers stay with their readings.
+When several labels are laid out together, leaders connect them to their curves, including in
+the marked, wrapped stack used by narrow maps. A lone label is clamped inside the visible map
+without a leader. If even the stack cannot fit, **Readouts: hover for all** opens all full readings
+without curve leaders and explains how to restore inline labels by enlarging the map.
+Fonts and circles are not reduced or hidden.
+Your sky-point ring/crosshair has a light core and dark outline for both bright and dark maps,
+with the same shape for a pick, drag or typed **Set sky point**.
 
 ## 8. The point inspector (the Pose & trace window, point detail)
 
@@ -270,9 +270,11 @@ removes (the curve's reading strip holds an eight-line budget until you drag its
 yourself).
 
 Waiting, cancelled, refused and sample changes retain the same canvas and control slots. Missing
-components or samples disable the corresponding controls instead of inventing data. Each graph's
-report below it scrolls; it does not squeeze the graph when its content grows. Resize and divider
-changes still resize the graph normally.
+components or samples disable the corresponding controls instead of inventing data. Raypath 3D and the globe have no duplicate sample/angle report below them: that space belongs
+to the canvases. The current pose's exact values remain in the factors region. The fixed window
+status bar names errors, refused paths, empty samples and partial results; hover a shortened
+line to read the full reason. These states do not squeeze the graphs. Resize and divider
+changes still resize them normally.
 
 **The sun direction globe** (the window's upper right) draws the selected component's fiber:
 each valid sample is one pose where the sun sits somewhere in the crystal (the `u` arrow), the
@@ -296,9 +298,10 @@ left edge, contacts marked. **World** and **Crystal** are the same physical path
 Fresnel ratios** toggle (on by default — the per-segment ratio numbers are the path's
 exact-value face; switching it never moves the canvas) and an ⓘ help icon carrying the usage
 and display-semantics notes. While the path for a fresh pose is computing, the window's status
-bar says so and the report keeps the previous sample's named source line; a pose with no legal
-path names why in the report (the corridor's refusal and its measured area); a rank-0 point
-mass has no path and says that instead of drawing one.
+bar says so without showing the previous sample's path or report. A pose with no legal path
+names the representative-path refusal in that same bar; hover a shortened line for the complete
+reason and corridor measurements. A rank-0 point mass has no path and says that instead of
+drawing one. Partial results are explicitly incomplete even with this window open on its own.
 
 **Contribution curve** (the window's left column, lower region) draws the selected component's
 five named

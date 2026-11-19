@@ -47,7 +47,7 @@ inline bool IsMarkerLookAt(LookAtId id) {
 // re-typed here, because a preset the user cannot match to the dot they can see is worth less than
 // no preset at all. The Horizon series owns the only new literals in this file, and they live in
 // the same table as the series' offsets so a name and its bearing cannot be edited apart.
-// Returns nullptr for an out-of-range id.
+// None has its own label but no direction; returns nullptr for an invalid id.
 const char* LookAtDisplayName(LookAtId id);
 
 // The camera angles that point at `dir`, inverting the forward vector BuildViewMatrix builds:
@@ -96,6 +96,8 @@ bool ResolveLookAtPose(LookAtId id, float sun_altitude_deg, const FieldEditorCon
                        const FieldEditorConstraint& az_c, float* out_az_deg, float* out_el_deg);
 
 // User-level state transitions. These are the only GUI actions that change the follow intent.
+// Selecting None clears target and Lock without touching the camera; Unlock keeps the target.
+// Lock and follow reject None just like any other id without a resolvable direction.
 bool SelectLookAtTarget(GuiState& state, LookAtId target);
 bool SetLookAtLocked(GuiState& state, bool locked);
 void UnlockLookAt(GuiState& state);

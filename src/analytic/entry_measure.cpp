@@ -112,7 +112,7 @@ int ClipHalfplane(const std::vector<double>& in, int count, const double a[2], c
 }  // namespace
 
 Corridor::Corridor(const FaceNormalTable& normals, const FacePolygonTable& polygons, const int* slots, int slot_count) {
-  assert(slot_count >= 2);
+  assert(slot_count >= 1);
   const int last = slot_count - 1;
   Placement placement;
   offsets_.push_back(0);
@@ -145,7 +145,9 @@ Corridor::Corridor(const FaceNormalTable& normals, const FacePolygonTable& polyg
     plane_offsets_.push_back(c);
     placement.Reflect(n, c);
   }
-  append(slots[last]);
+  if (slot_count > 1) {
+    append(slots[last]);
+  }
   for (int i = 0; i < 3; i++) {
     entry_normal_[i] = normals.normal[slots[0]][i];
   }
@@ -164,15 +166,17 @@ Corridor::Corridor(const FaceNormalTable& normals, const FacePolygonTable& polyg
   }
   entry_offset /= offsets_[1] - offsets_[0];
   plane_offsets_.insert(plane_offsets_.begin(), entry_offset);
-  double exit_plane[3];
-  placement.Rotate(normals.normal[slots[last]], exit_plane);
-  plane_normals_.insert(plane_normals_.end(), exit_plane, exit_plane + 3);
-  double exit_offset = 0.0;
-  for (int v = offsets_[last]; v < offsets_[last + 1]; v++) {
-    exit_offset += so3::Dot3(exit_plane, &points_[3 * static_cast<size_t>(v)]);
+  if (slot_count > 1) {
+    double exit_plane[3];
+    placement.Rotate(normals.normal[slots[last]], exit_plane);
+    plane_normals_.insert(plane_normals_.end(), exit_plane, exit_plane + 3);
+    double exit_offset = 0.0;
+    for (int v = offsets_[last]; v < offsets_[last + 1]; v++) {
+      exit_offset += so3::Dot3(exit_plane, &points_[3 * static_cast<size_t>(v)]);
+    }
+    exit_offset /= offsets_[last + 1] - offsets_[last];
+    plane_offsets_.push_back(exit_offset);
   }
-  exit_offset /= offsets_[last + 1] - offsets_[last];
-  plane_offsets_.push_back(exit_offset);
   for (int k = 0; k < slot_count; k++) {
     const int slot = slots[k];
     real_normals_.insert(real_normals_.end(), normals.normal[slot], normals.normal[slot] + 3);
@@ -203,27 +207,35 @@ EntryMeasure Corridor::Evaluate(const double s_body[3], double refractive_index,
     *diagnostics = {};
     diagnostics->area_threshold = eps_;
   }
+  // offsets_ delimits the actual face polygons: one face has exactly [0, end].
+  // No diagnostic or ghost polygon is appended for an external-reflection path.
+  const bool external = offsets_.size() == 2;
+  if (external) {
+    m.area_perp_internal = std::numeric_limits<double>::quiet_NaN();
+  }
   // Entry gate: the incident side has no critical angle (LI entry_ok with cos_tc = 0, and cos_i > 0).
   const double cos_i = -so3::Dot3(entry_normal_, s_body);
   if (!(cos_i > 0.0)) {
     m.status = EntryMeasureStatus::kEntryBackface;
     return m;
   }
-  // LI refract_into_crystal.
-  const double eta = 1.0 / refractive_index;
-  const double discriminant = 1.0 - eta * eta * (1.0 - cos_i * cos_i);
-  const double k = eta * cos_i - std::sqrt(discriminant);
-  double d_in[3];
-  for (int i = 0; i < 3; i++) {
-    d_in[i] = eta * s_body[i] + k * entry_normal_[i];
-  }
-  const double cos_t = -so3::Dot3(entry_normal_, d_in);
-  // Exit gate (LI exit_ok): d_in . n~_b >= cos(theta_c), with theta_c from the call's index, the one
-  // the ray actually crosses (as in LI).
-  const double cos_critical = std::sqrt(1.0 - 1.0 / (refractive_index * refractive_index));
-  if (!(so3::Dot3(d_in, exit_normal_) >= cos_critical)) {
-    m.status = EntryMeasureStatus::kExitCriticalAngle;
-    return m;
+  double d_in[3] = { s_body[0], s_body[1], s_body[2] };
+  double cos_t = cos_i;
+  if (!external) {
+    // LI refract_into_crystal. A single external face instead projects along the
+    // air-side incident line, without a fictitious internal segment or exit gate.
+    const double eta = 1.0 / refractive_index;
+    const double discriminant = 1.0 - eta * eta * (1.0 - cos_i * cos_i);
+    const double k = eta * cos_i - std::sqrt(discriminant);
+    for (int i = 0; i < 3; i++) {
+      d_in[i] = eta * s_body[i] + k * entry_normal_[i];
+    }
+    cos_t = -so3::Dot3(entry_normal_, d_in);
+    const double cos_critical = std::sqrt(1.0 - 1.0 / (refractive_index * refractive_index));
+    if (!(so3::Dot3(d_in, exit_normal_) >= cos_critical)) {
+      m.status = EntryMeasureStatus::kExitCriticalAngle;
+      return m;
+    }
   }
 
   // LI perp_bases of d_in: (u, w, d) right-handed, helper +z unless |d_z| >= 0.9, then +x.
@@ -280,20 +292,23 @@ EntryMeasure Corridor::Evaluate(const double s_body[3], double refractive_index,
       poly_.swap(next_);
     }
   }
-  m.area_perp_internal = PolygonArea(poly_, count);
+  const double raw_area = PolygonArea(poly_, count);
+  if (!external) {
+    m.area_perp_internal = raw_area;
+  }
   if (diagnostics) {
-    diagnostics->raw_area = m.area_perp_internal;
+    diagnostics->raw_area = raw_area;
     diagnostics->edge_sources = std::move(sources);
     for (int i = 0; i < count; ++i) {
       diagnostics->vertices.push_back({ poly_[2 * i], poly_[2 * i + 1] });
     }
   }
-  if (m.area_perp_internal <= eps_) {
+  if (raw_area <= eps_) {
     m.status = EntryMeasureStatus::kCorridorEmpty;
     return m;
   }
   m.status = EntryMeasureStatus::kOk;
-  m.value = m.area_perp_internal * cos_i / cos_t;
+  m.value = external ? raw_area : raw_area * cos_i / cos_t;
   return m;
 }
 

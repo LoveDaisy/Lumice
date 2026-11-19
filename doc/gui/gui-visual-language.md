@@ -124,7 +124,7 @@ ScrollbarRounding 3  WindowRounding 4  PopupRounding 4
 
 **info icon 权威形态** —— 单一实现是 `gui/tooltip.hpp` 的 `InfoIcon`：透明 `SmallButton` 承载 FontAwesome 圆形问号（`ICON_FA_CIRCLE_INFO`），`TextDisabled` 色、无边框、稳定 item ID（调用方提供 `##` 后缀并保证窗口内唯一）；`SameLine` 并入前一控件所在行（`InfoIconLine` 为独立行标记变体）；hover 正文经 `SetWrappedTooltip` 呈现，无点击副作用、不改控件值、正文按需构造。同主题共用一个 icon，不逐按钮机械追加。
 
-**`SetWrappedTooltip`** 保留 ImGui tooltip 的格式化、定位与覆盖语义，正文最多 `UiPx(400)`，外框另加实际 `WindowPadding`；短句仍自适应宽度。它是 info icon 的 hover 正文与迁移/新增长 tooltip 的统一排版载体（原「仅 Settings 采用」的限定废止）。width-exact 的存量行（右面板各宽定行、Look-at 行——行宽由列预算精确钉死、无处安放 per-control icon 的行）暂沿控件 hover 原样，待 owner 对这些行终裁后归属；终裁前本条的「统一载体」不覆盖它们。Settings 对行长提示的原有保障不变：全文不丢、长正文多行、外框受限、短句自适应；400 是排版设计选值，维持既有合同，owner 上手后可再调。
+**`SetWrappedTooltip`** 保留 ImGui tooltip 的格式化、定位与覆盖语义，正文最多 `UiPx(400)`，外框另加实际 `WindowPadding`；短句仍自适应宽度。它是 info icon 与保留控件 hover 的普通正文统一排版载体；混合浮层中的解释段落使用同源的 `WrappedTooltipText`，保留原有数据行与分组。**载体归属与正文排版正交**：width-exact 的存量行（右面板各宽定行、Look-at 行、Axis Label chip 行）可暂沿控件 hover 等待归属终裁，但不能因此豁免正文限宽；不为浮层换行加宽面板、裁控件或强塞 icon。截断内容的全文读回与动态错误也遵守同一上限，纯数据表/特殊数值读数按其实际布局保留，而非按 API 名称整块豁免混合正文。保障与 Settings 一致：全文不丢、长正文多行、正文及外框受限、短句自适应；400 是排版设计选值，维持既有合同，owner 上手后可再调。
 
 **4.3 调色板** —— 见 §3 定案列。核心两条规则：**强调色不做大面积常驻填充，且滑条静止态不上色**；分组标题是**染色**不是实心条。
 
@@ -384,7 +384,9 @@ InputText 缓冲之外的第四个：Size）。
 
 Analyze 的具体空间合同见 `analyze-interaction-contract.md` §15。窗口尺寸与内部内容预算是两件事：
 保留自由档外窗及既有下限，不用增大外窗来遮盖瞬态文字推动画布的缺陷。画布/操作/状态报告先按
-可见几何分份额，再填入查询状态；长身份、图例与领域限定正文在报告内滚，不影响主要锚点。
+可见几何分份额，再填入查询状态；曲线/诊断的长正文在自身报告内滚，不影响主要锚点。
+Pose 的 Ray3D/globe 无下方成功态报告或配额，图例在画布、实际姿态在因素区；当前错误/拒答/partial
+等事实归既有固定底栏，正常与失败共用同一画布预算。
 两个分析浮窗另有同一机制的全宽常驻单行查询底栏（28pt，沿用主窗尺度、主窗实现不改）：
 先从可见 client 扣底栏再分正文；长等待/错误省略、hover 全文，健康只显示状态词。它不因文本变高，
 也不用增大自由档窗口下限换空间；No selection 完整引导在空地图画布居中，不挤进底栏。

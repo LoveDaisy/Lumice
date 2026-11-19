@@ -159,6 +159,41 @@ bool TracePathChain(const FaceNormalTable& table, const int* slots, int slot_cou
   bool failed = false;  // kEvaluateAll only: has the first failure been recorded
   double fresnel = 1.0;
 
+  // A complete one-face path is the reflected air-side branch, not transmission into
+  // a crystal with a missing exit. Keep its direction and derivatives in this same chain.
+  if (slot_count == 1) {
+    S normal[3];
+    BodyToWorld(pose, table.normal[slots[0]], normal);
+    const S cosine = -so3::Dot3(normal, incident_direction);
+    Record(domain, ValueOf(cosine));
+    if (diagnostics) {
+      diagnostics->reached = 1;
+      diagnostics->incidence[0] = cosine;
+      diagnostics->discriminant[0] = S(std::nan(""));
+    }
+    if (GateStops<kMode>(domain, !std::isfinite(ValueOf(cosine)), ChainFailure::kNonFinite, std::nan(""), &failed) ||
+        GateStops<kMode>(domain, !(ValueOf(cosine) > 0.0), ChainFailure::kPathInfeasible, ValueOf(cosine), &failed)) {
+      return false;
+    }
+    for (int i = 0; i < 3; ++i) {
+      outgoing[i] = incident_direction[i] + 2.0 * cosine * normal[i];
+    }
+    if constexpr (kDetail) {
+      if (detail) {
+        chain_detail::WorldToBody(pose, incident_direction, detail->segment_directions);
+        chain_detail::WorldToBody(pose, outgoing, detail->segment_directions + 3);
+        const double rr = 1.0 / refractive_index;
+        const double disc = 1.0 - rr * rr * (1.0 - cosine * cosine);
+        detail->interface_transmittances[0] = chain_detail::Reflectance(cosine, rr, disc);
+        detail->fresnel_transmission = detail->interface_transmittances[0];
+      }
+    }
+    if (domain && !failed) {
+      domain->failure = ChainFailure::kNone;
+    }
+    return !failed;
+  }
+
   // Entry: refraction into the crystal, normal toward the incident medium is the outward normal.
   S normal[3];
   BodyToWorld(pose, table.normal[slots[0]], normal);

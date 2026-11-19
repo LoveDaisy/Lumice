@@ -6,6 +6,7 @@
 namespace lumice::gui {
 
 enum class LookAtId : int {
+  kNone = -1,  // No direction; named ids retain their marker/table indices.
   kZenith = LUMICE_ANNOTATION_MARKER_ZENITH,
   kNadir = LUMICE_ANNOTATION_MARKER_NADIR,
   kSun = LUMICE_ANNOTATION_MARKER_SUN,
@@ -24,7 +25,7 @@ inline bool IsValidLookAtId(LookAtId id) {
 }
 
 struct LookAtSession {
-  LookAtId target = LookAtId::kSun;
+  LookAtId target = LookAtId::kNone;
   bool locked = false;
 };
 

@@ -92,8 +92,8 @@ struct RepresentativeRayData {
 
 inline RepresentativeRayData FinalizeRepresentativeRayData(RepresentativeRayData data) {
   const size_t face_count = data.meta.faces.size();
-  if (face_count < 2) {
-    throw std::invalid_argument("representative ray: the face sequence must be at least two faces");
+  if (face_count < 1) {
+    throw std::invalid_argument("representative ray: the face sequence must not be empty");
   }
   if (const auto* path = std::get_if<RepresentativeRayValues>(&data.payload)) {
     if (path->contacts.size() != face_count) {

@@ -38,6 +38,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <filesystem>
 #include <nlohmann/json.hpp>
 #include <set>
@@ -45,14 +46,20 @@
 #include <vector>
 
 #include "IconsFontAwesome6.h"  // the sky eyedropper's label is an icon glyph, and its "##" id folds it in
-#include "gui/app.hpp"          // g_state / g_server / g_preview_vp / DoRun — the exposure-mode case
+#include "gui/analyze_map_view.hpp"
+#include "gui/analyze_overview.hpp"
+#include "gui/analyze_survey.hpp"
+#include "gui/analyze_ui_widgets.hpp"
+#include "gui/app.hpp"  // g_state / g_server / g_preview_vp / DoRun — the exposure-mode case
 #include "gui/defaults_diff.hpp"
 #include "gui/file_io.hpp"
 #include "gui/gui_state.hpp"
 #include "gui/mono_exposure_scale.hpp"
 #include "gui/user_defaults.hpp"
+#include "gui/view_look_at.hpp"
 #include "support/user_defaults_test_env.hpp"
 #include "test_gui_shared.hpp"
+#include "tooltip_observation.hpp"
 
 namespace {
 
@@ -194,6 +201,60 @@ ImGuiTestItemInfo LookAtComboInfo(ImGuiTestContext* ctx) {
   return ctx->ItemInfo(LookAtComboId(ctx), ImGuiTestOpFlags_NoError);
 }
 
+// Read the real combo draw, including full glyph UVs and the command's actual clip. A state
+// field or text log alone would accept a mislabeled/clipped preview.
+bool LookAtPreviewShown(ImGuiTestContext* ctx, const char* expected) {
+  const auto combo = LookAtComboInfo(ctx);
+  IM_CHECK_RETV(combo.ID != 0 && combo.Window != nullptr, false);
+  IM_CHECK_RETV(combo.Window->InnerClipRect.Contains(combo.RectFull), false);
+  ImFont* font = ImGui::GetFont();
+  const float scale = combo.Window->FontRefSize / font->FontSize;
+  float x = std::floor(combo.RectFull.Min.x + ImGui::GetStyle().FramePadding.x);
+  const float y = std::floor(combo.RectFull.Min.y + ImGui::GetStyle().FramePadding.y);
+  const ImDrawList* draw = combo.Window->DrawList;
+  const auto check_glyph = [&](char c) {
+    const ImFontGlyph* glyph = font->FindGlyphNoFallback(static_cast<ImWchar>(c));
+    IM_CHECK_RETV(glyph != nullptr, false);
+    if (glyph->Visible) {
+      const ImVec2 lo(x + glyph->X0 * scale, y + glyph->Y0 * scale);
+      const ImVec2 hi(x + glyph->X1 * scale, y + glyph->Y1 * scale);
+      bool complete = false;
+      for (const ImDrawCmd& cmd : draw->CmdBuffer) {
+        const ImRect clip(ImVec2(cmd.ClipRect.x, cmd.ClipRect.y), ImVec2(cmd.ClipRect.z, cmd.ClipRect.w));
+        if (!clip.Contains(ImRect(lo, hi))) {
+          continue;
+        }
+        for (unsigned int i = cmd.IdxOffset; i < cmd.IdxOffset + cmd.ElemCount; ++i) {
+          const unsigned int v = cmd.VtxOffset + draw->IdxBuffer[i];
+          if (v + 2 >= static_cast<unsigned int>(draw->VtxBuffer.Size)) {
+            continue;
+          }
+          const ImDrawVert& a = draw->VtxBuffer[v];
+          const ImDrawVert& b = draw->VtxBuffer[v + 2];
+          if (std::fabs(a.pos.x - lo.x) < 0.1f && std::fabs(a.pos.y - lo.y) < 0.1f &&
+              std::fabs(b.pos.x - hi.x) < 0.1f && std::fabs(b.pos.y - hi.y) < 0.1f && a.uv.x == glyph->U0 &&
+              a.uv.y == glyph->V0 && b.uv.x == glyph->U1 && b.uv.y == glyph->V1) {
+            complete = true;
+            break;
+          }
+        }
+      }
+      if (!complete) {
+        ctx->LogInfo("Look At preview '%s': glyph '%c' missing or clipped", expected, c);
+      }
+      IM_CHECK_RETV(complete, false);
+    }
+    x += glyph->AdvanceX * scale;
+    return true;
+  };
+  for (const char* c = expected; *c != '\0'; ++c) {
+    if (!check_glyph(*c)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 bool LookAtControlsFitOneRow(ImGuiTestContext* ctx, float ui_scale) {
   // Scroll the row into view first: at 2x it starts below the harness window's fold, and a
   // clipped Reset never registers its debug label (ButtonEx returns from its clipped branch
@@ -260,8 +321,10 @@ bool LookAtControlsFitOneRow(ImGuiTestContext* ctx, float ui_scale) {
               static_cast<double>(fov_label.RectFull.Min.x));
     return false;
   }
-  if (lock.RectFull.Max.x > lock.Window->InnerRect.Max.x) {
-    IM_ERRORF("UI scale %.2f: Lock extends beyond the right panel", ui_scale);
+  if (lock.RectFull.Max.x > lock.Window->InnerRect.Max.x || !reset.Window->InnerClipRect.Contains(reset.RectFull) ||
+      !combo.Window->InnerClipRect.Contains(combo.RectFull) || !lock.Window->InnerClipRect.Contains(lock.RectFull) ||
+      std::fabs(lock.Window->Size.x - gui::UiPx(300.0f)) > 0.5f) {
+    IM_ERRORF("UI scale %.2f: the complete row does not fit the original 300pt right panel clip", ui_scale);
     return false;
   }
   const float longest_preview_width =
@@ -299,6 +362,169 @@ void PickLens(ImGuiTestContext* ctx, int lens) {
 }  // namespace
 
 void RegisterViewDisplayControlTests(ImGuiTestEngine* engine) {
+  {
+    ImGuiTest* t =
+        IM_REGISTER_TEST(engine, "view_display_controls", "survey_object_tooltip_keeps_rows_and_full_reason");
+    static gui::SurveyObjectRow row;
+    static bool draw = false;
+    t->GuiFunc = [](ImGuiTestContext*) {
+      if (!draw) {
+        return;
+      }
+      ImGui::SetNextWindowPos(ImVec2(40.0f, 80.0f), ImGuiCond_Always);
+      ImGui::Begin("Survey tooltip host");
+      ImGui::Button("Located object", ImVec2(gui::UiPx(180.0f), gui::UiPx(60.0f)));
+      if (ImGui::IsItemHovered()) {
+        gui::RenderSurveyObjectTooltip({ &row, &row });
+      }
+      ImGui::End();
+    };
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      const ScopedTooltipUiScale scale(ctx);
+      struct Clear {
+        ~Clear() { draw = false; }
+      } clear;
+      // A model-level fixture, not a fabricated physics result or an engine acquisition.
+      row = {};
+      row.kind_name = "family";
+      row.state_name = "refused";
+      row.position_available = true;
+      row.position_altitude_deg = 12.5;
+      row.position_azimuth_deg = 30.25;
+      row.family_level = 2;
+      row.blur_deg = 0.5;
+      row.reason =
+          "The located family retains its position and evidence fields even when this part of the "
+          "calculation is refused. The complete reason must remain readable beside the grouped "
+          "object count, without dropping this final explanation.";
+      draw = true;
+      ctx->Yield(3);
+      std::string rendered;
+      IM_CHECK(ObserveTooltip(ctx, ctx->ItemInfo("//Survey tooltip host/Located object").RectFull.GetCenter(),
+                              row.reason.c_str(), true, "survey-object-tooltip.png", &rendered));
+      IM_CHECK(rendered.find("Survey objects") != std::string::npos);
+      IM_CHECK(rendered.find("2 objects") != std::string::npos);
+      IM_CHECK(rendered.find("×2 identical") != std::string::npos);
+      IM_CHECK(rendered.find("alt 12.50° az 30.25° · level 2 · blur 0.50°") != std::string::npos);
+    };
+  }
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "view_display_controls", "truncated_status_tooltip_uses_the_shared_bound");
+    static std::string status;
+    t->GuiFunc = [](ImGuiTestContext*) {
+      if (status.empty()) {
+        return;
+      }
+      ImGui::SetNextWindowPos(ImVec2(30.0f, 80.0f), ImGuiCond_Always);
+      ImGui::SetNextWindowSize(ImVec2(gui::UiPx(480.0f), gui::UiPx(140.0f)), ImGuiCond_Always);
+      ImGui::Begin("Tooltip status host");
+      const auto layout = gui::ReserveAnalyzeStatusBar();
+      ImGui::Dummy(layout.body_size);
+      gui::RenderAnalyzeStatusBar(layout, status);
+      ImGui::End();
+    };
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      const ScopedTooltipUiScale scale(ctx);
+      struct Clear {
+        ~Clear() { status.clear(); }
+      } clear;
+      gui::InflightPoll poll;
+      poll.in_flight = true;
+      poll.face = gui::QueryFace::kMap;
+      poll.stage = LUMICE_PATH_POLL_STAGE_SURVEY_ASSEMBLY;
+      status = "Waiting — " + gui::MapWaitLineFor({}, true, 1234.5, poll);
+      const auto exercise = [&](float multiplier) -> bool {
+        gui::SetUiScaleMultiplierImmediate(multiplier);
+        ctx->Yield(4);
+        ImGuiWindow* bar = nullptr;
+        for (ImGuiWindow* window : GImGui->Windows) {
+          if (window->Active && std::strstr(window->Name, "Tooltip status host/") != nullptr &&
+              std::strstr(window->Name, "##QueryStatusBar") != nullptr) {
+            bar = window;
+          }
+        }
+        IM_CHECK_RETV(bar != nullptr, false);
+        IM_CHECK_RETV(ImGui::CalcTextSize(status.c_str()).x > bar->WorkRect.GetWidth(), false);
+        IM_CHECK_RETV(ObserveTooltip(ctx, bar->Rect().GetCenter(), status.c_str(), true,
+                                     multiplier == 1.0f ? "status-tooltip-1x.png" : "status-tooltip-15x.png"),
+                      false);
+        return true;
+      };
+      IM_CHECK(exercise(1.0f));
+      IM_CHECK(exercise(1.5f));
+    };
+  }
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "view_display_controls", "map_cursor_tooltip_bounds_its_explanation");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      const ScopedTooltipUiScale scale(ctx);
+      gui::SelectLensType(gui::g_state, gui::kLensTypeGlobe);
+      gui::g_state.renderer.front = false;
+      gui::g_state.renderer.visible = gui::kVisibleFull;
+      gui::g_state.renderer.globe_back_fade = 1.0f;
+      gui::g_state.analyze_raypath_view_open = true;
+      ctx->Yield(4);
+      const auto canvas = ctx->ItemInfo("**/##map_canvas");
+      IM_CHECK(canvas.ID != 0);
+      IM_CHECK(ObserveTooltip(ctx, canvas.RectFull.GetCenter(), "Far-side hint — separate direction, not a sum", true,
+                              "map-cursor-tooltip.png"));
+      ctx->WindowClose("//Raypath view");
+    };
+  }
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "view_display_controls", "retained_display_tooltips_wrap_in_both_hosts");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      const ScopedTooltipUiScale scale(ctx);
+      ctx->Yield(3);
+      constexpr const char* kAnchorText =
+          "Which anchor display brightness is measured against.\n\n"
+          "Relative: each snapshot is re-anchored to its own brightest pixels. This is the "
+          "default and what the preview has always done. Good for looking at one document; "
+          "brightness carries no meaning when compared with another.\n\n"
+          "Absolute: anchored to the energy the light source emitted. EV then reads as stops "
+          "above or below physical, and two scenes at the same EV are directly comparable.\n\n"
+          "Switching only changes how the pixels already simulated are converted. It does not "
+          "re-run the simulation.";
+      const auto exercise = [&](float multiplier, bool analyze) -> bool {
+        gui::SetUiScaleMultiplierImmediate(multiplier);
+        gui::g_state.workspace.mode =
+            analyze ? gui::GuiState::WorkspaceMode::kAnalyze : gui::GuiState::WorkspaceMode::kRender;
+        ctx->Yield(4);
+        const std::string host = analyze ? "//##AnalyzeLeftPanel" : "//##RightPanel";
+        if (analyze) {
+          ctx->ItemOpen((host + "/Display").c_str());
+        }
+        const std::string anchor = host + "/EV Anchor##display";
+        ctx->ScrollToItem(anchor.c_str(), ImGuiAxis_Y);
+        ctx->Yield(3);
+        const auto item = ctx->ItemInfo(anchor.c_str());
+        IM_CHECK_RETV(item.ID != 0 && item.Window->InnerClipRect.Contains(item.RectFull), false);
+        IM_CHECK_RETV(ObserveTooltip(ctx, item.RectFull.GetCenter(), kAnchorText, true,
+                                     multiplier == 1.0f ? "ev-anchor-1x.png" : "ev-anchor-15x.png"),
+                      false);
+        ctx->ItemClick(anchor.c_str());
+        ctx->SetRef("//$FOCUSED");
+        ctx->ItemClick("**/Absolute");
+        ctx->SetRef("");
+        ctx->Yield(2);
+        IM_CHECK_RETV(gui::g_state.renderer.ev_mode == 1, false);
+        return true;
+      };
+      IM_CHECK(exercise(1.0f, false));
+      IM_CHECK(exercise(1.5f, false));
+      IM_CHECK(exercise(1.0f, true));
+      IM_CHECK(exercise(1.5f, true));
+      gui::g_state.workspace.mode = gui::GuiState::WorkspaceMode::kRender;
+      gui::SetUiScaleMultiplierImmediate(1.0f);
+      ctx->Yield(4);
+      IM_CHECK(ObserveTooltip(ctx, ctx->ItemInfo("##TopBar/###toolbar_new").RectFull.GetCenter(),
+                              "New: start a new document.", false));
+    };
+  }
   // The positive branch: a clamped window on a real preset says so.
   {
     ImGuiTest* t =
@@ -1464,6 +1690,69 @@ void RegisterViewDisplayControlTests(ImGuiTestEngine* engine) {
   // test_color_window.cpp records for its own. That the registry has a reason to show at all is
   // asserted one layer down, in test_view_look_at.cpp.
 
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "view_display_controls", "none_is_visible_inert_and_cannot_lock");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      const ScopedPopups popup_guard(ctx);
+      ctx->Yield(3);
+      const auto epoch = gui::g_state.committed_epoch;
+      const auto run = gui::g_state.run_intent;
+      const auto survey = gui::g_state.analysis.survey.intent_id;
+      const auto map = gui::g_state.analysis.map.intent_id;
+      const auto point = gui::g_state.analysis.point.intent_id;
+      const auto trace = gui::g_state.analysis.trace.intent_id;
+      const auto inert = [&]() {
+        return !gui::g_state.dirty && gui::g_state.committed_epoch == epoch && gui::g_state.run_intent == run &&
+               !gui::g_state.analysis.started && !gui::g_state.analysis_run_in_progress &&
+               gui::g_state.analysis.survey.intent_id == survey && gui::g_state.analysis.map.intent_id == map &&
+               gui::g_state.analysis.point.intent_id == point && gui::g_state.analysis.trace.intent_id == trace;
+      };
+      IM_CHECK_EQ(gui::g_state.look_at.target, gui::LookAtId::kNone);
+      IM_CHECK(LookAtPreviewShown(ctx, "None"));
+      IM_CHECK(IsDisabled(ctx->ItemInfo(kLookAtLock)));
+      const auto lock = ctx->ItemInfo(kLookAtLock);
+      IM_CHECK(ObserveTooltip(ctx, lock.RectFull.GetCenter(), "Choose a Look At target before enabling Lock.", false));
+      const auto camera = gui::g_state.renderer;
+      ctx->MouseClick(0);
+      ctx->Yield(3);
+      IM_CHECK(!gui::g_state.look_at.locked);
+      IM_CHECK_EQ(gui::g_state.renderer.azimuth, camera.azimuth);
+      IM_CHECK_EQ(gui::g_state.renderer.elevation, camera.elevation);
+      IM_CHECK(inert());
+
+      PickLookAt(ctx, "Subsun");
+      IM_CHECK(!IsDisabled(ctx->ItemInfo(kLookAtLock)));
+      ctx->ItemClick(kLookAtLock);
+      ctx->Yield(3);
+      IM_CHECK(gui::g_state.look_at.locked);
+      IM_CHECK(inert());
+      const auto selected_camera = gui::g_state.renderer;
+      PickLookAt(ctx, "None");
+      ctx->Yield(3);
+      IM_CHECK(LookAtPreviewShown(ctx, "None"));
+      IM_CHECK_EQ(gui::g_state.look_at.target, gui::LookAtId::kNone);
+      IM_CHECK(!gui::g_state.look_at.locked);
+      IM_CHECK(IsDisabled(ctx->ItemInfo(kLookAtLock)));
+      IM_CHECK_EQ(gui::g_state.renderer.azimuth, selected_camera.azimuth);
+      IM_CHECK_EQ(gui::g_state.renderer.elevation, selected_camera.elevation);
+      IM_CHECK(inert());
+      // Matching a named direction by hand does not create a target.
+      ctx->ItemInputValue("**/##Elevation##view_input", 90.0f);
+      ctx->Yield(3);
+      IM_CHECK_EQ(gui::g_state.look_at.target, gui::LookAtId::kNone);
+      IM_CHECK(LookAtPreviewShown(ctx, "None"));
+      IM_CHECK(inert());
+      PickLookAt(ctx, "Subsun");
+      ctx->ItemClick(kLookAtLock);
+      ctx->ItemClick("**/Reset##view");
+      ctx->Yield(3);
+      IM_CHECK_EQ(gui::g_state.look_at.target, gui::LookAtId::kNone);
+      IM_CHECK(!gui::g_state.look_at.locked);
+      IM_CHECK(inert());
+    };
+  }
+
   // P-LookAt-1 / AC1. The gate is the sliders' gate. Asserted across the lens space rather than at
   // one lens, because "same rule" is a claim about where the two answers agree AND disagree: a
   // hand-written `lens == globe` condition would pass a globe-only check and fail here.
@@ -1472,6 +1761,7 @@ void RegisterViewDisplayControlTests(ImGuiTestEngine* engine) {
         IM_REGISTER_TEST(engine, "view_display_controls", "the_look_at_entry_is_gated_exactly_like_the_view_angles");
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
+      gui::g_state.look_at.target = gui::LookAtId::kSun;
       ctx->Yield(2);
 
       // Every lens the product offers, iterated from the product's own list so a lens added later
@@ -1752,6 +2042,7 @@ void RegisterViewDisplayControlTests(ImGuiTestEngine* engine) {
       ctx->ItemInputValue("**/##Elevation##view_input", 12.0f);
       ctx->Yield(3);
       IM_CHECK(!gui::g_state.look_at.locked);
+      IM_CHECK_EQ(gui::g_state.look_at.target, gui::LookAtId::kSun);
       IM_CHECK_LT(std::fabs(gui::g_state.renderer.elevation - 12.0f), 1e-3f);
       ctx->ItemInputValue("**/##Altitude_input", 48.0f);
       ctx->Yield(3);
@@ -1759,6 +2050,16 @@ void RegisterViewDisplayControlTests(ImGuiTestEngine* engine) {
 
       ctx->ItemClick(kLookAtLock);
       IM_CHECK(gui::g_state.look_at.locked);
+      IM_CHECK_LT(std::fabs(gui::g_state.renderer.elevation - 48.0f), 1e-3f);
+      ctx->ItemInputValue("**/##Azimuth##view_input", 37.0f);
+      ctx->Yield(3);
+      IM_CHECK(!gui::g_state.look_at.locked);
+      IM_CHECK_EQ(gui::g_state.look_at.target, gui::LookAtId::kSun);
+      IM_CHECK_LT(std::fabs(gui::g_state.renderer.azimuth - 37.0f), 1e-3f);
+      ctx->ItemClick(kLookAtLock);
+      ctx->Yield(3);
+      IM_CHECK(gui::g_state.look_at.locked);
+      IM_CHECK_LT(std::fabs(gui::g_state.renderer.azimuth), 1e-3f);
       ctx->ItemInputValue("**/##Roll##view_input", 27.0f);
       ctx->ItemInputValue("**/##FOV##view_input", 65.0f);
       ctx->Yield(3);
@@ -1769,7 +2070,9 @@ void RegisterViewDisplayControlTests(ImGuiTestEngine* engine) {
       ctx->ItemClick("**/Reset##view");
       ctx->Yield(2);
       IM_CHECK(!gui::g_state.look_at.locked);
-      IM_CHECK_EQ(gui::g_state.look_at.target, gui::LookAtId::kSun);
+      IM_CHECK_EQ(gui::g_state.look_at.target, gui::LookAtId::kNone);
+      IM_CHECK(LookAtPreviewShown(ctx, "None"));
+      IM_CHECK(IsDisabled(ctx->ItemInfo(kLookAtLock)));
       const gui::ViewDefaults defaults = gui::DefaultViewParamsFor(gui::g_state.renderer.lens_type);
       IM_CHECK_EQ(gui::g_state.renderer.fov, defaults.fov);
       IM_CHECK_EQ(gui::g_state.renderer.elevation, defaults.elevation);
@@ -1787,18 +2090,36 @@ void RegisterViewDisplayControlTests(ImGuiTestEngine* engine) {
       // minimum; the product leaves it grown once the multiplier returns to 1x). The guard hands
       // the basis back to the next case — including when an IM_CHECK inside the loop returns
       // early, which is exactly when a tail statement would not run.
-      const ScopedWindowBasis window_basis(ctx);
+      const ScopedTooltipUiScale ui_scale(ctx);
       ctx->Yield(3);
 
-      PickLookAt(ctx, "Away from sun");
-      ctx->ItemClick(kLookAtLock);
-      IM_CHECK(gui::g_state.look_at.locked);
-      IM_CHECK_EQ(gui::g_state.look_at.target, gui::LookAtId::kHorizonAntiSun);
-
-      for (const float scale : { 1.0f, 1.5f, 2.0f, 1.0f }) {
+      const auto check_scale = [ctx](float scale) {
         gui::SetUiScaleMultiplierImmediate(scale);
         ctx->Yield(3);
-        if (!LookAtControlsFitOneRow(ctx, scale)) {
+        IM_CHECK_RETV(LookAtControlsFitOneRow(ctx, scale), false);
+        PickLookAt(ctx, "None");
+        IM_CHECK_RETV(LookAtPreviewShown(ctx, "None"), false);
+        IM_CHECK_RETV(IsDisabled(ctx->ItemInfo(kLookAtLock)), false);
+        PickLookAt(ctx, "Away from sun");
+        IM_CHECK_RETV(LookAtControlsFitOneRow(ctx, scale), false);
+        IM_CHECK_RETV(LookAtPreviewShown(ctx, "Away from sun"), false);
+        ctx->ItemClick(kLookAtLock);
+        IM_CHECK_RETV(gui::g_state.look_at.locked, false);
+        IM_CHECK_RETV(gui::g_state.look_at.target == gui::LookAtId::kHorizonAntiSun, false);
+        ctx->ItemClick("**/Reset##view");
+        ctx->Yield(3);
+        IM_CHECK_RETV(LookAtPreviewShown(ctx, "None"), false);
+        const auto lock = ctx->ItemInfo(kLookAtLock);
+        IM_CHECK_RETV(IsDisabled(lock), false);
+        char capture_name[64];
+        std::snprintf(capture_name, sizeof(capture_name), "look-at-none-%d.png", static_cast<int>(scale * 100));
+        IM_CHECK_RETV(ObserveTooltip(ctx, lock.RectFull.GetCenter(), "Choose a Look At target before enabling Lock.",
+                                     false, capture_name),
+                      false);
+        return true;
+      };
+      for (const float scale : { 1.0f, 1.5f, 2.0f, 1.0f }) {
+        if (!check_scale(scale)) {
           return;
         }
       }

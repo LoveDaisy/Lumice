@@ -613,6 +613,11 @@ void RegisterPreviewViewportTests(ImGuiTestEngine* engine) {
       IM_CHECK_EQ(gui::g_state.renderer.azimuth, dragged_azimuth);
       IM_CHECK_EQ(gui::g_state.renderer.elevation, dragged_elevation);
       IM_CHECK_EQ(gui::g_state.look_at.target, gui::LookAtId::kSun);
+      ctx->ItemClick("**/Lock##view_look_at_lock");
+      ctx->Yield(3);
+      IM_CHECK(gui::g_state.look_at.locked);
+      IM_CHECK_LT(std::fabs(gui::g_state.renderer.azimuth), 1e-3f);
+      IM_CHECK_LT(std::fabs(gui::g_state.renderer.elevation - 55.0f), 1e-3f);
     };
   }
 }

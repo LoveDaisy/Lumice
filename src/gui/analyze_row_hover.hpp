@@ -13,17 +13,13 @@
 namespace lumice::gui {
 
 // Which reference-profile reading row the pointer stood on (the class answer's three profile
-// rows): the session identity the map's profile device consumes, one frame behind the row write
-// (the same lag the verdict anchor's hover owns). The ratio row keeps its feedback local — it
-// names no spatial payload, so it never enters this identity.
+// rows): the session identity the map's profile device consumes, one frame behind the row write.
+// Verdict, Position and ratio rows keep their highlight feedback local, outside this identity.
 enum class SurveyProfileHover { kNone, kEdge, kPeak, kSeparation };
 
-// The interactive class-answer host's per-row hover read (§16.1's A2 pilot family): the renderer
-// writes every row's standing each frame it draws them, the canvas consumes the session copy the
-// NEXT frame. `verdict` is the two linked diagnose rows' OR (the verdict anchor's read);
-// `profile` is the three profile reading rows' exclusive standing (the profile device's read).
+// The interactive class-answer host writes the profile rows' exclusive standing each frame;
+// the canvas consumes the session copy the NEXT frame. Other row highlights remain local.
 struct SurveyRowHoverReadout {
-  bool verdict = false;
   SurveyProfileHover profile = SurveyProfileHover::kNone;
 };
 

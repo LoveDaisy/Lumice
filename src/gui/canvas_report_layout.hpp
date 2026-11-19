@@ -2,20 +2,11 @@
 #define LUMICE_GUI_CANVAS_REPORT_LAYOUT_HPP
 
 #include <algorithm>
-#include <cmath>
 
 #include "imgui.h"
 #include "imgui_internal.h"
 
 namespace lumice::gui {
-
-// Allocate the graph AFTER fixed controls and BEFORE a scrollable report. Only geometry enters
-// this decision: query state, titles, legends and last frame's text heights cannot move a canvas.
-// A short host yields the graph, not the report's recovery path. Zero means no graph, never an
-// ImGui child size (where zero would mean "fill the remainder"). Consumers own aspect and drawing.
-inline float CanvasHeightBeforeReport(float available, float controls, float report, float gap) {
-  return std::floor(std::max(0.0f, available - controls - report - gap));
-}
 
 // Reports take the remaining vertical slice, but never pass zero to BeginChild: zero there
 // means "fill", not "absent". Keep this container rule with the allocation it protects.

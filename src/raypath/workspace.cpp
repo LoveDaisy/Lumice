@@ -42,10 +42,14 @@ const PreparedGeometry* AnalysisWorkspace::GeometryFor(const PathSelection& sele
 }
 
 bool AnalysisWorkspace::WarmFor(const PathSelection& selection, WarmCandidate* out) const {
-  // Storage addressing only: the slot answers when the request's selection is the one that
-  // filled it. Whether any fact is reusable stays the existing criterion's call (admission in
-  // the face, then per-fact evaluation) — this file judges nothing.
+  // An automatic candidate is an optimization, not caller input: a failed admission is a miss.
+  // Use the same authority as explicit warm input; never duplicate its fingerprint/location gates.
+  // The face still owns admission of explicit input and qualification of each numeric fact.
   if (warm_slot_.crystal_id != selection.crystal_id || warm_slot_.path_layers != selection.path_layers) {
+    return false;
+  }
+  std::optional<AdmittedWarmSource> admitted;
+  if (!ValidateWarmCandidate(snapshot_, selection, warm_slot_.candidate, &admitted).Ok()) {
     return false;
   }
   *out = warm_slot_.candidate;

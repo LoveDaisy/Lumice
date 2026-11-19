@@ -33,6 +33,7 @@
 #include "gui/gui_constants.hpp"    // kAnalyzeSplitterSize — the strips' shared thickness
 #include "gui/semantic_colors.hpp"  // WarningTextColor — the warning line's colour source
 #include "gui/theme.hpp"            // UiPx — the logical-px outlet every geometry reads through
+#include "gui/tooltip.hpp"
 #include "imgui.h"
 
 namespace lumice::gui {
@@ -125,11 +126,8 @@ inline void RenderAnalyzeStatusBar(const AnalyzeStatusBarLayout& layout, const s
   ImGui::PushStyleColor(ImGuiCol_Text, warning ? WarningTextColor() : ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
   ImGui::TextUnformatted(fitted.c_str());
   ImGui::PopStyleColor();
-  if (fitted != single_line && ImGui::IsWindowHovered() && ImGui::BeginTooltip()) {
-    ImGui::PushTextWrapPos(ImGui::GetFontSize() * 32.0f);
-    ImGui::TextUnformatted(full_text.c_str());
-    ImGui::PopTextWrapPos();
-    ImGui::EndTooltip();
+  if (fitted != single_line && ImGui::IsWindowHovered()) {
+    SetWrappedTooltip("%s", full_text.c_str());
   }
   ImGui::EndChild();
   ImGui::PopStyleVar();

@@ -1388,7 +1388,7 @@ static void RenderCrystalPreviewPane(GuiState& /*state*/, float preview_px) {
                       ImVec2(ImGui::CalcTextSize(ICON_FA_TRIANGLE_EXCLAMATION).x, ImGui::GetTextLineHeight()));
     ImGui::PopStyleColor();
     if (ImGui::IsItemHovered()) {
-      ImGui::SetTooltip("%s", FormatAxisLabelMismatchTooltip(g_axis_label_buf, g_axis_buf[0], g_axis_buf[1],
+      SetWrappedTooltip("%s", FormatAxisLabelMismatchTooltip(g_axis_label_buf, g_axis_buf[0], g_axis_buf[1],
                                                              g_axis_buf[2], DescribeAxisPresetDomain(g_axis_label_buf))
                                   .c_str());
     }
@@ -1666,7 +1666,7 @@ static void RenderAxisModal(GuiState& state) {
       "pose follows, re-seating on this label's typical view.";
   ImGui::Text("Label:");
   if (ImGui::IsItemHovered()) {
-    ImGui::SetTooltip("%s", kChipSwitchNote);
+    SetWrappedTooltip("%s", kChipSwitchNote);
   }
   for (const auto& entry : kAxisPresets) {
     ImGui::SameLine();
@@ -1707,7 +1707,7 @@ static void RenderAxisModal(GuiState& state) {
       ImGui::PopStyleColor(4);
     }
     if (ImGui::IsItemHovered()) {
-      ImGui::SetTooltip("%s", kChipSwitchNote);
+      SetWrappedTooltip("%s", kChipSwitchNote);
     }
   }
 
@@ -1763,7 +1763,7 @@ static void RenderAxisModal(GuiState& state) {
   }
   // AllowWhenDisabled so the Custom case can still say why its button is inert.
   if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip | ImGuiHoveredFlags_AllowWhenDisabled)) {
-    ImGui::SetTooltip("%s", custom_label ? "Custom has no definition to reset to." :
+    SetWrappedTooltip("%s", custom_label ? "Custom has no definition to reset to." :
                                            "Resets this label's parameters to its definition (as retuned in the "
                                            "preset library). The label, the memory and the view are unchanged.");
   }
@@ -1926,7 +1926,7 @@ static void RenderSummandRowList() {
   }
   ImGui::EndDisabled();
   if (at_cap && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-    ImGui::SetTooltip("Maximum OR rows reached (%zu)", kMaxSummandRows);
+    SetWrappedTooltip("Maximum OR rows reached (%zu)", kMaxSummandRows);
   }
 
   // Static hint — includes ';' example post-334.3 (H-A). Kept as one line so
@@ -3080,7 +3080,7 @@ void RenderEditModals(GuiState& state, GLFWwindow* window) {
       g_entry_buf.enabled = !g_entry_buf.enabled;
     }
     if (ImGui::IsItemHovered()) {
-      ImGui::SetTooltip("%s", ParticipationToggleTooltip(g_entry_buf.enabled));
+      SetWrappedTooltip("%s", ParticipationToggleTooltip(g_entry_buf.enabled));
     }
     ImGui::SameLine();
     if (g_pull_adopted.entry_proportion) {
@@ -3099,7 +3099,7 @@ void RenderEditModals(GuiState& state, GLFWwindow* window) {
                     LabelPlacement::kLeading);
     ImGui::EndDisabled();
     if (!g_entry_buf.enabled && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-      ImGui::SetTooltip("%s", kWeightInertTooltip);
+      SetWrappedTooltip("%s", kWeightInertTooltip);
     }
     ImGui::Separator();
   }
@@ -3219,7 +3219,7 @@ void RenderEditModals(GuiState& state, GLFWwindow* window) {
     }
     ImGui::EndDisabled();
     if (ok_disabled && ok_tooltip != nullptr && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-      ImGui::SetTooltip("%s", ok_tooltip);
+      SetWrappedTooltip("%s", ok_tooltip);
     }
     ImGui::SameLine();
     if (ImGui::Button(kCancelLabel, ImVec2(ok_cancel_width, 0))) {
@@ -3530,7 +3530,7 @@ bool RenderSpectrumEditorBody(GuiState& state, SpectrumCommitMode mode) {
   }
   ImGui::EndDisabled();
   if (ok_disabled && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-    ImGui::SetTooltip("Need at least one wavelength row before OK.");
+    SetWrappedTooltip("Need at least one wavelength row before OK.");
   }
   ImGui::SameLine();
   if (ImGui::Button(ICON_FA_XMARK " Cancel##spec_cancel", ImVec2(UiPx(80.0f), 0.0f))) {

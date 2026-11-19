@@ -62,6 +62,45 @@ def halo():
     return result
 
 
+def test_single_face_external_reflection_point_context_and_probe():
+    reflection_config = get_project_root() / "test" / "e2e" / "configs" / "raypath_feature_random_regular.json"
+    point = run_lumice(["raypath", "point", "-f", str(reflection_config), "--crystal", "1", "--path", "3",
+                        "--target", "20,90", "--events", "50k", "--grid", "0"])
+    assert point.returncode == 0, point.stderr
+    doc = json.loads(point.stdout)
+    assert doc["meta"]["faces"] == [3]
+    assert doc["outcome"] == "discovered"
+    assert doc["components"]
+    sample = next(p for c in doc["components"] for p in c["points"]
+                  if p["valid"] and p["entry_measure"] > 0)
+    pose = sample["pose"]
+    normal = (pose[0], pose[3], pose[6])
+    incident = (-1.0, 0.0, 0.0)  # C01's sun is at altitude 0
+    dot = sum(a * b for a, b in zip(normal, incident))
+    expected = [a - 2 * dot * b for a, b in zip(incident, normal)]
+    assert sample["outgoing_direction"] == pytest.approx(expected, abs=1e-10)
+    assert len(sample["interface_transmittances"]) == 1
+    assert len(sample["segment_directions"]) == 6
+    assert doc["survey_context"]["object"]["target_inside_support"]
+    probe = run_lumice(["raypath", "probe", "-f", str(reflection_config), "--crystal", "1", "--path", "3",
+                        "--along", "radial", "--at", "20,90", "--lambda", "550", "--events", "50k"])
+    assert probe.returncode == 0, probe.stderr
+    profile = json.loads(probe.stdout)["profiles"][0]
+    assert profile["evidence"]["state"] == "finite"
+    assert profile["spec"]["representative"] == [3]
+    assert profile["samples"]
+    assert any(row["value"] is not None and row["value"] > 0 for row in profile["samples"])
+    survey = run_lumice(["raypath", "survey", "-f", str(reflection_config), "--crystal", "1", "--path", "3",
+                         "--literal", "--lambda", "550", "--budget", "30s"])
+    assert survey.returncode == 0, survey.stderr
+    onsets = json.loads(survey.stdout)["chromatic"]["positional_dispersion"]["followed_onsets"]
+    assert onsets
+    for onset in onsets:
+        assert onset["direction"] == "none"
+        assert onset["displacement_deg"] == 0
+        assert onset["values_deg"][0] == onset["values_deg"][1]
+
+
 def test_help_names_the_request_options():
     result = run_lumice(["raypath", "point", "-h"])
     assert result.returncode == 0

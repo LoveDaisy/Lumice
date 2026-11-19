@@ -25,6 +25,38 @@ resolution's rule — the scene's spectrum when exactly one discrete wavelength,
 nominal geometry, the point sun, the scene's declared pose density. Per-lambda maps are a later
 face (742.4's dispersion reads positions, not a colored map).
 
+## One-face external reflection
+
+A single existing face is a complete air-side reflection, not an incomplete transmitted
+path. It is accepted by the engine map, survey, point, probe and representative-ray entries.
+The normal, finite face and Fresnel authority are the same ones used by the multi-face chain;
+no synthetic exit face or crystal-interior leg is inserted. For world propagation `d` and
+outward normal `N`, `c=-d·N>0`, `q=d+2cN`, and the event weight is
+`A_face*c*R_air_to_ice(c)`. The direction is index-independent; the Fresnel weight is not.
+
+Under a random orientation, a literal member has smooth density
+`A_face*R(sin(delta/2))/(16*pi)` per steradian: `dOmega_q=4c*dOmega_N` cancels
+the projected-area cosine. The existing lattice band estimator averages this density over its
+angular band, with its existing centre-sine normalization, rather than evaluating it exactly
+at the centre. Areas use the closed-form reference crystal (circumscribed diameter 1), not a
+rescaled hexagon with edge 1. Physical-class values still sum each real member separately.
+
+An external mirror is never a full-SO(3) identity path. A declared restricted family can
+nevertheless keep its normal fixed, producing a mass at the **reflected** direction, not
+automatically at the sun. Survey preserves the family image; Point explicitly locates that
+mass and names `external_reflection_mass_not_integrated` when its integral is not computed.
+Map and Probe retain their `measure_not_expressible` refusal for singular orientation
+measures; they do not place this reflection mass through the sun-only identity arm. A
+nonconstant restricted image is not labelled a mass merely because a dimension is fixed.
+
+For Point, an exact antisolar target is a **regular** one-face reflection fiber (`c=1`,
+`J=4`), although the map estimator still marks polar cells singular by its existing chart
+contract. Point aligns the actual face normal with `-incident`, then runs the shared
+corrector and continuation on that seed; it does not use the band-to-pose chart that divides
+by `sin(delta)`. The pool count is zero and the aligned pose is an extra solver seed, not a
+fabricated lattice event or a point mass. The solar target is grazing, with no positive-area
+external-reflection fiber.
+
 ## The view and its mapping
 
 A view is a (deviation x azimuth-about-sun) grid in the probe frame — the line probe's own frame
@@ -52,7 +84,7 @@ an explicit re-evaluation, not an upscale of an older raster.
 
 `LUMICE_PathMapGetPixels` borrows five row-major columns: cell-centre `delta_deg`/`azimuth_deg`,
 the per-sr `values` (LI Phase I pixel convention: power per steradian along the path, per unit
-incident irradiance, hexagon edge a = 1), summed member event `counts`, and a `status` byte
+incident irradiance, using the closed-form reference crystal's circumscribed diameter 1), summed member event `counts`, and a `status` byte
 (`OK` / `SINGULAR` / `POINT_MASS`). A cell covering the sun direction or its antipode is
 SINGULAR: NaN value, never a written zero. `LUMICE_PATH_MAP_PIXEL_POINT_MASS` marks the cell
 holding `m_total / Omega`; `LUMICE_PathMapGetPointMass` reads the mass, its error and the

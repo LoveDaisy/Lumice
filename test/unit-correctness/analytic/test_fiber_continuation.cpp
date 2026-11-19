@@ -16,6 +16,7 @@
 #include "analytic/fiber_continuation.hpp"
 #include "analytic/jet.hpp"
 #include "analytic/so3.hpp"
+#include "support/analytic_diagnostic_roundoff.hpp"
 
 namespace lumice::analytic {
 namespace {
@@ -188,13 +189,15 @@ TEST(FiberContinuation, NormalJacobianUsesThePosesOwnDirection) {
   EXPECT_NEAR(own.singular_values[1], 1.0, 1e-14);
   EXPECT_NEAR(own.value, 1.0, 1e-14);
 
-  // EvaluateRegularState records the same numbers from its one forward-mode evaluation.
+  // The same mathematical definition, but a separate optimized forward-mode evaluation.
   const auto state =
       fiber_detail::EvaluateRegularState(BodyAxisMap{}, chart, ContinuationParams{}, pose.data(), nullptr);
   ASSERT_TRUE(state.accepted);
-  EXPECT_EQ(state.normal.value, own.value);
-  EXPECT_EQ(state.normal.singular_values[0], own.singular_values[0]);
-  EXPECT_EQ(state.normal.singular_values[1], own.singular_values[1]);
+  const double allowance = test_roundoff::SingularValueAllowance(BodyAxisMap{}, pose.data());
+  ASSERT_TRUE(std::isfinite(allowance));
+  EXPECT_NEAR(state.normal.value, own.value, allowance * (2.0 + allowance));
+  EXPECT_NEAR(state.normal.singular_values[0], own.singular_values[0], allowance);
+  EXPECT_NEAR(state.normal.singular_values[1], own.singular_values[1], allowance);
 }
 
 // A rank-0 map still has a normal Jacobian (J_perp = 0, available): availability says whether A
@@ -210,6 +213,66 @@ TEST(FiberContinuation, NormalJacobianIsUnavailableOnlyWhenItCannotBeFormed) {
   EXPECT_TRUE(std::isnan(none.value));
   EXPECT_TRUE(std::isnan(none.singular_values[0]));
   EXPECT_TRUE(std::isnan(none.singular_values[1]));
+}
+
+// Copy mechanics use distinct synthetic payloads: a near-closed physical loop can have almost
+// identical first/last diagnostics and cannot reliably expose a stale closure row by itself.
+TEST(FiberContinuation, AppendAndClosureReplaceCopyTheWholeStateExactly) {
+  auto payload = [](double tag, bool available) {
+    fiber_detail::State s;
+    for (int k = 0; k < 9; k++) {
+      s.rotation[k] = tag + k;
+    }
+    for (int k = 0; k < 3; k++) {
+      s.tangent[k] = tag + 10 + k;
+    }
+    s.residual_norm = tag + 20;
+    s.domain.margin_count = 4;
+    for (int k = 0; k < 4; k++) {
+      s.domain.margins[k] = tag + 30 + k;
+    }
+    s.normal.available = available;
+    s.normal.value = tag + 40;
+    s.normal.singular_values[0] = tag + 50;
+    s.normal.singular_values[1] = tag + 60;
+    return s;
+  };
+  auto expect_row = [](const TraceResult& r, int row, const fiber_detail::State& s) {
+    for (int k = 0; k < 9; k++) {
+      EXPECT_EQ(r.poses[9 * row + k], s.rotation[k]);
+    }
+    for (int k = 0; k < 3; k++) {
+      EXPECT_EQ(r.tangents[3 * row + k], s.tangent[k]);
+    }
+    EXPECT_EQ(r.residual_norms[row], s.residual_norm);
+    EXPECT_EQ(r.jacobian_available[row], s.normal.available ? 1 : 0);
+    EXPECT_EQ(r.normal_jacobian[row], s.normal.value);
+    EXPECT_EQ(r.singular_values[2 * row], s.normal.singular_values[0]);
+    EXPECT_EQ(r.singular_values[2 * row + 1], s.normal.singular_values[1]);
+    for (int k = 0; k < 4; k++) {
+      EXPECT_EQ(r.branch_margins[4 * row + k], s.domain.margins[k]);
+    }
+  };
+  const auto first = payload(1.0, true);
+  const auto trial = payload(100.0, false);
+  const auto closure = payload(200.0, true);
+  TraceResult r;
+  fiber_detail::AppendState(first, &r);
+  fiber_detail::AppendState(trial, &r);
+  ASSERT_EQ(r.PoseCount(), 2);
+  ASSERT_EQ(r.residual_norms.size(), 2u);
+  ASSERT_EQ(r.tangents.size(), 6u);
+  ASSERT_EQ(r.branch_margin_count, 4);
+  ASSERT_EQ(r.branch_margins.size(), 8u);
+  ASSERT_EQ(r.jacobian_available.size(), 2u);
+  ASSERT_EQ(r.normal_jacobian.size(), 2u);
+  ASSERT_EQ(r.singular_values.size(), 4u);
+  expect_row(r, 0, first);
+  expect_row(r, 1, trial);
+  fiber_detail::ReplaceLastState(closure, &r);
+  EXPECT_EQ(r.PoseCount(), 2);
+  expect_row(r, 0, first);
+  expect_row(r, 1, closure);
 }
 
 // LI test_tangent_orientation_is_continuous.
@@ -258,7 +321,9 @@ TEST(FiberContinuation, C02AnalyticCircleClosesAtTwoPi) {
       EXPECT_NEAR(r.singular_values[2 * i], 1.0, 1e-13);
       EXPECT_NEAR(r.singular_values[2 * i + 1], 1.0, 1e-13);
       const NormalJacobian fresh = fiber_detail::NormalJacobianAt(BodyAxisMap{}, &r.poses[9 * i]);
-      EXPECT_EQ(r.normal_jacobian[i], fresh.value) << i;
+      const double allowance = test_roundoff::SingularValueAllowance(BodyAxisMap{}, &r.poses[9 * i]);
+      EXPECT_TRUE(std::isfinite(allowance));
+      EXPECT_NEAR(r.normal_jacobian[i], fresh.value, allowance * (2.0 + allowance)) << i;
     }
   }
 }

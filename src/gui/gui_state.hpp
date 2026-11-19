@@ -1905,12 +1905,6 @@ struct GuiState {
     // writes the sample index and nothing else (AC3).
     PointQuerySession point;
     RayTraceSession trace;
-    // The Ray3D report's stale-honest retention (analyze_survey.hpp Ray3DReportRecord): the
-    // last persistent report content and its source identity, shown while the trace re-arms so
-    // the report does not cycle a transient through it. Cleared with the whole struct where the
-    // sessions die; re-shown only while the record's point/component identity matches the live
-    // selection (the read site's check). Written only by the Ray3D report's persistent arms.
-    Ray3DReportRecord ray3d_report_record;
     PointViewState point_view;
     // The 3D trace's per-segment Fresnel ratio labels, exactly as drawn this frame (the
     // draw-list carries no strings; the positions come from the submitted primitives, the
@@ -1930,33 +1924,12 @@ struct GuiState {
     // site drew this frame, for the gui_test layer to read (ImGui text has no ID to address).
     // Cleared at the Analyze workspace's frame entry; the render sites are the only writers.
     WaitFeedbackTexts wait_feedback_texts;
-    // The verdict anchor's density interaction (contract §16.1's A2 pilot): the class answer's
-    // colour verdict drawn on the map, two switches. `verdict_anchor_shown` is the persistent
-    // checkbox (default off — with nothing hovered the default frame's canvas is unchanged).
-    // `verdict_anchor_hover` is the diagnose-row hover standing: the class answer's render path
-    // overwrites it EVERY frame it renders (hover on either of the two linked rows → true,
-    // otherwise false), and
-    // the canvas consumes it the NEXT frame (the map region draws before the info column writes
-    // — the one-frame lag is the hover semantics' own, accepted at the contract). The two seams
-    // that skip the render path write false explicitly — the class-answer-absent frame and the
-    // closed window — so the flag only ever stands while the region that wrote it is on screen.
-    // A document switch drops the whole struct with the session (the reset below). Session tier
-    // like the struct's other display fields: never persisted, not in ConfigSnapshot or the
-    // dirty diff, Revert keeps them.
-    // WRITERS (the audit set): the checkbox in the Raypath view's map header row;
-    // RenderAnalyzeMapRegion's ##MapReport class-answer host (the overwrite, and the absent
-    // branch's reset); RenderAnalyzeRaypathViewWindow's closed-window seams (both the closed
-    // early-return and the Begin-false branch). No other write path by construction. READER:
-    // the canvas's verdict anchor draw (analyze_map_view.cpp DrawSurveyOverlays).
-    bool verdict_anchor_shown = false;
-    bool verdict_anchor_hover = false;
     // The reference profile's hover standing (§16.1.3's extension): which of the class answer's
     // three profile reading rows the pointer stood on — the profile device's read, written by the
-    // same class-answer render path that owns the verdict hover above, consumed by the canvas the
-    // NEXT frame (the same one-frame lag), and reset by the same three seams (the absent branch,
-    // the closed early-return, the Begin-false branch). Session tier like its sibling: never
-    // persisted, not in ConfigSnapshot or the dirty diff, Revert keeps them. The ratio row keeps
-    // its feedback local and never enters this identity (it names no spatial payload).
+    // class-answer render path and consumed by the canvas the NEXT frame. Reset by three seams:
+    // the absent branch, the closed early-return and the Begin-false branch. Session tier: never
+    // persisted, not in ConfigSnapshot or the dirty diff, Revert keeps it. Verdict, Position and
+    // ratio rows keep their highlight feedback local and never enter this identity.
     // WRITERS (the audit set): RenderAnalyzeMapRegion's ##MapReport class-answer host (the
     // overwrite, and the absent branch's reset); RenderAnalyzeRaypathViewWindow's closed-window
     // seams (both the closed early-return and the Begin-false branch). No other write path by

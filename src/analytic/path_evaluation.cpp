@@ -239,7 +239,7 @@ Status BuildFaceNormals(const LUMICE_ANALYTIC_Crystal& crystal, FaceNormalTable*
 }
 
 Status ResolveFaceSequence(const FaceNormalTable& table, const int* faces, int face_count, int* slots_out) {
-  if (face_count < 2) {
+  if (face_count < 1 || face_count > kMaxFaceCount) {
     return Status::kInvalidValue;
   }
   for (int k = 0; k < face_count; k++) {
@@ -279,7 +279,7 @@ bool ValidateRotation(const double r[9]) {
 
 bool EvaluatePath(const FaceNormalTable& table, const int* slots, int slot_count, double refractive_index,
                   const double incident_direction[3], const double pose[9], PathOutputs* out) {
-  assert(slot_count >= 2);
+  assert(slot_count >= 1);
   for (int k = 0; k < slot_count; k++) {
     assert(slots[k] >= 0 && slots[k] < table.slot_cnt && table.present[slots[k]]);
   }
@@ -301,7 +301,7 @@ bool EvaluatePath(const FaceNormalTable& table, const int* slots, int slot_count
 }
 
 int BranchMarginCount(int face_count) {
-  return face_count + 2;
+  return face_count == 1 ? 1 : face_count + 2;
 }
 
 const char* ChainFailureName(ChainFailure failure) {

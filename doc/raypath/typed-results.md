@@ -142,7 +142,13 @@ Witness attachment is restricted to support objects, and its claim is independen
 the partition claim: a refused partition plus a finite positive witness is valid. A
 witness never upgrades the family routing's structural-output verdict.
 
-Point mass and discovered fibers are mutually exclusive point payloads. The discovered
+Point mass and discovered fibers are mutually exclusive point payloads. A one-face external
+reflection also uses the mass arm when its outward normal is invariant over the actual declared
+Euler freedoms (including a single fixed pose); its location is the reflected image, not the sun.
+The orbit integral then stays unavailable with `external_reflection_mass_not_integrated` rather
+than inventing a mass or a coarea Jacobian. For a varying-normal singular family, geometric
+fiber samples remain available but continuous angle-density/product factors are NaN (not zero).
+The discovered
 arm owns incomplete components as well as completed ones. Probe profiles carry a spec
 and a claim; refused profiles have no samples/readings, while a finite all-zero profile
 keeps its bins. Survey probes likewise own their samples/readings only in a successful
@@ -370,7 +376,15 @@ from the result handle rather than parsing the document. The new C workspace cap
 Scene at creation and runs the four typed queries through the same execution owners;
 explicit typed warm data comes from a completed result or a legacy document import.
 Its bounded slots are replaced on selection or request-shape changes; only completed surveys
-populate the survey/warm slots. A result handle owns its frozen value independently of the
+populate the survey/warm slots. An automatic candidate is injected into a point/probe only after
+`ValidateWarmCandidate` accepts it for the actual request, including symmetry and scene location.
+An incompatible automatic candidate is a cache miss: no seeds or facts enter the query. Explicit
+warm input takes precedence and an admission failure remains an error, never a silent cold retry.
+Identity admission does not bypass the existing per-fact wavelength/sun/profile qualification.
+Point fibers always retain the requested literal member; their optional survey context independently
+uses the requested physical class (default) or literal scope. Probe profiles remain representative-member
+quantities under either context choice, not class sums.
+A result handle owns its frozen value independently of the
 Scene and Workspace. Strings and arrays returned by typed getters are borrowed from that
 handle until its Destroy, not from the current workspace slot or a `ToJson` buffer. Typed
 `PathWarmDataFromSurvey`/`PathWarmDataFromPoint` harvest independent candidates: destroying
