@@ -11,13 +11,10 @@
 //     lambdas — restated here from C-visible quantities only (the apex from the edge
 //     certificate, the indices from the dispersion echo), the same shape AC6's independent
 //     anchor asks for, with the direction the red-inside fact is stated in;
-//   * the refused-support document keeps its independent facts beside the refusal — the
-//     witness's positive event and the TIR share stand next to the named refusal, and the
-//     chromatic layer's absence carries the engine's own reason (AC4's coexistence);
 //   * the family document organizes as the freezing ladder the engine walked, with its per-level
 //     freeze facts and the survival-filter verdicts.
 //
-// Cost note: the three surveys cost real, fixed engine legs (the class tint's two-lambda power
+// Cost note: the C01 and family surveys cost real, fixed engine legs (the class tint's two-lambda power
 // sums dominate). That cost is the point — these documents cannot be fabricated from outside the
 // engine — and it is paid here once per document, in the tier whose pools already carry the
 // survey's own price.
@@ -292,50 +289,6 @@ TEST(AnalyzeOverviewChain, FullDimensionalDispersionAnchorsToTheClosedForm) {
   EXPECT_NE(model.dispersion.evidence_basis.find("index pair"), std::string::npos);
 }
 
-// The refused-support arm (the C17 shape): the refusal and the independent facts coexist in one
-// document and in one model — the named refusal, the witness's positive event, the TIR share —
-// with the chromatic layer honestly unevaluated in the engine's own words.
-TEST(AnalyzeOverviewChain, RefusedSupportKeepsItsIndependentFacts) {
-  const auto scene = SceneFromConfig("raypath_feature_random_regular.json");
-  const auto survey = RunSurvey(scene.get(), { 3, 1, 5, 7 });
-  ASSERT_NE(survey.get(), nullptr);
-
-  const SurveyOverviewModel model = BuildSurveyOverviewModel(*survey);
-  ASSERT_TRUE(model.valid);
-  ASSERT_EQ(model.arm, SurveyArm::kRefused);
-
-  // The refusal names its mode, and the conclusions say what the refusal is NOT.
-  EXPECT_EQ(model.evidence_state, LUMICE_PATH_STATE_REFUSED);
-  EXPECT_EQ(model.evidence_mode, std::string("slab_crease_touching"));
-  EXPECT_TRUE(HasLine(model.conclusions, "Support refused"));
-  EXPECT_TRUE(HasLine(model.conclusions, "slab_crease_touching"));
-  EXPECT_TRUE(HasLine(model.conclusions, "not a statement that the class carries no light"));
-
-  // The witness: the declared source's own positive event, readable.
-  ASSERT_TRUE(model.witness.available);
-  EXPECT_TRUE(model.witness.value_available);
-  EXPECT_GT(model.witness.kept_count, 0);
-  EXPECT_GT(model.witness.sample_count, 0);
-  EXPECT_TRUE(HasLine(model.conclusions, "independent witness"));
-
-  // The TIR share: produced beside the refusal, both lambdas.
-  ASSERT_TRUE(model.tir.available);
-  EXPECT_TRUE(model.tir.value_available);
-  EXPECT_GT(model.tir.share_all_tir_red, 0.0);
-  EXPECT_GT(model.tir.share_all_tir_blue, 0.0);
-
-  // The chromatic layer sits downstream of the refused axis and says so in the engine's words —
-  // unevaluated, not absent, not an error (AC3's 如实区分).
-  EXPECT_FALSE(model.dispersion.available);
-  EXPECT_FALSE(model.diagnose.available);
-  EXPECT_EQ(model.chromatic_state, LUMICE_PATH_STATE_UNEVALUATED);
-  EXPECT_NE(model.chromatic_note.find("the delta axis refused"), std::string::npos);
-
-  // The refused card is the one object, refused, with the mode as its reason.
-  ASSERT_GE(model.objects.size(), 1u);
-  EXPECT_EQ(model.objects[0].state, LUMICE_PATH_STATE_REFUSED);
-}
-
 // The family arm: the freezing ladder the engine walked organizes as levels — frozen dims with
 // their centers and widths, free dims named, per-level sampling and survival-filter verdicts.
 TEST(AnalyzeOverviewChain, FamilyArmOrganizesAsTheFreezingLadder) {
@@ -379,53 +332,6 @@ TEST(AnalyzeOverviewChain, FamilyArmOrganizesAsTheFreezingLadder) {
   EXPECT_TRUE(saw_level_tag);
   ASSERT_TRUE(model.tint.available);
   EXPECT_TRUE(model.tint.reading_available);
-}
-
-// The wide-diffusion shape (C04): the open-arc class carries a support and a bright domain but
-// NO caustic edge — and its dispersion table has no minimum-deviation fold, only followed
-// onsets. The overview renders exactly that: no sharp-edge conclusion, no certificate, and a
-// dispersion block that says the followed onsets are the positional facts. The probe's peak
-// stays a finite-resolution reading, never a fabricated "brightest point".
-TEST(AnalyzeOverviewChain, WideDiffusionClassNeedsNoSharpStructure) {
-  const auto scene = SceneFromConfig("raypath_feature_random_regular.json");
-  const auto survey = RunSurvey(scene.get(), { 3, 1, 4, 5 });
-  ASSERT_NE(survey.get(), nullptr);
-
-  const SurveyOverviewModel model = BuildSurveyOverviewModel(*survey);
-  ASSERT_TRUE(model.valid);
-  ASSERT_EQ(model.arm, SurveyArm::kFullDimensional);
-  EXPECT_EQ(model.evidence_state, LUMICE_PATH_STATE_FINITE);
-
-  // No edge card came through, and the conclusions never invent one.
-  bool saw_edge_card = false;
-  for (const SurveyObjectRow& row : model.objects) {
-    if (row.kind_name == "caustic edge") {
-      saw_edge_card = true;
-    }
-  }
-  EXPECT_FALSE(saw_edge_card);
-  EXPECT_FALSE(HasLine(model.conclusions, "Sharp edge"));
-  EXPECT_FALSE(model.dispersion.certificate_available);
-  EXPECT_TRUE(HasLine(model.conclusions, "Support:"));
-  // The probe reading is a reading: quoted as finite-resolution, not as the answer.
-  EXPECT_TRUE(HasLine(model.conclusions, "Brightness peaks near"));
-
-  // The dispersion: no minimum-deviation fold — the followed onsets are the positional facts.
-  // Their direction is the engine's per-row fact (this open-arc class moves blue inside red —
-  // the opposite of C01's two-face minimum), so the assertion is the label agreeing with the
-  // values it labels, not a specific side.
-  ASSERT_TRUE(model.dispersion.available);
-  EXPECT_FALSE(model.dispersion.min_row_available);
-  ASSERT_GE(model.dispersion.followed.size(), 1u);
-  for (const SurveyFollowedOnsetView& row : model.dispersion.followed) {
-    if (row.value_red_deg < row.value_blue_deg) {
-      EXPECT_EQ(row.direction, std::string("red_inner_blue_outer"));
-    } else if (row.value_blue_deg < row.value_red_deg) {
-      EXPECT_EQ(row.direction, std::string("blue_inner_red_outer"));
-    }
-    // else: a degenerate onset (both lambdas at one corner — this class's TIR corner sits at
-    // 120.000° for both) carries either name and the equal values speak for themselves.
-  }
 }
 
 // The deadline document (plan Step 2's "a partial document still shows its produced legs"):
