@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795216383601,
+  "lastUpdate": 1795216386295,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9620,50 +9620,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "9f6df4d7e70c2cd552b73298382577b9399e17d1",
-          "message": "Merge pull request #506 from LoveDaisy/fix/verbose-witness-dead-site\n\nfeat(cli): make -v/-d observable — drop dead VERBOSE site, add parse-time level lines",
-          "timestamp": "2026-10-17T18:54:32+08:00",
-          "tree_id": "4ad751e4775236fa65d6490bf1d0dd4ec37524c1",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/9f6df4d7e70c2cd552b73298382577b9399e17d1"
-        },
-        "date": 1792234613625,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 86,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 100,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 98.4,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 94.7,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "e74a6fad65c33336e274a3929c5f9121f4339a44",
           "message": "Merge pull request #507 from LoveDaisy/chore/e2e-step-budget-runner-variance\n\ntest/e2e cost trims + shadow bench probe (697 PR1: restore work headroom, instrument the budget)",
           "timestamp": "2026-10-17T23:21:07+08:00",
@@ -14003,6 +13959,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 94.4,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "d685b0569327ac7aea6e1e534b775274ad0194e4",
+          "message": "Merge pull request #623 from LoveDaisy/feat/metal-exit-wsum-main-port\n\nfix(metal): reduce exit weights per SIMD group (port from release/4.7.7)",
+          "timestamp": "2026-11-21T07:08:10+08:00",
+          "tree_id": "46894b9cf42864f233a143255b8be541dd2329de",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/d685b0569327ac7aea6e1e534b775274ad0194e4"
+        },
+        "date": 1795216385689,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 94.7,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 100.1,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 99.1,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 94.6,
             "unit": "%"
           }
         ]
