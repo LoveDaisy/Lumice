@@ -813,7 +813,7 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
             IM_CHECK_RETV(item.RectFull.Min.x >= previous_right, false);
             previous_right = item.RectFull.Max.x;
             if (entry.id == gui::AxisPreset::kCustom) {
-              IM_CHECK_RETV(ChipGlyphsMatchBaseline(ctx, item, entry.label, false), false);
+              IM_CHECK_RETV(ChipGlyphsComplete(ctx, item, entry.label), false);
             }
             return true;
           };
