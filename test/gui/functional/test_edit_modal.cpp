@@ -742,15 +742,6 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
         ctx->Yield(4);
         ctx->ItemClick(kCancel);
         ctx->Yield(2);
-        if (multiplier == 1.5f) {
-          gui::SetUiScaleMultiplierImmediate(multiplier);
-          ctx->Yield(4);
-          // Real non-Axis consumer, in the left panel's bottom toolbar rather
-          // than the modal's Label row. It contains the same y descender.
-          const auto layer = ctx->ItemInfo("**/+ Layer");
-          IM_CHECK_RETV(layer.ID != 0 && layer.Window != nullptr, false);
-          IM_CHECK_RETV(ChipGlyphsComplete(ctx, layer, "+ Layer"), false);
-        }
         return true;
       };
       IM_CHECK(exercise(1.0f, true));
@@ -853,6 +844,29 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
         }
       }
       IM_CHECK(exercise(1.0f, false));
+    };
+  }
+  {
+    // Same y descender and native SmallButton, but a real non-Axis consumer in
+    // the left panel's bottom toolbar. Separate case keeps its negative control
+    // observable even when the Axis regression stops at the first cropped tail.
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "edit_modal", "small_button_toolbar_descender");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      const ScopedTooltipUiScale scale(ctx);
+      gui::SetUiScaleMultiplierImmediate(1.5f);
+      ctx->Yield(4);
+      const auto item = ctx->ItemInfo("**/+ Layer");
+      IM_CHECK(item.ID != 0 && item.Window != nullptr);
+      GlyphTailSample tail;
+      const bool complete = ChipGlyphsComplete(ctx, item, "+ Layer", &tail);
+      IM_CHECK(ObserveGlyphTail(ctx, item, tail, "layer-tail-15x.png"));
+      IM_CHECK(complete);
+      IM_CHECK_EQ(item.RectFull.GetHeight(), ImGui::GetFontSize());
+      const auto count = gui::g_state.layers.size();
+      ctx->ItemClick("**/+ Layer");
+      ctx->Yield(2);
+      IM_CHECK_EQ(gui::g_state.layers.size(), count + 1);
     };
   }
   // ===================================================================================
