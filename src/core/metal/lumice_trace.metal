@@ -461,7 +461,10 @@ struct WlEntry {
 // metal_trace_backend.mm (see the static_assert there). All fields sit at
 // natural 4-byte alignment; total sizeof == 16.
 //   count / w_sum     : diagnostic tally of EVERY filter-pass polygon exit —
-//                       continuation writes included (parity harness).
+//                       continuation writes included (parity harness). count is
+//                       atomic per exit; w_sum is accumulated per ray and added
+//                       once per SIMD-group in the epilogue, without alloc_tally
+//                       or renderer-count gating.
 //   tally_w / tally_w2: the online ray-allocation tally
 //                       (core/shared/ray_allocation_shared.hpp): Σw and Σw² over
 //                       the rays handed to the IMAGE only — the two device-fused
@@ -897,12 +900,12 @@ kernel void trace_layer_kernel(
   gate_stream.global_idx = tid;
   gate_stream.slot       = 0u;
 
-  // Online ray-allocation tally, accumulated in REGISTERS along the ray's path
-  // and folded into exit_stats once per SIMD-group at the kernel's end (see
-  // the epilogue). Not an atomic per exit: two more single-address float
-  // atomics beside count / w_sum measured −23% on the single-crystal bench
-  // scene, where nearly every ray is an image-bound exit and every lane then
-  // serialises on the same 16 bytes. The register form costs two FMAs per exit.
+  // Exit weight and online ray-allocation tallies accumulate in registers,
+  // then fold into exit_stats once per SIMD-group in the epilogue. Per-exit
+  // single-address float atomics serialise lanes in exit-dense scenes; only
+  // the uint count remains atomic per exit. Exit weight includes continuation
+  // writes, while the allocation tallies include only image-bound exits.
+  float exit_weight_acc = 0.0f;
   float tally_w_acc  = 0.0f;
   float tally_w2_acc = 0.0f;
   // Per-renderer landed weight, accumulated in registers along the ray's path
@@ -1122,12 +1125,11 @@ kernel void trace_layer_kernel(
                 // swap + shuffle gather must move this in lockstep (LANDMINE).
                 cont_component[slot] = this_mask;
               }
-              // scrum-267 task-fused-emit-gate: post-gate semantics — exit_cnt
-              // / exit_wsum now tally "filter_pass polygon-exits" (gate dropped
-              // filter_fail rays above; legacy meaning was "all polygon-exits").
-              // Diagnostic-only counters; not consumed by parity tests.
+              // Post-gate semantics: count / w_sum tally filter-pass polygon
+              // exits, not all polygon exits; filter-fail rays were dropped above.
+              // Parity exit statistics include continuation writes.
               atomic_fetch_add_explicit(&exit_stats->count, 1u, memory_order_relaxed);
-              atomic_fetch_add_explicit(&exit_stats->w_sum, cw, memory_order_relaxed);
+              exit_weight_acc += cw;
             } else {
               // Mid-exit: filter_pass && !do_continue → device-fused XYZ accumulation.
               // 315.3: single-source projection via lm_proj::ProjectExitToPixel
@@ -1154,9 +1156,9 @@ kernel void trace_layer_kernel(
                   exit_comp_w[cslot]    = cw;
                 }
               }
-              // Diagnostic counters (not consumed by parity tests).
+              // Parity exit statistics also include image-bound exits.
               atomic_fetch_add_explicit(&exit_stats->count, 1u, memory_order_relaxed);
-              atomic_fetch_add_explicit(&exit_stats->w_sum, cw, memory_order_relaxed);
+              exit_weight_acc += cw;
               // Online ray-allocation tally: this ray reached the image.
               tally_w_acc  += cw;
               tally_w2_acc += cw * cw;
@@ -1252,7 +1254,7 @@ kernel void trace_layer_kernel(
             AccumRendererPlanes(prm, image, landed_acc, class_lane_buf, this_mask_f,
                                 wx, wy, wz, cmf_x, cmf_y, cmf_z, cw);
             atomic_fetch_add_explicit(&exit_stats->count, 1u, memory_order_relaxed);
-            atomic_fetch_add_explicit(&exit_stats->w_sum, cw, memory_order_relaxed);
+            exit_weight_acc += cw;
             // Online ray-allocation tally: this ray reached the image.
             tally_w_acc  += cw;
             tally_w2_acc += cw * cw;
@@ -1277,6 +1279,14 @@ kernel void trace_layer_kernel(
     rec_csum += float(path[k]);
   }
   rec_sink[tid] = rec_csum;
+
+  // Every valid lane reaches the epilogue, including zero-exit rays and the
+  // active lanes of a partial SIMD-group: the hit loop only breaks, never
+  // returns. Exit weight is independent of alloc_tally and renderer count.
+  float exit_weight_sum = simd_sum(exit_weight_acc);
+  if (simd_is_first()) {
+    atomic_fetch_add_explicit(&exit_stats->w_sum, exit_weight_sum, memory_order_relaxed);
+  }
 
   // Online ray-allocation tally epilogue: one SIMD-group reduction and one
   // atomic per SIMD-group instead of two atomics per exit. Every lane that

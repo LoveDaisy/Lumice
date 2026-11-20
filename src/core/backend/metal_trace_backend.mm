@@ -147,7 +147,10 @@ constexpr uint32_t kInvalidIdU32 = 0xffffffffu;
 // Host mirror of the MSL `ExitStats` struct in src/core/metal/lumice_trace.metal
 // (per-ray K-shape pool: the merged exit-stats accumulator frees a
 // trace_layer_kernel buffer slot for the per-ray pool-shape offset carrier).
-// Field order (count, then w_sum) MUST match the MSL definition; host
+// count / w_sum feed the parity harness, including continuation exits. The
+// kernel updates count per exit, but reduces w_sum once per SIMD-group, even
+// on proportional dispatches (unlike the image-only allocation tallies).
+// Field order (count, w_sum, tally_w, tally_w2) MUST match the MSL definition; host
 // reads/writes non-atomically after `waitUntilCompleted` (unified memory +
 // relaxed-order atomics on the device side are fully ordered by the CB
 // completion barrier).
@@ -986,9 +989,9 @@ struct MetalTraceBackend::Impl {
   size_t        rec_sink_capacity = 0;
   size_t        max_produced = 0;
 
-  // Exit-ray statistics buffer (parity harness). One 8-byte `ExitStats`
-  // allocation (uint32 atomic count + float atomic w_sum) bound at buffer(15);
-  // buffer(16) is reserved for the per-ray pool-shape offset carrier
+  // Exit-ray statistics buffer (parity harness + online allocation tallies).
+  // One 16-byte `ExitStats` allocation bound at buffer(14); buffer(15) carries
+  // the per-ray pool-shape offset carrier
   // (`r_pool_shape`) that the K-shape geometry pool feeds into
   // `trace_layer_kernel`. Populated by the kernel in both ms_mode branches and
   // read back after each DispatchLayer; cached in `last_stats` for the
