@@ -533,7 +533,7 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
           buttons_width += item.RectFull.GetWidth();
           text_width += ImGui::CalcTextSize(entry.label).x;
         }
-        const float row_start = first.RectFull.Min.x - style.ItemSpacing.x - ImGui::CalcTextSize("Label:").x;
+        const float row_start = first.Window->DC.CursorStartPos.x;
         ctx->LogInfo(
             "Axis budget scale=%.2f font=%.1f text=%.1f buttons=%.1f padding=%.1f spacing=%.1f "
             "need=%.1f available=%.1f row_start=%.1f host=%.1f scrollbar=%.1f scroll_y=%.1f window_padding=%.1f",
@@ -547,9 +547,7 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
                        win->InnerClipRect.Max.y);
         }
         // The id-zero caption precedes the first chip on this same line; no production test ID.
-        const ImVec2 caption(
-            first.RectFull.Min.x - ImGui::GetStyle().ItemSpacing.x - ImGui::CalcTextSize("Label:").x * 0.5f,
-            first.RectFull.GetCenter().y);
+        const ImVec2 caption(row_start + ImGui::CalcTextSize("Label:").x * 0.5f, first.RectFull.GetCenter().y);
         IM_CHECK_RETV(ObserveTooltip(ctx, caption, kText, true,
                                      multiplier == 1.0f ? "axis-caption-1x.png" : "axis-caption-15x.png"),
                       false);
@@ -575,7 +573,22 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
           const std::string capture =
               std::string("axis-") + entry.label + (multiplier == 1.0f ? "-1x.png" : "-15x.png");
           IM_CHECK_RETV(ObserveTooltip(ctx, item.RectFull.GetCenter(), kText, true, capture.c_str()), false);
-          ctx->ItemClick(ref.c_str());
+          if (entry.id == gui::AxisPreset::kCustom) {
+            IM_CHECK_RETV(gui::GetEditModalBuffers().axis_preset != gui::AxisPreset::kCustom, false);
+            // Inset only one scaled pixel: this lies inside the historical five-pixel tail,
+            // not the safe centre. Positional mouse input cannot scroll the item into view.
+            const ImVec2 tail(item.RectFull.Max.x - gui::UiPx(1.0f), item.RectFull.GetCenter().y);
+            ctx->MouseMoveToPos(tail);
+            ctx->Yield(2);
+            ctx->LogInfo("Custom tail hit=(%.2f,%.2f) right=%.2f clip=%.2f hovered=%08X target=%08X", tail.x, tail.y,
+                         item.RectFull.Max.x, clip.Max.x, GImGui->HoveredId, item.ID);
+            IM_CHECK_RETV(GImGui->HoveredId == item.ID, false);
+            ctx->MouseDown(0);
+            ctx->Yield();
+            ctx->MouseUp(0);
+          } else {
+            ctx->ItemClick(ref.c_str());
+          }
           ctx->Yield(2);
           IM_CHECK_RETV(gui::GetEditModalBuffers().axis_preset == entry.id, false);
           return true;
@@ -595,6 +608,101 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
       };
       IM_CHECK(exercise(1.0f));
       IM_CHECK(exercise(1.5f));
+    };
+  }
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "edit_modal", "axis_chips_fit_supported_scales_and_short_panes");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      const ScopedPopups popups(ctx);
+      const ScopedTooltipUiScale scale(ctx);
+      const auto exercise = [&](float multiplier, bool compact) -> bool {
+        gui::SetUiScaleMultiplierImmediate(multiplier);
+        gui::g_state.modal_layout_compact = compact;
+        ctx->Yield(4);
+        // Keep the larger-scale default layout on a large enough client. The short-pane pass
+        // below independently drives the real height clamp and vertical scrollbar.
+        g_window_size_test.Reset();
+        g_window_size_test.width = std::max(gui::kInitWindowWidth, gui::UiPxI(gui::kInitWindowWidth));
+        g_window_size_test.height = std::max(gui::kInitWindowHeight, gui::UiPxI(gui::kInitWindowHeight));
+        g_window_size_test.requested.store(true);
+        for (int i = 0; i < 20 && !g_window_size_test.done.load(); ++i) {
+          ctx->Yield();
+        }
+        IM_CHECK_RETV(g_window_size_test.done.load(), false);
+        gui::TestSetEditModalMaxHeightOverride(ImGui::GetIO().DisplaySize.y - gui::UiPx(16.0f));
+        OpenCardEditor(ctx, 0, kCrystalTabRef);
+        if (compact) {
+          ctx->ItemClick("**/###axis_tab");
+        }
+        ctx->Yield(4);
+        ImGuiWindow* modal = ctx->GetWindowByRef("Edit Entry");
+        IM_CHECK_RETV(modal != nullptr, false);
+        const auto check_row = [&](bool short_pane) -> bool {
+          float previous_right = -FLT_MAX;
+          const auto check_chip = [&](const gui::AxisPresetEntry& entry) -> bool {
+            const auto item = ctx->ItemInfo((std::string("**/") + entry.label + "##axis_label_chip").c_str());
+            IM_CHECK_RETV(item.ID != 0 && item.Window != nullptr, false);
+            const ImRect clip = item.Window->InnerClipRect;
+            ctx->LogInfo(
+                "Axis matrix scale=%.2f compact=%d short=%d %s rect_x=%.1f..%.1f clip_x=%.1f..%.1f "
+                "host=%.1f scrollbar=%.1f font=%.1f",
+                multiplier, compact, short_pane, entry.label, item.RectFull.Min.x, item.RectFull.Max.x, clip.Min.x,
+                clip.Max.x, item.Window->Size.x, item.Window->ScrollbarSizes.x, ImGui::GetFontSize());
+            IM_CHECK_RETV(clip.Contains(item.RectFull), false);
+            IM_CHECK_RETV(item.RectFull.Min.x >= previous_right, false);
+            previous_right = item.RectFull.Max.x;
+            if (entry.id == gui::AxisPreset::kCustom) {
+              IM_CHECK_RETV(ChipGlyphsMatchBaseline(ctx, item, entry.label, false), false);
+            }
+            return true;
+          };
+          for (const auto& entry : gui::kAxisPresets) {
+            if (!check_chip(entry)) {
+              return false;
+            }
+          }
+          return true;
+        };
+        IM_CHECK_RETV(check_row(false), false);
+        const float natural_h = modal->Size.y;
+        gui::TestSetEditModalMaxHeightOverride(natural_h - gui::UiPx(120.0f));
+        ctx->Yield(4);
+        ctx->LogInfo("Axis short-pane height natural=%.1f actual=%.1f requested=%.1f", natural_h, modal->Size.y,
+                     natural_h - gui::UiPx(120.0f));
+        IM_CHECK_RETV(modal->Size.y <= natural_h - gui::UiPx(100.0f), false);
+        IM_CHECK_RETV(check_row(true), false);
+        // Input and Reset still operate through the same scrolling pane; the footer remains
+        // outside it. Existing memory/pose/Immediate tests own the full editing semantics.
+        ctx->ItemClick("**/Column##axis_label_chip");
+        ctx->ItemInputValue("**/Zenith/##Mean_input", 12.0f);
+        ctx->Yield(2);
+        IM_CHECK_RETV(gui::GetEditModalBuffers().axis[0].mean == 12.0f, false);
+        ctx->ItemClick("**/Reset All##axis_reset");
+        ctx->Yield(2);
+        IM_CHECK_RETV(gui::GetEditModalBuffers().axis[0].mean == 90.0f, false);
+        const auto cancel = ctx->ItemInfo(kCancel);
+        IM_CHECK_RETV(cancel.ID != 0 && modal->InnerClipRect.Contains(cancel.RectFull), false);
+        ctx->ItemClick(kCancel);
+        ctx->Yield(2);
+        gui::TestSetEditModalMaxHeightOverride(ImGui::GetIO().DisplaySize.y - gui::UiPx(16.0f));
+        // Close/reopen at this same scale and layout, not only after a reset to the default.
+        OpenCardEditor(ctx, 0, kCrystalTabRef);
+        if (compact) {
+          ctx->ItemClick("**/###axis_tab");
+        }
+        ctx->Yield(4);
+        IM_CHECK_RETV(check_row(false), false);
+        ctx->ItemClick(kCancel);
+        ctx->Yield(2);
+        return true;
+      };
+      for (float multiplier : gui::kAllowedUiScaleMultipliers) {
+        if (!exercise(multiplier, true)) {
+          return;
+        }
+      }
+      IM_CHECK(exercise(1.0f, false));
     };
   }
   // ===================================================================================
