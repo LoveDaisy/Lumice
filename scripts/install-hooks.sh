@@ -12,17 +12,19 @@
 # global one chains back to `<git-common-dir>/hooks`, or when the repo sets
 # `core.hooksPath` locally to its own `.git/hooks` — this script says so and
 # leaves that choice to the user rather than editing config.
-# Currently installs the pre-commit hook (main-worktree guard + policy checks +
-# clang-format on staged files). The existing git-lfs hooks (post-checkout /
-# post-commit / post-merge / pre-push) are left untouched — we only add
-# pre-commit, which git-lfs does not use.
+# Installs a fixed pre-commit delegator: each invocation runs the committing
+# checkout's scripts/hooks/pre-commit (guard + policy + format), not the copy in
+# the checkout that installed it. A checkout without that script loudly skips.
+# The existing git-lfs hooks (post-checkout / post-commit / post-merge / pre-push)
+# are left untouched — we only add pre-commit, which git-lfs does not use.
 #
-# Run once after cloning:  ./scripts/install-hooks.sh
+# Run after cloning, or rerun THIS installer to migrate old symlink/copy entries:
+#   ./scripts/install-hooks.sh
+# Merging does not reinstall; running an older installer restores its mechanism.
 # Bypass the hook for one commit:  git commit --no-verify
 
 set -e
 REPO_ROOT=$(git rev-parse --show-toplevel)
-HOOK_SRC="$REPO_ROOT/scripts/hooks/pre-commit"
 HOOK_DIR="$(git -C "$REPO_ROOT" rev-parse --path-format=absolute --git-common-dir)/hooks"
 HOOK_DST="$HOOK_DIR/pre-commit"
 mkdir -p "$HOOK_DIR"
@@ -40,20 +42,26 @@ elif [ -n "$GLOBAL_HOOKS_PATH" ]; then
   echo "      repo at its own hooks:  git config core.hooksPath \"$HOOK_DIR\"" >&2
 fi
 
-chmod +x "$HOOK_SRC"
-
-# Prefer a symlink so the hook tracks updates to scripts/hooks/pre-commit; fall
-# back to a copy where symlinks are unavailable (e.g. some Windows setups).
-if ln -sf "../../scripts/hooks/pre-commit" "$HOOK_DST" 2>/dev/null; then
-  echo "Linked pre-commit hook -> scripts/hooks/pre-commit"
-else
-  cp "$HOOK_SRC" "$HOOK_DST"
-  chmod +x "$HOOK_DST"
-  echo "Copied pre-commit hook (symlink unavailable on this platform)."
+# Replace the directory entry, never write through an old symlink into its
+# checkout. Stage beside the destination so the rename leaves no partial hook.
+HOOK_TMP=$(mktemp "$HOOK_DIR/pre-commit.XXXXXX")
+trap 'rm -f "$HOOK_TMP"' EXIT
+trap 'exit 1' HUP INT TERM
+cat > "$HOOK_TMP" <<'EOF'
+#!/bin/sh
+REPO_ROOT=$(git rev-parse --show-toplevel) || exit 1
+if [ ! -f "$REPO_ROOT/scripts/hooks/pre-commit" ]; then
+  echo "pre-commit: scripts/hooks/pre-commit not in this checkout; checks skipped." >&2
+  exit 0
 fi
+exec sh "$REPO_ROOT/scripts/hooks/pre-commit" "$@"
+EOF
+chmod +x "$HOOK_TMP"
+mv -f "$HOOK_TMP" "$HOOK_DST"
 
-echo "Done. The pre-commit hook runs the main-worktree guard (scripts/hooks/worktree-guard.py),"
-echo "scripts/check_policies.py + the diff-scoped checkers, and clang-format on staged sources."
+echo "Installed fixed pre-commit delegator in $HOOK_DST"
+echo "Done. Each commit runs its checkout's scripts/hooks/pre-commit and checkers."
+echo "A checkout without that script reports that checks were skipped."
 
 # The guard's Claude Code side lives in a git-ignored settings file that no diff
 # can show is current; ask the script, which owns the canonical content. Its
