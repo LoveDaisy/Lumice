@@ -1,56 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795178120159,
+  "lastUpdate": 1795215394603,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "43a72d655ad2a9f3ab50650b80bc0bafeddeb49a",
-          "message": "Merge pull request #505 from LoveDaisy/chore/source-comment-consistency\n\nchore(source-comment-consistency): rewrite five drift groups of src/ comments",
-          "timestamp": "2026-10-17T17:35:59+08:00",
-          "tree_id": "d4e5b5d64f6ec519bee36522169fafe1ef1e335a",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/43a72d655ad2a9f3ab50650b80bc0bafeddeb49a"
-        },
-        "date": 1792230020749,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 306154.3,
-            "unit": "rays/sec",
-            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 506185.6,
-            "unit": "rays/sec",
-            "extra": "CPU: Neoverse-N2\\nCores: 4"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 484721.9,
-            "unit": "rays/sec",
-            "extra": "CPU: Intel(R) Xeon(R) 6973P-C\\nCores: 4"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 310487.5,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -4798,6 +4750,54 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 489595.7,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 9V45 96-Core Processor                \\nCores: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "7febf6d10091602d355d0238a51937df978814df",
+          "message": "Merge pull request #622 from LoveDaisy/feat/small-button-glyph-clip\n\nfix(gui): preserve SmallButton descender ink at scaled line height",
+          "timestamp": "2026-11-21T06:50:01+08:00",
+          "tree_id": "491d95044f79f070d1681aea38134ce614726abf",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/7febf6d10091602d355d0238a51937df978814df"
+        },
+        "date": 1795215392373,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 412580.8,
+            "unit": "rays/sec",
+            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 504371.8,
+            "unit": "rays/sec",
+            "extra": "CPU: Neoverse-N2\\nCores: 4"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 329370,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 9V74 80-Core Processor\\nCores: 4"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 509165.2,
             "unit": "rays/sec",
             "extra": "CPU: AMD EPYC 9V45 96-Core Processor                \\nCores: 4"
           }
