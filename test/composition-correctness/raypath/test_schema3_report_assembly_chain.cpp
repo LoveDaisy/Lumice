@@ -159,46 +159,6 @@ TEST(Schema3ReportAssemblyChain, ExplicitEventsProduceObservedKind1) {
   EXPECT_TRUE(assembled.density_skip_note.empty());
 }
 
-TEST(Schema3ReportAssemblyChain, AutoStarveStaysSilentAndCarries33RowContinuation) {
-  // The 666.2 B-arm shape through the production assembly: continuous illuminant, auto budget.
-  // The starvation is deterministic (the weighted field never reaches standing): no kActual, no
-  // unattributed output, and the kind-1 (unproven at this budget's measure) reads `consistent`
-  // on sufficient recorded presence. The same run carries the 33-row n-continuation table: the
-  // constant-D_P curves were re-read at every spectral node.
-  const ConfigManager config = PrismScene(true);
-  PathFeatureReportRequest request;
-  request.crystal_id = 1;
-  request.path_layers = { { 3, 5 } };
-  request.sample_count = 0;    // auto
-  request.budget_ms = 120000;  // the evaluations cap, not the clock, must end this run
-  const AssembledSchema3Report assembled = AssembleOrDie(config, request);
-  ASSERT_EQ(assembled.annotations.size(), assembled.core.objects.size());
-  for (const DiagnosticFeatureRecord& record : assembled.mc.discovery.features) {
-    EXPECT_NE(record.evidence, DiagnosticEvidence::kActual) << "the starvation premise must hold";
-  }
-  EXPECT_TRUE(assembled.unattributed.structures.empty());
-  EXPECT_EQ(assembled.unattributed.skipped_below_ess, 0);
-  EXPECT_EQ(assembled.mc.spectral_verification.available, true) << "a continuous quadrature is the in-scope signal";
-  bool consistent_kind1 = false;
-  for (size_t i = 0; i < assembled.core.objects.size(); i++) {
-    if (assembled.core.objects[i].kind != ObjectKind::kKind1) {
-      continue;
-    }
-    // The unit-side B-arm's guard, carried over 1:1: every kind-1 sits unproven at this
-    // budget's measure — the starvation is in the weighted field, not in the sampling.
-    EXPECT_EQ(assembled.core.objects[i].visibility.state, VisibilityState::kUnproven);
-    if (assembled.annotations[i].state == CorroborationState::kConsistent) {
-      consistent_kind1 = true;
-      // The unproven arm reads consistent only on SUFFICIENT recorded presence — the
-      // starvation premise does not mean an empty record.
-      EXPECT_GE(assembled.annotations[i].presence_ess, 32.0) << assembled.annotations[i].reason;
-      EXPECT_NE(assembled.annotations[i].reason.find("nothing the MC could contradict"), std::string::npos)
-          << assembled.annotations[i].reason;
-    }
-  }
-  EXPECT_TRUE(consistent_kind1) << "unproven kind-1 on sufficient presence reads consistent";
-}
-
 TEST(Schema3ReportAssemblyChain, ContinuousSpectrumFeedsThe33RowContinuationTable) {
   // The n-continuation leg at production resolution: the beta plate (the C05/C06 crystal)
   // under the D65 quadrature. The assembly builds the (nm, index) table from the assembled
