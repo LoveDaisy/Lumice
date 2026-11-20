@@ -760,7 +760,9 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
         ctx->Yield(4);
         const char* scale_tag = multiplier == 1.0f ? "1x" : multiplier == 1.5f ? "15x" : "125x";
         OpenCardEditor(ctx, 0, kCrystalTabRef);
-        ctx->ItemClick("**/###axis_tab");
+        if (compact) {
+          ctx->ItemClick("**/###axis_tab");
+        }  // Expanded draws the Axis section directly, without a tab bar.
         ctx->Yield(4);
         const auto first = ctx->ItemInfo("**/Column##axis_label_chip");
         IM_CHECK_RETV(first.ID != 0, false);
@@ -799,6 +801,7 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
           ctx->Yield(3);
           const auto item = ctx->ItemInfo(ref.c_str());
           IM_CHECK_RETV(item.ID != 0 && item.Window != nullptr, false);
+          IM_CHECK_RETV(item.RectFull.GetHeight() == ImGui::GetFontSize(), false);
           ctx->LogInfo("Axis chip %s: rect=(%.1f,%.1f)-(%.1f,%.1f) clip=(%.1f,%.1f)-(%.1f,%.1f)", entry.label,
                        item.RectFull.Min.x, item.RectFull.Min.y, item.RectFull.Max.x, item.RectFull.Max.y,
                        item.Window->InnerClipRect.Min.x, item.Window->InnerClipRect.Min.y,
@@ -809,6 +812,16 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
           const bool complete = ChipGlyphsComplete(ctx, item, entry.label, &tail);
           if (multiplier == 1.5f && entry.id == gui::AxisPreset::kParry) {
             IM_CHECK_RETV(ObserveGlyphTail(ctx, item, tail, "parry-tail-15x.png"), false);
+            IM_CHECK_RETV(tail.point.y >= item.RectFull.Max.y &&
+                              tail.point.y < item.RectFull.Max.y + ImGui::GetStyle().ItemSpacing.y,
+                          false);
+            const auto before = gui::GetEditModalBuffers().axis_preset;
+            // The restored ink lies in the existing inter-line gap, not a new
+            // clickable extension: pressing just below the nominal bb is a no-op.
+            ctx->MouseMoveToPos(tail.point);
+            ctx->MouseClick(ImGuiMouseButton_Left);
+            ctx->Yield(2);
+            IM_CHECK_RETV(gui::GetEditModalBuffers().axis_preset == before, false);
           }
           IM_CHECK_RETV(complete, false);
           ctx->LogInfo(
