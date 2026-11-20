@@ -334,9 +334,18 @@ SUITE_FILTER_EXPR = (
 SUITE_ARGS = ["--fixed-dt", "--filter", SUITE_FILTER_EXPR, "--no-user-config"]
 
 
+def _run_text(cmd: list[str], *, capture_output: bool) -> subprocess.CompletedProcess:
+    """Decode external logs as UTF-8, replacing bad bytes without hiding process failures.
+
+    Both captured streams need this policy: even unused stdout is decoded by communicate().
+    Keep subprocess's text-mode newline normalization and inherited streams unchanged.
+    """
+    return subprocess.run(cmd, capture_output=capture_output, text=True, encoding="utf-8", errors="replace")
+
+
 def _run(binary: str, extra_args: list[str], capture_stderr: bool = False) -> tuple[int, str]:
     cmd = [binary] + SUITE_ARGS + extra_args
-    result = subprocess.run(cmd, capture_output=capture_stderr, text=True)
+    result = _run_text(cmd, capture_output=capture_stderr)
     return result.returncode, result.stderr if capture_stderr else ""
 
 
@@ -418,7 +427,7 @@ def _read_thresholds(json_path: str) -> dict:
 
 
 def _git(args: list[str]) -> tuple[int, str, str]:
-    result = subprocess.run(["git"] + args, capture_output=True, text=True)
+    result = _run_text(["git"] + args, capture_output=True)
     return result.returncode, result.stdout, result.stderr
 
 
