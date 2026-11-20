@@ -368,6 +368,56 @@ TEST(MetalTraceParity, SingleLayerExitStatsAndXyz) {
   }
 }
 
+// A non-multiple of the SIMD width leaves one lane in the last group on Apple
+// GPUs. Compare exit weight to the double oracle with allocation tally disabled;
+// zero hits also exercises the epilogue with no exit contribution from any lane.
+TEST(MetalTraceParity, ExitWeightPartialSimdGroupAndZeroHits) {
+  if (ShouldSkipMetalTests()) {
+    GTEST_SKIP() << "LUMICE_SKIP_METAL_TESTS set";
+  }
+  ForceHostGenForByteIdentity();
+
+  for (size_t max_hits : { size_t{ 8 }, size_t{ 0 } }) {
+    SCOPED_TRACE(max_hits);
+    auto scene = MakeMetalScene(max_hits, /*ms_layers=*/1);
+    auto render = MakeRectangularRender();
+    SessionSpec spec;
+    spec.scene = &scene;
+    spec.renders = { &render };
+    spec.wl = WlParam{ 550.0f, 1.0f };
+    spec.seed = 42;
+    constexpr size_t kRayCount = 33;
+    HostRayBatch host;
+    host.count = kRayCount;
+
+    MetalTraceBackend metal;
+    metal.BeginSession(spec);
+    auto handle = metal.TraceLayer(RootRaySource::FromHost(host));
+    if (!handle) {
+      ADD_FAILURE() << "Metal trace returned no layer handle";
+      metal.EndSession();
+      continue;
+    }
+    const auto stats = handle->GetLayerStats();
+    metal.EndSession();
+
+    RandomNumberGenerator oracle_rng(0);
+    SeedRngsLikeMetal(oracle_rng, spec.seed);
+    auto roots = BuildFirstLayerRoots(oracle_rng, spec, kRayCount);
+    auto poly = BuildPolyArrays(roots.crystal);
+    auto oracle =
+        OracleTraceLayer(roots.crystal, poly, roots.n_idx, scene.max_hits_, roots.d, roots.p, roots.w, roots.tf);
+    EXPECT_EQ(stats.exit_count, oracle.exit_count);
+    if (max_hits == 0) {
+      EXPECT_EQ(stats.exit_count, 0u);
+      EXPECT_EQ(stats.exit_w_sum, 0.0f);
+    } else {
+      EXPECT_GT(oracle.exit_w_sum, 0.0);
+      EXPECT_LT(RelErr(stats.exit_w_sum, oracle.exit_w_sum), 5e-4);
+    }
+  }
+}
+
 // =============================================================================
 // Test H — two-layer MS end-to-end parity
 // =============================================================================
