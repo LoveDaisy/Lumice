@@ -115,6 +115,16 @@ ScrollbarRounding 3  WindowRounding 4  PopupRounding 4
 
 实测收益：同一面板在字号更大的前提下，可见内容反而**多于**现状（现状 Overlay 组被截断，量化后连末尾的半径行都可见）。
 
+**紧凑按钮的行高与墨迹是两份边界**：`SmallButton` 保留文本行的名义高度、基线、横向 padding、
+ID 和命中框，但名义 `FontSize` 不是实际 glyph 的纵向墨迹包围盒。例如 1.5× 的 Roboto 取整到
+23px，而 `y` 的栅格下界是 24px；不能以 23px 的文字 CPU fine clip 吞掉非透明尾行。
+`cmake/imgui_small_button_ink.cmake` 在只读的锁定依赖源上生成 build-local widgets TU，产品与测试
+共用：仅在 SmallButton 路径以当前可见 label 的 glyph bounds 补足纵向文字 clip，保留横向 clip、
+按钮布局和窗口 scissor。字体、atlas 构造、全局行高与间距不变；不复制按钮输入处理。
+依赖内容变更会在 configure 拒绝，须重新核对上游度量/对齐/裁剪链，不能只更新 SHA 后跳过验证。
+字形回归同时核查未裁 atlas UV、所属 draw-command clip 和 framebuffer 中原尾行的可辨贡献；
+被 tooltip 遮挡或暗字与底色合成后低于像素量化精度的帧不能冒称可辨墨迹证据。
+
 **tooltip 两档规则与 info icon（2026-11-17 owner 裁决，全 GUI 单一规则）** —— 悬浮帮助分两档：
 
 - **功能/概念性解释 → info icon**。一个控件/字段/模式/术语「是什么、意味着什么」的稳定解释，集中到显式的 info icon 上（集中、可发现、不烦人），不再黏在控件 hover 上。

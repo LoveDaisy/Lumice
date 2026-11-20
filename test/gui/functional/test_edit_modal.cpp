@@ -422,18 +422,29 @@ bool ResetRestoresTheNaturalHeight(ImGuiTestContext* ctx, bool compact) {
   return true;
 }
 
-// Match each label glyph to its atlas quad and actual raster clip. At 1.5x the existing Parry
-// descender loses at most one atlas row (maximum alpha 34); every other glyph must remain whole.
-bool ChipGlyphsMatchBaseline(ImGuiTestContext* ctx, const ImGuiTestItemInfo& item, const char* label,
-                             bool scaled_parry) {
+struct GlyphTailSample {
+  ImVec2 point;
+  ImRect clip;
+  ImU32 color = 0;
+  int alpha = 0;
+  float filtered_alpha = 0.0f;
+  bool valid = false;
+};
+
+// Match each label glyph to its uncropped atlas quad and actual raster clip.
+bool ChipGlyphsComplete(ImGuiTestContext* ctx, const ImGuiTestItemInfo& item, const char* label,
+                        GlyphTailSample* tail = nullptr) {
   const ImDrawList& draw = *item.Window->DrawList;
   ImFont* font = ImGui::GetFont();
   const float font_scale = ImGui::GetFontSize() / font->FontSize;
   float previous_x = item.RectFull.Min.x - 1.0f;
   for (const char* ch = label; *ch != '\0'; ++ch) {
     const ImFontGlyph* glyph = font->FindGlyphNoFallback(static_cast<ImWchar>(*ch));
-    if (glyph == nullptr || !glyph->Visible) {
+    if (glyph == nullptr) {
       return false;
+    }
+    if (!glyph->Visible) {
+      continue;  // Spaces have an advance, not an atlas quad.
     }
     bool found = false;
     for (const ImDrawCmd& cmd : draw.CmdBuffer) {
@@ -449,19 +460,65 @@ bool ChipGlyphsMatchBaseline(ImGuiTestContext* ctx, const ImGuiTestItemInfo& ite
             a.pos.x <= previous_x || !item.RectFull.Contains(a.pos) || b.pos.x > item.RectFull.Max.x) {
           continue;
         }
-        float lost_height = 0.0f;
-        if (b.uv.y != glyph->V1) {
-          if (!scaled_parry || *ch != 'y') {
-            continue;
+        if (tail != nullptr && *ch == 'y') {
+          unsigned char* pixels = nullptr;
+          int width = 0;
+          int height = 0;
+          font->ContainerAtlas->GetTexDataAsAlpha8(&pixels, &width, &height);
+          const int row = static_cast<int>(std::round(glyph->V1 * height)) - 1;
+          const int left = static_cast<int>(std::round(glyph->U0 * width));
+          const int right = static_cast<int>(std::round(glyph->U1 * width));
+          int peak_x = left;
+          for (int x = left; x < right; ++x) {
+            if (pixels[row * width + x] > pixels[row * width + peak_x]) {
+              peak_x = x;
+            }
           }
+          tail->alpha = pixels[row * width + peak_x];
+          const ImVec2 fb = ImGui::GetIO().DisplayFramebufferScale;
+          const ImVec2 origin = ImGui::GetMainViewport()->Pos;
+          const float glyph_width = (glyph->X1 - glyph->X0) * font_scale;
+          const float glyph_height = (glyph->Y1 - glyph->Y0) * font_scale;
+          const float sample_y = (std::ceil((a.pos.y + glyph_height - origin.y) * fb.y) - 0.5f) / fb.y + origin.y;
+          // OversampleH=3: the atlas peak need not fall on a screen pixel centre.
+          // Select from device pixel centres using the atlas's bilinear filter,
+          // before reading any framebuffer data, rather than fitting a screenshot.
+          float peak_filtered = -1.0f;
+          for (int px = static_cast<int>(std::floor((a.pos.x - origin.x) * fb.x));
+               px < static_cast<int>(std::ceil((a.pos.x + glyph_width - origin.x) * fb.x)); ++px) {
+            const float sample_x = (px + 0.5f) / fb.x + origin.x;
+            if (sample_x < a.pos.x || sample_x >= a.pos.x + glyph_width) {
+              continue;
+            }
+            const float tx = left + (sample_x - a.pos.x) / glyph_width * (right - left) - 0.5f;
+            const float ty =
+                glyph->V0 * height + (sample_y - a.pos.y) / glyph_height * (glyph->V1 - glyph->V0) * height - 0.5f;
+            const int ix = static_cast<int>(std::floor(tx));
+            const int iy = static_cast<int>(std::floor(ty));
+            const float fx = tx - ix;
+            const float fy = ty - iy;
+            const auto alpha = [&](int x, int y) {
+              return pixels[ImClamp(y, 0, height - 1) * width + ImClamp(x, 0, width - 1)];
+            };
+            const float filtered = (1.0f - fy) * ((1.0f - fx) * alpha(ix, iy) + fx * alpha(ix + 1, iy)) +
+                                   fy * ((1.0f - fx) * alpha(ix, iy + 1) + fx * alpha(ix + 1, iy + 1));
+            if (filtered > peak_filtered) {
+              peak_filtered = filtered;
+              tail->point = ImVec2(sample_x, sample_y);
+            }
+          }
+          tail->filtered_alpha = peak_filtered;
+          tail->clip = clip;
+          tail->color = a.col;
+          tail->valid = true;
+          ctx->LogInfo("Tail %s/y: frame=%d point=(%.3f,%.3f) alpha=%d actual_v1=%.9f full_v1=%.9f", label,
+                       GImGui->FrameCount, tail->point.x, tail->point.y, tail->alpha, b.uv.y, glyph->V1);
+        }
+        if (b.uv.y != glyph->V1) {
           unsigned char* pixels = nullptr;
           int atlas_width = 0;
           int atlas_height = 0;
           font->ContainerAtlas->GetTexDataAsAlpha8(&pixels, &atlas_width, &atlas_height);
-          const float lost_rows = (glyph->V1 - b.uv.y) * atlas_height;
-          if (lost_rows <= 0.0f || lost_rows > 1.0f) {
-            continue;
-          }
           int lost_alpha = 0;
           for (int y = static_cast<int>(std::floor(b.uv.y * atlas_height));
                y < static_cast<int>(std::round(glyph->V1 * atlas_height)); ++y) {
@@ -470,17 +527,16 @@ bool ChipGlyphsMatchBaseline(ImGuiTestContext* ctx, const ImGuiTestItemInfo& ite
               lost_alpha = ImMax(lost_alpha, static_cast<int>(pixels[y * atlas_width + x]));
             }
           }
-          ctx->LogInfo("Axis Parry y baseline comparison: lost atlas rows=%.2f maximum alpha=%d", lost_rows,
-                       lost_alpha);
-          if (lost_alpha > 34) {
-            continue;
-          }
-          lost_height = lost_rows * font_scale;
+          ctx->LogInfo(
+              "Glyph %s/%c: font=%.1f bounds_y=%.1f..%.1f item_h=%.1f pos_y=%.1f..%.1f "
+              "V1=%.9f expected=%.9f lost_rows=%.2f lost_alpha=%d clip_y=%.1f..%.1f",
+              label, *ch, ImGui::GetFontSize(), glyph->Y0, glyph->Y1, item.RectFull.GetHeight(), a.pos.y, b.pos.y,
+              b.uv.y, glyph->V1, (glyph->V1 - b.uv.y) * atlas_height, lost_alpha, clip.Min.y, clip.Max.y);
+          return false;
         }
         const ImRect ink(a.pos, b.pos);
         if (std::abs(ink.GetWidth() - (glyph->X1 - glyph->X0) * font_scale) >= 0.1f ||
-            std::abs(ink.GetHeight() + lost_height - (glyph->Y1 - glyph->Y0) * font_scale) >= 0.1f ||
-            !clip.Contains(ink)) {
+            std::abs(ink.GetHeight() - (glyph->Y1 - glyph->Y0) * font_scale) >= 0.1f || !clip.Contains(ink)) {
           return false;
         }
         previous_x = a.pos.x;
@@ -496,7 +552,64 @@ bool ChipGlyphsMatchBaseline(ImGuiTestContext* ctx, const ImGuiTestItemInfo& ite
       return false;
     }
   }
-  ctx->LogInfo("Axis %s: glyph atlas quads and actual raster clip do not worsen the baseline", label);
+  ctx->LogInfo("Axis %s: full glyph atlas quads are inside the actual raster clip", label);
+  return true;
+}
+
+// The strongest texel of the *uncropped* last atlas row fixes the sample before
+// reading the framebuffer. A neighbouring pixel on the same background supplies
+// the independent no-ink control; no image-difference threshold can absorb alpha34.
+bool ObserveGlyphTail(ImGuiTestContext* ctx, const ImGuiTestItemInfo& item, const GlyphTailSample& tail,
+                      const char* capture_name, bool require_signal = true) {
+  IM_CHECK_RETV(tail.valid && tail.alpha > 0 && tail.clip.Contains(tail.point), false);
+  const ImVec2 origin = ImGui::GetMainViewport()->Pos;
+  const ImVec2 fb_scale = ImGui::GetIO().DisplayFramebufferScale;
+  const ImVec2 display = ImGui::GetIO().DisplaySize;
+  g_fullframe_capture.Reset();
+  g_fullframe_capture.requested.store(true);
+  for (int i = 0; i < 10 && !g_fullframe_capture.done.load(); ++i) {
+    ctx->Yield();
+  }
+  IM_CHECK_RETV(g_fullframe_capture.done.load(), false);
+  const int width = g_fullframe_capture.width;
+  const int height = g_fullframe_capture.height;
+  const int x = static_cast<int>(std::floor((tail.point.x - origin.x) * fb_scale.x));
+  const int y = static_cast<int>(std::floor((tail.point.y - origin.y) * fb_scale.y));
+  const int bg_x = static_cast<int>(std::floor((item.RectFull.Max.x - 1.0f - origin.x) * fb_scale.x));
+  IM_CHECK_RETV(x >= 0 && x < width && bg_x >= 0 && bg_x < width && y >= 0 && y < height, false);
+  IM_CHECK_RETV(std::abs(width - display.x * fb_scale.x) < 1.0f && std::abs(height - display.y * fb_scale.y) < 1.0f,
+                false);
+  const auto& pixels = g_fullframe_capture.pixels;
+  const auto* ink = &pixels[(y * width + x) * 4];
+  const auto* bg = &pixels[(y * width + bg_x) * 4];
+  ctx->LogInfo(
+      "Raster tail: frame=%d fb_scale=%.2f,%.2f pixel=%d,%d RGB=%d,%d,%d "
+      "background=%d,%d,%d atlas_alpha=%d",
+      GImGui->FrameCount, fb_scale.x, fb_scale.y, x, y, ink[0], ink[1], ink[2], bg[0], bg[1], bg[2], tail.alpha);
+  if (g_keep_export_png) {
+    const auto rgb = lumice::test::StripAlpha(pixels.data(), width, height);
+    IM_CHECK_RETV(lumice::test::SavePng(GuiTestTempPath(capture_name).string().c_str(), rgb.data(), width, height, 3),
+                  false);
+  }
+  float predicted_contrast = 0.0f;
+  const float alpha = tail.filtered_alpha / 255.0f * ((tail.color >> IM_COL32_A_SHIFT) & 255) / 255.0f;
+  const int shifts[] = { IM_COL32_R_SHIFT, IM_COL32_G_SHIFT, IM_COL32_B_SHIFT };
+  for (int c = 0; c < 3; ++c) {
+    const float foreground = static_cast<float>((tail.color >> shifts[c]) & 255);
+    const float expected = bg[c] + (foreground - bg[c]) * alpha;
+    predicted_contrast = ImMax(predicted_contrast, std::abs(expected - bg[c]));
+    if (std::abs(expected - ink[c]) > 2.0f) {
+      ctx->LogInfo("Raster channel %d: expected=%.3f actual=%d filtered_alpha=%.3f", c, expected, ink[c],
+                   tail.filtered_alpha);
+      return false;
+    }
+  }
+  ctx->LogInfo("Raster tail predicted contrast=%.3f/255; filtered alpha=%.3f", predicted_contrast, tail.filtered_alpha);
+  // Dark selected text can blend into the child background at <1 quantization
+  // unit. That arm still requires full UV and clip, but cannot prove RGB ink.
+  if (require_signal || predicted_contrast > 1.0f) {
+    IM_CHECK_RETV(ink[0] != bg[0] || ink[1] != bg[1] || ink[2] != bg[2], false);
+  }
   return true;
 }
 
@@ -514,14 +627,18 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
           "Switches to this label: remembers the current parameters under the one you leave, then "
           "loads this label's memory — or its definition when nothing is remembered. The preview "
           "pose follows, re-seating on this label's typical view.";
-      const auto exercise = [&](float multiplier) -> bool {
+      const auto exercise = [&](float multiplier, bool compact) -> bool {
+        gui::g_state.modal_layout_compact = compact;
         gui::SetUiScaleMultiplierImmediate(multiplier);
         // The harness renders with no GLFW monitor handle; exercise the product's work-area
         // clamp instead of its unbounded headless fallback, which hides the scrollbar case.
         gui::TestSetEditModalMaxHeightOverride(ImGui::GetIO().DisplaySize.y - gui::UiPx(16.0f));
         ctx->Yield(4);
+        const char* scale_tag = multiplier == 1.0f ? "1x" : multiplier == 1.5f ? "15x" : "125x";
         OpenCardEditor(ctx, 0, kCrystalTabRef);
-        ctx->ItemClick("**/###axis_tab");
+        if (compact) {
+          ctx->ItemClick("**/###axis_tab");
+        }  // Expanded draws the Axis section directly, without a tab bar.
         ctx->Yield(4);
         const auto first = ctx->ItemInfo("**/Column##axis_label_chip");
         IM_CHECK_RETV(first.ID != 0, false);
@@ -547,31 +664,49 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
                        win->InnerClipRect.Max.y);
         }
         // The id-zero caption precedes the first chip on this same line; no production test ID.
-        const ImVec2 caption(row_start + ImGui::CalcTextSize("Label:").x * 0.5f, first.RectFull.GetCenter().y);
-        IM_CHECK_RETV(ObserveTooltip(ctx, caption, kText, true,
-                                     multiplier == 1.0f ? "axis-caption-1x.png" : "axis-caption-15x.png"),
-                      false);
+        const ImVec2 caption(
+            first.RectFull.Min.x - ImGui::GetStyle().ItemSpacing.x - ImGui::CalcTextSize("Label:").x * 0.5f,
+            first.RectFull.GetCenter().y);
+        const std::string caption_capture = std::string("axis-caption-") + scale_tag + ".png";
+        IM_CHECK_RETV(ObserveTooltip(ctx, caption, kText, true, caption_capture.c_str()), false);
         const auto chip = [&](const gui::AxisPresetEntry& entry) -> bool {
           const std::string ref = std::string("**/") + entry.label + "##axis_label_chip";
+          // The preceding chip's tooltip can cover exactly the descender row.
+          // Withdraw it before resolving this frame's glyph and framebuffer sample.
+          ctx->MouseMoveToPos(ImVec2(1.0f, 1.0f));
+          ctx->Yield(3);
           const auto item = ctx->ItemInfo(ref.c_str());
           IM_CHECK_RETV(item.ID != 0 && item.Window != nullptr, false);
+          IM_CHECK_RETV(item.RectFull.GetHeight() == ImGui::GetFontSize(), false);
           ctx->LogInfo("Axis chip %s: rect=(%.1f,%.1f)-(%.1f,%.1f) clip=(%.1f,%.1f)-(%.1f,%.1f)", entry.label,
                        item.RectFull.Min.x, item.RectFull.Min.y, item.RectFull.Max.x, item.RectFull.Max.y,
                        item.Window->InnerClipRect.Min.x, item.Window->InnerClipRect.Min.y,
                        item.Window->InnerClipRect.Max.x, item.Window->InnerClipRect.Max.y);
           const ImRect clip = item.Window->InnerClipRect;
           IM_CHECK_RETV(clip.Contains(item.RectFull), false);
-          IM_CHECK_RETV(ChipGlyphsMatchBaseline(ctx, item, entry.label,
-                                                multiplier == 1.5f && entry.id == gui::AxisPreset::kParry),
-                        false);
+          GlyphTailSample tail;
+          const bool complete = ChipGlyphsComplete(ctx, item, entry.label, &tail);
+          if (multiplier == 1.5f && entry.id == gui::AxisPreset::kParry) {
+            IM_CHECK_RETV(ObserveGlyphTail(ctx, item, tail, "parry-tail-15x.png"), false);
+            IM_CHECK_RETV(tail.point.y >= item.RectFull.Max.y &&
+                              tail.point.y < item.RectFull.Max.y + ImGui::GetStyle().ItemSpacing.y,
+                          false);
+            const auto before = gui::GetEditModalBuffers().axis_preset;
+            // The restored ink lies in the existing inter-line gap, not a new
+            // clickable extension: pressing just below the nominal bb is a no-op.
+            ctx->MouseMoveToPos(tail.point);
+            ctx->MouseClick(ImGuiMouseButton_Left);
+            ctx->Yield(2);
+            IM_CHECK_RETV(gui::GetEditModalBuffers().axis_preset == before, false);
+          }
+          IM_CHECK_RETV(complete, false);
           ctx->LogInfo(
               "Axis relative geometry: client=%.0fx%.0f host=%.0fx%.0f clip=%.0fx%.0f offset=%.0f,%.0f width=%.0f "
               "overflow=%.0f",
               ImGui::GetIO().DisplaySize.x, ImGui::GetIO().DisplaySize.y, item.Window->Size.x, item.Window->Size.y,
               clip.GetWidth(), clip.GetHeight(), item.RectFull.Min.x - clip.Min.x, item.RectFull.Min.y - clip.Min.y,
               item.RectFull.GetWidth(), ImMax(0.0f, item.RectFull.Max.x - clip.Max.x));
-          const std::string capture =
-              std::string("axis-") + entry.label + (multiplier == 1.0f ? "-1x.png" : "-15x.png");
+          const std::string capture = std::string("axis-") + entry.label + "-" + scale_tag + ".png";
           IM_CHECK_RETV(ObserveTooltip(ctx, item.RectFull.GetCenter(), kText, true, capture.c_str()), false);
           if (entry.id == gui::AxisPreset::kCustom) {
             IM_CHECK_RETV(gui::GetEditModalBuffers().axis_preset != gui::AxisPreset::kCustom, false);
@@ -591,9 +726,31 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
           }
           ctx->Yield(2);
           IM_CHECK_RETV(gui::GetEditModalBuffers().axis_preset == entry.id, false);
+          ctx->MouseMoveToPos(ImVec2(1.0f, 1.0f));
+          ctx->Yield(3);
+          const auto selected = ctx->ItemInfo(ref.c_str());
+          GlyphTailSample selected_tail;
+          IM_CHECK_RETV(ChipGlyphsComplete(ctx, selected, entry.label, &selected_tail), false);
+          if (multiplier == 1.5f && entry.id == gui::AxisPreset::kParry) {
+            IM_CHECK_RETV(ObserveGlyphTail(ctx, selected, selected_tail, "parry-selected-tail-15x.png", false), false);
+            const auto before = gui::GetEditModalBuffers();
+            ctx->ItemClick(ref.c_str());
+            ctx->Yield(2);
+            const auto after = gui::GetEditModalBuffers();
+            IM_CHECK_RETV(after.axis_preset == before.axis_preset, false);
+            IM_CHECK_RETV(
+                after.axis[0] == before.axis[0] && after.axis[1] == before.axis[1] && after.axis[2] == before.axis[2],
+                false);
+          }
           return true;
         };
         for (const auto& entry : gui::kAxisPresets) {
+          // Expanded's existing fixed-width Axis column is a different horizontal
+          // budget. This representative leg proves Parry in another host, not a
+          // new six-chip fit contract; Compact retains its full original set.
+          if (!compact && entry.id != gui::AxisPreset::kParry) {
+            continue;
+          }
           if (!chip(entry)) {
             return false;
           }
@@ -606,8 +763,11 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
         ctx->Yield(2);
         return true;
       };
-      IM_CHECK(exercise(1.0f));
-      IM_CHECK(exercise(1.5f));
+      IM_CHECK(exercise(1.0f, true));
+      IM_CHECK(exercise(1.5f, true));
+      // 1.25x rounds 18.75 to font19 with independently rounded style metrics;
+      // Expanded also witnesses the same glyph contract outside the Compact host.
+      IM_CHECK(exercise(1.25f, false));
     };
   }
   {
@@ -653,7 +813,7 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
             IM_CHECK_RETV(item.RectFull.Min.x >= previous_right, false);
             previous_right = item.RectFull.Max.x;
             if (entry.id == gui::AxisPreset::kCustom) {
-              IM_CHECK_RETV(ChipGlyphsMatchBaseline(ctx, item, entry.label, false), false);
+              IM_CHECK_RETV(ChipGlyphsComplete(ctx, item, entry.label), false);
             }
             return true;
           };
@@ -703,6 +863,29 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
         }
       }
       IM_CHECK(exercise(1.0f, false));
+    };
+  }
+  {
+    // Same y descender and native SmallButton, but a real non-Axis consumer in
+    // the left panel's bottom toolbar. Separate case keeps its negative control
+    // observable even when the Axis regression stops at the first cropped tail.
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "edit_modal", "small_button_toolbar_descender");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      const ScopedTooltipUiScale scale(ctx);
+      gui::SetUiScaleMultiplierImmediate(1.5f);
+      ctx->Yield(4);
+      const auto item = ctx->ItemInfo("**/+ Layer");
+      IM_CHECK(item.ID != 0 && item.Window != nullptr);
+      GlyphTailSample tail;
+      const bool complete = ChipGlyphsComplete(ctx, item, "+ Layer", &tail);
+      IM_CHECK(ObserveGlyphTail(ctx, item, tail, "layer-tail-15x.png"));
+      IM_CHECK(complete);
+      IM_CHECK_EQ(item.RectFull.GetHeight(), ImGui::GetFontSize());
+      const auto count = gui::g_state.layers.size();
+      ctx->ItemClick("**/+ Layer");
+      ctx->Yield(2);
+      IM_CHECK_EQ(gui::g_state.layers.size(), count + 1);
     };
   }
   // ===================================================================================
