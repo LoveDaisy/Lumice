@@ -776,7 +776,7 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
       ResetTestState();
       const ScopedPopups popups(ctx);
       const ScopedTooltipUiScale scale(ctx);
-      const auto exercise = [&](float multiplier, bool compact) -> bool {
+      const auto exercise = [&](float multiplier, bool compact, bool fit_only = false) -> bool {
         gui::SetUiScaleMultiplierImmediate(multiplier);
         gui::g_state.modal_layout_compact = compact;
         ctx->Yield(4);
@@ -798,11 +798,102 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
         ctx->Yield(4);
         ImGuiWindow* modal = ctx->GetWindowByRef("Edit Entry");
         IM_CHECK_RETV(modal != nullptr, false);
-        const auto check_row = [&](bool short_pane) -> bool {
+        const bool expanded_target = !compact && multiplier == 1.25f;
+        const auto check_row = [&](bool short_pane, const char* phase) -> bool {
+          if (expanded_target) {
+            ctx->ItemClick("**/Column##axis_label_chip");
+            ctx->MouseMoveToPos(ImVec2(1.0f, 1.0f));
+            ctx->Yield(3);
+            IM_CHECK_RETV(ActiveTooltipWindow() == nullptr, false);
+            if (g_keep_export_png) {
+              g_fullframe_capture.Reset();
+              g_fullframe_capture.requested.store(true);
+              for (int i = 0; i < 10 && !g_fullframe_capture.done.load(); ++i) {
+                ctx->Yield();
+              }
+              IM_CHECK_RETV(g_fullframe_capture.done.load(), false);
+              const auto rgb = lumice::test::StripAlpha(g_fullframe_capture.pixels.data(), g_fullframe_capture.width,
+                                                        g_fullframe_capture.height);
+              const auto path = GuiTestTempPath((std::string("expanded-125-") + phase + ".png").c_str()).string();
+              IM_CHECK_RETV(lumice::test::SavePng(path.c_str(), rgb.data(), g_fullframe_capture.width,
+                                                  g_fullframe_capture.height, 3),
+                            false);
+            }
+            const auto first = ctx->ItemInfo("**/Column##axis_label_chip");
+            IM_CHECK_RETV(first.ID != 0, false);
+            // ItemAdd still submits a fully clipped button, but ButtonEx returns before its
+            // label reaches ItemInfo. Gather by the sibling's ID scope, not by label wildcard.
+            ImGuiTestItemList items;
+            ctx->GatherItems(&items, modal->ID);
+            const auto* custom = items.GetByID(ImHashStr("Custom##axis_label_chip", 0, first.ParentID));
+            IM_CHECK_RETV(custom != nullptr && custom->Window != nullptr, false);
+            const ImGuiID target = custom->ID;
+            ctx->LogInfo(
+                "Expanded Custom %s frame=%d stamp=%d rect=(%.1f,%.1f)-(%.1f,%.1f) clip=(%.1f,%.1f)-(%.1f,%.1f) "
+                "font=%.1f padding=%.1f spacing=%.1f",
+                phase, GImGui->FrameCount, custom->TimestampMain, custom->RectFull.Min.x, custom->RectFull.Min.y,
+                custom->RectFull.Max.x, custom->RectFull.Max.y, custom->Window->InnerClipRect.Min.x,
+                custom->Window->InnerClipRect.Min.y, custom->Window->InnerClipRect.Max.x,
+                custom->Window->InnerClipRect.Max.y, ImGui::GetFontSize(), ImGui::GetStyle().FramePadding.x,
+                ImGui::GetStyle().ItemSpacing.x);
+            const ImVec2 tail(custom->RectFull.Max.x - gui::UiPx(1.0f), custom->RectFull.GetCenter().y);
+            const auto before = gui::GetEditModalBuffers().axis_preset;
+            IM_CHECK_RETV(before != gui::AxisPreset::kCustom, false);
+            ctx->MouseMoveToPos(tail);
+            ctx->Yield(2);
+            const ImGuiID hovered = GImGui->HoveredId;
+            ctx->MouseDown(0);
+            ctx->Yield();
+            ctx->MouseUp(0);
+            ctx->Yield(2);
+            const auto after = gui::GetEditModalBuffers().axis_preset;
+            ctx->LogInfo("Expanded tail %s pos=%.2f,%.2f target=%08X hovered=%08X before=%d after=%d", phase, tail.x,
+                         tail.y, target, hovered, static_cast<int>(before), static_cast<int>(after));
+            IM_CHECK_RETV(hovered == target && after == gui::AxisPreset::kCustom, false);
+          }
+          const auto first = ctx->ItemInfo("**/Column##axis_label_chip");
+          IM_CHECK_RETV(first.ID != 0, false);
+          ImGuiTestItemList items;
+          ctx->GatherItems(&items, modal->ID);
+          const int snapshot_frame = GImGui->FrameCount;
+          const auto* first_snapshot = items.GetByID(first.ID);
+          IM_CHECK_RETV(first_snapshot != nullptr, false);
+          const int snapshot_stamp = first_snapshot->TimestampMain;
+          if (!compact) {
+            int columns = 0;
+            const auto check_window = [&](ImGuiWindow* win) -> bool {
+              if (!win->WasActive || win->RootWindow != modal) {
+                return true;
+              }
+              ctx->LogInfo(
+                  "Expanded %s frame=%d window=%s size=%.1fx%.1f work=%.1f..%.1f clip=(%.1f,%.1f)-(%.1f,%.1f) "
+                  "scrollmax=%.1f,%.1f scrollbar=%d,%d",
+                  phase, snapshot_frame, win->Name, win->Size.x, win->Size.y, win->WorkRect.Min.x, win->WorkRect.Max.x,
+                  win->InnerClipRect.Min.x, win->InnerClipRect.Min.y, win->InnerClipRect.Max.x,
+                  win->InnerClipRect.Max.y, win->ScrollMax.x, win->ScrollMax.y, win->ScrollbarX, win->ScrollbarY);
+              if (win != modal) {
+                IM_CHECK_RETV(win->ScrollMax.x == 0.0f, false);
+              }
+              if (win->ParentWindow == modal) {
+                ++columns;
+                IM_CHECK_RETV(modal->InnerClipRect.Contains(win->Rect()), false);
+              }
+              return true;
+            };
+            for (ImGuiWindow* win : GImGui->Windows) {
+              if (!check_window(win)) {
+                return false;
+              }
+            }
+            IM_CHECK_RETV(columns == 2, false);
+          }
           float previous_right = -FLT_MAX;
           const auto check_chip = [&](const gui::AxisPresetEntry& entry) -> bool {
-            const auto item = ctx->ItemInfo((std::string("**/") + entry.label + "##axis_label_chip").c_str());
-            IM_CHECK_RETV(item.ID != 0 && item.Window != nullptr, false);
+            const std::string label = std::string(entry.label) + "##axis_label_chip";
+            const auto* observed = items.GetByID(ImHashStr(label.c_str(), 0, first.ParentID));
+            IM_CHECK_RETV(observed != nullptr && observed->Window != nullptr, false);
+            const auto& item = *observed;
+            IM_CHECK_RETV(item.TimestampMain == snapshot_stamp, false);
             const ImRect clip = item.Window->InnerClipRect;
             ctx->LogInfo(
                 "Axis matrix scale=%.2f compact=%d short=%d %s rect_x=%.1f..%.1f clip_x=%.1f..%.1f "
@@ -812,7 +903,7 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
             IM_CHECK_RETV(clip.Contains(item.RectFull), false);
             IM_CHECK_RETV(item.RectFull.Min.x >= previous_right, false);
             previous_right = item.RectFull.Max.x;
-            if (entry.id == gui::AxisPreset::kCustom) {
+            if (entry.id == gui::AxisPreset::kCustom || expanded_target) {
               IM_CHECK_RETV(ChipGlyphsComplete(ctx, item, entry.label), false);
             }
             return true;
@@ -822,16 +913,22 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
               return false;
             }
           }
+          IM_CHECK_RETV(GImGui->FrameCount == snapshot_frame, false);
           return true;
         };
-        IM_CHECK_RETV(check_row(false), false);
+        IM_CHECK_RETV(check_row(false, "normal"), false);
+        if (fit_only) {
+          ctx->ItemClick(kCancel);
+          ctx->Yield(2);
+          return true;
+        }
         const float natural_h = modal->Size.y;
         gui::TestSetEditModalMaxHeightOverride(natural_h - gui::UiPx(120.0f));
         ctx->Yield(4);
         ctx->LogInfo("Axis short-pane height natural=%.1f actual=%.1f requested=%.1f", natural_h, modal->Size.y,
                      natural_h - gui::UiPx(120.0f));
         IM_CHECK_RETV(modal->Size.y <= natural_h - gui::UiPx(100.0f), false);
-        IM_CHECK_RETV(check_row(true), false);
+        IM_CHECK_RETV(check_row(true, "short"), false);
         // Input and Reset still operate through the same scrolling pane; the footer remains
         // outside it. Existing memory/pose/Immediate tests own the full editing semantics.
         ctx->ItemClick("**/Column##axis_label_chip");
@@ -852,7 +949,7 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
           ctx->ItemClick("**/###axis_tab");
         }
         ctx->Yield(4);
-        IM_CHECK_RETV(check_row(false), false);
+        IM_CHECK_RETV(check_row(false, "reopen"), false);
         ctx->ItemClick(kCancel);
         ctx->Yield(2);
         return true;
@@ -862,7 +959,14 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
           return;
         }
       }
-      IM_CHECK(exercise(1.0f, false));
+      // The target gets the full input/height/reopen contract. Other Expanded scales only
+      // need the shared column-consumer and discrete-font-rounding fit witness.
+      IM_CHECK(exercise(1.25f, false));
+      for (float multiplier : gui::kAllowedUiScaleMultipliers) {
+        if (multiplier != 1.25f && !exercise(multiplier, false, multiplier != 1.0f)) {
+          return;
+        }
+      }
     };
   }
   {

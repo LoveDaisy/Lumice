@@ -2763,7 +2763,9 @@ static void RenderModalTwoColumn(GuiState& state, bool crystal_dirty, bool axis_
   const float column_floor_h = above_filter_h + style.ItemSpacing.y + header_h + kEditModalFlexPaneMinRows * row_h;
   const float column_h = EditModalFlexPaneHeight(column_budget_h, column_floor_h, max_h);
 
-  ImGui::BeginChild("##modal_expanded_left", ImVec2(kModalColumnWidthCrystal, column_h), ImGuiChildFlags_None);
+  // Column widths are 1x design units, like the outer window's fixed width. Convert once
+  // to layout coordinates; the live style spacing and font metrics are already scaled.
+  ImGui::BeginChild("##modal_expanded_left", ImVec2(UiPx(kModalColumnWidthCrystal), column_h), ImGuiChildFlags_None);
   RenderCrystalPreviewPane(state, preview_px);
   RenderModalSectionHeader("Crystal", crystal_dirty, show_dirty);
   ImGui::PushID(entry_layer);
@@ -2775,7 +2777,8 @@ static void RenderModalTwoColumn(GuiState& state, bool crystal_dirty, bool axis_
 
   ImGui::SameLine();
 
-  ImGui::BeginChild("##modal_expanded_right", ImVec2(kModalColumnWidthAxisOrFilter, column_h), ImGuiChildFlags_None);
+  ImGui::BeginChild("##modal_expanded_right", ImVec2(UiPx(kModalColumnWidthAxisOrFilter), column_h),
+                    ImGuiChildFlags_None);
   RenderModalSectionHeader("Axis", axis_dirty, show_dirty);
   ImGui::BeginChild("##modal_expanded_axis", ImVec2(-FLT_MIN, axis_h), ImGuiChildFlags_None);
   ImGui::PushID(entry_layer);
