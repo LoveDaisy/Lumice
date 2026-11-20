@@ -1125,9 +1125,8 @@ kernel void trace_layer_kernel(
                 // swap + shuffle gather must move this in lockstep (LANDMINE).
                 cont_component[slot] = this_mask;
               }
-              // scrum-267 task-fused-emit-gate: post-gate semantics — exit_cnt
-              // / exit_wsum now tally "filter_pass polygon-exits" (gate dropped
-              // filter_fail rays above; legacy meaning was "all polygon-exits").
+              // Post-gate semantics: count / w_sum tally filter-pass polygon
+              // exits, not all polygon exits; filter-fail rays were dropped above.
               // Parity exit statistics include continuation writes.
               atomic_fetch_add_explicit(&exit_stats->count, 1u, memory_order_relaxed);
               exit_weight_acc += cw;
