@@ -61,8 +61,9 @@
 // control in the preview's top-right corner (RenderDisplayModeControl, src/gui/app_panels.cpp),
 // and the help icon riding the same row (the control reserves the icon's advance and ends the row
 // with InfoIcon). They are ImGui widgets drawn over the blit and so never part of the export —
-// which is correct, a Screenshot must not carry them. They are excluded by name and by the
-// rectangles the test engine reports for them, not by an inset: an inset would stop watching every
+// which is correct, a Screenshot must not carry them. They are excluded by name, by the item
+// rectangles the test engine reports, and by the help icon's actual glyph ink (a SmallButton's
+// nominal line is not an ink bound), not by an inset: an inset would stop watching every
 // edge to hide one corner. The case asserts that exclusion both ways — differences do occur inside
 // them (they are really drawn there) and they stay under 2% of the frame.
 //
@@ -98,6 +99,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <string>
 #include <vector>
 
 #include "IconsFontAwesome6.h"  // ICON_FA_CIRCLE_INFO selector: the help icon's label carries the glyph
@@ -105,6 +107,7 @@
 #include "gui/overlay_labels.hpp"
 #include "imgui.h"
 #include "test_gui_shared.hpp"
+#include "test_screenshot.hpp"
 
 namespace {
 
@@ -172,8 +175,8 @@ const char* const kDisplayModeControlSegments[] = { "//##PreviewPanel/Normal##pr
 // The help icon riding the same row is the second chrome element over the blit: the control
 // reserves the icon's advance (so the icon's right edge lands on the margin line instead of
 // clipping away entirely), and InfoIcon ends the row with a SameLine circle-info SmallButton.
-// Excluded the same way as the segments — by name and by the rectangle the test engine reports
-// for it — never by widening the inset.
+// Excluded the same way as the segments — by name and by the item rectangle plus
+// actual glyph ink — never by widening the inset.
 const char* const kDisplayModeHelpIcon = "//##PreviewPanel/" ICON_FA_CIRCLE_INFO "##preview_display_mode_help";
 
 constexpr int kXyzTexW = 64;
@@ -346,10 +349,19 @@ static void RunPreviewExportParity(ImGuiTestContext* ctx, int display_mode) {
   IM_CHECK(g_req.export_done);
   IM_CHECK(g_req.export_ok);
   IM_CHECK_EQ(g_req.rgba.size(), screen.size());
+  if (g_keep_export_png) {
+    const auto save = [&](const std::vector<unsigned char>& rgba, const char* arm) {
+      const auto rgb = lumice::test::StripAlpha(rgba.data(), vp_w, vp_h);
+      const auto path = GuiTestTempPath("preview-parity-" + std::to_string(display_mode) + "-" + arm + ".png");
+      return lumice::test::SavePng(path.string().c_str(), rgb.data(), vp_w, vp_h, 3);
+    };
+    IM_CHECK(save(screen, "screen"));
+    IM_CHECK(save(g_req.rgba, "export"));
+  }
 
   // The chrome inside the rectangle: the display-mode control and the help icon riding its row,
-  // excluded by the rectangles ImGui itself laid them out in (see the inset section above for why
-  // this is not an inset). Converted from screen points to this capture's pixels through the
+  // excluded by their layout rectangles plus the icon's ink (see the inset section above).
+  // Converted from screen points to this capture's pixels through the
   // published DPI, from the preview window's own origin — the same origin the blit rectangle is
   // built from. The icon joined the row when RenderDisplayModeControl began reserving its
   // advance; before that it clipped away entirely, which is why it was not part of the original
@@ -361,7 +373,46 @@ static void RunPreviewExportParity(ImGuiTestContext* ctx, int display_mode) {
   for (const char* ref : kDisplayModeControlSegments) {
     control.Add(ctx->ItemInfo(ref).RectFull);
   }
-  control.Add(ctx->ItemInfo(kDisplayModeHelpIcon).RectFull);
+  const ImGuiTestItemInfo help = ctx->ItemInfo(kDisplayModeHelpIcon);
+  IM_CHECK(help.ID != 0 && help.Window != nullptr);
+  control.Add(help.RectFull);
+  // An icon's ink can overhang its nominal SmallButton line (including above
+  // it). Exclude that named chrome's actual atlas quad, not a wider global inset
+  // or a tolerance on the preview comparison. Match it inside this item's x span
+  // so an unrelated glyph elsewhere in the panel cannot grow the mask.
+  unsigned int codepoint = 0;
+  ImTextCharFromUtf8(&codepoint, ICON_FA_CIRCLE_INFO, nullptr);
+  const ImFontGlyph* glyph = ImGui::GetFont()->FindGlyphNoFallback(static_cast<ImWchar>(codepoint));
+  IM_CHECK(glyph != nullptr && glyph->Visible);
+  const ImDrawList& draw = *help.Window->DrawList;
+  bool found_ink = false;
+  for (const ImDrawCmd& cmd : draw.CmdBuffer) {
+    for (unsigned int i = cmd.IdxOffset; i < cmd.IdxOffset + cmd.ElemCount; ++i) {
+      const unsigned int v = cmd.VtxOffset + draw.IdxBuffer[i];
+      if (v + 3 >= static_cast<unsigned int>(draw.VtxBuffer.Size)) {
+        continue;
+      }
+      const auto& a = draw.VtxBuffer[v];
+      const auto& b = draw.VtxBuffer[v + 2];
+      if (a.uv.x == glyph->U0 && a.uv.y == glyph->V0 && b.uv.x == glyph->U1 && b.uv.y == glyph->V1 &&
+          a.pos.x >= help.RectFull.Min.x && b.pos.x <= help.RectFull.Max.x && a.pos.y < help.RectFull.Max.y &&
+          b.pos.y > help.RectFull.Min.y) {
+        const ImRect ink(a.pos, b.pos);
+        const ImRect clip(ImVec2(cmd.ClipRect.x, cmd.ClipRect.y), ImVec2(cmd.ClipRect.z, cmd.ClipRect.w));
+        if (clip.Contains(ink)) {
+          control.Add(ink);
+          found_ink = true;
+          ctx->LogInfo("Preview help icon: item_y=%.2f..%.2f ink_y=%.2f..%.2f glyph_y=%.2f..%.2f", help.RectFull.Min.y,
+                       help.RectFull.Max.y, ink.Min.y, ink.Max.y, glyph->Y0, glyph->Y1);
+          break;
+        }
+      }
+    }
+    if (found_ink) {
+      break;
+    }
+  }
+  IM_CHECK(found_ink);
   const PixelRect excluded{
     static_cast<int>(std::floor((control.Min.x - panel->Pos.x) * gui::g_preview_vp.dpi_scale_x)),
     static_cast<int>(std::floor((control.Min.y - panel->Pos.y) * gui::g_preview_vp.dpi_scale_y)),
