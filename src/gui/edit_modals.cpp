@@ -1800,12 +1800,24 @@ static void RenderAxisModal(GuiState& state) {
       "Switches to this label: remembers the current parameters under the one you leave, then "
       "loads this label's memory — or its definition when nothing is remembered. The preview "
       "pose follows, re-seating on this label's typical view.";
+  // Font pixels round independently of the scaled window/style; a vertical scrollbar can
+  // consume the remaining slack. Budget the six gaps from live content width, not the modal's
+  // nominal width. Text and button padding are already in window coordinates, so do not scale
+  // them again. Flooring the gap prevents per-item pixel snapping from accumulating overflow.
+  const ImGuiStyle& style = ImGui::GetStyle();
+  float fixed_width = ImGui::CalcTextSize("Label:").x;
+  for (const auto& entry : kAxisPresets) {
+    fixed_width += ImGui::CalcTextSize(entry.label).x + 2.0f * style.FramePadding.x;
+  }
+  const float chip_gap =
+      std::min(style.ItemSpacing.x, std::max(0.0f, std::floor((ImGui::GetContentRegionAvail().x - fixed_width) /
+                                                              static_cast<float>(kAxisPresetCount))));
   ImGui::Text("Label:");
   if (ImGui::IsItemHovered()) {
     ImGui::SetTooltip("%s", kChipSwitchNote);
   }
   for (const auto& entry : kAxisPresets) {
-    ImGui::SameLine();
+    ImGui::SameLine(0.0f, chip_gap);
     bool highlighted = entry.id == active;
     if (highlighted) {
       ImGui::PushStyleColor(ImGuiCol_Button, active_color);
