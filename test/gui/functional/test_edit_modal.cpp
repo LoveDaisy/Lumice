@@ -640,6 +640,9 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
           "pose follows, re-seating on this label's typical view.";
       const auto exercise = [&](float multiplier) -> bool {
         gui::SetUiScaleMultiplierImmediate(multiplier);
+        // The harness renders with no GLFW monitor handle; exercise the product's work-area
+        // clamp instead of its unbounded headless fallback, which hides the scrollbar case.
+        gui::TestSetEditModalMaxHeightOverride(ImGui::GetIO().DisplaySize.y - gui::UiPx(16.0f));
         ctx->Yield(4);
         const auto first = ctx->ItemInfo("**/Random##axis_label_chip");
         IM_CHECK_RETV(first.ID != 0, false);
