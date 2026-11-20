@@ -47,9 +47,10 @@ def sandbox(tmp_path: Path):
         HOME=str(home), USERPROFILE=str(home), XDG_CONFIG_HOME=str(home),
         GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=str(home / "gitconfig"),
         GIT_TEMPLATE_DIR=str(home / "empty-templates"),
+        GIT_CEILING_DIRECTORIES=str(tmp_path),
         GIT_AUTHOR_NAME="Test", GIT_AUTHOR_EMAIL="test@example.invalid",
         GIT_COMMITTER_NAME="Test", GIT_COMMITTER_EMAIL="test@example.invalid",
-        GIT_TERMINAL_PROMPT="0",
+        GIT_TERMINAL_PROMPT="0", LC_ALL="C",
     )
     Path(env["GIT_TEMPLATE_DIR"]).mkdir()
     repo = tmp_path / "main checkout"
@@ -159,8 +160,12 @@ def test_missing_orchestrator_is_loud_success_not_a_clean_check(sandbox) -> None
     assert not result.stdout
     assert "passed" not in result.stderr.lower() and "clean" not in result.stderr.lower()
     # Git location failures are errors, not the missing-orchestrator exemption.
-    outside = run(repo.parent, env, "sh", str(hook_dir / "pre-commit"), check=False)
+    # Start below the ceiling: Git does not apply it to the initial directory.
+    outside_dir = repo.parent / "not a checkout"
+    outside_dir.mkdir()
+    outside = run(outside_dir, env, "sh", str(hook_dir / "pre-commit"), check=False)
     assert outside.returncode != 0
+    assert "not a git repository" in outside.stderr
     assert "skipped" not in outside.stderr
 
 
