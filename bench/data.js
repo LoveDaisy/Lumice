@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795215400122,
+  "lastUpdate": 1795215402686,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9620,50 +9620,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "43a72d655ad2a9f3ab50650b80bc0bafeddeb49a",
-          "message": "Merge pull request #505 from LoveDaisy/chore/source-comment-consistency\n\nchore(source-comment-consistency): rewrite five drift groups of src/ comments",
-          "timestamp": "2026-10-17T17:35:59+08:00",
-          "tree_id": "d4e5b5d64f6ec519bee36522169fafe1ef1e335a",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/43a72d655ad2a9f3ab50650b80bc0bafeddeb49a"
-        },
-        "date": 1792230027544,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 101.4,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 100.1,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 103.3,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 94.4,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "9f6df4d7e70c2cd552b73298382577b9399e17d1",
           "message": "Merge pull request #506 from LoveDaisy/fix/verbose-witness-dead-site\n\nfeat(cli): make -v/-d observable — drop dead VERBOSE site, add parse-time level lines",
           "timestamp": "2026-10-17T18:54:32+08:00",
@@ -14003,6 +13959,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 93.2,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "7febf6d10091602d355d0238a51937df978814df",
+          "message": "Merge pull request #622 from LoveDaisy/feat/small-button-glyph-clip\n\nfix(gui): preserve SmallButton descender ink at scaled line height",
+          "timestamp": "2026-11-21T06:50:01+08:00",
+          "tree_id": "491d95044f79f070d1681aea38134ce614726abf",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/7febf6d10091602d355d0238a51937df978814df"
+        },
+        "date": 1795215401872,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 85.1,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 100.3,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 98.4,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 94.4,
             "unit": "%"
           }
         ]
