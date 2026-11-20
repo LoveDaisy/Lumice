@@ -4,12 +4,13 @@ message(STATUS "[gui] Building GUI application")
 
 # imgui has no CMake support — manually list source files
 set(IMGUI_DIR ${imgui_SOURCE_DIR})
+include(${CMAKE_SOURCE_DIR}/cmake/imgui_small_button_ink.cmake)
 set(IMGUI_SOURCES
     ${IMGUI_DIR}/imgui.cpp
     ${IMGUI_DIR}/imgui_demo.cpp
     ${IMGUI_DIR}/imgui_draw.cpp
     ${IMGUI_DIR}/imgui_tables.cpp
-    ${IMGUI_DIR}/imgui_widgets.cpp
+    ${LUMICE_IMGUI_WIDGETS}
     ${IMGUI_DIR}/backends/imgui_impl_glfw.cpp
     ${IMGUI_DIR}/backends/imgui_impl_opengl3.cpp)
 
