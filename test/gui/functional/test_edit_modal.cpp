@@ -522,6 +522,27 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
         ctx->Yield(4);
         const auto first = ctx->ItemInfo("**/Column##axis_label_chip");
         IM_CHECK_RETV(first.ID != 0, false);
+        const ImGuiStyle& style = ImGui::GetStyle();
+        float text_width = ImGui::CalcTextSize("Label:").x;
+        float buttons_width = 0.0f;
+        for (const auto& entry : gui::kAxisPresets) {
+          const auto item = ctx->ItemInfo((std::string("**/") + entry.label + "##axis_label_chip").c_str());
+          buttons_width += item.RectFull.GetWidth();
+          text_width += ImGui::CalcTextSize(entry.label).x;
+        }
+        const float row_start = first.RectFull.Min.x - style.ItemSpacing.x - ImGui::CalcTextSize("Label:").x;
+        ctx->LogInfo(
+            "Axis budget scale=%.2f font=%.1f text=%.1f buttons=%.1f padding=%.1f spacing=%.1f "
+            "need=%.1f available=%.1f row_start=%.1f host=%.1f scrollbar=%.1f scroll_y=%.1f window_padding=%.1f",
+            multiplier, ImGui::GetFontSize(), text_width, buttons_width, 12.0f * style.FramePadding.x,
+            6.0f * style.ItemSpacing.x, ImGui::CalcTextSize("Label:").x + buttons_width + 6.0f * style.ItemSpacing.x,
+            first.Window->InnerClipRect.Max.x - row_start, row_start, first.Window->Size.x,
+            first.Window->ScrollbarSizes.x, first.Window->ScrollMax.y, first.Window->WindowPadding.x);
+        for (ImGuiWindow* win = first.Window; win != nullptr; win = win->ParentWindow) {
+          ctx->LogInfo("Axis ancestor %s size=%.1fx%.1f clip=(%.1f,%.1f)-(%.1f,%.1f)", win->Name, win->Size.x,
+                       win->Size.y, win->InnerClipRect.Min.x, win->InnerClipRect.Min.y, win->InnerClipRect.Max.x,
+                       win->InnerClipRect.Max.y);
+        }
         // The id-zero caption precedes the first chip on this same line; no production test ID.
         const ImVec2 caption(
             first.RectFull.Min.x - ImGui::GetStyle().ItemSpacing.x - ImGui::CalcTextSize("Label:").x * 0.5f,
@@ -538,13 +559,7 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
                        item.Window->InnerClipRect.Min.x, item.Window->InnerClipRect.Min.y,
                        item.Window->InnerClipRect.Max.x, item.Window->InnerClipRect.Max.y);
           const ImRect clip = item.Window->InnerClipRect;
-          // Compact's scaled scrollbar already trims 5px of Custom's right padding. Preserve
-          // that geometric ceiling separately from the measured Parry descender baseline.
-          const float allowed_padding_clip = multiplier == 1.5f && entry.id == gui::AxisPreset::kCustom ? 5.0f : 0.0f;
-          IM_CHECK_RETV(item.RectFull.Min.x >= clip.Min.x && item.RectFull.Min.y >= clip.Min.y &&
-                            item.RectFull.Max.y <= clip.Max.y &&
-                            item.RectFull.Max.x <= clip.Max.x + allowed_padding_clip,
-                        false);
+          IM_CHECK_RETV(clip.Contains(item.RectFull), false);
           IM_CHECK_RETV(ChipGlyphsMatchBaseline(ctx, item, entry.label,
                                                 multiplier == 1.5f && entry.id == gui::AxisPreset::kParry),
                         false);
