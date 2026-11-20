@@ -555,8 +555,11 @@ bool ChipGlyphsComplete(ImGuiTestContext* ctx, const ImGuiTestItemInfo& item, co
   float previous_x = item.RectFull.Min.x - 1.0f;
   for (const char* ch = label; *ch != '\0'; ++ch) {
     const ImFontGlyph* glyph = font->FindGlyphNoFallback(static_cast<ImWchar>(*ch));
-    if (glyph == nullptr || !glyph->Visible) {
+    if (glyph == nullptr) {
       return false;
+    }
+    if (!glyph->Visible) {
+      continue;  // Spaces have an advance, not an atlas quad.
     }
     bool found = false;
     for (const ImDrawCmd& cmd : draw.CmdBuffer) {
