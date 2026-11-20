@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795215394603,
+  "lastUpdate": 1795215400122,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -4818,54 +4818,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "43a72d655ad2a9f3ab50650b80bc0bafeddeb49a",
-          "message": "Merge pull request #505 from LoveDaisy/chore/source-comment-consistency\n\nchore(source-comment-consistency): rewrite five drift groups of src/ comments",
-          "timestamp": "2026-10-17T17:35:59+08:00",
-          "tree_id": "d4e5b5d64f6ec519bee36522169fafe1ef1e335a",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/43a72d655ad2a9f3ab50650b80bc0bafeddeb49a"
-        },
-        "date": 1792230025439,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 931053.6,
-            "unit": "rays/sec",
-            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 1013857.5,
-            "unit": "rays/sec",
-            "extra": "CPU: Neoverse-N2\\nCores: 4"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 1001635.2,
-            "unit": "rays/sec",
-            "extra": "CPU: Intel(R) Xeon(R) 6973P-C\\nCores: 4"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 585891.9,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "9f6df4d7e70c2cd552b73298382577b9399e17d1",
           "message": "Merge pull request #506 from LoveDaisy/fix/verbose-witness-dead-site\n\nfeat(cli): make -v/-d observable — drop dead VERBOSE site, add parse-time level lines",
           "timestamp": "2026-10-17T18:54:32+08:00",
@@ -9600,6 +9552,54 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 913061.6,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 9V45 96-Core Processor                \\nCores: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "7febf6d10091602d355d0238a51937df978814df",
+          "message": "Merge pull request #622 from LoveDaisy/feat/small-button-glyph-clip\n\nfix(gui): preserve SmallButton descender ink at scaled line height",
+          "timestamp": "2026-11-21T06:50:01+08:00",
+          "tree_id": "491d95044f79f070d1681aea38134ce614726abf",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/7febf6d10091602d355d0238a51937df978814df"
+        },
+        "date": 1795215399468,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 1053491.4,
+            "unit": "rays/sec",
+            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 1011468.8,
+            "unit": "rays/sec",
+            "extra": "CPU: Neoverse-N2\\nCores: 4"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 648094.5,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 9V74 80-Core Processor\\nCores: 4"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 961473.1,
             "unit": "rays/sec",
             "extra": "CPU: AMD EPYC 9V45 96-Core Processor                \\nCores: 4"
           }
