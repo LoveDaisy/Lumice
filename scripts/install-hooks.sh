@@ -12,12 +12,15 @@
 # global one chains back to `<git-common-dir>/hooks`, or when the repo sets
 # `core.hooksPath` locally to its own `.git/hooks` — this script says so and
 # leaves that choice to the user rather than editing config.
-# Currently installs the pre-commit hook (main-worktree guard + policy checks +
-# clang-format on staged files). The existing git-lfs hooks (post-checkout /
-# post-commit / post-merge / pre-push) are left untouched — we only add
-# pre-commit, which git-lfs does not use.
+# Installs a fixed pre-commit delegator: each invocation runs the committing
+# checkout's scripts/hooks/pre-commit (guard + policy + format), not the copy in
+# the checkout that installed it. A checkout without that script loudly skips.
+# The existing git-lfs hooks (post-checkout / post-commit / post-merge / pre-push)
+# are left untouched — we only add pre-commit, which git-lfs does not use.
 #
-# Run once after cloning:  ./scripts/install-hooks.sh
+# Run after cloning, or rerun THIS installer to migrate old symlink/copy entries:
+#   ./scripts/install-hooks.sh
+# Merging does not reinstall; running an older installer restores its mechanism.
 # Bypass the hook for one commit:  git commit --no-verify
 
 set -e

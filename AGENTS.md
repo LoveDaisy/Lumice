@@ -308,10 +308,15 @@ fails the check.
      is already covered by `info/exclude`, which lives in the common dir and so applies to every
      worktree; do not add it again). Worktrees are cheap here on purpose — dependency sources are
      cached per machine, see "Build trees..." above. One consequence worth knowing:
-     `.git/hooks/pre-commit` is shared across worktrees (hooks live in the common dir) but does
-     `cd "$(git rev-parse --show-toplevel)"`, which inside a worktree resolves to the worktree
-     root — so a commit there runs the worktree's own copy of the four checkers, and a branch that
-     edits a hook script does not see its own edit take effect until it is merged.
+     `<git-common-dir>/hooks/pre-commit` is a shared, fixed delegator installed by
+     `./scripts/install-hooks.sh`. It resolves `git rev-parse --show-toplevel` at invocation and
+     runs that checkout's `scripts/hooks/pre-commit`, which runs its own checkers. These are
+     checkout live files, not index blobs or committed snapshots: even uncommitted hook edits
+     take effect on that branch's next commit, without leaking into other worktrees. A broken
+     hook edit can block the branch's own commits; the escape remains `git commit --no-verify`.
+     A checkout without the orchestrator reports that checks were skipped and allows the commit.
+     Existing symlink/copy installations need a rerun of the new installer to migrate; merging
+     alone does not deploy it, and rerunning an old checkout's installer restores the old mechanism.
   Criterion 2 is machine-enforced at the point every write converges on, whatever tool produced
   it: `git commit`. Step 0 of `scripts/hooks/pre-commit` runs
   `scripts/hooks/worktree-guard.py pre-commit`, which refuses the commit when the staged set

@@ -158,6 +158,10 @@ def test_missing_orchestrator_is_loud_success_not_a_clean_check(sandbox) -> None
     assert "not in this checkout" in result.stderr and "skipped" in result.stderr
     assert not result.stdout
     assert "passed" not in result.stderr.lower() and "clean" not in result.stderr.lower()
+    # Git location failures are errors, not the missing-orchestrator exemption.
+    outside = run(repo.parent, env, "sh", str(hook_dir / "pre-commit"), check=False)
+    assert outside.returncode != 0
+    assert "skipped" not in outside.stderr
 
 
 @pytest.mark.parametrize("scope", ["global", "local", "own-hooks"])

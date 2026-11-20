@@ -2,8 +2,11 @@
 #
 # Lumice pre-commit hook — non-interactive local mirror of the CI policy +
 # format-check jobs.
-# Installed by scripts/install-hooks.sh into .git/hooks/pre-commit (the git-lfs
-# hooks live in other hook files and are left untouched).
+# scripts/install-hooks.sh installs <git-common-dir>/hooks/pre-commit as a fixed
+# delegator; it invokes THIS checkout's script and checkers, including live,
+# uncommitted hook edits. A broken edit can block this branch's own commits.
+# Rerun the new installer to migrate old symlink/copy entries; git-lfs hooks
+# live in other hook files and are left untouched.
 #
 # It NEVER prompts. On a violation it prints what failed and exits 1; the commit
 # is blocked. Bypass a single commit with:  git commit --no-verify  (this is
