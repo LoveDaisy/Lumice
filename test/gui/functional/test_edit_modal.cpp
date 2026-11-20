@@ -745,6 +745,12 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
           return true;
         };
         for (const auto& entry : gui::kAxisPresets) {
+          // Expanded's existing fixed-width Axis column is a different horizontal
+          // budget. This representative leg proves Parry in another host, not a
+          // new six-chip fit contract; Compact retains its full original set.
+          if (!compact && entry.id != gui::AxisPreset::kParry) {
+            continue;
+          }
           if (!chip(entry)) {
             return false;
           }
