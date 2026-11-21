@@ -1,56 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795218523612,
+  "lastUpdate": 1795219654894,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "b5112a34db028a9f3ad0ae392c2a1769e42ea6f7",
-          "message": "Merge pull request #509 from LoveDaisy/feat/api-version-narrow-header\n\nrefactor(capi): move LUMICE_API_VERSION to a leaf header",
-          "timestamp": "2026-10-18T10:16:11+08:00",
-          "tree_id": "9bdfa4c447ed393ed682a9709fdfa31a03e7e980",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/b5112a34db028a9f3ad0ae392c2a1769e42ea6f7"
-        },
-        "date": 1792291248521,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 328555.9,
-            "unit": "rays/sec",
-            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 504116.3,
-            "unit": "rays/sec",
-            "extra": "CPU: Neoverse-N2\\nCores: 4"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 429181.5,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 9V74 80-Core Processor\\nCores: 4"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 312442.5,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -4800,6 +4752,54 @@ window.BENCHMARK_DATA = {
             "value": 434728.6,
             "unit": "rays/sec",
             "extra": "CPU: Intel(R) Xeon(R) 6973P-C\\nCores: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "a9b0149b1aa7bb53a1a0e521d99af42a3548f068",
+          "message": "Merge pull request #626 from LoveDaisy/docs/gate-duration-disposition\n\ntest(budget): record the 2026-11-20/21 ctest disposition (reason-only)",
+          "timestamp": "2026-11-21T08:04:03+08:00",
+          "tree_id": "a142292d0432fc5976b070cfacacb6fbb7779e7c",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/a9b0149b1aa7bb53a1a0e521d99af42a3548f068"
+        },
+        "date": 1795219653017,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 328505,
+            "unit": "rays/sec",
+            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 506290,
+            "unit": "rays/sec",
+            "extra": "CPU: Neoverse-N2\\nCores: 4"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 522784.1,
+            "unit": "rays/sec",
+            "extra": "CPU: Intel(R) Xeon(R) 6975P-C\\nCores: 4"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 450249,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 9V45 96-Core Processor                \\nCores: 4"
           }
         ]
       }
