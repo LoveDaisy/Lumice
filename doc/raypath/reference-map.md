@@ -8,7 +8,10 @@ map's domain, units, view mapping and stop semantics — the consumption entry a
 ## What is evaluated
 
 One map request names a captured scene, one single-layer raypath class (the request's face
-sequence and symmetry bits) and one view. The engine resolves the class's physical members (the
+sequence and symmetry bits) and one view. On the C API the member selection rides the request's
+`symmetry_bits_plus_one` tail field (zero keeps the all-members class; 1..8 select the concrete
+P/B/D set) — the GUI's map request always states its true ticked set. The engine resolves the
+class's physical members (the
 existing expansion authority), then evaluates **every** member with the same `analytic::BandSum`
 kernel on one shared antipodal-Fibonacci lattice and one shared PixelTable — the same kernel the
 survey's radial line and the query probe run (one implementation, three triggers):

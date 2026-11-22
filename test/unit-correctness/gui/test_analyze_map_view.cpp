@@ -2410,4 +2410,34 @@ TEST(AnalyzeMapView, ArcStrokeHitTestsSubmittedSegmentsOnly) {
 }
 
 }  // namespace
+
+// The map's true symmetry bits ride the request explicitly (1..8): the default-constructed key
+// still names the all-members set, and every ticked combination encodes as its bits + 1 — the 0
+// default encoding stays the older callers' (bitwise-equal to the explicit full selection).
+TEST(AnalyzeMapView, RequestCarriesTheTickedSymmetryBitsExplicitly) {
+  MapIntentKey key;
+  std::vector<int> faces;
+  std::vector<int> counts;
+  std::vector<double> wavelengths;
+  EXPECT_EQ(key.symmetry_bits, 7);
+  const LUMICE_PathMapRequest full = MakeMapRequestForKey(key, &faces, &counts, &wavelengths);
+  EXPECT_EQ(full.symmetry_bits_plus_one, 8);
+  key.symmetry_bits = 0;
+  const LUMICE_PathMapRequest literal = MakeMapRequestForKey(key, &faces, &counts, &wavelengths);
+  EXPECT_EQ(literal.symmetry_bits_plus_one, 1);
+  for (const uint8_t bits : { uint8_t{ 2 }, uint8_t{ 3 }, uint8_t{ 4 }, uint8_t{ 5 }, uint8_t{ 6 } }) {
+    key.symmetry_bits = bits;
+    const LUMICE_PathMapRequest request = MakeMapRequestForKey(key, &faces, &counts, &wavelengths);
+    EXPECT_EQ(request.symmetry_bits_plus_one, static_cast<int>(bits) + 1) << "bits " << static_cast<int>(bits);
+  }
+  // The intent key compares the bits: a partial-to-partial change is its own new intent, while
+  // every other field standing still keeps the identity.
+  MapIntentKey base;
+  MapIntentKey other = base;
+  other.symmetry_bits = 3;
+  EXPECT_NE(base, other);
+  other.symmetry_bits = base.symmetry_bits;
+  EXPECT_EQ(base, other);
+}
+
 }  // namespace lumice::gui

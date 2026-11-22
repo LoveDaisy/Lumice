@@ -41,6 +41,15 @@ constexpr const char* kPlateScene = R"({
   "render": []
 })";
 
+// The archived rhombic-plate scene (the 2026-11-21 symmetry evidence's config, inlined): the
+// C01 corpus's plate cousin whose literal-vs-class contrast at delta 117 / azimuth 253 is the
+// member-selection oracle.
+constexpr const char* kRhombicPlateScene = R"({"crystal":[{"id":1,"type":"prism","shape":{"height":1.0,
+"face_distance":[1.5,1,1,1.5,1,1]},"axis":{"zenith":{"type":"gauss","mean":0,"std":1},
+"azimuth":{"type":"uniform","mean":0,"std":360},"roll":{"type":"gauss","mean":0,"std":5}}}],"filter":[],
+"scene":{"light_source":{"type":"sun","altitude":9,"azimuth":180,"spectrum":"D65"},"ray_num":1000,
+"max_hits":7,"scattering":[{"prob":0,"entries":[{"crystal":1,"proportion":1}]}]},"render":[]})";
+
 struct SceneDeleter {
   void operator()(LUMICE_Scene* scene) const { LUMICE_SceneDestroy(scene); }
 };
@@ -627,4 +636,92 @@ TEST(MapCApi, LegacyExtentAndPoisonTailKeepTheAllMembersDefault) {
 }
 
 }  // namespace
+
+// AC3's oracle on the C face: the archived rhombic-plate contrast. The literal member (the
+// 1-3-5-2 sequence, bits 0) leaves the delta-117 / azimuth-253 cell empty while the full class
+// (bits 7) lights it at the archived per-sr magnitude; the literal's delta-107 arc stays lit as
+// the non-empty witness. Cells are located through the result's own centre columns, never a
+// re-derived grid arithmetic.
+TEST(MapCApi, RhombicPlateLiteralVersusFullClassOnTheArchivedCell) {
+  ScenePtr scene;
+  {
+    LUMICE_Scene* raw = nullptr;
+    ASSERT_EQ(LUMICE_SceneFromJson(kRhombicPlateScene, &raw), LUMICE_OK);
+    scene.reset(raw);
+  }
+  LUMICE_PathMapRequest request{};
+  request.struct_size = sizeof(LUMICE_PathMapRequest);
+  request.crystal_id = 1;
+  static const int faces[] = { 1, 3, 5, 2 };
+  request.faces = faces;
+  request.face_count = 4;
+  static const int layer_counts[] = { 4 };
+  request.layer_face_counts = layer_counts;
+  request.layer_count = 1;
+  request.full_sky = 1;
+  request.view_rows = 90;
+  request.view_cols = 180;
+  request.sample_count = 2000000;
+
+  auto analyze = [&](int bits_plus_one, LUMICE_PathMap** out) {
+    request.symmetry_bits_plus_one = bits_plus_one;
+    return LUMICE_AnalyzePathMap(scene.get(), &request, out, g_err, sizeof(g_err));
+  };
+  auto cell_value = [](const LUMICE_PathMapPixels& px, double delta, double az, bool* found) {
+    *found = false;
+    double value = 0.0;
+    for (size_t i = 0; i < px.pixel_count; ++i) {
+      if (std::fabs(px.delta_deg[i] - delta) < 0.6 && std::fabs(px.azimuth_deg[i] - az) < 0.6 &&
+          px.status[i] == LUMICE_PATH_MAP_PIXEL_OK) {
+        *found = true;
+        value = px.values[i];
+        break;
+      }
+    }
+    return value;
+  };
+
+  LUMICE_PathMap* raw_map = nullptr;
+  ASSERT_EQ(analyze(1, &raw_map), LUMICE_OK) << g_err;  // the literal member
+  MapPtr literal(raw_map);
+  {
+    LUMICE_PathMapInfo info{};
+    info.struct_size = sizeof(info);
+    ASSERT_EQ(LUMICE_PathMapGetInfo(literal.get(), &info), LUMICE_PATH_READ_OK);
+    ASSERT_EQ(info.state, LUMICE_PATH_STATE_FINITE);
+    EXPECT_EQ(info.member_count, 1);
+    EXPECT_EQ(info.members_evaluated, 1);
+    LUMICE_PathMapPixels px{};
+    px.struct_size = sizeof(px);
+    ASSERT_EQ(LUMICE_PathMapGetPixels(literal.get(), &px), LUMICE_PATH_READ_OK);
+    bool found = false;
+    const double arc_cell = cell_value(px, 117.0, 253.0, &found);
+    ASSERT_TRUE(found) << "the delta-117 / azimuth-253 cell must exist";
+    EXPECT_EQ(arc_cell, 0.0) << "the literal member does not light the class-only cell";
+    const double lit_cell = cell_value(px, 117.0, 107.0, &found);
+    ASSERT_TRUE(found) << "the delta-117 / azimuth-107 cell must exist";
+    EXPECT_GT(lit_cell, 0.0) << "the literal's lit arc is the non-empty witness";
+  }
+
+  raw_map = nullptr;
+  ASSERT_EQ(analyze(8, &raw_map), LUMICE_OK) << g_err;  // the explicit full class
+  MapPtr full(raw_map);
+  {
+    LUMICE_PathMapInfo info{};
+    info.struct_size = sizeof(info);
+    ASSERT_EQ(LUMICE_PathMapGetInfo(full.get(), &info), LUMICE_PATH_READ_OK);
+    ASSERT_EQ(info.state, LUMICE_PATH_STATE_FINITE);
+    EXPECT_EQ(info.member_count, 4);
+    EXPECT_EQ(info.members_evaluated, 4);
+    LUMICE_PathMapPixels px{};
+    px.struct_size = sizeof(px);
+    ASSERT_EQ(LUMICE_PathMapGetPixels(full.get(), &px), LUMICE_PATH_READ_OK);
+    bool found = false;
+    const double arc_cell = cell_value(px, 117.0, 253.0, &found);
+    ASSERT_TRUE(found) << "the delta-117 / azimuth-253 cell must exist";
+    EXPECT_GT(arc_cell, 0.0) << "the full class lights the cell the literal cannot";
+    EXPECT_NEAR(arc_cell, 0.0248088, 0.005) << "magnitude vs the archived n=2M run";
+  }
+}
+
 }  // namespace lumice::raypath::survey

@@ -14916,6 +14916,22 @@ bool WindowsCoexistPickReopenAndScaleTiers(ImGuiTestContext* ctx) {
       "[combo] second-row selection re-keyed both windows' issued intents and adopted docs to the full expected "
       "identity");
 
+  // ---- ②b the map's own symmetry bits (AC2/AC4's map face): a partial tick set re-keys the
+  // naming the map's member set against the survey's literal representative. The survey key
+  // deliberately stays binary here; only the map's bits move.
+  {
+    const auto full_id = gui::g_state.analysis.map.intent_id;
+    IM_CHECK_RETV(gui::g_state.analysis.map.adopted_result != nullptr,
+                  false);  // the full-class map settled before the tick
+    ctx->ItemClick("**/P##analysis_symmetry");
+    auto& m = gui::g_state.analysis.map;  // re-read each frame: the pump republishes after invalidation
+    IM_CHECK_RETV(DriveUntil(
+                      ctx, [&] { return m.key.symmetry_bits == 6; }, 60),  // P unticked: B|D partial
+                  false);
+    IM_CHECK_RETV(DriveUntil(
+                      ctx, [&] { return m.adopted_id == m.intent_id && m.adopted_result != nullptr; }, 120),
+                  false);  // the partial-set map answered in full; the note rides the ADOPTED map only
+  }  // the partial-set arm closes
   // ---- ③ close both through their title bars, reopen both through their real entries.
   ctx->WindowClose("//Raypath view");
   ctx->Yield(2);

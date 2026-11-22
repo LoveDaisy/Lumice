@@ -548,6 +548,39 @@ def _check_map_family_published_extents_and_cross_destroy_reads():
     ok_cells = sum(1 for p in range(pixels.pixel_count) if pixels.status[p] == 1)
     assert ok_cells > 0
     lib.LUMICE_PathMapDestroy(standalone)
+    # The older-client witness: the v4.62 complete extent rides both entries with the appended
+    # field poisoned and keeps the all-members default the map has always evaluated. The tail
+    # must never be read (a premature read would refuse these requests, not accept them).
+    def poisoned_legacy_request():
+        client = MapRequestV463()
+        base = make_request()
+        C.memmove(C.addressof(client), C.addressof(base), C.sizeof(MapRequestV462))
+        client.struct_size = C.sizeof(MapRequestV462)
+        client.symmetry_bits_plus_one = 999  # beyond the extent: unread
+        return client
+
+    legacy_standalone = C.c_void_p()
+    poisoned_standalone = poisoned_legacy_request()
+    assert lib.LUMICE_AnalyzePathMap(scene, C.byref(poisoned_standalone), C.byref(legacy_standalone), err, len(err)) == 0, \
+        err.value
+    info = MapInfo()
+    info.struct_size = C.sizeof(info)
+    assert lib.LUMICE_PathMapGetInfo(legacy_standalone, C.byref(info)) == 0
+    assert info.member_count == 12, info.member_count  # the full uniform-prism class
+    lib.LUMICE_PathMapDestroy(legacy_standalone)
+
+    # The new layout selects the member set: the literal encoding evaluates the 3-5 sequence alone.
+    literal_request = make_request()
+    literal_request.struct_size = C.sizeof(literal_request)
+    literal_request.symmetry_bits_plus_one = 1
+    literal_map = C.c_void_p()
+    assert lib.LUMICE_AnalyzePathMap(scene, C.byref(literal_request), C.byref(literal_map), err, len(err)) == 0, \
+        err.value
+    info = MapInfo()
+    info.struct_size = C.sizeof(info)
+    assert lib.LUMICE_PathMapGetInfo(literal_map, C.byref(info)) == 0
+    assert info.member_count == 1, info.member_count
+    lib.LUMICE_PathMapDestroy(literal_map)
 
     # The workspace entry, then reads that survive the workspace (and the scene).
     workspace = C.c_void_p()
@@ -571,47 +604,17 @@ def _check_map_family_published_extents_and_cross_destroy_reads():
     assert C.string_at(C.addressof(future) + C.sizeof(MapRequestV463), 32) == bytes([0xA5] * 32)
     lib.LUMICE_PathMapDestroy(tail_result)
 
-    # The older-client witness: the v4.62 complete extent rides both entries with the appended
-    # field poisoned and keeps the all-members default the map has always evaluated. The tail
-    # must never be read (a premature read would refuse these requests, not accept them).
-    def poisoned_legacy_request():
-        client = MapRequestV463()
-        base = make_request()
-        C.memmove(C.addressof(client), C.addressof(base), C.sizeof(MapRequestV462))
-        client.struct_size = C.sizeof(MapRequestV462)
-        client.symmetry_bits_plus_one = 999  # beyond the extent: unread
-        return client
 
     legacy_workspace_request = poisoned_legacy_request()
-    standalone = C.c_void_p()
-    poisoned_standalone = poisoned_legacy_request()
-    assert lib.LUMICE_AnalyzePathMap(scene, C.byref(poisoned_standalone), C.byref(standalone), err, len(err)) == 0, \
-        err.value
-    info = MapInfo()
-    info.struct_size = C.sizeof(info)
-    assert lib.LUMICE_PathMapGetInfo(standalone, C.byref(info)) == 0
-    assert info.member_count == 12, info.member_count  # the full uniform-prism class
-    lib.LUMICE_PathMapDestroy(standalone)
-    owned = C.c_void_p()
+    legacy_owned = C.c_void_p()
     assert lib.LUMICE_PathWorkspaceQueryMap(workspace, C.byref(legacy_workspace_request), None,
-                                            C.byref(owned), err, len(err)) == 0, err.value
+                                            C.byref(legacy_owned), err, len(err)) == 0, err.value
     info = MapInfo()
     info.struct_size = C.sizeof(info)
     assert lib.LUMICE_PathMapGetInfo(owned, C.byref(info)) == 0
     assert info.member_count == 12, info.member_count
-    lib.LUMICE_PathMapDestroy(owned)
+    lib.LUMICE_PathMapDestroy(legacy_owned)
 
-    # The new layout selects the member set: the literal encoding evaluates the 3-5 sequence alone.
-    literal_request = make_request()
-    literal_request.symmetry_bits_plus_one = 1
-    literal_map = C.c_void_p()
-    assert lib.LUMICE_AnalyzePathMap(scene, C.byref(literal_request), C.byref(literal_map), err, len(err)) == 0, \
-        err.value
-    info = MapInfo()
-    info.struct_size = C.sizeof(info)
-    assert lib.LUMICE_PathMapGetInfo(literal_map, C.byref(info)) == 0
-    assert info.member_count == 1, info.member_count
-    lib.LUMICE_PathMapDestroy(literal_map)
 
     lib.LUMICE_PathWorkspaceDestroy(workspace)
     info = MapInfo()
