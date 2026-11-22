@@ -2378,6 +2378,33 @@ void RenderPreviewPanel(GLFWwindow* window, float window_width, float window_hei
   // section is expanded, and before this frame assembles any view-dependent inputs.
   UpdateLockedLookAt(g_state);
 
+  // 814 AC3: the preview recovery notice — one-time dismissible, with the explicit retry within
+  // reach (plan §3.2). Drawn inside this window so it reads as part of the preview area: the
+  // deferred FBO blit runs before ImGui's draw data, so this text lands on top of whatever the
+  // preview is (or is not) showing. The Retry button's visibility is INDEPENDENT of the notice's
+  // dismissal state — dismissing the message never takes away the recovery exit; it shows only
+  // when an exhausted cycle left a retained source to re-attempt (a degraded-but-working display
+  // has no retry target, and its way back is a new Run).
+  const int notice_kind = PreviewRecoveryNoticeKind();
+  const bool retry_available = PreviewRecoveryRetryAvailable();
+  if (notice_kind != 0 || retry_available) {
+    ImGui::SetCursorPos(ImVec2(UiPx(8), UiPx(8)));
+    ImGui::BeginGroup();
+    if (notice_kind != 0) {
+      ImGui::TextUnformatted(PreviewRecoveryNoticeText());
+    }
+    if (retry_available && ImGui::SmallButton("Retry preview")) {
+      RetryPreviewUpload();
+    }
+    if (notice_kind != 0) {
+      ImGui::SameLine();
+      if (ImGui::SmallButton("Dismiss")) {
+        DismissPreviewRecoveryNotice();
+      }
+    }
+    ImGui::EndGroup();
+  }
+
   // Renderer invariants (previously in RenderViewBar, runs every frame).
   // Copy-model: GuiState always owns a single renderer, no vector/index bookkeeping needed.
   {
@@ -2433,7 +2460,7 @@ void RenderPreviewPanel(GLFWwindow* window, float window_width, float window_hei
     mono_ev_in.ev_auto = g_state.ev_auto;
     mono_ev_in.snapshot_intensity = g_state.snapshot_intensity;
     mono_ev_in.snapshot_emitted_energy = g_state.snapshot_emitted_energy;
-    mono_ev_in.total_pixels = g_preview.GetTextureWidth() * g_preview.GetTextureHeight();
+    mono_ev_in.total_pixels = PreviewSourcePixelCount();
     const lumice::gui::MonoExposure mono_ev = lumice::gui::ComputeMonoExposure(rc.ev_mode, mono_ev_in);
     pp.exposure.intensity_factor = mono_ev.intensity_factor;
 

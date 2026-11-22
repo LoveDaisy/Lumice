@@ -77,7 +77,12 @@ namespace {
 // 89 with look_at, the named camera target and follow intent. It is session-only: files persist the
 // resulting pose, not an instruction to keep changing it when the sun moves.
 // 90 with the app-only startup preview style, a pure client view default.
-constexpr std::size_t kExpectedGovernedFieldCount = 90;
+// 92 with the upload failure latch (814): upload_latched / upload_latch_epoch join
+// kDerivedFieldsExcludeList beside last_uploaded_texture_serial — runtime pause state owned by
+// SyncFromPoller's upload branch (a failed giant allocation must not be re-attempted at the poll
+// rate). A measurement of a failed attempt is not a setting, so deliberately ineligible as a
+// personal default, exactly like the cursor beside it.
+constexpr std::size_t kExpectedGovernedFieldCount = 92;
 
 std::vector<std::string> AllGovernedFieldNames() {
   std::vector<std::string> names;

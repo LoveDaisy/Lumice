@@ -371,6 +371,12 @@ ScreenshotRender RenderScreenshot(const ScreenshotExportSelection& sel);
 ScreenshotFrameFacts CurrentScreenshotFrameFacts();
 void DoExportDualFisheyeEqualAreaPng();
 void DoExportEquirectangularPng();
+// The no-dialog bodies of the two all-sky panorama exports (dialog → these, gui tests drive
+// these directly since a native save dialog cannot be driven from a test). Return whether the
+// file was written; every failure inside is logged and explicit (no file, never a truncated or
+// pseudo-full-resolution delivery). Needs the GL context.
+bool ExportDualFisheyeEqualAreaPng(const std::filesystem::path& path);
+bool ExportEquirectangularPng(const std::filesystem::path& path);
 void DoExportConfigJson();
 
 // The half of DoExportConfigJson that is not the file dialog: write `json_str` to `path`, OR — when
@@ -580,6 +586,82 @@ bool ShouldUseCompositeUpload(bool payload_is_composite, bool show_composite_pre
 bool ShouldFireCompositeUpload(const PreviewSnapshot& snap, unsigned long long last_uploaded_texture_serial,
                                uint64_t display_epoch_floor, bool show_composite_preview,
                                bool last_uploaded_as_composite);
+
+// 814 upload failure latch: true while a failed upload's pause still applies to the CURRENT
+// generation. SyncFromPoller sets upload_latched + upload_latch_epoch = committed_epoch when an
+// upload returns !ok, and consults this before the fire gate — so a constrained machine is never
+// made to re-attempt a giant allocation at the poll rate (a newly minted serial inside the same
+// generation is not a new authorization). A new Run mints committed_epoch+1, which is what
+// un-latches with no explicit unlock (the recorded epoch no longer matches); a document switch
+// clears the latch outright in ResetFrontendState. Pure predicate, no globals, same testable-
+// contract convention as the gates above (truth table in
+// test/composition-correctness/gui/test_run_lifecycle_chain.cpp).
+bool ShouldBlockUploadForLatch(bool upload_latched, unsigned long long latch_epoch, unsigned long long committed_epoch);
+
+// ---- Preview recovery surface (814 §3.2/§3.3/§3.4) ----
+//
+// The ladder, its notice and its incident record live in app.cpp (runtime machine-resource state,
+// same ownership class as the upload latch); these accessors are the panel's and the diagnostics
+// exporter's whole view of it.
+
+// What the preview panel's one-time notice should say right now: 0 = nothing to report (healthy
+// or notice dismissed), 1 = degraded (the ladder established a reduced tier — the preview shows a
+// smaller but valid picture), 2 = unavailable (the last authorized cycle ran out of candidates;
+// an explicit retry or a new run is the way back). Dismissal only silences the notice; it never
+// fakes recovery.
+int PreviewRecoveryNoticeKind();
+
+// The notice's text for the current kind (empty when kind == 0). Names what happened, what the
+// user is looking at, and what the way back is.
+const char* PreviewRecoveryNoticeText();
+
+// Dismiss the notice. Deliberately not named "retry": dismissal hides the message only — it
+// changes no upload state, triggers no allocation, and a NEW failure re-shows the notice.
+void DismissPreviewRecoveryNotice();
+
+// Whether an explicit retry currently has a target: the last cycle ended exhausted AND a
+// retained newest-qualifying source exists. This is the Retry button's visibility predicate,
+// deliberately independent of the notice text's kind/dismissal state — dismissing the notice
+// must never take away the recovery exit, and a degraded-but-working display (kind 1, whose
+// source was already promoted) has no retry target to offer.
+bool PreviewRecoveryRetryAvailable();
+
+// The explicit recovery entry (plan 814 §3.2: reachable near the unavailable/degraded notice,
+// using the retained newest qualifying source — including a backend-completed terminal frame the
+// poller self-paused on — without re-running the simulation). Re-authorizes ONE full ladder
+// cycle, from candidate 0, against that retained source, on the caller's thread. With no
+// retained source there is nothing to retry and this is a no-op (a new Run is the way back then).
+// Main thread only (GL calls).
+void RetryPreviewUpload();
+
+// The minimal incident record of the last failed upload cycle (814 §3.4): the first failure's
+// stage, raw GL error, requested size, the ladder tier being attempted when it happened, and the
+// frame's serial. has_incident is false until a failure exists; a later success never erases the
+// record. This is what the hardware-diagnostics task reads — no new report UI, no hardware
+// enumeration, no dependency on that task landing first.
+struct PreviewUploadIncident {
+  bool has_incident = false;
+  int stage = 0;
+  int gl_error = 0;
+  int request_width = 0;
+  int request_height = 0;
+  int tier_tried = 0;
+  unsigned long long texture_serial = 0;
+};
+PreviewUploadIncident GetPreviewUploadIncident();
+
+// The pixel count absolute EV normalization divides by (plan 814 §3.3: the ORIGINAL source's
+// pixel count, never the display's). Priority: the accepted frame's payload — the authoritative
+// source extent while it is held — then the save mirror's own dimensions, then, only when neither
+// holds anything (a fresh document), the GPU display extent, which for an undegraded display IS
+// the source extent. A degraded display alone (ladder tier > 0) must never shrink this number:
+// using the displayed pixel count there is worth exactly -2 EV per halving of each axis.
+long PreviewSourcePixelCount();
+
+// The full source's own extent (payload first, then the save mirror, then the display — the same
+// priority order as PreviewSourcePixelCount, whose count is this product). Zeroes when nothing
+// holds a source.
+void PreviewSourceExtent(int* out_w, int* out_h);
 
 // task-348.3 AC3 (⑦): decide whether opening the Colors window should force
 // show_composite_preview=true. True only when no color classes exist yet (nothing

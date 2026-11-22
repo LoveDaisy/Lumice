@@ -52,7 +52,8 @@ inline float DeviceToLogical(int device_px, float dpi) {
 //     name their own canvas size in pixels and pass no labels at all).
 std::vector<unsigned char> RenderExportToRgba(PreviewRenderer& renderer, const PreviewParams& params, int dst_w,
                                               int dst_h, const std::vector<CurveLabelSet>& curve_labels = {},
-                                              float dpi_scale_x = 1.0f, float dpi_scale_y = 1.0f);
+                                              float dpi_scale_x = 1.0f, float dpi_scale_y = 1.0f,
+                                              int* out_gl_error = nullptr);
 
 // Render one on-screen preview frame through the SAME core the export above uses, then blit it
 // back onto the caller's framebuffer at the viewport rect `(dst_x, dst_y, dst_w, dst_h)`.
@@ -123,6 +124,15 @@ void DestroyPreviewFrameFbo();
 // source texture format.
 void ConfigureDualFisheyeExportParams(PreviewParams& params);
 void ConfigureEquirectExportParams(PreviewParams& params);
+
+// Test seam (gui_test main thread; never set in production): while the counter is above zero,
+// the next N RGBA8 renderbuffer-storage creations report a failed allocation (gl_error =
+// GL_OUT_OF_MEMORY, incomplete framebuffer) without touching the driver — the exact failure
+// shape a real target out-of-memory produces, consumed through the production branches. This is
+// the witness seam for the §2.5 shared-context ruling at the EXPORT-TARGET level: the upload
+// fault hooks cannot reach a renderbuffer allocation, and the reviewers' bar was witnesses that
+// hit the target allocation itself, not the source upload ahead of it.
+void SetRgba8StorageFaultForTest(int remaining_failures);
 
 }  // namespace lumice::gui
 

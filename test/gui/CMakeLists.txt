@@ -44,6 +44,9 @@ add_executable(gui_test
     functional/test_contrast_headroom_notice.cpp
     functional/test_preview_dual_fisheye_gather.cpp
     functional/test_preview_texture.cpp
+    # The 814 acceptance leg's opt-in full-size-archive display witness (env-gated; registers as
+    # nothing in the suite's normal runs — see the TU's header comment).
+    functional/test_full_archive_acceptance.cpp
     functional/test_view_display_controls.cpp
     functional/test_gui_sim_smoke.cpp
     functional/test_raypath_analysis_panel.cpp

@@ -4161,12 +4161,15 @@ bool SaveLmcFile(const std::filesystem::path& path, const GuiState& state, const
   // the three encodings it holds (PreviewRenderer::GetCpuTextureMode), and the flags written
   // below follow the mirror rather than a constant: a pre-v4 document re-saved without a run
   // still carries composited pixels, and declaring them radiance-only would paint its sky twice.
+  // Since 814 the save eligibility AND the serialized dimensions come off the mirror itself
+  // (HasCpuTexture / GetCpuTextureWidth/Height) — the save source's own facts — not off the GPU
+  // display, which a failed upload can revoke or resize without touching the mirror.
   std::vector<unsigned char> tex_bytes;
   bool has_texture = false;
   uint32_t tex_flags = 0;
-  if (save_texture && preview.HasTexture()) {
-    const int w = preview.GetTextureWidth();
-    const int h = preview.GetTextureHeight();
+  if (save_texture && preview.HasCpuTexture()) {
+    const int w = preview.GetCpuTextureWidth();
+    const int h = preview.GetCpuTextureHeight();
     switch (preview.GetCpuTextureMode()) {
       case PreviewRenderer::TextureMode::kXyz:
         if (preview.GetXyzTextureData() != nullptr &&

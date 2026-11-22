@@ -2,6 +2,8 @@
 #define LUMICE_GUI_PREVIEW_RENDERER_HPP
 
 #include <array>
+#include <atomic>
+#include <functional>
 #include <optional>
 #include <vector>
 
@@ -223,8 +225,56 @@ struct XyzTextureMeta {
   int effective_pixels = 0;
 };
 
+// One texture-upload attempt's outcome, returned by every upload entry point. ok == true means
+// the new frame IS the display texture now, and the display metadata (GetTextureWidth/Height,
+// GetTextureMode, GetXyzTextureScale) describes GL storage that was verified to exist. ok ==
+// false means the display was not advanced to this frame: stage names the GL step that failed,
+// gl_error the raw error it reported, and old_frame_retained says whether the PREVIOUSLY
+// displayed frame is provably untouched — true when the failure happened before the texture was
+// touched or was an ordinary GL error (the offending command is ignored with no side effect),
+// false after a real or injected GL_OUT_OF_MEMORY at a texture stage, whose storage the spec
+// leaves undefined (nothing but a fresh successful upload re-establishes trust; the caller must
+// treat the display as unavailable, and this renderer already has).
+//
+// A caller that ignores this value is back to the pre-814 behavior: a failed upload silently
+// leaves whatever was previously committed (or, at the conservative-revoke stages, worse), which
+// is exactly the defect class this result exists to close.
+struct UploadResult {
+  bool ok = false;
+  enum class Stage {
+    kNone = 0,
+    kInvalidInput,            // null data / non-positive size / no texture object
+    kFenceWait,               // glClientWaitSync on the staging slot timed out or failed
+    kPboAllocate,             // glBufferData failed
+    kPboMap,                  // glMapBufferRange returned null
+    kPboUnmap,                // glUnmapBuffer returned false
+    kTexImage,                // glTexImage2D (re-definition) failed
+    kTexUpdate,               // glTexSubImage2D failed
+    kFenceCreate,             // glFenceSync failed (frame itself committed; the slot is torn down)
+    kStorageMismatch,         // post-define level-0 storage query disagrees with the request
+    kCpuAllocation,           // a host-side buffer allocation threw std::bad_alloc (no GL call made)
+    kRenderTargetAllocation,  // an export target's RGBA8 renderbuffer storage failed (no texture involved)
+  };
+  Stage stage = Stage::kNone;
+  // GLenum observed at the failing stage; 0 when the stage failed without a reported error
+  // (e.g. a null map pointer, a CPU allocation, or nothing failed). For kFenceWait the drained
+  // driver error flag when one was set, otherwise the sync return status.
+  int gl_error = 0;
+  int request_width = 0;
+  int request_height = 0;
+  bool old_frame_retained = false;
+};
+
+// Human-readable name for one UploadResult::Stage — the log spelling shared by the renderer and
+// every caller that reports an UploadResult (SyncFromPoller included). Defined once in
+// preview_renderer.cpp.
+const char* UploadStageName(UploadResult::Stage stage);
+
 class PreviewRenderer {
  public:
+  PreviewRenderer();
+  ~PreviewRenderer();
+
   // What the source texture's samples MEAN, and therefore how much of the display chain the
   // shader still owes them. Mirrored by the kTexMode* constants in the GLSL (preview_renderer.cpp)
   // — the two enumerations are one contract and their values must stay in step.
@@ -248,17 +298,35 @@ class PreviewRenderer {
   bool Init();
   void Destroy();
 
+  // All three entry points return an UploadResult (see above) and commit display state only on
+  // a fully successful, storage-verified upload. The CPU mirror is written only by the paths
+  // named below; it is the SAVE source, and its dimensions are its own (GetCpuTextureWidth/
+  // Height) — never read back off the display.
+
   // Upload equirectangular image (RGB, uint8, row-major) whose texels ALREADY carry the sky
   // colour — see TextureMode::kSrgbComposited. The only remaining producer is a legacy .lmc.
-  void UploadTexture(const unsigned char* data, int width, int height);
+  // On success the bytes also land in the uint8 CPU mirror (the mirror's one live production
+  // writer for the 8-bit modes: a reopened pre-v4 document re-saved without a run must go back
+  // out flagged composited).
+  UploadResult UploadTexture(const unsigned char* data, int width, int height);
 
   // The same bytes, but carrying the halo's radiance alone — see TextureMode::kSrgbRadiance.
   // Two producers: the composite (raypath-colour) preview, and a v4 .lmc being reopened.
-  void UploadRadianceTexture(const unsigned char* data, int width, int height);
+  UploadResult UploadRadianceTexture(const unsigned char* data, int width, int height);
 
   // Upload equirectangular XYZ float data — the live simulation preview, and a v>=5 .lmc being
-  // reopened (the same bytes a live upload of that frame carried).
-  void UploadXyzTexture(const float* data, int width, int height);
+  // reopened (the same bytes a live upload of that frame carried). Does NOT touch the CPU mirror:
+  // this runs at the poll rate, and Save refreshes the mirror from the retained poller payload
+  // instead — see UpdateCpuXyzTextureData.
+  UploadResult UploadXyzTexture(const float* data, int width, int height);
+
+  // Full-resolution XYZ upload WITHOUT the double PBO staging: the quantize happens into a
+  // transient CPU buffer and glTexImage2D copies from client memory, synchronously. Recovery
+  // tier 1 — what a PBO allocation/map/wait failure falls back to when the texture itself still
+  // fits (plan 814 §3.2: "低 staging 压力的完整上传路径"). Same UploadResult contract, same
+  // witness, same commit as the PBO path; no fence is created because no async DMA exists to
+  // guard.
+  UploadResult UploadXyzTextureNoStaging(const float* data, int width, int height);
 
   // Render preview into the given viewport region (in framebuffer pixels)
   void Render(int vp_x, int vp_y, int vp_w, int vp_h, const PreviewParams& params);
@@ -273,18 +341,24 @@ class PreviewRenderer {
   float GetXyzTextureScale() const { return tex_xyz_scale_; }
   void ClearTexture();
 
-  // Update the CPU-side uint8 mirror only (no GL upload, no tex_mode_ change). The mirror is
-  // declared kSrgbRadiance: every producer that bakes bytes into it bakes the halo alone.
-  // Production no longer reaches it — Save mirrors linear XYZ through UpdateCpuXyzTextureData —
-  // but it stays as the seam tests use to plant known pixels behind SaveLmcFile.
-  void UpdateCpuTextureData(const unsigned char* data, int width, int height);
+  // Update the CPU-side uint8 mirror only (no GL upload, no tex_mode_ change, and — the 814
+  // separation — no display-size write: the mirror's dimensions are cpu_tex_width_/height_).
+  // `mode` is what the CALLER baked into these bytes — kSrgbRadiance (the default: every producer
+  // that bakes bytes into the mirror bakes the halo alone) or kSrgbComposited (a pre-v4 .lmc's
+  // sky-summed bytes, whose label must survive a failed display so a re-save does not paint its
+  // sky twice). Production no longer reaches the default — Save mirrors linear XYZ through
+  // UpdateCpuXyzTextureData — but the seam stays for tests and the 814 failed-open save-source
+  // path.
+  void UpdateCpuTextureData(const unsigned char* data, int width, int height,
+                            TextureMode mode = TextureMode::kSrgbRadiance);
 
-  // Update the CPU-side linear-XYZ mirror only (no GL upload, no tex_mode_ change): the W*H*3
-  // floats exactly as UploadXyzTexture received them, plus the measurements that expose them.
-  // This is what Save serializes. It is NOT written by UploadXyzTexture itself: that runs at the
-  // poll rate on a buffer of tens of megabytes, and a second copy there would double the cost of
-  // every live upload for the benefit of the occasional Save. The frame stays reachable through
-  // the poller payload the upload came from, so Save copies it once, at Save time.
+  // Update the CPU-side linear-XYZ mirror only (no GL upload, no tex_mode_ change, no
+  // display-size write): the W*H*3 floats exactly as UploadXyzTexture received them, plus the
+  // measurements that expose them. This is what Save serializes. It is NOT written by
+  // UploadXyzTexture itself: that runs at the poll rate on a buffer of tens of megabytes, and a
+  // second copy there would double the cost of every live upload for the benefit of the
+  // occasional Save. The frame stays reachable through the poller payload the upload came from,
+  // so Save copies it once, at Save time.
   void UpdateCpuXyzTextureData(const float* data, int width, int height, const XyzTextureMeta& meta);
 
   // CPU-side mirror access (for .lmc file save). The two data getters are mutually exclusive by
@@ -297,6 +371,88 @@ class PreviewRenderer {
   const XyzTextureMeta& GetXyzTextureMeta() const { return tex_xyz_meta_; }
   int GetTextureWidth() const { return tex_width_; }
   int GetTextureHeight() const { return tex_height_; }
+  // The SAVE source's own dimensions — what SaveLmcFile serializes. Deliberately separate from
+  // GetTextureWidth/Height above: the GPU texture tracks what is on screen, the mirror tracks
+  // what Save would write, and since 814 a failed upload no longer lets the two write each
+  // other's size.
+  int GetCpuTextureWidth() const { return cpu_tex_width_; }
+  int GetCpuTextureHeight() const { return cpu_tex_height_; }
+  // Save eligibility: the mirror holds a frame (its own size > 0). A successful display without
+  // a mirrored source still saves a texture-less document, and a failed display never borrows
+  // eligibility from the GPU texture.
+  bool HasCpuTexture() const { return cpu_tex_width_ > 0 && cpu_tex_height_ > 0; }
+
+  // Test-only upload fault injection (gui_test main thread; never set in production): see the
+  // comment on the upload_fault_hook_ member below for the contract.
+  using UploadFaultHook = std::function<int(UploadResult::Stage)>;
+  void SetUploadFaultHookForTest(UploadFaultHook hook) { upload_fault_hook_ = std::move(hook); }
+
+  // Test seam (gui_test main thread): issues one REAL GL call the driver rejects
+  // (GL_INVALID_VALUE, no state change), so a witness can arrange a genuinely driver-set error
+  // flag. The fence-wait drain witness needs a flag the DRIVER placed — a synthesized hook
+  // return value cannot produce one — to prove the wait-failure branch reads and clears it
+  // before the next candidate's error reads. Deliberately not drained here.
+  static void RaiseRealGlInvalidOperationForTest();
+
+  // Test seam (gui/unit tests; never set in production): a hook consulted for EVERY renderer
+  // instance after its own per-instance hook — the degraded-export witness must fail the
+  // TRANSIENT full-source renderer's upload, which the app creates internally and tests cannot
+  // reach. 0 = let the real call proceed, same contract as the per-instance hook.
+  static void SetUploadFaultHookForAllForTest(UploadFaultHook hook);
+
+  // Test seam (gui_test main thread; never set in production): while the counter is above zero,
+  // shader compilation fails (each failure consumes one count), so a witness can drive Init's
+  // partial-failure cleanup without hand-crafting a bad GLSL string.
+  static void SetShaderCompileFaultForTest(int remaining_failures);
+  static bool ShaderCompileFaultArmedForTest() {
+    if (s_shader_compile_fault_for_test_ <= 0) {
+      return false;
+    }
+    --s_shader_compile_fault_for_test_;
+    return true;
+  }
+
+  // Conservative revoke under a SHARED-CONTEXT OOM (GL spec §2.5: after the error the whole GL
+  // state is undefined, and that state is shared by every renderer in the context — the
+  // transient full-source export renderer included). A revoke that answers only the object that
+  // happened to make the failing call leaves the preview sampling a texture nothing can vouch
+  // for; the caller of a transient renderer that saw a real OOM invokes this so the display
+  // stops being sampleable until a verified rebuild. Same body as ConservativeRevoke; public
+  // because the caller is outside this object.
+  void RevokeDisplayForContextOom();
+
+  // End the staging slots' lifecycle when the upload path stops using them (a recovery tier at
+  // or above 1 uploads from client memory; the explicit-unavailable state uploads nothing): each
+  // full-size slot is nominal 192 MiB at an 8192x4096 source, and a document that settles at a
+  // reduced tier would otherwise carry both slots — and their fences — until Destroy. The PBO
+  // path re-allocates its slot lazily if a later cycle re-establishes tier 0. Fence deletion
+  // without a wait is safe by the spec: GL defers the underlying storage's reclamation while a
+  // command stream still references it.
+  void ReleaseStagingSlots();
+
+  // Test-only observability (gui_test main thread): the registered byte count of one staging
+  // slot, 0 once released — the lifecycle witness reads this, since no aggregate GL query names
+  // buffer storage.
+  size_t StagingSlotByteCountForTest(int slot) const { return pbo_byte_count_[slot]; }
+
+  // Test-only observability (gui_test): how many PreviewRenderer instances are alive right now.
+  // The transient full-source export renderer's lifetime is what the shared-context OOM's
+  // resource ordering turns on — the rebuild cycle must not walk while the failed export's
+  // renderer still holds its full-size source texture — and this counter is the witness read:
+  // a hook fired at the rebuild's first upload captures it, where a still-alive transient shows
+  // as the baseline plus one. Atomic because the test coroutine reads it while the main thread
+  // constructs and destroys renderers.
+  static int LiveInstanceCountForTest() { return s_live_instances_for_test_.load(); }
+
+  // Test-only observability (gui_test): net live GL objects this class created minus deleted,
+  // across ALL instances (the six persistent objects each Init builds — source texture,
+  // background texture, VAO, VBO and the two programs — plus the staging-slot buffers).
+  // Deliberately NOT the C++ instance count: scope exit alone never deletes GL objects (the
+  // destructor maintains only the counter above), so "the transient is gone" and "its storage
+  // is gone" are different propositions — the resource-release witnesses read THIS counter.
+  // Shader objects are excluded by design: they are created and destroyed entirely inside Init
+  // (and its failure cleanups), never outliving it. Atomic for the same cross-thread reason.
+  static int LiveGlObjectCountForTest() { return s_live_gl_objects_for_test_.load(); }
 
   // Background image texture management (GL upload only, no file I/O)
   void UploadBgTexture(const unsigned char* data, int width, int height);
@@ -317,13 +473,70 @@ class PreviewRenderer {
   // CPU-side mirror for .lmc save: exactly one of the two vectors is non-empty, and cpu_tex_mode_
   // names it. Deliberately separate from tex_mode_ below: the GPU texture tracks what is on
   // screen and is rewritten at the poll rate, the mirror tracks what Save would write and is
-  // refreshed only at Save / Open time, so the two can legitimately disagree in between.
+  // refreshed only at Save / Open time, so the two can legitimately disagree in between — and
+  // since 814 their SIZES are separate fields too (cpu_tex_width_/height_), so a display-side
+  // failure can never resize the save source and a mirror refresh can never resize the display.
   std::vector<unsigned char> tex_data_;  // RGB uint8 (kSrgbComposited / kSrgbRadiance)
   std::vector<float> tex_xyz_data_;      // linear XYZ float (kXyz)
   XyzTextureMeta tex_xyz_meta_;          // companion of tex_xyz_data_
   TextureMode cpu_tex_mode_ = TextureMode::kSrgbComposited;
+  int cpu_tex_width_ = 0;
+  int cpu_tex_height_ = 0;
   TextureMode tex_mode_ = TextureMode::kSrgbComposited;  // what texture_ currently holds
   float tex_xyz_scale_ = 1.0f;                           // companion of texture_ under kXyz: the float16 storage scale
+  // Whether the sim layer may be SAMPLED at all. The no-image state (a revoked display, a cleared
+  // document) must not depend on "re-allocating a 1x1 black texture will succeed": after a real
+  // OOM the GL's whole state is undefined (spec §2.5), and the blank redefinition can fail just
+  // like any other allocation. While this is false, Render() passes u_sim_valid=0 and the shader
+  // skips the texture fetch entirely — the zero-energy colour (paper/black) stands in for the sky,
+  // background photo and overlay keep drawing, and NO texel of whatever the storage holds reaches
+  // the screen. Set false by ClearTexture() and ConservativeRevoke(); set true only by a verified
+  // blank (UploadBlankSimTexture) or a verified upload. Defaults true (Init's blank).
+  bool sim_layer_valid_ = true;
+  // The deferred blank's retry budget: a blank that fails (real OOM leaves the GL undefined) is
+  // re-armed for the next frame up to kMaxBlankAttempts times, then the attempt STOPS until a
+  // successful upload or a document switch re-arms it. Without the bound, every rendered frame
+  // would re-attempt an allocation and log — an unbounded retry loop outside the recovery
+  // ladder's one-cycle-per-authorization contract. The no-sample gate (sim_layer_valid_) stays
+  // closed the whole time, so stopping costs nothing visually.
+  int blank_attempts_ = 0;
+  static constexpr int kMaxBlankAttempts = 4;
+
+  // Test-only upload fault injection hook — consulted by the upload paths at each GL stage
+  // boundary. The hook receives the stage about to run and returns the GLenum error to synthesize
+  // for it (0 = let the real call proceed). The synthesized failure takes the SAME production
+  // failure branch the real error would take — there is no parallel mock path — which is what
+  // lets a gui_test witness the OOM-conservative and stage-propagation contracts on a healthy GL.
+  // Every stage whose failure contract says "the texture/storage was not touched by this attempt"
+  // (kTexImage/kTexUpdate: an ordinary GL error means the offending command was ignored with no
+  // side effect; kPboAllocate/kPboMap/kFenceWait: the call never issued) consults the hook BEFORE
+  // the real call and skips it — that end-state equivalence is what makes the injection faithful
+  // enough for pixel-readback witnesses. kPboUnmap and kFenceCreate consult after (a successful
+  // real call's end state — unmapped buffer / committed frame — matches the branch they force);
+  // kStorageMismatch is synthesized-only. Cleared by every test's scope guard; see
+  // test/gui/functional/test_preview_texture.cpp. Install through SetUploadFaultHookForTest
+  // (public, above).
+  UploadFaultHook upload_fault_hook_;
+  // The all-instances test hook above; defined in preview_renderer.cpp.
+  static UploadFaultHook s_upload_fault_hook_all_;
+  static int s_shader_compile_fault_for_test_;
+  // LiveInstanceCountForTest's counter; incremented/decremented by the constructor/destructor
+  // (defined in preview_renderer.cpp).
+  static std::atomic<int> s_live_instances_for_test_;
+  // LiveGlObjectCountForTest's counter; maintained at the glGen/glCreate and glDelete sites
+  // (defined in preview_renderer.cpp).
+  static std::atomic<int> s_live_gl_objects_for_test_;
+  // The hook's verdict for one stage, or 0 to proceed with the real call; the all-instances test
+  // hook is consulted after this instance's own.
+  int HookFaultFor(UploadResult::Stage stage) const {
+    if (upload_fault_hook_) {
+      const int forced = upload_fault_hook_(stage);
+      if (forced != 0) {
+        return forced;
+      }
+    }
+    return s_upload_fault_hook_all_ ? s_upload_fault_hook_all_(stage) : 0;
+  }
 
   // Deferred GL blank request. ClearTexture() sets this from any thread
   // (callable from coroutine workers without a GL context); Render() (main
@@ -337,7 +550,30 @@ class PreviewRenderer {
   void UploadBlankSimTexture();
 
   // GL body shared by UploadTexture / UploadRadianceTexture; see the definition.
-  void UploadUint8Texture(const unsigned char* data, int width, int height, TextureMode mode);
+  UploadResult UploadUint8Texture(const unsigned char* data, int width, int height, TextureMode mode);
+
+  // The tail both XYZ paths share, from the define call through the commit: error-checked
+  // define-or-update of the already-quantized half bits at (width, height), the level-0 storage
+  // witness, the OOM/ordinary failure branches, the staging-slot fence (only when staging_slot
+  // >= 0 — the client-memory path has no DMA in flight to guard), and on success the display
+  // commit. Caller has texture_ bound; define_data is the client pointer for a client-memory
+  // define, or null while a PIXEL_UNPACK_BUFFER is bound (the pointer-as-offset mechanism).
+  UploadResult UploadXyzBitsTail(const void* define_data, int width, int height, float scale, int staging_slot);
+
+  // Drop one staging slot's buffer object and forget its registered size, so the next cycle in
+  // that slot allocates a fresh store instead of writing into a buffer whose guard is gone (a
+  // failed fence wait, a failed fence create, a texture-stage failure whose DMA may still be
+  // reading it). Deleting a buffer that is the source of an in-flight DMA is safe: GL defers the
+  // actual deletion until the reading command completes. Main thread only (GL call).
+  void TearDownPboSlot(int slot);
+
+  // The conservative display revoke (plan 814 §3.1): after a texture-stage GL_OUT_OF_MEMORY or a
+  // storage verification that cannot witness the request, the texture's content is not
+  // trustworthy and nothing about it is sampled as a frame. Clears the display size (HasTexture()
+  // goes false), re-arms the deferred blank so the next Render() re-establishes the 1x1 sim
+  // layer first, and never touches the CPU mirror — the save source outlives the display
+  // failure by design.
+  UploadResult ConservativeRevoke(UploadResult::Stage stage, int gl_error, int req_w, int req_h);
 
   // PBO double-buffer for async XYZ texture upload (GLsync stored as void* to
   // avoid including GL headers in this header; cast to GLsync in the .cpp).
