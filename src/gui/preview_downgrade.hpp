@@ -22,8 +22,8 @@
 //    DOWNGRADING OF PREVIOUS CANDIDATES AS THE USER RETRIES. Sequential 2x2 steps applied k times
 //    to the source produce exactly the k-step box average; re-running a step over an already
 //    downgraded buffer would compound blur and, worse, make the result depend on how many failed
-//    attempts came before. DowngradeXyzPlane takes `steps` and always reads the caller's original
-//    plane.
+//    attempts came before. DowngradeXyzPlaneBounded takes `steps` and always reads the caller's
+//    original plane.
 //
 // The dual-disc layout survives untouched: each 2x2 step halves both axes, so the two discs stay
 // proportional, the packing's corner padding stays padding, and the shader's dual-fisheye inverse
@@ -31,8 +31,10 @@
 // terminates: below kMinDowngradedWidth x kMinDowngradedHeight a dual-disc pair no longer carries
 // a meaningful projection, and a candidate that small has stopped being a recovery.
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <new>
 #include <vector>
 
 #include "gui/xyz_half_codec.hpp"
@@ -72,69 +74,79 @@ inline bool DowngradedSize(int w, int h, int steps, int* out_w, int* out_h) {
   return true;
 }
 
-// One 2x2 area-average step over a linear-XYZ plane (row-major, 3 floats per texel). `src` and
-// `dst` must not alias; dst holds (src_w/2)*(src_h/2)*3 floats. Both dimensions must be even
-// (CanDowngradeOnce); a mixed odd edge would have to invent texels, and inventing radiance is
-// exactly what a recovery path may not do.
-inline void DowngradeXyzStep2x2(const float* src, int src_w, int src_h, float* dst) {
-  const int dst_w = src_w / 2;
-  const int dst_h = src_h / 2;
-  for (int y = 0; y < dst_h; ++y) {
-    const float* row0 = src + static_cast<size_t>(y * 2) * src_w * 3;
-    const float* row1 = row0 + static_cast<size_t>(src_w) * 3;
-    float* out = dst + static_cast<size_t>(y) * dst_w * 3;
-    for (int x = 0; x < dst_w; ++x) {
-      const size_t a = static_cast<size_t>(x * 2) * 3;
-      const size_t b = a + 3;
-      for (int c = 0; c < 3; ++c) {
-        // Average, not sum: the texel keeps its per-source-texel radiance unit (see the header
-        // comment, law 1). Plain quarter-sum in float; no reweighting, no gamma, no clamp —
-        // radiance is linear and unbounded.
-        out[x * 3 + c] = 0.25f * (row0[a + c] + row0[b + c] + row1[a + c] + row1[b + c]);
+// Test-only allocation-fault injection (gui/unit tests; never set in production): while the
+// counter is above zero, DowngradeXyzPlaneBounded throws std::bad_alloc from its own buffer
+// allocations, so a witness can drive the ladder's CPU-allocation failure contract without
+// exhausting real memory. Each throw consumes one count. An inline variable + setter: the
+// header-inline function consults it directly, no second definition site.
+inline std::atomic<int> g_downgrade_alloc_fault_for_test{ 0 };
+inline void SetDowngradeAllocFaultForTest(int remaining_failures) {
+  g_downgrade_alloc_fault_for_test.store(remaining_failures);
+}
+
+// ONE candidate's 2^steps box average over the CANONICAL-half input, computed directly from the
+// original plane. The working set is the destination plane plus ONE source row (canonical float +
+// half bits) — bounded no matter how large the source, which is the point: the stack this
+// replaces (a full-size canonical float plane, a full-size half plane inside the canonicalizer,
+// and a quarter-size scratch) peaked around 768 MiB of simultaneous allocations on an 8192x4096
+// source, on exactly the constrained machines the ladder serves, and every one of those
+// allocations threw std::bad_alloc straight past the failure contract.
+//
+// Same canonical values as the old canonicalize-then-step formulation: the plane-wide scale scan
+// is a read-only pass (ComputeXyzHalfScale), and each element is quantize-then-dequantize
+// through THE one codec the .lmc writer shares, applied to one row slice at a time — identical
+// per-element results. Same average-not-sum semantics. The block is accumulated in one pass, so
+// the float association differs from the nested (a+b+c+d)/4 form; the laws pin the value class
+// (constant in, constant out; average; canonical inputs; deterministic per step count), not the
+// association, and the unit tests hold both formulations' propositions against THIS function.
+//
+// Returns false only when `steps` crosses the floor (the caller's cycle already probes this —
+// the false return is a defensive same-shape answer, not a second termination authority).
+// Allocates its three buffers itself and lets std::bad_alloc propagate: the CALLER owns the
+// failure contract (app.cpp's ladder converts it into a reported upload failure), which is what
+// keeps an exhausted machine inside the latch-and-unavailable state instead of past it.
+inline bool DowngradeXyzPlaneBounded(const float* src, int w, int h, int steps, int* out_w, int* out_h,
+                                     std::vector<float>& dst) {
+  if (steps < 0 || out_w == nullptr || out_h == nullptr) {
+    return false;
+  }
+  int dw = 0;
+  int dh = 0;
+  if (!DowngradedSize(w, h, steps, &dw, &dh)) {
+    return false;
+  }
+  const int block = 1 << steps;
+  const size_t row_floats = static_cast<size_t>(w) * 3;
+  const float scale = ComputeXyzHalfScale(src, static_cast<size_t>(w) * h * 3);
+  if (g_downgrade_alloc_fault_for_test.fetch_sub(1) > 0) {
+    throw std::bad_alloc();
+  }
+  dst.assign(static_cast<size_t>(dw) * dh * 3, 0.0f);
+  std::vector<float> canon_row(row_floats);
+  std::vector<uint16_t> half_row(row_floats);
+  const float inv = 1.0f / static_cast<float>(block * block);
+  for (int oy = 0; oy < dh; ++oy) {
+    float* acc = dst.data() + static_cast<size_t>(oy) * dw * 3;
+    for (int by = 0; by < block; ++by) {
+      const float* srow = src + (static_cast<size_t>(oy) * block + by) * row_floats;
+      QuantizeXyzToHalf(srow, row_floats, scale, half_row.data());
+      DequantizeHalfToXyz(half_row.data(), row_floats, scale, canon_row.data());
+      for (int ox = 0; ox < dw; ++ox) {
+        const float* first = canon_row.data() + static_cast<size_t>(ox) * block * 3;
+        for (int bx = 0; bx < block; ++bx) {
+          for (int c = 0; c < 3; ++c) {
+            acc[ox * 3 + c] += first[bx * 3 + c];
+          }
+        }
       }
     }
-  }
-}
-
-// Apply `steps` sequential 2x2 steps, ALWAYS starting from `src` (law 2). Returns the number of
-// steps actually applied — fewer than asked only when the floor stops the ladder. `scratch` must
-// hold one INTERMEDIATE plane ((w/2)*(h/2)*3 — the largest the loop ever writes); `dst` must hold
-// only the FINAL plane and is written once, at the end (steps == 0 leaves it untouched: the
-// original is the candidate). Every intermediate lands in scratch — ping-ponging into dst would
-// overflow it, because dst is sized for the result, not for the walk.
-inline int DowngradeXyzPlane(const float* src, int w, int h, int steps, float* scratch, float* dst, int* out_w,
-                             int* out_h) {
-  int applied = 0;
-  int cw = w;
-  int ch = h;
-  const float* cur = src;
-  for (int i = 0; i < steps && CanDowngradeOnce(cw, ch); ++i) {
-    DowngradeXyzStep2x2(cur, cw, ch, scratch);
-    cur = scratch;
-    cw /= 2;
-    ch /= 2;
-    ++applied;
-  }
-  if (applied > 0) {
-    const size_t floats = static_cast<size_t>(cw) * ch * 3;
-    for (size_t i = 0; i < floats; ++i) {
-      dst[i] = cur[i];
+    for (size_t i = 0; i < static_cast<size_t>(dw) * 3; ++i) {
+      acc[i] *= inv;
     }
   }
-  *out_w = cw;
-  *out_h = ch;
-  return applied;
-}
-
-// The canonical-half input (plan 814 §3.3): quantize-then-dequantize through THE one codec the
-// .lmc writer shares, so every downgrade candidate — live or reopened — is derived from the same
-// canonical values in the same order. Lives beside the filter because the ladder is its only
-// consumer; the codec itself stays free of ladder semantics.
-inline void CanonicalizeXyzPlane(const float* src, size_t component_count, float* dst) {
-  const float scale = ComputeXyzHalfScale(src, component_count);
-  std::vector<uint16_t> half(component_count);
-  QuantizeXyzToHalf(src, component_count, scale, half.data());
-  DequantizeHalfToXyz(half.data(), component_count, scale, dst);
+  *out_w = dw;
+  *out_h = dh;
+  return true;
 }
 
 }  // namespace lumice::gui

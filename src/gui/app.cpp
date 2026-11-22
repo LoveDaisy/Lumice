@@ -736,6 +736,32 @@ static bool IsDisplayDegradedAgainstSource() {
   return disp_w > 0 && disp_h > 0 && static_cast<long>(disp_w) * disp_h < PreviewSourcePixelCount();
 }
 
+// One authorized recovery cycle against the resolver's source, run after a SHARED-CONTEXT OOM
+// revoked the preview's sampling资格 (see RenderExportFromFullSource). Either a smaller trusted
+// tier is re-established, or the explicit exhausted/no-image state stands — never continued
+// sampling of a texture nothing can vouch for. Bounded: one cycle, the same machinery a live
+// failure uses.
+static void RebuildPreviewAfterContextOom() {
+  const ResolvedPreviewSource src = ResolvePreviewSource();
+  if (src.xyz_pixels == nullptr || src.width <= 0 || src.height <= 0) {
+    return;  // nothing holds a rebuildable source; the no-image state stands
+  }
+  const XyzUploadCycle cycle =
+      RunXyzUploadCycle(src.xyz_pixels, src.width, src.height, src.serial, /*probe_full_ladder=*/true);
+  if (cycle.displayed_tier >= 0) {
+    g_recovery.xyz_tier = cycle.displayed_tier;
+    g_recovery.exhausted = false;
+    GUI_LOG_INFO("[GUI] Export: the preview was rebuilt at {}x{} after the export's out-of-memory",
+                 src.width >> (cycle.displayed_tier >= 1 ? cycle.displayed_tier - 1 : 0),
+                 src.height >> (cycle.displayed_tier >= 1 ? cycle.displayed_tier - 1 : 0));
+  } else {
+    g_recovery.exhausted = true;  // the cycle recorded its own real first failure
+    GUI_LOG_ERROR(
+        "[GUI] Export: the preview could not be rebuilt after the export's out-of-memory — "
+        "preview unavailable, source retained");
+  }
+}
+
 static std::vector<unsigned char> RenderExportFromFullSource(const PreviewParams& params, int out_w, int out_h) {
   // The resolver names the same source a Save of this document would write (one adjudication,
   // review r4); the export reads its pixels directly instead of round-tripping them through the
@@ -762,6 +788,15 @@ static std::vector<unsigned char> RenderExportFromFullSource(const PreviewParams
         "[GUI] Export: uploading the full source failed (stage={} gl_error=0x{:04X} request={}x{}) — no "
         "file written",
         UploadStageName(upload.stage), upload.gl_error, upload.request_width, upload.request_height);
+    if (upload.stage == UploadResult::Stage::kTexImage && upload.gl_error == 0x0505) {
+      // A REAL out-of-memory is a SHARED-CONTEXT fact, not the transient renderer's private one
+      // (GL spec §2.5, the ruling this file's own upload path already applies): the transient
+      // object's conservative revoke answers its own storage, not whether the preview's texture
+      // is still provable. Stop sampling the unprovable display, then rebuild one authorized
+      // cycle from the retained source — a smaller trusted tier or the explicit no-image state.
+      g_preview.RevokeDisplayForContextOom();
+      RebuildPreviewAfterContextOom();
+    }
   } else {
     rgba = RenderExportToRgba(export_renderer, params, out_w, out_h);
     if (rgba.empty()) {
@@ -2358,18 +2393,35 @@ static UploadResult UploadXyzAtTier(const float* xyz, int width, int height, int
     r.request_height = height;
     return r;
   }
-  std::vector<float> downgraded(static_cast<size_t>(dst_w) * dst_h * 3);
-  std::vector<float> scratch(static_cast<size_t>(width / 2) * (height / 2) * 3);
-  int applied_w = 0;
-  int applied_h = 0;
-  // Canonical-half input (plan 814 §3.3): the ladder's low-pass runs over the frame the .lmc
-  // codec would store — quantize-then-dequantize first, so a live frame's candidates and a
-  // reopened document's candidates are derived through the same canonical values and the same
-  // order, and the same-tier round trip stays on one input, not two nearly-equal ones.
-  std::vector<float> canonical(static_cast<size_t>(width) * height * 3);
-  CanonicalizeXyzPlane(xyz, static_cast<size_t>(width) * height * 3, canonical.data());
-  DowngradeXyzPlane(canonical.data(), width, height, steps, scratch.data(), downgraded.data(), &applied_w, &applied_h);
-  return g_preview.UploadXyzTextureNoStaging(downgraded.data(), applied_w, applied_h);
+  // The bounded candidate (see DowngradeXyzPlaneBounded): canonical-half input, one-pass box
+  // average, and a working set of the destination plane plus ONE source row — no full-size
+  // canonical plane, no full-size half plane, no quarter scratch. A machine too tight for even
+  // that fails the allocation, and the failure is REPORTED like any other stage: an
+  // std::bad_alloc escaping the recovery state machine would terminate the process exactly when
+  // the latch-and-unavailable state is what the plan asks for.
+  try {
+    std::vector<float> downgraded;
+    int applied_w = 0;
+    int applied_h = 0;
+    if (!DowngradeXyzPlaneBounded(xyz, width, height, steps, &applied_w, &applied_h, downgraded)) {
+      UploadResult r;
+      r.stage = UploadResult::Stage::kInvalidInput;
+      r.request_width = width;
+      r.request_height = height;
+      return r;
+    }
+    return g_preview.UploadXyzTextureNoStaging(downgraded.data(), applied_w, applied_h);
+  } catch (const std::bad_alloc&) {
+    GUI_LOG_ERROR(
+        "[GUI] Ladder: host allocation failed for a {}x{} recovery candidate — reported as a "
+        "failed stage",
+        width, height);
+    UploadResult r;
+    r.stage = UploadResult::Stage::kCpuAllocation;
+    r.request_width = width;
+    r.request_height = height;
+    return r;
+  }
 }
 
 // Run ONE authorized recovery cycle: candidate 0 upward, stopping at the first success, each
@@ -2448,6 +2500,17 @@ bool ShouldApplyStats(const PreviewSnapshot& snap, uint64_t committed_epoch) {
 // upload branch falls back to the XYZ float path (AC4 zero-regression).
 bool ShouldUseCompositeUpload(bool payload_is_composite, bool show_composite_preview) {
   return payload_is_composite && show_composite_preview;
+}
+
+// The effective composite preference: the user's toggle MINUS the channel-B-R exclusion — the
+// diagnostic reads B-R off the NORMAL (full-spectrum) picture, so while it is on screen the
+// composite preference is read as off (the toggle itself is untouched and applies again the
+// moment the display mode changes back). ONE adjudication for SyncFromPoller's live upload,
+// Retry's target mode and both success commits: the r5 finding had Retry recompute the
+// preference without the exclusion, so a B-R-mode retry of a failed composite frame uploaded
+// the palette instead of the spectrum and recorded the display mode to match.
+static bool EffectiveShowCompositePreview() {
+  return g_state.show_composite_preview && !IsChannelBrDisplay(g_state.renderer);
 }
 
 // task-345.4 fire-branch gate — see app.hpp. Combines the standard serial-dedup gate and the
@@ -2742,7 +2805,7 @@ void SyncFromPoller() {
   // of BuildScene leaves it at normal), so the server keeps producing the composite regardless. The
   // CLI's twin is DoSnapshot's composite skip. Fed into BOTH predicates below, which is what turns a
   // mode flip into an immediate re-upload through their mode-change OR-branch.
-  const bool show_composite = g_state.show_composite_preview && !IsChannelBrDisplay(g_state.renderer);
+  const bool show_composite = EffectiveShowCompositePreview();
   const bool effective_composite =
       payload != nullptr && ShouldUseCompositeUpload(payload->is_composite, show_composite);
 
@@ -2844,6 +2907,11 @@ void SyncFromPoller() {
       g_state.texture_upload_count++;
       g_state.last_uploaded_texture_serial = snap->texture_serial;  // record exact-once cursor
       g_state.upload_latched = false;
+      // And the recovery state: an ACCEPTED frame is the situation the exhausted flag describes
+      // being over. A DoContinue re-commit (new epoch) can un-latch an exhausted generation and
+      // its very next upload succeeds — without this clear, the panel would keep reporting the
+      // preview unavailable under a full-size picture that just got accepted.
+      g_recovery.exhausted = false;
       // Auto-EV. The anchor is the SERVER's sky radiance (LUMICE_RawXyzResult::anchor_l99_sky),
       // the same scalar RenderConsumer::ExposureScale divides by, so the preview and a CLI render
       // of this document are exposed against one number rather than two that were argued to agree
@@ -2990,7 +3058,7 @@ void RetryPreviewUpload() {
     }
   } else {
     const TexturePayload& payload = *target;
-    const bool use_composite = ShouldUseCompositeUpload(payload.is_composite, g_state.show_composite_preview);
+    const bool use_composite = ShouldUseCompositeUpload(payload.is_composite, EffectiveShowCompositePreview());
     if (use_composite) {
       // A composite keeps its own display semantics: the composite bake is uint8 and the
       // ladder's linear-radiance low-pass does not apply to it — one plain re-upload, success or

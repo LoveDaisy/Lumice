@@ -32,12 +32,14 @@
 #include <chrono>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <functional>
 #include <memory>
 #include <string>
 #include <vector>
 
 #include "gui/gui_state.hpp"
+#include "gui/preview_downgrade.hpp"
 #include "test_gui_shared.hpp"
 
 // Local spellings for the run-driven cases (same shape as test_run_lifecycle.cpp's).
@@ -88,6 +90,15 @@ struct FaultUploadRequest {
   std::atomic<bool> bg_done{ false };
   std::atomic<bool> custom_hook_requested{ false };
   std::atomic<bool> custom_hook_installed{ false };
+  std::atomic<bool> allhook_requested{ false };
+  std::atomic<bool> allhook_installed{ false };
+  std::atomic<bool> allhook_clear_requested{ false };
+  std::atomic<bool> allhook_cleared{ false };
+  std::atomic<bool> init_probe_requested{ false };
+  std::atomic<bool> init_probe_done{ false };
+  bool init_probe_result = false;
+  bool init_probe_upload_ok = false;
+  bool init_probe_has_texture = false;
   std::atomic<bool> retry_requested{ false };
   std::atomic<bool> retry_done{ false };
   std::atomic<bool> dfe_requested{ false };  // dual-fisheye equal-area export (no-dialog seam)
@@ -121,6 +132,15 @@ struct FaultUploadRequest {
     bg_done = false;
     custom_hook_requested = false;
     custom_hook_installed = false;
+    allhook_requested = false;
+    allhook_installed = false;
+    allhook_clear_requested = false;
+    allhook_cleared = false;
+    init_probe_requested = false;
+    init_probe_done = false;
+    init_probe_result = false;
+    init_probe_upload_ok = false;
+    init_probe_has_texture = false;
     retry_requested = false;
     retry_done = false;
     dfe_requested = false;
@@ -170,6 +190,26 @@ void FaultUploadGuiFunc(ImGuiTestContext* /*ctx*/) {
   if (g_fault.custom_hook_requested && !g_fault.custom_hook_installed) {
     gui::g_preview.SetUploadFaultHookForTest(g_custom_hook);
     g_fault.custom_hook_installed = true;
+  }
+  if (g_fault.allhook_requested && !g_fault.allhook_installed) {
+    gui::PreviewRenderer::SetUploadFaultHookForAllForTest(g_custom_hook);
+    g_fault.allhook_installed = true;
+  }
+  if (g_fault.allhook_clear_requested && !g_fault.allhook_cleared) {
+    gui::PreviewRenderer::SetUploadFaultHookForAllForTest(nullptr);
+    g_fault.allhook_cleared = true;
+  }
+  if (g_fault.init_probe_requested && !g_fault.init_probe_done) {
+    // A THROWAWAY renderer: Init's partial-failure exits must leave a context the next Init can
+    // build a fully working renderer in.
+    gui::PreviewRenderer probe;
+    g_fault.init_probe_result = probe.Init();
+    if (g_fault.init_probe_result) {
+      static const float px[3] = { 0.25f, 0.5f, 0.75f };
+      g_fault.init_probe_upload_ok = probe.UploadXyzTexture(px, 1, 1).ok;
+      g_fault.init_probe_has_texture = probe.HasTexture();
+    }
+    g_fault.init_probe_done = true;
   }
   if (g_fault.hook_clear_requested && !g_fault.hook_cleared) {
     gui::g_preview.SetUploadFaultHookForTest(nullptr);
@@ -238,6 +278,43 @@ void SetCustomHookAndWait(ImGuiTestContext* ctx, std::function<int(gui::UploadRe
   g_fault.custom_hook_requested = true;
   ctx->Yield(2);
   IM_CHECK(g_fault.custom_hook_installed);
+}
+
+// Install (or clear) the ALL-instances upload hook through the main-thread channel — the
+// degraded-export witness fails the transient full-source renderer this way. Shares the
+// g_custom_hook slot with the per-instance custom hook; install one at a time.
+void SetAllHookAndWait(ImGuiTestContext* ctx, std::function<int(gui::UploadResult::Stage)> hook) {
+  g_fault.Reset();
+  g_custom_hook = std::move(hook);
+  if (g_custom_hook) {
+    g_fault.allhook_requested = true;
+    ctx->Yield(2);
+    IM_CHECK(g_fault.allhook_installed);
+  } else {
+    g_fault.allhook_clear_requested = true;
+    ctx->Yield(2);
+    IM_CHECK(g_fault.allhook_cleared);
+  }
+}
+
+// Run Init on a THROWAWAY renderer on the main thread and report what happened (Init result and,
+// when it succeeded, whether the renderer then takes a verified upload).
+struct InitProbeResult {
+  bool ran = false;
+  bool init_ok = false;
+  bool upload_ok = false;
+  bool has_texture = false;
+};
+InitProbeResult RunInitProbe(ImGuiTestContext* ctx) {
+  g_fault.init_probe_requested = true;
+  g_fault.init_probe_done = false;
+  ctx->Yield(2);
+  InitProbeResult out;
+  out.ran = g_fault.init_probe_done;
+  out.init_ok = g_fault.init_probe_result;
+  out.upload_ok = g_fault.init_probe_upload_ok;
+  out.has_texture = g_fault.init_probe_has_texture;
+  return out;
 }
 
 // Drive one explicit retry through the production entry on the main thread (the ladder and the
@@ -334,6 +411,29 @@ bool DriveUntil(ImGuiTestContext* ctx, Pred pred, int timeout_s) {
     ctx->Yield();
   }
   return true;
+}
+
+// A color class whose ref matches every ray of the default document's only placement — the
+// minimal raypath_color configuration that makes a real server produce composite payloads (same
+// shape as the color-window suite's class factory).
+gui::ColorClassRefConfig MakeColorMatchAllRef() {
+  gui::ColorClassRefConfig ref;
+  ref.layer_idx = 0;
+  ref.crystal_pool_id = gui::g_state.layers[0].entries[0].crystal_id;
+  ref.match_all = true;
+  return ref;
+}
+
+gui::ColorClassConfig MakeColorMatchAllClass(float r, float g, float b, int z_order) {
+  gui::ColorClassConfig cls;
+  cls.color[0] = r;
+  cls.color[1] = g;
+  cls.color[2] = b;
+  cls.visible = true;
+  cls.solo = false;
+  cls.z_order = z_order;
+  cls.match.push_back(MakeColorMatchAllRef());
+  return cls;
 }
 
 // A real server scope for the run-driven cases (same borrow-set as test_run_lifecycle.cpp's
@@ -1705,6 +1805,263 @@ void RegisterPreviewTextureTests(ImGuiTestEngine* engine) {
       std::remove(path.c_str());
       std::remove(png_a.c_str());
       std::remove(png_b.c_str());
+    };
+  }
+
+  // The retry's display-mode adjudication is the SAME one the live upload uses, channel-B-R
+  // exclusion included. The r5 fork: Retry read the raw toggle, so with the diagnostic on screen
+  // a failed composite frame's retry uploaded the raypath PALETTE and recorded the display mode
+  // to match — while the live path was preferring the full-spectrum XYZ bytes for that very
+  // display. Driven through production: a composite-producing run displays its composite; the
+  // diagnostic flips on, the mode-change XYZ upload is forced to fail (the composite payload is
+  // retained); the retry must re-attempt the SPECTRUM and record the XYZ shape.
+  {
+    ImGuiTest* t =
+        IM_REGISTER_TEST(engine, "preview_texture", "a_retry_prefers_the_spectrum_when_the_br_diagnostic_is_on_screen");
+    t->GuiFunc = FaultUploadGuiFunc;
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ScopedRunServer scene;
+      IM_CHECK(scene.ok());
+      SetFaultAndWait(ctx, -1, 0);
+      gui::g_state.raypath_color.push_back(MakeColorMatchAllClass(1.0f, 0.0f, 0.0f, /*z_order=*/0));
+      gui::g_state.show_composite_preview = true;
+      gui::g_state.renderer.display_mode = LUMICE_DISPLAY_MODE_NORMAL;
+
+      SeedFiniteRun(/*millions=*/0.1f);
+      gui::DoRun(/*user_initiated=*/true);
+      // The composite lands first (the composite-producing fact the fork depends on), visibly in
+      // the display mode record.
+      IM_CHECK(WaitForSimRestartAtLeast(ctx, /*baseline_upload_count=*/0, /*timeout_ms=*/20000));
+      IM_CHECK(gui::g_state.last_uploaded_as_composite);
+      IM_CHECK(gui::g_preview.GetTextureMode() == gui::PreviewRenderer::TextureMode::kSrgbRadiance);
+
+      // The diagnostic flips on; the very next sync re-uploads the same frame as XYZ. That
+      // upload — and only that upload — is forced to fail, so the retained frame is the
+      // composite payload.
+      SetFaultAndWait(ctx, static_cast<int>(gui::UploadResult::Stage::kTexImage), kGlInvalidValue);
+      gui::g_state.renderer.display_mode = LUMICE_DISPLAY_MODE_CHANNEL_BR;
+      IM_CHECK(DriveUntil(ctx, [] { return gui::g_state.upload_latched; }, 20));
+      IM_CHECK(DriveUntil(
+          ctx,
+          [] {
+            return gui::g_state.sim_state == SimState::kDone && gui::g_state.run_intent == RunIntent::kRunCompleted;
+          },
+          20));
+      ctx->Yield(2);
+
+      // The retry re-attempts the spectrum: XYZ on the GPU, the mode record saying so, and the
+      // retained frame accepted exactly once by THE RETRY (the baseline is read while still
+      // latched — no upload can run between it and the retry call — so the delta measures the
+      // retry alone; the run's own tail frames may still be accepted afterwards and are not
+      // this witness).
+      SetFaultAndWait(ctx, -1, 0);
+      const unsigned long long baseline = gui::g_state.texture_upload_count;
+      RetryAndWait(ctx);
+      IM_CHECK(gui::g_preview.HasTexture());
+      IM_CHECK(gui::g_preview.GetTextureMode() == gui::PreviewRenderer::TextureMode::kXyz);
+      IM_CHECK(!gui::g_state.last_uploaded_as_composite);
+      // At least the retry's own commit: the run's tail frames may still be accepted inside the
+      // same yield window (the latch cleared at the retry's authorization), so an exact delta
+      // would measure scheduling, not the contract.
+      IM_CHECK_GE(gui::g_state.texture_upload_count, baseline + 1);
+      IM_CHECK(gui::g_preview.GetTextureWidth() == 1024);
+      IM_CHECK(gui::g_preview.GetTextureHeight() == 512);
+    };
+  }
+
+  // The degraded export's out-of-memory is a SHARED-CONTEXT fact: when the transient full-source
+  // renderer's upload hits a real OOM, the export fails explicitly AND the preview stops
+  // sampling a texture nothing can vouch for — one authorized rebuild cycle runs against the
+  // retained source, and failing that, the explicit unavailable state stands with the source
+  // intact and the retry exit open.
+  {
+    ImGuiTest* t =
+        IM_REGISTER_TEST(engine, "preview_texture", "an_export_oom_revokes_and_rebuilds_the_preview_it_threatened");
+    t->GuiFunc = FaultUploadGuiFunc;
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      SetFaultAndWait(ctx, -1, 0);
+      constexpr int kW = 256;
+      constexpr int kH = 128;
+      const std::vector<float> baked = XyzCoordinatePattern(kW, kH, /*seed=*/38);
+      const std::string path = GuiTestTempPath("lumice_preview_texture_export_oom.lmc").string();
+      gui::XyzTextureMeta meta;
+      meta.snapshot_intensity = 7.0f;
+      IM_CHECK(WriteXyzLmcFile(path, baked, kW, kH, meta));
+
+      // Degraded open: the two full-size candidates fail, tier 2 displays.
+      SetCustomHookAndWait(ctx,
+                           FailFirstNThenPass(gui::UploadResult::Stage::kTexImage, /*fail_count=*/2, kGlOutOfMemory));
+      g_open_requested = true;
+      g_open_done = false;
+      g_open_path = path;
+      YieldUntilOpenDone(ctx);
+      IM_CHECK(g_open_done);
+      ctx->Yield(2);
+      IM_CHECK_EQ(gui::g_preview.GetTextureWidth(), kW / 2);
+
+      // Every renderer in the context now fails texture defines with a REAL-looking OOM: the
+      // export's transient upload, and the rebuild cycle the revoke arms.
+      SetAllHookAndWait(ctx, [](gui::UploadResult::Stage st) -> int {
+        return st == gui::UploadResult::Stage::kTexImage ? kGlOutOfMemory : 0;
+      });
+      const std::string png = GuiTestTempPath("lumice_preview_texture_export_oom.png").string();
+      std::remove(png.c_str());
+      IM_CHECK(!ExportDualFisheyeAndWait(ctx, png));
+      IM_CHECK(!std::filesystem::exists(png));  // no file, not even a partial one
+      // The preview was revoked and the rebuild failed: the explicit no-image state, not the
+      // pre-export degraded picture still being sampled.
+      IM_CHECK(!gui::g_preview.HasTexture());
+      IM_CHECK(gui::g_preview.HasCpuTexture());  // the source is intact
+      IM_CHECK_EQ(gui::PreviewRecoveryNoticeKind(), 2);
+      IM_CHECK(gui::PreviewRecoveryRetryAvailable());
+      const gui::PreviewUploadIncident incident = gui::GetPreviewUploadIncident();
+      IM_CHECK(incident.has_incident);
+      IM_CHECK(incident.stage == static_cast<int>(gui::UploadResult::Stage::kTexImage));
+      IM_CHECK_EQ(incident.gl_error, kGlOutOfMemory);
+      IM_CHECK_EQ(incident.request_width, kW);
+      IM_CHECK_EQ(incident.request_height, kH);
+
+      // The failure is over: the retained source recovers the display in full.
+      SetAllHookAndWait(ctx, nullptr);
+      RetryAndWait(ctx);
+      IM_CHECK(gui::g_preview.HasTexture());
+      IM_CHECK_EQ(gui::g_preview.GetTextureWidth(), kW);
+      IM_CHECK_EQ(gui::g_preview.GetTextureHeight(), kH);
+
+      std::remove(path.c_str());
+    };
+  }
+
+  // A host allocation failure inside the recovery ladder is a REPORTED stage, not a process
+  // exit: the bounded candidate's buffers throw, the ladder converts the throw, the cycle
+  // exhausts into the explicit unavailable state with the source intact — and a retry after the
+  // machine eased up recovers in full.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "preview_texture",
+                                    "an_allocation_failure_in_the_ladder_lands_in_the_unavailable_state");
+    t->GuiFunc = FaultUploadGuiFunc;
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      SetFaultAndWait(ctx, -1, 0);
+      constexpr int kW = 256;
+      constexpr int kH = 128;
+      const std::vector<float> baked = XyzCoordinatePattern(kW, kH, /*seed=*/39);
+      const std::string path = GuiTestTempPath("lumice_preview_texture_alloc_fail.lmc").string();
+      gui::XyzTextureMeta meta;
+      meta.snapshot_intensity = 7.0f;
+      IM_CHECK(WriteXyzLmcFile(path, baked, kW, kH, meta));
+
+      // The two full-size candidates fail; the prefiltered candidate's host allocation throws.
+      SetCustomHookAndWait(ctx,
+                           FailFirstNThenPass(gui::UploadResult::Stage::kTexImage, /*fail_count=*/2, kGlOutOfMemory));
+      lumice::gui::SetDowngradeAllocFaultForTest(/*remaining_failures=*/1);
+      g_open_requested = true;
+      g_open_done = false;
+      g_open_path = path;
+      YieldUntilOpenDone(ctx);
+      IM_CHECK(g_open_done);
+      ctx->Yield(2);
+      lumice::gui::SetDowngradeAllocFaultForTest(/*remaining_failures=*/0);
+
+      IM_CHECK(!gui::g_preview.HasTexture());
+      IM_CHECK(gui::g_preview.HasCpuTexture());
+      IM_CHECK_EQ(gui::PreviewRecoveryNoticeKind(), 2);
+      IM_CHECK(gui::PreviewRecoveryRetryAvailable());
+      // The incident stays the cycle's REAL first failure (the prefiltered candidate's alloc
+      // failure was the LAST candidate's stage; the throw having become a reported, survived
+      // failure is witnessed by the process reaching these asserts with the explicit
+      // unavailable state standing).
+      const gui::PreviewUploadIncident incident = gui::GetPreviewUploadIncident();
+      IM_CHECK(incident.has_incident);
+      IM_CHECK(incident.stage == static_cast<int>(gui::UploadResult::Stage::kTexImage));
+      IM_CHECK_EQ(incident.gl_error, kGlOutOfMemory);
+
+      // The machine eased up: the same retained source recovers the display in full, and the
+      // document still saves its own complete bytes.
+      SetFaultAndWait(ctx, -1, 0);
+      RetryAndWait(ctx);
+      IM_CHECK(gui::g_preview.HasTexture());
+      IM_CHECK_EQ(gui::g_preview.GetTextureWidth(), kW);
+      const std::string saved = GuiTestTempPath("lumice_preview_texture_alloc_fail_saved.lmc").string();
+      IM_CHECK(gui::SaveLmcFile(saved, gui::g_state, gui::g_preview, /*save_texture=*/true));
+      {
+        gui::GuiState scratch;
+        gui::LmcTexture tex;
+        IM_CHECK(gui::LoadLmcFile(saved, scratch, tex));
+        IM_CHECK_EQ(tex.width, kW);
+        IM_CHECK_EQ(tex.height, kH);
+      }
+
+      std::remove(path.c_str());
+      std::remove(saved.c_str());
+    };
+  }
+
+  // A successful acceptance ends the exhausted situation it describes being over: a generation
+  // whose every candidate failed, followed by a Continue re-commit (a new epoch that un-latches
+  // the old one), must leave the notice gone and the retry exit closed once a real frame is
+  // accepted — the r5 defect had the panel reporting "unavailable" under a full-size picture.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "preview_texture", "an_accepted_frame_clears_the_exhausted_state");
+    t->GuiFunc = FaultUploadGuiFunc;
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ScopedRunServer scene;
+      IM_CHECK(scene.ok());
+      SetFaultAndWait(ctx, -1, 0);
+      SetFaultAndWait(ctx, static_cast<int>(gui::UploadResult::Stage::kTexImage), kGlInvalidValue);
+      SeedFiniteRun(/*millions=*/0.1f);
+      gui::DoRun(/*user_initiated=*/true);
+      IM_CHECK(DriveUntil(ctx, [] { return gui::g_state.upload_latched; }, 20));
+      IM_CHECK_EQ(gui::PreviewRecoveryNoticeKind(), 2);
+      IM_CHECK(DriveUntil(
+          ctx,
+          [] {
+            return gui::g_state.sim_state == SimState::kDone && gui::g_state.run_intent == RunIntent::kRunCompleted;
+          },
+          20));
+
+      // Continue re-commits the same document under a new epoch; the uploads succeed now.
+      SetFaultAndWait(ctx, -1, 0);
+      IM_CHECK(gui::DoContinue());
+      IM_CHECK(DriveUntil(
+          ctx,
+          [] {
+            return gui::g_state.sim_state == SimState::kDone && gui::g_state.run_intent == RunIntent::kRunCompleted;
+          },
+          30));
+      IM_CHECK(WaitForSimRestartAtLeast(ctx, /*baseline_upload_count=*/0, /*timeout_ms=*/20000));
+      ctx->Yield(2);
+      IM_CHECK(gui::g_preview.HasTexture());
+      IM_CHECK_EQ(gui::g_preview.GetTextureWidth(), 1024);
+      IM_CHECK_EQ(gui::g_preview.GetTextureHeight(), 512);
+      IM_CHECK_EQ(gui::PreviewRecoveryNoticeKind(), 0);
+      IM_CHECK(!gui::PreviewRecoveryRetryAvailable());
+    };
+  }
+
+  // Init's partial-failure exits reclaim what they created: a renderer whose first Init fails
+  // mid-shader-compile leaves a context the next Init builds a fully working renderer in — the
+  // transient full-source export renderer can fail init repeatedly inside a live application,
+  // and every leaked shader or program would stay in a context that keeps running.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "preview_texture", "a_failed_init_leaves_a_buildable_context");
+    t->GuiFunc = FaultUploadGuiFunc;
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      SetFaultAndWait(ctx, -1, 0);
+
+      gui::PreviewRenderer::SetShaderCompileFaultForTest(/*remaining_failures=*/1);
+      const InitProbeResult failed = RunInitProbe(ctx);
+      IM_CHECK(failed.ran);
+      IM_CHECK(!failed.init_ok);
+
+      gui::PreviewRenderer::SetShaderCompileFaultForTest(/*remaining_failures=*/0);
+      const InitProbeResult recovered = RunInitProbe(ctx);
+      IM_CHECK(recovered.ran);
+      IM_CHECK(recovered.init_ok);
+      IM_CHECK(recovered.upload_ok);
+      IM_CHECK(recovered.has_texture);
     };
   }
 }
