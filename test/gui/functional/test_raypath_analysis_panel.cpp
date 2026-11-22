@@ -6497,6 +6497,24 @@ bool SupportEdgeLayersShareOneStrokeAndGateIndependently(ImGuiTestContext* ctx) 
   ScopedServerGuard guard;
   IM_CHECK_RETV(BringUpScene(ctx, kFullyRandomJson, /*infinite=*/false, /*gpu=*/false), false);
   OpenWindow(ctx);
+  // AC1's entry legs, before any selection exists: the view opens through its main-window
+  // entry (no class selected — the window is openable in every state, §16.3), and the popup's
+  // rows all stand with the absence note naming the empty document instead of disabling
+  // anything. The Layers button is unconditional by construction (no data-state gate wraps its
+  // submission), so these two extreme states carry the states in between.
+  ctx->ItemClick("**/Raypath view###main_raypath_open");
+  ctx->Yield(2);
+  ctx->ItemClick("**/Layers##map_layers");
+  ctx->Yield(2);
+  IM_CHECK_RETV(ctx->ItemInfo("**/Support range", ImGuiTestOpFlags_NoError).ID != 0, false);
+  IM_CHECK_RETV(ctx->ItemInfo("**/Sharp edges", ImGuiTestOpFlags_NoError).ID != 0, false);
+  IM_CHECK_RETV(ctx->ItemInfo("**/Red-blue shift", ImGuiTestOpFlags_NoError).ID != 0, false);
+  IM_CHECK_RETV(ctx->ItemInfo("**/Reflection turns", ImGuiTestOpFlags_NoError).ID != 0, false);
+  const std::string popup_text = CaptureMapFrameText(ctx);
+  IM_CHECK_RETV(popup_text.find("no document") != std::string::npos, false);
+  ctx->PopupCloseAll();
+  ctx->WindowClose("//Raypath view");
+  ctx->Yield(2);
   IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
   SetListRef(ctx);
   ctx->ItemClick("**/3-5");
@@ -6658,6 +6676,18 @@ bool SupportEdgeLayersShareOneStrokeAndGateIndependently(ImGuiTestContext* ctx) 
     // while every analysis layer's entry is gone.
     IM_CHECK_RETV(legend.anchor_sun && legend.anchor_zenith && legend.anchor_horizon, false);
   }
+  // The master gate never owns the preferences: with it OFF the popup still opens and the
+  // switches still edit (edge flips and flips back — no ink either way, the storage is what
+  // changes), and the master-on restore below proves the groups' choices survived.
+  ctx->ItemClick("**/Layers##map_layers");
+  ctx->Yield(2);
+  ctx->ItemClick("**/Sharp edges");
+  ctx->Yield(2);
+  IM_CHECK_RETV(MapWindowIndexCountForColour(gui::kSurveyArcInk) == 0, false);
+  ctx->ItemClick("**/Sharp edges");
+  ctx->Yield(2);
+  ctx->PopupCloseAll();
+  ctx->Yield(2);
   ctx->ItemClick("**/Overlays##map");
   ctx->Yield(3);
   IM_CHECK_RETV(MapWindowIndexCountForColour(gui::kSurveyArcInk) == total_before_master, false);
