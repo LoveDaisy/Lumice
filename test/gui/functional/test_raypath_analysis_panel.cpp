@@ -6958,6 +6958,20 @@ bool InnerEdgeObjectSelectsFromTextAndArc(ImGuiTestContext* ctx) {
     ctx->MouseUp(0);
     ctx->Yield(2);
     IM_CHECK_RETV(!gui::g_state.analysis.inner_edge_selected, false);
+    // The out-and-back press: past the drag threshold and RETURNED to the press point reads a
+    // zero net displacement, but the press did drag — the hold's latch (the camera orbit's own
+    // predicate) kills the selection where a release-frame delta check would not.
+    ctx->MouseMoveToPos(*arc_point);
+    ctx->Yield(2);
+    ctx->MouseDown(0);
+    ctx->Yield(2);
+    ctx->MouseMoveToPos(ImVec2(arc_point->x + gui::UiPx(14.0f), arc_point->y + gui::UiPx(6.0f)));
+    ctx->Yield(2);
+    ctx->MouseMoveToPos(*arc_point);
+    ctx->Yield(2);
+    ctx->MouseUp(0);
+    ctx->Yield(2);
+    IM_CHECK_RETV(!gui::g_state.analysis.inner_edge_selected, false);
   }
   // The text entry's click: the selection commits against the adopted identity, the readings
   // expander opens with the object selected, and the four readings name their calibers.

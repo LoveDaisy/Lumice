@@ -1959,6 +1959,12 @@ struct GuiState {
     // structure selection fires only for a plain camera press. Frame-transient interaction
     // state, session tier (a document switch clears it with the session).
     int map_canvas_press_owner = 0;  // PanoramaPressOwner as int; 0 = kNone
+    // The same press's drag latch: set on any held frame where IsMouseDragging (the camera
+    // orbit's own predicate) reads true, read and cleared on the release frame. The latch, not
+    // the release-time delta, is the stationary judgement — GetMouseDragDelta returns the LAST
+    // position's offset, so an out-and-back drag (past the threshold, back to the press point,
+    // release) reads zero and would masquerade as a stationary click.
+    bool map_canvas_dragged_beyond_threshold = false;
     // The sun the frozen scene binding was built with, captured at DoAnalyze (the GUI's sun is
     // always due north). The map request's window geometry derives from the sun the ENGINE will
     // evaluate against — the executor's frozen scene, not the live document, which the user may

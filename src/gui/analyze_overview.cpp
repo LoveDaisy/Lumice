@@ -315,10 +315,17 @@ void BuildInnerEdgeView(const LUMICE_PathSurvey& result, SurveyOverviewModel* mo
   if (model->arm != SurveyArm::kFullDimensional) {
     return;
   }
-  // The qualified edge card: the first concluded (certified/finite) card that declares
-  // coincidence with the support set — the shared stroke's own productioner declaration, never a
-  // GUI-side tolerance re-derivation. An unevaluated or refused card, or one the engine does not
-  // declare coincident, is not the object.
+  // The qualified edge card: the first card that is CONCLUDED, declares coincidence with the
+  // support set, and carries the closed-form certificate. The certificate is the lower-end
+  // proof, not decoration: the producer certifies only an interior-minimum fold (the closed form
+  // is the minimum-deviation identity), and the support's lower bound IS that minimum — so a
+  // certified coincident card is the support's inner bound, and "light begins outside" follows.
+  // A merely finite coincident card may be the support's UPPER bound (the producer's
+  // coincidence flag covers both ends; the max-fold corpus document delivers exactly such an
+  // upper card at ~149.085° with no certificate), where the outside of the circle is the dark
+  // side — upgrading it would invert the physics, so it keeps its existing flat presentation.
+  // The gate is the producers' own words end to end; no GUI-side tolerance or direction
+  // re-derivation.
   for (size_t i = 0; i < model->object_count; ++i) {
     LUMICE_PathSurveyObject obj{};
     obj.struct_size = sizeof(obj);
@@ -329,7 +336,8 @@ void BuildInnerEdgeView(const LUMICE_PathSurvey& result, SurveyOverviewModel* mo
     }
     LUMICE_PathSurveyEdge card{};
     card.struct_size = sizeof(card);
-    if (LUMICE_PathSurveyGetEdge(&result, i, &card) != LUMICE_PATH_READ_OK || card.coincident_with_support == 0) {
+    if (LUMICE_PathSurveyGetEdge(&result, i, &card) != LUMICE_PATH_READ_OK || card.coincident_with_support == 0 ||
+        card.certificate_available == 0) {
       continue;
     }
     view.qualified = true;

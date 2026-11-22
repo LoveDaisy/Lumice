@@ -1960,6 +1960,177 @@ TEST_F(ReferenceArcDraw, NonCoincidentEdgeNeverMergesEvenAtTheSameDelta) {
 
 // The labels split: a group's labels bit hides its readouts and keeps its ink; the graphics bit
 // removes both. Hiding labels never hides ink, and hiding ink removes the labels with it.
+// The coincidence identity holds across the display gates (the pickable rule's foundation): the
+// association is built from the producers' own declarations BEFORE any gate, so a coincident
+// edge whose position is NOT bit-equal to its bound keeps the identity when only the support's
+// gate shows the stroke — hiding an owner changes visibility, never the object identity, and no
+// numeric comparison re-derives the pairing.
+TEST_F(ReferenceArcDraw, CoincidenceIdentityHoldsAcrossTheDisplayGates) {
+  const ViewProjection vp = RectangularCamera();
+  SurveyOverlayFacts facts = ReachFacts(21.916, 43.5);
+  SurveyOverlayFacts::EdgeArc edge = EdgeFact(21.916 + 5e-12, /*coincident=*/true, /*concluded=*/true);
+  edge.object_index = 0;  // NOT bit-equal to the bound: one tolerance step off
+  facts.edges.push_back(edge);
+
+  // Both gates on: the shared stroke — one submission, both display owners, the identity on it.
+  {
+    ReferenceArcInput in = ArcInput(vp);
+    in.reach.graphics = in.reach.labels = true;
+    in.edge.graphics = in.edge.labels = true;
+    std::vector<ReferenceArcStroke> sink;
+    in.stroke_sink = &sink;
+    ImDrawList* dl = ImGui::GetBackgroundDrawList();
+    DrawReferenceArcs(dl, facts, in);
+    ASSERT_EQ(sink.size(), 2u) << "the shared stroke plus the far bound";
+    const ReferenceArcStroke* shared = nullptr;
+    for (const ReferenceArcStroke& stroke : sink) {
+      if (stroke.owned_by_edge) {
+        shared = &stroke;
+      }
+    }
+    ASSERT_NE(shared, nullptr);
+    EXPECT_TRUE(shared->carries_edge_identity);
+    EXPECT_EQ(shared->edge_object_index, 0u);
+    EXPECT_TRUE(shared->owned_by_reach);
+  }
+  FreshFrame();
+  // The edge gate OFF, the support's gate alone: the same bound carries the identity — the
+  // visible stroke is still the object's, pickable and selectable.
+  {
+    ReferenceArcInput in = ArcInput(vp);
+    in.reach.graphics = in.reach.labels = true;
+    in.edge.graphics = in.edge.labels = false;
+    std::vector<ReferenceArcStroke> sink;
+    in.stroke_sink = &sink;
+    ImDrawList* dl = ImGui::GetBackgroundDrawList();
+    DrawReferenceArcs(dl, facts, in);
+    ASSERT_EQ(sink.size(), 2u);
+    const ReferenceArcStroke* bound_stroke = nullptr;
+    for (const ReferenceArcStroke& stroke : sink) {
+      EXPECT_FALSE(stroke.owned_by_edge) << "the display ownership follows the gates";
+      if (stroke.carries_edge_identity) {
+        bound_stroke = &stroke;
+      }
+    }
+    ASSERT_NE(bound_stroke, nullptr);
+    EXPECT_EQ(bound_stroke->edge_object_index, 0u);
+    EXPECT_TRUE(bound_stroke->owned_by_reach);
+  }
+  FreshFrame();
+  // The support's gate OFF, the edge's alone: the solo stroke carries the same identity — both
+  // visibility states locate the SAME object.
+  {
+    ReferenceArcInput in = ArcInput(vp);
+    in.reach.graphics = in.reach.labels = false;
+    in.edge.graphics = in.edge.labels = true;
+    std::vector<ReferenceArcStroke> sink;
+    in.stroke_sink = &sink;
+    ImDrawList* dl = ImGui::GetBackgroundDrawList();
+    DrawReferenceArcs(dl, facts, in);
+    ASSERT_EQ(sink.size(), 1u);
+    EXPECT_TRUE(sink.front().carries_edge_identity);
+    EXPECT_EQ(sink.front().edge_object_index, 0u);
+    EXPECT_TRUE(sink.front().owned_by_edge);
+    EXPECT_FALSE(sink.front().owned_by_reach);
+  }
+}
+
+// The light-side tick's direction regression, on the reviewer's own reproduction: a sun on the
+// equator under the dual-fisheye family puts the topmost arc anchor in the OTHER disk from the
+// projected sun, where a screen-space sun-to-anchor direction points back INSIDE the circle.
+// The tick is built in sky space (the same azimuth, a larger deviation), so its tip must equal
+// the projection of that outward sky point — asserted against a test-local oracle (an
+// independent basis + the exposed projection), with the tip's larger angular distance checked
+// on the oracle side.
+TEST_F(ReferenceArcDraw, LightSideTickPointsOutwardAcrossTheFisheyeDiskSplit) {
+  const ViewProjection vp = DualFisheyeCamera();
+  constexpr double kDelta = 21.916126;
+  const SkySunAnchor sun{ 0.0, 0.0 };  // the equator: the split puts the sun far from the top anchor
+  const LightSideTick tick = LightSideTickFor(&vp, 1000, 500, 1000.0f, 500.0f, 0.0f, 0.0f, 1000.0f, sun, kDelta);
+  ASSERT_TRUE(tick.drawn) << "the reproduction's circle must carry the tick";
+
+  // The test-local oracle: the walk basis about the sun, the circle's samples through the
+  // exposed projection, the topmost same-run in-canvas sample, the eps ladder. Independent of
+  // the production code path by construction.
+  auto basis_and_project = [&](double delta, double phi, double* x, double* y) {
+    double sun_pos[3];
+    double alt = sun.altitude_deg * (3.14159265358979323846 / 180.0);
+    double az = sun.azimuth_deg * (3.14159265358979323846 / 180.0);
+    sun_pos[0] = std::cos(alt) * std::cos(az);
+    sun_pos[1] = std::cos(alt) * std::sin(az);
+    sun_pos[2] = std::sin(alt);
+    double u[3] = { 0.0, 0.0, 1.0 };
+    double dot = u[2] * sun_pos[2];
+    if (std::fabs(dot) > 0.9) {
+      u[0] = 1.0;
+      u[1] = 0.0;
+      u[2] = 0.0;
+      dot = u[0] * sun_pos[0] + u[2] * sun_pos[2];
+    }
+    for (int k = 0; k < 3; ++k) {
+      u[k] -= dot * sun_pos[k];
+    }
+    double n = std::sqrt(u[0] * u[0] + u[1] * u[1] + u[2] * u[2]);
+    for (int k = 0; k < 3; ++k) {
+      u[k] /= n;
+    }
+    double v[3] = { sun_pos[1] * u[2] - sun_pos[2] * u[1], sun_pos[2] * u[0] - sun_pos[0] * u[2],
+                    sun_pos[0] * u[1] - sun_pos[1] * u[0] };
+    const double d = delta * (3.14159265358979323846 / 180.0);
+    double p[3];
+    for (int k = 0; k < 3; ++k) {
+      p[k] = std::cos(d) * sun_pos[k] + std::sin(d) * (std::cos(phi) * u[k] + std::sin(phi) * v[k]);
+    }
+    const float travel[3] = { static_cast<float>(-p[0]), static_cast<float>(-p[1]), static_cast<float>(-p[2]) };
+    const std::array<float, 2> screen = ProjectWorldDirToScreen(vp, travel, 1000, 500, false);
+    *x = (screen[0] / 1000.0f + 0.5f) * 1000.0f;
+    *y = (0.5f - screen[1] / 500.0f) * 500.0f;
+    return true;
+  };
+  // The direction, on the oracle side: the anchor and the tip project from the SAME azimuth at
+  // deltas kDelta and kDelta + eps — the tip's angular distance from the sun is larger by
+  // construction; assert the production tick's tip is that outward point, not the screen-sun
+  // direction's endpoint (which lands INSIDE the circle here — the bug this pins).
+  {
+    // The anchor at the production tick: find its circle sample by nearest projected neighbour.
+    double best_phi = 0.0;
+    double best_dist = FLT_MAX;
+    for (int sample = 0; sample <= 96; ++sample) {
+      const double phi = 2.0 * 3.14159265358979323846 * sample / 96.0;
+      double x = 0.0;
+      double y = 0.0;
+      basis_and_project(kDelta, phi, &x, &y);
+      const double d = (x - tick.anchor_x) * (x - tick.anchor_x) + (y - tick.anchor_y) * (y - tick.anchor_y);
+      if (d < best_dist) {
+        best_dist = d;
+        best_phi = phi;
+      }
+    }
+    ASSERT_LT(best_dist, 4.0f * 4.0f) << "the anchor must sit on the circle's own samples";
+    double tx = 0.0;
+    double ty = 0.0;
+    basis_and_project(kDelta + tick.eps_deg, best_phi, &tx, &ty);
+    EXPECT_NEAR(tick.tip_x, tx, 1.0f);
+    EXPECT_NEAR(tick.tip_y, ty, 1.0f);
+    // The anchor is the circle's TOP: the tip below-left of nothing — its screen y must sit no
+    // more than a step above the anchor's, and the outward property itself is the equality
+    // above. The bug this pins: the screen-sun-direction tip, which here lands at a SMALLER
+    // angular distance; assert that too, so the regression cannot silently flip to it.
+    double sx = 0.0;
+    double sy = 0.0;
+    double sun_pos[3] = { 1.0, 0.0, 0.0 };
+    (void)sun_pos;
+    basis_and_project(0.0, 0.0, &sx, &sy);  // the projected sun (delta 0)
+    const double anchor_dx = tick.anchor_x - sx;
+    const double anchor_dy = tick.anchor_y - sy;
+    const double wrong_tip_x = tick.anchor_x + anchor_dx / std::hypot(anchor_dx, anchor_dy) * 12.0;
+    const double wrong_tip_y = tick.anchor_y + anchor_dy / std::hypot(anchor_dx, anchor_dy) * 12.0;
+    // The wrong tip is NOT what production returned.
+    EXPECT_FALSE(std::fabs(tick.tip_x - wrong_tip_x) < 0.5 && std::fabs(tick.tip_y - wrong_tip_y) < 0.5)
+        << "the tick must not be the screen-sun-direction point (the dark-side pointer)";
+  }
+}
+
 TEST_F(ReferenceArcDraw, LabelsSplitKeepsInkAndGraphicsRemovesBoth) {
   const ViewProjection vp = SunCamera();
   const SurveyOverlayFacts facts = ReachFacts(30.0, 120.0);
@@ -2224,7 +2395,7 @@ TEST(AnalyzeMapView, ArcStrokeHitTestsSubmittedSegmentsOnly) {
   // The stroke's hit: a stroke whose segments cover (0,0)-(2,0) and (4,0)-(6,0); the gap between
   // them is NOT the stroke, and the tolerance decides the pick.
   ReferenceArcStroke stroke;
-  stroke.owned_by_edge = true;
+  stroke.carries_edge_identity = true;
   stroke.edge_object_index = 3;
   stroke.segments = { 0.0f, 0.0f, 2.0f, 0.0f, 4.0f, 0.0f, 6.0f, 0.0f };
   const float tight = 0.25f;  // (0.5 pt)^2

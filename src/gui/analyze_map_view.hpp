@@ -355,10 +355,6 @@ struct ReferenceArcInput {
   // the light-outside wording and the outward hint tick) — the answer's selection and the map's
   // ink are one state read by two consumers.
   int selected_edge_object_index = -1;
-  // The selected object's own delta (with its availability): the stroke's second identity —
-  // the shared stroke carries the selection while either owner's gate shows it.
-  double selected_edge_delta_deg = 0.0;
-  bool selected_edge_delta_valid = false;
   // The frame's submitted-stroke click surfaces (the stationary-click selection's input; null =
   // no collection). A stroke records only the segments the walk actually submitted this frame —
   // post-clip, screen points — so a part of the circle no line covered cannot be picked.
@@ -368,16 +364,17 @@ struct ReferenceArcInput {
 // One submitted reference-arc stroke's click surface: whose stroke it is, and the segments the
 // walk actually drew this frame as flat screen-point quadruples (x0, y0, x1, y1, ...). Plain
 // floats — this header stays off imgui.h. Frame-transient display state: filled by the draw
-// pass, read by the same frame's click handling, never stored. `delta_deg` is the stroke's own
-// deviation — the C01 stroke's second identity: the shared support/edge stroke carries the
-// selected object while EITHER owner's gate shows it (the plan's pickable rule), so the hit
-// test matches the edge-owned index or, when the edge gate left the merge, the document's own
-// delta the coincidence made identical.
+// pass, read by the same frame's click handling, never stored. `carries_edge_identity` is the
+// coincidence association (the edge→support-bound pairing the producer's own declaration
+// determines, built before any gate): the shared stroke carries the object while EITHER owner's
+// gate shows it — hiding an owner changes visibility, never the object identity, and no numeric
+// comparison ever re-derives the pairing. `owned_by_edge` is the display ownership the legend
+// and labels consume, which DOES follow the gates.
 struct ReferenceArcStroke {
+  bool carries_edge_identity = false;
   bool owned_by_edge = false;
   bool owned_by_reach = false;
   size_t edge_object_index = 0;
-  double delta_deg = 0.0;
   std::vector<float> segments;
 };
 
@@ -385,6 +382,27 @@ struct ReferenceArcStroke {
 // compared against a squared tolerance. Pure — the unit layer drives the geometry directly.
 float PointSegmentDistanceSq(float px, float py, float ax, float ay, float bx, float by);
 bool ArcStrokeHit(const ReferenceArcStroke& stroke, float px, float py, float tolerance_sq);
+
+// The selected stroke's light-side tick, computed in SKY space: the anchor is the circle's own
+// topmost in-disk sample (the walk's parameterization and continuity rules), and the tip is the
+// SAME circle azimuth at a larger deviation — a step outward on the sphere, which is the light
+// side by the support's own geometry — projected through the shared projection chain. Surfaced
+// whole for the unit layer's direction regression: a screen-space sun-to-anchor direction is
+// wrong exactly where the wording matters (under the dual-fisheye family the projected circle
+// is not centred on the projected sun, and the tick would point into the dark side). `eps_deg`
+// is the step that read (the draw scales the tip, not the direction); `drawn` false when no
+// step carried — the words carry the side then, never a wrong geometry.
+struct LightSideTick {
+  bool drawn = false;
+  double anchor_x = 0.0;
+  double anchor_y = 0.0;
+  double tip_x = 0.0;
+  double tip_y = 0.0;
+  double eps_deg = 0.0;
+};
+LightSideTick LightSideTickFor(const ViewProjection* camera, int width_px, int height_px, float width_pt,
+                               float height_pt, float pic_min_x, float pic_min_y, float pic_px, const SkySunAnchor& sun,
+                               double delta_deg);
 
 // The reach/edge/turn arcs, drawn in the ONE shared neutral ink (kSurveyArcInk). The shared
 // stroke (the layer plan's AC2): an edge whose card declares coincidence with support takes its

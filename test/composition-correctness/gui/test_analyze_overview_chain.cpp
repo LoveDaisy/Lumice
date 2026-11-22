@@ -324,6 +324,96 @@ TEST(AnalyzeOverviewChain, FullDimensionalDispersionAnchorsToTheClosedForm) {
   EXPECT_NE(model.dispersion.evidence_basis.find("index pair"), std::string::npos);
 }
 
+// The max-fold upper edge (the corpus's C09 document): a finite caustic card that DECLARES
+// coincidence with the support — with the support's UPPER bound, the dark side outside — and
+// carries no closed-form certificate (the producer certifies only an interior-minimum fold).
+// The coincidence flag covers both ends and carries no direction, so the inner-edge object gate
+// reads the certificate as the lower-end proof and refuses this card: no object, no success
+// sentence, no light-outside anything; the card keeps its existing flat presentation.
+TEST(AnalyzeOverviewChain, MaxFoldUpperEdgeDoesNotQualifyAsTheInnerEdgeObject) {
+  const auto scene = SceneFromConfig("raypath_feature_max_fold_pyramid.json");
+  const auto survey = RunSurvey(scene.get(), { 13, 15, 26, 28 });
+  ASSERT_NE(survey.get(), nullptr);
+
+  const SurveyOverviewModel model = BuildSurveyOverviewModel(*survey);
+  ASSERT_TRUE(model.valid);
+  ASSERT_EQ(model.arm, SurveyArm::kFullDimensional);
+
+  // The card's own shape, read back through the typed readers: exactly the premises that must
+  // NOT qualify — finite, coincident, uncertified, at the support's upper bound. Row reads fail
+  // non-fatally inside the loops (one row's early failure must not skip the rows after it); the
+  // found card's propositions assert after the hunt.
+  bool saw_edge_card = false;
+  LUMICE_PathSurveyEdge card{};
+  card.struct_size = sizeof(card);
+  LUMICE_PathSurveyInfo info{};
+  info.struct_size = sizeof(info);
+  ASSERT_EQ(LUMICE_PathSurveyGetInfo(survey.get(), &info), LUMICE_PATH_READ_OK);
+  for (size_t i = 0; i < info.object_count && !saw_edge_card; ++i) {
+    LUMICE_PathSurveyObject obj{};
+    obj.struct_size = sizeof(obj);
+    if (LUMICE_PathSurveyGetObject(survey.get(), i, &obj) != LUMICE_PATH_READ_OK) {
+      ADD_FAILURE() << "object row " << i << " unreadable";
+      continue;
+    }
+    if (obj.kind != LUMICE_PATH_SURVEY_CAUSTIC_EDGE) {
+      continue;
+    }
+    if (LUMICE_PathSurveyGetEdge(survey.get(), i, &card) != LUMICE_PATH_READ_OK) {
+      ADD_FAILURE() << "edge card row " << i << " unreadable";
+      continue;
+    }
+    saw_edge_card = true;
+    EXPECT_NE(obj.state, LUMICE_PATH_STATE_REFUSED);
+    EXPECT_TRUE(card.coincident_with_support != 0);
+    EXPECT_FALSE(card.certificate_available != 0)
+        << "the corpus upper card carries no closed form; if the producer begins certifying it, "
+        << "this gate and its premise must be re-derived";
+    EXPECT_NEAR(card.position_deg, 149.0849, 0.05);
+  }
+  ASSERT_TRUE(saw_edge_card) << "the corpus document must carry the counterexample card";
+  {
+    // The upper end: the SUPPORT card's (a separate object's) own intervals reach up to the
+    // card, not down to it — the card sits far from the support's lower bound.
+    bool saw_support = false;
+    for (size_t k = 0; k < info.object_count && !saw_support; ++k) {
+      LUMICE_PathSurveyObject sup_obj{};
+      sup_obj.struct_size = sizeof(sup_obj);
+      if (LUMICE_PathSurveyGetObject(survey.get(), k, &sup_obj) != LUMICE_PATH_READ_OK) {
+        ADD_FAILURE() << "object row " << k << " unreadable";
+        continue;
+      }
+      if (sup_obj.kind != LUMICE_PATH_SURVEY_SUPPORT_SET) {
+        continue;
+      }
+      LUMICE_PathSurveySupport support{};
+      support.struct_size = sizeof(support);
+      if (LUMICE_PathSurveyGetSupport(survey.get(), k, &support) != LUMICE_PATH_READ_OK ||
+          support.interval_count < 1u) {
+        ADD_FAILURE() << "support card row " << k << " unreadable";
+        continue;
+      }
+      LUMICE_PathSurveyInterval first{};
+      first.struct_size = sizeof(first);
+      if (LUMICE_PathSurveyGetSupportInterval(survey.get(), k, 0, &first) != LUMICE_PATH_READ_OK) {
+        ADD_FAILURE() << "support interval row " << k << " unreadable";
+        continue;
+      }
+      saw_support = true;
+      EXPECT_GT(card.position_deg, first.lower_deg + 1.0)
+          << "the card sits far from the support's lower bound — the upper end, not the inner edge";
+    }
+    ASSERT_TRUE(saw_support) << "the corpus document must carry the support card";
+  }
+
+  // The gate holds: no object, no success sentence, no light-side claim; the flat edge line
+  // stays exactly as it was.
+  EXPECT_FALSE(model.inner_edge.qualified);
+  EXPECT_FALSE(HasLine(model.conclusions, "light begins"));
+  EXPECT_FALSE(HasLine(model.conclusions, "Inner edge"));
+  EXPECT_TRUE(HasLine(model.conclusions, "Sharp edge at"));
+}
+
 // The family arm: the freezing ladder the engine walked organizes as levels — frozen dims with
 // their centers and widths, free dims named, per-level sampling and survival-filter verdicts.
 TEST(AnalyzeOverviewChain, FamilyArmOrganizesAsTheFreezingLadder) {
