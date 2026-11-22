@@ -157,14 +157,15 @@ struct SurveyInnerEdgeView {
 // The interactive host's inner-edge entry wiring (the Raypath view's class answer only; the main
 // window's summary passes nothing). Plain values — the session types stay in the callers' TU, so
 // this header keeps gui_state.hpp off its include chain. The renderer reads `selected` /
-// `map_layer_draws` / `entry_request_scroll` and writes `select_requested`; the map region applies
-// the click to its session the same frame.
+// `map_layer_draws` and writes `select_requested`; the map region applies the click to its
+// session the same frame, and the map-side scroll request consumes at the report's own content
+// top (the map region's class-answer host), not here.
 struct SurveyInnerEdgeInteraction {
   bool selected = false;              // the session selection is live on this document's object
   bool map_layer_draws = true;        // the edge arc's graphics gate stands (drives the hidden-layer
                                       // note; the selection itself is kept regardless)
   bool entry_request_scroll = false;  // in/out: a map-side commit asks the entry scrolled into
-                                      // view; consumed by the host render (single reader)
+                                      // view; consumed at the entry's own item (single reader)
   bool select_requested = false;      // out: the entry's click surface was activated this frame
 };
 
@@ -304,8 +305,13 @@ struct SurveyOverviewModel {
 };
 
 // The pure half: survey document in, model out. Reads every block through the typed readers;
-// never throws, never computes optics.
-SurveyOverviewModel BuildSurveyOverviewModel(const LUMICE_PathSurvey& result);
+// never throws, never computes optics. `point_sun_premise` is the GUI's frozen judgment that
+// the analyzed sun is a point source (the session's freeze capture, never the live document):
+// the whole-sky inner-edge object's "light begins outside" claim rests on the point sun the
+// survey algebra certifies against, so a false premise leaves `inner_edge.qualified` false and
+// the display at the existing angular-distance lines — the gate has no default, every caller
+// answers.
+SurveyOverviewModel BuildSurveyOverviewModel(const LUMICE_PathSurvey& result, bool point_sun_premise);
 
 // The map overlay layers' display facts (the five-group layer plan): the positional payload the
 // map's reach/edge/TIR layers draw, read back through the typed readers — a second pure read of

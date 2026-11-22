@@ -1971,6 +1971,13 @@ struct GuiState {
     // have edited since. The anchor chain's last resort reads this, never the live sun.
     bool frozen_sun_valid = false;
     float frozen_sun_altitude = 20.0f;
+    // The frozen sun's DISC diameter (degrees), captured at DoAnalyze beside the altitude — the
+    // same freeze, for the inner-edge object's point-sun premise: the whole-sky "light begins
+    // outside" claim holds for the point sun the survey algebra certifies against, and a GUI
+    // default sun carries a 0.5° disc whose light begins before the certified bound (the
+    // certificate is the single-direction minimum, the disc spreads the start inward). The
+    // engine's own default is 0 (a point source); the GUI's editor spells 0 as the point source.
+    float frozen_sun_diameter_deg = 0.0f;
     // The crystal configs the frozen scene binding was built from, captured at DoAnalyze — the
     // same freeze as the sun above, for the same reason: the point inspector's 3D mesh must be
     // the geometry the trace ran against, and a post-Analyze edit of the live document must not
@@ -1978,6 +1985,11 @@ struct GuiState {
     // the snapshot's own core->pool map names (both sides captured at DoAnalyze, so the
     // numbering is one system's). Cleared with the session by the same per-reason rules.
     std::vector<CrystalConfig> frozen_crystals;
+
+    // The inner-edge object's frozen point-sun premise, read off the freeze captures above.
+    // Inline, trivial, read-only: the session is the only premise store (never the live
+    // document — a post-Analyze diameter edit is a staleness fact, not this premise).
+    bool FrozenPointSunPremise() const { return frozen_sun_valid && frozen_sun_diameter_deg <= 0.0f; }
   };
   RaypathAnalysisSession analysis;
 

@@ -186,7 +186,7 @@ TEST(AnalyzeOverviewChain, FullDimensionalDispersionAnchorsToTheClosedForm) {
   const auto survey = RunSurvey(scene.get(), { 3, 5 });
   ASSERT_NE(survey.get(), nullptr);
 
-  const SurveyOverviewModel model = BuildSurveyOverviewModel(*survey);
+  const SurveyOverviewModel model = BuildSurveyOverviewModel(*survey, /*point_sun_premise=*/true);
   ASSERT_TRUE(model.valid);
   ASSERT_EQ(model.arm, SurveyArm::kFullDimensional);
   EXPECT_EQ(model.execution, LUMICE_PATH_OUTCOME_COMPLETED);
@@ -335,7 +335,7 @@ TEST(AnalyzeOverviewChain, MaxFoldUpperEdgeDoesNotQualifyAsTheInnerEdgeObject) {
   const auto survey = RunSurvey(scene.get(), { 13, 15, 26, 28 });
   ASSERT_NE(survey.get(), nullptr);
 
-  const SurveyOverviewModel model = BuildSurveyOverviewModel(*survey);
+  const SurveyOverviewModel model = BuildSurveyOverviewModel(*survey, /*point_sun_premise=*/true);
   ASSERT_TRUE(model.valid);
   ASSERT_EQ(model.arm, SurveyArm::kFullDimensional);
 
@@ -414,6 +414,47 @@ TEST(AnalyzeOverviewChain, MaxFoldUpperEdgeDoesNotQualifyAsTheInnerEdgeObject) {
   EXPECT_TRUE(HasLine(model.conclusions, "Sharp edge at"));
 }
 
+// The extended sun (the corpus's C01 scene with a 2° solar disc): the routing and the cards are
+// unchanged — the survey still delivers the certified, coincident card at the same deviation
+// (the certificate is the single-direction minimum) — but the physical light then begins BEFORE
+// the certified bound, so the whole-sky "light begins outside" claim is false. The point-sun
+// premise is the GUI's frozen judgment, threaded into the builder: false leaves the display at
+// the existing angular-distance lines; the same document under a proven point-sun premise
+// qualifies (the gate reads the caller's judgment, and this pair pins which one owns the flip).
+TEST(AnalyzeOverviewChain, ExtendedSunKeepsTheAngularDistancePresentation) {
+  const auto scene = SceneFromConfig("raypath_feature_random_regular_extended_sun.json");
+  const auto survey = RunSurvey(scene.get(), { 3, 5 });
+  ASSERT_NE(survey.get(), nullptr);
+
+  // The document's own shape: the certified coincident card the reviewer's probe confirmed —
+  // the routing and the cards cannot see the disc.
+  {
+    const SurveyOverlayFacts facts = BuildSurveyOverlayFacts(*survey);
+    ASSERT_GE(facts.edges.size(), 1u);
+    EXPECT_TRUE(facts.edges.front().coincident_with_support);
+    EXPECT_TRUE(facts.edges.front().certificate_available);
+    EXPECT_NEAR(facts.edges.front().position_deg, 21.9161264398004, 1e-6);
+  }
+
+  // Without the premise: no object, no success sentence, no light-side wording; the flat lines
+  // stay (the angular-distance reference the reviewer's boundary asks to keep).
+  {
+    const SurveyOverviewModel model = BuildSurveyOverviewModel(*survey, /*point_sun_premise=*/false);
+    ASSERT_TRUE(model.valid);
+    EXPECT_FALSE(model.inner_edge.qualified);
+    EXPECT_FALSE(HasLine(model.conclusions, "light begins"));
+    EXPECT_FALSE(HasLine(model.conclusions, "Inner edge"));
+    EXPECT_TRUE(HasLine(model.conclusions, "Sharp edge at"));
+  }
+  // With the premise: the same document qualifies — the flip is the premise's own.
+  {
+    const SurveyOverviewModel model = BuildSurveyOverviewModel(*survey, /*point_sun_premise=*/true);
+    ASSERT_TRUE(model.valid);
+    EXPECT_TRUE(model.inner_edge.qualified);
+    EXPECT_EQ(model.conclusions.front().find("Inner edge (3-5): about 21.92° from the sun"), 0u);
+  }
+}
+
 // The family arm: the freezing ladder the engine walked organizes as levels — frozen dims with
 // their centers and widths, free dims named, per-level sampling and survival-filter verdicts.
 TEST(AnalyzeOverviewChain, FamilyArmOrganizesAsTheFreezingLadder) {
@@ -421,7 +462,7 @@ TEST(AnalyzeOverviewChain, FamilyArmOrganizesAsTheFreezingLadder) {
   const auto survey = RunSurvey(scene.get(), { 3, 5 });
   ASSERT_NE(survey.get(), nullptr);
 
-  const SurveyOverviewModel model = BuildSurveyOverviewModel(*survey);
+  const SurveyOverviewModel model = BuildSurveyOverviewModel(*survey, /*point_sun_premise=*/true);
   ASSERT_TRUE(model.valid);
   ASSERT_EQ(model.arm, SurveyArm::kFamily);
   // The first-class inner-edge object is the random family's own: a family-restricted measure is
@@ -512,7 +553,7 @@ TEST(AnalyzeOverviewChain, DeadlineDocumentKeepsItsArmAndItsProducedLegs) {
   EXPECT_EQ(info.execution, LUMICE_PATH_OUTCOME_DEADLINE_EXCEEDED);
   EXPECT_EQ(info.early_stopped, 0);
 
-  const SurveyOverviewModel model = BuildSurveyOverviewModel(*survey);
+  const SurveyOverviewModel model = BuildSurveyOverviewModel(*survey, /*point_sun_premise=*/true);
   ASSERT_TRUE(model.valid);
   EXPECT_EQ(model.execution, LUMICE_PATH_OUTCOME_DEADLINE_EXCEEDED);
   EXPECT_FALSE(model.early_stopped);
@@ -576,7 +617,7 @@ TEST(AnalyzeOverviewChain, OverlayFactsReadBackSupportEdgeAndTurns) {
     }
     ASSERT_GE(edge_index, 0);
     EXPECT_EQ(facts.edges.front().object_index, static_cast<size_t>(edge_index));
-    const SurveyOverviewModel model = BuildSurveyOverviewModel(*survey);
+    const SurveyOverviewModel model = BuildSurveyOverviewModel(*survey, /*point_sun_premise=*/true);
     ASSERT_TRUE(model.inner_edge.qualified);
     EXPECT_EQ(model.inner_edge.edge_object_index, edge_index);
   }
@@ -626,7 +667,7 @@ TEST(AnalyzeOverviewChain, IdentityDocumentRowSwitchesUnderItsOwnKindGate) {
   const auto survey = RunSurvey(scene.get(), { 1, 3, 6, 2 });
   ASSERT_NE(survey.get(), nullptr);
 
-  const SurveyOverviewModel model = BuildSurveyOverviewModel(*survey);
+  const SurveyOverviewModel model = BuildSurveyOverviewModel(*survey, /*point_sun_premise=*/true);
   ASSERT_TRUE(model.valid);
   ASSERT_EQ(model.arm, SurveyArm::kIdentity) << "the rank-0 chain routes to the identity arm on this scene";
   ASSERT_EQ(model.objects.size(), 1u);
@@ -652,7 +693,7 @@ TEST(AnalyzeOverviewChain, FullDimensionalDocumentCarriesNoPositionedCards) {
   const auto scene = SceneFromConfig("raypath_feature_random_regular.json");
   const auto survey = RunSurvey(scene.get(), { 3, 5 });
   ASSERT_NE(survey.get(), nullptr);
-  const SurveyOverviewModel model = BuildSurveyOverviewModel(*survey);
+  const SurveyOverviewModel model = BuildSurveyOverviewModel(*survey, /*point_sun_premise=*/true);
   ASSERT_TRUE(model.valid);
   bool any_positioned = false;
   for (const SurveyObjectRow& row : model.objects) {
@@ -672,7 +713,7 @@ TEST(AnalyzeOverviewChain, ChromaticDocumentCarriesLabelsAndTurnsWithoutMinRow) 
   const auto survey = RunSurvey(scene.get(), { 3, 1, 5 });
   ASSERT_NE(survey.get(), nullptr);
 
-  const SurveyOverviewModel model = BuildSurveyOverviewModel(*survey);
+  const SurveyOverviewModel model = BuildSurveyOverviewModel(*survey, /*point_sun_premise=*/true);
   ASSERT_TRUE(model.valid);
   ASSERT_TRUE(model.dispersion.available) << "the chromatic document carries the dispersion block";
   EXPECT_FALSE(model.dispersion.red_label.empty());

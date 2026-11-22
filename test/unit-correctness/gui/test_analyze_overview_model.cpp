@@ -103,7 +103,7 @@ TEST(AnalyzeOverviewModel, IdentityArmReadsBackSourceImageAndTint) {
   const auto survey = RunSurvey(scene.get(), { 1, 3, 6, 2 });
   ASSERT_NE(survey.get(), nullptr);
 
-  const SurveyOverviewModel model = BuildSurveyOverviewModel(*survey);
+  const SurveyOverviewModel model = BuildSurveyOverviewModel(*survey, /*point_sun_premise=*/true);
   ASSERT_TRUE(model.valid);
   EXPECT_EQ(model.arm, SurveyArm::kIdentity);
   EXPECT_EQ(model.execution, LUMICE_PATH_OUTCOME_COMPLETED);

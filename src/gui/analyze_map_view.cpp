@@ -1109,6 +1109,7 @@ namespace {
 struct SurveyOverlayCache {
   std::weak_ptr<const LUMICE_PathSurvey> source;
   SurveyQueryId id;
+  bool point_sun_premise = false;
   SurveyOverviewModel model;
   SurveyOverlayFacts facts;
 };
@@ -1118,13 +1119,17 @@ SurveyOverlayCache g_survey_overlay_cache;
 // overview model and the layer facts — once, from the immutable document. The popup's empty-state
 // notes and the arcs read this same entry, so the facts exist even on a frame whose master gate
 // suppresses every draw (a toggle edits display preferences; it never re-reads the document).
-const SurveyOverlayCache& RefreshSurveyOverlayCache(const SurveyQuerySession& survey) {
+const SurveyOverlayCache& RefreshSurveyOverlayCache(const SurveyQuerySession& survey, bool point_sun_premise) {
   auto& cache = g_survey_overlay_cache;
-  if (cache.source.lock() != survey.adopted_result || cache.id != survey.intent_id) {
-    // The document is immutable. Build once per adopted identity, not once per observation.
+  if (cache.source.lock() != survey.adopted_result || cache.id != survey.intent_id ||
+      cache.point_sun_premise != point_sun_premise) {
+    // The document is immutable. Build once per adopted identity, not once per observation; the
+    // premise rides the identity (a freeze capture — it only changes with a new analyze, which
+    // changes the identity anyway, but the compare keeps the cache honest to its own key).
     cache = {};
     if (survey.adopted_result != nullptr) {
-      cache.model = BuildSurveyOverviewModel(*survey.adopted_result);
+      cache.model = BuildSurveyOverviewModel(*survey.adopted_result, point_sun_premise);
+      cache.point_sun_premise = point_sun_premise;
       cache.facts = BuildSurveyOverlayFacts(*survey.adopted_result);
       cache.source = survey.adopted_result;
       cache.id = survey.intent_id;
@@ -1143,7 +1148,7 @@ void DrawSurveyOverlays(ImDrawList* dl, GuiState& state, const MapCanvasProjecti
   // The payloads read through the ONE document->facts mapping (§5.1.8: the overview model is the
   // single organizer; the map overlays consume its object rows and dispersion block verbatim).
   // The refresh is idempotent and already ran at the region's entry — this read cannot rebuild.
-  const SurveyOverlayCache& cache = RefreshSurveyOverlayCache(survey);
+  const SurveyOverlayCache& cache = RefreshSurveyOverlayCache(survey, state.analysis.FrozenPointSunPremise());
   const SurveyOverviewModel& model = cache.model;
   const SurveyOverlayFacts& facts = cache.facts;
   // The reference arcs (reach bounds, sharp edges, TIR turns): the frame's first analysis ink,
@@ -2118,7 +2123,8 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   // premise): with no adopted document the rows name the absence instead of disabling themselves,
   // and the switches stay editable — the preferences are display state, not query state.
   if (ImGui::BeginPopup("map_layer_switches")) {
-    const SurveyOverlayCache& cache = RefreshSurveyOverlayCache(state.analysis.survey);
+    const SurveyOverlayCache& cache =
+        RefreshSurveyOverlayCache(state.analysis.survey, state.analysis.FrozenPointSunPremise());
     const SurveyOverviewModel& model = cache.model;
     const SurveyOverlayFacts& facts = cache.facts;
     struct LayerRow {
@@ -2284,7 +2290,8 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   std::vector<ReferenceArcStroke> arc_strokes;
   int selected_edge_object_index = -1;
   if (InnerEdgeSelectionActive(state)) {
-    const SurveyOverlayCache& sel_cache = RefreshSurveyOverlayCache(state.analysis.survey);
+    const SurveyOverlayCache& sel_cache =
+        RefreshSurveyOverlayCache(state.analysis.survey, state.analysis.FrozenPointSunPremise());
     if (sel_cache.model.valid && sel_cache.model.inner_edge.qualified) {
       selected_edge_object_index = sel_cache.model.inner_edge.edge_object_index;
     }
@@ -2378,7 +2385,8 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
     // owners are not kCamera). A miss commits nothing: the existing point-selection features are
     // untouched, and an existing selection is not cleared.
     if (press_owner == static_cast<int>(Owner::kCamera) && !dragged && !explicit_pick) {
-      const SurveyOverlayCache& hit_cache = RefreshSurveyOverlayCache(state.analysis.survey);
+      const SurveyOverlayCache& hit_cache =
+          RefreshSurveyOverlayCache(state.analysis.survey, state.analysis.FrozenPointSunPremise());
       if (hit_cache.model.valid && hit_cache.model.inner_edge.qualified) {
         const float tolerance_sq = UiPx(6.0f) * UiPx(6.0f);
         const ImVec2 press_pos = io.MouseClickedPos[ImGuiMouseButton_Left];
@@ -2709,14 +2717,15 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   // four-state shell stays in the main window (§16.2's split): while the survey computes, is
   // cancelled or refused, this section draws nothing here — the answer region carries answers.
   if (state.analysis.survey.adopted_result) {
-    const SurveyOverviewModel survey_model = BuildSurveyOverviewModel(*state.analysis.survey.adopted_result);
+    const SurveyOverviewModel survey_model =
+        BuildSurveyOverviewModel(*state.analysis.survey.adopted_result, state.analysis.FrozenPointSunPremise());
     ImGui::TextDisabled("Class answer");
     // The profile rows' read (§16.1.3): this class-answer host owns the standing's overwrite
     // every frame (hover or explicit none); the canvas consumes it next frame. The verdict and
     // Position rows keep their highlight feedback local, without a session standing. The
     // inner-edge entry's wiring (817.2): the selection's liveness, the arc layers' visibility
-    // fact this frame (the master gate and the edge graphics gate), the one-shot scroll hint —
-    // consumed inside — and the click the entry's surface may have taken.
+    // fact this frame (the master gate and the edge graphics gate), and the click the entry's
+    // surface may have taken (the scroll request consumed above).
     SurveyRowHoverReadout row_readout;
     SurveyInnerEdgeInteraction inner_edge;
     inner_edge.selected = InnerEdgeSelectionActive(state);

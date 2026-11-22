@@ -166,6 +166,24 @@ const char* const kFullyRandomJson = R"({
 // its list carries multi-layer rows — the ones whose `display` holds the " -> " joiner. Mirrors
 // test/e2e/configs/raypath_analysis_pc_two_layer.json (the e2e layer reads the file; gui_test
 // inlines its scenes, as kHalo22Json above).
+// The same fully-random prism with an EXPLICIT point sun (diameter 0): the inner-edge object's
+// whole-sky premise needs the point sun the survey algebra certifies against, and a scene
+// without a diameter field parses into the GUI's 0.5° default — a different premise, not a
+// typo fix. The inner-edge case runs on this one; the shared fixture stays untouched for its
+// own cases' pixel probes.
+const char* const kFullyRandomPointSunJson = R"({
+  "crystal": [{"id": 1, "type": "prism", "shape": {"height": 1.2},
+               "axis": {"zenith": {"type": "uniform", "mean": 0, "std": 360},
+                        "azimuth": {"type": "uniform", "mean": 0, "std": 360},
+                        "roll": {"type": "uniform", "mean": 0, "std": 360}}}],
+  "filter": [],
+  "scene": {"light_source": {"type": "sun", "altitude": 20.0, "diameter": 0.0, "spectrum": "D65"},
+            "ray_num": 100000, "max_hits": 7,
+            "scattering": [{"prob": 0.0, "entries": [{"crystal": 1, "proportion": 10}]}]},
+  "render": [{"id": 1, "lens": {"type": "linear", "fov": 60},
+              "resolution": [64, 64], "view": {"elevation": 42}}]
+})";
+
 const char* const kPcTwoLayerJson = R"({
   "crystal": [{"id": 1, "type": "prism", "shape": {"height": 0.3},
                "axis": {"zenith": {"type": "gauss", "mean": 90, "std": 0.5},
@@ -1953,7 +1971,8 @@ bool SurveyDigestAnswersWithRealClassFacts(ImGuiTestContext* ctx) {
   // region shows: the named refusal, the witness's positive event, and the chromatic layer's
   // engine-worded absence. (The dispersion-on-screen face is the kFullyRandomJson case below.)
   {
-    const gui::SurveyOverviewModel model = gui::BuildSurveyOverviewModel(*survey.adopted_result);
+    const gui::SurveyOverviewModel model =
+        gui::BuildSurveyOverviewModel(*survey.adopted_result, gui::g_state.analysis.FrozenPointSunPremise());
     IM_CHECK_RETV(model.valid, false);
     IM_CHECK_RETV(model.arm == gui::SurveyArm::kRefused, false);
     IM_CHECK_RETV(model.evidence_state == LUMICE_PATH_STATE_REFUSED, false);
@@ -2779,7 +2798,8 @@ bool SurveyOverviewShowsDispersionAndProfile(ImGuiTestContext* ctx) {
   const gui::SurveyQuerySession& survey = gui::g_state.analysis.survey;
   IM_CHECK_RETV(survey.adopted_result != nullptr, false);
 
-  const gui::SurveyOverviewModel model = gui::BuildSurveyOverviewModel(*survey.adopted_result);
+  const gui::SurveyOverviewModel model =
+      gui::BuildSurveyOverviewModel(*survey.adopted_result, gui::g_state.analysis.FrozenPointSunPremise());
   IM_CHECK_RETV(model.valid, false);
   IM_CHECK_RETV(model.arm == gui::SurveyArm::kFullDimensional, false);
   IM_CHECK_RETV(model.dispersion.available, false);
@@ -2933,7 +2953,8 @@ bool VerdictAnchorHoverAndToggleOnTheMap(ImGuiTestContext* ctx) {
                 false);
   // The fixture's premise, on the very document the window is about to draw: the pilot's
   // verdict — edge, blue, visible, positioned, complete coverage.
-  const gui::SurveyOverviewModel model = gui::BuildSurveyOverviewModel(*gui::g_state.analysis.survey.adopted_result);
+  const gui::SurveyOverviewModel model = gui::BuildSurveyOverviewModel(*gui::g_state.analysis.survey.adopted_result,
+                                                                       gui::g_state.analysis.FrozenPointSunPremise());
   IM_CHECK_RETV(model.valid && model.diagnose.available, false);
   IM_CHECK_RETV(model.diagnose.verdict_kind == "edge", false);
   IM_CHECK_RETV(model.diagnose.color == "blue", false);
@@ -3301,7 +3322,8 @@ bool AnalyzeFullChainOneSession(ImGuiTestContext* ctx) {
   // keeps the routing facts and drops the dispersion row; the leg pins the dispersion on the
   // survey's own terms (completed → the readings must be there) and names the partial otherwise.
   {
-    const gui::SurveyOverviewModel model = gui::BuildSurveyOverviewModel(*gui::g_state.analysis.survey.adopted_result);
+    const gui::SurveyOverviewModel model = gui::BuildSurveyOverviewModel(*gui::g_state.analysis.survey.adopted_result,
+                                                                         gui::g_state.analysis.FrozenPointSunPremise());
     IM_CHECK_RETV(model.valid && model.arm == gui::SurveyArm::kFullDimensional, false);
     ctx->LogInfo("[v1 chain] survey execution %d, budget %d ms, early-stopped %d, dispersion available %d",
                  model.execution, model.budget_ms, model.early_stopped ? 1 : 0, model.dispersion.available ? 1 : 0);
@@ -5768,7 +5790,8 @@ bool IdentityClassShowsTheMassArmAndTheMapAnswers(ImGuiTestContext* ctx) {
                     60),
                 false);
   {
-    const gui::SurveyOverviewModel model = gui::BuildSurveyOverviewModel(*gui::g_state.analysis.survey.adopted_result);
+    const gui::SurveyOverviewModel model = gui::BuildSurveyOverviewModel(*gui::g_state.analysis.survey.adopted_result,
+                                                                         gui::g_state.analysis.FrozenPointSunPremise());
     IM_CHECK_RETV(model.valid && model.arm == gui::SurveyArm::kIdentity, false);
     ctx->LogInfo("[v1 c15] overview arm identity, valid %d", model.valid ? 1 : 0);
   }
@@ -5977,7 +6000,8 @@ bool RefusedClassNamesTheRefusalAndKeepsTheWitness(ImGuiTestContext* ctx) {
                     60),
                 false);
   {
-    const gui::SurveyOverviewModel model = gui::BuildSurveyOverviewModel(*gui::g_state.analysis.survey.adopted_result);
+    const gui::SurveyOverviewModel model = gui::BuildSurveyOverviewModel(*gui::g_state.analysis.survey.adopted_result,
+                                                                         gui::g_state.analysis.FrozenPointSunPremise());
     IM_CHECK_RETV(model.valid && model.arm == gui::SurveyArm::kRefused, false);
     IM_CHECK_RETV(!model.evidence_mode.empty(), false);
     // Both outcomes are honest here: on a machine whose load pushes the tail past the budget
@@ -6564,8 +6588,8 @@ bool SupportEdgeLayersShareOneStrokeAndGateIndependently(ImGuiTestContext* ctx) 
   // The fixed reference caliber rides the legend keys: the bounds quote the survey document's
   // OWN scope wavelength — the identification the map's independent λ slider cannot provide.
   {
-    const gui::SurveyOverviewModel model_check =
-        gui::BuildSurveyOverviewModel(*gui::g_state.analysis.survey.adopted_result);
+    const gui::SurveyOverviewModel model_check = gui::BuildSurveyOverviewModel(
+        *gui::g_state.analysis.survey.adopted_result, gui::g_state.analysis.FrozenPointSunPremise());
     IM_CHECK_RETV(model_check.scope_available, false);
     char lambda[48];
     std::snprintf(lambda, sizeof(lambda), "survey %.1f nm", model_check.wavelength_nm);
@@ -6788,8 +6812,8 @@ bool SupportEdgeLayersShareOneStrokeAndGateIndependently(ImGuiTestContext* ctx) 
                       },
                       30),
                   false);
-    const gui::SurveyOverviewModel plate_model =
-        gui::BuildSurveyOverviewModel(*gui::g_state.analysis.survey.adopted_result);
+    const gui::SurveyOverviewModel plate_model = gui::BuildSurveyOverviewModel(
+        *gui::g_state.analysis.survey.adopted_result, gui::g_state.analysis.FrozenPointSunPremise());
     IM_CHECK_RETV(plate_model.valid && plate_model.objects.size() == 1, false);
     IM_CHECK_RETV(plate_model.objects[0].kind_name == "source image" && plate_model.objects[0].position_available,
                   false);
@@ -6836,35 +6860,61 @@ bool SupportEdgeLayersShareOneStrokeAndGateIndependently(ImGuiTestContext* ctx) 
   return true;
 }
 
-// A screen point on the survey arc's first submitted geometry quad this frame (the quad's own
-// vertex centroid — the centre of a thick-line quad lies on its segment), or nullopt when no arc
-// geometry drew. The click that targets the line aims at the line's own ink, never a derived
-// projection: the product drew exactly this geometry, and the selection's hit test reads the same
-// submitted segments.
-std::optional<ImVec2> MapArcGeometryPoint() {
-  const ImGuiWindow* region = MapRegionWindow();
-  if (region == nullptr) {
+// A screen point ON the selected object's arc, computed ANALYTICALLY through the product's own
+// projection: the walk basis about the sun at the arc's deviation, toward the zenith, projected
+// with BuildPreviewViewProjFromRenderer + ProjectWorldDirToScreen and mapped onto the map
+// canvas's rect exactly as ProjectToRect maps it. Draw-list vertex scanning was the previous
+// shape and it is thickness-fragile: a selected stroke draws thick, and this ImGui's thick
+// anti-aliased lines carry line-atlas UVs, so the white-UV geometry discriminator skipped every
+// quad of the very stroke the click was aiming at and the helper returned a point on another
+// bound. The analytic point is on the circle by construction, at any thickness.
+std::optional<ImVec2> MapArcGeometryPoint(ImGuiTestContext* ctx, double delta_deg) {
+  const ImGuiTestItemInfo canvas = ctx->ItemInfo("**/##map_canvas", ImGuiTestOpFlags_NoError);
+  if (canvas.ID == 0) {
     return std::nullopt;
   }
-  const ImDrawList* dl = region->DrawList;
-  const ImVec2 white = ImGui::GetIO().Fonts->TexUvWhitePixel;
-  for (int i = 0; i + 5 < dl->IdxBuffer.Size; i += 6) {
-    ImVec2 sum(0.0f, 0.0f);
-    bool matches = true;
-    for (int k = 0; k < 6; ++k) {
-      const ImDrawVert& v = dl->VtxBuffer[static_cast<int>(dl->IdxBuffer[i + k])];
-      if (v.col != gui::kSurveyArcInk || std::fabs(v.uv.x - white.x) >= 1e-3f || std::fabs(v.uv.y - white.y) >= 1e-3f) {
-        matches = false;
-        break;
-      }
-      sum.x += v.pos.x;
-      sum.y += v.pos.y;
-    }
-    if (matches) {
-      return ImVec2(sum.x / 6.0f, sum.y / 6.0f);
-    }
+  gui::SkySunAnchor sun;
+  IM_CHECK_SILENT_RETV(gui::SkySunAnchorFor(gui::g_state, &sun), std::nullopt);
+  double sun_pos[3];
+  const double alt = sun.altitude_deg * (3.14159265358979323846 / 180.0);
+  const double az = sun.azimuth_deg * (3.14159265358979323846 / 180.0);
+  sun_pos[0] = std::cos(alt) * std::cos(az);
+  sun_pos[1] = std::cos(alt) * std::sin(az);
+  sun_pos[2] = std::sin(alt);
+  // The walk basis about the sun (the production SkyRadialBasis's construction, spelled here for
+  // the oracle): u = the zenith projected onto the sun's tangent plane, v = sun x u.
+  double u[3] = { 0.0, 0.0, 1.0 };
+  double dot = u[2] * sun_pos[2];
+  if (std::fabs(dot) > 0.9) {
+    u[0] = 1.0;
+    u[1] = 0.0;
+    u[2] = 0.0;
+    dot = u[0] * sun_pos[0] + u[2] * sun_pos[2];
   }
-  return std::nullopt;
+  for (int k = 0; k < 3; ++k) {
+    u[k] -= dot * sun_pos[k];
+  }
+  const double n = std::sqrt(u[0] * u[0] + u[1] * u[1] + u[2] * u[2]);
+  for (int k = 0; k < 3; ++k) {
+    u[k] /= n;
+  }
+  double v[3] = { sun_pos[1] * u[2] - sun_pos[2] * u[1], sun_pos[2] * u[0] - sun_pos[0] * u[2],
+                  sun_pos[0] * u[1] - sun_pos[1] * u[0] };
+  const double d = delta_deg * (3.14159265358979323846 / 180.0);
+  double p[3];
+  for (int k = 0; k < 3; ++k) {
+    p[k] = std::cos(d) * sun_pos[k] + std::sin(d) * u[k];  // phi = 0: the zenith side, always in
+                                                           // view on the rectangular full sky
+  }
+  const gui::ViewProjection camera = gui::BuildPreviewViewProjFromRenderer(gui::g_state.renderer);
+  const auto dpi = ImGui::GetIO().DisplayFramebufferScale;
+  const int width_px = std::max(1, static_cast<int>(std::lround(canvas.RectFull.GetWidth() * dpi.x)));
+  const int height_px = std::max(1, static_cast<int>(std::lround(canvas.RectFull.GetHeight() * dpi.y)));
+  const float travel[3] = { static_cast<float>(-p[0]), static_cast<float>(-p[1]), static_cast<float>(-p[2]) };
+  const std::array<float, 2> screen = gui::ProjectWorldDirToScreen(camera, travel, width_px, height_px, false);
+  return ImVec2(
+      canvas.RectFull.Min.x + (screen[0] / static_cast<float>(width_px) + 0.5f) * canvas.RectFull.GetWidth(),
+      canvas.RectFull.Min.y + (0.5f - screen[1] / static_cast<float>(height_px)) * canvas.RectFull.GetHeight());
 }
 
 // The class answer's first-class inner-edge object, on the real C01 document (817.2): the
@@ -6876,7 +6926,7 @@ std::optional<ImVec2> MapArcGeometryPoint() {
 // 550 nm reference — exactly as they were.
 bool InnerEdgeObjectSelectsFromTextAndArc(ImGuiTestContext* ctx) {
   ScopedServerGuard guard;
-  IM_CHECK_RETV(BringUpScene(ctx, kFullyRandomJson, /*infinite=*/false, /*gpu=*/false), false);
+  IM_CHECK_RETV(BringUpScene(ctx, kFullyRandomPointSunJson, /*infinite=*/false, /*gpu=*/false), false);
   OpenWindow(ctx);
   IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
   SetListRef(ctx);
@@ -6910,7 +6960,8 @@ bool InnerEdgeObjectSelectsFromTextAndArc(ImGuiTestContext* ctx) {
   const auto ids_before = query_ids();
   // The qualified object exists on this document before anything draws — the composition tier's
   // fact, read here as the display's premise.
-  const gui::SurveyOverviewModel model = gui::BuildSurveyOverviewModel(*gui::g_state.analysis.survey.adopted_result);
+  const gui::SurveyOverviewModel model = gui::BuildSurveyOverviewModel(*gui::g_state.analysis.survey.adopted_result,
+                                                                       gui::g_state.analysis.FrozenPointSunPremise());
   IM_CHECK_RETV(model.inner_edge.qualified, false);
   // AC2's first read: the class answer opens on the object's main sentence, the premise note
   // names the whole-sky fact at the survey's own λ, and the support set keeps its own line.
@@ -6927,7 +6978,7 @@ bool InnerEdgeObjectSelectsFromTextAndArc(ImGuiTestContext* ctx) {
   }
   // The arc's own ink, before any selection: the shared stroke drew, and a point ON it is the
   // click target every geometry leg below uses.
-  const std::optional<ImVec2> arc_point = MapArcGeometryPoint();
+  const std::optional<ImVec2> arc_point = MapArcGeometryPoint(ctx, model.inner_edge.edge_deg);
   IM_CHECK_RETV(arc_point.has_value(), false);
   ctx->LogInfo("[inner edge] arc click target (%.0f, %.0f)", arc_point->x, arc_point->y);
   // The modifier-key leg (AC4's 不抢占): Alt makes the press a direct sky-point write — the
@@ -7066,7 +7117,7 @@ bool InnerEdgeObjectSelectsFromTextAndArc(ImGuiTestContext* ctx) {
   gui::g_state.renderer.front = false;
   ctx->Yield(3);
   ctx->Yield(3);
-  const std::optional<ImVec2> arc_point2 = MapArcGeometryPoint();
+  const std::optional<ImVec2> arc_point2 = MapArcGeometryPoint(ctx, model.inner_edge.edge_deg);
   IM_CHECK_RETV(arc_point2.has_value(), false);
   // Scroll the report away from the entry first: the map-side commit must bring it back.
   {
@@ -7171,6 +7222,47 @@ bool InnerEdgeObjectSelectsFromTextAndArc(ImGuiTestContext* ctx) {
     ctx->ItemClick("**/reference##map_lambda");
     ctx->Yield(2);
   }
+  // The narrow/short viewport (the layout boundary a header-centered scroll fails at): deep in
+  // the report, the map commit must bring the ENTRY — not the readings header several wrapped
+  // lines below it — into the effective viewport, and the readings stay expanded.
+  ctx->WindowResize("//Raypath view", ImVec2(480.0f, 360.0f));
+  ctx->Yield(3);
+  gui::SelectLensType(gui::g_state, gui::kLensTypeRectangular);
+  gui::g_state.renderer.visible = gui::kVisibleFull;
+  gui::g_state.renderer.front = false;
+  ctx->Yield(3);
+  ctx->Yield(3);
+  const std::optional<ImVec2> arc_point3 = MapArcGeometryPoint(ctx, model.inner_edge.edge_deg);
+  IM_CHECK_RETV(arc_point3.has_value(), false);
+  ctx->SetRef("//Raypath view");
+  {
+    ImGuiWindow* report = MapReportWindow();
+    IM_CHECK_RETV(report != nullptr, false);
+    report->Scroll.y = report->ScrollMax.y;
+    ctx->Yield(2);
+  }
+  ctx->MouseMoveToPos(*arc_point3);
+  ctx->Yield(2);
+  ctx->MouseDown(0);
+  ctx->Yield(2);
+  ctx->MouseUp(0);
+  ctx->Yield(2);
+  IM_CHECK_RETV(gui::InnerEdgeSelectionActive(gui::g_state), false);
+  ctx->Yield(2);
+  {
+    ImGuiWindow* report = MapReportWindow();
+    IM_CHECK_RETV(report != nullptr, false);
+    const ImGuiTestItemInfo entry = ctx->ItemInfo("**/###inner_edge_entry", ImGuiTestOpFlags_NoError);
+    IM_CHECK_RETV(entry.ID != 0, false);
+    IM_CHECK_RETV(entry.RectFull.Min.y >= report->InnerClipRect.Min.y - 1.0f &&
+                      entry.RectFull.Max.y <= report->InnerClipRect.Max.y + 1.0f,
+                  false);  // the entry itself, not a later header, is what the commit brings into view
+    const ImGuiTestItemInfo readings_header =
+        ctx->ItemInfo("**/Inner edge readings##sv_inner_edge", ImGuiTestOpFlags_NoError);
+    IM_CHECK_RETV(readings_header.ID != 0, false);  // the readings stay expanded with the selection
+  }
+  ctx->WindowResize("//Raypath view", ImVec2(900.0f, 560.0f));
+  ctx->Yield(3);
   // The whole chain moved no survey query: the object's reads are display reads.
   const auto ids_after = query_ids();
   IM_CHECK_RETV(
@@ -7355,7 +7447,8 @@ bool ProfileRowsHighlightAndDrawOnTheMap(ImGuiTestContext* ctx) {
         m.probe.mode.c_str(), static_cast<int>(m.arm), m.tint.available ? 1 : 0, m.tint.state, m.budget_ms,
         m.early_stopped ? 1 : 0);
   };
-  gui::SurveyOverviewModel model = gui::BuildSurveyOverviewModel(*gui::g_state.analysis.survey.adopted_result);
+  gui::SurveyOverviewModel model = gui::BuildSurveyOverviewModel(*gui::g_state.analysis.survey.adopted_result,
+                                                                 gui::g_state.analysis.FrozenPointSunPremise());
   log_survey_doc(model);
   IM_CHECK_RETV(model.valid && model.arm == gui::SurveyArm::kFamily, false);
   if (model.execution == LUMICE_PATH_OUTCOME_CANCELLED) {
@@ -7394,7 +7487,8 @@ bool ProfileRowsHighlightAndDrawOnTheMap(ImGuiTestContext* ctx) {
       std::shared_ptr<const LUMICE_PathSurvey> acquired = AcquireCompleteSurveyDocument(ctx, *identity);
       if (acquired != nullptr) {
         gui::g_state.analysis.survey.adopted_result = std::move(acquired);
-        acquired_model = gui::BuildSurveyOverviewModel(*gui::g_state.analysis.survey.adopted_result);
+        acquired_model = gui::BuildSurveyOverviewModel(*gui::g_state.analysis.survey.adopted_result,
+                                                       gui::g_state.analysis.FrozenPointSunPremise());
         log_survey_doc(acquired_model);
         complete = acquired_model.valid && acquired_model.execution == LUMICE_PATH_OUTCOME_COMPLETED &&
                    acquired_model.probe.available;
@@ -9751,7 +9845,8 @@ void DumpSplitDispersionTimeoutState(ImGuiTestContext* ctx) {
           gui::SurveyStateName(chromatic.state), chromatic.mode.data, chromatic.reason.data,
           chromatic.dispersion_available, chromatic.diagnose_available);
     }
-    const auto model = gui::BuildSurveyOverviewModel(*survey.adopted_result);
+    const auto model =
+        gui::BuildSurveyOverviewModel(*survey.adopted_result, gui::g_state.analysis.FrozenPointSunPremise());
     ctx->LogInfo(
         "[m0] overview model: dispersion.available=%d min_row_available=%d chromatic_state=%d "
         "evidence_mode=\"%s\" tint.available=%d tint.state=%d tint.reading=%d arm=%d",
@@ -9855,7 +9950,8 @@ bool RaypathViewSplitIsManualAndFloored(ImGuiTestContext* ctx) {
       [] {
         if (!gui::g_state.analysis.survey.adopted_result || !gui::g_state.analysis.map.adopted_result)
           return false;
-        const auto model = gui::BuildSurveyOverviewModel(*gui::g_state.analysis.survey.adopted_result);
+        const auto model = gui::BuildSurveyOverviewModel(*gui::g_state.analysis.survey.adopted_result,
+                                                         gui::g_state.analysis.FrozenPointSunPremise());
         return model.dispersion.available && model.dispersion.min_row_available;
       },
       60);

@@ -310,9 +310,14 @@ void ReadFamily(const LUMICE_PathSurvey& result, SurveyOverviewModel* model) {
 // invariance the whole-sky wording rests on is the engine's, not a GUI inference — and a
 // concluded edge card declaring coincidence with the support set. Everything else leaves the
 // view unqualified and the display at its existing lines.
-void BuildInnerEdgeView(const LUMICE_PathSurvey& result, SurveyOverviewModel* model) {
+void BuildInnerEdgeView(const LUMICE_PathSurvey& result, SurveyOverviewModel* model, bool point_sun_premise) {
   SurveyInnerEdgeView& view = model->inner_edge;
-  if (model->arm != SurveyArm::kFullDimensional) {
+  // The point-sun premise is the third gate leg, beside the arm and the card: the certificate
+  // is the single-direction minimum-deviation identity — with an extended sun the physical
+  // light begins before the certified bound (a 2° disc starts ~2° inside it), so "light begins
+  // outside this circle" would be false exactly where it reads as a fact. An unproven premise
+  // keeps the existing angular-distance presentation.
+  if (model->arm != SurveyArm::kFullDimensional || !point_sun_premise) {
     return;
   }
   // The qualified edge card: the first card that is CONCLUDED, declares coincidence with the
@@ -756,7 +761,7 @@ const char* SurveyObjectKindName(int kind) {
   }
 }
 
-SurveyOverviewModel BuildSurveyOverviewModel(const LUMICE_PathSurvey& result) {
+SurveyOverviewModel BuildSurveyOverviewModel(const LUMICE_PathSurvey& result, bool point_sun_premise) {
   SurveyOverviewModel model;
   LUMICE_PathSurveyInfo info{};
   info.struct_size = sizeof(info);
@@ -868,7 +873,7 @@ SurveyOverviewModel BuildSurveyOverviewModel(const LUMICE_PathSurvey& result) {
     }
   }
 
-  BuildInnerEdgeView(result, &model);
+  BuildInnerEdgeView(result, &model, point_sun_premise);
   BuildConclusions(result, &model);
   return model;
 }
@@ -919,12 +924,6 @@ void RenderInnerEdgeExpander(const SurveyInnerEdgeView& edge, SurveyInnerEdgeInt
     ImGui::SetNextItemOpen(true);  // the selected object's readings stay open while it is selected
   }
   const bool open = ImGui::CollapsingHeader("Inner edge readings##sv_inner_edge");
-  if (inner_edge->entry_request_scroll) {
-    inner_edge->entry_request_scroll = false;  // consumed here — the host render is the sole reader
-    if (open) {
-      ImGui::SetScrollHereY(0.5f);
-    }
-  }
   if (!open) {
     return;
   }
@@ -1069,6 +1068,17 @@ void RenderSurveyDefaultLayer(const SurveyOverviewModel& model, SurveyRowHoverRe
         dl->AddRectFilled(entry_min, entry_max,
                           ImGui::GetColorU32(inner_edge->selected ? ImGuiCol_Header : ImGuiCol_HeaderHovered));
         dl->ChannelsSetCurrent(1);
+      }
+      if (inner_edge->entry_request_scroll) {
+        // The scroll request is the ENTRY's, consumed at the entry's own item (the click surface
+        // is the current item here): the map-side commit brings THE OBJECT back into view, not a
+        // later group's header — on a narrow column the wrapped sentence, premise and support
+        // conclusions between the two can exceed half the viewport, and centering the header
+        // would scroll the entry off. 0.0f puts the entry's own top at the viewport top, fully
+        // visible whenever the viewport can hold it; the item's rect stands even when the item
+        // is clipped away (LastItemData is the submitted rect, not the test registry's).
+        inner_edge->entry_request_scroll = false;
+        ImGui::SetScrollHereY(0.0f);
       }
     }
     DisabledWrappedText("%s", model.inner_edge.premise_note.c_str());

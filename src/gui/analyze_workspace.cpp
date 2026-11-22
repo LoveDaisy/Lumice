@@ -489,7 +489,7 @@ void RenderSurveyOverview(const SelectedClassIdentity& identity) {
       // default-layer renderer the Raypath view's complete answer uses, closed with the
       // pointer to it. The full report's fold groups live over there — the summary hosts no
       // folds of its own.
-      RenderSurveySummary(BuildSurveyOverviewModel(*survey.adopted_result));
+      RenderSurveySummary(BuildSurveyOverviewModel(*survey.adopted_result, g_state.analysis.FrozenPointSunPremise()));
       break;
   }
   // The M1-0 disposition's honesty label: an intermediate P/B/D read position has NO survey
