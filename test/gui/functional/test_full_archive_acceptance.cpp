@@ -24,6 +24,7 @@
 #include <cstdlib>
 #include <string>
 
+#include "gui/gl_common.h"
 #include "gui/gui_state.hpp"
 #include "test_gui_shared.hpp"
 
@@ -55,10 +56,30 @@ const std::vector<float>* g_bench_frame = nullptr;
 int g_bench_w = 0;
 int g_bench_h = 0;
 
+// The context's own identity, captured on the main thread right after the open's upload: the
+// adapter list names every GPU in the machine, and the sshd session's context may land on any
+// of them — the acceptance record's "actual renderer" is what the context itself reports, not
+// an inference from the adapter list.
+char g_accept_gl_vendor[256] = { 0 };
+char g_accept_gl_renderer[256] = { 0 };
+char g_accept_gl_version[256] = { 0 };
+bool g_accept_gl_info_requested = false;
+bool g_accept_gl_info_done = false;
+
 void AcceptanceOpenGuiFunc(ImGuiTestContext* /*ctx*/) {
   if (g_accept_open_requested && !g_accept_open_done) {
     gui::DoOpen(g_accept_open_path);
     g_accept_open_done = true;
+  }
+  if (g_accept_gl_info_requested && !g_accept_gl_info_done) {
+    const auto copy_gl_string = [](char* dst, size_t cap, unsigned which) {
+      const char* s = reinterpret_cast<const char*>(glGetString(which));
+      std::snprintf(dst, cap, "%s", s != nullptr ? s : "(glGetString returned null)");
+    };
+    copy_gl_string(g_accept_gl_vendor, sizeof(g_accept_gl_vendor), GL_VENDOR);
+    copy_gl_string(g_accept_gl_renderer, sizeof(g_accept_gl_renderer), GL_RENDERER);
+    copy_gl_string(g_accept_gl_version, sizeof(g_accept_gl_version), GL_VERSION);
+    g_accept_gl_info_done = true;
   }
   if (g_bench_rep_requested && !g_bench_rep_done) {
     const auto t0 = std::chrono::steady_clock::now();
@@ -126,11 +147,19 @@ void RegisterFullArchiveAcceptanceTests(ImGuiTestEngine* engine) {
     IM_CHECK(slot1 > 0);  // a 98-strip cut of 8192x4096 writes both ping-pong slots
     IM_CHECK(slot0 <= gui::kXyzStagingSlotTargetBytes);
     IM_CHECK(slot1 <= gui::kXyzStagingSlotTargetBytes);
+    g_accept_gl_info_requested = true;
+    g_accept_gl_info_done = false;
+    for (int i = 0; i < 4 && !g_accept_gl_info_done; ++i) {
+      ctx->Yield(1);
+    }
+    IM_CHECK(g_accept_gl_info_done);
     fprintf(stderr,
             "[highres-acceptance] staging slots: %zu + %zu bytes (budget %zu each); mirror: %zu half bytes; "
             "scale %f\n",
             slot0, slot1, gui::kXyzStagingSlotTargetBytes, mirror_bytes,
             static_cast<double>(gui::g_preview.GetXyzHalfTextureScale()));
+    fprintf(stderr, "[highres-acceptance] GL vendor='%s' renderer='%s' version='%s'\n", g_accept_gl_vendor,
+            g_accept_gl_renderer, g_accept_gl_version);
 
     // The screenshot: the live preview viewport's pixels, saved next to the log for eyeballing.
     // Size tolerance ±2 px absorbs the viewport fitting the window basis of whatever session
