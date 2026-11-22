@@ -1680,11 +1680,17 @@ void RegisterPreviewTextureTests(ImGuiTestEngine* engine) {
         IM_CHECK_EQ(tex.height, 512);
       }
 
-      // The run keeps producing while latched: a bounded wall-clock window guarantees newer
-      // qualifying frames updated the retained source (they stay off the GPU — that is the
-      // latch's contract — but the retained source tracks the newest one). The settle always
-      // "times out" — that IS the wait; the predicate would only fire early.
-      (void)DriveUntil(ctx, [] { return false; }, /*timeout_s=*/3);
+      // Stop the run: the drain publishes the TERMINAL frame, which the latch-period
+      // bookkeeping retains as the newest qualifying source while it stays off the GPU. (An
+      // open-ended settle would burn a full core set for the whole test and blow the engine's
+      // watchdog under pool load; a bounded run cannot guarantee a SECOND frame on a fast GPU —
+      // this shape gets the newer-frame premise deterministically on any machine's clock.)
+      gui::DoStop();
+      IM_CHECK(DriveUntil(
+          ctx,
+          [] { return gui::g_state.sim_state == SimState::kDone && gui::g_state.run_intent == RunIntent::kStopped; },
+          20));
+      ctx->Yield(2);
 
       // The second save refreshes from the newest retained frame.
       const std::string save2 = GuiTestTempPath("lumice_preview_texture_pending_save2.lmc").string();
