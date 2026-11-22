@@ -15,6 +15,16 @@
 
 namespace lumice::gui {
 
+// A retired mirror representation loses its STORAGE, not just its element count: std::vector's
+// clear() keeps the heap block, so a representation switch or a document close that only cleared
+// would leave hundreds of MiB of dead capacity resident on exactly the machines this renderer
+// serves. Same-representation rewrites keep their capacity (the assign path below reuses it).
+template <typename T>
+void ReleaseMirrorStorage(std::vector<T>& mirror) {
+  std::vector<T>().swap(mirror);
+}
+
+
 // clang-format off
 static const char* kVertexShader = R"glsl(
 #version 330 core
@@ -1523,9 +1533,9 @@ void PreviewRenderer::Destroy() {
   }
   tex_width_ = 0;
   tex_height_ = 0;
-  tex_data_.clear();
-  tex_xyz_data_.clear();
-  tex_xyz_half_data_.clear();
+  ReleaseMirrorStorage(tex_data_);
+  ReleaseMirrorStorage(tex_xyz_data_);
+  ReleaseMirrorStorage(tex_xyz_half_data_);
   tex_xyz_half_scale_ = 0.0f;
   tex_xyz_meta_ = XyzTextureMeta{};
   cpu_tex_mode_ = TextureMode::kSrgbComposited;
@@ -1539,9 +1549,12 @@ void PreviewRenderer::Destroy() {
 void PreviewRenderer::ClearTexture() {
   tex_width_ = 0;
   tex_height_ = 0;
-  tex_data_.clear();
-  tex_xyz_data_.clear();
-  tex_xyz_half_data_.clear();
+  // Every mirror retires WITH ITS STORAGE: the document is gone, no representation has a
+  // consumer, and a stale capacity would hold the previous document's frame size on the machine
+  // after the document that needed it.
+  ReleaseMirrorStorage(tex_data_);
+  ReleaseMirrorStorage(tex_xyz_data_);
+  ReleaseMirrorStorage(tex_xyz_half_data_);
   tex_xyz_half_scale_ = 0.0f;
   tex_xyz_meta_ = XyzTextureMeta{};
   cpu_tex_mode_ = TextureMode::kSrgbComposited;
@@ -1620,8 +1633,8 @@ void PreviewRenderer::UpdateCpuTextureData(const unsigned char* data, int width,
   }
   size_t byte_count = static_cast<size_t>(width) * height * 3;
   tex_data_.assign(data, data + byte_count);
-  tex_xyz_data_.clear();
-  tex_xyz_half_data_.clear();
+  ReleaseMirrorStorage(tex_xyz_data_);
+  ReleaseMirrorStorage(tex_xyz_half_data_);
   tex_xyz_half_scale_ = 0.0f;
   tex_xyz_meta_ = XyzTextureMeta{};
   cpu_tex_mode_ = mode;
@@ -1635,10 +1648,26 @@ void PreviewRenderer::UpdateCpuXyzTextureData(const float* data, int width, int 
   }
   size_t float_count = static_cast<size_t>(width) * height * 3;
   tex_xyz_data_.assign(data, data + float_count);
-  tex_xyz_half_data_.clear();
+  ReleaseMirrorStorage(tex_xyz_half_data_);
   tex_xyz_half_scale_ = 0.0f;
   tex_xyz_meta_ = meta;
-  tex_data_.clear();
+  ReleaseMirrorStorage(tex_data_);
+  cpu_tex_mode_ = TextureMode::kXyz;
+  cpu_tex_width_ = width;
+  cpu_tex_height_ = height;
+}
+
+void PreviewRenderer::UpdateCpuXyzHalfTextureData(std::vector<uint16_t>&& half_bits, int width, int height, float scale,
+                                                  const XyzTextureMeta& meta) {
+  if (half_bits.size() != static_cast<size_t>(width) * height * 3) {
+    return;
+  }
+  // The buffer becomes the mirror; the open that handed it over keeps an empty vector.
+  tex_xyz_half_data_ = std::move(half_bits);
+  tex_xyz_half_scale_ = scale;
+  tex_xyz_meta_ = meta;
+  ReleaseMirrorStorage(tex_xyz_data_);
+  ReleaseMirrorStorage(tex_data_);
   cpu_tex_mode_ = TextureMode::kXyz;
   cpu_tex_width_ = width;
   cpu_tex_height_ = height;
@@ -1653,8 +1682,8 @@ void PreviewRenderer::UpdateCpuXyzHalfTextureData(const uint16_t* half_bits, int
   tex_xyz_half_data_.assign(half_bits, half_bits + component_count);
   tex_xyz_half_scale_ = scale;
   tex_xyz_meta_ = meta;
-  tex_xyz_data_.clear();
-  tex_data_.clear();
+  ReleaseMirrorStorage(tex_xyz_data_);
+  ReleaseMirrorStorage(tex_data_);
   cpu_tex_mode_ = TextureMode::kXyz;
   cpu_tex_width_ = width;
   cpu_tex_height_ = height;

@@ -197,6 +197,12 @@ void ResetTestState() {
   lumice::test::JoinGuiServerTasksForTeardown();
   // Document state (delegates to DoNew: g_state, g_preview, g_crystal_mesh_id/hash)
   gui::DoNew();
+  // Process-static renderer test seams belong to the case boundary the same way the fault hook
+  // does (cleared per-case by the suites' own discipline) — but a seam a case leaves RAISED on
+  // an early return must not silently re-cut every later case's uploads: the strip override is
+  // reset here, at the one cleanup boundary every case passes through, so a leaked cap cannot
+  // outlive the case that armed it.
+  gui::PreviewRenderer::SetXyzStripRowsForTest(0);
   // What the previous case copied must not be what this case's copy assertion reads back.
   g_test_clipboard.clear();
 

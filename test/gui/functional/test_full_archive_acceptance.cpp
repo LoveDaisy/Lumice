@@ -90,8 +90,32 @@ void AcceptanceOpenGuiFunc(ImGuiTestContext* /*ctx*/) {
     g_accept_gl_info_done = true;
   }
   if (g_bench_rep_requested && !g_bench_rep_done) {
+    // The comparison boundary is the GPU COMPLETION of the whole snapshot, not the moment the
+    // submit call returns: the production upload leaves its last strips' DMAs deliberately in
+    // flight (the slot fences guard reuse, not the upload's return), and how much work is still
+    // in flight at return differs between the arms — on a truly asynchronous driver (the
+    // Windows/AMD shape this bundle measured at 28-38 ms) the difference is exactly the cost
+    // the "not worse" judgment is about. So the instrument closes it itself, identically on
+    // both arms: an UNTIMED drain fence first (the previous rep's tail must not leak into this
+    // rep's window), then the upload timed from call to a fence that witnesses EVERYTHING the
+    // upload issued has reached the GPU. The production path itself stays asynchronous — the
+    // fence exists only inside this instrument, on the same boundary for baseline and new.
+    {
+      GLsync drain = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+      if (drain != nullptr) {
+        glClientWaitSync(drain, GL_SYNC_FLUSH_COMMANDS_BIT, 2'000'000'000ULL);
+        glDeleteSync(drain);
+      }
+    }
     const auto t0 = std::chrono::steady_clock::now();
     const gui::UploadResult r = gui::g_preview.UploadXyzTexture(g_bench_frame->data(), g_bench_w, g_bench_h);
+    {
+      GLsync complete = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+      if (complete != nullptr) {
+        glClientWaitSync(complete, GL_SYNC_FLUSH_COMMANDS_BIT, 2'000'000'000ULL);
+        glDeleteSync(complete);
+      }
+    }
     const auto t1 = std::chrono::steady_clock::now();
     g_bench_rep_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
     g_bench_rep_ok = r.ok;

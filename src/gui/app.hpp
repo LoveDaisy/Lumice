@@ -586,9 +586,13 @@ enum class FrontendResetReason {
 
 // `baked` is the decoded texture section for `kOpenBaked` (LoadLmcFile's output, owned by the
 // caller). It must remain valid for the duration of the `ResetFrontendState` call and no longer:
-// the owner uploads it and copies what Save will need, and retains no pointer into it. Its
-// `mode` selects the PreviewRenderer upload entry point — see LmcTexture (file_io.hpp).
-void ResetFrontendState(GuiState& state, FrontendResetReason reason, const LmcTexture* baked = nullptr);
+// the owner uploads it and — for the kXyz half representation — takes the buffer itself by move
+// (the one-complete-source rule: a v6 document's inflated half bits BECOME the CPU mirror
+// instead of being copied beside the caller's copy, so the open never holds two full frames at
+// once; a v5 float section is still copied, the legacy shape). Nothing retains a pointer into
+// it, and the caller's vector is left empty for the moved representation. Its `mode` selects
+// the PreviewRenderer upload entry point — see LmcTexture (file_io.hpp).
+void ResetFrontendState(GuiState& state, FrontendResetReason reason, LmcTexture* baked = nullptr);
 
 // Single-owner sim_state reconcile (I2, blueprint §4/§5). Pure function of the last user intent,
 // the epoch the GUI committed, the last backend observation (may be null before the first poll),
