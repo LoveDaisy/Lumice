@@ -419,6 +419,14 @@ class PreviewRenderer {
   // the screen. Set false by ClearTexture() and ConservativeRevoke(); set true only by a verified
   // blank (UploadBlankSimTexture) or a verified upload. Defaults true (Init's blank).
   bool sim_layer_valid_ = true;
+  // The deferred blank's retry budget: a blank that fails (real OOM leaves the GL undefined) is
+  // re-armed for the next frame up to kMaxBlankAttempts times, then the attempt STOPS until a
+  // successful upload or a document switch re-arms it. Without the bound, every rendered frame
+  // would re-attempt an allocation and log — an unbounded retry loop outside the recovery
+  // ladder's one-cycle-per-authorization contract. The no-sample gate (sim_layer_valid_) stays
+  // closed the whole time, so stopping costs nothing visually.
+  int blank_attempts_ = 0;
+  static constexpr int kMaxBlankAttempts = 4;
 
   // Test-only upload fault injection hook — consulted by the upload paths at each GL stage
   // boundary. The hook receives the stage about to run and returns the GLenum error to synthesize

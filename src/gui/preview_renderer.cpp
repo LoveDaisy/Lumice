@@ -1496,6 +1496,8 @@ void PreviewRenderer::ClearTexture() {
   // when the deferred blank finally lands — between here and that blank, whatever the storage
   // still holds belongs to no document.
   sim_layer_valid_ = false;
+  // A fresh document is a fresh allocation climate: the blank retry budget resets with it.
+  blank_attempts_ = 0;
   // GL reset deferred to next Render() (main thread) — this method is called
   // from gui_test coroutine workers with no GL context; a direct gl* call
   // would SIGILL. See preview_renderer.hpp needs_gl_blank_ contract.
@@ -1531,18 +1533,30 @@ void PreviewRenderer::UploadBlankSimTexture() {
   if (err != GL_NO_ERROR) {
     // The blank itself failed to allocate (a real OOM leaves the GL state undefined — spec §2.5,
     // and the reviewer's point stands even for a 1x1): the storage behind texture_ is not
-    // trustworthy, so the no-sample gate stays CLOSED and the deferred blank stays armed for the
-    // next frame's retry. Nothing here may claim the sim layer is valid.
-    GUI_LOG_ERROR(
-        "[GL] UploadBlankSimTexture: glTexImage2D failed (gl_error=0x{:04X}) — sim layer stays "
-        "un-sampled, blank re-armed",
-        err);
+    // trustworthy, so the no-sample gate stays CLOSED. The retry is BOUNDED: each frame's
+    // re-attempt is an allocation the machine just refused, so after kMaxBlankAttempts the
+    // attempt stops until a successful upload or a document switch re-arms it — the gate stays
+    // closed the whole time, so stopping costs nothing visually and the log stops growing.
+    ++blank_attempts_;
+    if (blank_attempts_ >= kMaxBlankAttempts) {
+      needs_gl_blank_ = false;
+      GUI_LOG_ERROR(
+          "[GL] UploadBlankSimTexture: glTexImage2D failed (gl_error=0x{:04X}) — retry budget spent; the "
+          "display stays un-sampled until the next verified upload",
+          err);
+    } else {
+      GUI_LOG_ERROR(
+          "[GL] UploadBlankSimTexture: glTexImage2D failed (gl_error=0x{:04X}) — sim layer stays "
+          "un-sampled, blank re-armed",
+          err);
+    }
     tex_mode_ = TextureMode::kSrgbComposited;
     return;
   }
   tex_mode_ = TextureMode::kSrgbComposited;
   sim_layer_valid_ = true;
   needs_gl_blank_ = false;
+  blank_attempts_ = 0;
 }
 
 void PreviewRenderer::UpdateCpuTextureData(const unsigned char* data, int width, int height, TextureMode mode) {
@@ -1716,9 +1730,11 @@ UploadResult PreviewRenderer::UploadUint8Texture(const unsigned char* data, int 
   // Success — now and only now commit. Display first (the frame IS on the GPU and verified), then
   // the CPU mirror under the mode the caller declared: a reopened pre-v4 document re-saved
   // without a run must go back out flagged composited, not radiance-only. The newest real frame
-  // cancels any pending deferred blank, and the sim layer is sampleable again.
+  // cancels any pending deferred blank, the sim layer is sampleable again, and the blank retry
+  // budget resets (the pressure that spent it did not stop this upload).
   needs_gl_blank_ = false;
   sim_layer_valid_ = true;
+  blank_attempts_ = 0;
   if (tex_stage == UploadResult::Stage::kTexImage) {
     tex_width_ = width;
     tex_height_ = height;
@@ -2023,6 +2039,7 @@ UploadResult PreviewRenderer::UploadXyzBitsTail(const void* define_data, int wid
   // UploadUint8Texture for rationale).
   needs_gl_blank_ = false;
   sim_layer_valid_ = true;
+  blank_attempts_ = 0;
   if (tex_stage == UploadResult::Stage::kTexImage) {
     tex_width_ = width;
     tex_height_ = height;

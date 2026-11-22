@@ -613,6 +613,13 @@ const char* PreviewRecoveryNoticeText();
 // changes no upload state, triggers no allocation, and a NEW failure re-shows the notice.
 void DismissPreviewRecoveryNotice();
 
+// Whether an explicit retry currently has a target: the last cycle ended exhausted AND a
+// retained newest-qualifying source exists. This is the Retry button's visibility predicate,
+// deliberately independent of the notice text's kind/dismissal state — dismissing the notice
+// must never take away the recovery exit, and a degraded-but-working display (kind 1, whose
+// source was already promoted) has no retry target to offer.
+bool PreviewRecoveryRetryAvailable();
+
 // The explicit recovery entry (plan 814 §3.2: reachable near the unavailable/degraded notice,
 // using the retained newest qualifying source — including a backend-completed terminal frame the
 // poller self-paused on — without re-running the simulation). Re-authorizes ONE full ladder

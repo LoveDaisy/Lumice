@@ -2381,19 +2381,26 @@ void RenderPreviewPanel(GLFWwindow* window, float window_width, float window_hei
   // 814 AC3: the preview recovery notice — one-time dismissible, with the explicit retry within
   // reach (plan §3.2). Drawn inside this window so it reads as part of the preview area: the
   // deferred FBO blit runs before ImGui's draw data, so this text lands on top of whatever the
-  // preview is (or is not) showing. Dismissal only hides the message; the Retry button is the
-  // recovery action, and a NEW failure re-shows the notice on its own.
+  // preview is (or is not) showing. The Retry button's visibility is INDEPENDENT of the notice's
+  // dismissal state — dismissing the message never takes away the recovery exit; it shows only
+  // when an exhausted cycle left a retained source to re-attempt (a degraded-but-working display
+  // has no retry target, and its way back is a new Run).
   const int notice_kind = PreviewRecoveryNoticeKind();
-  if (notice_kind != 0) {
+  const bool retry_available = PreviewRecoveryRetryAvailable();
+  if (notice_kind != 0 || retry_available) {
     ImGui::SetCursorPos(ImVec2(UiPx(8), UiPx(8)));
     ImGui::BeginGroup();
-    ImGui::TextUnformatted(PreviewRecoveryNoticeText());
-    if (ImGui::SmallButton("Retry preview")) {
+    if (notice_kind != 0) {
+      ImGui::TextUnformatted(PreviewRecoveryNoticeText());
+    }
+    if (retry_available && ImGui::SmallButton("Retry preview")) {
       RetryPreviewUpload();
     }
-    ImGui::SameLine();
-    if (ImGui::SmallButton("Dismiss")) {
-      DismissPreviewRecoveryNotice();
+    if (notice_kind != 0) {
+      ImGui::SameLine();
+      if (ImGui::SmallButton("Dismiss")) {
+        DismissPreviewRecoveryNotice();
+      }
     }
     ImGui::EndGroup();
   }
