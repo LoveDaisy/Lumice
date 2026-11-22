@@ -65,10 +65,18 @@ char g_accept_gl_renderer[256] = { 0 };
 char g_accept_gl_version[256] = { 0 };
 bool g_accept_gl_info_requested = false;
 bool g_accept_gl_info_done = false;
+// The open's own wall time, taken INSIDE the GuiFunc around the real DoOpen: the decompress +
+// mirror + upload + commit chain the reopen cost account keys on (frame-quantized yields add at
+// most one frame of slack; the comparison is between arms of this same case, so the slack is
+// common).
+double g_accept_open_ms = 0.0;
 
 void AcceptanceOpenGuiFunc(ImGuiTestContext* /*ctx*/) {
   if (g_accept_open_requested && !g_accept_open_done) {
+    const auto t0 = std::chrono::steady_clock::now();
     gui::DoOpen(g_accept_open_path);
+    const auto t1 = std::chrono::steady_clock::now();
+    g_accept_open_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
     g_accept_open_done = true;
   }
   if (g_accept_gl_info_requested && !g_accept_gl_info_done) {
@@ -160,6 +168,8 @@ void RegisterFullArchiveAcceptanceTests(ImGuiTestEngine* engine) {
             static_cast<double>(gui::g_preview.GetXyzHalfTextureScale()));
     fprintf(stderr, "[highres-acceptance] GL vendor='%s' renderer='%s' version='%s'\n", g_accept_gl_vendor,
             g_accept_gl_renderer, g_accept_gl_version);
+    fprintf(stderr, "[highres-acceptance] open wall time: %.1f ms (decompress + mirror + upload + commit)\n",
+            g_accept_open_ms);
 
     // The screenshot: the live preview viewport's pixels, saved next to the log for eyeballing.
     // Size tolerance ±2 px absorbs the viewport fitting the window basis of whatever session
