@@ -5587,7 +5587,11 @@ bool InternalReflectionTraceFromTheRealConsumer(ImGuiTestContext* ctx) {
     ctx->ItemClick("**/Per-face energy##pose_factors");
     ctx->ItemClick((std::string("**/View face ") + std::to_string(info.faces[loss_k]) + "##pose_factors").c_str());
     ctx->ItemClick("**/Pose factors##pose_factors");
-    ctx->Yield(1);
+    ctx->Yield(2);
+    // The default layer's first screen, on file: the loss conclusion and its readings are what
+    // the user sees when the window opens (the record the 读样 describes).
+    IM_CHECK_RETV(SaveWindowPng(ctx, "//Pose & trace", GuiTestTempPath("analyze_c03_loss_first_screen.png").string()),
+                  false);
     ctx->LogInfo("[v1 c03] the loss readout legs: conclusion at face %d, arrival %.3g%%, expansions cycle closed",
                  info.faces[loss_k], e[loss_k] * 100.0);
   }

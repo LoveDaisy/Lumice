@@ -660,8 +660,7 @@ Windows/Linux 真机输入已测。最终执行结果存于测试报告；这些
   旧实现里四个宿主共享同名 `Physics details` / `Calculation details` 两词面，四对同名组互相
   混淆，已按宿主语义去同名（拼写单源 `gui_constants.hpp`）：survey 类答案 `Class evidence` /
   `Class diagnostics`、sky point 答案 `Point evidence` / `Point diagnostics`、地图口径
-  `Map quantity & premises` / `Map diagnostics`、Pose 因素区 `Interface transmission` /
-  `Pose diagnostics`。**诊断组整体受 `LUMICE_ANALYZE_DEBUG_DETAILS` 门控**（`env::
+  `Map quantity & premises` / `Map diagnostics`、Pose 因素区 `View face N`（损失界面细节）/ `Per-face energy` / `Pose factors` / `Pose diagnostics`。**诊断组整体受 `LUMICE_ANALYZE_DEBUG_DETAILS` 门控**（`env::
   AnalyzeDebugDetails`，`doc/env-var-policy.md` §2 A 类登记）：开发诊断展示通道，默认关
   （未设置/空/`0`），关时诊断组头与 body 均不提交渲染（门控先于 `CollapsingHeader`，不是
   仅隐藏已展开 body）；开时可展开访问全部保留细节。门控只改展示资格，不删数据读取与计算；
@@ -902,8 +901,8 @@ nav 焦点无（InvisibleButton 默认 NoNav）。主窗路径不传读出参数
 | Probe / Tint / Witness | 边与峰的区分在 conclusions（全维臂）；色调读数其余臂浮默认；见证句在拒答 conclusions | 剖面曲线+量程进 Physics；kept 计数进 Calc；tint caliber 进 Physics；见证权重与来源进 Physics、lattice 计数进 Calc |
 | TIR / Family / Objects | TIR 份额读数+拒答态默认；族臂存活后果句默认；对象+N 提示在清单处 | 接口数/维度枚举 Physics；各级计数 Calc；对象卡整块 Physics |
 | 点 target/deviation、member/λ/n/source | 主窗摘要带 target 行；Raypath view 答案带 target＋λ（默认层前两行） | member faces 进 pt Physics；n/source 随 λ 行默认（量纲）；execution 三元组进 pt Calc |
-| rank-0 | 主窗摘要必须给位置＋orbit integral/测度或 unavailable（整段 `PointMassLines` 默认层） | 完整质量答案同段在 Raypath view；无 fiber 不等于无答案 |
-| 无分量 reach 与 discovery 完备性 | 两窗都保短结论及完备性限定（共享 `DrawPointNoComponentConclusions`） | reach tolerance 数值随短结论行 |
+| rank-0 | 主窗摘要给点像读数（位置、太阳本方向的结构事实、分离角、总光量或不可用、点太阳前提——`PointMassLines` 读样句式，标题「Point image」） | 完整点像答案同段在 Raypath view；无 fiber 不等于无答案。Raypath view 地图按同一采纳点结果画点像标记（rank-0 质量色填充菱形，identity 绑采纳点文档）；matched 地图自身 mass cell 在太阳本方向已承载该墨迹时不叠画第二符号（复用分支＝引擎 `PathMapPointMass.pixel` 记录＋at-sun 结构判据，不做格网重推导或邻近拼接）；用户目标标记保持自身墨迹与位置，图像永不移动目标；Overlays 关时标记随组隐藏、文字定位仍在，标记缺席不作无像声明 |
+| 无分量 reach 与 discovery 完备性 | 两窗都保短结论及完备性限定（共享 `DrawPointNoComponentConclusions`）；in-range 零分量的措辞是**本次搜索口径**（「this search has not yet found a pose…」），不是「有限晶体无姿态」的绝对表述；probe 越界补分辨率限定（reach tolerance 数值随短结论行），两态不折叠 | reach tolerance 数值随短结论行 |
 | 分量清单、端点、积分、覆盖、无有效样本 | 主窗：分量计数＋kinds＋不可用限定＋选中分量无有效样本 | Raypath view：完整证据行+tooltip、选中分量 fiber integral、cap 提示在 pt Physics；valid/total 计数在 pt Calc；无有效样本默认 |
 | 当前姿态因素/各接口透射 | Pose 右下文字区（未动） | 不复制到主窗或类报告 |
 
@@ -1114,13 +1113,24 @@ ImGui 原生滚动（有可滚宿主则滚动，否则 no-op），不伤地图/3
 底部零行及伴读 current/hover 读数行已退役，X 三刻度、rad 和顶部 seed 保留。
 
 历史 2026-11-13 的 wheel/pan、P1 与两行 footer 设计已被上述 owner 裁决替换，不是现役合同。
-因素区（`RenderPoseFactorsRegion`）承载：`PointFactorLines` 的默认层读数（永远绑
-`view.sample_index`，hover 不改它所指样本）＋measure note（默认可见）＋`Interface transmission`
-折叠组（逐接口透射率——T 的光学前提，判据梯 L3 证据行）＋`Pose diagnostics` 折叠组
-（deviation grid 开关自 globe 常驻栈迁入，no-grid 注记随 toggle；整组不设 env 门——开关是
-用户面控制项而非实现级条目——任何环境都提交，globe 本体与其余姿态功能不随门控）。
-§16.1 判据梯逐行机械套用：
-接口透射率行=P3 证据行；因素结论=L1/L2 默认层。积分/测度不可用等限制在相关读数旁默认可读。
+因素区（`RenderPoseFactorsRegion`）承载（2026-11-23 起的 as-built）：**损失首屏**——
+`PointLossReadoutLines` 的结论行（最大绝对下降所在界面；「most light」判据＝该下降确实超过
+入射光一半，并列不编唯一主因，无损失如实报）、到达/继续/出射三读数（自同一未舍入链计算）
+与基准行（共同入射分母＝接触第一个面之前 100%、实际面序、仅此代表光线），永远绑
+`view.sample_index`，hover 不改它所指样本；measure note（默认可见）在其后。折叠组：
+`View face N`（损失界面的角色与条件分母切换声明——此下面百分比以到达该面的光为 100%；
+并列损失无单一界面，不出此组）、`Per-face energy`（逐接触角色行＋共同分母光量列，两口径在
+行内各自标注，不混称）、`Pose factors`（姿态角/ρ/A/T/J/K/乘积串——物理证据折叠未删除）、
+`Pose diagnostics`（deviation grid 开关自 globe 常驻栈迁入，no-grid 注记随 toggle；整组不设
+env 门——开关是用户面控制项而非实现级条目——任何环境都提交，globe 本体与其余姿态功能不随
+门控）。rank-0 臂给点像自己的读数（`PointMassLines`：位置、太阳本方向的结构事实
+（`PointMassAtSunDirection` 精确相等判据，不做邻近推断）、分离角、总光量或不可用、点太阳
+前提注），不是「无 per-pose 因素」技术注。累计与可用性唯一权威是 `RayTraceCumulativeEnergies`
+（3D 线宽/标签同源），损失表达不二次累计、不早舍入、不从字符串反解析；逐接触角色由序列位置
+单源推导（`PointFaceRoleFor`），同一面重复出现保持两个接触各自命名；不可用因子截断其后缀的
+损失断言，保留有效前缀。
+§16.1 判据梯逐行机械套用：损失结论/读数＝L1/L2 默认层；逐接触因素行与姿态因素串＝P3 证据行；
+积分/测度不可用等限制在相关读数旁默认可读。
 右上保 globe/分量/姿态游标/播放。
 
 **投影视角 Fit/Full（2026-11-17 反馈片）**：globe 的 Lambert 投影基有两种取心，标题带的
