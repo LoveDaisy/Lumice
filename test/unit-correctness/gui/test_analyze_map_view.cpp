@@ -1806,10 +1806,10 @@ SurveyOverlayFacts::EdgeArc EdgeFact(double position_deg, bool coincident, bool 
   edge.concluded = concluded;
   return edge;
 }
-SurveyOverlayFacts::TirTurn TirFact(int face, double red_deg, double blue_deg) {
+SurveyOverlayFacts::TirTurn TirFact(int step, double red_deg, double blue_deg) {
   SurveyOverlayFacts::TirTurn turn;
-  turn.source = "internal_" + std::to_string(face) + "_tir_discriminant";
-  turn.face = face;
+  turn.source = "internal_" + std::to_string(step) + "_tir_discriminant";
+  turn.step = step;
   turn.delta_red_deg = red_deg;
   turn.delta_blue_deg = blue_deg;
   return turn;
@@ -2053,8 +2053,8 @@ TEST_F(ReferenceArcDraw, TirTurnDrawsItsPairWithOneLabelAndObeyItsGate) {
     EXPECT_TRUE(legend.tir_turns);
     EXPECT_EQ(legend.tir_turn_count, 1);
     const std::vector<std::string> texts = SinkTexts(sink);
-    EXPECT_EQ(std::count(texts.begin(), texts.end(), std::string("TIR f1 · 40.000°/45.000°")), 1)
-        << "ONE paired readout for the two-circle pair";
+    EXPECT_EQ(std::count(texts.begin(), texts.end(), std::string("TIR step 1 · 40.000°/45.000°")), 1)
+        << "ONE paired readout for the two-circle pair, named by its reflection step";
     // The same facts with the turn's gate off: bounds only. The pair's two walks must add exactly
     // one bounds-count worth of ink — the turn never merged into a bound stroke.
     FreshFrame();
@@ -2070,7 +2070,7 @@ TEST_F(ReferenceArcDraw, TirTurnDrawsItsPairWithOneLabelAndObeyItsGate) {
     EXPECT_EQ(count, bounds_only_count * 2) << "the pair added exactly its own two walks, merged into nothing";
     // The gate off also removes the turn's readout and its legend entry, and leaves the bounds'.
     const std::vector<std::string> after_texts = SinkTexts(sink_without_tir);
-    EXPECT_EQ(std::count(after_texts.begin(), after_texts.end(), std::string("TIR f1 · 40.000°/45.000°")), 0);
+    EXPECT_EQ(std::count(after_texts.begin(), after_texts.end(), std::string("TIR step 1 · 40.000°/45.000°")), 0);
     EXPECT_GE(std::count(after_texts.begin(), after_texts.end(), std::string("support · 20.000°")), 1);
   }
 }
@@ -2093,6 +2093,51 @@ TEST_F(ReferenceArcDraw, EmptyFactsSubmitNothingWithEveryGateOn) {
   EXPECT_FALSE(legend.edge_arcs);
   EXPECT_FALSE(legend.edge_shared);
   EXPECT_FALSE(legend.tir_turns);
+}
+
+// The points group's per-kind gates (AC4): the THREE positioned image kinds switch
+// independently inside the group, every other kind follows the parent gate alone — the
+// exhaustive mapping on synthetic rows, the same predicate the draw loop, the hit collection
+// and the legend consume. The regular/collapse pair IS the controlled co-location witness's
+// switching half: each gate hides exactly its own kind and never the other's.
+TEST(AnalyzeMapView, PointMarkerVisibleMapsEachKindToItsOwnGate) {
+  auto row_of = [](const char* kind) {
+    SurveyObjectRow row;
+    row.kind_name = kind;
+    row.position_available = true;
+    return row;
+  };
+  const SurveyObjectRow source = row_of("source image");
+  const SurveyObjectRow regular = row_of("regular image");
+  const SurveyObjectRow collapse = row_of("family collapse");
+  const SurveyObjectRow support = row_of("support set");  // a non-image kind with a position
+
+  SurveyLayerGates gates;  // everything on: every positioned row is visible
+  EXPECT_TRUE(PointMarkerVisible(source, gates));
+  EXPECT_TRUE(PointMarkerVisible(regular, gates));
+  EXPECT_TRUE(PointMarkerVisible(collapse, gates));
+  EXPECT_TRUE(PointMarkerVisible(support, gates));
+
+  // Each kind's gate hides exactly its own kind.
+  gates.points_kinds.regular_image = false;
+  EXPECT_FALSE(PointMarkerVisible(regular, gates));
+  EXPECT_TRUE(PointMarkerVisible(collapse, gates)) << "the co-located collapse keeps its own gate";
+  EXPECT_TRUE(PointMarkerVisible(source, gates));
+  gates.points_kinds.family_collapse = false;
+  EXPECT_FALSE(PointMarkerVisible(regular, gates));
+  EXPECT_FALSE(PointMarkerVisible(collapse, gates));
+  EXPECT_TRUE(PointMarkerVisible(source, gates));
+  gates.points_kinds.source_image = false;
+  EXPECT_FALSE(PointMarkerVisible(source, gates));
+  EXPECT_TRUE(PointMarkerVisible(support, gates)) << "kinds outside the sub-gate vocabulary follow the parent alone";
+
+  // The parent graphics gate removes them all, whatever the sub-gates say.
+  gates.points_kinds = SurveyPointKindGates{};  // all sub-gates back on
+  gates.points.graphics = false;
+  EXPECT_FALSE(PointMarkerVisible(source, gates));
+  EXPECT_FALSE(PointMarkerVisible(regular, gates));
+  EXPECT_FALSE(PointMarkerVisible(collapse, gates));
+  EXPECT_FALSE(PointMarkerVisible(support, gates));
 }
 
 }  // namespace

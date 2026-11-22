@@ -777,20 +777,26 @@ Support range（support 区间界的角距参照弧）/ Sharp edges（edge 卡�
 （有位对象标记）/ Red-blue shift（dispersion 双圈 + 合格 verdict 锚，默认开）/ Reflection turns
 （可见 `internal_<n>_tir_discriminant` 特征的双代表角距，中性墨）——每组一对开关（图形/标签），
 沿 Render 逐项图形/标签分开的习惯；键随总门同一 T-session 窗口 storage 寿命，换类、采纳结果与
-关开窗口保留，新进程回出厂全开。区域着色子项单列且禁用（无区域通量载荷，诚实缺席）。所有开关
-是纯显示路径：只过滤既有事实并重投影/重绘，不重算、不发请求、不进 `.lmc`/导出/user defaults。
+关开窗口保留，新进程回出厂全开。Point images 组内另有三个逐类子开关（source image / regular
+image / family collapse，AC4 的常规像与折叠对象独立显隐；标记旁的常驻短名是该组标签框的消费
+端，hover 详情是交互细节不属标签门），其余种类随父门。区域着色子项单列且禁用（无区域通量
+载荷，诚实缺席）。所有开关是纯显示路径：只过滤既有事实并重投影/重绘，不重算、不发请求、不进
+`.lmc`/导出/user defaults。
 总关撤掉全部分析墨迹（弧、标记、色散、verdict、标签、profile 临时设备），保留太阳/天顶/地平线
 与用户 sky point；再开恢复原分组选项而非全量重置。关任一组标签只撤读数不撤墨迹；关图形墨迹与
 标签一起撤（无注解对象）。
 
 **参考弧与共笔画（as-built 2026-11-22）**：三组弧（范围界/锐边/内反射转折）共用一种中性墨
-（`kSurveyArcInk`，锚灰系）——图层以**名字**区分，不以色相区分，图例逐 owner 记账。C01 的
+（`kSurveyArcInk`，锚灰系）——图层以**名字**区分，不以色相区分，图例逐 owner 记账，键行标注各层引用的固定口径（support/edge 记 survey 自身 scope 波长，
+转折记色散对的两波长——底图 λ 滑杆的值不冒充这些参照的口径；scope 缺失时明写 unknown）。C01 的
 support 内界与 certified edge 同址：edge 卡自带 `coincident_with_support` 声明成立且两组门
 同时开时，两解释共用**一份笔画**（一次 walk，图例两名字并在，读数标 edge 名）；任一门单独开
 保留该线；非重合 edge 无论屏上多近都各走各的圈（禁止屏幕距离/格式化近似合并）。0–180° 全覆盖
 的 support 用文字一行（不画全天空圈对）；0/180° 退化界不画（即太阳锚与对跖点自身）。转折层每
-特征画双代表角距两圈 + 一条成对读数（`TIR f<n> · red°/blue°`），与红蓝组不建共笔画（两组同时
-开各自出墨、图例分别记账）；红蓝组关时中性转折仍可独立显示。红蓝组语义墨的完整撤除（AC 负
+特征画双代表角距两圈 + 一条成对读数（`TIR step <n> · red°/blue°`；<n> 是代表光路的反射步序
+——`internal_<n>` 的 n 由 dp_weight_kink 的 margin=2·step+1 经 dp_boundary 的 MarginName 编码，
+不是晶体面号，显示不作面归属），与红蓝组不建共笔画（两组同时开各自出墨、图例分别记账）；红蓝
+组关时中性转折仍可独立显示。红蓝组语义墨的完整撤除（AC 负
 对照：1-3-2 verdict 案例的蓝桶清零）由组门一并关掉 dispersion 与 verdict 两源实现。
 profile hover 设备仍只受总门控制，不被任一数据组门截断。
 

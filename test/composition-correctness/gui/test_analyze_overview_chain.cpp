@@ -21,6 +21,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -31,6 +32,7 @@
 
 #include "core/optics.hpp"  // IceRefractiveIndex: the engine's dispersion table, independent of any document echo
 #include "gui/analysis_panel.hpp"
+#include "gui/analyze_map_view.hpp"  // PointMarkerVisible — the one per-kind visibility rule
 #include "gui/analyze_overview.hpp"
 #include "gui/analyze_point_view.hpp"
 #include "gui/file_io.hpp"
@@ -434,7 +436,7 @@ TEST(AnalyzeOverviewChain, OverlayFactsReadBackSupportEdgeAndTurns) {
   // and the TIR quantity/share readers never produce a position on their own (a share without a
   // visible discriminant feature leaves the layer empty, not decorated).
   for (const SurveyOverlayFacts::TirTurn& turn : facts.tir_turns) {
-    EXPECT_GE(turn.face, 0) << turn.source;
+    EXPECT_GE(turn.step, 0) << turn.source;
     EXPECT_GT(turn.delta_red_deg, 0.0);
     EXPECT_LT(turn.delta_red_deg, 180.0);
     EXPECT_GT(turn.delta_blue_deg, 0.0);
@@ -459,6 +461,54 @@ TEST(AnalyzeOverviewChain, OverlayFactsReadBackSupportEdgeAndTurns) {
   }
   EXPECT_EQ(facts.tir_turns.empty(), !has_visible_tir_feature)
       << "the turn layer reads exactly the visible internal-reflection discriminants";
+}
+
+// The layer plan's AC4 switching half, integrated on real documents at this tier: the
+// identity arm's document carries THE positioned row the map's points group draws (the
+// certified source image at the sun), and the per-kind predicate — the one rule the draw loop,
+// hit collection and legend consume — hides exactly that row under its own gate while the
+// parent gate removes everything. The full two-kind switching matrix lives at the unit tier
+// (the controlled fixture: all six kinds, both sides of every gate); no canonical corpus
+// document currently carries two positioned kinds, so the real-row leg holds the integration,
+// not the matrix.
+TEST(AnalyzeOverviewChain, IdentityDocumentRowSwitchesUnderItsOwnKindGate) {
+  const auto scene = SceneFromConfig("raypath_feature_random_regular.json");
+  const auto survey = RunSurvey(scene.get(), { 1, 3, 6, 2 });
+  ASSERT_NE(survey.get(), nullptr);
+
+  const SurveyOverviewModel model = BuildSurveyOverviewModel(*survey);
+  ASSERT_TRUE(model.valid);
+  ASSERT_EQ(model.arm, SurveyArm::kIdentity) << "the rank-0 chain routes to the identity arm on this scene";
+  ASSERT_EQ(model.objects.size(), 1u);
+  ASSERT_TRUE(model.objects[0].position_available);
+  EXPECT_EQ(model.objects[0].kind_name, "source image");
+
+  SurveyLayerGates gates;  // everything on: the positioned row is visible
+  EXPECT_TRUE(PointMarkerVisible(model.objects[0], gates));
+  // The row's own kind gate hides exactly it; another kind's gate (the co-located pair's other
+  // half) would not — asserted here on the real row for the source-image half, the pair's
+  // regular/collapse halves at the unit tier's controlled fixture.
+  gates.points_kinds.source_image = false;
+  EXPECT_FALSE(PointMarkerVisible(model.objects[0], gates));
+  gates.points_kinds = SurveyPointKindGates{};
+  gates.points.graphics = false;
+  EXPECT_FALSE(PointMarkerVisible(model.objects[0], gates));
+}
+
+// The full-dimensional C01 document's own shape at the facts layer: no positioned object cards
+// (its support/edge/bright cards are deviation-axis structures), so the map's points group
+// names the honest empty state for this class — the per-kind gates stand with nothing to hide.
+TEST(AnalyzeOverviewChain, FullDimensionalDocumentCarriesNoPositionedCards) {
+  const auto scene = SceneFromConfig("raypath_feature_random_regular.json");
+  const auto survey = RunSurvey(scene.get(), { 3, 5 });
+  ASSERT_NE(survey.get(), nullptr);
+  const SurveyOverviewModel model = BuildSurveyOverviewModel(*survey);
+  ASSERT_TRUE(model.valid);
+  bool any_positioned = false;
+  for (const SurveyObjectRow& row : model.objects) {
+    any_positioned = any_positioned || row.position_available;
+  }
+  EXPECT_FALSE(any_positioned);
 }
 
 }  // namespace lumice::gui

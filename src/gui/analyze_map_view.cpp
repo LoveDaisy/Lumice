@@ -933,6 +933,26 @@ void DrawMapReadoutLabels(ImDrawList* dl, const std::vector<MapReadoutLabel>& la
 // The marker vocabulary: a shape and a colour per kind (the engine's six kinds plus the
 // fallback), solid for a concluded claim (certified/finite) and outline-only otherwise — the
 // refused/unevaluated rows must not read as answered.
+// The ONE points-row visibility rule (the header's contract): the parent graphics gate, and for
+// the three positioned image kinds their own sub-gate. The draw loop, the hit collection and the
+// legend all read the row through this predicate — hidden kinds draw no marker, join no hover
+// group and earn no legend entry from the very same check.
+bool PointMarkerVisible(const SurveyObjectRow& row, const SurveyLayerGates& gates) {
+  if (!gates.points.graphics) {
+    return false;
+  }
+  if (row.kind_name == "source image") {
+    return gates.points_kinds.source_image;
+  }
+  if (row.kind_name == "regular image") {
+    return gates.points_kinds.regular_image;
+  }
+  if (row.kind_name == "family collapse") {
+    return gates.points_kinds.family_collapse;
+  }
+  return true;  // kinds outside the sub-gate vocabulary follow the parent gate alone
+}
+
 OverlayMarkerStyle OverlayMarkerStyleFor(const std::string& kind_name, int state) {
   OverlayMarkerStyle s;
   s.filled = state == LUMICE_PATH_STATE_CERTIFIED || state == LUMICE_PATH_STATE_FINITE;
@@ -1091,6 +1111,17 @@ void DrawSurveyOverlays(ImDrawList* dl, GuiState& state, const MapCanvasProjecti
   arcs.tir = gates.tir;
   arcs.legend = legend;
   arcs.labels_sink = &labels;
+  // The arcs' FIXED reference calibers, read off the cached model: the survey's own scope
+  // wavelength names the reach/edge bounds (whatever the map's λ slider shows), and the turn
+  // pairs quote the chromatic pair's wavelength words — a turn's two deltas are that pair's
+  // values, not the scope wavelength's.
+  if (model.scope_available) {
+    arcs.reference_lambda_available = true;
+    arcs.reference_lambda_nm = static_cast<float>(model.wavelength_nm);
+  }
+  if (model.dispersion.available && model.dispersion.min_row_available) {
+    arcs.tir_lambda_text = model.dispersion.red_label + "/" + model.dispersion.blue_label;
+  }
   DrawReferenceArcs(dl, facts, arcs);
   // Positional objects: the survey's own located conclusions, drawn where the document puts
   // them — one marker per object, styled by kind and claim state; the frame's hits collect for
@@ -1100,7 +1131,7 @@ void DrawSurveyOverlays(ImDrawList* dl, GuiState& state, const MapCanvasProjecti
   std::vector<const SurveyObjectRow*> hits;
   const float marker_r = UiPx(6.0f);
   for (const SurveyObjectRow& row : model.objects) {
-    if (!gates.points.graphics || !row.position_available) {
+    if (!PointMarkerVisible(row, gates) || !row.position_available) {
       continue;
     }
     double pos[3];
@@ -1166,6 +1197,13 @@ void DrawSurveyOverlays(ImDrawList* dl, GuiState& state, const MapCanvasProjecti
       if (!known) {
         legend->object_kinds.push_back(row.kind_name);
       }
+    }
+    if (gates.points.labels) {
+      // The labels box's own consumer: the kind's short standing name beside its marker (the
+      // plan's 辨识所需短名 — the recognisable-structure face). Hiding labels keeps the marker
+      // and the hover details, never the reverse.
+      const ImVec2 label_pos(cx + marker_r + UiPx(3.0f), cy - ImGui::GetTextLineHeight() * 0.5f);
+      dl->AddText(label_pos, ImGui::GetColorU32(ImGuiCol_TextDisabled), row.kind_name.c_str());
     }
     if (ImGui::IsMouseHoveringRect(ImVec2(cx - marker_r, cy - marker_r), ImVec2(cx + marker_r, cy + marker_r))) {
       hits.push_back(&row);
@@ -1294,6 +1332,18 @@ void DrawSkyPointMarker(ImDrawList* dl, const MapCanvasProjection& view, const S
 
 }  // namespace
 
+// The legend keys' caliber words, ONE spelling per draw pass: the scope wavelength for the
+// reach/edge bounds, unknown spelled when the document carries no scope — never the map's λ.
+void RecordArcLambdaTexts(OverlayLegendState& legend, const ReferenceArcInput& in) {
+  if (in.reference_lambda_available) {
+    char lambda[32];
+    std::snprintf(lambda, sizeof(lambda), "%.1f nm", static_cast<double>(in.reference_lambda_nm));
+    legend.arc_lambda_text = lambda;
+  } else {
+    legend.arc_lambda_text = "wavelength unknown";
+  }
+}
+
 void DrawReferenceArcs(ImDrawList* dl, const SurveyOverlayFacts& facts, const ReferenceArcInput& in) {
   if (!in.reach.graphics && !in.edge.graphics && !in.tir.graphics) {
     return;
@@ -1350,6 +1400,7 @@ void DrawReferenceArcs(ImDrawList* dl, const SurveyOverlayFacts& facts, const Re
           in.legend->reach_bounds = true;
           in.legend->reach_bound_count = 1;
           in.legend->reach_full_range_text = true;
+          RecordArcLambdaTexts(*in.legend, in);
         }
       }
     } else {
@@ -1416,6 +1467,7 @@ void DrawReferenceArcs(ImDrawList* dl, const SurveyOverlayFacts& facts, const Re
           in.legend->edge_shared = true;
         }
       }
+      RecordArcLambdaTexts(*in.legend, in);
     }
   }
   // The internal-reflection turns: each drawable feature draws its pair of representative deltas
@@ -1436,16 +1488,17 @@ void DrawReferenceArcs(ImDrawList* dl, const SurveyOverlayFacts& facts, const Re
       const IsoDeltaWalk& carrier = red_carries ? red : blue;
       if (carrier.lines_submitted > 0) {
         if (in.tir.labels && in.labels_sink != nullptr) {
-          const std::string face = turn.face >= 0 ? "TIR f" + std::to_string(turn.face) : std::string("TIR");
+          const std::string step_word = turn.step >= 0 ? "TIR step " + std::to_string(turn.step) : std::string("TIR");
           char line[128];
-          std::snprintf(line, sizeof(line), "%s · %.3f°/%.3f°%s", face.c_str(), turn.delta_red_deg, turn.delta_blue_deg,
-                        carrier.partial() ? " · arc in view" : "");
+          std::snprintf(line, sizeof(line), "%s · %.3f°/%.3f°%s", step_word.c_str(), turn.delta_red_deg,
+                        turn.delta_blue_deg, carrier.partial() ? " · arc in view" : "");
           in.labels_sink->push_back(
               { static_cast<float>(carrier.top_x), static_cast<float>(carrier.top_y), kSurveyArcInk, line });
         }
         if (in.legend != nullptr) {
           in.legend->tir_turns = true;
           in.legend->tir_turn_count += 1;
+          in.legend->tir_lambda_text = in.tir_lambda_text;
         }
       }
     }
@@ -1778,6 +1831,22 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
       key_pairs[i].gate->labels = storage->GetBool(key_pairs[i].labels_key, true);
     }
   }
+  // The points group's per-kind sub-gates (AC4): regular and collapsed images keep independent
+  // visibility inside the group — two names that stay separately switchable whatever overlaps on
+  // screen. Same region-scope ID discipline as the group keys: resolve here once, the popup's
+  // rows reuse the precomputed IDs.
+  struct PointKindKey {
+    const char* key;
+    bool* value;
+    const char* label;
+    ImGuiID id;
+  } point_kind_keys[3] = { { "ov_points_k_src", &gates.points_kinds.source_image, "source image", 0 },
+                           { "ov_points_k_reg", &gates.points_kinds.regular_image, "regular image", 0 },
+                           { "ov_points_k_col", &gates.points_kinds.family_collapse, "family collapse", 0 } };
+  for (PointKindKey& k : point_kind_keys) {
+    k.id = ImGui::GetID(k.key);
+    *k.value = storage->GetBool(k.id, true);
+  }
   if (ImGui::SmallButton("Layers##map_layers")) {
     ImGui::OpenPopup("map_layer_switches");
   }
@@ -1857,6 +1926,22 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
         ImGui::TextDisabled("%s", row.absence);
       }
     }
+    // The points group's kind sub-rows, indented one step under the group: each positioned image
+    // kind its own graphics box (labels ride the group's box — the standing names and the hover
+    // details are the group's text channels). Hidden kinds draw no marker, join no hover group
+    // and earn no legend entry — one predicate on the draw side sees to all three.
+    ImGui::Indent();
+    for (const PointKindKey& k : point_kind_keys) {
+      bool v = *k.value;
+      if (ImGui::Checkbox(k.label, &v)) {
+        *k.value = v;
+        storage->SetBool(k.id, v);
+      }
+      if (ImGui::IsItemHovered()) {
+        SetWrappedTooltip("Show this kind's markers within Point images.");
+      }
+    }
+    ImGui::Unindent();
     // The region-shading sub-item: a separate switch by design (the plan's 正交 rule), and an
     // honest absence today — no regional-flux payload exists, so the switch stands disabled
     // rather than pretending a toggle with no consumer.
@@ -2507,26 +2592,32 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
           },
           ImGui::GetFrameHeight(), 0.0f, 0.0f);
     };
+    // The keys name the FIXED caliber each layer quotes (the survey's own scope wavelength for
+    // the bounds and edges, the chromatic pair's words for the turns) — the map's λ slider never
+    // masquerades as these references' caliber, and an unknown scope says so.
     if (legend.reach_bounds) {
       ImGui::Bullet();
       if (legend.reach_full_range_text) {
-        ImGui::TextWrapped("support range — full 0–180° (text, no bounds)");
+        ImGui::TextWrapped("support range — full 0–180° (text, no bounds) · survey %s", legend.arc_lambda_text.c_str());
       } else {
         arc_icon();
-        ImGui::TextWrapped("support range — %d bound%s", legend.reach_bound_count,
-                           legend.reach_bound_count == 1 ? "" : "s");
+        ImGui::TextWrapped("support range — %d bound%s · survey %s", legend.reach_bound_count,
+                           legend.reach_bound_count == 1 ? "" : "s", legend.arc_lambda_text.c_str());
       }
     }
     if (legend.edge_arcs) {
       ImGui::Bullet();
       arc_icon();
-      ImGui::TextWrapped("sharp edge%s", legend.edge_shared ? " — one stroke shared with the support range" : "");
+      ImGui::TextWrapped("sharp edge%s · survey %s",
+                         legend.edge_shared ? " — one stroke shared with the support range" : "",
+                         legend.arc_lambda_text.c_str());
     }
     if (legend.tir_turns) {
       ImGui::Bullet();
       arc_icon();
-      ImGui::TextWrapped("internal-reflection turns — %d turn pair%s", legend.tir_turn_count,
-                         legend.tir_turn_count == 1 ? "" : "s");
+      ImGui::TextWrapped("internal-reflection turns — %d turn pair%s · chromatic pair %s", legend.tir_turn_count,
+                         legend.tir_turn_count == 1 ? "" : "s",
+                         legend.tir_lambda_text.empty() ? "wavelength unknown" : legend.tir_lambda_text.c_str());
     }
     if (legend.dispersion_red || legend.dispersion_blue) {
       ImGui::Bullet();
@@ -2591,7 +2682,8 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
       if (legend.tir_turns) {
         ImGui::TextWrapped(
             "internal-reflection turns — the visible TIR discriminant feature's representative angular distances at "
-            "the two reference wavelengths; a reference pair, not a whole-circle colour claim");
+            "the chromatic pair's two wavelengths; the step number names the reflection step along the representative "
+            "path, not a crystal face; a reference pair, not a whole-circle colour claim");
       }
       if (!legend.object_kinds.empty()) {
         ImGui::TextWrapped("each kind's marker — the survey's located conclusion, at the position the card names");

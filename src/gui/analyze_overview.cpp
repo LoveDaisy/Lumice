@@ -386,10 +386,12 @@ std::string SurveyTextString(const LUMICE_PathText& text) {
 
 namespace {
 
-// The TIR turn's source grammar, the one the engine writes (survey_t1's MarginName):
-// `internal_<n>_tir_discriminant`. Anything else is not an internal-reflection turn the map can
-// name — no fuzzy matching, no substring guessing (a wrong face number misattributes the event).
-bool ParseTirTurnSource(const std::string& source, int* face) {
+// The TIR turn's source grammar, the one the engine writes (dp_boundary's MarginName, fed by
+// dp_weight_kink's margin = 2*step + 1): `internal_<step>_tir_discriminant`, where <step> is the
+// reflection step's 1-based index along the representative slot sequence — NOT a crystal face
+// number (the slot at that step is whatever face the path visits there). Anything else is not an
+// internal-reflection turn the map can name — no fuzzy matching, no substring guessing.
+bool ParseTirTurnStep(const std::string& source, int* step) {
   constexpr const char* kPrefix = "internal_";
   constexpr const char* kSuffix = "_tir_discriminant";
   if (source.size() <= std::strlen(kPrefix) + std::strlen(kSuffix)) {
@@ -405,7 +407,7 @@ bool ParseTirTurnSource(const std::string& source, int* face) {
       !std::all_of(middle.begin(), middle.end(), [](unsigned char c) { return std::isdigit(c) != 0; })) {
     return false;
   }
-  *face = std::atoi(middle.c_str());
+  *step = std::atoi(middle.c_str());
   return true;
 }
 
@@ -499,13 +501,13 @@ SurveyOverlayFacts BuildSurveyOverlayFacts(const LUMICE_PathSurvey& result) {
         continue;
       }
       const std::string source = SurveyTextString(feature.source);
-      int face = -1;
-      if (!ParseTirTurnSource(source, &face)) {
+      int step = -1;
+      if (!ParseTirTurnStep(source, &step)) {
         continue;
       }
       SurveyOverlayFacts::TirTurn turn;
       turn.source = source;
-      turn.face = face;
+      turn.step = step;
       turn.delta_red_deg = feature.delta_red_deg;
       turn.delta_blue_deg = feature.delta_blue_deg;
       facts.tir_turns.push_back(std::move(turn));

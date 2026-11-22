@@ -203,16 +203,22 @@ actually drawn.
 
 **Layer groups.** The **Layers** button beside Overlays opens the per-group switches — Support
 range, Sharp edges, Point images, Red-blue shift, Reflection turns — each with its own graphics
-and labels box (hiding labels never hides ink; hiding ink removes its labels with it). The
-switches only filter what is already computed: nothing is recalculated, and your choices survive
-class switches and closing the window for this session. The support-range bounds and sharp edges
+and labels box (hiding labels never hides ink; hiding ink removes its labels with it). Point
+images carries three per-kind boxes — source image, regular image, family collapse — so images
+that happen to overlap on screen stay separately switchable; each marker's standing short name
+is that group's label, and the hover tooltip remains the details channel. The switches only
+filter what is already computed: nothing is recalculated, and your choices survive class
+switches and closing the window for this session. The support-range bounds and sharp edges
 draw as angular-distance reference arcs at the survey's own wavelength — boundaries of where the
 class can light, not glowing rings; a range that spans the whole 0–180° axis states itself in
 text instead of painting the sky. When an edge's card declares it coincides with the support's
 bound, both groups share one stroke and the legend names both owners. Internal-reflection turns
-show the visible TIR features' representative distances at the two reference wavelengths as a
-neutral pair with one combined readout — a reference pair, not a whole-circle colour claim. Each
-group's entry appears in the legend only when it actually drew.
+show the visible TIR features' representative distances at the chromatic pair's two wavelengths
+as a neutral pair with one combined readout — the step number names the reflection step along
+the representative path, not a crystal face; a reference pair, not a whole-circle colour claim.
+The legend keys name the fixed caliber each layer quotes (the survey's own wavelength for the
+bounds and edges, the chromatic pair's for the turns), so a moved map wavelength never reads as
+these references'. Each group's entry appears in the legend only when it actually drew.
 
 **Row highlights and the reference profile's readings.** Every hoverable row in the class answer
 highlights while the pointer stands on it — the theme's own hover colour under the row's text —

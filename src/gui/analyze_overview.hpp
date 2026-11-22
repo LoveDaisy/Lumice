@@ -282,12 +282,16 @@ struct SurveyOverlayFacts {
 
   // The internal-reflection-turn layer: the diagnose features the document itself marks visible
   // and names as internal-reflection discriminants (source syntax `internal_<n>_tir_discriminant`).
-  // The two deltas are the turn's representative angular distances at the two reference
-  // wavelengths — a pair of references, never a whole-circle colour claim; the face number comes
-  // from the source's own grammar, unparsed names stay verbatim with face -1.
+  // The two deltas are the turn's representative angular distances at the chromatic pair's two
+  // reference wavelengths — a pair of references, never a whole-circle colour claim. The source's
+  // number is the REFLECTION STEP's 1-based index along the representative slot sequence — NOT a
+  // crystal face number (dp_weight_kink builds margin = 2*step + 1 and dp_boundary's MarginName
+  // spells margin/2, so the slot at step n is whatever face the path visits there; displaying it
+  // as a face would misattribute the event). The verbatim source rides along for the text hosts.
   struct TirTurn {
     std::string source;  // the engine's own source string, verbatim
-    int face = -1;       // parsed from internal_<n>_tir_discriminant; -1 when not parseable
+    int step = -1;       // the reflection step index parsed from internal_<n>_tir_discriminant;
+                         // -1 when not parseable — never presented as a face number
     double delta_red_deg = 0.0;
     double delta_blue_deg = 0.0;
   };

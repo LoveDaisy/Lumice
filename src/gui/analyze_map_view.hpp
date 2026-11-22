@@ -206,6 +206,12 @@ struct OverlayLegendState {
   bool edge_shared = false;            // the drawn edge arc is one stroke shared with a support bound
   bool tir_turns = false;              // any internal-reflection turn pair drew
   int tir_turn_count = 0;              // how many turns drew (one entry per turn pair)
+  // The reference calibers the drawn arcs quote, recorded with the bits so the legend keys can
+  // name them: the support/edge bounds read at the survey document's own scope wavelength (a
+  // FIXED reference, whatever the map's λ slider shows), the turn pair at the chromatic pair's
+  // two wavelengths. Empty when the document carries no caliber — the entry then says unknown.
+  std::string arc_lambda_text;
+  std::string tir_lambda_text;
 };
 
 // Last actually drawn overlay legend, not a second camera/availability model.
@@ -293,13 +299,31 @@ struct SurveyLayerGate {
   bool graphics = true;
   bool labels = true;
 };
+// The points group's per-kind sub-gates (AC4): the positioned image kinds keep independent
+// visibility inside the group — regular and collapsed images are separate names that stay
+// separately switchable, whatever happens to overlap on screen. Any other positioned kind (the
+// vocabulary's fallback) follows the parent gate alone.
+struct SurveyPointKindGates {
+  bool source_image = true;
+  bool regular_image = true;
+  bool family_collapse = true;
+};
 struct SurveyLayerGates {
-  SurveyLayerGate reach;      // support-range bounds
-  SurveyLayerGate edge;       // sharp-edge positions
-  SurveyLayerGate points;     // positioned object markers (their text channel is the hover tooltip)
+  SurveyLayerGate reach;   // support-range bounds
+  SurveyLayerGate edge;    // sharp-edge positions
+  SurveyLayerGate points;  // positioned object markers (labels gate the markers' short
+                           // standing labels; the hover tooltip is the group's detail channel)
+  SurveyPointKindGates points_kinds;
   SurveyLayerGate chromatic;  // the red-blue group: the dispersion pair and the verdict anchor
   SurveyLayerGate tir;        // internal-reflection turn references
 };
+
+// The ONE points-row visibility rule (the draw loop, the hit collection and the legend read it
+// through this single predicate — no second kind table): the parent graphics gate, and for the
+// three positioned image kinds their own sub-gate. Surfaced so the unit layer holds the mapping
+// exhaustively and the real family documents' rows at the composition tier.
+struct SurveyObjectRow;
+bool PointMarkerVisible(const SurveyObjectRow& row, const SurveyLayerGates& gates);
 
 // The reference arcs' caller-side geometry and gates — the same mirror discipline as
 // VerdictAnchorInput's projection quintet (a new MapCanvasProjection field must be added to BOTH
@@ -319,6 +343,13 @@ struct ReferenceArcInput {
   SurveyLayerGate tir;                   // touching its ink
   OverlayLegendState* legend = nullptr;  // the frame's legend accounting; null = no legend
   std::vector<MapReadoutLabel>* labels_sink = nullptr;  // production collects into the frame's set
+  // The fixed reference calibers the arcs quote (the caller reads them off the cached model):
+  // the survey document's own scope wavelength for the reach/edge bounds, and the chromatic
+  // pair's wavelength words for the turn pairs. Unavailable scopes leave the legend's caliber
+  // wording at "unknown" rather than borrowing the map's λ.
+  float reference_lambda_nm = 0.0f;
+  bool reference_lambda_available = false;
+  std::string tir_lambda_text;
 };
 
 // The reach/edge/turn arcs, drawn in the ONE shared neutral ink (kSurveyArcInk). The shared

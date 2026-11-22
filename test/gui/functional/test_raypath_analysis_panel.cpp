@@ -6561,6 +6561,23 @@ bool SupportEdgeLayersShareOneStrokeAndGateIndependently(ImGuiTestContext* ctx) 
   // Default frame: the shared stroke drew — reach bounds and the edge with its sharing named.
   const gui::OverlayLegendState legend0 = gui::LastMapOverlayLegend();
   IM_CHECK_RETV(legend0.reach_bounds && legend0.edge_arcs && legend0.edge_shared, false);
+  // The fixed reference caliber rides the legend keys: the bounds quote the survey document's
+  // OWN scope wavelength — the identification the map's independent λ slider cannot provide.
+  {
+    const gui::SurveyOverviewModel model_check =
+        gui::BuildSurveyOverviewModel(*gui::g_state.analysis.survey.adopted_result);
+    IM_CHECK_RETV(model_check.scope_available, false);
+    char lambda[48];
+    std::snprintf(lambda, sizeof(lambda), "survey %.1f nm", model_check.wavelength_nm);
+    // The legend sits at the report child's bottom: scroll it fully into view first — the frame
+    // text capture skips clipped items, and an un-scrolled report would log no legend at all.
+    if (ImGuiWindow* report = MapReportWindow()) {
+      report->Scroll.y = report->ScrollMax.y;
+    }
+    ctx->Yield(2);
+    const std::string legend_text = CaptureMapFrameText(ctx);
+    IM_CHECK_RETV(legend_text.find(lambda) != std::string::npos, false);
+  }
   const int ink_shared = MapWindowIndexCountForColour(gui::kSurveyArcInk);
   IM_CHECK_RETV(ink_shared > 0, false);
   // The stroke invariants read the GEOMETRY-only counter: the arcs' readout labels draw in the
@@ -6750,6 +6767,71 @@ bool SupportEdgeLayersShareOneStrokeAndGateIndependently(ImGuiTestContext* ctx) 
     PinRaypathViewOnScreen(ctx);
     ctx->Yield(3);
     IM_CHECK_RETV(chromatic_toggle_reaches("2x"), false);
+  }
+  // The points group's labels + per-kind sub-gates on a document that HAS positioned markers
+  // (the plate scene's identity arm: one certified source image at the sun — the C01 document
+  // above carries none). The labels box removes the markers' standing short names and nothing
+  // else; each kind's sub-box removes exactly its own markers.
+  {
+    ScopedServerGuard plate_guard;
+    IM_CHECK_RETV(BringUpScene(ctx, kPlateJson, /*infinite=*/false, /*gpu=*/false), false);
+    OpenWindow(ctx);
+    IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
+    SetListRef(ctx);
+    ctx->ItemClick("**/1-2");
+    ctx->SetRef("");
+    IM_CHECK_RETV(DriveUntil(
+                      ctx,
+                      [] {
+                        return gui::SurveyOverviewStateFor(gui::g_state.analysis.survey) ==
+                               gui::SurveyOverviewState::kCompleted;
+                      },
+                      30),
+                  false);
+    const gui::SurveyOverviewModel plate_model =
+        gui::BuildSurveyOverviewModel(*gui::g_state.analysis.survey.adopted_result);
+    IM_CHECK_RETV(plate_model.valid && plate_model.objects.size() == 1, false);
+    IM_CHECK_RETV(plate_model.objects[0].kind_name == "source image" && plate_model.objects[0].position_available,
+                  false);
+    gui::SelectLensType(gui::g_state, gui::kLensTypeRectangular);
+    gui::g_state.renderer.visible = gui::kVisibleFull;
+    gui::g_state.renderer.front = false;
+    ctx->Yield(3);
+    ctx->Yield(3);
+    ctx->MouseMoveToPos(ImVec2(-100.0f, -100.0f));
+    ctx->Yield(3);
+    // The standing short names: the map region's disabled-colour ink is dominated by the
+    // marker labels at this state (the guidance line belongs to the no-selection state, the
+    // other readouts carry their own colours), and the marker itself is the anchor gold.
+    const ImU32 disabled_ink = ImGui::GetColorU32(ImGuiCol_TextDisabled);
+    const int marker_gold = MapWindowIndexCountForColour(IM_COL32(255, 231, 168, 255));
+    const int labels_on = MapWindowIndexCountForColour(disabled_ink);
+    IM_CHECK_RETV(marker_gold > 0 && labels_on > 0, false);
+    ctx->ItemClick("**/Layers##map_layers");
+    ctx->Yield(2);
+    // The disabled-colour bucket also carries a small constant non-label share (the header's
+    // info icon glyph), so the labels leg reads the DROP, not an absolute zero: hiding the
+    // labels removes their glyph ink while the marker's own gold stays.
+    ctx->ItemClick("**/##ov_points_labels");
+    ctx->Yield(3);
+    const int labels_off = MapWindowIndexCountForColour(disabled_ink);
+    IM_CHECK_RETV(labels_off < labels_on, false);
+    IM_CHECK_RETV(MapWindowIndexCountForColour(IM_COL32(255, 231, 168, 255)) == marker_gold, false);
+    // The kind sub-box: off removes exactly this kind's markers (here: all of them — the
+    // document's one positioned kind), the legend entry leaves with them.
+    ctx->ItemClick("**/source image");
+    ctx->Yield(3);
+    IM_CHECK_RETV(MapWindowIndexCountForColour(IM_COL32(255, 231, 168, 255)) == 0, false);
+    IM_CHECK_RETV(gui::LastMapOverlayLegend().object_kinds.empty(), false);
+    ctx->ItemClick("**/source image");
+    ctx->Yield(3);
+    IM_CHECK_RETV(MapWindowIndexCountForColour(IM_COL32(255, 231, 168, 255)) == marker_gold, false);
+    IM_CHECK_RETV(gui::LastMapOverlayLegend().object_kinds.size() == 1, false);
+    ctx->ItemClick("**/##ov_points_labels");
+    ctx->Yield(3);
+    IM_CHECK_RETV(MapWindowIndexCountForColour(disabled_ink) == labels_on, false);
+    ctx->PopupCloseAll();
+    ctx->Yield(2);
   }
   return true;
 }
