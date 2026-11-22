@@ -516,6 +516,15 @@ class PreviewRenderer {
   // storage's reclamation while a command stream still references it.
   void ReleaseStagingSlots();
 
+  // Retire ALL CPU mirror storage WITHOUT touching any display fact: the dimensions, the
+  // texture mode, the sim-layer gate and the pending blank are left exactly as they are — only
+  // the save-source buffers' heap blocks are released. This is the file→accepted-live boundary:
+  // when a live payload becomes the document's authoritative complete source, the bytes the
+  // open wrote into the mirror have no reader left (Save refreshes the mirror from the payload),
+  // and a v6 document's retired half mirror is 192 MiB of dead allocation on exactly the
+  // machines this renderer serves. CPU-only and main-thread-safe like the mirror writers.
+  void ReleaseCpuMirrorStorage();
+
   // Test-only observability (gui_test main thread): the registered byte count of one staging
   // slot, 0 once released — the lifecycle witness reads this, since no aggregate GL query names
   // buffer storage.

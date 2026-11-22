@@ -2964,6 +2964,10 @@ void RegisterPreviewTextureTests(ImGuiTestEngine* engine) {
       }
       const std::vector<unsigned char> brighter_single = CapturePreviewFullFrame(ctx);
       IM_CHECK(!brighter_single.empty());
+      // The multi arm re-arms the 2-row cap: a multi-strip attempt on a frame of a DIFFERENT
+      // scale (this one), reached by an update from the previous frame — the scale-change
+      // witness rides the same cut the first arm exercised.
+      SetStripRowsAndWait(ctx, 2);
       UploadXyzAndWait(ctx, brighter, kW, kH);
       IM_CHECK(g_fault.uploadxyz_result.ok);
       IM_CHECK_EQ(gui::g_preview.GetXyzTextureScale(), brighter_single_scale);
@@ -2971,6 +2975,10 @@ void RegisterPreviewTextureTests(ImGuiTestEngine* engine) {
       IM_CHECK_EQ(brighter_multi.size(), brighter_single.size());
       if (std::memcmp(brighter_multi.data(), brighter_single.data(), brighter_multi.size()) != 0) {
         IM_ERRORF("%s", "the strip cut changed the brighter frame's picture");
+      }
+      IM_CHECK(gui::g_preview.StagingSlotByteCountForTest(0) > 0);
+      if (!(gui::g_preview.StagingSlotByteCountForTest(1) > 0)) {
+        IM_ERRORF("%s", "the brighter frame's multi-strip attempt wrote both slots");
       }
 
       SetStripRowsAndWait(ctx, 0);
@@ -3163,6 +3171,106 @@ void RegisterPreviewTextureTests(ImGuiTestEngine* engine) {
 
       SetStripRowsAndWait(ctx, 0);
       SetFaultAndWait(ctx, -1, 0);
+    };
+  }
+
+  // The file→accepted-live boundary: a live frame's ACCEPTANCE retires the open's file source —
+  // the fact AND the mirror storage (a v6 document's retired half mirror is real memory) —
+  // while a FAILED live acceptance must leave it intact, because it is still the save/retry
+  // authority. Witnessed at the capacity level: a cleared-but-resident mirror passes the
+  // null-pointer queries and would hide the leak.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "preview_texture", "an_accepted_live_frame_retires_the_file_source");
+    t->GuiFunc = FaultUploadGuiFunc;
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      // ScopedRunServer resets the state itself; a SECOND ResetTestState here would run DoNew
+      // against the live server and leave the subsequent Run unable to commit.
+      ScopedRunServer scene;
+      IM_CHECK(scene.ok());
+      SetFaultAndWait(ctx, -1, 0);
+      constexpr int kFW = 8;
+      constexpr int kFH = 8;
+      const std::vector<float> baked = XyzCoordinatePattern(kFW, kFH, /*seed=*/61);
+      gui::XyzTextureMeta meta;
+      meta.snapshot_intensity = 2.0f;
+      const std::string path = GuiTestTempPath("lumice_preview_texture_file_source_retire.lmc").string();
+      IM_CHECK(WriteXyzLmcFile(path, baked, kFW, kFH, meta));
+      g_open_requested = true;
+      g_open_done = false;
+      g_open_path = path;
+      YieldUntilOpenDone(ctx);
+      IM_CHECK(g_open_done);
+      ctx->Yield(2);
+      IM_CHECK(gui::g_preview.HasTexture());
+      if (!(gui::g_preview.CpuMirrorCapacityBytesForTest() > 0)) {
+        IM_ERRORF("%s", "premise: the open mirrored the file bits");
+      }
+
+      // Arm 1 — a real run whose live frame is ACCEPTED retires the file source's storage, and
+      // the live frame becomes the save source.
+      SeedFiniteRun(/*millions=*/0.1f);
+      gui::DoRun(/*user_initiated=*/true);
+      IM_CHECK(DriveUntil(
+          ctx,
+          [] {
+            return gui::g_state.sim_state == SimState::kDone && gui::g_state.run_intent == RunIntent::kRunCompleted;
+          },
+          20));
+      ctx->Yield(2);
+      IM_CHECK_EQ(gui::g_preview.GetTextureWidth(), 1024);
+      if (gui::g_preview.CpuMirrorCapacityBytesForTest() != 0u) {
+        IM_ERRORF("%s", "the accepted live frame retired the file source's mirror storage");
+      }
+      const std::string saved = GuiTestTempPath("lumice_preview_texture_file_source_retire_saved.lmc").string();
+      // The PRODUCTION save chain (PerformSave → RefreshCpuTextureForSave → SaveLmcFile): after
+      // the retirement the mirror is empty until this refresh repopulates it from the accepted
+      // payload — saving through the serializer alone would skip exactly the step the production
+      // user takes.
+      gui::g_state.current_file_path = saved;
+      gui::PerformSave();
+      {
+        gui::GuiState scratch;
+        gui::LmcTexture tex;
+        IM_CHECK(gui::LoadLmcFile(saved, scratch, tex));
+        if (tex.width != 1024) {
+          IM_ERRORF("%s", "the save source is the accepted live frame, not the opened file");
+        }
+      }
+
+      // Arm 2 — a FAILED live acceptance leaves the file source intact: its bytes are still the
+      // save/retry authority. Re-opening the file is the document switch (its non-Revert reset
+      // clears the latch, the pending source and the file fact), without a state reset that
+      // would fight the live server.
+      SetFaultAndWait(ctx, -1, 0);
+      g_open_requested = true;
+      g_open_done = false;
+      g_open_path = path;
+      YieldUntilOpenDone(ctx);
+      IM_CHECK(g_open_done);
+      ctx->Yield(2);
+      IM_CHECK(gui::g_preview.GetTextureWidth() == kFW);
+      IM_CHECK(gui::g_preview.CpuMirrorCapacityBytesForTest() > 0);
+      SetFaultAndWait(ctx, static_cast<int>(gui::UploadResult::Stage::kTexImage), kGlInvalidValue);
+      SeedFiniteRun(/*millions=*/0.1f);
+      gui::DoRun(/*user_initiated=*/true);
+      IM_CHECK(DriveUntil(
+          ctx,
+          [] {
+            return gui::g_state.sim_state == SimState::kDone && gui::g_state.run_intent == RunIntent::kRunCompleted;
+          },
+          20));
+      ctx->Yield(2);
+      IM_CHECK(gui::g_state.upload_latched);
+      if (!(gui::g_preview.CpuMirrorCapacityBytesForTest() > 0)) {
+        IM_ERRORF("%s", "a failed live acceptance keeps the file source's bytes");
+      }
+      if (gui::PreviewSourcePixelCount() != static_cast<long>(kFW) * kFH) {
+        IM_ERRORF("%s", "the resolver still names the file frame");
+      }
+
+      SetFaultAndWait(ctx, -1, 0);
+      std::remove(path.c_str());
+      std::remove(saved.c_str());
     };
   }
 }
