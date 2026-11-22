@@ -1794,13 +1794,22 @@ UploadResult PreviewRenderer::UploadXyzTexture(const float* data, int width, int
     glDeleteSync(sync);
     pbo_fence_[w] = nullptr;
     if (forced_wait || wait_result == GL_TIMEOUT_EXPIRED || wait_result == GL_WAIT_FAILED) {
+      // A sync STATUS is not a GL error code, but a failed wait is allowed to leave a driver
+      // error flag set (an invalid sync object is the spec's own example). Reading the flag HERE
+      // — before any teardown — does two things recording the raw status cannot: it attributes
+      // the failure to the driver's actual error when there is one, and it DRAINS the flag so it
+      // cannot leak past this candidate's boundary into the next candidate's error reads, where
+      // it would label a successful texture write as failed with the new frame already on the
+      // GPU — the exact pixel-vs-metadata split this file exists to prevent. When the driver set
+      // no flag (a plain timeout), the status code itself is the evidence that remains.
+      const GLenum wait_err = glGetError();
       GUI_LOG_WARNING(
-          "[GL] UploadXyzTexture: fence wait failed (result=0x{:X}), tearing down staging slot {}; "
-          "skipping frame",
-          wait_result, w);
+          "[GL] UploadXyzTexture: fence wait failed (result=0x{:X} driver_error=0x{:04X}), tearing "
+          "down staging slot {}; skipping frame",
+          wait_result, wait_err, w);
       TearDownPboSlot(w);
       r.stage = UploadResult::Stage::kFenceWait;
-      r.gl_error = forced_wait ? forced_wait : static_cast<int>(wait_result);
+      r.gl_error = wait_err != GL_NO_ERROR ? static_cast<int>(wait_err) : static_cast<int>(wait_result);
       r.old_frame_retained = true;
       return r;
     }
@@ -2052,6 +2061,14 @@ UploadResult PreviewRenderer::UploadXyzBitsTail(const void* define_data, int wid
   }
   r.ok = true;
   return r;
+}
+
+void PreviewRenderer::RaiseRealGlInvalidOperationForTest() {
+  // GL_UNPACK_ALIGNMENT accepts 1/2/4/8 only: 3 is rejected with GL_INVALID_VALUE and changes no
+  // state (the old alignment stays). Deliberately NOT drained — the caller arranges the read;
+  // this is what lets a witness place a driver-set error flag ahead of a branch whose contract
+  // is to read and clear it.
+  glPixelStorei(GL_UNPACK_ALIGNMENT, 3);
 }
 
 void PreviewRenderer::UploadBgTexture(const unsigned char* data, int width, int height) {

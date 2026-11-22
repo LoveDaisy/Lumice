@@ -380,6 +380,13 @@ class PreviewRenderer {
   using UploadFaultHook = std::function<int(UploadResult::Stage)>;
   void SetUploadFaultHookForTest(UploadFaultHook hook) { upload_fault_hook_ = std::move(hook); }
 
+  // Test seam (gui_test main thread): issues one REAL GL call the driver rejects
+  // (GL_INVALID_VALUE, no state change), so a witness can arrange a genuinely driver-set error
+  // flag. The fence-wait drain witness needs a flag the DRIVER placed — a synthesized hook
+  // return value cannot produce one — to prove the wait-failure branch reads and clears it
+  // before the next candidate's error reads. Deliberately not drained here.
+  static void RaiseRealGlInvalidOperationForTest();
+
   // Background image texture management (GL upload only, no file I/O)
   void UploadBgTexture(const unsigned char* data, int width, int height);
   void ClearBackground();

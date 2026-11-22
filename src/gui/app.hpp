@@ -371,6 +371,12 @@ ScreenshotRender RenderScreenshot(const ScreenshotExportSelection& sel);
 ScreenshotFrameFacts CurrentScreenshotFrameFacts();
 void DoExportDualFisheyeEqualAreaPng();
 void DoExportEquirectangularPng();
+// The no-dialog bodies of the two all-sky panorama exports (dialog → these, gui tests drive
+// these directly since a native save dialog cannot be driven from a test). Return whether the
+// file was written; every failure inside is logged and explicit (no file, never a truncated or
+// pseudo-full-resolution delivery). Needs the GL context.
+bool ExportDualFisheyeEqualAreaPng(const std::filesystem::path& path);
+bool ExportEquirectangularPng(const std::filesystem::path& path);
 void DoExportConfigJson();
 
 // The half of DoExportConfigJson that is not the file dialog: write `json_str` to `path`, OR — when
