@@ -577,6 +577,13 @@
 // LUMICE_PathProbeRequest. Zero and older complete extents retain physical P|B|D context;
 // one requests literal context. Point fibers and representative-member probe quantities are
 // unchanged. No symbols added; existing request prefixes retain their layout and behavior.
-#define LUMICE_API_VERSION 462
+// ADDED (v4.63): symmetry_bits_plus_one appended to LUMICE_PathMapRequest, the survey request's
+// member encoding generalized to the map's two entries. Zero and the older complete extent keep
+// the all-members class the map always evaluated; 1..8 select the concrete P/B/D member set the
+// band-sum evaluates member-by-member (the GUI's map request now carries its true selection).
+// An extent that does not carry the field is never read for it; values outside [0, 8] are
+// refused. The reference map's caliber, lattice and readers are unchanged; no symbols added and
+// existing request prefixes retain their layout and behavior.
+#define LUMICE_API_VERSION 463
 
 #endif  // LUMICE_API_VERSION_H_

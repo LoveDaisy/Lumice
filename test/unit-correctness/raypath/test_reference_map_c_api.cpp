@@ -74,6 +74,72 @@ LUMICE_PathMapRequest RingRequest() {
 
 char g_err[512];
 
+// The v4.63 member-selection append: the request's extent gates the read. The legacy extent
+// (what v4.62 published, through `interrupted` plus its trailing padding) must stay accepted
+// with a poisoned appended field — an implementation that reads the field early would refuse
+// the request and fail the test.
+constexpr size_t kMapRequestSizeV462 = ((offsetof(LUMICE_PathMapRequest, interrupted) + sizeof(void*) + 7) / 8) * 8;
+static_assert(kMapRequestSizeV462 < sizeof(LUMICE_PathMapRequest),
+              "the appended field must grow sizeof beyond the legacy extent");
+static_assert(kMapRequestSizeV462 == 120, "the legacy extent is a published ABI number; pin it");
+
+// Analyzes the ring view with the given member encoding and returns the engine's member count;
+// -1 on refusal (g_err carries the reason). The default encoding (0) keeps the all-members
+// class the map has always evaluated.
+int RingRequestMemberCount(LUMICE_Scene* scene, int symmetry_bits_plus_one) {
+  LUMICE_PathMapRequest request = RingRequest();
+  request.symmetry_bits_plus_one = symmetry_bits_plus_one;
+  LUMICE_PathMap* raw_map = nullptr;
+  if (LUMICE_AnalyzePathMap(scene, &request, &raw_map, g_err, sizeof(g_err)) != LUMICE_OK) {
+    return -1;
+  }
+  MapPtr map(raw_map);
+  LUMICE_PathMapInfo info{};
+  info.struct_size = sizeof(info);
+  if (LUMICE_PathMapGetInfo(map.get(), &info) != LUMICE_PATH_READ_OK) {
+    return -1;
+  }
+  return static_cast<int>(info.member_count);
+}
+
+// Analyzes the ring view with the given encoding and serializes the pixels reader's raw
+// columns (count, values, counts, status) into `blob` for bitwise comparison; returns the
+// member count, -1 on refusal.
+int AnalyzeRingIntoBlob(LUMICE_Scene* scene, int symmetry_bits_plus_one, bool legacy_extent,
+                        std::vector<unsigned char>* blob) {
+  LUMICE_PathMapRequest request = RingRequest();
+  if (legacy_extent) {
+    request.struct_size = kMapRequestSizeV462;
+    request.symmetry_bits_plus_one = 999;  // beyond the extent: must never be read
+  } else {
+    request.symmetry_bits_plus_one = symmetry_bits_plus_one;
+  }
+  LUMICE_PathMap* raw_map = nullptr;
+  if (LUMICE_AnalyzePathMap(scene, &request, &raw_map, g_err, sizeof(g_err)) != LUMICE_OK) {
+    return -1;
+  }
+  MapPtr map(raw_map);
+  LUMICE_PathMapInfo info{};
+  info.struct_size = sizeof(info);
+  if (LUMICE_PathMapGetInfo(map.get(), &info) != LUMICE_PATH_READ_OK) {
+    return -1;
+  }
+  LUMICE_PathMapPixels pixels{};
+  pixels.struct_size = sizeof(pixels);
+  if (LUMICE_PathMapGetPixels(map.get(), &pixels) != LUMICE_PATH_READ_OK) {
+    return -1;
+  }
+  const auto append = [blob](const void* data, size_t bytes) {
+    const auto* begin = static_cast<const unsigned char*>(data);
+    blob->insert(blob->end(), begin, begin + bytes);
+  };
+  append(&pixels.pixel_count, sizeof(pixels.pixel_count));
+  append(pixels.values, pixels.pixel_count * sizeof(*pixels.values));
+  append(pixels.counts, pixels.pixel_count * sizeof(*pixels.counts));
+  append(pixels.status, pixels.pixel_count * sizeof(*pixels.status));
+  return static_cast<int>(info.member_count);
+}
+
 // The happy path: request -> readers, all contracts on one small ring view.
 TEST(MapCApi, RequestEvaluatesAndReadersCarryTheDocument) {
   ScenePtr scene;
@@ -454,6 +520,110 @@ TEST(MapCApi, WorkspaceFaceAndLifetime) {
   mass.struct_size = sizeof(mass);
   EXPECT_EQ(LUMICE_PathMapGetPointMass(map.get(), &mass), LUMICE_PATH_READ_NOT_AVAILABLE);
   LUMICE_PathMapDestroy(nullptr);  // NULL is a no-op
+}
+
+// The member selection rides the request into the engine's expansion: the literal encoding
+// evaluates one member, a partial set differs from the default class, and every accepted value
+// yields a finite map.
+TEST(MapCApi, MemberSelectionBitsCarryThroughTheRequest) {
+  ScenePtr scene;
+  {
+    LUMICE_Scene* raw = nullptr;
+    ASSERT_EQ(LUMICE_SceneFromJson(kRandomPrismScene, &raw), LUMICE_OK);
+    scene.reset(raw);
+  }
+  const int literal = RingRequestMemberCount(scene.get(), 1);
+  ASSERT_GT(literal, 0) << g_err;
+  EXPECT_EQ(literal, 1);  // the literal 3-5 sequence, no symmetry expansion
+
+  const int p_only = RingRequestMemberCount(scene.get(), 2);
+  ASSERT_GT(p_only, 0) << g_err;
+  EXPECT_NE(p_only, 12);  // a partial set is neither the literal nor the full class
+  EXPECT_LT(p_only, 12);
+}
+
+// AC1's bitwise law on the C face: a zero field, an explicit all-members encoding and the legacy
+// extent that predates the field produce byte-identical maps (same binary, same input).
+TEST(MapCApi, DefaultExplicitFullAndLegacyExtentAreBitwiseIdentical) {
+  ScenePtr scene;
+  {
+    LUMICE_Scene* raw = nullptr;
+    ASSERT_EQ(LUMICE_SceneFromJson(kRandomPrismScene, &raw), LUMICE_OK);
+    scene.reset(raw);
+  }
+  std::vector<unsigned char> zero_blob;
+  const int zero_members = AnalyzeRingIntoBlob(scene.get(), 0, false, &zero_blob);
+  ASSERT_GT(zero_members, 0) << g_err;
+  std::vector<unsigned char> explicit_blob;
+  const int explicit_members = AnalyzeRingIntoBlob(scene.get(), 8, false, &explicit_blob);
+  ASSERT_EQ(explicit_members, zero_members);
+  std::vector<unsigned char> legacy_blob;
+  const int legacy_members = AnalyzeRingIntoBlob(scene.get(), 0, true, &legacy_blob);
+  ASSERT_EQ(legacy_members, zero_members);
+  EXPECT_EQ(zero_blob, explicit_blob);
+  EXPECT_EQ(zero_blob, legacy_blob);
+}
+
+// The encoding's domain: values outside [0, 8] are refused with the named reason and no handle.
+TEST(MapCApi, InvalidSymmetryBitsAreRefused) {
+  ScenePtr scene;
+  {
+    LUMICE_Scene* raw = nullptr;
+    ASSERT_EQ(LUMICE_SceneFromJson(kRandomPrismScene, &raw), LUMICE_OK);
+    scene.reset(raw);
+  }
+  for (const int bad : { -1, 9 }) {
+    LUMICE_PathMapRequest request = RingRequest();
+    request.symmetry_bits_plus_one = bad;
+    LUMICE_PathMap* map = nullptr;
+    EXPECT_EQ(LUMICE_AnalyzePathMap(scene.get(), &request, &map, g_err, sizeof(g_err)), LUMICE_ERR_INVALID_VALUE)
+        << "encoding " << bad;
+    EXPECT_EQ(std::string(g_err).compare(0, 34, "invalid_argument: invalid physical"), 0) << g_err;
+    EXPECT_EQ(map, nullptr);
+  }
+}
+
+// The two entries' extent discipline: the legacy complete extent rides both with a poisoned
+// appended field and keeps the all-members default; the new extent reads the field; anything
+// below the legacy extent and not in the published set is refused.
+TEST(MapCApi, LegacyExtentAndPoisonTailKeepTheAllMembersDefault) {
+  ScenePtr scene;
+  {
+    LUMICE_Scene* raw = nullptr;
+    ASSERT_EQ(LUMICE_SceneFromJson(kRandomPrismScene, &raw), LUMICE_OK);
+    scene.reset(raw);
+  }
+  // The standalone entry: legacy extent, appended field poisoned.
+  {
+    std::vector<unsigned char> legacy_blob;
+    const int legacy_members = AnalyzeRingIntoBlob(scene.get(), 0, true, &legacy_blob);
+    ASSERT_EQ(legacy_members, 12) << g_err;  // the poison was never read: the full class ran
+  }
+  // The workspace entry: legacy accepted, new accepted, below-legacy refused.
+  LUMICE_PathWorkspace* workspace = nullptr;
+  ASSERT_EQ(LUMICE_PathWorkspaceCreate(scene.get(), &workspace, g_err, sizeof(g_err)), LUMICE_OK);
+  {
+    LUMICE_PathMapRequest legacy = RingRequest();
+    legacy.struct_size = kMapRequestSizeV462;
+    legacy.symmetry_bits_plus_one = 999;  // inside the request object but beyond the extent
+    LUMICE_PathMap* raw_map = nullptr;
+    ASSERT_EQ(LUMICE_PathWorkspaceQueryMap(workspace, &legacy, nullptr, &raw_map, g_err, sizeof(g_err)), LUMICE_OK)
+        << g_err;
+    MapPtr map(raw_map);
+    LUMICE_PathMapInfo info{};
+    info.struct_size = sizeof(info);
+    ASSERT_EQ(LUMICE_PathMapGetInfo(map.get(), &info), LUMICE_PATH_READ_OK);
+    EXPECT_EQ(info.member_count, 12);
+  }
+  {
+    LUMICE_PathMap* raw_map = nullptr;
+    LUMICE_PathMapRequest undersized = RingRequest();
+    undersized.struct_size = kMapRequestSizeV462 - 8;
+    EXPECT_EQ(LUMICE_PathWorkspaceQueryMap(workspace, &undersized, nullptr, &raw_map, g_err, sizeof(g_err)),
+              LUMICE_ERR_INVALID_VALUE);
+    EXPECT_EQ(raw_map, nullptr);
+  }
+  LUMICE_PathWorkspaceDestroy(workspace);
 }
 
 }  // namespace
