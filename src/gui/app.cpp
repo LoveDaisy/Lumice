@@ -904,7 +904,13 @@ void ResetFrontendState(GuiState& state, FrontendResetReason reason, const LmcTe
         case PreviewRenderer::TextureMode::kSrgbComposited: {
           const UploadResult upload_result = g_preview.UploadTexture(baked->srgb.data(), baked->width, baked->height);
           if (!upload_result.ok) {
-            g_preview.UpdateCpuTextureData(baked->srgb.data(), baked->width, baked->height);
+            // The label must name what the bytes ARE: these texels already carry the sky, and a
+            // mirror that said radiance-only would make the next Save write a sky-summed frame
+            // under a flag that adds the sky again on reopen. UpdateCpuTextureData defaults to
+            // radiance because its usual producers bake radiance, so the composited caller says
+            // so explicitly.
+            g_preview.UpdateCpuTextureData(baked->srgb.data(), baked->width, baked->height,
+                                           PreviewRenderer::TextureMode::kSrgbComposited);
             GUI_LOG_ERROR(
                 "[GUI] Open: baked composited texture upload failed (stage={} gl_error=0x{:04X} "
                 "request={}x{}) — preview unavailable; the document's source is retained and still saves",
