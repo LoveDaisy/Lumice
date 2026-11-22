@@ -891,30 +891,70 @@ void ResetFrontendState(GuiState& state, FrontendResetReason reason, const LmcTe
       // the unexposed linear XYZ energy a live run uploads, a v4 one carries radiance-only bytes
       // the shader still owes the vignetting and the sky, a pre-v4 one has the sky already summed
       // in and can only be shown as it is.
+      //
+      // A document switch revokes the PREVIOUS document's display first (814 AC2: a cross-document
+      // open must never leave the old pixels on screen, and an upload that fails mid-flight must
+      // not be able to mix them into the new document's frame). ClearTexture also clears the CPU
+      // mirror, so each branch below re-establishes the save source from the file's own bytes —
+      // which stay saveable even when the display upload fails (814 §3.3: a document whose first
+      // display failed keeps its complete source, with the preview explicitly not shown).
+      g_preview.ClearTexture();
       switch (baked->mode) {
-        case PreviewRenderer::TextureMode::kXyz:
-          g_preview.UploadXyzTexture(baked->xyz.data(), baked->width, baked->height);
+        case PreviewRenderer::TextureMode::kXyz: {
+          const UploadResult upload_result = g_preview.UploadXyzTexture(baked->xyz.data(), baked->width, baked->height);
           // The mirror too, so a Save of this document with no run in between writes the same
-          // section back out rather than whatever the previous document left in the mirror.
+          // section back out rather than whatever the previous document left in the mirror. The
+          // mirror is the SOURCE fact: it holds the file's bytes whether or not the GPU accepted
+          // them. (UploadXyzTexture never writes the mirror — see its comment.)
           g_preview.UpdateCpuXyzTextureData(baked->xyz.data(), baked->width, baked->height, baked->meta);
-          // The exposure state SyncFromPoller would have filled from a live frame, filled from the
-          // file instead — the same four numbers, from the same frame the pixels came from, so the
-          // per-frame ComputeMonoExposure in the Display panel lights this texture exactly as it
-          // lit the live one. Without them intensity_scale is 0 and the reopened document is black.
-          // ev_auto is recomputed rather than stored: it is a pure function of the anchor, the
-          // intensity and target_white, and target_white is not persisted.
-          state.snapshot_intensity = baked->meta.snapshot_intensity;
-          state.snapshot_emitted_energy = baked->meta.emitted_energy;
-          state.effective_pixels = baked->meta.effective_pixels;
-          state.p99_raw_y = baked->meta.mono_anchor;
-          state.ev_auto = LUMICE_ComputeEvAuto(state.p99_raw_y, state.snapshot_intensity, state.target_white);
+          if (upload_result.ok) {
+            // The exposure state SyncFromPoller would have filled from a live frame, filled from
+            // the file instead — the same four numbers, from the same frame the pixels came from,
+            // so the per-frame ComputeMonoExposure in the Display panel lights this texture
+            // exactly as it lit the live one. Without them intensity_scale is 0 and the reopened
+            // document is black. ev_auto is recomputed rather than stored: it is a pure function
+            // of the anchor, the intensity and target_white, and target_white is not persisted.
+            // Committed only on a successful upload (814 AC1): exposure belongs to the frame that
+            // was accepted.
+            state.snapshot_intensity = baked->meta.snapshot_intensity;
+            state.snapshot_emitted_energy = baked->meta.emitted_energy;
+            state.effective_pixels = baked->meta.effective_pixels;
+            state.p99_raw_y = baked->meta.mono_anchor;
+            state.ev_auto = LUMICE_ComputeEvAuto(state.p99_raw_y, state.snapshot_intensity, state.target_white);
+          } else {
+            GUI_LOG_ERROR(
+                "[GUI] Open: baked XYZ texture upload failed (stage={} gl_error=0x{:04X} request={}x{}) — "
+                "preview unavailable; the document's source is retained and still saves",
+                UploadStageName(upload_result.stage), upload_result.gl_error, baked->width, baked->height);
+          }
           break;
-        case PreviewRenderer::TextureMode::kSrgbRadiance:
-          g_preview.UploadRadianceTexture(baked->srgb.data(), baked->width, baked->height);
+        }
+        case PreviewRenderer::TextureMode::kSrgbRadiance: {
+          const UploadResult upload_result =
+              g_preview.UploadRadianceTexture(baked->srgb.data(), baked->width, baked->height);
+          // The 8-bit upload paths write the mirror themselves on success; on failure the mirror
+          // is empty (ClearTexture above) and the file's bytes are restored here so the source
+          // survives without the display.
+          if (!upload_result.ok) {
+            g_preview.UpdateCpuTextureData(baked->srgb.data(), baked->width, baked->height);
+            GUI_LOG_ERROR(
+                "[GUI] Open: baked radiance texture upload failed (stage={} gl_error=0x{:04X} "
+                "request={}x{}) — preview unavailable; the document's source is retained and still saves",
+                UploadStageName(upload_result.stage), upload_result.gl_error, baked->width, baked->height);
+          }
           break;
-        case PreviewRenderer::TextureMode::kSrgbComposited:
-          g_preview.UploadTexture(baked->srgb.data(), baked->width, baked->height);
+        }
+        case PreviewRenderer::TextureMode::kSrgbComposited: {
+          const UploadResult upload_result = g_preview.UploadTexture(baked->srgb.data(), baked->width, baked->height);
+          if (!upload_result.ok) {
+            g_preview.UpdateCpuTextureData(baked->srgb.data(), baked->width, baked->height);
+            GUI_LOG_ERROR(
+                "[GUI] Open: baked composited texture upload failed (stage={} gl_error=0x{:04X} "
+                "request={}x{}) — preview unavailable; the document's source is retained and still saves",
+                UploadStageName(upload_result.stage), upload_result.gl_error, baked->width, baked->height);
+          }
           break;
+        }
       }
       ClearBackgroundImage(state);
       break;
@@ -931,6 +971,9 @@ void ResetFrontendState(GuiState& state, FrontendResetReason reason, const LmcTe
   if (reason != FrontendResetReason::kRevert) {
     g_server_poller.InvalidateStagedTexture();
     g_last_uploaded_payload.reset();
+    // A document switch re-authorizes the upload cycle (814): a latch recorded by the previous
+    // document's failed upload belongs to that document's generation, not to this one.
+    state.upload_latched = false;
   }
 
   // The analysis tool's state is about the scene that was on screen: its picked centre, its
@@ -2004,6 +2047,14 @@ bool ShouldUploadPayload(const PreviewSnapshot& snap, unsigned long long last_up
          payload->payload_epoch > display_epoch_floor;
 }
 
+// 814 upload failure latch — see app.hpp. Pure predicate, pinned for the same reason the other
+// gates are: the decision boundary is testable headlessly, and SyncFromPoller reads it instead of
+// re-deriving it inline.
+bool ShouldBlockUploadForLatch(bool upload_latched, unsigned long long latch_epoch,
+                               unsigned long long committed_epoch) {
+  return upload_latched && latch_epoch == committed_epoch;
+}
+
 // Stats-apply gate — see app.hpp. Deliberately reads snap.stats_epoch and NOT snap.epoch: the
 // bundle epoch is re-stamped on every poll, so it says nothing about which generation produced
 // the stats travelling with it.
@@ -2321,7 +2372,15 @@ void SyncFromPoller() {
   const bool effective_composite =
       payload != nullptr && ShouldUseCompositeUpload(payload->is_composite, show_composite);
 
-  if (ShouldFireCompositeUpload(*snap, g_state.last_uploaded_texture_serial, g_state.display_epoch_floor,
+  // Upload failure latch (814): while a failure is latched for the CURRENT generation, the
+  // upload branch stays silent — a constrained machine must not re-attempt a giant allocation at
+  // the poll rate, and a newly minted serial is not a new authorization. A new Run mints
+  // committed_epoch+1, which is what un-latches (the recorded epoch no longer matches); a
+  // document switch clears the latch explicitly in ResetFrontendState.
+  const bool upload_latched =
+      ShouldBlockUploadForLatch(g_state.upload_latched, g_state.upload_latch_epoch, g_state.committed_epoch);
+  if (!upload_latched &&
+      ShouldFireCompositeUpload(*snap, g_state.last_uploaded_texture_serial, g_state.display_epoch_floor,
                                 show_composite, g_state.last_uploaded_as_composite)) {
     GUI_LOG_VERBOSE("[GUI] SyncFromPoller: upload tex_rays={}, intensity={:.6f}, eff_pixels={}, factor={:.6f}",
                     payload->texture_ray_count, payload->snapshot_intensity, payload->effective_pixels,
@@ -2331,53 +2390,65 @@ void SyncFromPoller() {
     // bar (`show_composite_preview`). Auto-EV / stats / serial-dedup still consume xyz-derived
     // fields below — those are populated in both branches (plan §3 keypoint 3).
     // Both buffers are views into the result frame the payload holds, so `payload` staying alive
-    // for this whole block is what keeps them readable.
-    if (effective_composite) {
-      // Radiance-only: the composite bake carries no background (the GUI pushes none), so the
-      // shader adds the sky and the lens's relative illumination here, the same way it does for
-      // the mono XYZ branch beside it. Toggling the composite preview therefore changes which
-      // rays are shown, and nothing about how the picture is exposed or vignetted.
-      g_preview.UploadRadianceTexture(payload->rgb_buffer, payload->width, payload->height);
+    // for this whole block is what keeps them readable. Radiance-only (the composite bake carries
+    // no background; the shader adds sky and relative illumination as for mono XYZ) vs the XYZ
+    // float path — one ternary, chosen before either runs so the result handling below is shared.
+    const UploadResult upload_result =
+        effective_composite ? g_preview.UploadRadianceTexture(payload->rgb_buffer, payload->width, payload->height) :
+                              g_preview.UploadXyzTexture(payload->xyz_buffer, payload->width, payload->height);
+    if (!upload_result.ok) {
+      // The upload failed: nothing about the DISPLAY may advance. The payload retention, the
+      // serial cursor, the exposure state and the counters below all describe the frame that was
+      // ACCEPTED — committing them here would repeat the pre-814 defect where a logged-only
+      // failure still recorded a frame as shown. The latch pauses auto-uploads for this
+      // generation; Save keeps serializing the last accepted source.
+      g_state.upload_latched = true;
+      g_state.upload_latch_epoch = g_state.committed_epoch;
+      GUI_LOG_ERROR(
+          "[GUI] SyncFromPoller: texture upload failed (stage={} gl_error=0x{:04X} request={}x{}) — "
+          "display state not advanced; auto-upload paused for this generation (serial {})",
+          UploadStageName(upload_result.stage), upload_result.gl_error, upload_result.request_width,
+          upload_result.request_height, snap->texture_serial);
     } else {
-      g_preview.UploadXyzTexture(payload->xyz_buffer, payload->width, payload->height);
+      // Retained for Save: the picture now on screen is this payload's, and the file must hold
+      // exactly it. See g_last_uploaded_payload.
+      g_last_uploaded_payload = payload;
+      g_state.last_uploaded_as_composite = effective_composite;
+      g_state.snapshot_intensity = payload->snapshot_intensity;
+      g_state.snapshot_emitted_energy = payload->emitted_energy;
+      g_state.effective_pixels = payload->effective_pixels;
+      g_state.texture_upload_count++;
+      g_state.last_uploaded_texture_serial = snap->texture_serial;  // record exact-once cursor
+      g_state.upload_latched = false;
+      // Auto-EV. The anchor is the SERVER's sky radiance (LUMICE_RawXyzResult::anchor_l99_sky),
+      // the same scalar RenderConsumer::ExposureScale divides by, so the preview and a CLI render
+      // of this document are exposed against one number rather than two that were argued to agree
+      // (see doc/rendering/adaptive-brightness.md and doc/rendering/ev-pipeline-architecture.md).
+      //
+      // Only the FIRST argument changed. snapshot_intensity stays the real value, because it is
+      // not a leftover: ComputeEvAuto puts it in the numerator, ComputeMonoExposure's kRelative
+      // branch divides the result by it again, and the two cancel exactly — leaving
+      // intensity_scale = 2^exposure_offset * target_linear / anchor_l99_sky, which is the CLI's
+      // expression divided by Omega_axis, which is what the shader's relative-illumination factor
+      // supplies per pixel. Passing 1 here instead would break that cancellation and leave a
+      // 1/snapshot_intensity gain on the preview.
+      //
+      // The anchor is a RADIANCE and this texture holds a radiance integrated over a texel, so it
+      // is converted into the texture's own units before it can anchor anything: one multiply by
+      // the source renderer's on-axis solid angle, which the server publishes for exactly this.
+      // The CLI divides by ITS view's solid angle at the same point (RenderConsumer::ExposureScale)
+      // — same bridge, opposite direction, because one holds a texture and the other a render.
+      // Omitting it is worth 15 stops on the all-sky texture, and ComputeEvAuto's +/-6 clamp turns
+      // that into a picture that merely looks a few stops dark rather than into an obvious black.
+      //
+      // The composite path keeps its own anchor and its own field (payload->p99_y); this branch is
+      // the mono one, and the two do not converge — see server_poller.cpp. That field is already a
+      // P99 over the composite lanes of this same buffer, so it needs no conversion.
+      g_state.p99_raw_y = payload->is_composite ? payload->p99_y : payload->axis_solid_angle * payload->anchor_l99_sky;
+      g_state.ev_auto = LUMICE_ComputeEvAuto(g_state.p99_raw_y, g_state.snapshot_intensity, g_state.target_white);
+      GUI_LOG_VERBOSE("[GUI] SyncFromPoller: anchor={:.6f} (composite={}), ev_auto={:.3f}", g_state.p99_raw_y,
+                      payload->is_composite, g_state.ev_auto);
     }
-    // Retained for Save: the picture now on screen is this payload's, and the file must hold
-    // exactly it. See g_last_uploaded_payload.
-    g_last_uploaded_payload = payload;
-    g_state.last_uploaded_as_composite = effective_composite;
-    g_state.snapshot_intensity = payload->snapshot_intensity;
-    g_state.snapshot_emitted_energy = payload->emitted_energy;
-    g_state.effective_pixels = payload->effective_pixels;
-    g_state.texture_upload_count++;
-    g_state.last_uploaded_texture_serial = snap->texture_serial;  // record exact-once cursor
-    // Auto-EV. The anchor is the SERVER's sky radiance (LUMICE_RawXyzResult::anchor_l99_sky),
-    // the same scalar RenderConsumer::ExposureScale divides by, so the preview and a CLI render
-    // of this document are exposed against one number rather than two that were argued to agree
-    // (see doc/rendering/adaptive-brightness.md and doc/rendering/ev-pipeline-architecture.md).
-    //
-    // Only the FIRST argument changed. snapshot_intensity stays the real value, because it is
-    // not a leftover: ComputeEvAuto puts it in the numerator, ComputeMonoExposure's kRelative
-    // branch divides the result by it again, and the two cancel exactly — leaving
-    // intensity_scale = 2^exposure_offset * target_linear / anchor_l99_sky, which is the CLI's
-    // expression divided by Omega_axis, which is what the shader's relative-illumination factor
-    // supplies per pixel. Passing 1 here instead would break that cancellation and leave a
-    // 1/snapshot_intensity gain on the preview.
-    //
-    // The anchor is a RADIANCE and this texture holds a radiance integrated over a texel, so it
-    // is converted into the texture's own units before it can anchor anything: one multiply by
-    // the source renderer's on-axis solid angle, which the server publishes for exactly this.
-    // The CLI divides by ITS view's solid angle at the same point (RenderConsumer::ExposureScale)
-    // — same bridge, opposite direction, because one holds a texture and the other a render.
-    // Omitting it is worth 15 stops on the all-sky texture, and ComputeEvAuto's +/-6 clamp turns
-    // that into a picture that merely looks a few stops dark rather than into an obvious black.
-    //
-    // The composite path keeps its own anchor and its own field (payload->p99_y); this branch is
-    // the mono one, and the two do not converge — see server_poller.cpp. That field is already a
-    // P99 over the composite lanes of this same buffer, so it needs no conversion.
-    g_state.p99_raw_y = payload->is_composite ? payload->p99_y : payload->axis_solid_angle * payload->anchor_l99_sky;
-    g_state.ev_auto = LUMICE_ComputeEvAuto(g_state.p99_raw_y, g_state.snapshot_intensity, g_state.target_white);
-    GUI_LOG_VERBOSE("[GUI] SyncFromPoller: anchor={:.6f} (composite={}), ev_auto={:.3f}", g_state.p99_raw_y,
-                    payload->is_composite, g_state.ev_auto);
   }
 }
 

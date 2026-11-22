@@ -637,6 +637,17 @@ bool ShouldFireCompositeUpload(const PreviewSnapshot& snap, unsigned long long l
                                uint64_t display_epoch_floor, bool show_composite_preview,
                                bool last_uploaded_as_composite);
 
+// 814 upload failure latch: true while a failed upload's pause still applies to the CURRENT
+// generation. SyncFromPoller sets upload_latched + upload_latch_epoch = committed_epoch when an
+// upload returns !ok, and consults this before the fire gate — so a constrained machine is never
+// made to re-attempt a giant allocation at the poll rate (a newly minted serial inside the same
+// generation is not a new authorization). A new Run mints committed_epoch+1, which is what
+// un-latches with no explicit unlock (the recorded epoch no longer matches); a document switch
+// clears the latch outright in ResetFrontendState. Pure predicate, no globals, same testable-
+// contract convention as the gates above (truth table in
+// test/composition-correctness/gui/test_run_lifecycle_chain.cpp).
+bool ShouldBlockUploadForLatch(bool upload_latched, unsigned long long latch_epoch, unsigned long long committed_epoch);
+
 // task-348.3 AC3 (⑦): decide whether opening the Colors window should force
 // show_composite_preview=true. True only when no color classes exist yet (nothing
 // to remember, default to "on" so a newly-added first class is visible immediately);
