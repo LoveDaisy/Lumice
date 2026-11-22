@@ -2095,6 +2095,75 @@ TEST_F(ReferenceArcDraw, EmptyFactsSubmitNothingWithEveryGateOn) {
   EXPECT_FALSE(legend.tir_turns);
 }
 
+// The shared stroke's LABEL obeys each owner's labels switch, not the geometry ownership: with
+// both graphics on, the four labels combinations name and submit the shared stroke's readout
+// exactly per the switches — edge's word only through edge's own labels, support's word through
+// support's, both off leave the stroke drawn and unlabeled — while the geometry stays put.
+TEST_F(ReferenceArcDraw, SharedStrokeLabelObeysEachOwnerLabelsSwitch) {
+  const ViewProjection vp = SunCamera();
+  const SurveyOverlayFacts facts = [] {
+    SurveyOverlayFacts f = ReachFacts(20.0, 60.0);
+    f.edges.push_back(EdgeFact(20.0, /*coincident=*/true, /*concluded=*/true));
+    return f;
+  }();
+  ImDrawList* dl = ImGui::GetBackgroundDrawList();
+  struct Comb {
+    bool reach_labels;
+    bool edge_labels;
+  };
+  const Comb combos[] = {
+    { true, true },
+    { true, false },
+    { false, true },
+    { false, false },
+  };
+  int geometry_baseline = -1;
+  for (const Comb& c : combos) {
+    FreshFrame();
+    dl = ImGui::GetBackgroundDrawList();
+    std::vector<MapReadoutLabel> sink;
+    ReferenceArcInput in = ArcInput(vp);
+    in.reach.labels = c.reach_labels;
+    in.edge.labels = c.edge_labels;
+    in.labels_sink = &sink;
+    DrawReferenceArcs(dl, facts, in);
+    // The unit rig never renders the collected labels (no DrawMapReadoutLabels call), so the
+    // colour bucket IS pure geometry here — the mixed-bucket concern is the GUI counter's.
+    const int geometry = IndexCountForColour(kSurveyArcInk);
+    if (geometry_baseline < 0) {
+      geometry_baseline = geometry;
+    } else {
+      EXPECT_EQ(geometry, geometry_baseline) << "the stroke geometry is labels-independent";
+    }
+    const std::vector<std::string> texts = SinkTexts(sink);
+    if (c.reach_labels && c.edge_labels) {
+      if (texts.size() != 2u) {
+        ADD_FAILURE() << "expected two readouts, got " << texts.size();
+        continue;
+      }
+      EXPECT_NE(std::find(texts.begin(), texts.end(), std::string("edge · 20.000°")), texts.end());
+      EXPECT_NE(std::find(texts.begin(), texts.end(), std::string("support · 60.000°")), texts.end());
+    } else if (c.reach_labels) {
+      // The shared stroke falls back to the support's word; the outer bound keeps its own.
+      if (texts.size() != 2u) {
+        ADD_FAILURE() << "expected two readouts, got " << texts.size();
+        continue;
+      }
+      EXPECT_NE(std::find(texts.begin(), texts.end(), std::string("support · 20.000°")), texts.end());
+      EXPECT_NE(std::find(texts.begin(), texts.end(), std::string("support · 60.000°")), texts.end());
+    } else if (c.edge_labels) {
+      // The edge names the shared stroke; the outer bound's labels ride the reach switch (off).
+      if (texts.size() != 1u) {
+        ADD_FAILURE() << "expected one readout, got " << texts.size();
+        continue;
+      }
+      EXPECT_EQ(texts.front(), std::string("edge · 20.000°"));
+    } else {
+      EXPECT_TRUE(texts.empty()) << "both labels off: the stroke draws unlabeled";
+    }
+  }
+}
+
 // The points group's per-kind gates (AC4): the THREE positioned image kinds switch
 // independently inside the group, every other kind follows the parent gate alone — the
 // exhaustive mapping on synthetic rows, the same predicate the draw loop, the hit collection

@@ -511,4 +511,29 @@ TEST(AnalyzeOverviewChain, FullDimensionalDocumentCarriesNoPositionedCards) {
   EXPECT_FALSE(any_positioned);
 }
 
+// The TIR caliber's metadata premise, on the real chromatic document the layer's turns draw
+// from: the dispersion block can carry its red/blue wavelength labels WITHOUT a minimum-deviation
+// row (the producer fills the labels unconditionally, the min row is its own conditional), and
+// the same document can hold visible internal-reflection discriminants — the exact shape where a
+// min-row-gated caliber would wrongly report "wavelength unknown". The draw-side wiring is the
+// unit tier's; this holds the document shape the assembly must read.
+TEST(AnalyzeOverviewChain, ChromaticDocumentCarriesLabelsAndTurnsWithoutMinRow) {
+  const auto scene = SceneFromConfig("raypath_feature_random_regular.json");
+  const auto survey = RunSurvey(scene.get(), { 3, 1, 5 });
+  ASSERT_NE(survey.get(), nullptr);
+
+  const SurveyOverviewModel model = BuildSurveyOverviewModel(*survey);
+  ASSERT_TRUE(model.valid);
+  ASSERT_TRUE(model.dispersion.available) << "the chromatic document carries the dispersion block";
+  EXPECT_FALSE(model.dispersion.red_label.empty());
+  EXPECT_FALSE(model.dispersion.blue_label.empty());
+  EXPECT_FALSE(model.dispersion.min_row_available) << "the witness shape: labels without a minimum-deviation row";
+
+  const SurveyOverlayFacts facts = BuildSurveyOverlayFacts(*survey);
+  ASSERT_FALSE(facts.tir_turns.empty()) << "the same document carries visible internal-reflection turns";
+  for (const SurveyOverlayFacts::TirTurn& turn : facts.tir_turns) {
+    EXPECT_GE(turn.step, 0) << turn.source;
+  }
+}
+
 }  // namespace lumice::gui

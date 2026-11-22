@@ -1119,7 +1119,7 @@ void DrawSurveyOverlays(ImDrawList* dl, GuiState& state, const MapCanvasProjecti
     arcs.reference_lambda_available = true;
     arcs.reference_lambda_nm = static_cast<float>(model.wavelength_nm);
   }
-  if (model.dispersion.available && model.dispersion.min_row_available) {
+  if (model.dispersion.available && !model.dispersion.red_label.empty() && !model.dispersion.blue_label.empty()) {
     arcs.tir_lambda_text = model.dispersion.red_label + "/" + model.dispersion.blue_label;
   }
   DrawReferenceArcs(dl, facts, arcs);
@@ -1454,8 +1454,14 @@ void DrawReferenceArcs(ImDrawList* dl, const SurveyOverlayFacts& facts, const Re
     if (walk.lines_submitted == 0) {
       continue;
     }
-    push_label((s.owned_by_edge && in.edge.labels) || (s.owned_by_reach && in.reach.labels), walk.top_x, walk.top_y,
-               s.delta_deg, s.owned_by_edge ? "edge" : "support", walk.partial());
+    // The label OWNER obeys the labels switches, not the geometry ownership alone: the edge
+    // word only when the edge owns the stroke AND its labels are on; the support word when the
+    // reach's labels are on; both off, the stroke draws unlabeled — a shared stroke's text can
+    // never speak through an owner whose labels are switched off.
+    const bool edge_label = s.owned_by_edge && in.edge.labels;
+    const bool reach_label = s.owned_by_reach && in.reach.labels;
+    push_label(edge_label || reach_label, walk.top_x, walk.top_y, s.delta_deg, edge_label ? "edge" : "support",
+               walk.partial());
     if (in.legend != nullptr) {
       if (s.owned_by_reach) {
         in.legend->reach_bounds = true;
