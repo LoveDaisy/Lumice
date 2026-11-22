@@ -243,16 +243,17 @@ struct UploadResult {
   bool ok = false;
   enum class Stage {
     kNone = 0,
-    kInvalidInput,     // null data / non-positive size / no texture object
-    kFenceWait,        // glClientWaitSync on the staging slot timed out or failed
-    kPboAllocate,      // glBufferData failed
-    kPboMap,           // glMapBufferRange returned null
-    kPboUnmap,         // glUnmapBuffer returned false
-    kTexImage,         // glTexImage2D (re-definition) failed
-    kTexUpdate,        // glTexSubImage2D failed
-    kFenceCreate,      // glFenceSync failed (frame itself committed; the slot is torn down)
-    kStorageMismatch,  // post-define level-0 storage query disagrees with the request
-    kCpuAllocation,    // a host-side buffer allocation threw std::bad_alloc (no GL call made)
+    kInvalidInput,            // null data / non-positive size / no texture object
+    kFenceWait,               // glClientWaitSync on the staging slot timed out or failed
+    kPboAllocate,             // glBufferData failed
+    kPboMap,                  // glMapBufferRange returned null
+    kPboUnmap,                // glUnmapBuffer returned false
+    kTexImage,                // glTexImage2D (re-definition) failed
+    kTexUpdate,               // glTexSubImage2D failed
+    kFenceCreate,             // glFenceSync failed (frame itself committed; the slot is torn down)
+    kStorageMismatch,         // post-define level-0 storage query disagrees with the request
+    kCpuAllocation,           // a host-side buffer allocation threw std::bad_alloc (no GL call made)
+    kRenderTargetAllocation,  // an export target's RGBA8 renderbuffer storage failed (no texture involved)
   };
   Stage stage = Stage::kNone;
   // GLenum observed at the failing stage; 0 when the stage failed without a reported error
@@ -443,6 +444,16 @@ class PreviewRenderer {
   // constructs and destroys renderers.
   static int LiveInstanceCountForTest() { return s_live_instances_for_test_.load(); }
 
+  // Test-only observability (gui_test): net live GL objects this class created minus deleted,
+  // across ALL instances (the six persistent objects each Init builds — source texture,
+  // background texture, VAO, VBO and the two programs — plus the staging-slot buffers).
+  // Deliberately NOT the C++ instance count: scope exit alone never deletes GL objects (the
+  // destructor maintains only the counter above), so "the transient is gone" and "its storage
+  // is gone" are different propositions — the resource-release witnesses read THIS counter.
+  // Shader objects are excluded by design: they are created and destroyed entirely inside Init
+  // (and its failure cleanups), never outliving it. Atomic for the same cross-thread reason.
+  static int LiveGlObjectCountForTest() { return s_live_gl_objects_for_test_.load(); }
+
   // Background image texture management (GL upload only, no file I/O)
   void UploadBgTexture(const unsigned char* data, int width, int height);
   void ClearBackground();
@@ -512,6 +523,9 @@ class PreviewRenderer {
   // LiveInstanceCountForTest's counter; incremented/decremented by the constructor/destructor
   // (defined in preview_renderer.cpp).
   static std::atomic<int> s_live_instances_for_test_;
+  // LiveGlObjectCountForTest's counter; maintained at the glGen/glCreate and glDelete sites
+  // (defined in preview_renderer.cpp).
+  static std::atomic<int> s_live_gl_objects_for_test_;
   // The hook's verdict for one stage, or 0 to proceed with the real call; the all-instances test
   // hook is consulted after this instance's own.
   int HookFaultFor(UploadResult::Stage stage) const {

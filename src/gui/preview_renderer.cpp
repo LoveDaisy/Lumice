@@ -1399,6 +1399,10 @@ bool PreviewRenderer::Init() {
   glDeleteShader(vs);
   glDeleteShader(fs);
   glDeleteShader(fs_back_fade);
+  // Both programs linked (a link failure returned above with its own cleanup, before any
+  // counting): the two live program objects enter the paired create/delete counter here.
+  ++s_live_gl_objects_for_test_;
+  ++s_live_gl_objects_for_test_;
 
   // Fullscreen quad (two triangles, NDC coordinates)
   // clang-format off
@@ -1413,7 +1417,9 @@ bool PreviewRenderer::Init() {
   // clang-format on
 
   glGenVertexArrays(1, &vao_);
+  ++s_live_gl_objects_for_test_;
   glGenBuffers(1, &vbo_);
+  ++s_live_gl_objects_for_test_;
 
   glBindVertexArray(vao_);
   glBindBuffer(GL_ARRAY_BUFFER, vbo_);
@@ -1424,6 +1430,7 @@ bool PreviewRenderer::Init() {
 
   // Create equirect texture
   glGenTextures(1, &texture_);
+  ++s_live_gl_objects_for_test_;
   glBindTexture(GL_TEXTURE_2D, texture_);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
@@ -1450,6 +1457,7 @@ bool PreviewRenderer::Init() {
   // where the averaging has already been done. MAG stays GL_LINEAR: magnification has no footprint
   // to cover and no mip level above 0 to reach for.
   glGenTextures(1, &bg_texture_);
+  ++s_live_gl_objects_for_test_;
   glBindTexture(GL_TEXTURE_2D, bg_texture_);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
@@ -1479,26 +1487,32 @@ void PreviewRenderer::Destroy() {
   if (texture_) {
     glDeleteTextures(1, &texture_);
     texture_ = 0;
+    --s_live_gl_objects_for_test_;
   }
   if (bg_texture_) {
     glDeleteTextures(1, &bg_texture_);
     bg_texture_ = 0;
+    --s_live_gl_objects_for_test_;
   }
   if (vbo_) {
     glDeleteBuffers(1, &vbo_);
     vbo_ = 0;
+    --s_live_gl_objects_for_test_;
   }
   if (vao_) {
     glDeleteVertexArrays(1, &vao_);
     vao_ = 0;
+    --s_live_gl_objects_for_test_;
   }
   if (shader_program_) {
     glDeleteProgram(shader_program_);
     shader_program_ = 0;
+    --s_live_gl_objects_for_test_;
   }
   if (globe_back_fade_program_) {
     glDeleteProgram(globe_back_fade_program_);
     globe_back_fade_program_ = 0;
+    --s_live_gl_objects_for_test_;
   }
   tex_width_ = 0;
   tex_height_ = 0;
@@ -1627,6 +1641,7 @@ UploadResult PreviewRenderer::UploadRadianceTexture(const unsigned char* data, i
 // reads first, and a bare integer stage code would have to be decoded against the header.
 PreviewRenderer::UploadFaultHook PreviewRenderer::s_upload_fault_hook_all_ = nullptr;
 std::atomic<int> PreviewRenderer::s_live_instances_for_test_{ 0 };
+std::atomic<int> PreviewRenderer::s_live_gl_objects_for_test_{ 0 };
 
 PreviewRenderer::PreviewRenderer() {
   ++s_live_instances_for_test_;
@@ -1674,6 +1689,8 @@ const char* UploadStageName(UploadResult::Stage stage) {
       return "storage-mismatch";
     case UploadResult::Stage::kCpuAllocation:
       return "cpu-allocation";
+    case UploadResult::Stage::kRenderTargetAllocation:
+      return "render-target-allocation";
   }
   return "unknown";
 }
@@ -1696,6 +1713,7 @@ void PreviewRenderer::TearDownPboSlot(int slot) {
   if (pbo_[slot] != 0) {
     glDeleteBuffers(1, &pbo_[slot]);
     pbo_[slot] = 0;
+    --s_live_gl_objects_for_test_;
   }
   pbo_byte_count_[slot] = 0;
 }
@@ -1888,6 +1906,7 @@ UploadResult PreviewRenderer::UploadXyzTexture(const float* data, int width, int
   // does not hold, and the next cycle would skip the allocation it actually needs.
   if (pbo_[w] == 0) {
     glGenBuffers(1, &pbo_[w]);
+    ++s_live_gl_objects_for_test_;
   }
   glBindBuffer(GL_PIXEL_UNPACK_BUFFER, pbo_[w]);
   if (pbo_byte_count_[w] != byte_count) {

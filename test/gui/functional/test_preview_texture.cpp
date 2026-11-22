@@ -2179,6 +2179,15 @@ void RegisterPreviewTextureTests(ImGuiTestEngine* engine) {
       IM_CHECK_EQ(gui::g_state.last_uploaded_texture_serial, serial_before);  // cursor untouched
       IM_CHECK_EQ(gui::PreviewRecoveryNoticeKind(), 0);
       IM_CHECK(!gui::PreviewRecoveryRetryAvailable());
+      // The r2 Minor: the TARGET's allocation failure is in the retained incident record even
+      // though the rebuild succeeded — the structured entry the diagnostics read carries the
+      // trigger, not a clean slate.
+      const gui::PreviewUploadIncident shot_incident = gui::GetPreviewUploadIncident();
+      IM_CHECK(shot_incident.has_incident);
+      IM_CHECK(shot_incident.stage == static_cast<int>(gui::UploadResult::Stage::kRenderTargetAllocation));
+      IM_CHECK_EQ(shot_incident.gl_error, kGlOutOfMemory);
+      IM_CHECK_EQ(shot_incident.request_width, vp_w);
+      IM_CHECK_EQ(shot_incident.request_height, vp_h);
 
       // The fault was one-shot: the screenshot's healthy path still renders the viewport.
       SetStorageFaultAndWait(ctx, 0);
@@ -2228,6 +2237,13 @@ void RegisterPreviewTextureTests(ImGuiTestEngine* engine) {
       IM_CHECK(gui::g_preview.GetTextureMode() == gui::PreviewRenderer::TextureMode::kXyz);
       IM_CHECK_EQ(gui::g_state.texture_upload_count, count_before + 1);
       IM_CHECK_EQ(gui::PreviewRecoveryNoticeKind(), 0);
+      {
+        const gui::PreviewUploadIncident incident = gui::GetPreviewUploadIncident();
+        IM_CHECK(incident.has_incident);
+        IM_CHECK(incident.stage == static_cast<int>(gui::UploadResult::Stage::kRenderTargetAllocation));
+        IM_CHECK_EQ(incident.request_width, kW);
+        IM_CHECK_EQ(incident.request_height, kH);
+      }
 
       // Equirect, same story: a second fault, a second revoke and rebuild.
       count_before = gui::g_state.texture_upload_count;
@@ -2240,6 +2256,14 @@ void RegisterPreviewTextureTests(ImGuiTestEngine* engine) {
       IM_CHECK_EQ(gui::g_preview.GetTextureWidth(), kW);
       IM_CHECK_EQ(gui::g_state.texture_upload_count, count_before + 1);
       IM_CHECK_EQ(gui::PreviewRecoveryNoticeKind(), 0);
+      {
+        // The newer trigger legitimately supersedes the older one (same shape here).
+        const gui::PreviewUploadIncident incident = gui::GetPreviewUploadIncident();
+        IM_CHECK(incident.has_incident);
+        IM_CHECK(incident.stage == static_cast<int>(gui::UploadResult::Stage::kRenderTargetAllocation));
+        IM_CHECK_EQ(incident.request_width, kW);
+        IM_CHECK_EQ(incident.request_height, kH);
+      }
 
       std::remove(path.c_str());
       std::remove(png_a.c_str());
@@ -2280,6 +2304,7 @@ void RegisterPreviewTextureTests(ImGuiTestEngine* engine) {
       SetFaultAndWait(ctx, -1, 0);
 
       const int baseline = gui::PreviewRenderer::LiveInstanceCountForTest();
+      const int gl_baseline = gui::PreviewRenderer::LiveGlObjectCountForTest();
       const unsigned long long count_before = gui::g_state.texture_upload_count;
       SetAllHookAndWait(ctx, MakeOrderObserverHook());
       SetStorageFaultAndWait(ctx, 1);
@@ -2315,6 +2340,18 @@ void RegisterPreviewTextureTests(ImGuiTestEngine* engine) {
       IM_CHECK(gui::g_preview.StagingSlotByteCountForTest(0) > 0);
       IM_CHECK_EQ(gui::g_state.texture_upload_count, count_before + 1);
       IM_CHECK_EQ(gui::PreviewRecoveryNoticeKind(), 0);
+      // GL-object accounting, the r2-Major instrument: the transient's six objects are back
+      // out of the paired counter (early Destroy), and the only net addition is the rebuild's
+      // lazily re-allocated tier-0 slot.
+      IM_CHECK_EQ(gui::PreviewRenderer::LiveGlObjectCountForTest(), gl_baseline + 1);
+      // And the incident record carries the TARGET allocation that triggered the revoke.
+      {
+        const gui::PreviewUploadIncident incident = gui::GetPreviewUploadIncident();
+        IM_CHECK(incident.has_incident);
+        IM_CHECK(incident.stage == static_cast<int>(gui::UploadResult::Stage::kRenderTargetAllocation));
+        IM_CHECK_EQ(incident.request_width, kW);
+        IM_CHECK_EQ(incident.request_height, kH);
+      }
 
       SetAllHookAndWait(ctx, nullptr);
       std::remove(path.c_str());
@@ -2559,6 +2596,75 @@ void RegisterPreviewTextureTests(ImGuiTestEngine* engine) {
 
       SetAllHookAndWait(ctx, nullptr);
       std::remove(path.c_str());
+    };
+  }
+
+  // The transient export renderer's GL storage is released on EVERY exit, verified by the
+  // paired create/delete counter — not the C++ instance count (the r2 Major: scope exit alone
+  // never deletes GL objects, so a successful degraded export used to leave a full-size source
+  // texture behind, one set per export, and the instance counter read as if clean). Two
+  // consecutive successful exports must leave the count at baseline; the ordinary-failure exit
+  // must too, with the display untouched.
+  {
+    ImGuiTest* t =
+        IM_REGISTER_TEST(engine, "preview_texture", "a_successful_degraded_export_leaves_no_gl_objects_behind");
+    t->GuiFunc = FaultUploadGuiFunc;
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      SetFaultAndWait(ctx, -1, 0);
+      constexpr int kW = 256;
+      constexpr int kH = 128;
+      const std::vector<float> baked = XyzCoordinatePattern(kW, kH, /*seed=*/45);
+      const std::string path = GuiTestTempPath("lumice_preview_texture_export_gl_release.lmc").string();
+      gui::XyzTextureMeta meta;
+      meta.snapshot_intensity = 7.0f;
+      IM_CHECK(WriteXyzLmcFile(path, baked, kW, kH, meta));
+
+      // Degraded open: the two full-size candidates fail, the first prefiltered tier displays.
+      SetCustomHookAndWait(ctx,
+                           FailFirstNThenPass(gui::UploadResult::Stage::kTexImage, /*fail_count=*/2, kGlOutOfMemory));
+      g_open_requested = true;
+      g_open_done = false;
+      g_open_path = path;
+      YieldUntilOpenDone(ctx);
+      IM_CHECK(g_open_done);
+      ctx->Yield(2);
+      IM_CHECK_EQ(gui::g_preview.GetTextureWidth(), kW / 2);
+      SetFaultAndWait(ctx, -1, 0);
+
+      const int gl_baseline = gui::PreviewRenderer::LiveGlObjectCountForTest();
+      const std::string png_a = GuiTestTempPath("lumice_preview_texture_export_gl_release_a.png").string();
+      std::remove(png_a.c_str());
+      IM_CHECK(ExportDualFisheyeAndWait(ctx, png_a));  // the SUCCESS route, storage fault off
+      IM_CHECK(std::filesystem::exists(png_a));
+      IM_CHECK_EQ(gui::PreviewRenderer::LiveGlObjectCountForTest(), gl_baseline);
+
+      // Again: no accumulation across repeated successful exports.
+      const std::string png_b = GuiTestTempPath("lumice_preview_texture_export_gl_release_b.png").string();
+      std::remove(png_b.c_str());
+      IM_CHECK(ExportDualFisheyeAndWait(ctx, png_b));
+      IM_CHECK(std::filesystem::exists(png_b));
+      IM_CHECK_EQ(gui::PreviewRenderer::LiveGlObjectCountForTest(), gl_baseline);
+
+      // The ordinary-failure exit (the transient's source upload fails with a non-OOM — armed
+      // through the ALL hook: the per-instance hook cannot reach the transient): no revoke, no
+      // rebuild, explicit export failure — and the transient's storage still all released.
+      SetAllHookAndWait(ctx, [](gui::UploadResult::Stage st) -> int {
+        return st == gui::UploadResult::Stage::kTexImage ? kGlInvalidValue : 0;
+      });
+      const std::string png_c = GuiTestTempPath("lumice_preview_texture_export_gl_release_c.png").string();
+      std::remove(png_c.c_str());
+      IM_CHECK(!ExportDualFisheyeAndWait(ctx, png_c));
+      IM_CHECK(!std::filesystem::exists(png_c));
+      IM_CHECK(gui::g_preview.HasTexture());  // ordinary error: the degraded picture stands
+      IM_CHECK_EQ(gui::g_preview.GetTextureWidth(), kW / 2);
+      IM_CHECK_EQ(gui::PreviewRenderer::LiveGlObjectCountForTest(), gl_baseline);
+      SetAllHookAndWait(ctx, nullptr);
+
+      std::remove(path.c_str());
+      std::remove(png_a.c_str());
+      std::remove(png_b.c_str());
+      std::remove(png_c.c_str());
     };
   }
 

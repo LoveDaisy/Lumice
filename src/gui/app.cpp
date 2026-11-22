@@ -855,6 +855,21 @@ static void RebuildPreviewAfterContextOom() {
                src.height, use_composite ? "composite" : (tier >= 1 ? "xyz, recovery tier" : "xyz"));
 }
 
+// The export TARGET's own allocation failure enters the retained incident record (the r2 Minor:
+// a first-candidate rebuild that succeeded used to erase the fact that a target allocation had
+// OOM'd at all — the log carried it, but the structured record the diagnostics read saw no
+// incident, or an older unrelated one). Recorded by the same app owner that observed the
+// shared-context OOM, BEFORE the rebuild cycle runs, so a successful rebuild cannot mask the
+// trigger; a later rebuild failure legitimately overwrites it with the newer real cause.
+static void RecordExportTargetOomIncident(int target_w, int target_h) {
+  UploadResult r;
+  r.stage = UploadResult::Stage::kRenderTargetAllocation;
+  r.gl_error = 0x0505;
+  r.request_width = target_w;
+  r.request_height = target_h;
+  RecordUploadIncident(r, /*tier_tried=*/0, g_state.last_uploaded_texture_serial);
+}
+
 static std::vector<unsigned char> RenderExportFromFullSource(const PreviewParams& params, int out_w, int out_h) {
   // The resolver names the same source a Save of this document would write (one adjudication,
   // review r4); the export reads its pixels directly instead of round-tripping them through the
@@ -873,11 +888,23 @@ static std::vector<unsigned char> RenderExportFromFullSource(const PreviewParams
   // OBJECT — not just its GL names — before the recovery cycle walks (the r4 release-timing
   // ruling: the retired resource leaves before the next strategy allocates, and the rebuild
   // must not run while the failed export's renderer still exists to hold it).
+  //
+  // GL cleanup is UNCONDITIONAL over every exit past construction (the r2 Major: the destructor
+  // maintains only the test counters — scope exit alone never deletes the GL objects, so a
+  // successful degraded export used to leave the full-size source texture and its programs
+  // behind, one set per export). The OOM branches destroy EARLY — the rebuild must not walk
+  // against the transient's storage — and the guard's second pass there is a guarded no-op.
   bool shared_context_oom = false;
   std::vector<unsigned char> rgba;
   {
     PreviewRenderer export_renderer;
+    struct ScopedGlCleanup {
+      PreviewRenderer* renderer;
+      ~ScopedGlCleanup() { renderer->Destroy(); }
+    } scoped_cleanup{ &export_renderer };
     if (!export_renderer.Init()) {
+      // Init's own partial-failure cleanup has already freed what it built; the guard's
+      // Destroy is a guarded no-op on the remainder.
       GUI_LOG_ERROR("[GUI] Export: the transient full-source renderer failed to initialize");
       return {};
     }
@@ -893,9 +920,10 @@ static std::vector<unsigned char> RenderExportFromFullSource(const PreviewParams
         // transient object's conservative revoke answers its own storage, not whether the
         // preview's texture is still provable. Stop sampling the unprovable display, then
         // rebuild one authorized cycle from the retained source — a smaller trusted tier or
-        // the explicit no-image state. The transient's storage is released first, below, by
-        // the scope exit.
+        // the explicit no-image state. The transient's storage is released first: the early
+        // Destroy below runs before the scope exit that precedes the rebuild.
         export_renderer.Destroy();
+        RecordUploadIncident(upload, /*tier_tried=*/0, g_state.last_uploaded_texture_serial);
         shared_context_oom = true;
       }
     } else {
@@ -911,14 +939,15 @@ static std::vector<unsigned char> RenderExportFromFullSource(const PreviewParams
           // The export TARGET's allocation (a full-size RGBA8 renderbuffer) hit a real
           // out-of-memory in the shared context — the same §2.5 ruling as the source-upload
           // path above: the preview stops being sampled until a verified rebuild stands.
-          // Same order: the transient's full-size source storage leaves before the rebuild
-          // walks.
+          // Same order: the early Destroy runs before the scope exit that precedes the
+          // rebuild.
           export_renderer.Destroy();
+          RecordExportTargetOomIncident(out_w, out_h);
           shared_context_oom = true;
         }
       }
     }
-  }  // the transient's destructor runs here — before the revoke and the rebuild cycle
+  }  // the guard's unconditional Destroy — and the destructor — run here, before the revoke
   if (shared_context_oom) {
     g_preview.RevokeDisplayForContextOom();
     RebuildPreviewAfterContextOom();
@@ -977,6 +1006,7 @@ ScreenshotRender RenderScreenshot(const ScreenshotExportSelection& sel) {
     // helper through the defaulted out-param, so a failed target allocation left the preview's
     // display qualification standing over unprovable storage). The FBO target is already
     // released inside RenderExportToRgba; stop sampling and run one authorized rebuild cycle.
+    RecordExportTargetOomIncident(w, h);
     g_preview.RevokeDisplayForContextOom();
     RebuildPreviewAfterContextOom();
   }
@@ -1042,6 +1072,7 @@ bool ExportDualFisheyeEqualAreaPng(const std::filesystem::path& path) {
       if (render_gl_error == 0x0505) {
         // The export target's allocation OOM'd in the shared context: the §2.5 ruling applies
         // to the whole context, the preview included, however healthy the source upload looked.
+        RecordExportTargetOomIncident(out_w, out_h);
         g_preview.RevokeDisplayForContextOom();
         RebuildPreviewAfterContextOom();
       }
@@ -1113,6 +1144,7 @@ bool ExportEquirectangularPng(const std::filesystem::path& path) {
                     render_gl_error);
       if (render_gl_error == 0x0505) {
         // Same shared-context ruling as the dual-fisheye branch above.
+        RecordExportTargetOomIncident(dst_w, dst_h);
         g_preview.RevokeDisplayForContextOom();
         RebuildPreviewAfterContextOom();
       }
