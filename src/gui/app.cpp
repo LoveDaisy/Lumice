@@ -563,7 +563,7 @@ static PreviewParams BuildExportParams(const PreviewParams& published) {
   ev_in.ev_auto = g_state.ev_auto;
   ev_in.snapshot_intensity = g_state.snapshot_intensity;
   ev_in.snapshot_emitted_energy = g_state.snapshot_emitted_energy;
-  ev_in.total_pixels = g_preview.GetTextureWidth() * g_preview.GetTextureHeight();
+  ev_in.total_pixels = PreviewSourcePixelCount();
   const lumice::gui::MonoExposure ev = lumice::gui::ComputeMonoExposure(g_state.renderer.ev_mode, ev_in);
   params.exposure.intensity_factor = ev.intensity_factor;
   params.exposure.intensity_scale = ev.intensity_scale;
@@ -573,6 +573,58 @@ static PreviewParams BuildExportParams(const PreviewParams& published) {
 void DoExportPreviewPng() {
   g_screenshot_export_selection = MakeScreenshotExportSelectionFromState(g_state);
   g_show_screenshot_export_options_popup = true;
+}
+
+// The all-sky exports' degraded-display route (plan 814 §3.3): when the on-screen texture is a
+// reduced recovery tier, the export must still be the ORIGINAL-size picture built from the FULL
+// source — upsampling the reduced texture would ship a blurred file labelled at full resolution.
+// The full source renders through a transient renderer (its own texture, quad and programs,
+// destroyed at return): a one-off allocation at export time, never a persistent second
+// full-size plane, and a failure of any stage inside it is EXPLICIT — empty return, error log, no
+// file written — never a truncated or pseudo-full-resolution delivery. Returns empty both when
+// the display is not degraded (caller uses the normal path) and when the degraded route failed
+// (callers distinguish via IsDisplayDegradedAgainstSource).
+static bool IsDisplayDegradedAgainstSource() {
+  const int disp_w = g_preview.GetTextureWidth();
+  const int disp_h = g_preview.GetTextureHeight();
+  return disp_w > 0 && disp_h > 0 && static_cast<long>(disp_w) * disp_h < PreviewSourcePixelCount();
+}
+
+static std::vector<unsigned char> RenderExportFromFullSource(const PreviewParams& params, int out_w, int out_h) {
+  // The mirror is the full source's holder (RefreshCpuTextureForSave fills it from the retained
+  // payload); the export reads exactly what a Save of this document would write.
+  RefreshCpuTextureForSave();
+  if (g_preview.GetCpuTextureMode() != PreviewRenderer::TextureMode::kXyz || g_preview.GetXyzTextureData() == nullptr) {
+    // A degraded display over a non-XYZ source (legacy/composite bake) has no linear floats to
+    // rebuild from. Explicit refusal, not a guess: upscaling the bake would be the exact
+    // pseudo-full-resolution delivery the plan forbids.
+    GUI_LOG_ERROR(
+        "[GUI] Export: the display is degraded but the document's source is not linear XYZ; refusing to "
+        "upscale a baked source");
+    return {};
+  }
+  const int src_w = g_preview.GetCpuTextureWidth();
+  const int src_h = g_preview.GetCpuTextureHeight();
+  PreviewRenderer export_renderer;
+  if (!export_renderer.Init()) {
+    GUI_LOG_ERROR("[GUI] Export: the transient full-source renderer failed to initialize");
+    return {};
+  }
+  const UploadResult upload = export_renderer.UploadXyzTextureNoStaging(g_preview.GetXyzTextureData(), src_w, src_h);
+  std::vector<unsigned char> rgba;
+  if (!upload.ok) {
+    GUI_LOG_ERROR(
+        "[GUI] Export: uploading the full source failed (stage={} gl_error=0x{:04X} request={}x{}) — no "
+        "file written",
+        UploadStageName(upload.stage), upload.gl_error, upload.request_width, upload.request_height);
+  } else {
+    rgba = RenderExportToRgba(export_renderer, params, out_w, out_h);
+    if (rgba.empty()) {
+      GUI_LOG_ERROR("[GUI] Export: rendering the full source failed (target {}x{}) — no file written", out_w, out_h);
+    }
+  }
+  export_renderer.Destroy();
+  return rgba;
 }
 
 ScreenshotFrameFacts CurrentScreenshotFrameFacts() {
@@ -686,7 +738,20 @@ void DoExportDualFisheyeEqualAreaPng() {
   PreviewParams params = BuildTextureExportBase(w, h);
   ConfigureDualFisheyeExportParams(params);
 
-  auto rgba = RenderExportToRgba(g_preview, params, w, h);
+  // A degraded display would only upsample: the export renders from the FULL source at the
+  // original size through the transient renderer, or fails explicitly (plan 814 §3.3).
+  std::vector<unsigned char> rgba;
+  if (IsDisplayDegradedAgainstSource()) {
+    int src_w = 0;
+    int src_h = 0;
+    PreviewSourceExtent(&src_w, &src_h);
+    rgba = RenderExportFromFullSource(params, src_w, src_h);
+    if (rgba.empty()) {
+      return;  // the failure is already logged; no file may be written
+    }
+  } else {
+    rgba = RenderExportToRgba(g_preview, params, w, h);
+  }
   if (rgba.empty()) {
     GUI_LOG_ERROR("[GUI] Export dual fisheye: RenderExportToRgba empty (size={}x{})", w, h);
     return;
@@ -722,10 +787,28 @@ void DoExportEquirectangularPng() {
   PreviewParams params = BuildTextureExportBase(dst_w, dst_h);
   ConfigureEquirectExportParams(params);
 
-  auto rgba = RenderExportToRgba(g_preview, params, dst_w, dst_h);
-  if (rgba.empty()) {
-    GUI_LOG_ERROR("[GUI] Export equirect: RenderExportToRgba empty (size={}x{})", dst_w, dst_h);
-    return;
+  // A degraded display would only upsample (plan 814 §3.3): the export renders from the FULL
+  // source at its own 2:1 size, or fails explicitly.
+  std::vector<unsigned char> rgba;
+  if (IsDisplayDegradedAgainstSource()) {
+    int src_w = 0;
+    int src_h = 0;
+    PreviewSourceExtent(&src_w, &src_h);
+    const int src_short = std::min(src_w / 2, src_h);
+    if (src_short <= 0) {
+      GUI_LOG_ERROR("[GUI] Export equirect: degraded source has no valid 2:1 extent ({}x{})", src_w, src_h);
+      return;
+    }
+    rgba = RenderExportFromFullSource(params, 2 * src_short, src_short);
+    if (rgba.empty()) {
+      return;  // the failure is already logged; no file may be written
+    }
+  } else {
+    rgba = RenderExportToRgba(g_preview, params, dst_w, dst_h);
+    if (rgba.empty()) {
+      GUI_LOG_ERROR("[GUI] Export equirect: RenderExportToRgba empty (size={}x{})", dst_w, dst_h);
+      return;
+    }
   }
   if (!WriteRgbaBufferToPng(path, dst_w, dst_h, rgba)) {
     GUI_LOG_ERROR("[GUI] Export equirect: PNG write failed path={}", PathToU8(path));
@@ -2715,6 +2798,38 @@ PreviewUploadIncident GetPreviewUploadIncident() {
   out.tier_tried = g_recovery.tier_tried;
   out.texture_serial = g_recovery.texture_serial;
   return out;
+}
+
+long PreviewSourcePixelCount() {
+  int w = 0;
+  int h = 0;
+  PreviewSourceExtent(&w, &h);
+  return static_cast<long>(w) * h;
+}
+
+void PreviewSourceExtent(int* out_w, int* out_h) {
+  if (out_w == nullptr || out_h == nullptr) {
+    return;
+  }
+  *out_w = 0;
+  *out_h = 0;
+  if (g_last_uploaded_payload != nullptr && g_last_uploaded_payload->width > 0 && g_last_uploaded_payload->height > 0) {
+    *out_w = g_last_uploaded_payload->width;
+    *out_h = g_last_uploaded_payload->height;
+    return;
+  }
+  if (g_pending_upload_source != nullptr && g_pending_upload_source->width > 0 && g_pending_upload_source->height > 0) {
+    *out_w = g_pending_upload_source->width;
+    *out_h = g_pending_upload_source->height;
+    return;
+  }
+  if (g_preview.HasCpuTexture()) {
+    *out_w = g_preview.GetCpuTextureWidth();
+    *out_h = g_preview.GetCpuTextureHeight();
+    return;
+  }
+  *out_w = g_preview.GetTextureWidth();
+  *out_h = g_preview.GetTextureHeight();
 }
 
 void CheckUnsavedAndDo(PendingAction action) {

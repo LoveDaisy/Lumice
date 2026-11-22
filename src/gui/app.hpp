@@ -693,6 +693,19 @@ struct PreviewUploadIncident {
 };
 PreviewUploadIncident GetPreviewUploadIncident();
 
+// The pixel count absolute EV normalization divides by (plan 814 §3.3: the ORIGINAL source's
+// pixel count, never the display's). Priority: the accepted frame's payload — the authoritative
+// source extent while it is held — then the save mirror's own dimensions, then, only when neither
+// holds anything (a fresh document), the GPU display extent, which for an undegraded display IS
+// the source extent. A degraded display alone (ladder tier > 0) must never shrink this number:
+// using the displayed pixel count there is worth exactly -2 EV per halving of each axis.
+long PreviewSourcePixelCount();
+
+// The full source's own extent (payload first, then the save mirror, then the display — the same
+// priority order as PreviewSourcePixelCount, whose count is this product). Zeroes when nothing
+// holds a source.
+void PreviewSourceExtent(int* out_w, int* out_h);
+
 // task-348.3 AC3 (⑦): decide whether opening the Colors window should force
 // show_composite_preview=true. True only when no color classes exist yet (nothing
 // to remember, default to "on" so a newly-added first class is visible immediately);
