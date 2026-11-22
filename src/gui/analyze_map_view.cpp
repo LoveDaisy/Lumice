@@ -213,6 +213,14 @@ std::vector<std::string> MapCaliberDefaultLines(const MapCaliberInput& in) {
   if (info.kept_count == 0 && info.truncated == 0 && in.completed) {
     lines.emplace_back("No events in this view — a finite zero, not a refusal and not missing data.");
   }
+  if (in.survey_scope_differs) {
+    // The in-place scope note (the partial tick sets): the map's member set and the survey
+    // overlay's are different collections — the note rides the adopted map's own bits, so a
+    // late frame cannot relabel the old picture with the current ticks.
+    lines.emplace_back(
+        "Partial selection: the map sums the ticked P/B/D member set; the survey answer and its overlay markers stay "
+        "the row's literal representative.");
+  }
   if (in.have_mass) {
     std::string methods;
     for (size_t i = 0; i < kMapCaliberMaxMethods; ++i) {
@@ -2872,6 +2880,8 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
       }
     }
     in.completed = true;  // the named finite source completed, independently of a newer intent
+    in.map_symmetry_bits = map.key.symmetry_bits;
+    in.survey_scope_differs = map.key.symmetry_bits > 0 && map.key.symmetry_bits < 7;
     ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
     for (const std::string& line : MapCaliberDefaultLines(in)) {
       ImGui::TextWrapped("%s", line.c_str());
