@@ -1396,14 +1396,22 @@ void DrawSkyPointMarker(ImDrawList* dl, const MapCanvasProjection& view, const S
 // The adopted point query's rank-0 image on the map (AC3): a dedicated marker in the rank-0
 // mass colour, drawn from the ADOPTED POINT RESULT only — the position is never borrowed from a
 // survey or map handle, and the user's sky-point marker keeps its own ink and its own place
-// (the image never moves the target). One reuse branch, structural on both sides: a matched,
-// adopted map whose own mass cell exists (the engine places it at the pixel containing the
-// incident direction) already inks an image that sits at the sun's exact direction — that cell
-// IS the image's ink and no second symbol draws. Outside the view or the gate: no ink, and the
-// point answer's text still carries the position — the marker's absence is never a no-image
-// claim.
+// (the image never moves the target). The image rides the EXISTING Point images group gate
+// (gates.points.graphics) beside the Overlays master: no parallel switch — closing the group
+// removes the dedicated marker and the reuse branch's legend naming with it (the text answer
+// still carries the position; a hidden layer is never a no-image claim). One reuse branch,
+// structural on both sides: a matched, adopted map whose own mass cell exists (the engine
+// places it at the pixel containing the incident direction) already inks an image that sits at
+// the sun's exact direction — that cell IS the image's ink and no second symbol draws. Outside
+// the view or the gates: no ink.
 void DrawPointImageMarker(GuiState& state, const MapCanvasProjection& view, const ImVec2& pic_min, float pic_px,
-                          OverlayLegendState* legend) {
+                          bool points_graphics_on, OverlayLegendState* legend) {
+  // The Point images group's graphics gate: the same eligibility for the dedicated draw and the
+  // reuse branch's legend bit — one group, one visibility rule (the layer plan's AC1; the
+  // master Overlays gate is the caller's).
+  if (!points_graphics_on) {
+    return;
+  }
   const PointQuerySession& point = state.analysis.point;
   if (PointQueryStateFor(point) != PointQueryState::kCompleted || point.adopted_result == nullptr) {
     return;
@@ -1453,10 +1461,11 @@ void DrawPointImageMarker(GuiState& state, const MapCanvasProjection& view, cons
   const ImU32 ink = static_cast<ImU32>(kPointMassColour);
   const float r = UiPx(5.0f);
   const ImVec2 c(static_cast<float>(x), static_cast<float>(y));
-  // A filled diamond: the mass colour with a dark rim, unmistakably not the sky-point
-  // crosshair beside it.
-  dl->AddTriangleFilled(ImVec2(c.x, c.y - r), ImVec2(c.x + r, c.y), ImVec2(c.x, c.y + r), ink);
-  dl->AddTriangleFilled(ImVec2(c.x, c.y - r), ImVec2(c.x - r, c.y), ImVec2(c.x, c.y + r), ink);
+  // One filled diamond, ONE convex quad in the screen-clockwise winding (top → right → bottom
+  // → left) — AddConvexPolyFilled's AA edge direction assumes it; two mirrored triangles would
+  // hand the left half a counter-clockwise order and render an asymmetric marker (the recorded
+  // ImGui AA fill trap).
+  dl->AddQuadFilled(ImVec2(c.x, c.y - r), ImVec2(c.x + r, c.y), ImVec2(c.x, c.y + r), ImVec2(c.x - r, c.y), ink);
   dl->AddCircle(c, r + UiPx(1.5f), IM_COL32(16, 17, 20, 255), 0, UiPx(1.2f));
   if (legend != nullptr) {
     legend->point_image = true;
@@ -2377,10 +2386,10 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   if (marker_px >= 0.0f) {
     legend.sky_point = true;
   }
-  // The adopted point query's rank-0 image (analysis ink): under the same Overlays gate as the
-  // survey layers; the text answer carries the position whatever the gate does.
+  // The adopted point query's rank-0 image (analysis ink): under the Overlays master gate AND
+  // the existing Point images group's graphics gate — one group, one visibility rule.
   if (overlays) {
-    DrawPointImageMarker(state, view, pic_min, pic_px, &legend);
+    DrawPointImageMarker(state, view, pic_min, pic_px, gates.points.graphics, &legend);
   }
 
   g_map_legend = legend;

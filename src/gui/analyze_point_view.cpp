@@ -447,6 +447,7 @@ PointLossReading PointLossReadingFor(const std::vector<RayTraceSegmentEnergy>& e
   out.tie_count = ties;
   out.majority = out.largest_drop > 0.5;
   out.lossless = !any_loss;
+  out.chain_complete = out.usable_contacts == static_cast<int>(energies.size()) - 1;
   if (out.lossless) {
     out.loss_contact = -1;
   }
@@ -480,9 +481,17 @@ std::vector<std::string> PointLossReadoutLines(const LUMICE_PathPointSample& sam
   };
   char buf[320];
   // The conclusion: "most light" only where the largest absolute drop really exceeds half the
-  // incident light; a tie names no single cause; no loss says so.
+  // incident light; a tie names no single cause; no loss says so. Whole-chain wording ("along
+  // this path", "every interface") is earned by a COMPLETE chain — an incomplete chain's
+  // conclusions stay scoped to the readable prefix, and the basis names the stop position
+  // unconditionally (the plan's 不可用因子停止受影响后缀的损失断言).
+  const bool complete = reading.chain_complete;
   if (reading.lossless) {
-    lines.emplace_back("No measurable loss along this path — every interface keeps the light.");
+    if (complete) {
+      lines.emplace_back("No measurable loss along this path — every interface keeps the light.");
+    } else {
+      lines.emplace_back("The readable prefix keeps the light.");
+    }
   } else if (reading.tie_count > 1) {
     std::string names;
     for (int i = 0; i < reading.usable_contacts; ++i) {
@@ -494,15 +503,19 @@ std::vector<std::string> PointLossReadoutLines(const LUMICE_PathPointSample& sam
         names += contact_name(static_cast<size_t>(i));
       }
     }
-    std::snprintf(buf, sizeof(buf), "The largest drop along this path ties at %s — no single face carries it.",
-                  names.c_str());
+    std::snprintf(buf, sizeof(buf), "The largest drop %s ties at %s — no single face carries it.",
+                  complete ? "along this path" : "along the readable prefix", names.c_str());
     lines.emplace_back(buf);
   } else if (reading.majority) {
+    // The majority fact is per-interface (this contact's drop against the shared incidence) and
+    // does not rank the unread suffix — it survives an incomplete chain, whose stop the basis
+    // names.
     std::snprintf(buf, sizeof(buf), "Most light leaves this path at %s.",
                   contact_name(static_cast<size_t>(reading.loss_contact)).c_str());
     lines.emplace_back(buf);
   } else {
-    std::snprintf(buf, sizeof(buf), "The largest drop along this path is at %s.",
+    std::snprintf(buf, sizeof(buf), "The largest drop %s is at %s.",
+                  complete ? "along this path" : "along the readable prefix",
                   contact_name(static_cast<size_t>(reading.loss_contact)).c_str());
     lines.emplace_back(buf);
   }
@@ -572,7 +585,7 @@ std::vector<std::string> PointLossReadoutLines(const LUMICE_PathPointSample& sam
     }
     basis += " (faces " + seq + ")";
   }
-  if (!reading.lossless && reading.usable_contacts < static_cast<int>(interfaces)) {
+  if (!complete) {
     std::snprintf(buf, sizeof(buf), "; amounts stop at contact %d — the factor there is out of range",
                   reading.usable_contacts + 1);
     basis += buf;
@@ -3619,7 +3632,18 @@ void RenderPoseFactorsRegion(GuiState& state, const ImVec2& size) {
           const double factor = current->sample.interface_transmittances != nullptr ?
                                     current->sample.interface_transmittances[static_cast<size_t>(k)] :
                                     0.0;
-          ImGui::TextWrapped("%s = %.6g (%s).", PointFaceFactorName(role), factor, PointFaceConditionalWords(role));
+          // The conditional answer IN the declared scale (AC2's 分母切换读样): the branch word
+          // follows the factor's own optics (a reflectance continues the reflected branch, a
+          // transmittance the transmitted one), formatted from the same unrounded factor —
+          // never the displayed cumulative values divided. The raw factor stays as auxiliary
+          // evidence.
+          const bool reflected =
+              role == PointFaceRole::kInternalReflection || role == PointFaceRole::kExternalReflection;
+          std::snprintf(buf, sizeof(buf),
+                        "Of the light reaching this face, about %s continues along the %s (%s = %.6g, %s).",
+                        PointLossPercentText(factor).c_str(), reflected ? "reflected branch" : "transmitted branch",
+                        PointFaceFactorName(role), factor, PointFaceConditionalWords(role));
+          ImGui::TextWrapped("%s", buf);
         }
       }
     }

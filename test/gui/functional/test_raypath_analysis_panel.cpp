@@ -2819,6 +2819,67 @@ bool PointMassArmIsHonestAndForcesNoFiber(ImGuiTestContext* ctx) {
     IM_CHECK_RETV(gui::g_state.analysis.trace.intent_valid == false, false);
   }
   ctx->LogInfo("[point view] the 23.74-shaped leg: image at the sun, separation real, no fiber");
+
+  // The marker's own shape (the winding fix's witness): the kPointMassColour vertices are the
+  // quad's four corners alone (the rim is a different ink) — their extent must be the diamond's
+  // square, centred, with the left and right spans equal (the AA-winding trap rendered the left
+  // half wrong; a one-sided fill breaks this symmetry).
+  {
+    const ImGuiWindow* region = MapRegionWindow();
+    IM_CHECK_RETV(region != nullptr, false);
+    float min_x = 0.0f, max_x = 0.0f, min_y = 0.0f, max_y = 0.0f;
+    int found = 0;
+    const ImDrawList* dl = region->DrawList;
+    for (int i = 0; i < dl->VtxBuffer.Size; ++i) {
+      const ImDrawVert& v = dl->VtxBuffer[i];
+      if (v.col != static_cast<ImU32>(gui::kPointMassColour)) {
+        continue;
+      }
+      const ImVec2 p(v.pos.x, v.pos.y);
+      if (found == 0) {
+        min_x = max_x = p.x;
+        min_y = max_y = p.y;
+      } else {
+        min_x = std::min(min_x, p.x);
+        max_x = std::max(max_x, p.x);
+        min_y = std::min(min_y, p.y);
+        max_y = std::max(max_y, p.y);
+      }
+      ++found;
+    }
+    IM_CHECK_RETV(found >= 4, false);
+    const float width = max_x - min_x;
+    const float height = max_y - min_y;
+    IM_CHECK_RETV(width > 0.0f && std::fabs(width - height) <= 1.0f, false);
+    const float centre_x = (min_x + max_x) / 2.0f;
+    const float left_span = centre_x - min_x;
+    const float right_span = max_x - centre_x;
+    IM_CHECK_RETV(std::fabs(left_span - right_span) <= 0.5f, false);
+    ctx->LogInfo("[point view] marker extent %.1fx%.1f, spans %.1f/%.1f — the diamond is symmetric",
+                 static_cast<double>(width), static_cast<double>(height), static_cast<double>(left_span),
+                 static_cast<double>(right_span));
+  }
+
+  // The Point images group's own gate (the layer contract's AC1): closing it removes the
+  // dedicated marker AND its legend naming, while the point answer's text keeps naming the
+  // position — a hidden layer is never a no-image claim. No query moves.
+  {
+    const int marker_before = MapWindowIndexCountForColour(gui::kPointMassColour);
+    IM_CHECK_RETV(marker_before > 0, false);
+    ctx->ItemClick("**/Layers##map_layers");
+    ctx->Yield(2);
+    ctx->ItemClick("**/Point images");
+    ctx->Yield(3);
+    IM_CHECK_RETV(MapWindowIndexCountForColour(gui::kPointMassColour) == 0, false);
+    IM_CHECK_RETV(!gui::LastMapOverlayLegend().point_image, false);
+    IM_CHECK_RETV(CaptureWindowFrameText(ctx, "Raypath view").find("Point image at") != std::string::npos, false);
+    ctx->ItemClick("**/Point images");
+    ctx->Yield(3);
+    IM_CHECK_RETV(MapWindowIndexCountForColour(gui::kPointMassColour) == marker_before, false);
+    ctx->ItemClick("**/Layers##map_layers");
+    ctx->Yield(1);
+    ctx->LogInfo("[point view] the Point images gate removes the marker and its legend; the text stays");
+  }
   return true;
 }
 
@@ -5561,6 +5622,15 @@ bool InternalReflectionTraceFromTheRealConsumer(ImGuiTestContext* ctx) {
                      at == std::string::npos ? "<absent>" : open_text.substr(at, 400).c_str());
       }
       IM_CHECK_RETV(open_text.find("read the light reaching this face as 100%") != std::string::npos, false);
+      // AC2's conditional answer IN the declared scale: the percentage comes from the same
+      // unrounded factor (never the displayed cumulative values divided), with the reflected
+      // branch named and the raw factor kept as auxiliary evidence.
+      char conditional[160];
+      std::snprintf(conditional, sizeof(conditional),
+                    "Of the light reaching this face, about %.3g%% continues along the %s branch",
+                    sample.interface_transmittances[loss_k] * 100.0,
+                    loss_k == 1 || loss_k == 2 ? "reflected" : "transmitted");
+      IM_CHECK_RETV(open_text.find(conditional) != std::string::npos, false);
       char local_factor[96];
       std::snprintf(local_factor, sizeof(local_factor), "reflectance = %.6g", sample.interface_transmittances[loss_k]);
       IM_CHECK_RETV(open_text.find(local_factor) != std::string::npos, false);

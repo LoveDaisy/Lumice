@@ -446,6 +446,7 @@ TEST(AnalyzePointView, LossReadingPicksTheLargestAbsoluteDrop) {
   const auto energies = RayTraceCumulativeEnergies(c03, 4);
   const PointLossReading reading = PointLossReadingFor(energies);
   EXPECT_EQ(reading.usable_contacts, 4);
+  EXPECT_TRUE(reading.chain_complete);
   EXPECT_EQ(reading.loss_contact, 1);
   EXPECT_EQ(reading.tie_count, 1);
   EXPECT_TRUE(reading.majority);  // the drop 0.9446 exceeds half the incident light
@@ -563,6 +564,44 @@ TEST(AnalyzePointView, LossReadoutLinesCarryDenominatorAndScope) {
   }
   EXPECT_NE(joined.find("ties at face 3 and face 7"), std::string::npos);
   EXPECT_EQ(joined.find("finally leaves"), std::string::npos);
+
+  // An unusable suffix scopes the conclusions to the readable prefix and names the stop
+  // position — the final strings are the regression, not just usable_contacts:
+  // {1.0, NaN}: the prefix keeps the light, but "every interface" is never claimed.
+  const double keeps_then_broken[2] = { 1.0, std::nan("") };
+  const int keep_faces[2] = { 3, 7 };
+  sample.interface_transmittances = keeps_then_broken;
+  sample.interface_count = 2;
+  joined.clear();
+  for (const std::string& l : PointLossReadoutLines(sample, keep_faces, 2)) {
+    joined += l + "\n";
+  }
+  EXPECT_NE(joined.find("The readable prefix keeps the light."), std::string::npos);
+  EXPECT_EQ(joined.find("every interface keeps the light"), std::string::npos);
+  EXPECT_NE(joined.find("amounts stop at contact 2 — the factor there is out of range"), std::string::npos);
+  {
+    const PointLossReading incomplete = PointLossReadingFor(RayTraceCumulativeEnergies(keeps_then_broken, 2));
+    EXPECT_FALSE(incomplete.chain_complete);
+  }
+
+  // {0.9, NaN, 0.1}: the known 10% prefix drop is the largest over the READABLE PREFIX — the
+  // sentence says so and never claims the whole path's ranking.
+  const double prefix_loss[3] = { 0.9, std::nan(""), 0.1 };
+  const int prefix_faces[3] = { 3, 5, 7 };
+  sample.interface_transmittances = prefix_loss;
+  sample.interface_count = 3;
+  joined.clear();
+  for (const std::string& l : PointLossReadoutLines(sample, prefix_faces, 3)) {
+    joined += l + "\n";
+  }
+  EXPECT_NE(joined.find("The largest drop along the readable prefix is at face 3."), std::string::npos);
+  EXPECT_EQ(joined.find("along this path"), std::string::npos);
+  EXPECT_NE(joined.find("amounts stop at contact 2 — the factor there is out of range"), std::string::npos);
+  {
+    const PointLossReading incomplete = PointLossReadingFor(RayTraceCumulativeEnergies(prefix_loss, 3));
+    EXPECT_FALSE(incomplete.chain_complete);
+    EXPECT_FALSE(incomplete.lossless);  // the prefix itself drops 10% at its entry contact
+  }
 
   // No usable factor: empty — the caller falls back to the plain factor lines.
   const double broken[1] = { std::nan("") };

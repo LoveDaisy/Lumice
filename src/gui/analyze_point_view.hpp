@@ -415,7 +415,10 @@ std::vector<RayTraceSegmentEnergy> RayTraceCumulativeEnergies(const double* fact
 // the usable prefix — not the smallest conditional factor. `majority` gates the "most light"
 // claim (the drop must exceed half the incident light); `tie_count > 1` names a tie (no single
 // cause is claimed); `lossless` says every usable factor keeps the energy (all drops within the
-// rounding band); `usable_contacts` is the prefix length loss claims may cover.
+// rounding band); `usable_contacts` is the prefix length loss claims may cover;
+// `chain_complete` says that prefix spans the whole chain — only then may conclusions speak of
+// "this path" as a whole; an incomplete chain's lossless/largest/tie conclusions are
+// prefix-scoped and the stop position shows unconditionally.
 struct PointLossReading {
   int usable_contacts = 0;
   int loss_contact = -1;
@@ -423,6 +426,7 @@ struct PointLossReading {
   int tie_count = 0;
   bool majority = false;
   bool lossless = false;
+  bool chain_complete = false;
 };
 PointLossReading PointLossReadingFor(const std::vector<RayTraceSegmentEnergy>& energies);
 
