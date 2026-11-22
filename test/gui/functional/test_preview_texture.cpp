@@ -398,6 +398,15 @@ void SeedFiniteRun(float millions) {
   gui::g_state.renderer.sim_resolution_index = 0;
 }
 
+// The infinite shape: frames keep arriving on real time, which is what makes the
+// newest-retained-frame witnesses machine-independent (a finite 0.1M run completes in a single
+// frame on a fast GPU, leaving no newer frame for the second save to pick up).
+void SeedInfiniteRun() {
+  gui::g_state.sim.infinite = true;
+  gui::g_state.sim.max_hits = 8;
+  gui::g_state.renderer.sim_resolution_index = 0;
+}
+
 // Pump frames until `pred` holds or the wall-clock budget runs out (same contract as
 // test_run_lifecycle.cpp's DriveUntil: --fixed-dt decouples frames from seconds, so only the
 // clock bounds a hang).
@@ -1626,7 +1635,10 @@ void RegisterPreviewTextureTests(ImGuiTestEngine* engine) {
       IM_CHECK(scene.ok());
       SetFaultAndWait(ctx, -1, 0);
       SetFaultAndWait(ctx, static_cast<int>(gui::UploadResult::Stage::kTexImage), kGlInvalidValue);
-      SeedFiniteRun(/*millions=*/0.1f);
+      // INFINITE on purpose: the witness needs the run to keep producing newer qualifying frames
+      // AFTER the first failure, on this machine's clock — a finite budget can finish inside one
+      // frame on a fast GPU and leave nothing newer for the second save to pick up.
+      SeedInfiniteRun();
       gui::DoRun(/*user_initiated=*/true);
 
       // First live frame fails everywhere and is retained.
@@ -1646,14 +1658,11 @@ void RegisterPreviewTextureTests(ImGuiTestEngine* engine) {
         IM_CHECK_EQ(tex.height, 512);
       }
 
-      // The run finishes; the terminal frame updates the retained source while latched.
-      IM_CHECK(DriveUntil(
-          ctx,
-          [] {
-            return gui::g_state.sim_state == SimState::kDone && gui::g_state.run_intent == RunIntent::kRunCompleted;
-          },
-          20));
-      ctx->Yield(2);
+      // The run keeps producing while latched: a bounded wall-clock window guarantees newer
+      // qualifying frames updated the retained source (they stay off the GPU — that is the
+      // latch's contract — but the retained source tracks the newest one). The settle always
+      // "times out" — that IS the wait; the predicate would only fire early.
+      (void)DriveUntil(ctx, [] { return false; }, /*timeout_s=*/3);
 
       // The second save refreshes from the newest retained frame.
       const std::string save2 = GuiTestTempPath("lumice_preview_texture_pending_save2.lmc").string();
