@@ -313,6 +313,14 @@ class PreviewRenderer {
   // instead — see UpdateCpuXyzTextureData.
   UploadResult UploadXyzTexture(const float* data, int width, int height);
 
+  // Full-resolution XYZ upload WITHOUT the double PBO staging: the quantize happens into a
+  // transient CPU buffer and glTexImage2D copies from client memory, synchronously. Recovery
+  // tier 1 — what a PBO allocation/map/wait failure falls back to when the texture itself still
+  // fits (plan 814 §3.2: "低 staging 压力的完整上传路径"). Same UploadResult contract, same
+  // witness, same commit as the PBO path; no fence is created because no async DMA exists to
+  // guard.
+  UploadResult UploadXyzTextureNoStaging(const float* data, int width, int height);
+
   // Render preview into the given viewport region (in framebuffer pixels)
   void Render(int vp_x, int vp_y, int vp_w, int vp_h, const PreviewParams& params);
 
@@ -443,6 +451,14 @@ class PreviewRenderer {
 
   // GL body shared by UploadTexture / UploadRadianceTexture; see the definition.
   UploadResult UploadUint8Texture(const unsigned char* data, int width, int height, TextureMode mode);
+
+  // The tail both XYZ paths share, from the define call through the commit: error-checked
+  // define-or-update of the already-quantized half bits at (width, height), the level-0 storage
+  // witness, the OOM/ordinary failure branches, the staging-slot fence (only when staging_slot
+  // >= 0 — the client-memory path has no DMA in flight to guard), and on success the display
+  // commit. Caller has texture_ bound; define_data is the client pointer for a client-memory
+  // define, or null while a PIXEL_UNPACK_BUFFER is bound (the pointer-as-offset mechanism).
+  UploadResult UploadXyzBitsTail(const void* define_data, int width, int height, float scale, int staging_slot);
 
   // Drop one staging slot's buffer object and forget its registered size, so the next cycle in
   // that slot allocates a fresh store instead of writing into a buffer whose guard is gone (a

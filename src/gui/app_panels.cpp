@@ -2378,6 +2378,26 @@ void RenderPreviewPanel(GLFWwindow* window, float window_width, float window_hei
   // section is expanded, and before this frame assembles any view-dependent inputs.
   UpdateLockedLookAt(g_state);
 
+  // 814 AC3: the preview recovery notice — one-time dismissible, with the explicit retry within
+  // reach (plan §3.2). Drawn inside this window so it reads as part of the preview area: the
+  // deferred FBO blit runs before ImGui's draw data, so this text lands on top of whatever the
+  // preview is (or is not) showing. Dismissal only hides the message; the Retry button is the
+  // recovery action, and a NEW failure re-shows the notice on its own.
+  const int notice_kind = PreviewRecoveryNoticeKind();
+  if (notice_kind != 0) {
+    ImGui::SetCursorPos(ImVec2(UiPx(8), UiPx(8)));
+    ImGui::BeginGroup();
+    ImGui::TextUnformatted(PreviewRecoveryNoticeText());
+    if (ImGui::SmallButton("Retry preview")) {
+      RetryPreviewUpload();
+    }
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Dismiss")) {
+      DismissPreviewRecoveryNotice();
+    }
+    ImGui::EndGroup();
+  }
+
   // Renderer invariants (previously in RenderViewBar, runs every frame).
   // Copy-model: GuiState always owns a single renderer, no vector/index bookkeeping needed.
   {

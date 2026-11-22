@@ -75,6 +75,8 @@ struct FaultUploadRequest {
   std::atomic<bool> upload8_done{ false };
   std::atomic<bool> uploadxyz_requested{ false };
   std::atomic<bool> uploadxyz_done{ false };
+  std::atomic<bool> uploadnstaging_requested{ false };
+  std::atomic<bool> uploadnstaging_done{ false };
   std::atomic<bool> bg_requested{ false };
   std::atomic<bool> bg_done{ false };
   gui::UploadResult upload8_result;
@@ -98,6 +100,8 @@ struct FaultUploadRequest {
     upload8_done = false;
     uploadxyz_requested = false;
     uploadxyz_done = false;
+    uploadnstaging_requested = false;
+    uploadnstaging_done = false;
     bg_requested = false;
     bg_done = false;
     srgb = nullptr;
@@ -142,6 +146,11 @@ void FaultUploadGuiFunc(ImGuiTestContext* /*ctx*/) {
   if (g_fault.uploadxyz_requested && !g_fault.uploadxyz_done) {
     g_fault.uploadxyz_result = gui::g_preview.UploadXyzTexture(g_fault.xyz->data(), g_fault.width, g_fault.height);
     g_fault.uploadxyz_done = true;
+  }
+  if (g_fault.uploadnstaging_requested && !g_fault.uploadnstaging_done) {
+    g_fault.uploadxyz_result =
+        gui::g_preview.UploadXyzTextureNoStaging(g_fault.xyz->data(), g_fault.width, g_fault.height);
+    g_fault.uploadnstaging_done = true;
   }
   if (g_fault.bg_requested && !g_fault.bg_done) {
     gui::g_preview.UploadBgTexture(g_fault.bg_pixels.data(), g_fault.bg_width, g_fault.bg_height);
@@ -642,6 +651,60 @@ void RegisterPreviewTextureTests(ImGuiTestEngine* engine) {
       // Recovery: the cleared hook lets a fresh upload rebuild a trusted display.
       SetFaultAndWait(ctx, -1, 0);
       UploadXyzAndWait(ctx, xyz, 56, 56);
+      IM_CHECK(g_fault.uploadxyz_result.ok);
+      IM_CHECK(gui::g_preview.HasTexture());
+      SetFaultAndWait(ctx, -1, 0);
+    };
+  }
+
+  // The no-staging upload path (recovery tier 1): full resolution quantized into a transient CPU
+  // buffer and defined from client memory. Its success commits the same display facts as the PBO
+  // path; a forced texture-stage OOM on it revokes the same way (the unified ruling is not
+  // PBO-specific), and its failure never registers a staging size because it never touches the
+  // double buffer — the next PBO-path upload still finds its slots as the last PBO cycle left
+  // them.
+  {
+    ImGuiTest* t =
+        IM_REGISTER_TEST(engine, "preview_texture", "a_no_staging_upload_commits_and_revokes_like_the_pbo_path");
+    t->GuiFunc = FaultUploadGuiFunc;
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      SetFaultAndWait(ctx, -1, 0);
+      constexpr int kSide = 96;
+      const std::vector<float> xyz = XyzCoordinatePattern(kSide, kSide, /*seed=*/31);
+      // Success through the client-memory path — its own request kind on the shared GuiFunc.
+      g_fault.Reset();
+      g_fault.xyz = &xyz;
+      g_fault.width = kSide;
+      g_fault.height = kSide;
+      g_fault.uploadnstaging_requested = true;
+      ctx->Yield(2);
+      IM_CHECK(g_fault.uploadnstaging_done);
+      IM_CHECK(gui::g_preview.HasTexture());
+      IM_CHECK_EQ(gui::g_preview.GetTextureWidth(), kSide);
+      IM_CHECK(gui::g_preview.GetTextureMode() == gui::PreviewRenderer::TextureMode::kXyz);
+
+      // Forced OOM at the client path's define: same conservative revoke as everywhere else. A
+      // LARGER frame than the one above, so the tail takes the define stage — same size and mode
+      // would take the in-place update stage, which is a different hook target (and its own case
+      // elsewhere in this suite).
+      SetFaultAndWait(ctx, static_cast<int>(gui::UploadResult::Stage::kTexImage), kGlOutOfMemory);
+      constexpr int kNextSide = 128;
+      const std::vector<float> next = XyzCoordinatePattern(kNextSide, kNextSide, /*seed=*/32);
+      g_fault.Reset();
+      g_fault.xyz = &next;
+      g_fault.width = kNextSide;
+      g_fault.height = kNextSide;
+      g_fault.uploadnstaging_requested = true;
+      ctx->Yield(2);
+      IM_CHECK(g_fault.uploadnstaging_done);
+      IM_CHECK(!g_fault.uploadxyz_result.ok);
+      IM_CHECK(g_fault.uploadxyz_result.stage == gui::UploadResult::Stage::kTexImage);
+      IM_CHECK(!gui::g_preview.HasTexture());
+
+      // Recovery: the cleared hook lets the PBO path (tier 0) work again.
+      SetFaultAndWait(ctx, -1, 0);
+      UploadXyzAndWait(ctx, next, kNextSide, kNextSide);
       IM_CHECK(g_fault.uploadxyz_result.ok);
       IM_CHECK(gui::g_preview.HasTexture());
       SetFaultAndWait(ctx, -1, 0);

@@ -592,6 +592,51 @@ bool ShouldFireCompositeUpload(const PreviewSnapshot& snap, unsigned long long l
 // test/composition-correctness/gui/test_run_lifecycle_chain.cpp).
 bool ShouldBlockUploadForLatch(bool upload_latched, unsigned long long latch_epoch, unsigned long long committed_epoch);
 
+// ---- Preview recovery surface (814 §3.2/§3.3/§3.4) ----
+//
+// The ladder, its notice and its incident record live in app.cpp (runtime machine-resource state,
+// same ownership class as the upload latch); these accessors are the panel's and the diagnostics
+// exporter's whole view of it.
+
+// What the preview panel's one-time notice should say right now: 0 = nothing to report (healthy
+// or notice dismissed), 1 = degraded (the ladder established a reduced tier — the preview shows a
+// smaller but valid picture), 2 = unavailable (the last authorized cycle ran out of candidates;
+// an explicit retry or a new run is the way back). Dismissal only silences the notice; it never
+// fakes recovery.
+int PreviewRecoveryNoticeKind();
+
+// The notice's text for the current kind (empty when kind == 0). Names what happened, what the
+// user is looking at, and what the way back is.
+const char* PreviewRecoveryNoticeText();
+
+// Dismiss the notice. Deliberately not named "retry": dismissal hides the message only — it
+// changes no upload state, triggers no allocation, and a NEW failure re-shows the notice.
+void DismissPreviewRecoveryNotice();
+
+// The explicit recovery entry (plan 814 §3.2: reachable near the unavailable/degraded notice,
+// using the retained newest qualifying source — including a backend-completed terminal frame the
+// poller self-paused on — without re-running the simulation). Re-authorizes ONE full ladder
+// cycle, from candidate 0, against that retained source, on the caller's thread. With no
+// retained source there is nothing to retry and this is a no-op (a new Run is the way back then).
+// Main thread only (GL calls).
+void RetryPreviewUpload();
+
+// The minimal incident record of the last failed upload cycle (814 §3.4): the first failure's
+// stage, raw GL error, requested size, the ladder tier being attempted when it happened, and the
+// frame's serial. has_incident is false until a failure exists; a later success never erases the
+// record. This is what the hardware-diagnostics task reads — no new report UI, no hardware
+// enumeration, no dependency on that task landing first.
+struct PreviewUploadIncident {
+  bool has_incident = false;
+  int stage = 0;
+  int gl_error = 0;
+  int request_width = 0;
+  int request_height = 0;
+  int tier_tried = 0;
+  unsigned long long texture_serial = 0;
+};
+PreviewUploadIncident GetPreviewUploadIncident();
+
 // task-348.3 AC3 (⑦): decide whether opening the Colors window should force
 // show_composite_preview=true. True only when no color classes exist yet (nothing
 // to remember, default to "on" so a newly-added first class is visible immediately);
