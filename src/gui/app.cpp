@@ -3065,9 +3065,11 @@ void RetryPreviewUpload() {
   if (target_is_file) {
     switch (g_file_source.mode) {
       case PreviewRenderer::TextureMode::kXyz: {
-        tier = RunXyzUploadCycle(g_preview.GetXyzTextureData(), g_file_source.width, g_file_source.height,
-                                 /*texture_serial=*/0, /*probe_full_ladder=*/true)
-                   .displayed_tier;
+        const XyzUploadCycle cycle = RunXyzUploadCycle(g_preview.GetXyzTextureData(), g_file_source.width,
+                                                       g_file_source.height, /*texture_serial=*/0,
+                                                       /*probe_full_ladder=*/true);
+        tier = cycle.displayed_tier;
+        upload_result = cycle.first_failure;
         upload_result.ok = tier >= 0;
         break;
       }
@@ -3099,10 +3101,12 @@ void RetryPreviewUpload() {
     } else if (payload.xyz_buffer != nullptr) {
       // The cycle records its own first failure — the retry block below must NOT record again,
       // or it would overwrite the concrete stage/GL error/request size with a placeholder (the
-      // r4 defect that turned a real texture OOM into a fabricated invalid-input report).
-      tier = RunXyzUploadCycle(payload.xyz_buffer, payload.width, payload.height, target_serial,
-                               /*probe_full_ladder=*/true)
-                 .displayed_tier;
+      // r4 defect that turned a real texture OOM into a fabricated invalid-input report). The
+      // cycle's real result is what the failure log carries, same as SyncFromPoller's.
+      const XyzUploadCycle cycle = RunXyzUploadCycle(payload.xyz_buffer, payload.width, payload.height, target_serial,
+                                                     /*probe_full_ladder=*/true);
+      tier = cycle.displayed_tier;
+      upload_result = cycle.first_failure;
       upload_result.ok = tier >= 0;
     } else {
       // A source with no usable pixels (the acceptance-leg retained copy can carry none in
