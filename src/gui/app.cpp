@@ -2599,6 +2599,22 @@ GuiState::SimState ReconcileSimState(RunIntent intent, uint64_t committed_epoch,
   return (base == S::kDone && dirty) ? S::kModified : base;
 }
 
+// The document's file source has been REPLACED as the complete-source authority by an ACCEPTED
+// live frame: retire the fact and the mirror storage the open wrote (a v6 document's retired
+// half mirror is 192 MiB of dead allocation once a payload is the authoritative source — Save
+// refreshes the mirror from the payload, and the resolver's file role is gone). Deliberately no
+// display call: the just-accepted frame stays displayed, and the mirror's emptiness is
+// transient — the next Save's RefreshCpuTextureForSave re-populates it from the payload.
+// Acceptance SUCCESS branches only: a failed live upload leaves the file source intact (it is
+// still the save/retry source).
+static void RetireFileSourceForAcceptedLive() {
+  if (!g_file_source.valid) {
+    return;
+  }
+  g_file_source = FilePreviewSource{};
+  g_preview.ReleaseCpuMirrorStorage();
+}
+
 // Record one failed attempt into the minimal incident record and arm the notice. A NEW failure
 // always re-shows the notice (the dismissal is one-time per incident, not forever).
 static void RecordUploadIncident(const UploadResult& result, int tier_tried, unsigned long long texture_serial) {
@@ -3174,6 +3190,10 @@ void SyncFromPoller() {
       // displayed payload is the authoritative source now.
       g_pending_upload_source.reset();
       g_last_uploaded_payload = payload;
+      // The accepted payload is the document's authoritative complete source: the open's file
+      // bits have no reader left — retire them (the boundary plan §3.3 names: "文件源被新 live
+      // 接纳替代时淘汰相应旧表示").
+      RetireFileSourceForAcceptedLive();
       g_state.last_uploaded_as_composite = effective_composite;
       g_state.snapshot_intensity = payload->snapshot_intensity;
       g_state.snapshot_emitted_energy = payload->emitted_energy;
@@ -3413,6 +3433,7 @@ void RetryPreviewUpload() {
     g_pending_upload_source.reset();
     g_pending_upload_serial = 0;
     const TexturePayload& payload = *target;
+    RetireFileSourceForAcceptedLive();
     g_state.last_uploaded_as_composite = use_composite;
     g_state.snapshot_intensity = payload.snapshot_intensity;
     g_state.snapshot_emitted_energy = payload.emitted_energy;
@@ -3427,6 +3448,7 @@ void RetryPreviewUpload() {
     g_pending_upload_serial = 0;
     g_state.last_uploaded_texture_serial = retried_serial;
     const TexturePayload& payload = *g_last_uploaded_payload;
+    RetireFileSourceForAcceptedLive();
     g_state.last_uploaded_as_composite = use_composite;
     g_state.snapshot_intensity = payload.snapshot_intensity;
     g_state.snapshot_emitted_energy = payload.emitted_energy;

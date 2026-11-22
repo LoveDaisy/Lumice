@@ -1538,6 +1538,17 @@ void PreviewRenderer::Destroy() {
   bg_aspect_ = 1.0f;
 }
 
+void PreviewRenderer::ReleaseCpuMirrorStorage() {
+  ReleaseMirrorStorage(tex_data_);
+  ReleaseMirrorStorage(tex_xyz_data_);
+  ReleaseMirrorStorage(tex_xyz_half_data_);
+  tex_xyz_half_scale_ = 0.0f;
+  tex_xyz_meta_ = XyzTextureMeta{};
+  cpu_tex_mode_ = TextureMode::kSrgbComposited;
+  cpu_tex_width_ = 0;
+  cpu_tex_height_ = 0;
+}
+
 void PreviewRenderer::ClearTexture() {
   tex_width_ = 0;
   tex_height_ = 0;

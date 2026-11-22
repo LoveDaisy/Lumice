@@ -30,6 +30,12 @@
 
 namespace {
 
+// glClientWaitSync return statuses the instrument distinguishes (a sync STATUS is not a GL error
+// code): GL_ALREADY_SIGNALED 0x911F, GL_CONDITION_SATISFIED 0x911C, GL_WAIT_FAILED 0x911D.
+constexpr int kGlAlreadySignaled = 0x911F;
+constexpr int kGlConditionSatisfied = 0x911C;
+constexpr int kGlWaitFailed = 0x911D;
+
 std::string ArchivePathFromEnv() {
   const char* p = std::getenv("LUMICE_TEST_OPEN_ARCHIVE");
   return (p != nullptr && *p != '\0') ? std::string(p) : std::string();
@@ -51,10 +57,43 @@ std::atomic<bool> g_bench_rep_done{ false };
 std::atomic<bool> g_bench_rep_ok{ false };
 std::atomic<int> g_bench_rep_stage{ 0 };
 std::atomic<int> g_bench_rep_gl_error{ 0 };
+// Sample validity of the completion boundary itself: 0 = the rep's fence work succeeded (the
+// timing really spans submit→GPU completion); 1 = the DRAIN fence failed (prior work may be
+// mixed into the window — the rep must not start); 2 = the COMPLETION fence failed (the window
+// does not prove the upload reached the GPU). Either failure makes the rep INVALID: no timing
+// line that a performance reading could consume. This is a production-independent instrument
+// gate — the upload's own r.ok says nothing about DMA completion.
+std::atomic<int> g_bench_rep_fail_phase{ 0 };
+std::atomic<int> g_bench_fence_status{ 0 };
 double g_bench_rep_ms = 0.0;  // written on the main thread; the done-atomic is the happens-before
 const std::vector<float>* g_bench_frame = nullptr;
 int g_bench_w = 0;
 int g_bench_h = 0;
+// Test-only fence-fault injection (never set in production): while above zero, the instrument's
+// next fence wait fails synthetically (each failure consumes one count) — the failure-path
+// witness drives THIS branch, the same branch a real null fence or GL_WAIT_FAILED takes.
+std::atomic<int> g_bench_fence_fault_for_test{ 0 };
+
+namespace {
+// One instrument fence: create, wait, delete, and report whether the boundary it witnesses was
+// actually reached. Only an explicit signalled state counts; a null fence, a timeout or a wait
+// failure is a failed boundary (the caller records the raw status and voids the sample).
+bool BenchFenceWait(int* out_status) {
+  if (g_bench_fence_fault_for_test.fetch_sub(1) > 0) {
+    *out_status = kGlWaitFailed;
+    return false;
+  }
+  GLsync fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+  if (fence == nullptr) {
+    *out_status = static_cast<int>(glGetError());
+    return false;
+  }
+  GLenum wait = glClientWaitSync(fence, GL_SYNC_FLUSH_COMMANDS_BIT, 2'000'000'000ULL);
+  glDeleteSync(fence);
+  *out_status = static_cast<int>(wait);
+  return wait == GL_ALREADY_SIGNALED || wait == GL_CONDITION_SATISFIED;
+}
+}  // namespace
 
 // The context's own identity, captured on the main thread right after the open's upload: the
 // adapter list names every GPU in the machine, and the sshd session's context may land on any
@@ -91,36 +130,36 @@ void AcceptanceOpenGuiFunc(ImGuiTestContext* /*ctx*/) {
   }
   if (g_bench_rep_requested && !g_bench_rep_done) {
     // The comparison boundary is the GPU COMPLETION of the whole snapshot, not the moment the
-    // submit call returns: the production upload leaves its last strips' DMAs deliberately in
-    // flight (the slot fences guard reuse, not the upload's return), and how much work is still
-    // in flight at return differs between the arms — on a truly asynchronous driver (the
-    // Windows/AMD shape this bundle measured at 28-38 ms) the difference is exactly the cost
-    // the "not worse" judgment is about. So the instrument closes it itself, identically on
-    // both arms: an UNTIMED drain fence first (the previous rep's tail must not leak into this
-    // rep's window), then the upload timed from call to a fence that witnesses EVERYTHING the
-    // upload issued has reached the GPU. The production path itself stays asynchronous — the
-    // fence exists only inside this instrument, on the same boundary for baseline and new.
-    {
-      GLsync drain = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
-      if (drain != nullptr) {
-        glClientWaitSync(drain, GL_SYNC_FLUSH_COMMANDS_BIT, 2'000'000'000ULL);
-        glDeleteSync(drain);
-      }
+    // submit call returns — and a sample is only valid when both fence boundaries SUCCEEDED:
+    // an UNTIMED drain fence first (the previous rep's tail must not leak into this rep's
+    // window; a failed drain voids the rep before timing starts), then the upload, then a
+    // completion fence whose SUCCESS is what lets the window be read as submit→GPU-completion.
+    // A failed fence records phase + raw status and voids the sample — it never produces a
+    // timing line a performance reading could mistake for a completed-boundary measurement.
+    int drain_status = 0;
+    if (!BenchFenceWait(&drain_status)) {
+      g_bench_rep_fail_phase = 1;
+      g_bench_fence_status = drain_status;
+      g_bench_rep_ok = false;
+      g_bench_rep_done = true;
+      return;
     }
     const auto t0 = std::chrono::steady_clock::now();
     const gui::UploadResult r = gui::g_preview.UploadXyzTexture(g_bench_frame->data(), g_bench_w, g_bench_h);
-    {
-      GLsync complete = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
-      if (complete != nullptr) {
-        glClientWaitSync(complete, GL_SYNC_FLUSH_COMMANDS_BIT, 2'000'000'000ULL);
-        glDeleteSync(complete);
-      }
-    }
+    int complete_status = 0;
+    const bool complete_ok = BenchFenceWait(&complete_status);
     const auto t1 = std::chrono::steady_clock::now();
     g_bench_rep_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
-    g_bench_rep_ok = r.ok;
+    g_bench_rep_ok = r.ok && complete_ok;
     g_bench_rep_stage = static_cast<int>(r.stage);
     g_bench_rep_gl_error = r.gl_error;
+    if (!complete_ok) {
+      g_bench_rep_fail_phase = 2;
+      g_bench_fence_status = complete_status;
+    } else {
+      g_bench_rep_fail_phase = 0;
+      g_bench_fence_status = complete_status;
+    }
     g_bench_rep_done = true;
   }
 }
@@ -128,6 +167,45 @@ void AcceptanceOpenGuiFunc(ImGuiTestContext* /*ctx*/) {
 }  // namespace
 
 void RegisterFullArchiveAcceptanceTests(ImGuiTestEngine* engine) {
+  // The bench instrument's failure path runs in the NORMAL correctness pool (no archive needed):
+  // a synthetically failed drain fence must void the rep — phase=1, no valid timing line — and
+  // the next rep with the fault cleared must be a valid sample again. This is the gate that
+  // keeps a failed completion boundary from ever masquerading as a measurement.
+  {
+    ImGuiTest* w = IM_REGISTER_TEST(engine, "full_archive_acceptance", "a_failed_bench_fence_voids_the_sample");
+    w->GuiFunc = AcceptanceOpenGuiFunc;
+    w->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      gui::g_preview.SetUploadFaultHookForTest(nullptr);
+      constexpr int kW = 64;
+      constexpr int kH = 32;
+      std::vector<float> frame(static_cast<size_t>(kW) * kH * 3, 0.5f);
+
+      g_bench_fence_fault_for_test = 1;  // the next fence wait fails synthetically
+      g_bench_frame = &frame;
+      g_bench_w = kW;
+      g_bench_h = kH;
+      g_bench_rep_requested = true;
+      g_bench_rep_done = false;
+      ctx->Yield(2);
+      IM_CHECK(g_bench_rep_done.load());
+      IM_CHECK(!g_bench_rep_ok.load());
+      IM_CHECK_EQ(g_bench_rep_fail_phase.load(), 1);
+      IM_CHECK_EQ(g_bench_fence_status.load(), kGlWaitFailed);
+
+      // The fault is consumed: a plain rep is a valid sample again.
+      g_bench_rep_requested = true;
+      g_bench_rep_done = false;
+      g_bench_rep_fail_phase = 0;
+      g_bench_fence_status = 0;
+      ctx->Yield(2);
+      IM_CHECK(g_bench_rep_done.load());
+      IM_CHECK(g_bench_rep_ok.load());
+      IM_CHECK_EQ(g_bench_rep_fail_phase.load(), 0);
+      g_bench_fence_fault_for_test = 0;
+    };
+  }
+
   if (ArchivePathFromEnv().empty()) {
     return;  // No archive pointed at: this leg is opt-in, the suite stays untouched.
   }
@@ -259,6 +337,13 @@ void RegisterFullArchiveAcceptanceTests(ImGuiTestEngine* engine) {
       if (!g_bench_rep_done.load()) {
         IM_ERRORF("upload bench rep %d never landed", rep);
         continue;  // non-fatal on purpose (loop-fatal-assert rule): report every rep's outcome
+      }
+      if (g_bench_rep_fail_phase.load() != 0) {
+        // A failed fence boundary voids the sample: the phase (1 = drain, 2 = completion) and
+        // the raw sync status are the evidence; this line is NOT a timing sample.
+        IM_ERRORF("upload bench rep %d INVALID: fence phase=%d status=0x%04X — excluded from the pair", rep,
+                  g_bench_rep_fail_phase.load(), g_bench_fence_status.load());
+        continue;
       }
       if (!g_bench_rep_ok.load()) {
         IM_ERRORF("upload bench rep %d failed: stage=%d gl_error=0x%04X", rep, g_bench_rep_stage.load(),
