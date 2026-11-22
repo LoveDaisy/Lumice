@@ -405,9 +405,14 @@ class PreviewRenderer {
   void UpdateCpuXyzTextureData(const float* data, int width, int height, const XyzTextureMeta& meta);
 
   // The half twin of UpdateCpuXyzTextureData: the kXyz mirror takes a frame ALREADY held as
-  // binary16 + scale — a v6 open's writer. The bits are stored as they came, so a re-save writes
-  // exactly the file's own texels and an upload consumes them without a representation change.
-  // Clears the other two mirrors, like every mirror writer.
+  // binary16 + scale — a v6 open's writer. Two shapes for the two owners of the bits: the move
+  // overload takes the caller's buffer itself (the production open's handover — the inflated
+  // bits BECOME the mirror, so the open never holds two full frames), the pointer overload
+  // copies (tests seeding a mirror from their own bytes). Both clear the other two mirrors WITH
+  // THEIR STORAGE (a representation switch retires the old one's allocation, not just its
+  // element count) and record the same size/mode facts.
+  void UpdateCpuXyzHalfTextureData(std::vector<uint16_t>&& half_bits, int width, int height, float scale,
+                                   const XyzTextureMeta& meta);
   void UpdateCpuXyzHalfTextureData(const uint16_t* half_bits, int width, int height, float scale,
                                    const XyzTextureMeta& meta);
 
@@ -429,6 +434,16 @@ class PreviewRenderer {
   // the frame is held as binary16 + scale exactly as a v6 file stored it, so Save re-encodes the
   // held bits and an upload consumes them without a representation change.
   bool CpuXyzStorageIsHalf() const { return !tex_xyz_half_data_.empty(); }
+
+  // Test-only observability (gui/unit tests): the mirrors' HEAP footprint in bytes — capacity,
+  // not element count. This is the quantity a representation retirement must drive to zero: the
+  // null-pointer queries witness "no live frame in that representation", and a retired-but-
+  // still-allocated mirror passes them while holding its old allocation. The retirement and
+  // document-clear witnesses read this.
+  size_t CpuMirrorCapacityBytesForTest() const {
+    return tex_data_.capacity() + tex_xyz_data_.capacity() * sizeof(float) +
+           tex_xyz_half_data_.capacity() * sizeof(uint16_t);
+  }
   const XyzTextureMeta& GetXyzTextureMeta() const { return tex_xyz_meta_; }
   int GetTextureWidth() const { return tex_width_; }
   int GetTextureHeight() const { return tex_height_; }

@@ -1021,6 +1021,60 @@ TEST(PreviewDowngrade, HalfSourceTwinMatchesTheFloatTwinOnTheCanonicalValues) {
   lumice::gui::SetDowngradeAllocFaultForTest(0);
 }
 
+// Mirror retirement: a representation switch and a document clear must release the RETIRED
+// mirror's heap block, not merely empty it — capacity() is the witness, and the null-pointer
+// queries cannot carry it (a cleared-but-allocated vector passes them while holding its old
+// allocation). The move handover also consumes the caller's buffer, which is what keeps the
+// production open at ONE full frame instead of two.
+TEST(PreviewRenderer, MirrorRetirementReleasesTheRetiredRepresentationsStorage) {
+  namespace g = lumice::gui;
+  g::PreviewRenderer renderer;  // no Init: the mirror writers are CPU-only
+  constexpr int kW = 8;
+  constexpr int kH = 4;
+  const size_t float_bytes = static_cast<size_t>(kW) * kH * 3 * sizeof(float);
+  const size_t half_bytes = static_cast<size_t>(kW) * kH * 3 * sizeof(uint16_t);
+  g::XyzTextureMeta meta;
+
+  std::vector<float> floats(static_cast<size_t>(kW) * kH * 3, 1.0f);
+  renderer.UpdateCpuXyzTextureData(floats.data(), kW, kH, meta);
+  // Allocation sizes are >= (a standard library may round a growth up); RELEASE is == 0, the
+  // one exact statement a swap-based retirement makes on every implementation.
+  EXPECT_GE(renderer.CpuMirrorCapacityBytesForTest(), float_bytes);
+  EXPECT_TRUE(renderer.CpuXyzStorageIsHalf() == false);
+
+  // The production open's handover: MOVE the half buffer in. The float mirror retires with its
+  // storage, the moved-from vector leaves empty, and the mirror's heap is the half's alone.
+  std::vector<uint16_t> bits(static_cast<size_t>(kW) * kH * 3, 0x3C00u);  // half 1.0
+  renderer.UpdateCpuXyzHalfTextureData(std::move(bits), kW, kH, 1.0f, meta);
+  EXPECT_TRUE(bits.empty()) << "the move handover consumed the caller's buffer";
+  EXPECT_TRUE(renderer.GetXyzTextureData() == nullptr);
+  EXPECT_EQ(renderer.CpuMirrorCapacityBytesForTest(), half_bytes)
+      << "the retired float representation's storage must be released, not kept as capacity";
+  EXPECT_TRUE(renderer.CpuXyzStorageIsHalf());
+
+  // The copy writer (tests seeding from their own bytes) retires the same way.
+  std::vector<uint16_t> bits2(static_cast<size_t>(kW) * kH * 3, 0x0000u);
+  renderer.UpdateCpuXyzHalfTextureData(bits2.data(), kW, kH, 2.0f, meta);
+  EXPECT_GE(renderer.CpuMirrorCapacityBytesForTest(), half_bytes);
+  EXPECT_LE(renderer.CpuMirrorCapacityBytesForTest(), 2 * half_bytes);
+
+  // A uint8 mirror write retires BOTH XYZ representations' storage.
+  std::vector<unsigned char> srgb(static_cast<size_t>(kW) * kH * 3, 7);
+  renderer.UpdateCpuTextureData(srgb.data(), kW, kH);
+  const size_t srgb_bytes = static_cast<size_t>(kW) * kH * 3;
+  EXPECT_GE(renderer.CpuMirrorCapacityBytesForTest(), srgb_bytes);
+  EXPECT_LT(renderer.CpuMirrorCapacityBytesForTest(), srgb_bytes + half_bytes)
+      << "uint8 bytes only: both XYZ representations' storage released";
+
+  // Document clear retires everything: the heap is empty, not merely element-free.
+  renderer.UpdateCpuXyzHalfTextureData(std::vector<uint16_t>(static_cast<size_t>(kW) * kH * 3, 0x3C00u), kW, kH, 1.0f,
+                                       meta);
+  EXPECT_GT(renderer.CpuMirrorCapacityBytesForTest(), 0u);
+  renderer.ClearTexture();
+  EXPECT_EQ(renderer.CpuMirrorCapacityBytesForTest(), 0u)
+      << "a cleared document keeps no mirror allocation of any representation";
+}
+
 // The strip staging plan: rows are what the budget buys, the override only shrinks, a small
 // frame is one strip, the tail strip is the remaining rows (never an empty strip), and the slot
 // allocation is the capacity the plan actually holds — the numbers the renderer maps, fences and

@@ -1368,7 +1368,7 @@ void LoadBackgroundWithDegrade(GuiState& state) {
   }
 }
 
-void ResetFrontendState(GuiState& state, FrontendResetReason reason, const LmcTexture* baked) {
+void ResetFrontendState(GuiState& state, FrontendResetReason reason, LmcTexture* baked) {
   // reason/payload consistency: baked payload is present iff and only if kOpenBaked.
   // A caller mismatch is a programming error — assert here so it fails fast in debug builds
   // instead of silently doing the wrong thing (UB deref if kOpenBaked && baked==nullptr, or
@@ -1468,11 +1468,14 @@ void ResetFrontendState(GuiState& state, FrontendResetReason reason, const LmcTe
           file_view.height = baked->height;
           const XyzUploadCycle cycle = RunXyzUploadCycle(file_view, /*texture_serial=*/0, /*probe_full_ladder=*/true);
           // The mirror + the source fact: the file's own bytes and their metadata, whether or
-          // not the GPU accepted the display upload — in the file's own representation. THIS —
-          // not a payload wrapped around the caller's stack buffer, whose pixels die when DoOpen
-          // returns — is the retry and save-source fact from here on.
+          // not the GPU accepted the display upload. For the half representation the buffer is
+          // TAKEN, not copied — the open's inflated bits become the CPU mirror, so the open
+          // never holds two full frames at once (the one-complete-source rule); the upload
+          // cycle above already consumed its bytes. THIS — not a payload wrapped around the
+          // caller's stack buffer, whose pixels die when DoOpen returns — is the retry and
+          // save-source fact from here on, and the caller's vector leaves empty.
           if (baked->XyzStorageIsHalf()) {
-            g_preview.UpdateCpuXyzHalfTextureData(baked->xyz_half.data(), baked->width, baked->height,
+            g_preview.UpdateCpuXyzHalfTextureData(std::move(baked->xyz_half), baked->width, baked->height,
                                                   baked->xyz_half_scale, baked->meta);
           } else {
             g_preview.UpdateCpuXyzTextureData(baked->xyz.data(), baked->width, baked->height, baked->meta);
