@@ -6128,6 +6128,27 @@ bool IdentityClassShowsTheMassArmAndTheMapAnswers(ImGuiTestContext* ctx) {
     IM_CHECK_RETV(reuse_licensed ? marker_vertices == 0 : marker_vertices > 0, false);
   }
 
+  // The shared visibility rule's off-view leg: with the camera aimed away from the sun, the
+  // reused mass cell is off-frame — the legend goes silent (it records what the frame actually
+  // drew, not what the document could carry), and the answer's text still names the position.
+  // Camera back, the legend names the image again.
+  {
+    const float saved_az = gui::g_state.renderer.azimuth;
+    const float saved_el = gui::g_state.renderer.elevation;
+    gui::g_state.renderer.azimuth = 180.0f;
+    gui::g_state.renderer.elevation = -30.0f;
+    ctx->Yield(3);
+    IM_CHECK_RETV(!gui::LastMapOverlayLegend().point_image, false);
+    gui::g_state.renderer.azimuth = saved_az;
+    gui::g_state.renderer.elevation = saved_el;
+    ctx->Yield(3);
+    IM_CHECK_RETV(gui::LastMapOverlayLegend().point_image, false);
+    // The answer text's view/gate independence is the mass-arm leg's own assertion (its
+    // overlays-off pin reads the drawn text); this leg's claim is the legend recording what the
+    // frame actually drew — silent off-frame, naming again in view.
+    ctx->LogInfo("[v1 c15] off-view: the reuse legend goes silent; back in view it names the image again");
+  }
+
   // The summary projection and the complete answer, on the fast arm (the identity survey
   // answers in milliseconds — this leg carries the §16.2 shape checks the dispersion case's
   // real-timing window cannot prove under pool load): the main window carries the default
