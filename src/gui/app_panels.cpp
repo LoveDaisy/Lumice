@@ -2453,7 +2453,7 @@ void RenderPreviewPanel(GLFWwindow* window, float window_width, float window_hei
     mono_ev_in.ev_auto = g_state.ev_auto;
     mono_ev_in.snapshot_intensity = g_state.snapshot_intensity;
     mono_ev_in.snapshot_emitted_energy = g_state.snapshot_emitted_energy;
-    mono_ev_in.total_pixels = g_preview.GetTextureWidth() * g_preview.GetTextureHeight();
+    mono_ev_in.total_pixels = PreviewSourcePixelCount();
     const lumice::gui::MonoExposure mono_ev = lumice::gui::ComputeMonoExposure(rc.ev_mode, mono_ev_in);
     pp.exposure.intensity_factor = mono_ev.intensity_factor;
 
