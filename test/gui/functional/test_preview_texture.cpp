@@ -29,13 +29,20 @@
 // payload.
 
 #include <atomic>
+#include <chrono>
 #include <cstdio>
 #include <cstring>
+#include <functional>
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "gui/gui_state.hpp"
 #include "test_gui_shared.hpp"
+
+// Local spellings for the run-driven cases (same shape as test_run_lifecycle.cpp's).
+using SimState = gui::GuiState::SimState;
+using RunIntent = gui::RunIntent;
 
 namespace {
 
@@ -79,6 +86,14 @@ struct FaultUploadRequest {
   std::atomic<bool> uploadnstaging_done{ false };
   std::atomic<bool> bg_requested{ false };
   std::atomic<bool> bg_done{ false };
+  std::atomic<bool> custom_hook_requested{ false };
+  std::atomic<bool> custom_hook_installed{ false };
+  std::atomic<bool> retry_requested{ false };
+  std::atomic<bool> retry_done{ false };
+  std::atomic<bool> dfe_requested{ false };  // dual-fisheye equal-area export (no-dialog seam)
+  std::atomic<bool> dfe_done{ false };
+  bool dfe_result = false;
+  std::string dfe_path;
   gui::UploadResult upload8_result;
   gui::UploadResult uploadxyz_result;
   const std::vector<unsigned char>* srgb = nullptr;
@@ -104,6 +119,14 @@ struct FaultUploadRequest {
     uploadnstaging_done = false;
     bg_requested = false;
     bg_done = false;
+    custom_hook_requested = false;
+    custom_hook_installed = false;
+    retry_requested = false;
+    retry_done = false;
+    dfe_requested = false;
+    dfe_done = false;
+    dfe_result = false;
+    dfe_path.clear();
     srgb = nullptr;
     xyz = nullptr;
     bg_pixels.clear();
@@ -116,6 +139,12 @@ struct FaultUploadRequest {
 
 FaultUploadRequest g_fault;
 
+// The custom hook's factory slot: TestFunc fills it BEFORE raising custom_hook_requested, the
+// GuiFunc (main thread) installs it. The function object itself EXECUTES on the main thread like
+// every hook — side effects it makes on GL or on plain captured counters are main-thread facts;
+// counters a TestFunc later reads are atomics for that reason only.
+std::function<int(gui::UploadResult::Stage)> g_custom_hook;
+
 // DoOpen request channel, same shape as test_file_ops' baked-preview open: the open's GL upload
 // branch must run on the render thread, so the TestFunc posts a path and the GuiFunc executes it.
 bool g_open_requested = false;
@@ -123,9 +152,12 @@ bool g_open_done = false;
 std::string g_open_path;
 
 // Raw GLenum spellings for the synthesized errors. Kept numeric so this TU does not need the GL
-// headers: GL_OUT_OF_MEMORY (0x0505), GL_INVALID_VALUE (0x0500).
+// headers: GL_OUT_OF_MEMORY (0x0505), GL_INVALID_VALUE (0x0500). GL_WAIT_FAILED (0x911D) is a
+// glClientWaitSync RETURN STATUS, not a driver error flag — the fence-wait witness leans on
+// exactly that difference.
 constexpr int kGlOutOfMemory = 0x0505;
 constexpr int kGlInvalidValue = 0x0500;
+constexpr int kGlWaitFailed = 0x911D;
 
 void FaultUploadGuiFunc(ImGuiTestContext* /*ctx*/) {
   if (g_fault.hook_requested && !g_fault.hook_installed) {
@@ -135,9 +167,21 @@ void FaultUploadGuiFunc(ImGuiTestContext* /*ctx*/) {
         [stage, err](gui::UploadResult::Stage s) -> int { return s == stage ? err : 0; });
     g_fault.hook_installed = true;
   }
+  if (g_fault.custom_hook_requested && !g_fault.custom_hook_installed) {
+    gui::g_preview.SetUploadFaultHookForTest(g_custom_hook);
+    g_fault.custom_hook_installed = true;
+  }
   if (g_fault.hook_clear_requested && !g_fault.hook_cleared) {
     gui::g_preview.SetUploadFaultHookForTest(nullptr);
     g_fault.hook_cleared = true;
+  }
+  if (g_fault.retry_requested && !g_fault.retry_done) {
+    gui::RetryPreviewUpload();
+    g_fault.retry_done = true;
+  }
+  if (g_fault.dfe_requested && !g_fault.dfe_done) {
+    g_fault.dfe_result = gui::ExportDualFisheyeEqualAreaPng(g_fault.dfe_path);
+    g_fault.dfe_done = true;
   }
   if (g_fault.upload8_requested && !g_fault.upload8_done) {
     g_fault.upload8_result = gui::g_preview.UploadTexture(g_fault.srgb->data(), g_fault.width, g_fault.height);
@@ -183,6 +227,144 @@ void SetFaultAndWait(ImGuiTestContext* ctx, int stage, int gl_error) {
     IM_CHECK(g_fault.hook_installed);
   }
 }
+
+// Install a caller-built hook — the shape for witnesses that need more than one stage's
+// synthesized return value: per-candidate counters, side effects on real GL state, or
+// pass-after-N-fails ladders. The hook body runs on the main thread; anything it mutates that
+// the TestFunc later reads is an atomic captured through the shared pointer.
+void SetCustomHookAndWait(ImGuiTestContext* ctx, std::function<int(gui::UploadResult::Stage)> hook) {
+  g_fault.Reset();
+  g_custom_hook = std::move(hook);
+  g_fault.custom_hook_requested = true;
+  ctx->Yield(2);
+  IM_CHECK(g_fault.custom_hook_installed);
+}
+
+// Drive one explicit retry through the production entry on the main thread (the ladder and the
+// uploads it performs are GL work; the TestFunc coroutine must not touch them).
+void RetryAndWait(ImGuiTestContext* ctx) {
+  g_fault.retry_requested = true;
+  g_fault.retry_done = false;
+  ctx->Yield(2);
+  IM_CHECK(g_fault.retry_done);
+}
+
+// Drive the no-dialog dual-fisheye export body on the main thread and report whether it wrote
+// the file. Waits by bounded yield loop rather than IM_CHECK: this helper returns a value, and
+// the check macro's failure path is a bare `return;`.
+bool ExportDualFisheyeAndWait(ImGuiTestContext* ctx, const std::string& path) {
+  g_fault.dfe_path = path;
+  g_fault.dfe_result = false;
+  g_fault.dfe_requested = true;
+  g_fault.dfe_done = false;
+  for (int i = 0; i < 6 && !g_fault.dfe_done.load(); ++i) {
+    ctx->Yield(1);
+  }
+  return g_fault.dfe_done && g_fault.dfe_result;
+}
+
+// Write an XYZ-baked .lmc whose texture section carries `xyz` at `w`x`h` and whose metadata
+// carries `meta`. The document state written alongside is whatever the current one holds — the
+// readers of this file only assert on the texture section and its meta.
+bool WriteXyzLmcFile(const std::string& path, const std::vector<float>& xyz, int w, int h,
+                     const gui::XyzTextureMeta& meta) {
+  gui::g_preview.UpdateCpuXyzTextureData(xyz.data(), w, h, meta);
+  const bool ok = gui::SaveLmcFile(path, gui::g_state, gui::g_preview, /*save_texture=*/true);
+  return ok;
+}
+
+// The whole live viewport capture as one byte buffer (RGBA, top-down), for cases that compare
+// WHOLE frames rather than one centre pixel (the degraded-tier τ=0 round trip).
+std::vector<unsigned char> CapturePreviewFullFrame(ImGuiTestContext* ctx) {
+  const int vp_w = gui::g_preview_vp.vp_w;
+  const int vp_h = gui::g_preview_vp.vp_h;
+  if (!gui::g_preview_vp.active || vp_w <= 0 || vp_h <= 0) {
+    return {};
+  }
+  g_fullframe_capture.Reset();
+  g_fullframe_capture.rect_x = gui::g_preview_vp.vp_x;
+  g_fullframe_capture.rect_y = gui::g_preview_vp.vp_y;
+  g_fullframe_capture.rect_w = vp_w;
+  g_fullframe_capture.rect_h = vp_h;
+  g_fullframe_capture.requested.store(true);
+  for (int i = 0; i < 4 && !g_fullframe_capture.done.load(); ++i) {
+    ctx->Yield(1);
+  }
+  if (!g_fullframe_capture.done.load()) {
+    return {};
+  }
+  return g_fullframe_capture.pixels;
+}
+
+// A hook that fails the FIRST `fail_count` calls of `stage` (with `gl_error`) and lets every
+// later call through — the shape that drives a walk to a specific candidate: the first two
+// kTexImage failures kill the two full-size tiers and the walk establishes the first prefiltered
+// one. The counter is main-thread-only (the hook runs there); the atomic is for the TestFunc.
+std::function<int(gui::UploadResult::Stage)> FailFirstNThenPass(gui::UploadResult::Stage stage, int fail_count,
+                                                                int gl_error) {
+  auto counter = std::make_shared<std::atomic<int>>(0);
+  return [stage, fail_count, gl_error, counter](gui::UploadResult::Stage s) -> int {
+    if (s != stage) {
+      return 0;
+    }
+    return counter->fetch_add(1) < fail_count ? gl_error : 0;
+  };
+}
+
+// The smallest scene that still produces a real frame, at a chosen simulation resolution index
+// (0 = 512x256 all-sky) and a finite budget, for the cases that must drive SyncFromPoller
+// through a real run. `millions` is dyadic so the ray count is exact.
+void SeedFiniteRun(float millions) {
+  gui::g_state.sim.infinite = false;
+  gui::g_state.sim.ray_num_millions = millions;
+  gui::g_state.sim.max_hits = 8;
+  gui::g_state.renderer.sim_resolution_index = 0;
+}
+
+// Pump frames until `pred` holds or the wall-clock budget runs out (same contract as
+// test_run_lifecycle.cpp's DriveUntil: --fixed-dt decouples frames from seconds, so only the
+// clock bounds a hang).
+template <typename Pred>
+bool DriveUntil(ImGuiTestContext* ctx, Pred pred, int timeout_s) {
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(timeout_s);
+  while (!pred()) {
+    if (std::chrono::steady_clock::now() > deadline) {
+      return false;
+    }
+    ctx->Yield();
+  }
+  return true;
+}
+
+// A real server scope for the run-driven cases (same borrow-set as test_run_lifecycle.cpp's
+// ScopedRunScene: the stop latch and the four epoch fields have no other owner, so the scope
+// gives them back explicitly on every exit path).
+struct ScopedRunServer {
+  ScopedRunServer() {
+    gui::JoinPendingStop();
+    ResetTestState();
+    gui::g_server = LUMICE_CreateServer();
+    gui::ResetServerConstructionTrackers();
+  }
+  ~ScopedRunServer() {
+    gui::g_server_poller.Stop();
+    gui::JoinPendingStop();
+    if (gui::g_server != nullptr) {
+      LUMICE_StopServer(gui::g_server);
+      LUMICE_DestroyServer(gui::g_server);
+      gui::g_server = nullptr;
+    }
+    gui::ResetServerConstructionTrackers();
+    gui::g_stop_inflight.store(false);
+    gui::g_state.run_intent = RunIntent::kNone;
+    gui::g_state.committed_epoch = 0;
+    gui::g_state.display_epoch_floor = 0;
+    gui::g_state.dirty = false;
+  }
+  ScopedRunServer(const ScopedRunServer&) = delete;
+  ScopedRunServer& operator=(const ScopedRunServer&) = delete;
+  bool ok() const { return gui::g_server != nullptr; }
+};
 
 // The XYZ float frame every fault case uploads: a coordinate pattern so two frames of the same
 // size are still distinguishable by content, and small enough that the PBO double-buffer stays
@@ -934,6 +1116,595 @@ void RegisterPreviewTextureTests(ImGuiTestEngine* engine) {
       std::remove(path.c_str());
       std::remove(path2.c_str());
       SetFaultAndWait(ctx, -1, 0);
+    };
+  }
+
+  // The fence-wait failure branch must read and CLEAR the driver's error flag: a failed wait is
+  // allowed to leave one set, and a flag left behind would leak past this candidate's boundary
+  // into the NEXT candidate's error reads — which would label a successful client-memory write
+  // as failed with the new frame already on the GPU (the exact pixel-vs-metadata split the
+  // upload contract exists to prevent). The witness places a REAL driver flag (the hook raises
+  // one through the renderer's test seam; a synthesized return value cannot produce one), then
+  // proves the very next candidate — the no-staging full-size upload — commits at full size and
+  // the incident reports the driver's error, not the raw wait status.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "preview_texture",
+                                    "a_fence_wait_failure_reads_the_real_error_and_falls_back_to_client_memory");
+    t->GuiFunc = FaultUploadGuiFunc;
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      SetFaultAndWait(ctx, -1, 0);
+
+      // Arm both staging slots: two successful uploads leave a fence on each, so the next
+      // upload's slot-0 wait has a real sync object to wait on.
+      const std::vector<float> arm = XyzCoordinatePattern(32, 32, /*seed=*/31);
+      UploadXyzAndWait(ctx, arm, 32, 32);
+      IM_CHECK(g_fault.uploadxyz_result.ok);
+      UploadXyzAndWait(ctx, arm, 32, 32);
+      IM_CHECK(g_fault.uploadxyz_result.ok);
+
+      SetCustomHookAndWait(ctx, [](gui::UploadResult::Stage s) -> int {
+        if (s == gui::UploadResult::Stage::kFenceWait) {
+          gui::PreviewRenderer::RaiseRealGlInvalidOperationForTest();
+          return kGlWaitFailed;
+        }
+        return 0;
+      });
+
+      // The open's tier-0 PBO attempt waits on the armed fence and fails; the walk's next
+      // candidate is the client-memory full-size upload, which must commit on the drained
+      // context.
+      constexpr int kW = 256;
+      constexpr int kH = 128;
+      const std::vector<float> baked = XyzCoordinatePattern(kW, kH, /*seed=*/32);
+      gui::XyzTextureMeta meta;
+      meta.snapshot_intensity = 7.0f;
+      const std::string path = GuiTestTempPath("lumice_preview_texture_fence_wait.lmc").string();
+      IM_CHECK(WriteXyzLmcFile(path, baked, kW, kH, meta));
+      g_open_requested = true;
+      g_open_done = false;
+      g_open_path = path;
+      YieldUntilOpenDone(ctx);
+      IM_CHECK(g_open_done);
+      ctx->Yield(2);
+
+      // Full size on screen: a poisoned next candidate would have walked on to the prefiltered
+      // tier and displayed 128x64 instead.
+      IM_CHECK(gui::g_preview.HasTexture());
+      IM_CHECK_EQ(gui::g_preview.GetTextureWidth(), kW);
+      IM_CHECK_EQ(gui::g_preview.GetTextureHeight(), kH);
+      // The incident names the fence-wait stage with the DRIVER'S error — a real GL error flag
+      // the drain picked up, never the raw wait status (0x911D) and never zero. Which basic
+      // error a driver reports for the rejected call is the driver's own spelling (macOS reports
+      // GL_INVALID_ENUM 0x0501 here); the witness pins "a real driver error, drained", and the
+      // full-size display below pins the drain itself.
+      const gui::PreviewUploadIncident incident = gui::GetPreviewUploadIncident();
+      IM_CHECK(incident.has_incident);
+      IM_CHECK(incident.stage == static_cast<int>(gui::UploadResult::Stage::kFenceWait));
+      IM_CHECK(incident.gl_error >= 0x0500 && incident.gl_error <= 0x0503);
+
+      SetFaultAndWait(ctx, -1, 0);
+      std::remove(path.c_str());
+    };
+  }
+
+  // One authorized open = one attempt per recovery candidate. The counted defect had the open
+  // try tier 0 outside the ladder and then walk from candidate 0 — two full-size PBO passes in
+  // one cycle. The hook counts every texture-define attempt; for a 256x128 source the ladder is
+  // tier 0 (PBO), tier 1 (no staging), tier 2 (2x2 prefiltered to 128x64, the floor) — exactly
+  // three. The exhausted cycle's incident also stays the REAL first failure: stage, driver
+  // error and request size exactly as the failing candidate reported them.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "preview_texture", "one_open_walks_each_recovery_candidate_exactly_once");
+    t->GuiFunc = FaultUploadGuiFunc;
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      SetFaultAndWait(ctx, -1, 0);
+      auto define_attempts = std::make_shared<std::atomic<int>>(0);
+      SetCustomHookAndWait(ctx, [define_attempts](gui::UploadResult::Stage s) -> int {
+        if (s == gui::UploadResult::Stage::kTexImage) {
+          define_attempts->fetch_add(1);
+          return kGlOutOfMemory;
+        }
+        return 0;
+      });
+
+      constexpr int kW = 256;
+      constexpr int kH = 128;
+      const std::vector<float> baked = XyzCoordinatePattern(kW, kH, /*seed=*/33);
+      const std::string path = GuiTestTempPath("lumice_preview_texture_once_per_candidate.lmc").string();
+      gui::XyzTextureMeta meta;
+      meta.snapshot_intensity = 7.0f;
+      IM_CHECK(WriteXyzLmcFile(path, baked, kW, kH, meta));
+      g_open_requested = true;
+      g_open_done = false;
+      g_open_path = path;
+      YieldUntilOpenDone(ctx);
+      IM_CHECK(g_open_done);
+      ctx->Yield(2);
+
+      IM_CHECK_EQ(define_attempts->load(), 3);
+      IM_CHECK(!gui::g_preview.HasTexture());
+      IM_CHECK(gui::g_preview.HasCpuTexture());
+      const gui::PreviewUploadIncident incident = gui::GetPreviewUploadIncident();
+      IM_CHECK(incident.has_incident);
+      IM_CHECK(incident.stage == static_cast<int>(gui::UploadResult::Stage::kTexImage));
+      IM_CHECK_EQ(incident.gl_error, kGlOutOfMemory);
+      IM_CHECK_EQ(incident.request_width, kW);
+      IM_CHECK_EQ(incident.request_height, kH);
+      IM_CHECK(gui::PreviewRecoveryRetryAvailable());
+      IM_CHECK_EQ(gui::PreviewRecoveryNoticeKind(), 2);
+
+      SetFaultAndWait(ctx, -1, 0);
+      std::remove(path.c_str());
+    };
+  }
+
+  // A failed open retries from the DOCUMENT'S OWN source, after DoOpen has returned. This is the
+  // shape the borrowed-pointer defect lived in: the old retained payload wrapped the caller's
+  // stack buffer, so the first retry after the open returned walked freed memory. The mirror is
+  // the holder now, so the retry — first with the failure still in place (the incident must
+  // still name the real texture failure, not a synthesized invalid-input), then with it cleared
+  // — walks the document's own bytes to a full-size display, commits the file's exposure, and
+  // leaves a document whose Save round-trips its own complete source.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "preview_texture", "a_failed_open_retries_from_the_document_s_own_source");
+    t->GuiFunc = FaultUploadGuiFunc;
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      SetFaultAndWait(ctx, -1, 0);
+      constexpr int kW = 256;
+      constexpr int kH = 128;
+      const std::vector<float> baked = XyzCoordinatePattern(kW, kH, /*seed=*/34);
+      gui::XyzTextureMeta meta;
+      meta.snapshot_intensity = 7.0f;
+      meta.emitted_energy = 11.0f;
+      meta.mono_anchor = 13.0f;
+      meta.effective_pixels = 3;
+      const std::string path = GuiTestTempPath("lumice_preview_texture_open_retry.lmc").string();
+      IM_CHECK(WriteXyzLmcFile(path, baked, kW, kH, meta));
+
+      SetFaultAndWait(ctx, static_cast<int>(gui::UploadResult::Stage::kTexImage), kGlOutOfMemory);
+      g_open_requested = true;
+      g_open_done = false;
+      g_open_path = path;
+      YieldUntilOpenDone(ctx);
+      IM_CHECK(g_open_done);
+      ctx->Yield(2);
+      IM_CHECK(!gui::g_preview.HasTexture());
+      IM_CHECK(gui::g_preview.HasCpuTexture());
+      IM_CHECK_EQ(gui::g_preview.GetCpuTextureWidth(), kW);
+      IM_CHECK_EQ(gui::g_state.snapshot_intensity, 0.0f);  // failure committed no exposure
+      IM_CHECK(gui::PreviewRecoveryRetryAvailable());
+
+      // Retry with the failure still armed: the walk runs out again, nothing is committed, and
+      // the incident STILL names the real first failure of THIS cycle.
+      const unsigned long long baseline = gui::g_state.texture_upload_count;
+      RetryAndWait(ctx);
+      IM_CHECK(!gui::g_preview.HasTexture());
+      IM_CHECK_EQ(gui::g_state.texture_upload_count, baseline);
+      const gui::PreviewUploadIncident failed_retry = gui::GetPreviewUploadIncident();
+      IM_CHECK(failed_retry.has_incident);
+      IM_CHECK(failed_retry.stage == static_cast<int>(gui::UploadResult::Stage::kTexImage));
+      IM_CHECK_EQ(failed_retry.gl_error, kGlOutOfMemory);
+      IM_CHECK_EQ(failed_retry.request_width, kW);
+      IM_CHECK_EQ(failed_retry.request_height, kH);
+
+      // Clear the failure: the SAME retained document source re-uploads to full size.
+      SetFaultAndWait(ctx, -1, 0);
+      RetryAndWait(ctx);
+      IM_CHECK(gui::g_preview.HasTexture());
+      IM_CHECK_EQ(gui::g_preview.GetTextureWidth(), kW);
+      IM_CHECK_EQ(gui::g_preview.GetTextureHeight(), kH);
+      IM_CHECK_EQ(gui::g_state.snapshot_intensity, 7.0f);
+      IM_CHECK_EQ(gui::g_state.texture_upload_count, baseline + 1);
+      IM_CHECK(!gui::PreviewRecoveryRetryAvailable());
+      IM_CHECK_EQ(gui::PreviewRecoveryNoticeKind(), 0);
+
+      // The recovered document saves its own complete source, metadata intact.
+      const std::string path2 = GuiTestTempPath("lumice_preview_texture_open_retry_saved.lmc").string();
+      IM_CHECK(gui::SaveLmcFile(path2, gui::g_state, gui::g_preview, /*save_texture=*/true));
+      {
+        gui::GuiState scratch;
+        gui::LmcTexture tex;
+        IM_CHECK(gui::LoadLmcFile(path2, scratch, tex));
+        IM_CHECK_EQ(tex.width, kW);
+        IM_CHECK_EQ(tex.height, kH);
+        IM_CHECK_EQ(tex.meta.snapshot_intensity, 7.0f);
+      }
+
+      std::remove(path.c_str());
+      std::remove(path2.c_str());
+    };
+  }
+
+  // A uint8 document whose open fails gets the SAME observable failure exit the XYZ path has:
+  // incident, exhausted (the unavailable notice), a retry that survives Dismiss, and a retry
+  // that re-uploads in the document's OWN mode — radiance, then composited. The r4 gap: these
+  // failures only restored the mirror and logged, leaving the panel without a notice or a way
+  // back.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "preview_texture",
+                                    "a_failed_uint8_open_wires_the_failure_exit_and_retries_in_its_own_mode");
+    t->GuiFunc = FaultUploadGuiFunc;
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      SetFaultAndWait(ctx, -1, 0);
+      constexpr int kSide = 16;
+
+      // Radiance leg.
+      const std::vector<unsigned char> rad = SolidPattern(kSide, kSide, 90, 160, 30);
+      gui::g_preview.UpdateCpuTextureData(rad.data(), kSide, kSide, gui::PreviewRenderer::TextureMode::kSrgbRadiance);
+      const std::string rad_path = GuiTestTempPath("lumice_preview_texture_uint8_retry_rad.lmc").string();
+      IM_CHECK(gui::SaveLmcFile(rad_path, gui::g_state, gui::g_preview, /*save_texture=*/true));
+      SetFaultAndWait(ctx, static_cast<int>(gui::UploadResult::Stage::kTexImage), kGlOutOfMemory);
+      g_open_requested = true;
+      g_open_done = false;
+      g_open_path = rad_path;
+      YieldUntilOpenDone(ctx);
+      IM_CHECK(g_open_done);
+      ctx->Yield(2);
+      IM_CHECK(!gui::g_preview.HasTexture());
+      IM_CHECK(gui::g_preview.HasCpuTexture());
+      const gui::PreviewUploadIncident rad_incident = gui::GetPreviewUploadIncident();
+      IM_CHECK(rad_incident.has_incident);
+      IM_CHECK(rad_incident.stage == static_cast<int>(gui::UploadResult::Stage::kTexImage));
+      IM_CHECK(gui::PreviewRecoveryRetryAvailable());
+      IM_CHECK_EQ(gui::PreviewRecoveryNoticeKind(), 2);
+      gui::DismissPreviewRecoveryNotice();
+      IM_CHECK_EQ(gui::PreviewRecoveryNoticeKind(), 0);
+      IM_CHECK(gui::PreviewRecoveryRetryAvailable());  // Dismiss hides the notice, not the exit
+      SetFaultAndWait(ctx, -1, 0);
+      RetryAndWait(ctx);
+      IM_CHECK(gui::g_preview.HasTexture());
+      IM_CHECK(gui::g_preview.GetTextureMode() == gui::PreviewRenderer::TextureMode::kSrgbRadiance);
+      IM_CHECK_EQ(gui::PreviewRecoveryNoticeKind(), 0);
+
+      // Composited leg: the second open resets the document wholesale, so the two legs share
+      // nothing but the harness.
+      const std::vector<unsigned char> comp = SolidPattern(kSide, kSide, 30, 90, 200);
+      gui::g_preview.UpdateCpuTextureData(comp.data(), kSide, kSide,
+                                          gui::PreviewRenderer::TextureMode::kSrgbComposited);
+      const std::string comp_path = GuiTestTempPath("lumice_preview_texture_uint8_retry_comp.lmc").string();
+      IM_CHECK(gui::SaveLmcFile(comp_path, gui::g_state, gui::g_preview, /*save_texture=*/true));
+      SetFaultAndWait(ctx, static_cast<int>(gui::UploadResult::Stage::kTexImage), kGlOutOfMemory);
+      g_open_requested = true;
+      g_open_done = false;
+      g_open_path = comp_path;
+      YieldUntilOpenDone(ctx);
+      IM_CHECK(g_open_done);
+      ctx->Yield(2);
+      IM_CHECK(!gui::g_preview.HasTexture());
+      IM_CHECK(gui::GetPreviewUploadIncident().has_incident);
+      IM_CHECK(gui::PreviewRecoveryRetryAvailable());
+      IM_CHECK_EQ(gui::PreviewRecoveryNoticeKind(), 2);
+      SetFaultAndWait(ctx, -1, 0);
+      RetryAndWait(ctx);
+      IM_CHECK(gui::g_preview.HasTexture());
+      IM_CHECK(gui::g_preview.GetTextureMode() == gui::PreviewRenderer::TextureMode::kSrgbComposited);
+
+      std::remove(rad_path.c_str());
+      std::remove(comp_path.c_str());
+    };
+  }
+
+  // A degraded open re-probes to full resolution on retry: the file source — not a live
+  // payload — is what makes the retry exit exist for a document that was never simulated, and
+  // the re-walk runs the real candidates (128x64 first, then the full 256x128 once the failure
+  // is gone).
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "preview_texture", "a_degraded_open_reprobes_to_full_resolution_on_retry");
+    t->GuiFunc = FaultUploadGuiFunc;
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      SetFaultAndWait(ctx, -1, 0);
+      constexpr int kW = 256;
+      constexpr int kH = 128;
+      const std::vector<float> baked = XyzCoordinatePattern(kW, kH, /*seed=*/35);
+      const std::string path = GuiTestTempPath("lumice_preview_texture_open_degraded.lmc").string();
+      gui::XyzTextureMeta meta;
+      meta.snapshot_intensity = 7.0f;
+      IM_CHECK(WriteXyzLmcFile(path, baked, kW, kH, meta));
+
+      // The first two texture-define attempts (tier 0 and tier 1, both full-size) fail; the
+      // walk establishes the first prefiltered tier.
+      SetCustomHookAndWait(ctx,
+                           FailFirstNThenPass(gui::UploadResult::Stage::kTexImage, /*fail_count=*/2, kGlOutOfMemory));
+      g_open_requested = true;
+      g_open_done = false;
+      g_open_path = path;
+      YieldUntilOpenDone(ctx);
+      IM_CHECK(g_open_done);
+      ctx->Yield(2);
+      IM_CHECK(gui::g_preview.HasTexture());
+      IM_CHECK_EQ(gui::g_preview.GetTextureWidth(), kW / 2);
+      IM_CHECK_EQ(gui::g_preview.GetTextureHeight(), kH / 2);
+      IM_CHECK_EQ(gui::PreviewRecoveryNoticeKind(), 1);
+      IM_CHECK(gui::PreviewRecoveryRetryAvailable());
+
+      SetFaultAndWait(ctx, -1, 0);
+      RetryAndWait(ctx);
+      IM_CHECK_EQ(gui::g_preview.GetTextureWidth(), kW);
+      IM_CHECK_EQ(gui::g_preview.GetTextureHeight(), kH);
+      IM_CHECK(!gui::PreviewRecoveryRetryAvailable());
+      IM_CHECK_EQ(gui::PreviewRecoveryNoticeKind(), 0);
+
+      std::remove(path.c_str());
+    };
+  }
+
+  // The one adjudication at work over a REAL run: a displayed FILE frame survives a newer
+  // failed live frame as the save source AND the absolute-EV denominator. The r4 fork had the
+  // extent query prefer the never-displayed pending frame (512x256) over the file frame the
+  // screen actually shows (8x8) — silently moving the exposure normalization off the displayed
+  // picture. Asserted through the production chain: real DoRun, real SyncFromPoller failure,
+  // real save.
+  {
+    ImGuiTest* t =
+        IM_REGISTER_TEST(engine, "preview_texture", "the_document_s_source_survives_a_failed_newer_live_frame");
+    t->GuiFunc = FaultUploadGuiFunc;
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ScopedRunServer scene;
+      IM_CHECK(scene.ok());
+      SetFaultAndWait(ctx, -1, 0);
+
+      // File A: 8x8 with its own exposure meta, displayed without injection.
+      constexpr int kAW = 8;
+      constexpr int kAH = 8;
+      const std::vector<float> baked = XyzCoordinatePattern(kAW, kAH, /*seed=*/36);
+      gui::XyzTextureMeta meta;
+      meta.snapshot_intensity = 5.0f;
+      meta.emitted_energy = 9.0f;
+      meta.mono_anchor = 2.0f;
+      meta.effective_pixels = 1;
+      const std::string path = GuiTestTempPath("lumice_preview_texture_source_fork.lmc").string();
+      IM_CHECK(WriteXyzLmcFile(path, baked, kAW, kAH, meta));
+      g_open_requested = true;
+      g_open_done = false;
+      g_open_path = path;
+      YieldUntilOpenDone(ctx);
+      IM_CHECK(g_open_done);
+      ctx->Yield(2);
+      IM_CHECK(gui::g_preview.HasTexture());
+      IM_CHECK_EQ(gui::g_preview.GetTextureWidth(), kAW);
+
+      // A real run whose every define fails with an ORDINARY error: the offending command is
+      // ignored, the live frame is retained as pending, and the file frame stays displayed. (An
+      // injected OOM would be the revoke path — correct production behavior, the wrong scenario
+      // for this witness.)
+      SetFaultAndWait(ctx, static_cast<int>(gui::UploadResult::Stage::kTexImage), kGlInvalidValue);
+      SeedFiniteRun(/*millions=*/0.1f);
+      gui::DoRun(/*user_initiated=*/true);
+      IM_CHECK(DriveUntil(
+          ctx,
+          [] {
+            return gui::g_state.sim_state == SimState::kDone && gui::g_state.run_intent == RunIntent::kRunCompleted;
+          },
+          20));
+      ctx->Yield(2);
+      IM_CHECK(gui::g_state.upload_latched);
+
+      IM_CHECK_EQ(gui::g_preview.GetTextureWidth(), kAW);  // the file frame stays displayed
+      // The adjudication names the FILE frame for exposure and export — not the failed pending
+      // one at 1024x512.
+      IM_CHECK_EQ(gui::PreviewSourcePixelCount(), static_cast<long>(kAW) * kAH);
+      const gui::PreviewUploadIncident incident = gui::GetPreviewUploadIncident();
+      IM_CHECK(incident.has_incident);
+      IM_CHECK(incident.stage == static_cast<int>(gui::UploadResult::Stage::kTexImage));
+      IM_CHECK_EQ(incident.gl_error, kGlInvalidValue);
+      IM_CHECK_EQ(incident.request_width, 1024);
+      IM_CHECK_EQ(incident.request_height, 512);
+
+      // Save writes the file's own complete source.
+      const std::string saved = GuiTestTempPath("lumice_preview_texture_source_fork_saved.lmc").string();
+      IM_CHECK(gui::SaveLmcFile(saved, gui::g_state, gui::g_preview, /*save_texture=*/true));
+      {
+        gui::GuiState scratch;
+        gui::LmcTexture tex;
+        IM_CHECK(gui::LoadLmcFile(saved, scratch, tex));
+        IM_CHECK_EQ(tex.width, kAW);
+        IM_CHECK_EQ(tex.height, kAH);
+        IM_CHECK_EQ(tex.meta.snapshot_intensity, 5.0f);
+      }
+
+      SetFaultAndWait(ctx, -1, 0);
+      std::remove(path.c_str());
+      std::remove(saved.c_str());
+    };
+  }
+
+  // The pending fallback stays the NEWEST retained frame across saves: a first failure, saved,
+  // then a terminal frame retained while latched, then a second save — the second file must
+  // carry the terminal frame's measurements, not the stale mirror copy of the first failure.
+  // The r4 defect: the mirror being non-empty skipped the refresh, so the second save silently
+  // rewrote the first frame.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "preview_texture", "a_second_save_picks_up_the_newest_retained_frame");
+    t->GuiFunc = FaultUploadGuiFunc;
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ScopedRunServer scene;
+      IM_CHECK(scene.ok());
+      SetFaultAndWait(ctx, -1, 0);
+      SetFaultAndWait(ctx, static_cast<int>(gui::UploadResult::Stage::kTexImage), kGlInvalidValue);
+      SeedFiniteRun(/*millions=*/0.1f);
+      gui::DoRun(/*user_initiated=*/true);
+
+      // First live frame fails everywhere and is retained.
+      IM_CHECK(DriveUntil(ctx, [] { return gui::g_state.upload_latched; }, 20));
+      // The production save entry (PerformSave = refresh-from-adjudication + write; the file
+      // path is set so no dialog opens).
+      const std::string save1 = GuiTestTempPath("lumice_preview_texture_pending_save1.lmc").string();
+      gui::g_state.current_file_path = save1;
+      gui::PerformSave();
+      float intensity1 = 0.0f;
+      {
+        gui::GuiState scratch;
+        gui::LmcTexture tex;
+        IM_CHECK(gui::LoadLmcFile(save1, scratch, tex));
+        intensity1 = tex.meta.snapshot_intensity;
+        IM_CHECK_EQ(tex.width, 1024);
+        IM_CHECK_EQ(tex.height, 512);
+      }
+
+      // The run finishes; the terminal frame updates the retained source while latched.
+      IM_CHECK(DriveUntil(
+          ctx,
+          [] {
+            return gui::g_state.sim_state == SimState::kDone && gui::g_state.run_intent == RunIntent::kRunCompleted;
+          },
+          20));
+      ctx->Yield(2);
+
+      // The second save refreshes from the newest retained frame.
+      const std::string save2 = GuiTestTempPath("lumice_preview_texture_pending_save2.lmc").string();
+      gui::g_state.current_file_path = save2;
+      gui::PerformSave();
+      {
+        gui::GuiState scratch;
+        gui::LmcTexture tex;
+        IM_CHECK(gui::LoadLmcFile(save2, scratch, tex));
+        IM_CHECK_EQ(tex.width, 1024);
+        IM_CHECK_EQ(tex.height, 512);
+        IM_CHECK(tex.meta.snapshot_intensity > intensity1);
+      }
+      const gui::PreviewUploadIncident incident = gui::GetPreviewUploadIncident();
+      IM_CHECK(incident.has_incident);
+      IM_CHECK(incident.stage == static_cast<int>(gui::UploadResult::Stage::kTexImage));
+      IM_CHECK_EQ(incident.gl_error, kGlInvalidValue);
+
+      SetFaultAndWait(ctx, -1, 0);
+      std::remove(save1.c_str());
+      std::remove(save2.c_str());
+    };
+  }
+
+  // The degraded round trip at the pixels: a live frame accepted at a prefiltered tier, saved
+  // (the file keeps the FULL source), reopened onto the SAME tier, and the two viewport frames
+  // compared BYTE for BYTE — the same-tier live/save/reopen consistency the plan pins at tau=0,
+  // witnessed on the whole picture rather than a statistic.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "preview_texture",
+                                    "a_degraded_live_frame_roundtrips_tau_zero_through_save_and_reopen");
+    t->GuiFunc = FaultUploadGuiFunc;
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ScopedRunServer scene;
+      IM_CHECK(scene.ok());
+      SetFaultAndWait(ctx, -1, 0);
+      // Tier 0 and tier 1 (both full-size) fail; the walk establishes tier 2 (512x256 from
+      // the run's 1024x512 frame: BuildScene sizes the canvas 2*res x res).
+      SetCustomHookAndWait(ctx,
+                           FailFirstNThenPass(gui::UploadResult::Stage::kTexImage, /*fail_count=*/2, kGlOutOfMemory));
+      SeedFiniteRun(/*millions=*/0.1f);
+      gui::DoRun(/*user_initiated=*/true);
+      IM_CHECK(WaitForSimRestartAtLeast(ctx, /*baseline_upload_count=*/0, /*timeout_ms=*/20000));
+      IM_CHECK(DriveUntil(
+          ctx,
+          [] {
+            return gui::g_state.sim_state == SimState::kDone && gui::g_state.run_intent == RunIntent::kRunCompleted;
+          },
+          30));
+      ctx->Yield(3);  // drain the run's in-flight uploads before reading the display
+      IM_CHECK_EQ(gui::g_preview.GetTextureWidth(), 512);
+      IM_CHECK_EQ(gui::g_preview.GetTextureHeight(), 256);
+      const std::vector<unsigned char> live_frame = CapturePreviewFullFrame(ctx);
+      IM_CHECK(!live_frame.empty());
+
+      // The file keeps the full-resolution source while the display stays degraded.
+      const std::string path = GuiTestTempPath("lumice_preview_texture_degraded_rt.lmc").string();
+      gui::g_state.current_file_path = path;
+      gui::PerformSave();
+      {
+        gui::GuiState scratch;
+        gui::LmcTexture tex;
+        IM_CHECK(gui::LoadLmcFile(path, scratch, tex));
+        IM_CHECK_EQ(tex.width, 1024);
+        IM_CHECK_EQ(tex.height, 512);
+      }
+
+      // Re-arm the same ladder so the reopen lands on the SAME tier, then compare.
+      SetCustomHookAndWait(ctx,
+                           FailFirstNThenPass(gui::UploadResult::Stage::kTexImage, /*fail_count=*/2, kGlOutOfMemory));
+      g_open_requested = true;
+      g_open_done = false;
+      g_open_path = path;
+      YieldUntilOpenDone(ctx);
+      IM_CHECK(g_open_done);
+      ctx->Yield(2);
+      IM_CHECK_EQ(gui::g_preview.GetTextureWidth(), 512);
+      IM_CHECK_EQ(gui::g_preview.GetTextureHeight(), 256);
+      const std::vector<unsigned char> reopen_frame = CapturePreviewFullFrame(ctx);
+      IM_CHECK(!reopen_frame.empty());
+      IM_CHECK_EQ(live_frame.size(), reopen_frame.size());
+      IM_CHECK(std::memcmp(live_frame.data(), reopen_frame.data(), live_frame.size()) == 0);
+
+      SetFaultAndWait(ctx, -1, 0);
+      std::remove(path.c_str());
+    };
+  }
+
+  // The degraded all-sky export is the FULL-source render, byte for byte, whatever the display
+  // tier: exporting while degraded must produce exactly the file the healthy route produces
+  // from the same document — a low-resolution upsample would differ on this high-frequency
+  // pattern. The export entry is the production body (no dialog), and the source extent it
+  // renders at comes from the one adjudication.
+  {
+    ImGuiTest* t =
+        IM_REGISTER_TEST(engine, "preview_texture", "the_degraded_all_sky_export_matches_the_full_source_render");
+    t->GuiFunc = FaultUploadGuiFunc;
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      SetFaultAndWait(ctx, -1, 0);
+      constexpr int kW = 256;
+      constexpr int kH = 128;
+      const std::vector<float> baked = XyzCoordinatePattern(kW, kH, /*seed=*/37);
+      const std::string path = GuiTestTempPath("lumice_preview_texture_degraded_export.lmc").string();
+      gui::XyzTextureMeta meta;
+      meta.snapshot_intensity = 7.0f;
+      IM_CHECK(WriteXyzLmcFile(path, baked, kW, kH, meta));
+
+      SetCustomHookAndWait(ctx,
+                           FailFirstNThenPass(gui::UploadResult::Stage::kTexImage, /*fail_count=*/2, kGlOutOfMemory));
+      g_open_requested = true;
+      g_open_done = false;
+      g_open_path = path;
+      YieldUntilOpenDone(ctx);
+      IM_CHECK(g_open_done);
+      ctx->Yield(2);
+      IM_CHECK_EQ(gui::g_preview.GetTextureWidth(), kW / 2);  // degraded on screen
+      IM_CHECK_EQ(gui::PreviewSourcePixelCount(), static_cast<long>(kW) * kH);
+
+      const std::string png_a = GuiTestTempPath("lumice_preview_texture_degraded_export_a.png").string();
+      std::remove(png_a.c_str());
+      IM_CHECK(ExportDualFisheyeAndWait(ctx, png_a));
+      std::vector<unsigned char> img_a;
+      int w_a = 0;
+      int h_a = 0;
+      int ch_a = 0;
+      IM_CHECK(lumice::test::LoadPng(png_a.c_str(), img_a, w_a, h_a, ch_a));
+      IM_CHECK_EQ(w_a, kW);
+      IM_CHECK_EQ(h_a, kH);
+
+      // Recover to full and export again through the healthy route: the two files must agree
+      // byte for byte.
+      SetFaultAndWait(ctx, -1, 0);
+      RetryAndWait(ctx);
+      IM_CHECK_EQ(gui::g_preview.GetTextureWidth(), kW);
+      const std::string png_b = GuiTestTempPath("lumice_preview_texture_degraded_export_b.png").string();
+      std::remove(png_b.c_str());
+      IM_CHECK(ExportDualFisheyeAndWait(ctx, png_b));
+      std::vector<unsigned char> img_b;
+      int w_b = 0;
+      int h_b = 0;
+      int ch_b = 0;
+      IM_CHECK(lumice::test::LoadPng(png_b.c_str(), img_b, w_b, h_b, ch_b));
+      IM_CHECK_EQ(w_b, kW);
+      IM_CHECK_EQ(h_b, kH);
+      IM_CHECK_EQ(img_a.size(), img_b.size());
+      IM_CHECK(std::memcmp(img_a.data(), img_b.data(), img_a.size()) == 0);
+
+      std::remove(path.c_str());
+      std::remove(png_a.c_str());
+      std::remove(png_b.c_str());
     };
   }
 }
