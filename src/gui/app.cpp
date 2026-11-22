@@ -448,10 +448,145 @@ struct PreviewRecoveryState {
 };
 static PreviewRecoveryState g_recovery;
 
-// Forward declaration: the recovery ladder's walk (defined beside the other upload machinery)
-// is also the document-open path's recovery cycle, and ResetFrontendState runs long before the
-// definition in this file.
-static int WalkXyzRecoveryLadder(const float* xyz, int width, int height, unsigned long long texture_serial);
+// ONE authorized XYZ upload cycle's outcome: the tier that displayed (>= 0), or -1 when every
+// attempted candidate failed — plus the cycle's REAL first failure, the incident's causal head
+// (stage, GL error and request size exactly as the failing candidate reported them). Callers log
+// and report THIS result instead of synthesizing a placeholder: the r4 defect was a retry that
+// fabricated stage=kInvalidInput 0x0 on top of the walk's concrete record, so the hardware
+// report named an input problem where a texture OOM had happened. (Defined here because the
+// open path calls the runner before its definition below.)
+struct XyzUploadCycle {
+  int displayed_tier = -1;
+  UploadResult first_failure;
+};
+static XyzUploadCycle RunXyzUploadCycle(const float* xyz, int width, int height, unsigned long long texture_serial,
+                                        bool probe_full_ladder);
+// The incident record's single writer (defined beside the upload machinery); the open's uint8
+// branches reach it through this declaration.
+static void RecordUploadIncident(const UploadResult& result, int tier_tried, unsigned long long texture_serial);
+
+// The FILE-side complete-source fact (814 §3.1/§3.3): a document opened from a .lmc carries its
+// full source in the renderer's CPU mirror — the open writes those bytes whether or not the GPU
+// accepted the display upload — and this struct is the metadata that travels with them: what the
+// bytes mean (extent, mode) and, for XYZ, the exposure measurements the file stored. The mirror
+// is the pixel holder; this struct never owns pixels. That is deliberate: an owning second copy
+// of a full-size frame is exactly the resident backup the plan forbids on the constrained
+// machines this task serves, and the mirror already exists. It also retires the r4 defect where
+// the failed open wrapped the CALLER'S stack buffer in a payload whose views nobody owned: the
+// file's retry source is now the document's own mirror, never a borrowed pointer.
+//
+// Lifetime contract: valid for the current document only — ResetFrontendState clears it on every
+// non-Revert reason (Revert is a config restore of the same document). While it is valid, the
+// only mirror writers left are the open itself and RefreshCpuTextureForSave writing from a
+// payload or the pending source — content of THIS document, never another frame's pixels — so a
+// retry walking against the mirror cannot observe a mid-document mutation of someone else's
+// bytes, and nothing here can outlive the ClearTexture that pairs with the fact reset.
+struct FilePreviewSource {
+  bool valid = false;
+  int width = 0;
+  int height = 0;
+  PreviewRenderer::TextureMode mode = PreviewRenderer::TextureMode::kSrgbComposited;
+  // XYZ only (zero for the two baked uint8 modes: their exposure lives in the bytes).
+  float snapshot_intensity = 0;
+  float emitted_energy = 0;
+  float mono_anchor = 0;
+  int effective_pixels = 0;
+};
+static FilePreviewSource g_file_source;
+
+// The ONE adjudication of "what is this document's complete source" (814 §3.1; review r4: save,
+// the extent/exposure queries and the degraded-export route each re-derived it, with opposite
+// priorities — which is how a failed newer frame ended up deciding the absolute-EV denominator
+// of an older DISPLAYED file frame). One resolver, one priority:
+//
+//   1. the accepted live payload — the frame the screen was built from;
+//   2. the file source — the document's own bytes in the CPU mirror (an opened document);
+//   3. the pending source — the newest frame that never displayed (first-failure fallback).
+//
+// Consumers: RefreshCpuTextureForSave (what Save writes), PreviewSourceExtent/PixelCount (the
+// absolute-EV denominator and the degraded-export size), RenderExportFromFullSource (the pixels
+// a full-size export renders), and the retry target (which frame a recovery cycle walks).
+struct ResolvedPreviewSource {
+  enum class Role {
+    kNone,                // nothing holds this document's source
+    kAcceptedLive,        // payload of the displayed frame
+    kFileMirror,          // the open's own bytes in the CPU mirror
+    kPendingUndisplayed,  // retained frame that never displayed
+  };
+  Role role = Role::kNone;
+  std::shared_ptr<const TexturePayload> payload;  // the live roles; empty for kFileMirror
+  // kFileMirror: a view into the renderer's CPU mirror, valid on the main thread for this
+  // document's lifetime — no consumer retains it across a mirror write. A live payload carries
+  // xyz_pixels in BOTH display shapes (mono and composite) plus rgb_pixels when composite.
+  const float* xyz_pixels = nullptr;
+  const unsigned char* rgb_pixels = nullptr;
+  int width = 0;
+  int height = 0;
+  // Exposure measurements (meaningful for XYZ sources; zeros for the baked uint8 modes).
+  float snapshot_intensity = 0;
+  float emitted_energy = 0;
+  float mono_anchor = 0;
+  int effective_pixels = 0;
+  unsigned long long serial = 0;  // live: the frame's poller serial; file: 0 (a file has none)
+};
+
+static ResolvedPreviewSource ResolvePreviewSource() {
+  ResolvedPreviewSource out;
+  // Priority 1: the accepted live payload. A payload whose pixel views are empty cannot name a
+  // source (the acceptance-leg retained copy may carry none) — fall through, never trust it.
+  const auto fill_from_payload = [&out](const TexturePayload& p, ResolvedPreviewSource::Role role,
+                                        unsigned long long serial) {
+    out.role = role;
+    out.width = p.width;
+    out.height = p.height;
+    out.xyz_pixels = p.xyz_buffer;
+    out.rgb_pixels = p.rgb_buffer;
+    out.snapshot_intensity = p.snapshot_intensity;
+    out.emitted_energy = p.emitted_energy;
+    out.mono_anchor = p.axis_solid_angle * p.anchor_l99_sky;
+    out.effective_pixels = p.effective_pixels;
+    out.serial = serial;
+  };
+  if (g_last_uploaded_payload != nullptr &&
+      (g_last_uploaded_payload->xyz_buffer != nullptr || g_last_uploaded_payload->rgb_buffer != nullptr) &&
+      g_last_uploaded_payload->width > 0 && g_last_uploaded_payload->height > 0) {
+    fill_from_payload(*g_last_uploaded_payload, ResolvedPreviewSource::Role::kAcceptedLive,
+                      g_state.last_uploaded_texture_serial);
+    out.payload = g_last_uploaded_payload;
+    return out;
+  }
+  // Priority 2: the document's own file bytes. The facts and the mirror were written together by
+  // the open; if the mirror view is gone anyway the state is inconsistent and resolves as
+  // nothing rather than as a half-named source.
+  if (g_file_source.valid) {
+    const float* xyz =
+        g_file_source.mode == PreviewRenderer::TextureMode::kXyz ? g_preview.GetXyzTextureData() : nullptr;
+    const unsigned char* rgb =
+        g_file_source.mode != PreviewRenderer::TextureMode::kXyz ? g_preview.GetTextureData() : nullptr;
+    if (xyz != nullptr || rgb != nullptr) {
+      out.role = ResolvedPreviewSource::Role::kFileMirror;
+      out.width = g_file_source.width;
+      out.height = g_file_source.height;
+      out.xyz_pixels = xyz;
+      out.rgb_pixels = rgb;
+      out.snapshot_intensity = g_file_source.snapshot_intensity;
+      out.emitted_energy = g_file_source.emitted_energy;
+      out.mono_anchor = g_file_source.mono_anchor;
+      out.effective_pixels = g_file_source.effective_pixels;
+      return out;
+    }
+  }
+  // Priority 3: the newest frame that never displayed.
+  if (g_pending_upload_source != nullptr &&
+      (g_pending_upload_source->xyz_buffer != nullptr || g_pending_upload_source->rgb_buffer != nullptr) &&
+      g_pending_upload_source->width > 0 && g_pending_upload_source->height > 0) {
+    fill_from_payload(*g_pending_upload_source, ResolvedPreviewSource::Role::kPendingUndisplayed,
+                      g_pending_upload_serial);
+    out.payload = g_pending_upload_source;
+    return out;
+  }
+  return out;  // kNone
+}
 
 // Refresh the renderer's CPU-side mirror with the linear XYZ energy behind the picture on screen,
 // so SaveLmcFile writes it out. No exposure, no sky, no vignetting: all three are settings the
@@ -477,27 +612,29 @@ static void RefreshCpuTextureForSave() {
   if (g_state.sim_state == SimState::kIdle) {
     return;  // No simulation data to refresh; the mirror keeps whatever Open last put there
   }
-  // Priority is the plan's save-what-you-see rule (814 §3.3): a trusted DISPLAYED frame wins over
-  // a newer never-shown one, and the CURRENT document's own source wins over everything — a
-  // reopened document's mirror already holds its file's bytes (the open wrote them), so a live
-  // failure's retained retry source must not overwrite what is on screen and saveable right now.
-  // The retained retry source steps in only when nothing else holds this document's frame: no
-  // accepted payload AND an empty mirror — exactly the "first live upload failed" shape the
-  // provenance line exists for.
-  const TexturePayload* source_payload = nullptr;
-  if (g_last_uploaded_payload != nullptr) {
-    source_payload = g_last_uploaded_payload.get();
-  } else if (!g_preview.HasCpuTexture() && g_pending_upload_source != nullptr) {
-    source_payload = g_pending_upload_source.get();
+  // One adjudication for every source consumer (see ResolvePreviewSource): a trusted DISPLAYED
+  // frame wins over a newer never-shown one, and the CURRENT document's own file source wins
+  // over a failed live frame — a reopened document's mirror already holds its file's bytes, so a
+  // live failure's retained retry source must not overwrite what is on screen and saveable right
+  // now. The mirror being non-empty is NOT what keeps the file bytes in place; the RESOLVER's
+  // file role is. That is the r4 distinction: a mirror written by an earlier fallback save (a
+  // first-failure frame) must not outrank the newest retained source, and a mirror holding file
+  // bytes must not lose them to one either.
+  const ResolvedPreviewSource src = ResolvePreviewSource();
+  if (src.role != ResolvedPreviewSource::Role::kAcceptedLive &&
+      src.role != ResolvedPreviewSource::Role::kPendingUndisplayed) {
+    // kNone: nothing holds a source to refresh from. kFileMirror: the mirror already holds
+    // exactly the bytes Save must write — the open wrote them — nothing to refresh.
+    return;
+  }
+  const TexturePayload& payload = *src.payload;
+  if (payload.xyz_buffer == nullptr || payload.width <= 0 || payload.height <= 0) {
+    return;
+  }
+  if (src.role == ResolvedPreviewSource::Role::kPendingUndisplayed) {
     GUI_LOG_INFO(
         "[GUI] Save: the preview never displayed this document's frame (upload failed); saving the "
         "retained source, not a displayed picture");
-  } else {
-    return;
-  }
-  const TexturePayload& payload = *source_payload;
-  if (payload.xyz_buffer == nullptr || payload.width <= 0 || payload.height <= 0) {
-    return;
   }
   XyzTextureMeta meta;
   meta.snapshot_intensity = payload.snapshot_intensity;
@@ -602,26 +739,25 @@ static bool IsDisplayDegradedAgainstSource() {
 }
 
 static std::vector<unsigned char> RenderExportFromFullSource(const PreviewParams& params, int out_w, int out_h) {
-  // The mirror is the full source's holder (RefreshCpuTextureForSave fills it from the retained
-  // payload); the export reads exactly what a Save of this document would write.
-  RefreshCpuTextureForSave();
-  if (g_preview.GetCpuTextureMode() != PreviewRenderer::TextureMode::kXyz || g_preview.GetXyzTextureData() == nullptr) {
-    // A degraded display over a non-XYZ source (legacy/composite bake) has no linear floats to
-    // rebuild from. Explicit refusal, not a guess: upscaling the bake would be the exact
-    // pseudo-full-resolution delivery the plan forbids.
+  // The resolver names the same source a Save of this document would write (one adjudication,
+  // review r4); the export reads its pixels directly instead of round-tripping them through the
+  // CPU mirror.
+  const ResolvedPreviewSource src = ResolvePreviewSource();
+  if (src.xyz_pixels == nullptr || src.width <= 0 || src.height <= 0) {
+    // A degraded display over a source with no linear floats (the two baked uint8 modes) has
+    // nothing to rebuild from. Explicit refusal, not a guess: upscaling the bake would be the
+    // exact pseudo-full-resolution delivery the plan forbids.
     GUI_LOG_ERROR(
-        "[GUI] Export: the display is degraded but the document's source is not linear XYZ; refusing to "
-        "upscale a baked source");
+        "[GUI] Export: the display is degraded but the document's source carries no linear XYZ; "
+        "refusing to upscale a baked source");
     return {};
   }
-  const int src_w = g_preview.GetCpuTextureWidth();
-  const int src_h = g_preview.GetCpuTextureHeight();
   PreviewRenderer export_renderer;
   if (!export_renderer.Init()) {
     GUI_LOG_ERROR("[GUI] Export: the transient full-source renderer failed to initialize");
     return {};
   }
-  const UploadResult upload = export_renderer.UploadXyzTextureNoStaging(g_preview.GetXyzTextureData(), src_w, src_h);
+  const UploadResult upload = export_renderer.UploadXyzTextureNoStaging(src.xyz_pixels, src.width, src.height);
   std::vector<unsigned char> rgba;
   if (!upload.ok) {
     GUI_LOG_ERROR(
@@ -733,17 +869,19 @@ PreviewParams BuildTextureExportBase(int w, int h) {
   return params;
 }
 
-void DoExportDualFisheyeEqualAreaPng() {
-  auto path = ShowExportDualFisheyeEqualAreaDialog();
+// The no-dialog body of the dual-fisheye all-sky export (gui tests drive this directly; the
+// native save dialog cannot be driven from a test — same split as ExportPreviewPng). Returns
+// whether the file was written.
+bool ExportDualFisheyeEqualAreaPng(const std::filesystem::path& path) {
   if (path.empty()) {
-    return;
+    return false;
   }
 
   int w = g_preview.GetTextureWidth();
   int h = g_preview.GetTextureHeight();
   if (w <= 0 || h <= 0) {
     GUI_LOG_ERROR("[GUI] Export dual fisheye: no texture loaded");
-    return;
+    return false;
   }
 
   PreviewParams params = BuildTextureExportBase(w, h);
@@ -760,39 +898,45 @@ void DoExportDualFisheyeEqualAreaPng() {
     PreviewSourceExtent(&out_w, &out_h);
     rgba = RenderExportFromFullSource(params, out_w, out_h);
     if (rgba.empty()) {
-      return;  // the failure is already logged; no file may be written
+      return false;  // the failure is already logged; no file may be written
     }
   } else {
     rgba = RenderExportToRgba(g_preview, params, out_w, out_h);
   }
   if (rgba.empty()) {
     GUI_LOG_ERROR("[GUI] Export dual fisheye: RenderExportToRgba empty (size={}x{})", out_w, out_h);
-    return;
+    return false;
   }
   if (!WriteRgbaBufferToPng(path, out_w, out_h, rgba)) {
     GUI_LOG_ERROR("[GUI] Export dual fisheye: PNG write failed path={}", PathToU8(path));
-    return;
+    return false;
   }
   GUI_LOG_INFO("[GUI] Export dual fisheye equal-area: {}", PathToU8(path));
+  return true;
 }
 
-void DoExportEquirectangularPng() {
-  auto path = ShowExportEquirectangularDialog();
+void DoExportDualFisheyeEqualAreaPng() {
+  ExportDualFisheyeEqualAreaPng(ShowExportDualFisheyeEqualAreaDialog());
+}
+
+// The no-dialog body of the equirectangular all-sky export (same split as the dual-fisheye
+// above). Returns whether the file was written.
+bool ExportEquirectangularPng(const std::filesystem::path& path) {
   if (path.empty()) {
-    return;
+    return false;
   }
 
   int tex_w = g_preview.GetTextureWidth();
   int tex_h = g_preview.GetTextureHeight();
   if (tex_w <= 0 || tex_h <= 0) {
     GUI_LOG_ERROR("[GUI] Export equirect: no texture loaded");
-    return;
+    return false;
   }
   // Preserve 155.4 约定：short_res = min(tex_w/2, tex_h) for strict 2:1 output.
   int short_res = std::min(tex_w / 2, tex_h);
   if (short_res <= 0) {
     GUI_LOG_ERROR("[GUI] Export equirect: texture too small (tex={}x{})", tex_w, tex_h);
-    return;
+    return false;
   }
   int dst_w = 2 * short_res;
   int dst_h = short_res;
@@ -811,11 +955,11 @@ void DoExportEquirectangularPng() {
     const int src_short = std::min(src_w / 2, src_h);
     if (src_short <= 0) {
       GUI_LOG_ERROR("[GUI] Export equirect: degraded source has no valid 2:1 extent ({}x{})", src_w, src_h);
-      return;
+      return false;
     }
     rgba = RenderExportFromFullSource(params, 2 * src_short, src_short);
     if (rgba.empty()) {
-      return;  // the failure is already logged; no file may be written
+      return false;  // the failure is already logged; no file may be written
     }
     dst_w = 2 * src_short;
     dst_h = src_short;
@@ -823,14 +967,19 @@ void DoExportEquirectangularPng() {
     rgba = RenderExportToRgba(g_preview, params, dst_w, dst_h);
     if (rgba.empty()) {
       GUI_LOG_ERROR("[GUI] Export equirect: RenderExportToRgba empty (size={}x{})", dst_w, dst_h);
-      return;
+      return false;
     }
   }
   if (!WriteRgbaBufferToPng(path, dst_w, dst_h, rgba)) {
     GUI_LOG_ERROR("[GUI] Export equirect: PNG write failed path={}", PathToU8(path));
-    return;
+    return false;
   }
   GUI_LOG_INFO("[GUI] Export equirectangular: {}", PathToU8(path));
+  return true;
+}
+
+void DoExportEquirectangularPng() {
+  ExportEquirectangularPng(ShowExportEquirectangularDialog());
 }
 
 void DoExportConfigJson() {
@@ -1052,6 +1201,7 @@ void ResetFrontendState(GuiState& state, FrontendResetReason reason, const LmcTe
     state.upload_latched = false;
     g_pending_upload_source.reset();
     g_pending_upload_serial = 0;
+    g_file_source = FilePreviewSource{};  // the old document's source fact leaves with the document
     g_recovery.xyz_tier = 0;
     g_recovery.exhausted = false;
     g_recovery.notice_dismissed = false;
@@ -1083,31 +1233,34 @@ void ResetFrontendState(GuiState& state, FrontendResetReason reason, const LmcTe
       g_preview.ClearTexture();
       switch (baked->mode) {
         case PreviewRenderer::TextureMode::kXyz: {
-          // The open walks the SAME recovery ladder a live upload walks: the reopened document
-          // is on the same constrained machine, and its file bytes are as good a ladder input as
-          // a poll frame — the codec half the file stores quantizes back to exactly the
-          // canonical values the ladder's prefilter consumes. One authorized cycle;
-          // a walk that ends with nothing displayed lands in the same explicit unavailable state
-          // as a live failure, with the file's own source retained below either way.
-          UploadResult upload_result = g_preview.UploadXyzTexture(baked->xyz.data(), baked->width, baked->height);
-          int open_tier = 0;
-          if (!upload_result.ok) {
-            open_tier = WalkXyzRecoveryLadder(baked->xyz.data(), baked->width, baked->height, /*texture_serial=*/0);
-            upload_result.ok = open_tier >= 0;
-            if (open_tier > 0) {
+          // The open runs the SAME upload cycle a live upload and a Retry run: ONE authorized
+          // walk from candidate 0 (the r4-counted defect here was a tier-0 attempt outside the
+          // ladder followed by a walk from candidate 0 — two full-size PBO passes in one cycle,
+          // and a first-failure record that could not see the pre-ladder attempt).
+          const XyzUploadCycle cycle =
+              RunXyzUploadCycle(baked->xyz.data(), baked->width, baked->height, /*texture_serial=*/0,
+                                /*probe_full_ladder=*/true);
+          // The mirror + the source fact: the file's own bytes and their metadata, whether or
+          // not the GPU accepted the display upload (UpdateCpuXyzTextureData copies). THIS — not
+          // a payload wrapped around the caller's stack buffer, whose floats die when DoOpen
+          // returns — is the retry and save-source fact from here on.
+          g_preview.UpdateCpuXyzTextureData(baked->xyz.data(), baked->width, baked->height, baked->meta);
+          g_file_source.valid = true;
+          g_file_source.width = baked->width;
+          g_file_source.height = baked->height;
+          g_file_source.mode = PreviewRenderer::TextureMode::kXyz;
+          g_file_source.snapshot_intensity = baked->meta.snapshot_intensity;
+          g_file_source.emitted_energy = baked->meta.emitted_energy;
+          g_file_source.mono_anchor = baked->meta.mono_anchor;
+          g_file_source.effective_pixels = baked->meta.effective_pixels;
+          if (cycle.displayed_tier >= 0) {
+            if (cycle.displayed_tier > 0) {
               // The tier memory belongs to this document's session: a live frame arriving later
               // starts from what the open established instead of re-probing the full ladder.
-              g_recovery.xyz_tier = open_tier;
-              GUI_LOG_INFO("[GUI] Open: recovery ladder established tier {} ({}x{})", open_tier, baked->width,
-                           baked->height);
+              g_recovery.xyz_tier = cycle.displayed_tier;
+              GUI_LOG_INFO("[GUI] Open: recovery ladder established tier {} ({}x{})", cycle.displayed_tier,
+                           baked->width, baked->height);
             }
-          }
-          // The mirror too, so a Save of this document with no run in between writes the same
-          // section back out rather than whatever the previous document left in the mirror. The
-          // mirror is the SOURCE fact: it holds the file's bytes whether or not the GPU accepted
-          // them. (UploadXyzTexture never writes the mirror — see its comment.)
-          g_preview.UpdateCpuXyzTextureData(baked->xyz.data(), baked->width, baked->height, baked->meta);
-          if (upload_result.ok) {
             // The exposure state SyncFromPoller would have filled from a live frame, filled from
             // the file instead — the same four numbers, from the same frame the pixels came from,
             // so the per-frame ComputeMonoExposure in the Display panel lights this texture
@@ -1122,41 +1275,35 @@ void ResetFrontendState(GuiState& state, FrontendResetReason reason, const LmcTe
             state.p99_raw_y = baked->meta.mono_anchor;
             state.ev_auto = LUMICE_ComputeEvAuto(state.p99_raw_y, state.snapshot_intensity, state.target_white);
           } else {
-            // The whole ladder ran out: the file's own floats become the retained retry source
-            // (an explicit Retry re-walks against them without re-opening the file), the cycle
-            // reports exhausted so the notice and the Retry predicate open the recovery exit,
-            // and the mirror keeps the file's bytes either way.
-            auto retained = std::make_shared<TexturePayload>();
-            retained->xyz_buffer = baked->xyz.data();
-            retained->width = baked->width;
-            retained->height = baked->height;
-            retained->snapshot_intensity = baked->meta.snapshot_intensity;
-            retained->emitted_energy = baked->meta.emitted_energy;
-            retained->effective_pixels = baked->meta.effective_pixels;
-            // The retry's exposure commit rebuilds the mono anchor as the product
-            // axis_solid_angle * anchor_l99_sky; the file stores that product as one float, so
-            // the retained copy carries it as an identity multiply (1 * mono_anchor) rather than
-            // reading as zeros.
-            retained->axis_solid_angle = 1.0f;
-            retained->anchor_l99_sky = baked->meta.mono_anchor;
-            g_pending_upload_source = retained;  // converts to the const holder
-            g_pending_upload_serial = 0;         // a file has no poller serial
+            // The whole ladder ran out: the cycle's own first-failure record IS the incident (the
+            // real stage, GL error and request size — nothing synthesized on top), the cycle
+            // reports exhausted so the notice and the retry predicate open the recovery exit,
+            // and the mirror + source facts above are what an explicit Retry walks against,
+            // without re-opening the file.
             g_recovery.exhausted = true;
             GUI_LOG_ERROR(
                 "[GUI] Open: baked XYZ texture upload failed (stage={} gl_error=0x{:04X} request={}x{}) — "
                 "preview unavailable; the document's source is retained and still saves",
-                UploadStageName(upload_result.stage), upload_result.gl_error, baked->width, baked->height);
+                UploadStageName(cycle.first_failure.stage), cycle.first_failure.gl_error, baked->width, baked->height);
           }
           break;
         }
         case PreviewRenderer::TextureMode::kSrgbRadiance: {
           const UploadResult upload_result =
               g_preview.UploadRadianceTexture(baked->srgb.data(), baked->width, baked->height);
+          g_file_source.valid = true;
+          g_file_source.width = baked->width;
+          g_file_source.height = baked->height;
+          g_file_source.mode = PreviewRenderer::TextureMode::kSrgbRadiance;
           // The 8-bit upload paths write the mirror themselves on success; on failure the mirror
           // is empty (ClearTexture above) and the file's bytes are restored here so the source
-          // survives without the display.
+          // survives without the display — and the failure is OBSERVABLE: the incident record
+          // and the exhausted flag open the notice and the Retry exit (the r4 gap: a uint8 open
+          // failure used to restore the mirror and only log, leaving the panel silent).
           if (!upload_result.ok) {
             g_preview.UpdateCpuTextureData(baked->srgb.data(), baked->width, baked->height);
+            RecordUploadIncident(upload_result, /*tier_tried=*/0, /*texture_serial=*/0);
+            g_recovery.exhausted = true;
             GUI_LOG_ERROR(
                 "[GUI] Open: baked radiance texture upload failed (stage={} gl_error=0x{:04X} "
                 "request={}x{}) — preview unavailable; the document's source is retained and still saves",
@@ -1166,14 +1313,20 @@ void ResetFrontendState(GuiState& state, FrontendResetReason reason, const LmcTe
         }
         case PreviewRenderer::TextureMode::kSrgbComposited: {
           const UploadResult upload_result = g_preview.UploadTexture(baked->srgb.data(), baked->width, baked->height);
+          g_file_source.valid = true;
+          g_file_source.width = baked->width;
+          g_file_source.height = baked->height;
+          g_file_source.mode = PreviewRenderer::TextureMode::kSrgbComposited;
           if (!upload_result.ok) {
             // The label must name what the bytes ARE: these texels already carry the sky, and a
             // mirror that said radiance-only would make the next Save write a sky-summed frame
             // under a flag that adds the sky again on reopen. UpdateCpuTextureData defaults to
             // radiance because its usual producers bake radiance, so the composited caller says
-            // so explicitly.
+            // so explicitly. Failure is observable for the same reason as the radiance branch.
             g_preview.UpdateCpuTextureData(baked->srgb.data(), baked->width, baked->height,
                                            PreviewRenderer::TextureMode::kSrgbComposited);
+            RecordUploadIncident(upload_result, /*tier_tried=*/0, /*texture_serial=*/0);
+            g_recovery.exhausted = true;
             GUI_LOG_ERROR(
                 "[GUI] Open: baked composited texture upload failed (stage={} gl_error=0x{:04X} "
                 "request={}x{}) — preview unavailable; the document's source is retained and still saves",
@@ -2312,23 +2465,34 @@ static UploadResult UploadXyzAtTier(const float* xyz, int width, int height, int
   return g_preview.UploadXyzTextureNoStaging(downgraded.data(), applied_w, applied_h);
 }
 
-// Walk ONE authorized recovery cycle, first candidate to last, stopping at the first success.
-// Returns the tier that displayed (>= 0), or -1 when every candidate failed — the caller then
-// latches, marks the cycle exhausted, and the notice says the preview is unavailable until an
-// explicit retry or a new run. Finite by construction: the ladder ends at the smallest dual-disc
-// frame the projection can still carry (preview_downgrade.hpp), and each candidate is tried once.
-static int WalkXyzRecoveryLadder(const float* xyz, int width, int height, unsigned long long texture_serial) {
-  int first_fail_tier = -1;
-  for (int tier = 0;; ++tier) {
+// Run ONE authorized recovery cycle: candidate 0 upward, stopping at the first success, each
+// candidate attempted at most once. `probe_full_ladder` false runs ONE attempt at the
+// established tier only — the steady-state shape for ongoing frames of a generation whose tier
+// is already known (a constrained machine must not re-probe giant candidates at the poll rate).
+// Finite by construction: the ladder ends at the smallest dual-disc frame the projection can
+// still carry (preview_downgrade.hpp), and each candidate is tried once. The FIRST failure of
+// the cycle is recorded into the incident record here, and nowhere else — one writer per cycle
+// (plan 814 §3.4: the first failure chain survives later successes; a NEW cycle's first failure
+// legitimately supersedes the previous cycle's, and successes never erase the record). The
+// XyzUploadCycle it fills is declared beside the other source-adjudication state above, where
+// the open path first calls this.
+static XyzUploadCycle RunXyzUploadCycle(const float* xyz, int width, int height, unsigned long long texture_serial,
+                                        bool probe_full_ladder) {
+  XyzUploadCycle out;
+  bool first_failure_recorded = false;
+  for (int tier = probe_full_ladder ? 0 : g_recovery.xyz_tier;; ++tier) {
     const UploadResult r = UploadXyzAtTier(xyz, width, height, tier);
     if (r.ok) {
-      return tier;
+      out.displayed_tier = tier;
+      return out;
     }
-    if (first_fail_tier < 0) {
-      // The FIRST failure is the incident's causal head (plan 814 §3.4: the first failure chain
-      // survives later successes); later candidates' failures are the walk's continuation.
+    if (!first_failure_recorded) {
       RecordUploadIncident(r, tier, texture_serial);
-      first_fail_tier = tier;
+      out.first_failure = r;
+      first_failure_recorded = true;
+    }
+    if (!probe_full_ladder) {
+      return out;  // the established tier's single attempt is the whole cycle
     }
     // Termination: is there a NEXT candidate? DowngradedSize with steps = tier+1 asks exactly
     // that (and must get REAL out-pointers — the null form is its "arguments invalid" refusal,
@@ -2339,7 +2503,7 @@ static int WalkXyzRecoveryLadder(const float* xyz, int width, int height, unsign
     // The NEXT candidate is tier+1, whose step count is (tier+1)-1 = tier — querying tier+1
     // STEPS here skipped one legal candidate and the floor-sized tier was never attempted.
     if (tier > 0 && !DowngradedSize(width, height, tier, &next_w, &next_h)) {
-      return -1;
+      return out;
     }
   }
 }
@@ -2726,33 +2890,28 @@ void SyncFromPoller() {
         // notice and the Retry exit (whose composite branch re-uploads this same payload).
         g_recovery.exhausted = true;
       }
-    } else if (g_recovery.xyz_tier > 0) {
-      upload_result = UploadXyzAtTier(payload->xyz_buffer, payload->width, payload->height, g_recovery.xyz_tier);
-      if (!upload_result.ok) {
-        // The established tier stopped working: the machine's climate changed under a live run.
-        // Mark the cycle exhausted so the recovery exit opens — the retained frame (updated by
-        // the latch bookkeeping below) is what a Retry re-walks from candidate 0.
-        g_recovery.exhausted = true;
-      }
     } else {
-      const int tier =
-          WalkXyzRecoveryLadder(payload->xyz_buffer, payload->width, payload->height, snap->texture_serial);
-      if (tier >= 0) {
-        g_recovery.xyz_tier = tier;
+      // One authorized XYZ cycle (see RunXyzUploadCycle): at the established tier only when one
+      // is set — one attempt per frame, never re-probing bigger candidates at the poll rate —
+      // otherwise one full walk from candidate 0. The cycle's REAL first failure is what the
+      // failure block below logs and what the incident record carries; nothing is synthesized.
+      const XyzUploadCycle cycle =
+          RunXyzUploadCycle(payload->xyz_buffer, payload->width, payload->height, snap->texture_serial,
+                            /*probe_full_ladder=*/g_recovery.xyz_tier <= 0);
+      if (cycle.displayed_tier >= 0) {
         upload_result.ok = true;
-        if (tier > 0) {
-          GUI_LOG_INFO("[GUI] SyncFromPoller: recovery ladder established tier {} ({}x{})", tier,
-                       payload->width >> (tier - 1), payload->height >> (tier - 1));
+        if (g_recovery.xyz_tier <= 0 && cycle.displayed_tier > 0) {
+          g_recovery.xyz_tier = cycle.displayed_tier;
+          GUI_LOG_INFO("[GUI] SyncFromPoller: recovery ladder established tier {} ({}x{})", cycle.displayed_tier,
+                       payload->width >> (cycle.displayed_tier - 1), payload->height >> (cycle.displayed_tier - 1));
         }
       } else {
-        // Every candidate failed: the cycle is exhausted, the latch below pauses auto-uploads,
-        // and the panel notice says the preview is unavailable until an explicit retry or a new
-        // run.
+        // Every attempted candidate failed: the cycle is exhausted, the latch below pauses
+        // auto-uploads, and the panel notice says the preview is unavailable until an explicit
+        // retry or a new run.
         g_recovery.exhausted = true;
+        upload_result = cycle.first_failure;
         upload_result.ok = false;
-        upload_result.stage = UploadResult::Stage::kInvalidInput;
-        upload_result.request_width = payload->width;
-        upload_result.request_height = payload->height;
       }
     }
     if (!upload_result.ok) {
@@ -2846,61 +3005,114 @@ void DismissPreviewRecoveryNotice() {
 }
 
 bool PreviewRecoveryRetryAvailable() {
-  // A retry target exists when an exhausted cycle left a retained frame, OR the display is
-  // degraded but working (tier > 0) and holds an accepted source — the second shape is the
-  // degraded re-probe: re-walk from full resolution against the very frame the smaller tier is
-  // displaying, without a new run.
-  return (g_recovery.exhausted && g_pending_upload_source != nullptr) ||
-         (g_recovery.xyz_tier > 0 && g_last_uploaded_payload != nullptr);
+  // A retry target exists when an exhausted cycle left a retained frame (the newest one that
+  // never displayed), OR the document holds an accepted source — the displayed live payload or
+  // its own file bytes — while the display is degraded-but-working (tier > 0, the re-probe) or
+  // exhausted (the re-walk). The file source closing both shapes is the r4 fix: a degraded or
+  // failed OPEN used to leave no retry exit at all, because availability was phrased in live
+  // payloads and an open never creates one.
+  if (g_pending_upload_source != nullptr) {
+    return true;
+  }
+  if (!g_file_source.valid && g_last_uploaded_payload == nullptr) {
+    return false;
+  }
+  return g_recovery.exhausted || g_recovery.xyz_tier > 0;
 }
 
 void RetryPreviewUpload() {
   // The retry target, in priority order: the retained newest-qualifying frame of a failed cycle
-  // (the exhausted path), or — when the display is degraded but working — the ACCEPTED source
-  // itself, which a degraded tier is displaying smaller than it is; re-walking the ladder from
-  // candidate 0 against it is how the user probes for restored full resolution without a new
-  // run. Both targets hold the document's own complete frame; the mode predicate below is the
-  // SAME one SyncFromPoller uses, so a retry cannot disagree with a live upload about what the
-  // bytes mean.
+  // (the exhausted path — for a run that kept producing this is the terminal frame), or the
+  // ACCEPTED source resolved by the same adjudication Save and the extent queries use — the
+  // frame a degraded tier is displaying smaller than it is, whose re-walk from candidate 0 is
+  // how the user probes for restored full resolution without a new run. Availability
+  // (PreviewRecoveryRetryAvailable) and this resolution are ONE contract, so the panel cannot
+  // offer a retry the target resolver cannot name and vice versa. A file target re-uploads in
+  // its own mode (r4: the file source could not re-attempt at all); its pixels come from the
+  // CPU mirror, where the open wrote them.
   std::shared_ptr<const TexturePayload> target = g_pending_upload_source;
   unsigned long long target_serial = g_pending_upload_serial;
-  const bool retrying_accepted = target == nullptr && g_recovery.xyz_tier > 0 && g_last_uploaded_payload != nullptr;
-  if (target == nullptr && retrying_accepted) {
-    target = g_last_uploaded_payload;
-    target_serial = g_state.last_uploaded_texture_serial;
-  }
+  bool target_is_file = false;
+  bool from_accepted_live = false;
   if (target == nullptr) {
-    // Nothing retained and nothing degraded: a new Run is the way back, and pretending otherwise
-    // would fabricate an attempt against a frame nobody holds.
-    GUI_LOG_INFO("[GUI] Preview retry: no retained source to re-attempt; run the simulation again");
-    return;
+    if (!(g_recovery.exhausted || g_recovery.xyz_tier > 0)) {
+      // Nothing retained, nothing degraded or exhausted: a new Run is the way back, and
+      // pretending otherwise would fabricate an attempt against a frame nobody holds.
+      GUI_LOG_INFO("[GUI] Preview retry: no retained source to re-attempt; run the simulation again");
+      return;
+    }
+    const ResolvedPreviewSource src = ResolvePreviewSource();
+    if (src.role == ResolvedPreviewSource::Role::kAcceptedLive) {
+      target = src.payload;
+      target_serial = src.serial;
+      from_accepted_live = true;
+    } else if (src.role == ResolvedPreviewSource::Role::kFileMirror) {
+      target_is_file = true;
+    } else {
+      GUI_LOG_INFO("[GUI] Preview retry: no retained source to re-attempt; run the simulation again");
+      return;
+    }
   }
+
   // Re-authorize ONE cycle, from candidate 0: the machine's pressure may have eased, and the
   // plan's contract is that an explicit retry walks the ladder afresh against the retained
   // source — the newest qualifying frame, which a self-paused terminal poll keeps readable.
   g_state.upload_latched = false;
   g_recovery.exhausted = false;
   g_recovery.notice_dismissed = false;
-  const TexturePayload& payload = *target;
   UploadResult upload_result;
   int tier = -1;
-  const bool use_composite = ShouldUseCompositeUpload(payload.is_composite, g_state.show_composite_preview);
-  if (use_composite) {
-    // A composite keeps its own display semantics: the composite bake is uint8 and the ladder's
-    // linear-radiance low-pass does not apply to it — one plain re-upload, success or the same
-    // latch as any other failure.
-    upload_result = g_preview.UploadRadianceTexture(payload.rgb_buffer, payload.width, payload.height);
-  } else if (payload.xyz_buffer != nullptr) {
-    tier = WalkXyzRecoveryLadder(payload.xyz_buffer, payload.width, payload.height, target_serial);
-    upload_result.ok = tier >= 0;
-    upload_result.stage = tier >= 0 ? UploadResult::Stage::kNone : UploadResult::Stage::kInvalidInput;
+  if (target_is_file) {
+    switch (g_file_source.mode) {
+      case PreviewRenderer::TextureMode::kXyz: {
+        tier = RunXyzUploadCycle(g_preview.GetXyzTextureData(), g_file_source.width, g_file_source.height,
+                                 /*texture_serial=*/0, /*probe_full_ladder=*/true)
+                   .displayed_tier;
+        upload_result.ok = tier >= 0;
+        break;
+      }
+      case PreviewRenderer::TextureMode::kSrgbRadiance:
+        upload_result =
+            g_preview.UploadRadianceTexture(g_preview.GetTextureData(), g_file_source.width, g_file_source.height);
+        if (!upload_result.ok) {
+          RecordUploadIncident(upload_result, /*tier_tried=*/0, /*texture_serial=*/0);
+        }
+        break;
+      case PreviewRenderer::TextureMode::kSrgbComposited:
+        upload_result = g_preview.UploadTexture(g_preview.GetTextureData(), g_file_source.width, g_file_source.height);
+        if (!upload_result.ok) {
+          RecordUploadIncident(upload_result, /*tier_tried=*/0, /*texture_serial=*/0);
+        }
+        break;
+    }
   } else {
-    // A source with no usable pixels (the acceptance-leg retained copy can carry none in shapes
-    // the ladder cannot walk): treat as an exhausted retry.
-    upload_result.ok = false;
-    upload_result.stage = UploadResult::Stage::kInvalidInput;
-    upload_result.request_width = payload.width;
-    upload_result.request_height = payload.height;
+    const TexturePayload& payload = *target;
+    const bool use_composite = ShouldUseCompositeUpload(payload.is_composite, g_state.show_composite_preview);
+    if (use_composite) {
+      // A composite keeps its own display semantics: the composite bake is uint8 and the
+      // ladder's linear-radiance low-pass does not apply to it — one plain re-upload, success or
+      // the same latch as any other failure.
+      upload_result = g_preview.UploadRadianceTexture(payload.rgb_buffer, payload.width, payload.height);
+      if (!upload_result.ok) {
+        RecordUploadIncident(upload_result, /*tier_tried=*/0, target_serial);
+      }
+    } else if (payload.xyz_buffer != nullptr) {
+      // The cycle records its own first failure — the retry block below must NOT record again,
+      // or it would overwrite the concrete stage/GL error/request size with a placeholder (the
+      // r4 defect that turned a real texture OOM into a fabricated invalid-input report).
+      tier = RunXyzUploadCycle(payload.xyz_buffer, payload.width, payload.height, target_serial,
+                               /*probe_full_ladder=*/true)
+                 .displayed_tier;
+      upload_result.ok = tier >= 0;
+    } else {
+      // A source with no usable pixels (the acceptance-leg retained copy can carry none in
+      // shapes the ladder cannot walk): treat as an exhausted retry, recorded for what it is.
+      upload_result.ok = false;
+      upload_result.stage = UploadResult::Stage::kInvalidInput;
+      upload_result.request_width = payload.width;
+      upload_result.request_height = payload.height;
+      RecordUploadIncident(upload_result, /*tier_tried=*/0, target_serial);
+    }
   }
   if (!upload_result.ok) {
     // The cycle ran out again: re-latch against the CURRENT generation, exactly as SyncFromPoller
@@ -2909,20 +3121,43 @@ void RetryPreviewUpload() {
     g_recovery.exhausted = true;
     g_state.upload_latched = true;
     g_state.upload_latch_epoch = g_state.committed_epoch;
-    RecordUploadIncident(upload_result, /*tier_tried=*/0, target_serial);
     GUI_LOG_ERROR(
-        "[GUI] Preview retry: every recovery candidate failed again — preview stays unavailable, "
-        "auto-upload re-latched");
+        "[GUI] Preview retry: every recovery candidate failed again (stage={} gl_error=0x{:04X} "
+        "request={}x{}) — preview stays unavailable, auto-upload re-latched",
+        UploadStageName(upload_result.stage), upload_result.gl_error, upload_result.request_width,
+        upload_result.request_height);
     return;
   }
   // Success. The display commit mirrors SyncFromPoller's exactly: the accepted payload pointer,
   // the exact-once cursor, the display-mode record, the exposure state and the counters all
   // describe the picture now on screen. For the degraded-reprobe shape the target WAS the
   // accepted payload — the commit re-asserts it at the tier the walk re-established.
-  if (retrying_accepted) {
+  if (target_is_file) {
+    // A file has no poller frame behind it: no payload moves, and the exact-once cursor stays
+    // untouched (writing 0 there would un-dedup the poller's first frame). The exposure state,
+    // though, is committed from the file's own facts for XYZ — the same numbers the open
+    // committed on its successful upload, so the document lights the same after a recovery as
+    // it would have without one. The baked uint8 modes carry their exposure in the bytes; only
+    // the display facts change for them.
+    if (g_file_source.mode == PreviewRenderer::TextureMode::kXyz) {
+      g_state.snapshot_intensity = g_file_source.snapshot_intensity;
+      g_state.snapshot_emitted_energy = g_file_source.emitted_energy;
+      g_state.effective_pixels = g_file_source.effective_pixels;
+      g_state.p99_raw_y = g_file_source.mono_anchor;
+      g_state.ev_auto = LUMICE_ComputeEvAuto(g_state.p99_raw_y, g_state.snapshot_intensity, g_state.target_white);
+    }
+    g_state.last_uploaded_as_composite = g_file_source.mode == PreviewRenderer::TextureMode::kSrgbComposited;
+  } else if (from_accepted_live) {
     // The accepted pointer stays the accepted pointer; drop the retained copy if one existed.
     g_pending_upload_source.reset();
     g_pending_upload_serial = 0;
+    const TexturePayload& payload = *target;
+    g_state.last_uploaded_as_composite = ShouldUseCompositeUpload(payload.is_composite, g_state.show_composite_preview);
+    g_state.snapshot_intensity = payload.snapshot_intensity;
+    g_state.snapshot_emitted_energy = payload.emitted_energy;
+    g_state.effective_pixels = payload.effective_pixels;
+    g_state.p99_raw_y = payload.is_composite ? payload.p99_y : payload.axis_solid_angle * payload.anchor_l99_sky;
+    g_state.ev_auto = LUMICE_ComputeEvAuto(g_state.p99_raw_y, g_state.snapshot_intensity, g_state.target_white);
   } else {
     // The retained frame is now the accepted one: move the hold, don't copy it.
     const unsigned long long retried_serial = g_pending_upload_serial;
@@ -2930,18 +3165,23 @@ void RetryPreviewUpload() {
     g_pending_upload_source.reset();
     g_pending_upload_serial = 0;
     g_state.last_uploaded_texture_serial = retried_serial;
+    const TexturePayload& payload = *g_last_uploaded_payload;
+    g_state.last_uploaded_as_composite = ShouldUseCompositeUpload(payload.is_composite, g_state.show_composite_preview);
+    g_state.snapshot_intensity = payload.snapshot_intensity;
+    g_state.snapshot_emitted_energy = payload.emitted_energy;
+    g_state.effective_pixels = payload.effective_pixels;
+    g_state.p99_raw_y = payload.is_composite ? payload.p99_y : payload.axis_solid_angle * payload.anchor_l99_sky;
+    g_state.ev_auto = LUMICE_ComputeEvAuto(g_state.p99_raw_y, g_state.snapshot_intensity, g_state.target_white);
   }
-  g_recovery.xyz_tier = use_composite ? 0 : (tier >= 0 ? tier : 0);
-  g_state.last_uploaded_as_composite = use_composite;
-  g_state.snapshot_intensity = payload.snapshot_intensity;
-  g_state.snapshot_emitted_energy = payload.emitted_energy;
-  g_state.effective_pixels = payload.effective_pixels;
-  g_state.p99_raw_y = payload.is_composite ? payload.p99_y : payload.axis_solid_angle * payload.anchor_l99_sky;
-  g_state.ev_auto = LUMICE_ComputeEvAuto(g_state.p99_raw_y, g_state.snapshot_intensity, g_state.target_white);
+  g_recovery.xyz_tier = tier >= 0 ? tier : 0;
   g_state.texture_upload_count++;
   g_state.upload_latched = false;
-  GUI_LOG_INFO("[GUI] Preview retry: recovery succeeded ({}x{}, {})", payload.width, payload.height,
-               use_composite ? "composite" : "xyz ladder");
+  GUI_LOG_INFO("[GUI] Preview retry: recovery succeeded ({}x{}, {})",
+               target_is_file ? g_file_source.width : target->width,
+               target_is_file ? g_file_source.height : target->height,
+               target_is_file ?
+                   (g_file_source.mode == PreviewRenderer::TextureMode::kXyz ? "file xyz ladder" : "file re-upload") :
+                   "retained source");
 }
 
 PreviewUploadIncident GetPreviewUploadIncident() {
@@ -2969,14 +3209,15 @@ void PreviewSourceExtent(int* out_w, int* out_h) {
   }
   *out_w = 0;
   *out_h = 0;
-  if (g_last_uploaded_payload != nullptr && g_last_uploaded_payload->width > 0 && g_last_uploaded_payload->height > 0) {
-    *out_w = g_last_uploaded_payload->width;
-    *out_h = g_last_uploaded_payload->height;
-    return;
-  }
-  if (g_pending_upload_source != nullptr && g_pending_upload_source->width > 0 && g_pending_upload_source->height > 0) {
-    *out_w = g_pending_upload_source->width;
-    *out_h = g_pending_upload_source->height;
+  // The ONE source adjudication (see ResolvePreviewSource) — the same answer Save, the exposure
+  // queries and the degraded-export route get, in the same priority order. The r4 fork had this
+  // query prefer a never-displayed failed frame over the file source it sat on top of, which
+  // silently moved the absolute-EV denominator and the degraded-export size off the displayed
+  // frame.
+  const ResolvedPreviewSource src = ResolvePreviewSource();
+  if (src.width > 0 && src.height > 0) {
+    *out_w = src.width;
+    *out_h = src.height;
     return;
   }
   if (g_preview.HasCpuTexture()) {
