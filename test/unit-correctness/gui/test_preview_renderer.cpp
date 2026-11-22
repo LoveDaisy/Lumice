@@ -36,6 +36,7 @@
 #include "gui/forward_projection.hpp"
 #include "gui/gui_constants.hpp"
 #include "gui/overlay_labels.hpp"
+#include "gui/preview_downgrade.hpp"
 #include "gui/preview_renderer.hpp"
 
 namespace {
@@ -809,4 +810,145 @@ TEST(BgTransform, TheModifierHintNamesTheKeyThisPlatformEngraves) {
 #else
   EXPECT_STREQ(lumice::gui::kBgModifierName, "Alt");
 #endif
+}
+
+// ---- The recovery ladder's pure pixel math (preview_downgrade.hpp) ----
+//
+// The prefiltered downgrade candidates the 814 ladder offers when neither the staging buffers nor
+// the full-size texture fit. Two laws are under witness, because they are the two the plan's
+// exposure contracts lean on and the two a clever-looking implementation silently breaks. Law 1 —
+// average, not sum, in the linear source domain — is what keeps a constant-radiance frame
+// gain-free through a downgrade (the relative mode shows the same brightness) and keeps every
+// texel's per-original-texel unit (the absolute mode, which divides by the ORIGINAL pixel count,
+// stays correct). Law 2 — every candidate derived from the original frame by step count — is what
+// keeps a retry from compounding blur: the ladder re-derives from the retained source, it never
+// downgrades a downgrade. Headless by construction: the header carries no GL, no GuiState and no
+// ImGui.
+
+namespace preview_downgrade_test {
+
+std::vector<float> ConstantPlane(int w, int h, float v) {
+  return std::vector<float>(static_cast<size_t>(w) * h * 3, v);
+}
+
+// A coordinate pattern whose every texel differs, so a wrong stencil (a skip instead of an
+// average, a transposed read) cannot land on the right answer by accident.
+std::vector<float> CoordinatePlane(int w, int h, int seed) {
+  std::vector<float> tex(static_cast<size_t>(w) * h * 3);
+  for (int y = 0; y < h; ++y) {
+    for (int x = 0; x < w; ++x) {
+      const size_t idx = (static_cast<size_t>(y) * w + x) * 3;
+      for (int c = 0; c < 3; ++c) {
+        tex[idx + c] = static_cast<float>(((x * 7 + y * 5 + c * 13 + seed) % 61) - 30) / 30.0f;
+      }
+    }
+  }
+  return tex;
+}
+
+}  // namespace preview_downgrade_test
+
+// Law 1, relative-mode form: a constant radiance downgrades to the same constant — no gain, no
+// bias. A summing implementation fails this by exactly 4x; a clamping one fails on bright values.
+TEST(PreviewDowngrade, ConstantRadianceDowngradesGainFree) {
+  using namespace preview_downgrade_test;
+  // One step above the floor: 256x128 downgrades to 128x64. Smaller planes are below the
+  // ladder's minimum valid dual-disc size and are refused by design (CanDowngradeOnce), which is
+  // its own case below.
+  constexpr int kW = 256;
+  constexpr int kH = 128;
+  for (float v : { 0.0f, 0.5f, 1.0f, 12.75f }) {
+    const std::vector<float> src = ConstantPlane(kW, kH, v);
+    std::vector<float> scratch(static_cast<size_t>(kW / 2) * (kH / 2) * 3);
+    std::vector<float> dst(static_cast<size_t>(kW / 2) * (kH / 2) * 3);
+    int out_w = 0;
+    int out_h = 0;
+    const int applied =
+        lumice::gui::DowngradeXyzPlane(src.data(), kW, kH, 1, scratch.data(), dst.data(), &out_w, &out_h);
+    // Non-fatal + continue (loop-fatal-assert rule): one failed value must not hide the others.
+    if (applied != 1) {
+      ADD_FAILURE() << "the step did not apply for v=" << v;
+      continue;
+    }
+    EXPECT_EQ(out_w, kW / 2);
+    EXPECT_EQ(out_h, kH / 2);
+    for (size_t i = 0; i < dst.size(); ++i) {
+      // Non-fatal on purpose (loop-fatal-assert rule): one bad texel must not hide the rest.
+      EXPECT_NEAR(dst[i], v, 1e-6f) << "texel " << i << " of a constant " << v << " plane moved";
+    }
+  }
+}
+
+// Law 1, exact-stencil form: the average is the plain quarter-sum of the 2x2 block in the linear
+// domain, per component, with no reweighting. Pinning the exact number (not just the range) is
+// what rejects a skip-stencil (nearest-neighbour resample in disguise) and a corner-weighted one
+// alike.
+TEST(PreviewDowngrade, StepIsThePlain2x2Average) {
+  constexpr int kW = 2;
+  constexpr int kH = 2;
+  std::vector<float> src(2 * 2 * 3, 0.0f);
+  const float blocks[4][3] = { { 1.0f, 2.0f, 3.0f }, { 3.0f, 2.0f, 1.0f }, { 5.0f, 4.0f, 7.0f }, { 7.0f, 4.0f, 5.0f } };
+  for (int y = 0; y < 2; ++y) {
+    for (int x = 0; x < 2; ++x) {
+      for (int c = 0; c < 3; ++c) {
+        src[(static_cast<size_t>(y) * 2 + x) * 3 + c] = blocks[y * 2 + x][c];
+      }
+    }
+  }
+  std::vector<float> dst(3, 0.0f);
+  lumice::gui::DowngradeXyzStep2x2(src.data(), kW, kH, dst.data());
+  EXPECT_NEAR(dst[0], (1.0f + 3.0f + 5.0f + 7.0f) / 4.0f, 1e-6f);
+  EXPECT_NEAR(dst[1], (2.0f + 2.0f + 4.0f + 4.0f) / 4.0f, 1e-6f);
+  EXPECT_NEAR(dst[2], (3.0f + 1.0f + 7.0f + 5.0f) / 4.0f, 1e-6f);
+}
+
+// Law 2: two steps derived from the ORIGINAL compose exactly with one step applied to the
+// one-step result — the property that makes "derive by step count" (the ladder's contract) and
+// "iterate" agree, so the retry that re-derives from the retained source gets bit-identical
+// candidates.
+TEST(PreviewDowngrade, StepsAlwaysDeriveFromTheOriginalPlane) {
+  using namespace preview_downgrade_test;
+  constexpr int kW = 512;
+  constexpr int kH = 256;
+  const std::vector<float> src = CoordinatePlane(kW, kH, /*seed=*/5);
+  std::vector<float> scratch(static_cast<size_t>(kW / 2) * (kH / 2) * 3);
+  std::vector<float> dst2(static_cast<size_t>(kW / 4) * (kH / 4) * 3);
+  std::vector<float> dst1(static_cast<size_t>(kW / 2) * (kH / 2) * 3);
+
+  int w2 = 0;
+  int h2 = 0;
+  lumice::gui::DowngradeXyzPlane(src.data(), kW, kH, 2, scratch.data(), dst2.data(), &w2, &h2);
+  ASSERT_EQ(w2, kW / 4);
+  ASSERT_EQ(h2, kH / 4);
+
+  int w1 = 0;
+  int h1 = 0;
+  lumice::gui::DowngradeXyzPlane(src.data(), kW, kH, 1, scratch.data(), dst1.data(), &w1, &h1);
+  ASSERT_EQ(w1, kW / 2);
+  std::vector<float> scratch2(static_cast<size_t>(kW / 4) * (kH / 4) * 3);
+  std::vector<float> dst1_then_1(static_cast<size_t>(kW / 4) * (kH / 4) * 3);
+  int ww = 0;
+  int hh = 0;
+  lumice::gui::DowngradeXyzPlane(dst1.data(), kW / 2, kH / 2, 1, scratch2.data(), dst1_then_1.data(), &ww, &hh);
+  ASSERT_EQ(ww, kW / 4);
+  for (size_t i = 0; i < dst2.size(); ++i) {
+    // Non-fatal on purpose (loop-fatal-assert rule): report every diverging texel.
+    EXPECT_NEAR(dst2[i], dst1_then_1[i], 1e-5f) << "texel " << i;
+  }
+}
+
+// The ladder terminates: from a full-size dual-disc frame the sizes halve until the floor
+// (8192x4096 -> 128x64 in six steps), and the seventh step — which would cross it — is refused.
+// Finite candidates by construction, plan 814 §3.2.
+TEST(PreviewDowngrade, LadderStopsAtTheMinimumDualDiscFloor) {
+  int w = 0;
+  int h = 0;
+  ASSERT_TRUE(lumice::gui::DowngradedSize(8192, 4096, 6, &w, &h));
+  EXPECT_EQ(w, 128);
+  EXPECT_EQ(h, 64);
+  EXPECT_FALSE(lumice::gui::DowngradedSize(8192, 4096, 7, &w, &h));
+  EXPECT_FALSE(lumice::gui::CanDowngradeOnce(128, 64));
+  // A frame already at the floor has no next candidate; steps == 0 is the frame itself.
+  EXPECT_TRUE(lumice::gui::DowngradedSize(128, 64, 0, &w, &h));
+  EXPECT_FALSE(lumice::gui::DowngradedSize(128, 64, 1, &w, &h));
 }
