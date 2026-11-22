@@ -75,10 +75,15 @@ struct FaultUploadRequest {
   std::atomic<bool> upload8_done{ false };
   std::atomic<bool> uploadxyz_requested{ false };
   std::atomic<bool> uploadxyz_done{ false };
+  std::atomic<bool> bg_requested{ false };
+  std::atomic<bool> bg_done{ false };
   gui::UploadResult upload8_result;
   gui::UploadResult uploadxyz_result;
   const std::vector<unsigned char>* srgb = nullptr;
   const std::vector<float>* xyz = nullptr;
+  std::vector<unsigned char> bg_pixels;
+  int bg_width = 0;
+  int bg_height = 0;
   int width = 0;
   int height = 0;
 
@@ -93,8 +98,13 @@ struct FaultUploadRequest {
     upload8_done = false;
     uploadxyz_requested = false;
     uploadxyz_done = false;
+    bg_requested = false;
+    bg_done = false;
     srgb = nullptr;
     xyz = nullptr;
+    bg_pixels.clear();
+    bg_width = 0;
+    bg_height = 0;
     width = 0;
     height = 0;
   }
@@ -132,6 +142,10 @@ void FaultUploadGuiFunc(ImGuiTestContext* /*ctx*/) {
   if (g_fault.uploadxyz_requested && !g_fault.uploadxyz_done) {
     g_fault.uploadxyz_result = gui::g_preview.UploadXyzTexture(g_fault.xyz->data(), g_fault.width, g_fault.height);
     g_fault.uploadxyz_done = true;
+  }
+  if (g_fault.bg_requested && !g_fault.bg_done) {
+    gui::g_preview.UploadBgTexture(g_fault.bg_pixels.data(), g_fault.bg_width, g_fault.bg_height);
+    g_fault.bg_done = true;
   }
   if (g_open_requested && !g_open_done) {
     gui::DoOpen(g_open_path);
@@ -175,6 +189,63 @@ std::vector<float> XyzCoordinatePattern(int w, int h, int seed) {
     }
   }
   return tex;
+}
+
+// A solid RGB frame — every texel the same colour, so what the LENS does to the mapping is
+// invisible and a screen capture's centre pixel names the texel directly.
+std::vector<unsigned char> SolidPattern(int w, int h, unsigned char r, unsigned char g, unsigned char b) {
+  std::vector<unsigned char> tex(static_cast<size_t>(w) * h * 3);
+  for (size_t i = 0; i < tex.size(); i += 3) {
+    tex[i + 0] = r;
+    tex[i + 1] = g;
+    tex[i + 2] = b;
+  }
+  return tex;
+}
+
+// Capture the LIVE preview viewport's pixels through the harness's full-frame hook (served by
+// test_gui_main after the render pass — no per-test wiring), and return the centre pixel as
+// {r,g,b}. Returns {0,0,0} with the capture failed flag set when the viewport is not active or
+// the hook never completed.
+struct CenterPixel {
+  unsigned char r = 0;
+  unsigned char g = 0;
+  unsigned char b = 0;
+  bool captured = false;
+};
+
+CenterPixel CapturePreviewCenterPixel(ImGuiTestContext* ctx) {
+  CenterPixel out;
+  const int vp_w = gui::g_preview_vp.vp_w;
+  const int vp_h = gui::g_preview_vp.vp_h;
+  if (!gui::g_preview_vp.active || vp_w <= 0 || vp_h <= 0) {
+    return out;
+  }
+  g_fullframe_capture.Reset();
+  g_fullframe_capture.rect_x = gui::g_preview_vp.vp_x;
+  g_fullframe_capture.rect_y = gui::g_preview_vp.vp_y;
+  g_fullframe_capture.rect_w = vp_w;
+  g_fullframe_capture.rect_h = vp_h;
+  g_fullframe_capture.requested.store(true);
+  // ONE yield is the expectation: the request is consumed after this frame's render pass. The
+  // loop bound is a safety net, not the mechanism (same contract as the annotation suite).
+  for (int i = 0; i < 4 && !g_fullframe_capture.done.load(); ++i) {
+    ctx->Yield(1);
+  }
+  if (!g_fullframe_capture.done.load()) {
+    return out;
+  }
+  const int w = g_fullframe_capture.width;
+  const int h = g_fullframe_capture.height;
+  const size_t px = (static_cast<size_t>(h) / 2 * w + w / 2) * 4;
+  if (g_fullframe_capture.pixels.size() < px + 4) {
+    return out;
+  }
+  out.r = g_fullframe_capture.pixels[px + 0];
+  out.g = g_fullframe_capture.pixels[px + 1];
+  out.b = g_fullframe_capture.pixels[px + 2];
+  out.captured = true;
+  return out;
 }
 
 void UploadXyzAndWait(ImGuiTestContext* ctx, const std::vector<float>& xyz, int w, int h) {
@@ -463,10 +534,13 @@ void RegisterPreviewTextureTests(ImGuiTestEngine* engine) {
     };
   }
 
-  // A PBO-map failure on the XYZ path happens before the texture is touched: the previously
-  // displayed uint8 frame is provably untouched — retained, not revoked.
+  // A real (or injected) OOM at the PBO-map stage: the GL's state is undefined after an OOM
+  // (spec §2.5) — it is not scoped to the object the failing call was about to fill — so the
+  // previously displayed frame is NOT provably safe and the display is conservatively revoked.
+  // Retention would enshrine a per-stage trust boundary the spec does not draw; the save source
+  // is what survives, byte for byte.
   {
-    ImGuiTest* t = IM_REGISTER_TEST(engine, "preview_texture", "a_pbo_map_failure_keeps_the_old_frame");
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "preview_texture", "a_pbo_map_oom_revokes_the_display");
     t->GuiFunc = FaultUploadGuiFunc;
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
@@ -482,16 +556,17 @@ void RegisterPreviewTextureTests(ImGuiTestEngine* engine) {
 
       IM_CHECK(!g_fault.uploadxyz_result.ok);
       IM_CHECK(g_fault.uploadxyz_result.stage == gui::UploadResult::Stage::kPboMap);
-      IM_CHECK(g_fault.uploadxyz_result.old_frame_retained);
-      IM_CHECK(gui::g_preview.HasTexture());
-      IM_CHECK_EQ(gui::g_preview.GetTextureWidth(), kSide);
-      IM_CHECK(gui::g_preview.GetTextureMode() == gui::PreviewRenderer::TextureMode::kSrgbComposited);
+      IM_CHECK(!g_fault.uploadxyz_result.old_frame_retained);
+      IM_CHECK(!gui::g_preview.HasTexture());
+      // The save source survives the display revocation, byte for byte.
+      IM_CHECK(gui::g_preview.HasCpuTexture());
+      IM_CHECK_EQ(gui::g_preview.GetCpuTextureWidth(), kSide);
+      ExpectSamePixels("pbo_map_oom_save_source", gui::g_preview.GetTextureData(), good, kSide, kSide);
       SetFaultAndWait(ctx, -1, 0);
     };
   }
 
-  // A PBO-allocation failure must not leave the slot claiming a size it does not hold — the
-  // pre-814 code registered pbo_byte_count_ before the allocation result was known. The size here
+  // A PBO-allocation OOM: same unified ruling — revoke, never register the size. The size here
   // (48x48) is deliberately one no earlier case in this suite uploads: a size some earlier
   // success already registered would skip the realloc branch entirely (the production
   // optimization this case is NOT about) and the hook would never be consulted. Observed through
@@ -507,7 +582,7 @@ void RegisterPreviewTextureTests(ImGuiTestEngine* engine) {
 
       IM_CHECK(!g_fault.uploadxyz_result.ok);
       IM_CHECK(g_fault.uploadxyz_result.stage == gui::UploadResult::Stage::kPboAllocate);
-      IM_CHECK(g_fault.uploadxyz_result.old_frame_retained);
+      IM_CHECK(!g_fault.uploadxyz_result.old_frame_retained);
       IM_CHECK(!gui::g_preview.HasTexture());
 
       SetFaultAndWait(ctx, -1, 0);
@@ -519,16 +594,17 @@ void RegisterPreviewTextureTests(ImGuiTestEngine* engine) {
     };
   }
 
-  // A fence-create failure happens after the frame committed: the upload SUCCEEDS, and the
-  // unguarded-reuse hazard is answered by tearing the slot down — observed by the next upload
-  // (fresh allocation) still succeeding.
+  // An ORDINARY fence-create failure (the fence came back null without memory pressure): the
+  // frame itself committed fine, what failed is the guard for the NEXT write into this slot —
+  // the commit stands and the slot is torn down, observed by the next upload (fresh allocation)
+  // still succeeding.
   {
     ImGuiTest* t =
         IM_REGISTER_TEST(engine, "preview_texture", "a_fence_create_failure_commits_and_tears_down_the_slot");
     t->GuiFunc = FaultUploadGuiFunc;
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
-      SetFaultAndWait(ctx, static_cast<int>(gui::UploadResult::Stage::kFenceCreate), kGlOutOfMemory);
+      SetFaultAndWait(ctx, static_cast<int>(gui::UploadResult::Stage::kFenceCreate), kGlInvalidValue);
       const std::vector<float> xyz = XyzCoordinatePattern(64, 64, /*seed=*/17);
       UploadXyzAndWait(ctx, xyz, 64, 64);
 
@@ -540,6 +616,32 @@ void RegisterPreviewTextureTests(ImGuiTestEngine* engine) {
       SetFaultAndWait(ctx, -1, 0);
       const std::vector<float> next = XyzCoordinatePattern(64, 64, /*seed=*/18);
       UploadXyzAndWait(ctx, next, 64, 64);
+      IM_CHECK(g_fault.uploadxyz_result.ok);
+      IM_CHECK(gui::g_preview.HasTexture());
+      SetFaultAndWait(ctx, -1, 0);
+    };
+  }
+
+  // A fence-create OOM: the same synthesized error one stage later flips the ruling — the GL's
+  // state is undefined after an OOM, so the "frame committed, only the guard failed" story does
+  // not hold and the display is revoked instead of counted as a success.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "preview_texture", "a_fence_create_oom_revokes_instead_of_committing");
+    t->GuiFunc = FaultUploadGuiFunc;
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      SetFaultAndWait(ctx, static_cast<int>(gui::UploadResult::Stage::kFenceCreate), kGlOutOfMemory);
+      const std::vector<float> xyz = XyzCoordinatePattern(56, 56, /*seed=*/171);
+      UploadXyzAndWait(ctx, xyz, 56, 56);
+
+      IM_CHECK(!g_fault.uploadxyz_result.ok);
+      IM_CHECK(g_fault.uploadxyz_result.stage == gui::UploadResult::Stage::kFenceCreate);
+      IM_CHECK(!g_fault.uploadxyz_result.old_frame_retained);
+      IM_CHECK(!gui::g_preview.HasTexture());
+
+      // Recovery: the cleared hook lets a fresh upload rebuild a trusted display.
+      SetFaultAndWait(ctx, -1, 0);
+      UploadXyzAndWait(ctx, xyz, 56, 56);
       IM_CHECK(g_fault.uploadxyz_result.ok);
       IM_CHECK(gui::g_preview.HasTexture());
       SetFaultAndWait(ctx, -1, 0);
@@ -632,6 +734,143 @@ void RegisterPreviewTextureTests(ImGuiTestEngine* engine) {
       IM_CHECK_EQ(gui::g_state.snapshot_intensity, 7.0f);
 
       std::remove(path.c_str());
+    };
+  }
+
+  // The no-image contract at the PIXELS, on the live screen: after a revoked display the
+  // previously displayed frame must NOT appear, the blank
+  // failing must not resurrect it, and recovery must. A solid red frame makes every texel name
+  // itself, so the viewport's centre pixel is the whole story: red before, black while the
+  // display is revoked (including with the blank's own define injected to fail — the no-sample
+  // gate holds without any successful allocation), still not-red while blanked, green after a
+  // verified upload re-establishes the display.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "preview_texture", "a_revoked_display_never_shows_the_old_or_failed_frame");
+    t->GuiFunc = FaultUploadGuiFunc;
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      SetFaultAndWait(ctx, -1, 0);
+
+      // A dim background photo keeps PreviewShowsPicture() true while the display is revoked —
+      // that is the case the no-sample gate exists for (the panel keeps drawing, the texture
+      // behind it is untrusted), and the only way the deferred preview pass keeps consuming the
+      // blank attempts the revoke arms. bg_show stays false, so the photo itself never paints:
+      // the centre pixel reads the SIM layer alone.
+      g_fault.Reset();
+      g_fault.bg_pixels = SolidPattern(32, 32, 60, 60, 60);
+      g_fault.bg_width = 32;
+      g_fault.bg_height = 32;
+      g_fault.bg_requested = true;
+      ctx->Yield(2);
+      IM_CHECK(g_fault.bg_done);
+      IM_CHECK(gui::g_preview.HasBackground());
+
+      // A solid red 128x128 composited frame, displayed and visible on screen.
+      constexpr int kSide = 128;
+      const std::vector<unsigned char> red = SolidPattern(kSide, kSide, 240, 20, 20);
+      UploadAndWait(ctx, red, kSide, kSide);
+      IM_CHECK(gui::g_preview.HasTexture());
+      const CenterPixel baseline = CapturePreviewCenterPixel(ctx);
+      IM_CHECK(baseline.captured);
+      IM_CHECK(baseline.r > 200);
+      IM_CHECK(baseline.g < 60);
+      IM_CHECK(baseline.b < 60);
+
+      // OOM at the texture-define stage of an XYZ upload: the display revokes, and the screen
+      // stops showing the red frame — the storage still holds it, which is exactly why the
+      // no-sample gate is the mechanism under witness, not HasTexture().
+      SetFaultAndWait(ctx, static_cast<int>(gui::UploadResult::Stage::kTexImage), kGlOutOfMemory);
+      const std::vector<float> xyz = XyzCoordinatePattern(64, 64, /*seed=*/23);
+      UploadXyzAndWait(ctx, xyz, 64, 64);
+      IM_CHECK(!g_fault.uploadxyz_result.ok);
+      IM_CHECK(!gui::g_preview.HasTexture());
+      const CenterPixel revoked = CapturePreviewCenterPixel(ctx);
+      IM_CHECK(revoked.captured);
+      IM_CHECK(revoked.r < 8);
+      IM_CHECK(revoked.g < 8);
+      IM_CHECK(revoked.b < 8);
+
+      // The blank redefinition ALSO fails (hook still on kTexImage): the no-sample gate keeps
+      // holding — nothing red may come back while not a single allocation has succeeded.
+      const CenterPixel blank_failed = CapturePreviewCenterPixel(ctx);
+      IM_CHECK(blank_failed.captured);
+      IM_CHECK(blank_failed.r < 8);
+      IM_CHECK(blank_failed.g < 8);
+      IM_CHECK(blank_failed.b < 8);
+      IM_CHECK(!gui::g_preview.HasTexture());
+
+      // Clear the hook: the pending blank now lands (a verified 1x1 define), the sim layer is
+      // sampleable again — and it is BLACK, the blank's own colour, not the red frame.
+      SetFaultAndWait(ctx, -1, 0);
+      ctx->Yield(2);
+      const CenterPixel blanked = CapturePreviewCenterPixel(ctx);
+      IM_CHECK(blanked.captured);
+      IM_CHECK(blanked.r < 8);
+      IM_CHECK(blanked.g < 8);
+      IM_CHECK(blanked.b < 8);
+      IM_CHECK(!gui::g_preview.HasTexture());
+
+      // Recovery: a verified solid-green upload re-establishes the display.
+      const std::vector<unsigned char> green = SolidPattern(kSide, kSide, 20, 240, 20);
+      UploadAndWait(ctx, green, kSide, kSide);
+      IM_CHECK(gui::g_preview.HasTexture());
+      const CenterPixel recovered = CapturePreviewCenterPixel(ctx);
+      IM_CHECK(recovered.captured);
+      IM_CHECK(recovered.g > 200);
+      IM_CHECK(recovered.r < 60);
+    };
+  }
+
+  // The composited source keeps its LABEL through a failed open: these texels already carry the
+  // sky, and a mirror that said radiance-only would make the next Save write a sky-summed frame
+  // under a flag that adds the sky again on reopen. Observed by re-saving the retained source
+  // and reopening it: the mode must come back composited.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "preview_texture", "a_failed_composited_open_keeps_the_source_label");
+    t->GuiFunc = FaultUploadGuiFunc;
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      SetFaultAndWait(ctx, -1, 0);
+
+      // Write a composited .lmc: bytes in the mirror under kSrgbComposited (the label the v4-era
+      // document carries), so the file's flags say composited.
+      constexpr int kSide = 16;
+      const std::vector<unsigned char> baked = SolidPattern(kSide, kSide, 30, 90, 200);
+      gui::g_preview.UpdateCpuTextureData(baked.data(), kSide, kSide,
+                                          gui::PreviewRenderer::TextureMode::kSrgbComposited);
+      const std::string path = GuiTestTempPath("lumice_preview_texture_composited_label.lmc").string();
+      IM_CHECK(gui::SaveLmcFile(path, gui::g_state, gui::g_preview, /*save_texture=*/true));
+
+      // Open with the define stage forced to fail: preview unavailable, but the mirror keeps the
+      // file's bytes under the file's label.
+      SetFaultAndWait(ctx, static_cast<int>(gui::UploadResult::Stage::kTexImage), kGlOutOfMemory);
+      g_open_requested = true;
+      g_open_done = false;
+      g_open_path = path;
+      YieldUntilOpenDone(ctx);
+      IM_CHECK(g_open_done);
+      ctx->Yield(2);
+      IM_CHECK(!gui::g_preview.HasTexture());
+      IM_CHECK(gui::g_preview.HasCpuTexture());
+      IM_CHECK(gui::g_preview.GetCpuTextureMode() == gui::PreviewRenderer::TextureMode::kSrgbComposited);
+
+      // Re-save the retained source and reopen without the injection: the label must survive the
+      // round trip — composited, not radiance-only (the sky must not be painted twice).
+      const std::string path2 = GuiTestTempPath("lumice_preview_texture_composited_label_2.lmc").string();
+      IM_CHECK(gui::SaveLmcFile(path2, gui::g_state, gui::g_preview, /*save_texture=*/true));
+      SetFaultAndWait(ctx, -1, 0);
+      g_open_requested = true;
+      g_open_done = false;
+      g_open_path = path2;
+      YieldUntilOpenDone(ctx);
+      IM_CHECK(g_open_done);
+      ctx->Yield(2);
+      IM_CHECK(gui::g_preview.HasTexture());
+      IM_CHECK(gui::g_preview.GetTextureMode() == gui::PreviewRenderer::TextureMode::kSrgbComposited);
+
+      std::remove(path.c_str());
+      std::remove(path2.c_str());
+      SetFaultAndWait(ctx, -1, 0);
     };
   }
 }

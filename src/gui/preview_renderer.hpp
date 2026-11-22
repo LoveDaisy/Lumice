@@ -328,11 +328,14 @@ class PreviewRenderer {
 
   // Update the CPU-side uint8 mirror only (no GL upload, no tex_mode_ change, and — the 814
   // separation — no display-size write: the mirror's dimensions are cpu_tex_width_/height_).
-  // The mirror is declared kSrgbRadiance: every producer that bakes bytes into it bakes the halo
-  // alone. Production no longer reaches it — Save mirrors linear XYZ through
-  // UpdateCpuXyzTextureData — but it stays as the seam tests use to plant known pixels behind
-  // SaveLmcFile.
-  void UpdateCpuTextureData(const unsigned char* data, int width, int height);
+  // `mode` is what the CALLER baked into these bytes — kSrgbRadiance (the default: every producer
+  // that bakes bytes into the mirror bakes the halo alone) or kSrgbComposited (a pre-v4 .lmc's
+  // sky-summed bytes, whose label must survive a failed display so a re-save does not paint its
+  // sky twice). Production no longer reaches the default — Save mirrors linear XYZ through
+  // UpdateCpuXyzTextureData — but the seam stays for tests and the 814 failed-open save-source
+  // path.
+  void UpdateCpuTextureData(const unsigned char* data, int width, int height,
+                            TextureMode mode = TextureMode::kSrgbRadiance);
 
   // Update the CPU-side linear-XYZ mirror only (no GL upload, no tex_mode_ change, no
   // display-size write): the W*H*3 floats exactly as UploadXyzTexture received them, plus the
@@ -399,17 +402,28 @@ class PreviewRenderer {
   int cpu_tex_height_ = 0;
   TextureMode tex_mode_ = TextureMode::kSrgbComposited;  // what texture_ currently holds
   float tex_xyz_scale_ = 1.0f;                           // companion of texture_ under kXyz: the float16 storage scale
+  // Whether the sim layer may be SAMPLED at all. The no-image state (a revoked display, a cleared
+  // document) must not depend on "re-allocating a 1x1 black texture will succeed": after a real
+  // OOM the GL's whole state is undefined (spec §2.5), and the blank redefinition can fail just
+  // like any other allocation. While this is false, Render() passes u_sim_valid=0 and the shader
+  // skips the texture fetch entirely — the zero-energy colour (paper/black) stands in for the sky,
+  // background photo and overlay keep drawing, and NO texel of whatever the storage holds reaches
+  // the screen. Set false by ClearTexture() and ConservativeRevoke(); set true only by a verified
+  // blank (UploadBlankSimTexture) or a verified upload. Defaults true (Init's blank).
+  bool sim_layer_valid_ = true;
 
   // Test-only upload fault injection hook — consulted by the upload paths at each GL stage
   // boundary. The hook receives the stage about to run and returns the GLenum error to synthesize
   // for it (0 = let the real call proceed). The synthesized failure takes the SAME production
   // failure branch the real error would take — there is no parallel mock path — which is what
   // lets a gui_test witness the OOM-conservative and stage-propagation contracts on a healthy GL.
-  // Stages where a successful real call would leave different GL state than the real failure
-  // (kPboMap: a mapped buffer; kPboAllocate/kFenceWait: issued work) consult the hook BEFORE the
-  // real call and skip it; stages where the end state matches (kPboUnmap/kTexImage/kTexUpdate:
-  // content never read on the failure branch; kFenceCreate/kStorageMismatch: synthesized-only)
-  // consult it after. Cleared by every test's scope guard; see
+  // Every stage whose failure contract says "the texture/storage was not touched by this attempt"
+  // (kTexImage/kTexUpdate: an ordinary GL error means the offending command was ignored with no
+  // side effect; kPboAllocate/kPboMap/kFenceWait: the call never issued) consults the hook BEFORE
+  // the real call and skips it — that end-state equivalence is what makes the injection faithful
+  // enough for pixel-readback witnesses. kPboUnmap and kFenceCreate consult after (a successful
+  // real call's end state — unmapped buffer / committed frame — matches the branch they force);
+  // kStorageMismatch is synthesized-only. Cleared by every test's scope guard; see
   // test/gui/functional/test_preview_texture.cpp. Install through SetUploadFaultHookForTest
   // (public, above).
   UploadFaultHook upload_fault_hook_;
