@@ -79,6 +79,22 @@ bool HasLine(const std::vector<std::string>& lines, const std::string& needle) {
 
 }  // namespace
 
+// The map's overlay facts on the identity arm's document: the rank-0 class delivers no support
+// intervals, no edge card and no chromatic diagnose, so every arc layer's fact set is EMPTY —
+// the map has nothing to draw for this class, and the builder fabricates nothing (no coordinates
+// from the tint/quantity calibers).
+TEST(AnalyzeOverviewModel, OverlayFactsAreEmptyOnTheIdentityArm) {
+  const auto scene = MakeScene(kRandomPrismJson);
+  const auto survey = RunSurvey(scene.get(), { 1, 3, 6, 2 });
+  ASSERT_NE(survey.get(), nullptr);
+
+  const SurveyOverlayFacts facts = BuildSurveyOverlayFacts(*survey);
+  EXPECT_TRUE(facts.reach_intervals.empty());
+  EXPECT_FALSE(facts.reach_full_range);
+  EXPECT_TRUE(facts.edges.empty());
+  EXPECT_TRUE(facts.tir_turns.empty());
+}
+
 // The identity arm: the survey document of a rank-0 class reads back as exactly the two facts
 // the arm has — the certified source image at the sun, and the weight tint with its caliber —
 // with the positional-chromatic absence stated, not silent.

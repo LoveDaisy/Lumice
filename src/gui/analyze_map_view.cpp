@@ -47,6 +47,7 @@ static_assert(kChromaticColourRed == IM_COL32(242, 108, 92, 235), "the promoted 
 static_assert(kChromaticColourBlue == IM_COL32(96, 145, 240, 235), "the promoted blue must equal its literal");
 static_assert(kReadoutBackingInk == IM_COL32(16, 17, 20, 170), "the promoted backing ink must equal its literal");
 static_assert(kProfileReadingColour == IM_COL32(244, 114, 182, 255), "the promoted rose must equal its literal");
+static_assert(kSurveyArcInk == IM_COL32(200, 205, 215, 215), "the promoted arc ink must equal its literal");
 
 OverlayLegendState g_map_legend;
 MapObservationTiming g_map_observation_timing;
@@ -1037,34 +1038,69 @@ struct SurveyOverlayCache {
   std::weak_ptr<const LUMICE_PathSurvey> source;
   SurveyQueryId id;
   SurveyOverviewModel model;
+  SurveyOverlayFacts facts;
 };
 SurveyOverlayCache g_survey_overlay_cache;
 
+// The one refresh per frame path (idempotent): a stale identity rebuilds BOTH pure reads — the
+// overview model and the layer facts — once, from the immutable document. The popup's empty-state
+// notes and the arcs read this same entry, so the facts exist even on a frame whose master gate
+// suppresses every draw (a toggle edits display preferences; it never re-reads the document).
+const SurveyOverlayCache& RefreshSurveyOverlayCache(const SurveyQuerySession& survey) {
+  auto& cache = g_survey_overlay_cache;
+  if (cache.source.lock() != survey.adopted_result || cache.id != survey.intent_id) {
+    // The document is immutable. Build once per adopted identity, not once per observation.
+    cache = {};
+    if (survey.adopted_result != nullptr) {
+      cache.model = BuildSurveyOverviewModel(*survey.adopted_result);
+      cache.facts = BuildSurveyOverlayFacts(*survey.adopted_result);
+      cache.source = survey.adopted_result;
+      cache.id = survey.intent_id;
+    }
+  }
+  return cache;
+}
+
 void DrawSurveyOverlays(ImDrawList* dl, GuiState& state, const MapCanvasProjection& view, const ImVec2& pic_min,
-                        float pic_px, OverlayLegendState* legend) {
+                        float pic_px, OverlayLegendState* legend, const SurveyLayerGates& gates) {
   SurveyQuerySession& survey = state.analysis.survey;
   if (survey.adopted_result == nullptr) {
     return;
   }
   // The payloads read through the ONE document->facts mapping (§5.1.8: the overview model is the
   // single organizer; the map overlays consume its object rows and dispersion block verbatim).
-  auto& cache = g_survey_overlay_cache;
-  if (cache.source.lock() != survey.adopted_result || cache.id != survey.intent_id) {
-    // The document is immutable. Build once per adopted identity, not once per observation.
-    cache = {};
-    cache.model = BuildSurveyOverviewModel(*survey.adopted_result);
-    cache.source = survey.adopted_result;
-    cache.id = survey.intent_id;
-  }
+  // The refresh is idempotent and already ran at the region's entry — this read cannot rebuild.
+  const SurveyOverlayCache& cache = RefreshSurveyOverlayCache(survey);
   const SurveyOverviewModel& model = cache.model;
+  const SurveyOverlayFacts& facts = cache.facts;
+  // The reference arcs (reach bounds, sharp edges, TIR turns): the frame's first analysis ink,
+  // under everything the other groups draw. Their readout labels join the frame's one label set.
+  std::vector<MapReadoutLabel> labels;
+  ReferenceArcInput arcs;
+  arcs.camera = &view.camera;
+  arcs.width_px = view.width;
+  arcs.height_px = view.height;
+  arcs.width_pt = view.width_pt;
+  arcs.height_pt = view.height_pt;
+  arcs.pic_min_x = pic_min.x;
+  arcs.pic_min_y = pic_min.y;
+  arcs.pic_px = pic_px;
+  SkySunAnchorFor(state, &arcs.sun);
+  arcs.reach = gates.reach;
+  arcs.edge = gates.edge;
+  arcs.tir = gates.tir;
+  arcs.legend = legend;
+  arcs.labels_sink = &labels;
+  DrawReferenceArcs(dl, facts, arcs);
   // Positional objects: the survey's own located conclusions, drawn where the document puts
   // them — one marker per object, styled by kind and claim state; the frame's hits collect for
   // ONE organized tooltip (every object under the pointer, grouped by the observation key),
-  // never a stack of same-text tooltips.
+  // never a stack of same-text tooltips. The points group's gate: off, neither markers nor their
+  // tooltip collects (a hidden object does not answer the pointer).
   std::vector<const SurveyObjectRow*> hits;
   const float marker_r = UiPx(6.0f);
   for (const SurveyObjectRow& row : model.objects) {
-    if (!row.position_available) {
+    if (!gates.points.graphics || !row.position_available) {
       continue;
     }
     double pos[3];
@@ -1139,10 +1175,11 @@ void DrawSurveyOverlays(ImDrawList* dl, GuiState& state, const MapCanvasProjecti
   // per observation key (identical keys fold into an ×N count — a display grouping of the
   // model's rows; nothing drops, different sources stay separate).
   RenderSurveyObjectTooltip(hits);
-  std::vector<MapReadoutLabel> labels;
-  // The chromatic dispersion's inner-edge pair: the engine's own delta values, drawn as
-  // iso-deviation circles about the sun, red inside blue (the C01 alignment face).
-  if (model.dispersion.available && model.dispersion.min_row_available) {
+  // The chromatic group's gate wraps BOTH red-blue ink sources — the dispersion pair and the
+  // verdict anchor draw together or not at all (a half-open chromatic group would leave one
+  // semantic colour claiming the other's absence). The neutral layers above are untouched by it;
+  // the group's labels bit gates the readouts, never the ink.
+  if (gates.chromatic.graphics && model.dispersion.available && model.dispersion.min_row_available) {
     SkySunAnchor sun;
     SkySunAnchorFor(state, &sun);
     double sun_pos[3];
@@ -1179,7 +1216,7 @@ void DrawSurveyOverlays(ImDrawList* dl, GuiState& state, const MapCanvasProjecti
           legend->dispersion_partial = true;
         }
       }
-      if (walk.lines_submitted > 0) {
+      if (walk.lines_submitted > 0 && gates.chromatic.labels) {
         char line[112];
         std::snprintf(line, sizeof(line), "%s · %.3f°%s", curve.label->c_str(), curve.delta_deg,
                       walk.partial() ? " · arc in view" : "");
@@ -1187,21 +1224,25 @@ void DrawSurveyOverlays(ImDrawList* dl, GuiState& state, const MapCanvasProjecti
       }
     }
   }
-  // Qualified verdicts join the same Overlays pass and readout collection as dispersion.
-  // Honesty, the closed kind set and colour routing remain the anchor draw's own.
-  VerdictAnchorInput verdict;
-  verdict.camera = &view.camera;
-  verdict.width_px = view.width;
-  verdict.height_px = view.height;
-  verdict.width_pt = view.width_pt;
-  verdict.height_pt = view.height_pt;
-  verdict.pic_min_x = pic_min.x;
-  verdict.pic_min_y = pic_min.y;
-  verdict.pic_px = pic_px;
-  SkySunAnchorFor(state, &verdict.sun);
-  verdict.labels = &labels;
-  verdict.legend = legend;
-  DrawVerdictAnchor(dl, model.diagnose, verdict);
+  // Qualified verdicts join the same chromatic group gate and readout collection as dispersion.
+  // Honesty, the closed kind set and colour routing remain the anchor draw's own; its readout
+  // label obeys the same labels toggle (the anchor's ink draws, its text waits).
+  if (gates.chromatic.graphics) {
+    VerdictAnchorInput verdict;
+    verdict.camera = &view.camera;
+    verdict.width_px = view.width;
+    verdict.height_px = view.height;
+    verdict.width_pt = view.width_pt;
+    verdict.height_pt = view.height_pt;
+    verdict.pic_min_x = pic_min.x;
+    verdict.pic_min_y = pic_min.y;
+    verdict.pic_px = pic_px;
+    SkySunAnchorFor(state, &verdict.sun);
+    verdict.labels = &labels;
+    verdict.label_wanted = gates.chromatic.labels;
+    verdict.legend = legend;
+    DrawVerdictAnchor(dl, model.diagnose, verdict);
+  }
   DrawMapReadoutLabels(dl, labels, pic_min.x, pic_min.y, view.width_pt, view.height_pt);
   // The reference profile's hover device (§16.1.3's extension): the hovered profile row's
   // reading, drawn on the radial line the probe sampled — the SURVEY document's own sun echo and
@@ -1252,6 +1293,164 @@ void DrawSkyPointMarker(ImDrawList* dl, const MapCanvasProjection& view, const S
 }
 
 }  // namespace
+
+void DrawReferenceArcs(ImDrawList* dl, const SurveyOverlayFacts& facts, const ReferenceArcInput& in) {
+  if (!in.reach.graphics && !in.edge.graphics && !in.tir.graphics) {
+    return;
+  }
+  MapCanvasProjection view;
+  // The mirror of ReferenceArcInput's projection quintet (see its comment): a new
+  // MapCanvasProjection field must be copied here AND carried by the input struct, or this
+  // rebuilt view silently defaults while the dispersion circles move.
+  view.camera = *in.camera;
+  view.width = in.width_px;
+  view.height = in.height_px;
+  view.width_pt = in.width_pt;
+  view.height_pt = in.height_pt;
+  const ImVec2 pic_min(in.pic_min_x, in.pic_min_y);
+  double sun_pos[3];
+  SkyPosition(in.sun.altitude_deg, in.sun.azimuth_deg, sun_pos);
+  // One submitted stroke's readout: the owner word names the sharper owner when two share the
+  // stroke (the legend carries the second name); a group's labels bit shows its readouts and
+  // never its ink.
+  auto push_label = [&](bool label_wanted, double top_x, double top_y, double delta_deg, const char* owner_word,
+                        bool partial) {
+    if (!label_wanted || in.labels_sink == nullptr) {
+      return;
+    }
+    char line[128];
+    std::snprintf(line, sizeof(line), "%s · %.3f°%s", owner_word, delta_deg, partial ? " · arc in view" : "");
+    in.labels_sink->push_back({ static_cast<float>(top_x), static_cast<float>(top_y), kSurveyArcInk, line });
+  };
+  // One submitted stroke: the geometry (a delta about the sun), its weakened form, and the owners
+  // the legend must name. The reach/edge shared stroke merges owners onto one submission — one
+  // walk, both names — never two walks at the same delta (alpha would stack).
+  struct ArcSubmission {
+    double delta_deg;
+    bool dashed;
+    bool owned_by_reach;
+    bool owned_by_edge;
+  };
+  std::vector<ArcSubmission> submissions;
+  // The reach bounds first: the merged intervals' own endpoints, in the one neutral ink.
+  // Degenerate deltas submit nothing (0 is the sun's own anchor, already drawn; 180 is the
+  // antipodal point) — a bound that IS an anchor carries no second stroke.
+  if (in.reach.graphics) {
+    if (facts.reach_full_range) {
+      // The full [0, 180] range states itself in one text line anchored at the sun — a circle
+      // pair would paint the whole sky as ink and say nothing the words do not.
+      double lx = 0.0;
+      double ly = 0.0;
+      if (ProjectToRect(view, sun_pos, pic_min, in.pic_px, &lx, &ly)) {
+        if (in.reach.labels && in.labels_sink != nullptr) {
+          in.labels_sink->push_back(
+              { static_cast<float>(lx), static_cast<float>(ly), kSurveyArcInk, "support · full 0–180° range" });
+        }
+        if (in.legend != nullptr) {
+          in.legend->reach_bounds = true;
+          in.legend->reach_bound_count = 1;
+          in.legend->reach_full_range_text = true;
+        }
+      }
+    } else {
+      for (const SurveyOverlayFacts::ReachInterval& interval : facts.reach_intervals) {
+        for (const double bound : { interval.lower_deg, interval.upper_deg }) {
+          if (bound <= 0.0 || bound >= 180.0) {
+            continue;  // the degenerate deltas are the anchors, not arcs
+          }
+          submissions.push_back({ bound, false, true, false });
+        }
+      }
+    }
+  }
+  // The sharp edges: a card declaring coincidence with support takes the NEARER interval
+  // endpoint's submission as its own stroke (the layer plan's shared stroke — one walk, both
+  // owners' names); only while BOTH gates are on. Each gate alone walks its own geometry; a
+  // non-coincident edge never merges, however close on screen.
+  if (in.edge.graphics) {
+    for (const SurveyOverlayFacts::EdgeArc& edge : facts.edges) {
+      bool merged = false;
+      if (edge.coincident_with_support && in.reach.graphics && !facts.reach_full_range) {
+        ArcSubmission* nearest = nullptr;
+        double best = 0.0;
+        for (ArcSubmission& s : submissions) {
+          if (!s.owned_by_reach) {
+            continue;
+          }
+          const double d = std::fabs(s.delta_deg - edge.position_deg);
+          if (nearest == nullptr || d < best) {
+            nearest = &s;
+            best = d;
+          }
+        }
+        if (nearest != nullptr) {
+          nearest->owned_by_edge = true;
+          merged = true;
+        }
+      }
+      if (!merged) {
+        submissions.push_back({ edge.position_deg, !edge.concluded, false, true });
+      }
+    }
+  }
+  // One walk per submission — the whole point of the merge above. The legend and the labels read
+  // the SUBMITTED line count (a walk that grazed the disk draws no stroke and earns no entry),
+  // the dispersion pair's own precedents. The evidence level and the reference λ ride the
+  // legend's explanations and the layer control, not the arc text.
+  for (const ArcSubmission& s : submissions) {
+    const IsoDeltaWalk walk =
+        WalkIsoDeltaCircle(dl, view, pic_min, in.pic_px, sun_pos, s.delta_deg, kSurveyArcInk, 1.4f, s.dashed);
+    if (walk.lines_submitted == 0) {
+      continue;
+    }
+    push_label((s.owned_by_edge && in.edge.labels) || (s.owned_by_reach && in.reach.labels), walk.top_x, walk.top_y,
+               s.delta_deg, s.owned_by_edge ? "edge" : "support", walk.partial());
+    if (in.legend != nullptr) {
+      if (s.owned_by_reach) {
+        in.legend->reach_bounds = true;
+        in.legend->reach_bound_count += 1;
+      }
+      if (s.owned_by_edge) {
+        in.legend->edge_arcs = true;
+        if (s.owned_by_reach) {
+          in.legend->edge_shared = true;
+        }
+      }
+    }
+  }
+  // The internal-reflection turns: each drawable feature draws its pair of representative deltas
+  // in the same neutral ink and carries ONE paired readout (the pair is the feature's own fact —
+  // two positions, one event), anchored at whichever of the two submitted circles sits higher.
+  // The RED-BLUE group owns the chromatic claims; no stroke is shared across the two groups —
+  // simultaneous gates each draw their own ink, the legend accounts separately.
+  if (in.tir.graphics) {
+    for (const SurveyOverlayFacts::TirTurn& turn : facts.tir_turns) {
+      const IsoDeltaWalk red =
+          WalkIsoDeltaCircle(dl, view, pic_min, in.pic_px, sun_pos, turn.delta_red_deg, kSurveyArcInk, 1.4f);
+      const IsoDeltaWalk blue =
+          WalkIsoDeltaCircle(dl, view, pic_min, in.pic_px, sun_pos, turn.delta_blue_deg, kSurveyArcInk, 1.4f);
+      if (red.lines_submitted == 0 && blue.lines_submitted == 0) {
+        continue;  // the pair left the view disk: nothing drew, no entry, no readout
+      }
+      const bool red_carries = blue.lines_submitted == 0 || (red.lines_submitted > 0 && red.top_y <= blue.top_y);
+      const IsoDeltaWalk& carrier = red_carries ? red : blue;
+      if (carrier.lines_submitted > 0) {
+        if (in.tir.labels && in.labels_sink != nullptr) {
+          const std::string face = turn.face >= 0 ? "TIR f" + std::to_string(turn.face) : std::string("TIR");
+          char line[128];
+          std::snprintf(line, sizeof(line), "%s · %.3f°/%.3f°%s", face.c_str(), turn.delta_red_deg, turn.delta_blue_deg,
+                        carrier.partial() ? " · arc in view" : "");
+          in.labels_sink->push_back(
+              { static_cast<float>(carrier.top_x), static_cast<float>(carrier.top_y), kSurveyArcInk, line });
+        }
+        if (in.legend != nullptr) {
+          in.legend->tir_turns = true;
+          in.legend->tir_turn_count += 1;
+        }
+      }
+    }
+  }
+}
 
 void DrawSkyPointIndicator(ImDrawList* dl, float cx, float cy) {
   const float r = UiPx(6.0f);
@@ -1331,14 +1530,19 @@ void DrawVerdictAnchor(ImDrawList* dl, const SurveyDiagnoseView& diagnose, const
       in.legend->verdict_anchor_colour = colour;
       in.legend->verdict_anchor_dashed = dashed;
     }
-    char line[96];
-    std::snprintf(line, sizeof(line), "verdict · %.3f°%s", diagnose.position_deg,
-                  walk.partial() ? " · arc in view" : "");
-    const MapReadoutLabel label{ static_cast<float>(walk.top_x), static_cast<float>(walk.top_y), colour, line };
-    if (in.labels != nullptr) {
-      in.labels->push_back(label);
-    } else {
-      DrawMapReadoutLabels(dl, { label }, in.pic_min_x, in.pic_min_y, in.width_pt, in.height_pt);
+    // The readout label rides the labels toggle (label_wanted): off, the anchor's ink draws and
+    // its text waits — labels annotate the ink, they do not gate it, and the labels-off frame
+    // must not leak the label through this draw's solo path.
+    if (in.label_wanted) {
+      char line[96];
+      std::snprintf(line, sizeof(line), "verdict · %.3f°%s", diagnose.position_deg,
+                    walk.partial() ? " · arc in view" : "");
+      const MapReadoutLabel label{ static_cast<float>(walk.top_x), static_cast<float>(walk.top_y), colour, line };
+      if (in.labels != nullptr) {
+        in.labels->push_back(label);
+      } else {
+        DrawMapReadoutLabels(dl, { label }, in.pic_min_x, in.pic_min_y, in.width_pt, in.height_pt);
+      }
     }
   }
 }
@@ -1535,11 +1739,126 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   if (ImGui::Checkbox("Overlays##map", &overlays)) {
     storage->SetBool(overlay_key, overlays);
   }
+  // The five layer groups' session switches, beside the master gate (the layer plan's control
+  // face): each row's two boxes are the Render habit's graphics/labels split — one group, one
+  // graphics box and one labels box, one storage key pair per group. Storage keys ride the
+  // master gate's own T-session lifetime: class switches, adopted results and window close/open
+  // keep them; a new process resumes the factory defaults (all on — a group with no payload
+  // draws nothing anyway, so the defaults never fabricate ink). The master gate stays the ONE
+  // off switch: with it off no preference is disabled or forgotten, the groups stay editable
+  // and simply draw nothing.
+  struct LayerKeyPair {
+    const char* base;  // "ov_<group>": the graphics key; + "_l": the labels key
+    SurveyLayerGate* gate;
+  };
+  SurveyLayerGates gates;
+  {
+    const LayerKeyPair pairs[5] = { { "ov_reach", &gates.reach },
+                                    { "ov_edge", &gates.edge },
+                                    { "ov_points", &gates.points },
+                                    { "ov_chromatic", &gates.chromatic },
+                                    { "ov_tir", &gates.tir } };
+    for (const LayerKeyPair& p : pairs) {
+      const std::string labels_key = std::string(p.base) + "_l";
+      p.gate->graphics = storage->GetBool(ImGui::GetID(p.base), true);
+      p.gate->labels = storage->GetBool(ImGui::GetID(labels_key.c_str()), true);
+    }
+  }
+  if (ImGui::SmallButton("Layers##map_layers")) {
+    ImGui::OpenPopup("map_layer_switches");
+  }
+  if (ImGui::IsItemHovered()) {
+    SetWrappedTooltip(
+        "The survey's reference layers, per group: graphics and labels. Opening this never "
+        "recomputes; switches filter what is already drawn.");
+  }
   InfoIcon("map_overlays_help",
-           "Show survey objects, dispersion circles and qualified colour-verdict anchors. "
-           "Hover Profile edge, Profile peak or Peak–edge separation in the class answer "
-           "to locate the reading on its reference profile (not an all-sky peak). "
-           "Overlays must be on for these temporary markers. Sun, horizon and your sky point stay visible.");
+           "The survey's reference layers: support-range bounds, sharp edges, positioned object "
+           "markers, the red-blue dispersion pair with its colour-verdict anchor, and visible "
+           "internal-reflection turns. Hover Profile edge, Profile peak or Peak–edge separation "
+           "in the class answer to locate the reading on its reference profile (not an all-sky "
+           "peak). Overlays must be on for these temporary markers. Sun, horizon and your sky "
+           "point stay visible.");
+  // The layer popup opens in EVERY data state and with the master gate off (the entry's own
+  // premise): with no adopted document the rows name the absence instead of disabling themselves,
+  // and the switches stay editable — the preferences are display state, not query state.
+  if (ImGui::BeginPopup("map_layer_switches")) {
+    const SurveyOverlayCache& cache = RefreshSurveyOverlayCache(state.analysis.survey);
+    const SurveyOverviewModel& model = cache.model;
+    const SurveyOverlayFacts& facts = cache.facts;
+    struct LayerRow {
+      const char* name;
+      const char* base;  // the storage key pair's base ("ov_<group>")
+      SurveyLayerGate* gate;
+      const char* absence;  // why this group cannot draw on THIS document; nullptr = has payload
+    };
+    const char* no_document = model.valid ? nullptr : "no document";
+    const char* reach_absence =
+        model.valid ? (facts.reach_intervals.empty() ? "no support intervals" : nullptr) : no_document;
+    const char* edge_absence = model.valid ? (facts.edges.empty() ? "no positioned edge" : nullptr) : no_document;
+    bool points_available = false;
+    for (const SurveyObjectRow& row : model.objects) {
+      if (row.position_available) {
+        points_available = true;
+        break;
+      }
+    }
+    const char* points_absence = model.valid ? (points_available ? nullptr : "no positioned objects") : no_document;
+    const bool chromatic_available =
+        (model.dispersion.available && model.dispersion.min_row_available) ||
+        (model.diagnose.available && model.diagnose.position_available && model.diagnose.visible != 0);
+    const char* chromatic_absence =
+        model.valid ? (chromatic_available ? nullptr : "no chromatic positions") : no_document;
+    const char* tir_absence = model.valid ? (facts.tir_turns.empty() ? "no visible turns" : nullptr) : no_document;
+    const LayerRow rows[5] = {
+      { "Support range", "ov_reach", &gates.reach, reach_absence },
+      { "Sharp edges", "ov_edge", &gates.edge, edge_absence },
+      { "Point images", "ov_points", &gates.points, points_absence },
+      { "Red-blue shift", "ov_chromatic", &gates.chromatic, chromatic_absence },
+      { "Reflection turns", "ov_tir", &gates.tir, tir_absence },
+    };
+    for (const LayerRow& row : rows) {
+      // Read and write share ONE key spelling each (the entry read above): no ID-scope trickery —
+      // the graphics box's visible label is unique (the group's name), the labels box carries the
+      // group's base in its addressing suffix.
+      const ImGuiID g_key = ImGui::GetID(row.base);
+      const std::string l_id = std::string("##") + row.base + "_labels";
+      bool g = row.gate->graphics;
+      if (ImGui::Checkbox(row.name, &g)) {
+        row.gate->graphics = g;
+        storage->SetBool(g_key, g);
+      }
+      if (ImGui::IsItemHovered()) {
+        SetWrappedTooltip("Draw this group's ink.");
+      }
+      bool l = row.gate->labels;
+      ImGui::SameLine();
+      if (ImGui::Checkbox(l_id.c_str(), &l)) {
+        row.gate->labels = l;
+        storage->SetBool(ImGui::GetID(l_id.c_str()), l);
+      }
+      if (ImGui::IsItemHovered()) {
+        SetWrappedTooltip("Show this group's readout labels. Hiding labels never hides the ink.");
+      }
+      if (row.absence != nullptr) {
+        ImGui::SameLine();
+        ImGui::TextDisabled("%s", row.absence);
+      }
+    }
+    // The region-shading sub-item: a separate switch by design (the plan's 正交 rule), and an
+    // honest absence today — no regional-flux payload exists, so the switch stands disabled
+    // rather than pretending a toggle with no consumer.
+    ImGui::BeginDisabled();
+    bool region_shading = false;
+    ImGui::Checkbox("Region shading##layer_region", &region_shading);
+    ImGui::EndDisabled();
+    if (ImGui::IsItemHovered()) {
+      SetWrappedTooltip(
+          "Unavailable: no regional-flux payload exists yet. The turn references "
+          "above are angular-distance references, not an area claim.");
+    }
+    ImGui::EndPopup();
+  }
 
   const float canvas_avail_w = ImGui::GetContentRegionAvail().x;
   const float canvas_avail_h = ImGui::GetContentRegionAvail().y;
@@ -1610,7 +1929,7 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
     DrawFrameAnchors(dl, view, anchor_info, pic_min, pic_px, &legend);
   }
   if (overlays) {
-    DrawSurveyOverlays(dl, state, view, pic_min, pic_px, &legend);
+    DrawSurveyOverlays(dl, state, view, pic_min, pic_px, &legend, gates);
   }
 
   float marker_px = -1.0f;
@@ -2165,6 +2484,38 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
           ImGui::GetFrameHeight(), 0.0f, 0.0f);
       ImGui::TextWrapped("%s", kind.c_str());
     }
+    // The three arc layers' entries: one ink, named by owner (the layers differ by name, never by
+    // hue — the map's colour vocabulary stays one semantics one entry). The full-range form drew
+    // text, so its entry carries text and no arc icon.
+    const auto arc_icon = []() {
+      DrawLegendIconSlot(
+          [legend_dl = ImGui::GetWindowDrawList(), p = ImGui::GetCursorScreenPos()]() {
+            const ImVec2 c(p.x + ImGui::GetFrameHeight() * 0.5f - UiPx(3.0f), p.y + ImGui::GetTextLineHeight() * 0.5f);
+            legend_dl->AddCircle(c, UiPx(4.0f), kSurveyArcInk, 0, UiPx(1.2f));
+          },
+          ImGui::GetFrameHeight(), 0.0f, 0.0f);
+    };
+    if (legend.reach_bounds) {
+      ImGui::Bullet();
+      if (legend.reach_full_range_text) {
+        ImGui::TextWrapped("support range — full 0–180° (text, no bounds)");
+      } else {
+        arc_icon();
+        ImGui::TextWrapped("support range — %d bound%s", legend.reach_bound_count,
+                           legend.reach_bound_count == 1 ? "" : "s");
+      }
+    }
+    if (legend.edge_arcs) {
+      ImGui::Bullet();
+      arc_icon();
+      ImGui::TextWrapped("sharp edge%s", legend.edge_shared ? " — one stroke shared with the support range" : "");
+    }
+    if (legend.tir_turns) {
+      ImGui::Bullet();
+      arc_icon();
+      ImGui::TextWrapped("internal-reflection turns — %d turn pair%s", legend.tir_turn_count,
+                         legend.tir_turn_count == 1 ? "" : "s");
+    }
     if (legend.dispersion_red || legend.dispersion_blue) {
       ImGui::Bullet();
       if (legend.dispersion_red && legend.dispersion_blue) {
@@ -2214,6 +2565,21 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
     if (FoldOpen(kMapLegendExplanationsLabel, "map_legend")) {
       if (legend.anchor_sun) {
         ImGui::TextWrapped("sun marker — zero deviation");
+      }
+      if (legend.reach_bounds) {
+        ImGui::TextWrapped(
+            "support range — the delivered support intervals' bounds, angular-distance references at the survey's own "
+            "wavelength: where the class can light, not a glowing ring; a full 0–180° range states itself in text");
+      }
+      if (legend.edge_arcs) {
+        ImGui::TextWrapped(
+            "sharp edge — the edge card's position at the deviation it names; dashed when the claim has not concluded; "
+            "a stroke shared with the support range carries both owners' names here");
+      }
+      if (legend.tir_turns) {
+        ImGui::TextWrapped(
+            "internal-reflection turns — the visible TIR discriminant feature's representative angular distances at "
+            "the two reference wavelengths; a reference pair, not a whole-circle colour claim");
       }
       if (!legend.object_kinds.empty()) {
         ImGui::TextWrapped("each kind's marker — the survey's located conclusion, at the position the card names");

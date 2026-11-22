@@ -1,8 +1,12 @@
 #include "gui/analyze_overview.hpp"
 
+#include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdarg>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <string>
 
 #include "gui/analyze_ui_widgets.hpp"  // DisabledWrappedText — the wrapped disabled-colour pair
@@ -376,6 +380,138 @@ std::string SurveyTextString(const LUMICE_PathText& text) {
     return {};
   }
   return std::string(text.data, text.length);
+}
+
+// ---- The map overlay facts builder -------------------------------------------------------------------
+
+namespace {
+
+// The TIR turn's source grammar, the one the engine writes (survey_t1's MarginName):
+// `internal_<n>_tir_discriminant`. Anything else is not an internal-reflection turn the map can
+// name — no fuzzy matching, no substring guessing (a wrong face number misattributes the event).
+bool ParseTirTurnSource(const std::string& source, int* face) {
+  constexpr const char* kPrefix = "internal_";
+  constexpr const char* kSuffix = "_tir_discriminant";
+  if (source.size() <= std::strlen(kPrefix) + std::strlen(kSuffix)) {
+    return false;
+  }
+  if (source.compare(0, std::strlen(kPrefix), kPrefix) != 0 ||
+      source.compare(source.size() - std::strlen(kSuffix), std::strlen(kSuffix), kSuffix) != 0) {
+    return false;
+  }
+  const std::string middle =
+      source.substr(std::strlen(kPrefix), source.size() - std::strlen(kPrefix) - std::strlen(kSuffix));
+  if (middle.empty() ||
+      !std::all_of(middle.begin(), middle.end(), [](unsigned char c) { return std::isdigit(c) != 0; })) {
+    return false;
+  }
+  *face = std::atoi(middle.c_str());
+  return true;
+}
+
+}  // namespace
+
+SurveyOverlayFacts BuildSurveyOverlayFacts(const LUMICE_PathSurvey& result) {
+  SurveyOverlayFacts facts;
+  // The reach layer reads every delivered support interval, whichever object carries them (the
+  // reader is the gate — no second kind table of ours), then merges the document's own adjacency:
+  // an upper equal to the next lower is one continuous range, so no unreachable gap is invented
+  // between exactly-touching intervals (C01's two intervals meet at their shared endpoint).
+  std::vector<SurveyOverlayFacts::ReachInterval> raw;
+  LUMICE_PathSurveyInfo info{};
+  info.struct_size = sizeof(info);
+  if (LUMICE_PathSurveyGetInfo(&result, &info) == LUMICE_PATH_READ_OK) {
+    for (size_t i = 0; i < info.object_count; ++i) {
+      LUMICE_PathSurveySupport support{};
+      support.struct_size = sizeof(support);
+      if (LUMICE_PathSurveyGetSupport(&result, i, &support) != LUMICE_PATH_READ_OK) {
+        continue;
+      }
+      for (size_t k = 0; k < support.interval_count; ++k) {
+        LUMICE_PathSurveyInterval interval{};
+        interval.struct_size = sizeof(interval);
+        if (LUMICE_PathSurveyGetSupportInterval(&result, i, k, &interval) != LUMICE_PATH_READ_OK) {
+          continue;
+        }
+        raw.push_back({ interval.lower_deg, interval.upper_deg });
+      }
+    }
+  }
+  if (!raw.empty()) {
+    std::sort(raw.begin(), raw.end(),
+              [](const SurveyOverlayFacts::ReachInterval& a, const SurveyOverlayFacts::ReachInterval& b) {
+                return a.lower_deg < b.lower_deg;
+              });
+    SurveyOverlayFacts::ReachInterval merged = raw.front();
+    for (size_t i = 1; i < raw.size(); ++i) {
+      if (raw[i].lower_deg == merged.upper_deg) {
+        // Exact adjacency (the document's own numbers, no epsilon): one continuous range.
+        merged.upper_deg = std::max(merged.upper_deg, raw[i].upper_deg);
+      } else if (raw[i].lower_deg > merged.upper_deg) {
+        facts.reach_intervals.push_back(merged);
+        merged = raw[i];
+      } else {
+        // Overlapping deliveries: the union's outer bound, never a fabricated interior edge.
+        merged.upper_deg = std::max(merged.upper_deg, raw[i].upper_deg);
+      }
+    }
+    facts.reach_intervals.push_back(merged);
+    facts.reach_full_range = facts.reach_intervals.size() == 1 && facts.reach_intervals.front().lower_deg <= 0.0 &&
+                             facts.reach_intervals.front().upper_deg >= 180.0;
+  }
+  // The edge layer reads each delivered edge card. The refused cards draw no arc (the conclusions'
+  // rule); an unevaluated-but-delivered position draws the weakened dashed form (its claim did
+  // not conclude); certified/finite draw solid.
+  if (LUMICE_PathSurveyGetInfo(&result, &info) == LUMICE_PATH_READ_OK) {
+    for (size_t i = 0; i < info.object_count; ++i) {
+      LUMICE_PathSurveyObject obj{};
+      obj.struct_size = sizeof(obj);
+      if (LUMICE_PathSurveyGetObject(&result, i, &obj) != LUMICE_PATH_READ_OK ||
+          obj.kind != LUMICE_PATH_SURVEY_CAUSTIC_EDGE || obj.state == LUMICE_PATH_STATE_REFUSED) {
+        continue;
+      }
+      LUMICE_PathSurveyEdge edge{};
+      edge.struct_size = sizeof(edge);
+      if (LUMICE_PathSurveyGetEdge(&result, i, &edge) != LUMICE_PATH_READ_OK) {
+        continue;
+      }
+      SurveyOverlayFacts::EdgeArc arc;
+      arc.position_deg = edge.position_deg;
+      arc.coincident_with_support = edge.coincident_with_support != 0;
+      arc.certificate_available = edge.certificate_available != 0;
+      arc.measure_limit_available = edge.measure_limit_available != 0;
+      arc.measure_limit = edge.measure_limit;
+      arc.concluded = obj.state == LUMICE_PATH_STATE_CERTIFIED || obj.state == LUMICE_PATH_STATE_FINITE;
+      facts.edges.push_back(arc);
+    }
+  }
+  // The turn layer reads the diagnose features the document delivered: only a feature the engine
+  // names visible AND names as an internal-reflection discriminant is a drawable turn. The
+  // TIR quantity/share readers are calibers — they never enter this builder (no coordinates live
+  // there, and none are invented).
+  LUMICE_PathDiagnose diagnose{};
+  diagnose.struct_size = sizeof(diagnose);
+  if (LUMICE_PathSurveyGetDiagnose(&result, &diagnose) == LUMICE_PATH_READ_OK) {
+    for (size_t i = 0; i < diagnose.feature_count; ++i) {
+      LUMICE_PathDiagnoseFeature feature{};
+      feature.struct_size = sizeof(feature);
+      if (LUMICE_PathSurveyGetDiagnoseFeature(&result, i, &feature) != LUMICE_PATH_READ_OK || feature.visible == 0) {
+        continue;
+      }
+      const std::string source = SurveyTextString(feature.source);
+      int face = -1;
+      if (!ParseTirTurnSource(source, &face)) {
+        continue;
+      }
+      SurveyOverlayFacts::TirTurn turn;
+      turn.source = source;
+      turn.face = face;
+      turn.delta_red_deg = feature.delta_red_deg;
+      turn.delta_blue_deg = feature.delta_blue_deg;
+      facts.tir_turns.push_back(std::move(turn));
+    }
+  }
+  return facts;
 }
 
 const char* SurveyStateName(int state) {

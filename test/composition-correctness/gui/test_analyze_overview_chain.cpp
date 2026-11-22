@@ -398,4 +398,67 @@ TEST(AnalyzeOverviewChain, DeadlineDocumentKeepsItsArmAndItsProducedLegs) {
   }
 }
 
+// The map overlay layers' display facts (the layer plan's Step 1), read back from the real C01
+// 3-5 document — the reach/edge payloads the map's arc layers draw. Every number here is a
+// typed reader's own: the merged range's endpoints trace to LUMICE_PathSurveyGetSupportInterval,
+// the edge's coincidence flag to the card's own declaration, and the turn positions to the
+// diagnose features' visible discriminants — never to the TIR quantity/share calibers.
+TEST(AnalyzeOverviewChain, OverlayFactsReadBackSupportEdgeAndTurns) {
+  const auto scene = SceneFromConfig("raypath_feature_random_regular.json");
+  const auto survey = RunSurvey(scene.get(), { 3, 5 });
+  ASSERT_NE(survey.get(), nullptr);
+
+  const SurveyOverlayFacts facts = BuildSurveyOverlayFacts(*survey);
+
+  // The reach layer: C01's two delivered intervals meet at their shared endpoint, so the merged
+  // reach is ONE continuous range — no unreachable gap invented between exactly-touching
+  // intervals, and not the full [0, 180] range (the bounds draw as arcs, not as the text form).
+  ASSERT_EQ(facts.reach_intervals.size(), 1u);
+  EXPECT_FALSE(facts.reach_full_range);
+  EXPECT_GT(facts.reach_intervals.front().lower_deg, 21.0);
+  EXPECT_LT(facts.reach_intervals.front().lower_deg, 23.0);
+  EXPECT_GT(facts.reach_intervals.front().upper_deg, 43.5);
+  EXPECT_LE(facts.reach_intervals.front().upper_deg, 180.0);
+
+  // The edge layer: the class's certified caustic edge, whose card declares the coincidence with
+  // support — the flag the map's shared stroke keys on, passing through verbatim.
+  ASSERT_GE(facts.edges.size(), 1u);
+  EXPECT_TRUE(facts.edges.front().coincident_with_support);
+  EXPECT_TRUE(facts.edges.front().certificate_available);
+  EXPECT_TRUE(facts.edges.front().concluded);
+  EXPECT_NEAR(facts.edges.front().position_deg, facts.reach_intervals.front().lower_deg, 0.05)
+      << "the shared stroke's geometry: the edge sits at the support's inner bound";
+
+  // The turn layer: whatever visible internal-reflection discriminants the document carries,
+  // each is a parsed turn (a face number from the source grammar, positions inside the axis) —
+  // and the TIR quantity/share readers never produce a position on their own (a share without a
+  // visible discriminant feature leaves the layer empty, not decorated).
+  for (const SurveyOverlayFacts::TirTurn& turn : facts.tir_turns) {
+    EXPECT_GE(turn.face, 0) << turn.source;
+    EXPECT_GT(turn.delta_red_deg, 0.0);
+    EXPECT_LT(turn.delta_red_deg, 180.0);
+    EXPECT_GT(turn.delta_blue_deg, 0.0);
+    EXPECT_LT(turn.delta_blue_deg, 180.0);
+  }
+  bool has_visible_tir_feature = false;
+  LUMICE_PathDiagnose diagnose{};
+  diagnose.struct_size = sizeof(diagnose);
+  if (LUMICE_PathSurveyGetDiagnose(survey.get(), &diagnose) == LUMICE_PATH_READ_OK) {
+    for (size_t i = 0; i < diagnose.feature_count; ++i) {
+      LUMICE_PathDiagnoseFeature feature{};
+      feature.struct_size = sizeof(feature);
+      if (LUMICE_PathSurveyGetDiagnoseFeature(survey.get(), i, &feature) != LUMICE_PATH_READ_OK ||
+          feature.visible == 0) {
+        continue;
+      }
+      const std::string source = SurveyTextString(feature.source);
+      if (source.rfind("internal_", 0) == 0 && source.find("_tir_discriminant") != std::string::npos) {
+        has_visible_tir_feature = true;
+      }
+    }
+  }
+  EXPECT_EQ(facts.tir_turns.empty(), !has_visible_tir_feature)
+      << "the turn layer reads exactly the visible internal-reflection discriminants";
+}
+
 }  // namespace lumice::gui

@@ -51,6 +51,16 @@ inline constexpr unsigned int kReadoutBackingInk = (170u << 24) | (20u << 16) | 
 // the test), pinned like the pair above.
 inline constexpr unsigned int kProfileReadingColour = (255u << 24) | (182u << 16) | (114u << 8) | 244u;
 
+// The survey reference arcs' ink (the reach bounds, the sharp edges and the internal-reflection
+// turns all draw in it): the anchors' neutral grey at conversational alpha — a fixed-λ reference
+// structure, deliberately NOT a chromatic hue (the red-blue group's ink is the chromatic pair
+// alone, so the group's negative control cannot be defeated by an arc), and deliberately ONE
+// ink for all three layers: the layers differ by OWNER (legend names, label prefixes), never by
+// hue, so toggling a group never repaints a shared stroke and no arc can borrow another layer's
+// look. Same discipline as the pair above: one value, two consumers (the draw and the test), a
+// compile-time pin against the original literal.
+inline constexpr unsigned int kSurveyArcInk = (215u << 24) | (215u << 16) | (205u << 8) | 200u;
+
 // ---- Session-facing types -------------------------------------------------------------------------
 
 // The user's sky-point intent (AC3): WHERE in the sky they are asking about, independent of any
@@ -186,6 +196,16 @@ struct OverlayLegendState {
                                            // so the icon reads what actually drew
   bool verdict_anchor_dashed = false;      // the drawn form's weakening — the icon carries it too
   bool sky_point = false;
+  // The five layer groups' arcs, what the frame actually submitted (a legend describes the drawn
+  // picture — a group whose gate is off, or whose payloads left the view, draws no entry).
+  bool reach_bounds = false;           // any support-range bound arc, or the full-range text label, drew
+  int reach_bound_count = 0;           // how many bounds submitted (inner/outer/gap, or 1 for the text)
+  bool reach_full_range_text = false;  // the reach drew its full-range TEXT, not bound arcs — the
+                                       // legend entry names the form it carries
+  bool edge_arcs = false;              // any sharp-edge arc submitted (a shared stroke counts for the edge too)
+  bool edge_shared = false;            // the drawn edge arc is one stroke shared with a support bound
+  bool tir_turns = false;              // any internal-reflection turn pair drew
+  int tir_turn_count = 0;              // how many turns drew (one entry per turn pair)
 };
 
 // Last actually drawn overlay legend, not a second camera/availability model.
@@ -228,6 +248,9 @@ struct VerdictAnchorInput {
   float pic_px = 1.0f;                             // the canvas width in points (the walk's disk)
   SkySunAnchor sun;                                // the sun the delta quotes (SkySunAnchorFor's read)
   bool overlays = true;                            // the sole analysis-ink gate
+  bool label_wanted = true;                        // the readout label submits only when the labels
+                                                   // toggle is on; the arc/legend bit draws either way
+                                                   // (labels annotate the ink, they do not gate it)
   OverlayLegendState* legend = nullptr;            // the frame's legend accounting; null = no legend
   std::vector<MapReadoutLabel>* labels = nullptr;  // production collects before laying out; null draws alone
 };
@@ -255,6 +278,59 @@ struct MapObservationTiming {
   int height = 0;
 };
 MapObservationTiming LastMapObservationTiming();
+
+// ---- The survey reference arcs (the layer plan's reach / edge / turn groups) ------------------------
+
+struct SurveyOverlayFacts;  // gui/analyze_overview.hpp — the arcs' payload facts, by reference
+
+// The five layer groups' session switches, read from the map window's storage each frame (the
+// T-session display preferences; the master Overlays gate is applied by the caller and lives in
+// the same storage). One group, one pair — the Render habit's graphics/labels split at the
+// group's granularity: the labels box shows the group's readout labels without touching its ink,
+// and the graphics box removes ink and labels together (nothing to annotate). Defaults all on:
+// a group with no payload draws nothing anyway, so the defaults never fabricate ink.
+struct SurveyLayerGate {
+  bool graphics = true;
+  bool labels = true;
+};
+struct SurveyLayerGates {
+  SurveyLayerGate reach;      // support-range bounds
+  SurveyLayerGate edge;       // sharp-edge positions
+  SurveyLayerGate points;     // positioned object markers (their text channel is the hover tooltip)
+  SurveyLayerGate chromatic;  // the red-blue group: the dispersion pair and the verdict anchor
+  SurveyLayerGate tir;        // internal-reflection turn references
+};
+
+// The reference arcs' caller-side geometry and gates — the same mirror discipline as
+// VerdictAnchorInput's projection quintet (a new MapCanvasProjection field must be added to BOTH
+// sides or the rebuilt view silently defaults).
+struct ReferenceArcInput {
+  const ViewProjection* camera = nullptr;
+  int width_px = 1;
+  int height_px = 1;
+  float width_pt = 1.0f;
+  float height_pt = 1.0f;
+  float pic_min_x = 0.0f;
+  float pic_min_y = 0.0f;
+  float pic_px = 1.0f;
+  SkySunAnchor sun;
+  SurveyLayerGate reach;                 // the group gates (the master Overlays gate is the caller's, outside
+  SurveyLayerGate edge;                  // this pass); a group's labels bit shows its readout labels without
+  SurveyLayerGate tir;                   // touching its ink
+  OverlayLegendState* legend = nullptr;  // the frame's legend accounting; null = no legend
+  std::vector<MapReadoutLabel>* labels_sink = nullptr;  // production collects into the frame's set
+};
+
+// The reach/edge/turn arcs, drawn in the ONE shared neutral ink (kSurveyArcInk). The shared
+// stroke (the layer plan's AC2): an edge whose card declares coincidence with support takes its
+// NEARER interval endpoint's bound as the same geometry — with both gates on, one walk submits
+// the stroke and both owners' names stand in the legend; each gate alone keeps the line; only
+// both off (or no payloads) submit nothing. A non-coincident edge always walks its own circle —
+// coincidental on-screen overlap merges nothing. Honesty: bounds at the degenerate deltas (0 —
+// the sun's own anchor — and 180) submit no walk; the full-range reach draws its text statement,
+// not a circle pair; an unconcluded edge draws the dashed form. Labels follow the same topmost
+// anchor and "arc in view" precedents as the dispersion pair.
+void DrawReferenceArcs(ImDrawList* dl, const SurveyOverlayFacts& facts, const ReferenceArcInput& in);
 
 // ---- The reference profile's hover device (contract §16.1.3's extension) ----------------------------
 

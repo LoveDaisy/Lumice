@@ -240,6 +240,65 @@ struct SurveyOverviewModel {
 // never throws, never computes optics.
 SurveyOverviewModel BuildSurveyOverviewModel(const LUMICE_PathSurvey& result);
 
+// The map overlay layers' display facts (the five-group layer plan): the positional payload the
+// map's reach/edge/TIR layers draw, read back through the typed readers — a second pure read of
+// the same document, NOT an extension of SurveyOverviewModel (the overview's consumers are the
+// text hosts; their rows and ordering do not change for the map's sake). Read once per adopted
+// identity alongside the overview model, never per frame or per toggle (display switches filter
+// these facts; they do not re-read them).
+//
+// Honesty rules, the builder's own: a refused or undelivered reader writes "not available", never
+// a fabricated position (an interval list arrives only from LUMICE_PathSurveyGetSupport); the
+// TIR quantity/share readers are calibers, not locators, and no coordinates ever come from them
+// — a turn's position exists only where a diagnose feature carries one; a feature the engine
+// names not visible, or one whose source is not an internal-reflection discriminant, is not a
+// turn the map can draw.
+struct SurveyOverlayFacts {
+  // The reach layer: every delivered support interval, adjacency-merged (an upper that equals the
+  // next lower is one continuous range — the document's own numbers, no epsilon of ours). Bounds
+  // are angular distances at the survey's reference wavelength; a range spanning [0, 180] draws as
+  // text, not as a circle pair.
+  struct ReachInterval {
+    double lower_deg = 0.0;
+    double upper_deg = 0.0;
+  };
+  std::vector<ReachInterval> reach_intervals;  // merged, ascending; empty = no delivered support
+  bool reach_full_range = false;               // the merged union covers [0, 180]
+
+  // The sharp-edge layer: each delivered edge card's position, with the claim's own honesty
+  // fields — the coincidence declaration and the certificate/measure-limit levels pass through
+  // verbatim; the layer never upgrades an evidence level.
+  struct EdgeArc {
+    double position_deg = 0.0;
+    bool coincident_with_support = false;  // the card's own declaration (the engine's tolerance,
+                                           // not one re-derived here)
+    bool certificate_available = false;
+    bool measure_limit_available = false;
+    double measure_limit = 0.0;
+    bool concluded = false;  // certified/finite state: solid; an unevaluated-but-delivered
+                             // position draws the weakened dashed form, a refused card no arc
+  };
+  std::vector<EdgeArc> edges;
+
+  // The internal-reflection-turn layer: the diagnose features the document itself marks visible
+  // and names as internal-reflection discriminants (source syntax `internal_<n>_tir_discriminant`).
+  // The two deltas are the turn's representative angular distances at the two reference
+  // wavelengths — a pair of references, never a whole-circle colour claim; the face number comes
+  // from the source's own grammar, unparsed names stay verbatim with face -1.
+  struct TirTurn {
+    std::string source;  // the engine's own source string, verbatim
+    int face = -1;       // parsed from internal_<n>_tir_discriminant; -1 when not parseable
+    double delta_red_deg = 0.0;
+    double delta_blue_deg = 0.0;
+  };
+  std::vector<TirTurn> tir_turns;
+};
+
+// The pure half of the map's overlay facts: survey document in, facts out. Reads the support,
+// edge and diagnose-feature readers; never throws, never computes optics, never derives a
+// position the readers did not deliver.
+SurveyOverlayFacts BuildSurveyOverlayFacts(const LUMICE_PathSurvey& result);
+
 // A fold group's header: the display spelling comes from the ONE label constant; the ID suffix
 // keeps same-prefix groups apart inside one window (the Raypath view hosts the survey answer and
 // the point answer side by side, each with its own evidence/diagnostics pair — identical visible
