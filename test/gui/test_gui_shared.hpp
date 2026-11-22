@@ -682,6 +682,7 @@ void RegisterExportPreviewTests(ImGuiTestEngine* engine);
 void RegisterScreenshotExportOptionsTests(ImGuiTestEngine* engine);
 void RegisterPreviewPixelTests(ImGuiTestEngine* engine);
 void RegisterPreviewTextureTests(ImGuiTestEngine* engine);
+void RegisterFullArchiveAcceptanceTests(ImGuiTestEngine* engine);
 void RegisterPreviewBackgroundTests(ImGuiTestEngine* engine);
 void RegisterPreviewGlobeBackFadeTests(ImGuiTestEngine* engine);
 void RegisterPreviewPrintModeTests(ImGuiTestEngine* engine);
