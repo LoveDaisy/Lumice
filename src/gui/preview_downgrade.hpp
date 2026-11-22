@@ -33,6 +33,9 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <vector>
+
+#include "gui/xyz_half_codec.hpp"
 
 namespace lumice::gui {
 
@@ -121,6 +124,17 @@ inline int DowngradeXyzPlane(const float* src, int w, int h, int steps, float* s
   *out_w = cw;
   *out_h = ch;
   return applied;
+}
+
+// The canonical-half input (plan 814 §3.3): quantize-then-dequantize through THE one codec the
+// .lmc writer shares, so every downgrade candidate — live or reopened — is derived from the same
+// canonical values in the same order. Lives beside the filter because the ladder is its only
+// consumer; the codec itself stays free of ladder semantics.
+inline void CanonicalizeXyzPlane(const float* src, size_t component_count, float* dst) {
+  const float scale = ComputeXyzHalfScale(src, component_count);
+  std::vector<uint16_t> half(component_count);
+  QuantizeXyzToHalf(src, component_count, scale, half.data());
+  DequantizeHalfToXyz(half.data(), component_count, scale, dst);
 }
 
 }  // namespace lumice::gui

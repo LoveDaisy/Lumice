@@ -410,6 +410,10 @@ static std::shared_ptr<const TexturePayload> g_last_uploaded_payload;
 // reason, and superseded the moment any upload succeeds (the displayed payload is then the
 // authoritative source and this holder releases its frame).
 static std::shared_ptr<const TexturePayload> g_pending_upload_source;
+// The retained source's own poller serial, kept beside it: the retry's success commit must
+// advance the exact-once cursor to THIS frame's serial (the incident record's serial is the
+// FIRST failure's, which lags once later frames update the retained source).
+static unsigned long long g_pending_upload_serial = 0;
 
 // The recovery ladder's runtime state (814 §3.2/§3.4). Machine-resource memory, deliberately
 // app-side rather than GuiState: it is runtime pause/strategy state like the latch, not document
@@ -443,6 +447,11 @@ struct PreviewRecoveryState {
   unsigned long long texture_serial = 0;
 };
 static PreviewRecoveryState g_recovery;
+
+// Forward declaration: the recovery ladder's walk (defined beside the other upload machinery)
+// is also the document-open path's recovery cycle, and ResetFrontendState runs long before the
+// definition in this file.
+static int WalkXyzRecoveryLadder(const float* xyz, int width, int height, unsigned long long texture_serial);
 
 // Refresh the renderer's CPU-side mirror with the linear XYZ energy behind the picture on screen,
 // so SaveLmcFile writes it out. No exposure, no sky, no vignetting: all three are settings the
@@ -739,24 +748,26 @@ void DoExportDualFisheyeEqualAreaPng() {
   ConfigureDualFisheyeExportParams(params);
 
   // A degraded display would only upsample: the export renders from the FULL source at the
-  // original size through the transient renderer, or fails explicitly (plan 814 §3.3).
+  // original size through the transient renderer, or fails explicitly (plan 814 §3.3). The PNG
+  // must be written at the size actually rendered — the source extent in the degraded branch,
+  // the display extent otherwise; writing the display size over a full-source render truncates.
   std::vector<unsigned char> rgba;
+  int out_w = w;
+  int out_h = h;
   if (IsDisplayDegradedAgainstSource()) {
-    int src_w = 0;
-    int src_h = 0;
-    PreviewSourceExtent(&src_w, &src_h);
-    rgba = RenderExportFromFullSource(params, src_w, src_h);
+    PreviewSourceExtent(&out_w, &out_h);
+    rgba = RenderExportFromFullSource(params, out_w, out_h);
     if (rgba.empty()) {
       return;  // the failure is already logged; no file may be written
     }
   } else {
-    rgba = RenderExportToRgba(g_preview, params, w, h);
+    rgba = RenderExportToRgba(g_preview, params, out_w, out_h);
   }
   if (rgba.empty()) {
-    GUI_LOG_ERROR("[GUI] Export dual fisheye: RenderExportToRgba empty (size={}x{})", w, h);
+    GUI_LOG_ERROR("[GUI] Export dual fisheye: RenderExportToRgba empty (size={}x{})", out_w, out_h);
     return;
   }
-  if (!WriteRgbaBufferToPng(path, w, h, rgba)) {
+  if (!WriteRgbaBufferToPng(path, out_w, out_h, rgba)) {
     GUI_LOG_ERROR("[GUI] Export dual fisheye: PNG write failed path={}", PathToU8(path));
     return;
   }
@@ -788,7 +799,8 @@ void DoExportEquirectangularPng() {
   ConfigureEquirectExportParams(params);
 
   // A degraded display would only upsample (plan 814 §3.3): the export renders from the FULL
-  // source at its own 2:1 size, or fails explicitly.
+  // source at its own 2:1 size, or fails explicitly. The PNG is written at the size actually
+  // rendered.
   std::vector<unsigned char> rgba;
   if (IsDisplayDegradedAgainstSource()) {
     int src_w = 0;
@@ -803,6 +815,8 @@ void DoExportEquirectangularPng() {
     if (rgba.empty()) {
       return;  // the failure is already logged; no file may be written
     }
+    dst_w = 2 * src_short;
+    dst_h = src_short;
   } else {
     rgba = RenderExportToRgba(g_preview, params, dst_w, dst_h);
     if (rgba.empty()) {
@@ -1045,7 +1059,25 @@ void ResetFrontendState(GuiState& state, FrontendResetReason reason, const LmcTe
       g_preview.ClearTexture();
       switch (baked->mode) {
         case PreviewRenderer::TextureMode::kXyz: {
-          const UploadResult upload_result = g_preview.UploadXyzTexture(baked->xyz.data(), baked->width, baked->height);
+          // The open walks the SAME recovery ladder a live upload walks: the reopened document
+          // is on the same constrained machine, and its file bytes are as good a ladder input as
+          // a poll frame — the codec half the file stores quantizes back to exactly the
+          // canonical values the ladder's prefilter consumes. One authorized cycle;
+          // a walk that ends with nothing displayed lands in the same explicit unavailable state
+          // as a live failure, with the file's own source retained below either way.
+          UploadResult upload_result = g_preview.UploadXyzTexture(baked->xyz.data(), baked->width, baked->height);
+          int open_tier = 0;
+          if (!upload_result.ok) {
+            open_tier = WalkXyzRecoveryLadder(baked->xyz.data(), baked->width, baked->height, /*texture_serial=*/0);
+            upload_result.ok = open_tier >= 0;
+            if (open_tier > 0) {
+              // The tier memory belongs to this document's session: a live frame arriving later
+              // starts from what the open established instead of re-probing the full ladder.
+              g_recovery.xyz_tier = open_tier;
+              GUI_LOG_INFO("[GUI] Open: recovery ladder established tier {} ({}x{})", open_tier, baked->width,
+                           baked->height);
+            }
+          }
           // The mirror too, so a Save of this document with no run in between writes the same
           // section back out rather than whatever the previous document left in the mirror. The
           // mirror is the SOURCE fact: it holds the file's bytes whether or not the GPU accepted
@@ -1128,6 +1160,7 @@ void ResetFrontendState(GuiState& state, FrontendResetReason reason, const LmcTe
     // nothing about what the next one will.
     state.upload_latched = false;
     g_pending_upload_source.reset();
+    g_pending_upload_serial = 0;
     g_recovery.xyz_tier = 0;
     g_recovery.exhausted = false;
     g_recovery.notice_dismissed = false;
@@ -1892,6 +1925,7 @@ bool DoRun(bool user_initiated) {
     // ladder's established tier resets with it: the new run walks afresh, one bounded cycle, and
     // whatever tier it needs it re-establishes there.
     g_pending_upload_source.reset();
+    g_pending_upload_serial = 0;
     g_recovery.xyz_tier = 0;
     g_recovery.exhausted = false;
     // Intent + epoch readback (I1): the synchronous commit above has already minted (or reused)
@@ -2218,30 +2252,35 @@ static void RecordUploadIncident(const UploadResult& result, int tier_tried, uns
 // resolution from client memory (no staging), tier >= 2 = prefiltered 2^(tier-1) per axis from
 // the ORIGINAL floats, still client memory. Each candidate is attempted at most once per cycle;
 // the prefilter cost is paid only on the recovery path, never on a healthy full-size upload.
-static UploadResult UploadXyzAtTier(const TexturePayload& payload, int tier) {
+static UploadResult UploadXyzAtTier(const float* xyz, int width, int height, int tier) {
   if (tier <= 0) {
-    return g_preview.UploadXyzTexture(payload.xyz_buffer, payload.width, payload.height);
+    return g_preview.UploadXyzTexture(xyz, width, height);
   }
   if (tier == 1) {
-    return g_preview.UploadXyzTextureNoStaging(payload.xyz_buffer, payload.width, payload.height);
+    return g_preview.UploadXyzTextureNoStaging(xyz, width, height);
   }
   const int steps = tier - 1;
   int dst_w = 0;
   int dst_h = 0;
-  if (!DowngradedSize(payload.width, payload.height, steps, &dst_w, &dst_h)) {
+  if (!DowngradedSize(width, height, steps, &dst_w, &dst_h)) {
     // Past the ladder's end: nothing to try (the caller's cycle should have stopped already).
     UploadResult r;
     r.stage = UploadResult::Stage::kInvalidInput;
-    r.request_width = payload.width;
-    r.request_height = payload.height;
+    r.request_width = width;
+    r.request_height = height;
     return r;
   }
   std::vector<float> downgraded(static_cast<size_t>(dst_w) * dst_h * 3);
-  std::vector<float> scratch(static_cast<size_t>(payload.width / 2) * (payload.height / 2) * 3);
+  std::vector<float> scratch(static_cast<size_t>(width / 2) * (height / 2) * 3);
   int applied_w = 0;
   int applied_h = 0;
-  DowngradeXyzPlane(payload.xyz_buffer, payload.width, payload.height, steps, scratch.data(), downgraded.data(),
-                    &applied_w, &applied_h);
+  // Canonical-half input (plan 814 §3.3): the ladder's low-pass runs over the frame the .lmc
+  // codec would store — quantize-then-dequantize first, so a live frame's candidates and a
+  // reopened document's candidates are derived through the same canonical values and the same
+  // order, and the same-tier round trip stays on one input, not two nearly-equal ones.
+  std::vector<float> canonical(static_cast<size_t>(width) * height * 3);
+  CanonicalizeXyzPlane(xyz, static_cast<size_t>(width) * height * 3, canonical.data());
+  DowngradeXyzPlane(canonical.data(), width, height, steps, scratch.data(), downgraded.data(), &applied_w, &applied_h);
   return g_preview.UploadXyzTextureNoStaging(downgraded.data(), applied_w, applied_h);
 }
 
@@ -2250,10 +2289,10 @@ static UploadResult UploadXyzAtTier(const TexturePayload& payload, int tier) {
 // latches, marks the cycle exhausted, and the notice says the preview is unavailable until an
 // explicit retry or a new run. Finite by construction: the ladder ends at the smallest dual-disc
 // frame the projection can still carry (preview_downgrade.hpp), and each candidate is tried once.
-static int WalkXyzRecoveryLadder(const TexturePayload& payload, unsigned long long texture_serial) {
+static int WalkXyzRecoveryLadder(const float* xyz, int width, int height, unsigned long long texture_serial) {
   int first_fail_tier = -1;
   for (int tier = 0;; ++tier) {
-    const UploadResult r = UploadXyzAtTier(payload, tier);
+    const UploadResult r = UploadXyzAtTier(xyz, width, height, tier);
     if (r.ok) {
       return tier;
     }
@@ -2263,8 +2302,13 @@ static int WalkXyzRecoveryLadder(const TexturePayload& payload, unsigned long lo
       RecordUploadIncident(r, tier, texture_serial);
       first_fail_tier = tier;
     }
-    if (tier > 0 && !DowngradedSize(payload.width, payload.height, tier, nullptr, nullptr)) {
-      // The NEXT candidate would cross the floor: this was the last one.
+    // Termination: is there a NEXT candidate? DowngradedSize with steps = tier+1 asks exactly
+    // that (and must get REAL out-pointers — the null form is its "arguments invalid" refusal,
+    // not "no candidate"; a null call here made every reduced candidate unreachable and ended
+    // each walk after the two full-size tiers).
+    int next_w = 0;
+    int next_h = 0;
+    if (tier > 0 && !DowngradedSize(width, height, tier + 1, &next_w, &next_h)) {
       return -1;
     }
   }
@@ -2614,6 +2658,16 @@ void SyncFromPoller() {
   // document switch clears the latch explicitly in ResetFrontendState.
   const bool upload_latched =
       ShouldBlockUploadForLatch(g_state.upload_latched, g_state.upload_latch_epoch, g_state.committed_epoch);
+  // While latched, the fire gate below never runs — but the retained RETRY source must still
+  // track the newest qualifying frame (plan 814 §3.2: explicit retry uses "the retained newest
+  // qualifying source", which for a run that kept producing means the terminal frame, not the
+  // first mid-run failure). Pure bookkeeping: hold the newer payload, no GL call, no state
+  // commit.
+  if (upload_latched && payload != nullptr && snap->texture_serial != g_pending_upload_serial &&
+      snap->texture_serial != g_state.last_uploaded_texture_serial) {
+    g_pending_upload_source = payload;
+    g_pending_upload_serial = snap->texture_serial;
+  }
   if (!upload_latched &&
       ShouldFireCompositeUpload(*snap, g_state.last_uploaded_texture_serial, g_state.display_epoch_floor,
                                 show_composite, g_state.last_uploaded_as_composite)) {
@@ -2639,9 +2693,10 @@ void SyncFromPoller() {
         RecordUploadIncident(upload_result, /*tier_tried=*/0, snap->texture_serial);
       }
     } else if (g_recovery.xyz_tier > 0) {
-      upload_result = UploadXyzAtTier(*payload, g_recovery.xyz_tier);
+      upload_result = UploadXyzAtTier(payload->xyz_buffer, payload->width, payload->height, g_recovery.xyz_tier);
     } else {
-      const int tier = WalkXyzRecoveryLadder(*payload, snap->texture_serial);
+      const int tier =
+          WalkXyzRecoveryLadder(payload->xyz_buffer, payload->width, payload->height, snap->texture_serial);
       if (tier >= 0) {
         g_recovery.xyz_tier = tier;
         upload_result.ok = true;
@@ -2668,6 +2723,7 @@ void SyncFromPoller() {
       // retry ladder's input (explicit retry consumes it; Save falls back to it with clear
       // provenance), and the latch pauses auto-uploads for this generation.
       g_pending_upload_source = payload;
+      g_pending_upload_serial = snap->texture_serial;
       g_state.upload_latched = true;
       g_state.upload_latch_epoch = g_state.committed_epoch;
       GUI_LOG_ERROR(
@@ -2749,6 +2805,13 @@ void DismissPreviewRecoveryNotice() {
   g_recovery.notice_dismissed = true;
 }
 
+bool PreviewRecoveryRetryAvailable() {
+  // Exhausted AND a retained frame: after a recovered-but-degraded display the source was
+  // promoted to the accepted payload (nothing to retry — a new Run is what re-probes full
+  // resolution), so the button must not offer a no-op.
+  return g_recovery.exhausted && g_pending_upload_source != nullptr;
+}
+
 void RetryPreviewUpload() {
   if (g_pending_upload_source == nullptr) {
     // Nothing retained to re-attempt (the last upload succeeded, or no upload ever failed in
@@ -2764,19 +2827,44 @@ void RetryPreviewUpload() {
   g_recovery.exhausted = false;
   g_recovery.notice_dismissed = false;
   const TexturePayload& payload = *g_pending_upload_source;
-  const int tier = WalkXyzRecoveryLadder(payload, /*texture_serial=*/g_recovery.texture_serial);
-  if (tier < 0) {
+  UploadResult upload_result;
+  int tier = -1;
+  if (payload.is_composite) {
+    // A composite retry keeps its own display semantics: the composite bake is uint8 and the
+    // ladder's linear-radiance low-pass does not apply to it — one plain re-upload, success or
+    // the same latch as any other failure.
+    upload_result = g_preview.UploadRadianceTexture(payload.rgb_buffer, payload.width, payload.height);
+  } else {
+    tier = WalkXyzRecoveryLadder(payload.xyz_buffer, payload.width, payload.height,
+                                 /*texture_serial=*/g_pending_upload_serial);
+    upload_result.ok = tier >= 0;
+    upload_result.stage = tier >= 0 ? UploadResult::Stage::kNone : UploadResult::Stage::kInvalidInput;
+  }
+  if (!upload_result.ok) {
+    // The cycle ran out again: re-latch against the CURRENT generation, exactly as SyncFromPoller
+    // does — without this, the next ordinary poll would silently self-authorize yet another
+    // cycle, and the latch's one-cycle-per-authorization contract would be dead code.
     g_recovery.exhausted = true;
-    GUI_LOG_ERROR("[GUI] Preview retry: every recovery candidate failed again — preview stays unavailable");
+    g_state.upload_latched = true;
+    g_state.upload_latch_epoch = g_state.committed_epoch;
+    GUI_LOG_ERROR(
+        "[GUI] Preview retry: every recovery candidate failed again — preview stays unavailable, "
+        "auto-upload re-latched");
     return;
   }
   // The retained source is now the DISPLAYED frame: promote the held pointer through the same
-  // success shape SyncFromPoller uses, so the exposure state, the Save payload and the counters
-  // all describe the picture actually on screen. Move, not copy-then-reset: the frame's pixel
-  // storage lives exactly as long as its shared_ptr does.
-  g_recovery.xyz_tier = tier;
+  // success shape SyncFromPoller uses, INCLUDING the exact-once cursor and the display-mode
+  // record — without the cursor the poller's terminal frame (same serial) would be re-accepted
+  // on the next poll, and without the mode record a composite retry would misreport what mode
+  // produced the picture on screen. Move, not copy-then-reset: the frame's pixel storage lives
+  // exactly as long as its shared_ptr does.
+  g_recovery.xyz_tier = payload.is_composite ? 0 : tier;
+  const unsigned long long retried_serial = g_pending_upload_serial;
   g_last_uploaded_payload = g_pending_upload_source;
   g_pending_upload_source.reset();
+  g_pending_upload_serial = 0;
+  g_state.last_uploaded_as_composite = payload.is_composite;
+  g_state.last_uploaded_texture_serial = retried_serial;
   g_state.snapshot_intensity = payload.snapshot_intensity;
   g_state.snapshot_emitted_energy = payload.emitted_energy;
   g_state.effective_pixels = payload.effective_pixels;
@@ -2784,8 +2872,8 @@ void RetryPreviewUpload() {
   g_state.ev_auto = LUMICE_ComputeEvAuto(g_state.p99_raw_y, g_state.snapshot_intensity, g_state.target_white);
   g_state.texture_upload_count++;
   g_state.upload_latched = false;
-  GUI_LOG_INFO("[GUI] Preview retry: recovery succeeded at tier {} ({}x{})", tier,
-               payload.width >> (tier > 0 ? tier - 1 : 0), payload.height >> (tier > 0 ? tier - 1 : 0));
+  GUI_LOG_INFO("[GUI] Preview retry: recovery succeeded ({}x{}, {})", payload.width, payload.height,
+               payload.is_composite ? "composite" : "xyz ladder");
 }
 
 PreviewUploadIncident GetPreviewUploadIncident() {
