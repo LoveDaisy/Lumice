@@ -1167,6 +1167,13 @@ void DrawSurveyOverlays(ImDrawList* dl, GuiState& state, const MapCanvasProjecti
   // The selected object's feedback and this frame's click surfaces (817.2): the selection reads,
   // the sink fills — neither recomputes anything.
   arcs.selected_edge_object_index = selected_edge_object_index;
+  if (selected_edge_object_index >= 0) {
+    const SurveyOverlayCache& sel_cache = RefreshSurveyOverlayCache(survey);
+    if (sel_cache.model.valid && sel_cache.model.inner_edge.qualified) {
+      arcs.selected_edge_delta_deg = sel_cache.model.inner_edge.edge_deg;
+      arcs.selected_edge_delta_valid = true;
+    }
+  }
   arcs.stroke_sink = stroke_sink;
   // The arcs' FIXED reference calibers, read off the cached model: the survey's own scope
   // wavelength names the reach/edge bounds (whatever the map's λ slider shows), and the turn
@@ -1513,9 +1520,12 @@ void DrawReferenceArcs(ImDrawList* dl, const SurveyOverlayFacts& facts, const Re
   // hint tick at the label anchor — the circle's far side from the sun IS the light side (the
   // support starts at this bound), so the tick names the side the words claim.
   for (const ArcSubmission& s : submissions) {
-    const bool selected = s.owned_by_edge &&
-                          s.edge_object_index == static_cast<size_t>(std::max(0, in.selected_edge_object_index)) &&
-                          in.selected_edge_object_index >= 0;
+    // The selected object's stroke, by either identity: the edge card it owns, or — when the
+    // edge gate left the merge and a reach bound carries the same geometry — the document's own
+    // delta the coincidence declared identical.
+    const bool selected = (in.selected_edge_object_index >= 0 && s.owned_by_edge &&
+                           s.edge_object_index == static_cast<size_t>(in.selected_edge_object_index)) ||
+                          (in.selected_edge_delta_valid && s.delta_deg == in.selected_edge_delta_deg);
     std::vector<float> segments;
     const IsoDeltaWalk walk =
         WalkIsoDeltaCircle(dl, view, pic_min, in.pic_px, sun_pos, s.delta_deg, kSurveyArcInk,
@@ -1524,7 +1534,8 @@ void DrawReferenceArcs(ImDrawList* dl, const SurveyOverlayFacts& facts, const Re
       continue;
     }
     if (in.stroke_sink != nullptr) {
-      in.stroke_sink->push_back({ s.owned_by_edge, s.owned_by_reach, s.edge_object_index, std::move(segments) });
+      in.stroke_sink->push_back(
+          { s.owned_by_edge, s.owned_by_reach, s.edge_object_index, s.delta_deg, std::move(segments) });
     }
     // The label OWNER obeys the labels switches, not the geometry ownership alone: the edge
     // word only when the edge owns the stroke AND its labels are on; the support word when the
@@ -2225,16 +2236,26 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
     // leave nothing to test when off, and the marker/pick/direct-point presses never reach here
     // (their owners are not kCamera). A miss commits nothing: the existing point-selection
     // features are untouched, and an existing selection is not cleared.
-    if (press_owner == static_cast<int>(Owner::kCamera) && !ImGui::IsMouseDragging(ImGuiMouseButton_Left) &&
-        !explicit_pick) {
+    // `GetMouseDragDelta` (not `IsMouseDragging`: on the release frame the button is already
+    // up, and that predicate is unconditionally false there) reports the held press's delta —
+    // locked at zero until the hold moved past the drag threshold at least once, so a
+    // stationary release reads zero and any drag kills the selection.
+    const ImVec2 drag_delta = ImGui::GetMouseDragDelta(ImGuiMouseButton_Left);
+    if (press_owner == static_cast<int>(Owner::kCamera) &&
+        drag_delta.x * drag_delta.x + drag_delta.y * drag_delta.y == 0.0f && !explicit_pick) {
       const SurveyOverlayCache& hit_cache = RefreshSurveyOverlayCache(state.analysis.survey);
       if (hit_cache.model.valid && hit_cache.model.inner_edge.qualified) {
         const float tolerance_sq = UiPx(6.0f) * UiPx(6.0f);
         const ImVec2 press_pos = io.MouseClickedPos[ImGuiMouseButton_Left];
         for (const ReferenceArcStroke& stroke : arc_strokes) {
-          if (stroke.owned_by_edge &&
-              stroke.edge_object_index == static_cast<size_t>(hit_cache.model.inner_edge.edge_object_index) &&
-              ArcStrokeHit(stroke, press_pos.x, press_pos.y, tolerance_sq)) {
+          // The C01 stroke by either identity: the edge owner's index, or the document's own
+          // delta when the reach bound carries the shared geometry (the plan's pickable rule —
+          // either owner's gate showing the line keeps it pickable).
+          const bool is_c01_stroke =
+              (stroke.owned_by_edge &&
+               stroke.edge_object_index == static_cast<size_t>(hit_cache.model.inner_edge.edge_object_index)) ||
+              stroke.delta_deg == hit_cache.model.inner_edge.edge_deg;
+          if (is_c01_stroke && ArcStrokeHit(stroke, press_pos.x, press_pos.y, tolerance_sq)) {
             SelectInnerEdgeObject(state);
             state.analysis.inner_edge_scroll_hint = true;
             break;
@@ -2565,7 +2586,9 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
     SurveyRowHoverReadout row_readout;
     SurveyInnerEdgeInteraction inner_edge;
     inner_edge.selected = InnerEdgeSelectionActive(state);
-    inner_edge.map_layer_draws = overlays && gates.edge.graphics;
+    // The C01 stroke's visibility: the shared stroke draws while either owner's gate shows it
+    // — the note's "not drawn there" is exact only under this condition.
+    inner_edge.map_layer_draws = overlays && (gates.reach.graphics || gates.edge.graphics);
     inner_edge.entry_request_scroll = state.analysis.inner_edge_scroll_hint;
     RenderSurveyOverviewModel(survey_model, &row_readout, &inner_edge);
     state.analysis.profile_row_hover = row_readout.profile;

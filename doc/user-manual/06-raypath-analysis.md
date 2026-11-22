@@ -220,6 +220,27 @@ The legend keys name the fixed caliber each layer quotes (the survey's own wavel
 bounds and edges, the chromatic pair's for the turns), so a moved map wavelength never reads as
 these references'. Each group's entry appears in the legend only when it actually drew.
 
+**The inner-edge object.** When the survey's routing qualifies a class's inner edge — the engine
+entered its full-dimensional arm (the only route it takes with uniformly random orientations) and
+the edge card concluded while declaring coincidence with the support bound — the class answer
+opens on that object: **"Inner edge (3-5): about 21.92° from the sun — outside this circle the
+path's light begins."** The whole-sky wording is the random-orientation class's own fact, stated
+at the survey's fixed wavelength (never the map slider's). Clicking the sentence selects the
+object; the **Inner edge readings** group below it expands and gives the four readings, each
+under its own evidence level: the **geometric limit** (certified by the closed-form minimum, the
+support bound itself), the profile cut's **first occupied bin centre** and **highest bin centre
+on this cut** (stated at the bins' own precision, with the representative member, bin width and
+evaluated wavelength named — a cut fact, never a whole-row or all-sky peak), and the **fixed
+chromatic pair** (the minimum-deviation row's two wavelengths and their gap). A reading the
+document did not produce names why instead of showing a number. On the map, selecting the object
+thickens its arc, its readout becomes "inner edge — light outside · <λ> ref" with a tick pointing
+to the light side, and clicking the visible arc selects the same object back — the entry scrolls
+into view and stays selected after the mouse leaves. A drag never selects (the camera owns it);
+Alt-click keeps setting the sky point. Hiding the arc's layer groups hides the line and its
+picking with it, keeps the selection in the answer, and the entry says the map no longer draws
+it; switching classes or re-analyzing starts a new identity and clears the selection. Nothing in
+this flow recomputes or issues a query.
+
 **Row highlights and the reference profile's readings.** Every hoverable row in the class answer
 highlights while the pointer stands on it — the theme's own hover colour under the row's text —
 so the row you are on is readable without looking at the map. Three of the rows are also spatial:

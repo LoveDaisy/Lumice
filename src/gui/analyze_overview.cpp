@@ -933,17 +933,18 @@ void RenderInnerEdgeExpander(const SurveyInnerEdgeView& edge, SurveyInnerEdgeInt
       DisabledWrappedText("Measure limit %s.", FormatDeg(edge.measure_limit).c_str());
     }
   }
-  // Readings 2 and 3 — the profile cut's finite-resolution readings. Their shared premise (the
+  // Readings 2 and 3 — the profile cut's finite-resolution readings, stated at the bin's own
+  // two-decimal precision (three decimals would overstate a 0.1° bin). Their shared premise (the
   // representative member, the actual bin width, the evaluated λ, the cut-only scope) rides once
   // beneath them: the highest bin is this cut's fact, never a row or all-sky peak claim.
   const bool any_bin = edge.first_bin.available || edge.highest_bin.available;
   if (edge.first_bin.available) {
-    TextDeg("First occupied bin centre", edge.first_bin.deg);
+    ImGui::TextWrapped("First occupied bin centre %s", FormatDeg2(edge.first_bin.deg).c_str());
   } else {
     DisabledWrappedText("First occupied bin centre: %s.", edge.first_bin.unavailable.c_str());
   }
   if (edge.highest_bin.available) {
-    TextDeg("Highest bin centre on this cut", edge.highest_bin.deg);
+    ImGui::TextWrapped("Highest bin centre on this cut %s", FormatDeg2(edge.highest_bin.deg).c_str());
   } else {
     DisabledWrappedText("Highest bin centre on this cut: %s.", edge.highest_bin.unavailable.c_str());
   }

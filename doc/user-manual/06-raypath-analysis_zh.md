@@ -266,6 +266,20 @@ peak / Peak–edge separation** 上方提供 hover 提示：悬停前两行定�
 separation 定位两读数间径向区间；不是全天峰值圆圈。离开行后撤回，Overlays 关闭时仍有行反馈
 但无临时地图墨迹。缺读数、未知方位、拒答或端点离屏都不补位置。
 
+**内缘一等对象。** 当 survey 路由判定一个类的内缘合格——引擎进入其 full-dimensional 臂（唯一
+以均匀随机姿态族进入的路线，整圈措辞所依赖的旋转不变性即来自该判定）且 edge 卡已结论并声明
+与 support 界重合——类答案首行即该对象：**"Inner edge (3-5): about 21.92° from the sun —
+outside this circle the path's light begins."** 整圈措辞是该随机取向类自身的事实，按 survey
+固定波长陈述（绝不是底图滑杆的波长）。单击主句即选中该对象；其下 **Inner edge readings** 组
+展开给出四读数，各带自己的证据等级：**geometric limit**（闭式极小认证，即 support 界本身）、
+剖线此次截线的 **first occupied bin centre** 与 **highest bin centre**（按分箱自身精度陈述，
+明写代表成员/分箱宽/评估波长——是此次截线的事实，不升级为整行或全天峰）、以及 **fixed
+chromatic pair**（min-deviation 行的两个波长与间距）。文档未产出的读数写具名原因而非数字。
+地图上选中后该弧加粗、读数变为 "inner edge — light outside · <λ> ref" 并带指向有光侧的短刻；
+单击图上可见弧也选中同一对象——右栏入口滚入视口并在鼠标离开后保持选中。拖动永不选中（归相机
+）；Alt 单击仍是设天空点。隐藏弧所在图层组即藏线且不可点击，选择在右栏保留，入口注明地图不再
+绘制；切换类或重新分析即换身份并清除选择。整个流程不重算、不发查询。
+
 **图层组开关。** Overlays 旁的 **Layers** 按钮打开逐组开关——Support range / Sharp edges /
 Point images / Red-blue shift / Reflection turns——每组各有图形与标签两个框（藏标签不藏墨迹，
 关墨迹连同其标签一起撤）。Point images 组内另有三个逐类框（source image / regular image /

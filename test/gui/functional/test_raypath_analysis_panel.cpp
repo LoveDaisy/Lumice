@@ -6836,6 +6836,337 @@ bool SupportEdgeLayersShareOneStrokeAndGateIndependently(ImGuiTestContext* ctx) 
   return true;
 }
 
+// A screen point on the survey arc's first submitted geometry quad this frame (the quad's own
+// vertex centroid — the centre of a thick-line quad lies on its segment), or nullopt when no arc
+// geometry drew. The click that targets the line aims at the line's own ink, never a derived
+// projection: the product drew exactly this geometry, and the selection's hit test reads the same
+// submitted segments.
+std::optional<ImVec2> MapArcGeometryPoint() {
+  const ImGuiWindow* region = MapRegionWindow();
+  if (region == nullptr) {
+    return std::nullopt;
+  }
+  const ImDrawList* dl = region->DrawList;
+  const ImVec2 white = ImGui::GetIO().Fonts->TexUvWhitePixel;
+  for (int i = 0; i + 5 < dl->IdxBuffer.Size; i += 6) {
+    ImVec2 sum(0.0f, 0.0f);
+    bool matches = true;
+    for (int k = 0; k < 6; ++k) {
+      const ImDrawVert& v = dl->VtxBuffer[static_cast<int>(dl->IdxBuffer[i + k])];
+      if (v.col != gui::kSurveyArcInk || std::fabs(v.uv.x - white.x) >= 1e-3f || std::fabs(v.uv.y - white.y) >= 1e-3f) {
+        matches = false;
+        break;
+      }
+      sum.x += v.pos.x;
+      sum.y += v.pos.y;
+    }
+    if (matches) {
+      return ImVec2(sum.x / 6.0f, sum.y / 6.0f);
+    }
+  }
+  return std::nullopt;
+}
+
+// The class answer's first-class inner-edge object, on the real C01 document (817.2): the
+// answer's first read is the object's main sentence with its fixed-λ premise, the readings
+// expander holds the four calibers, the text entry's click and the visible arc's stationary
+// click commit the SAME selection (kept with the mouse away, dead after the class switches),
+// the Alt-click and the drag never select, the hidden layer is neither drawn nor pickable while
+// the selection survives with its note, and the 450 nm map legs leave the survey — and the
+// 550 nm reference — exactly as they were.
+bool InnerEdgeObjectSelectsFromTextAndArc(ImGuiTestContext* ctx) {
+  ScopedServerGuard guard;
+  IM_CHECK_RETV(BringUpScene(ctx, kFullyRandomJson, /*infinite=*/false, /*gpu=*/false), false);
+  OpenWindow(ctx);
+  IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
+  SetListRef(ctx);
+  ctx->ItemClick("**/3-5");
+  ctx->SetRef("");
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      return gui::SurveyOverviewStateFor(gui::g_state.analysis.survey) ==
+                             gui::SurveyOverviewState::kCompleted;
+                    },
+                    90),
+                false);
+  IM_CHECK_RETV(gui::g_state.analyze_raypath_view_open, false);
+  gui::SelectLensType(gui::g_state, gui::kLensTypeRectangular);
+  gui::g_state.renderer.visible = gui::kVisibleFull;
+  gui::g_state.renderer.front = false;
+  ctx->Yield(3);
+  ctx->Yield(3);
+  ctx->MouseMoveToPos(ImVec2(-100.0f, -100.0f));
+  ctx->Yield(3);
+  const auto query_ids = [] {
+    struct Ids {
+      decltype(gui::g_state.analysis.survey.intent_id) survey_intent;
+      const LUMICE_PathSurvey* survey_result;
+    } ids;
+    ids.survey_intent = gui::g_state.analysis.survey.intent_id;
+    ids.survey_result = gui::g_state.analysis.survey.adopted_result.get();
+    return ids;
+  };
+  const auto ids_before = query_ids();
+  // The qualified object exists on this document before anything draws — the composition tier's
+  // fact, read here as the display's premise.
+  const gui::SurveyOverviewModel model = gui::BuildSurveyOverviewModel(*gui::g_state.analysis.survey.adopted_result);
+  IM_CHECK_RETV(model.inner_edge.qualified, false);
+  // AC2's first read: the class answer opens on the object's main sentence, the premise note
+  // names the whole-sky fact at the survey's own λ, and the support set keeps its own line.
+  {
+    ImGuiWindow* report = MapReportWindow();
+    IM_CHECK_RETV(report != nullptr, false);
+    report->Scroll.y = 0.0f;
+    ctx->Yield(2);
+    const std::string answer_text = CaptureMapFrameText(ctx);
+    IM_CHECK_RETV(answer_text.find("Inner edge (3-5): about 21.92° from the sun") != std::string::npos, false);
+    IM_CHECK_RETV(answer_text.find("Whole-sky circle of this random-orientation class") != std::string::npos, false);
+    IM_CHECK_RETV(answer_text.find("550 nm") != std::string::npos, false);
+    IM_CHECK_RETV(answer_text.find("Support: from") != std::string::npos, false);
+  }
+  // The arc's own ink, before any selection: the shared stroke drew, and a point ON it is the
+  // click target every geometry leg below uses.
+  const std::optional<ImVec2> arc_point = MapArcGeometryPoint();
+  IM_CHECK_RETV(arc_point.has_value(), false);
+  ctx->LogInfo("[inner edge] arc click target (%.0f, %.0f)", arc_point->x, arc_point->y);
+  // The modifier-key leg (AC4's 不抢占): Alt makes the press a direct sky-point write — the
+  // point is set and the selection is NOT. The point intent is cleared afterwards.
+  {
+    const bool point_valid_before = gui::g_state.analysis.sky_point.valid;
+    ctx->SetRef("//Raypath view");
+    ctx->KeyDown(ImGuiMod_Alt);
+    ctx->MouseMoveToPos(*arc_point);
+    ctx->Yield(2);
+    ctx->MouseClick(0);
+    ctx->KeyUp(ImGuiMod_Alt);
+    ctx->Yield(2);
+    IM_CHECK_RETV(gui::g_state.analysis.sky_point.valid && !point_valid_before, false);
+    IM_CHECK_RETV(!gui::g_state.analysis.inner_edge_selected, false);
+    ctx->ItemClick("**/Clear##sky");
+    ctx->Yield(2);
+  }
+  // The drag leg (按压后成为拖动仍归相机): press on the arc, move past the drag threshold,
+  // release — a drag commits no selection, and the full-sky lens it ran on moved nothing else.
+  {
+    ctx->MouseMoveToPos(*arc_point);
+    ctx->Yield(2);
+    ctx->MouseDown(0);
+    ctx->Yield(2);
+    ctx->MouseMoveToPos(ImVec2(arc_point->x + gui::UiPx(14.0f), arc_point->y + gui::UiPx(6.0f)));
+    ctx->Yield(2);
+    ctx->MouseUp(0);
+    ctx->Yield(2);
+    IM_CHECK_RETV(!gui::g_state.analysis.inner_edge_selected, false);
+  }
+  // The text entry's click: the selection commits against the adopted identity, the readings
+  // expander opens with the object selected, and the four readings name their calibers.
+  ctx->ItemClick("**/###inner_edge_entry");
+  ctx->Yield(2);
+  IM_CHECK_RETV(gui::g_state.analysis.inner_edge_selected, false);
+  IM_CHECK_RETV(gui::InnerEdgeSelectionActive(gui::g_state), false);
+  {
+    ImGuiWindow* report = MapReportWindow();
+    IM_CHECK_RETV(report != nullptr, false);
+    const ImGuiTestItemInfo readings_header =
+        ctx->ItemInfo("**/Inner edge readings##sv_inner_edge", ImGuiTestOpFlags_NoError);
+    IM_CHECK_RETV(readings_header.ID != 0, false);
+    // Bring the expander to the clip's top so the capture sees every reading (the frame text
+    // capture skips clipped items).
+    report->Scroll.y = readings_header.RectFull.Min.y - report->InnerClipRect.Min.y;
+    ctx->Yield(2);
+    const std::string readings_text = CaptureMapFrameText(ctx);
+    IM_CHECK_RETV(readings_text.find("Geometric limit") != std::string::npos, false);
+    IM_CHECK_RETV(readings_text.find("21.916°") != std::string::npos, false);
+    IM_CHECK_RETV(readings_text.find("First occupied bin centre") != std::string::npos, false);
+    IM_CHECK_RETV(readings_text.find("21.95°") != std::string::npos, false);
+    IM_CHECK_RETV(readings_text.find("Highest bin centre on this cut") != std::string::npos, false);
+    IM_CHECK_RETV(readings_text.find("22.05°") != std::string::npos, false);
+    IM_CHECK_RETV(readings_text.find("Fixed chromatic pair") != std::string::npos, false);
+    IM_CHECK_RETV(
+        readings_text.find("21.69°") != std::string::npos && readings_text.find("22.27°") != std::string::npos, false);
+    IM_CHECK_RETV(readings_text.find("representative 3-5 cut") != std::string::npos, false);
+    IM_CHECK_RETV(readings_text.find("0.1° bins at 550 nm") != std::string::npos, false);
+    IM_CHECK_RETV(readings_text.find("whole-row or an all-sky peak") != std::string::npos, false);
+    // The selected entry's persistent highlight: the Header-colour ink the row background drew.
+    ImVec2 hl_min(0.0f, 0.0f);
+    ImVec2 hl_max(0.0f, 0.0f);
+    IM_CHECK_RETV(ReportHighlightBBox(ImGui::GetColorU32(ImGuiCol_Header), &hl_min, &hl_max), false);
+  }
+  // The mouse leaves: the selection is kept (not a hover).
+  ctx->MouseMoveToPos(ImVec2(-100.0f, -100.0f));
+  ctx->Yield(2);
+  IM_CHECK_RETV(gui::InnerEdgeSelectionActive(gui::g_state), false);
+  // The selection's map half: the readout label grew to the object's wording and the outward
+  // hint tick added its ink, while the survey facts' geometry stands unchanged.
+  {
+    const int ink_selected = MapWindowIndexCountForColour(gui::kSurveyArcInk);
+    IM_CHECK_RETV(ink_selected > 0, false);
+    ctx->LogInfo("[inner edge] selected arc-colour ink %d", ink_selected);
+    IM_CHECK_RETV(SaveWindowPng(ctx, "//Raypath view", GuiTestTempPath("inner_edge_selected.png").string()), false);
+  }
+  // The arc's stationary click after the selection is dead: switch away (the binding clears),
+  // switch back (a new generation, the stale selection stays dead), then click the line.
+  // The switches run the list's own scrolling row finder — the rows carry the layer's label
+  // prefix, and a row below the fold is still the class the user can click.
+  const auto click_class_row = [&](const char* display) -> bool {
+    const std::string label = gui::AnalysisRowLabel(display, gui::AnalysisCoreToPoolMap(gui::g_state));
+    SetListRef(ctx);
+    const ImGuiID row = FindListRowScrolling(ctx, label);
+    if (row == 0) {
+      ctx->LogError("[inner edge] class row not found: %s", label.c_str());
+      return false;
+    }
+    ctx->ItemClick(row);
+    ctx->SetRef("");
+    return true;
+  };
+  IM_CHECK_RETV(click_class_row("1-3-6-2"), false);
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      return gui::SurveyOverviewStateFor(gui::g_state.analysis.survey) ==
+                             gui::SurveyOverviewState::kCompleted;
+                    },
+                    90),
+                false);
+  IM_CHECK_RETV(!gui::InnerEdgeSelectionActive(gui::g_state), false);
+  IM_CHECK_RETV(click_class_row("3-5"), false);
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      return gui::SurveyOverviewStateFor(gui::g_state.analysis.survey) ==
+                             gui::SurveyOverviewState::kCompleted;
+                    },
+                    90),
+                false);
+  IM_CHECK_RETV(!gui::InnerEdgeSelectionActive(gui::g_state), false);
+  // The stable survey anchor for every query-silence leg below (the class switches themselves
+  // re-issued the intent, so the case-start ids are not the baseline).
+  const auto ids_stable = query_ids();
+  // The stale binding does not survive the new generation: the class switch died, and the
+  // re-selection's new survey is a different adopted identity than the one the selection was
+  // made under.
+  gui::SelectLensType(gui::g_state, gui::kLensTypeRectangular);
+  gui::g_state.renderer.visible = gui::kVisibleFull;
+  gui::g_state.renderer.front = false;
+  ctx->Yield(3);
+  ctx->Yield(3);
+  const std::optional<ImVec2> arc_point2 = MapArcGeometryPoint();
+  IM_CHECK_RETV(arc_point2.has_value(), false);
+  // Scroll the report away from the entry first: the map-side commit must bring it back.
+  {
+    ImGuiWindow* report = MapReportWindow();
+    IM_CHECK_RETV(report != nullptr, false);
+    report->Scroll.y = report->ScrollMax.y;
+    ctx->Yield(2);
+  }
+  ctx->SetRef("//Raypath view");
+  ctx->MouseMoveToPos(*arc_point2);
+  ctx->Yield(2);
+  ctx->MouseDown(0);
+  ctx->Yield(2);
+  ctx->MouseUp(0);
+  ctx->Yield(2);
+  IM_CHECK_RETV(gui::InnerEdgeSelectionActive(gui::g_state), false);
+  // The entry scrolled back into view (the one-shot scroll hint's observable).
+  {
+    ImGuiWindow* report = MapReportWindow();
+    IM_CHECK_RETV(report != nullptr, false);
+    const ImGuiTestItemInfo entry = ctx->ItemInfo("**/###inner_edge_entry", ImGuiTestOpFlags_NoError);
+    IM_CHECK_RETV(entry.ID != 0, false);
+    IM_CHECK_RETV(entry.RectFull.Min.y >= report->InnerClipRect.Min.y - 1.0f &&
+                      entry.RectFull.Max.y <= report->InnerClipRect.Max.y + 1.0f,
+                  false);
+  }
+  // The hidden layer, in the shared stroke's own two steps (817.1's invariant: one owner's gate
+  // off keeps the line — it draws as the other's bound): the edge gate off leaves the stroke and
+  // the pickable line, then the reach gate off too removes it — nothing drawn, nothing pickable,
+  // a click at the arc's position changes nothing, and the entry states the map's silence while
+  // the selection survives. Restoring both gates restores the exact geometry.
+  const int geo_before_hide = MapWindowGeometryIndexCountForColour(gui::kSurveyArcInk);
+  IM_CHECK_RETV(geo_before_hide > 0, false);
+  ctx->ItemClick("**/Layers##map_layers");
+  ctx->Yield(2);
+  ctx->ItemClick("**/Sharp edges");
+  ctx->Yield(3);
+  IM_CHECK_RETV(MapWindowGeometryIndexCountForColour(gui::kSurveyArcInk) == geo_before_hide, false);
+  IM_CHECK_RETV(gui::InnerEdgeSelectionActive(gui::g_state), false);
+  ctx->ItemClick("**/Support range");
+  ctx->Yield(3);
+  IM_CHECK_RETV(MapWindowGeometryIndexCountForColour(gui::kSurveyArcInk) == 0, false);
+  ctx->PopupCloseAll();
+  ctx->Yield(2);
+  ctx->MouseMoveToPos(*arc_point2);
+  ctx->Yield(2);
+  ctx->MouseDown(0);
+  ctx->Yield(2);
+  ctx->MouseUp(0);
+  ctx->Yield(2);
+  IM_CHECK_RETV(gui::InnerEdgeSelectionActive(gui::g_state), false);
+  {
+    ImGuiWindow* report = MapReportWindow();
+    IM_CHECK_RETV(report != nullptr, false);
+    const ImGuiTestItemInfo readings_header =
+        ctx->ItemInfo("**/Inner edge readings##sv_inner_edge", ImGuiTestOpFlags_NoError);
+    IM_CHECK_RETV(readings_header.ID != 0, false);
+    // The hidden-layer note sits at the expander body's end — scroll deeper than the readings
+    // capture so the note is inside the clip the frame text walks.
+    report->Scroll.y = readings_header.RectFull.Min.y - report->InnerClipRect.Min.y + gui::UiPx(160.0f);
+    ctx->Yield(2);
+    const std::string hidden_text = CaptureMapFrameText(ctx);
+    IM_CHECK_RETV(hidden_text.find("not drawn there") != std::string::npos, false);
+  }
+  ctx->ItemClick("**/Layers##map_layers");
+  ctx->Yield(2);
+  ctx->ItemClick("**/Sharp edges");
+  ctx->Yield(2);
+  ctx->ItemClick("**/Support range");
+  ctx->Yield(3);
+  ctx->PopupCloseAll();
+  ctx->Yield(2);
+  IM_CHECK_RETV(MapWindowGeometryIndexCountForColour(gui::kSurveyArcInk) == geo_before_hide, false);
+  // AC3: the map's λ moves to 450 nm — the survey keeps its intent and its document, the arcs'
+  // geometry stands unchanged at the survey's own reference, and the object's fixed-λ wording
+  // stays. The map at 450 adopts beneath the unchanged 550 nm reference.
+  {
+    const int geo_before_lambda = MapWindowGeometryIndexCountForColour(gui::kSurveyArcInk);
+    const int ink_before_lambda = MapWindowIndexCountForColour(gui::kSurveyArcInk);
+    ctx->ItemInputValue("**/wl##map", 450.0f);
+    IM_CHECK_RETV(DriveUntil(
+                      ctx,
+                      [] {
+                        const gui::MapQuerySession& m = gui::g_state.analysis.map;
+                        if (m.adopted_result == nullptr || !(m.adopted_id == m.intent_id)) {
+                          return false;
+                        }
+                        LUMICE_PathMapInfo i{};
+                        i.struct_size = sizeof(i);
+                        return LUMICE_PathMapGetInfo(m.adopted_result.get(), &i) == LUMICE_PATH_READ_OK &&
+                               i.wavelength_nm == 450.0;
+                      },
+                      120),
+                  false);
+    IM_CHECK_RETV(MapWindowGeometryIndexCountForColour(gui::kSurveyArcInk) == geo_before_lambda, false);
+    IM_CHECK_RETV(MapWindowIndexCountForColour(gui::kSurveyArcInk) >= ink_before_lambda, false);
+    const auto ids_after_lambda = query_ids();
+    IM_CHECK_RETV(ids_after_lambda.survey_intent == ids_stable.survey_intent &&
+                      ids_after_lambda.survey_result == ids_stable.survey_result,
+                  false);
+    IM_CHECK_RETV(gui::g_state.analysis.map_wavelength_nm == 450.0, false);
+    ctx->ItemClick("**/reference##map_lambda");
+    ctx->Yield(2);
+  }
+  // The whole chain moved no survey query: the object's reads are display reads.
+  const auto ids_after = query_ids();
+  IM_CHECK_RETV(
+      ids_after.survey_intent == ids_stable.survey_intent && ids_after.survey_result == ids_stable.survey_result,
+      false);
+  IM_CHECK_RETV(gui::SurveyOverviewStateFor(gui::g_state.analysis.survey) == gui::SurveyOverviewState::kCompleted,
+                false);
+  return true;
+}
+
 // The engine's named refusal, on the two-layer scene: a multi-layer class is a legitimate
 // selection and the survey answers it with multi_layer_unsupported — shown, not fabricated
 // around (R5/R7; the multi-layer evidence the plan's M3-5 asks to be on file).
@@ -6847,18 +7178,18 @@ int MapReportIndexCountForColour(ImU32 colour) {
   if (report == nullptr) {
     return 0;
   }
+  // Vertex counting, not 6-index groups: an AA-stroked icon (the verdict anchor's circle runs
+  // AddPolyline, whose fill and fringe triangles alternate in the index buffer) can place NO
+  // all-one-colour 6-index group anywhere in the buffer, while every one of its fill vertices
+  // carries the colour — the group scan read zero for an icon that demonstrably drew (measured
+  // red at the 817.1 baseline, green the day before, same commit: the flip was the icon's index
+  // layout, not the draw). Every caller compares one colour's count across states, so vertex
+  // counts carry the same propositions without the alignment trap.
   const ImDrawList* dl = report->DrawList;
   int count = 0;
-  for (int i = 0; i + 5 < dl->IdxBuffer.Size; i += 6) {
-    bool matches = true;
-    for (int k = 0; k < 6; ++k) {
-      if (dl->VtxBuffer[static_cast<int>(dl->IdxBuffer[i + k])].col != colour) {
-        matches = false;
-        break;
-      }
-    }
-    if (matches) {
-      count += 6;
+  for (int i = 0; i < dl->VtxBuffer.Size; ++i) {
+    if (dl->VtxBuffer[i].col == colour) {
+      ++count;
     }
   }
   return count;
@@ -19050,6 +19381,14 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
     ImGuiTest* t =
         IM_REGISTER_TEST(engine, "raypath_analysis", "support_edge_layers_share_one_stroke_and_gate_independently");
     t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(SupportEdgeLayersShareOneStrokeAndGateIndependently(ctx)); };
+  }
+  // The C01 first-class inner-edge object's real-input chain (817.2, real-timing pool: the
+  // class switches and the 450 nm map leg wait on real surveys): main sentence first, four
+  // readings, both selection entries to one object, the drag/Alt/hidden-gate negatives, and
+  // the fixed-λ reference standing under a moved map λ.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "inner_edge_object_selects_from_text_and_arc");
+    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(InnerEdgeObjectSelectsFromTextAndArc(ctx)); };
   }
   {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "survey_refuses_multilayer_class_by_name");

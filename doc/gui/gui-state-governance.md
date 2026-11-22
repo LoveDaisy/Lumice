@@ -63,6 +63,18 @@ defaults，不产生 dirty 或查询。storage 键 ID 在地图子窗口的 ID �
 重建一次，非每帧/每次开关重建），不触发 survey/map 重算。区域着色子项单列禁用（无载荷，非
 开关状态，不占 storage）。
 
+**内缘对象选择（2026-11-22，817.2）**：`RaypathAnalysisSession` 新增 C01 一等内缘对象的会话选择
+（`inner_edge_selected` + `inner_edge_document`（weak，不钉住被替换文档的内存）+ `inner_edge_id` +
+`inner_edge_scroll_hint`）：类答案主句的文字入口点击与地图可见弧的静止轻点提交同一选择，绑定
+**采纳身份**（adopted 文档句柄 + intent id）——换类、换代、失去文档即读为失效（派生谓词
+`InnerEdgeSelectionActive`，无显式清除写点），关开窗口保留。display-session 档位与 profile_row_hover
+同级：不持久化、不进 `ConfigSnapshot`/dirty、不写查询与 sky point、不改相机；scroll_hint 是地图
+提交方写入、类答案渲染即消费的单读者一次性字段。同族的 `map_canvas_press_owner` 是按压期间的
+owner 快照（workspace 帧入口在释放帧先把 `map_press_owner` 归零，释放帧由此快照区分普通按压与
+marker/pick/direct-point 占用），地图区写入并读取清除，帧瞬态交互态。选中反馈（弧加粗、
+`inner edge — light outside` 读数与向外指示）走选中态读回，不改查询；展开器在选中期间强制展开，
+图层双门全关时入口注明「地图未画、选择保留」。
+
 > **Raypath view 的共享相机机制**：唯一合同见 [raypath-view-camera.md](raypath-view-camera.md) §6–8，验证边界见§10。
 > map已移除私有圆盘与相机副本互抄；两个画面消费上述T-view的同一有效帧输入，Look At仍由既有owner解析，空主图也reconcile。
 > 单一全天空map的计算意图、完成代门与句柄归T-session；原格/frame/前缀是冻结结果，不是live renderer的副本。

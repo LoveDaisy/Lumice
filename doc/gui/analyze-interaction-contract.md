@@ -800,6 +800,29 @@ support 内界与 certified edge 同址：edge 卡自带 `coincident_with_suppor
 对照：1-3-2 verdict 案例的蓝桶清零）由组门一并关掉 dispersion 与 verdict 两源实现。
 profile hover 设备仍只受总门控制，不被任一数据组门截断。
 
+**C01 一等内缘对象（as-built 2026-11-22，817.2）**：合格输入（full-dimensional 臂——引擎侧唯一
+以均匀随机姿态族进入的路线，即整圈措辞所依赖的旋转不变性是引擎自己的路由判定——加 concluded
+edge 卡与其自带的 `coincident_with_support` 声明；资格沿生产者声明，GUI 不复算容差）的类答案
+首行是该对象的主句：`Inner edge (3-5): about 21.92° from the sun — outside this circle the
+path's light begins.`，其下的前提行明写「random-orientation class + survey 固定 λ」（AC3 固定
+参照分支：换图 λ 后措辞仍是 survey 自身 λ，绝不说「当前 λ 内缘」）。交互宿主（Raypath view 类
+答案）在主句行携带点击面（`###inner_edge_entry`）：单击即选择请求，选中期行有常驻高亮，展开器
+（`Inner edge readings##sv_inner_edge`）强制展开并给出四读数——geometric limit（证书口径）、
+first occupied bin centre / highest bin centre on this cut（各自 2 位小数=0.1° 分箱自身精度，
+共享前提行明写 representative 序列/分箱宽/评估 λ/仅此截线，不升级为整行或全天峰）、fixed
+chromatic pair（min-deviation 行，红蓝标签与间距原样）——缺席读数写具名原因，不以零顶替。主窗
+摘要宿主读同一主句与前提（零交互面，无展开器）。原平铺读数迁入对象后不再重复输出（support 行
+是 support 集自己的答案，保留）。
+地图侧选中反馈：该对象名下笔画加粗、读数改 `inner edge — light outside · <λ> ref`、锚点向外
+指示短刻（外侧=远离太阳侧=support 起点），标签位随 edge 组标签门。**双向选择**：图上可见弧的
+静止轻点（按压未越过拖动阈）与文字入口提交同一会话选择，点中使右栏入口滚入视口并展开，鼠标
+离开不清除；Alt（直接设点）、marker 拖动、显式 picker 占用的按压不触发选择，拖动归相机不选中
+，未命中不消灭既有选点功能、不清除既有选择。**共笔画可拾取规则**：该线在任一 owner 门可见时
+可拾取——命中按 edge 卡 index 或（边门关、support 门独扛时）文档自身恒等的 delta 匹配；两组
+全关（或总关）既不可见也不可拾取，标签门不影响命中；隐藏不清除选择，入口注明「地图未画、选择
+保留」。选择绑定采纳身份（换类/换代/失文档即失效，关开窗口保留），全程零查询、零 sky point、
+零相机写入。
+
 **行可寻址化的交互面增量（as-built 形态；2026-11-12 反馈波推翻高亮形态）**：联动行保留
 `Bullet + TextWrapped` 逐字节渲染（wrap 纪律：Selectable 的 RenderTextClipped 不换行，弃用）；
 行上叠加 InvisibleButton（ID 面向测试寻址：`###diagnose_verdict_row` /

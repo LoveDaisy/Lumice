@@ -129,7 +129,7 @@ GUI_REALTIMING_FILTER = (
     "analyze_full_chain_one_session,internal_reflection_trace_from_the_real_consumer,"
     "refused_class_names_the_refusal_and_keeps_the_witness,refused_class_blockades_nothing,"
     "narrow_column_clipped_rows_keep_their_entities,analyze_result_carries_across_scale_tiers,"
-    "profile_rows_highlight_and_draw_on_the_map"
+    "profile_rows_highlight_and_draw_on_the_map,inner_edge_object_selects_from_text_and_arc"
 )
 
 # The delay contract's three-ms-budget assertion lives inside one IM_CHECK

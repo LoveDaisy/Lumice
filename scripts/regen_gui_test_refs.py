@@ -327,7 +327,8 @@ SUITE_FILTER_EXPR = (
     "-analyze_full_chain_one_session,-internal_reflection_trace_from_the_real_consumer,"
     "-refused_class_names_the_refusal_and_keeps_the_witness,-refused_class_blockades_nothing,"
     "-narrow_column_clipped_rows_keep_their_entities,-analyze_result_carries_across_scale_tiers,"
-    "-profile_rows_highlight_and_draw_on_the_map,-support_edge_layers_share_one_stroke_and_gate_independently"
+    "-profile_rows_highlight_and_draw_on_the_map,-support_edge_layers_share_one_stroke_and_gate_independently,"
+    "-inner_edge_object_selects_from_text_and_arc"
 )
 # --no-user-config trails SUITE_FILTER_EXPR, matching scripts/build.sh. A reference image is the
 # one artifact where reading the generating machine's personal defaults would be permanent: the

@@ -355,6 +355,10 @@ struct ReferenceArcInput {
   // the light-outside wording and the outward hint tick) — the answer's selection and the map's
   // ink are one state read by two consumers.
   int selected_edge_object_index = -1;
+  // The selected object's own delta (with its availability): the stroke's second identity —
+  // the shared stroke carries the selection while either owner's gate shows it.
+  double selected_edge_delta_deg = 0.0;
+  bool selected_edge_delta_valid = false;
   // The frame's submitted-stroke click surfaces (the stationary-click selection's input; null =
   // no collection). A stroke records only the segments the walk actually submitted this frame —
   // post-clip, screen points — so a part of the circle no line covered cannot be picked.
@@ -364,11 +368,16 @@ struct ReferenceArcInput {
 // One submitted reference-arc stroke's click surface: whose stroke it is, and the segments the
 // walk actually drew this frame as flat screen-point quadruples (x0, y0, x1, y1, ...). Plain
 // floats — this header stays off imgui.h. Frame-transient display state: filled by the draw
-// pass, read by the same frame's click handling, never stored.
+// pass, read by the same frame's click handling, never stored. `delta_deg` is the stroke's own
+// deviation — the C01 stroke's second identity: the shared support/edge stroke carries the
+// selected object while EITHER owner's gate shows it (the plan's pickable rule), so the hit
+// test matches the edge-owned index or, when the edge gate left the merge, the document's own
+// delta the coincidence made identical.
 struct ReferenceArcStroke {
   bool owned_by_edge = false;
   bool owned_by_reach = false;
   size_t edge_object_index = 0;
+  double delta_deg = 0.0;
   std::vector<float> segments;
 };
 
