@@ -61,6 +61,12 @@ inline constexpr unsigned int kProfileReadingColour = (255u << 24) | (182u << 16
 // compile-time pin against the original literal.
 inline constexpr unsigned int kSurveyArcInk = (215u << 24) | (215u << 16) | (205u << 8) | 200u;
 
+// The rank-0 point-mass semantic colour (the map's own mass cells and the adopted point query's
+// point-image marker — one rank-0 semantics, one ink, so the picture never carries two hues for
+// one fact). Same discipline as the pair above: one value, two consumers (the draw and the
+// test), a compile-time pin against the original literal.
+inline constexpr unsigned int kPointMassColour = (255u << 24) | (74u << 16) | (184u << 8) | 250u;
+
 // ---- Session-facing types -------------------------------------------------------------------------
 
 // The user's sky-point intent (AC3): WHERE in the sky they are asking about, independent of any
@@ -196,6 +202,10 @@ struct OverlayLegendState {
                                            // so the icon reads what actually drew
   bool verdict_anchor_dashed = false;      // the drawn form's weakening — the icon carries it too
   bool sky_point = false;
+  // The adopted point query's rank-0 image (the point mass): true when the image is inked this
+  // frame — by the dedicated marker, or by the adopted map's own POINT_MASS cell when the two
+  // documents match (the reuse branch draws no second symbol).
+  bool point_image = false;
   // The five layer groups' arcs, what the frame actually submitted (a legend describes the drawn
   // picture — a group whose gate is off, or whose payloads left the view, draws no entry).
   bool reach_bounds = false;           // any support-range bound arc, or the full-range text label, drew

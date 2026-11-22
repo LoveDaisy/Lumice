@@ -33,6 +33,7 @@
 
 #include "IconsFontAwesome6.h"
 #include "gui/analysis_panel.hpp"
+#include "gui/analyze_map_renderer.hpp"  // MapCellIndex — the point-image reuse leg's cell lookup
 #include "gui/analyze_map_view.hpp"
 #include "gui/analyze_overview.hpp"
 #include "gui/analyze_point_view.hpp"
@@ -2754,12 +2755,70 @@ bool PointMassArmIsHonestAndForcesNoFiber(ImGuiTestContext* ctx) {
   ctx->WindowFocus("//Pose & trace");
   ctx->Yield(3);
   const std::string pose_text = CaptureWindowFrameText(ctx, "Pose & trace");
-  IM_CHECK_RETV(pose_text.find("A rank-0 point mass has no fiber or crystal-interior path") != std::string::npos,
-                false);
-  IM_CHECK_RETV(pose_text.find("mass numbers.") != std::string::npos, false);
+  // The rank-0 answer reads as the point image it is (AC3): the core explanation in the factors
+  // region and the footer's one-line form — no "no fiber" technical note anywhere in the window.
+  IM_CHECK_RETV(pose_text.find("Point image at") != std::string::npos, false);
+  IM_CHECK_RETV(pose_text.find("target separation") != std::string::npos, false);
+  IM_CHECK_RETV(pose_text.find("no fiber") == std::string::npos, false);
   ctx->SetRef("//Pose & trace");
   IM_CHECK_RETV(IsDisabled(ctx->ItemInfo("**/##globe_sample")), false);
   IM_CHECK_RETV(SaveWindowPng(ctx, "//Pose & trace", GuiTestTempPath("pose_rank_zero.png").string()), false);
+
+  // The AC3 map face: the Raypath view (opened by the row click) carries the image's ink from
+  // the ADOPTED POINT RESULT — this scene's map has not answered here, so the dedicated marker
+  // draws (the reuse branch needs a matched adopted map, which this test deliberately never
+  // waits for). The target marker keeps its own ink beside it; the legend names both.
+  ctx->SetRef("");  // the globe leg's ref points at the Pose window; the map clicks need the wildcards
+  ctx->Yield(3);
+  {
+    const gui::OverlayLegendState legend = gui::LastMapOverlayLegend();
+    IM_CHECK_RETV(legend.point_image, false);
+    IM_CHECK_RETV(legend.sky_point, false);
+  }
+  // The point answer's text is gate-independent: with the overlays hidden the image's position
+  // still reads from the answer block — a hidden layer is never a no-image claim. The
+  // sky-point bit rides the same master gate here (its marker draws beside the image's).
+  ctx->ItemClick("**/Overlays##map");
+  ctx->Yield(2);
+  {
+    const gui::OverlayLegendState legend = gui::LastMapOverlayLegend();
+    IM_CHECK_RETV(!legend.point_image, false);
+    const std::string raypath_text = CaptureWindowFrameText(ctx, "Raypath view");
+    IM_CHECK_RETV(raypath_text.find("Point image at") != std::string::npos, false);
+    IM_CHECK_RETV(raypath_text.find("target separation") != std::string::npos, false);
+  }
+  ctx->ItemClick("**/Overlays##map");
+  ctx->Yield(1);
+
+  // The 23.74°-shaped leg (读样三): the same plate chain, an off-sun target — the image stays at
+  // the sun's exact direction while the separation reads the real angular distance (the float
+  // intent roundtrip bounds the last digit; the double CLI path measures 23.7438 on the halo
+  // scene, the same geometry).
+  SetSkyPointTarget(20.1, 25.3);
+  ctx->Yield(2);  // the pump re-arms under the new key before the wait reads the state
+  IM_CHECK_RETV(
+      DriveUntil(
+          ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCompleted; },
+          30),
+      false);
+  {
+    LUMICE_PathPointMass moved{};
+    moved.struct_size = sizeof(moved);
+    IM_CHECK_RETV(
+        LUMICE_PathPointGetMass(gui::g_state.analysis.point.adopted_result.get(), &moved) == LUMICE_PATH_READ_OK,
+        false);
+    IM_CHECK_RETV(moved.target_separation_deg > 23.0 && moved.target_separation_deg < 24.0, false);
+    ctx->WindowFocus("//Pose & trace");
+    ctx->Yield(2);
+    const std::string moved_text = CaptureWindowFrameText(ctx, "Pose & trace");
+    IM_CHECK_RETV(moved_text.find("Point image at the sun's own direction") != std::string::npos, false);
+    char sep[64];
+    std::snprintf(sep, sizeof(sep), "%.2f° from your target", moved.target_separation_deg);
+    IM_CHECK_RETV(moved_text.find(sep) != std::string::npos, false);
+    // No fiber appeared with the moved target: the mass arm never grows a playable trajectory.
+    IM_CHECK_RETV(gui::g_state.analysis.trace.intent_valid == false, false);
+  }
+  ctx->LogInfo("[point view] the 23.74-shaped leg: image at the sun, separation real, no fiber");
   return true;
 }
 
@@ -3455,7 +3514,7 @@ bool AnalyzeFullChainOneSession(ImGuiTestContext* ctx) {
     IM_CHECK_RETV(LUMICE_PathPointGetSample(point.adopted_result.get(), 0, static_cast<size_t>(stored), &sample) ==
                       LUMICE_PATH_READ_OK,
                   false);
-    const std::vector<std::string> factors = gui::PointFactorLines(sample);
+    const std::vector<std::string> factors = gui::PointFactorLines(sample, info.faces, info.face_count);
     IM_CHECK_RETV(!factors.empty(), false);
     ctx->LogInfo("[v1 chain] point alt %.2f az %.2f dev %.2f, lambda %.1f, %d component(s), %d valid samples",
                  info.target_altitude_deg, info.target_azimuth_deg, info.target_deviation_deg, info.wavelength_nm,
@@ -5412,6 +5471,126 @@ bool InternalReflectionTraceFromTheRealConsumer(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(TraceSunArrowFollowsTheCrystalSun(ctx), false);
   IM_CHECK_RETV(TraceOverlayClipsAtTheNearPlane(ctx), false);
   ctx->LogInfo("[v1 c03] the internal-reflection path drawn in the 3D region: entry, 3 internal, exit");
+  // ---- The c03 readout legs (AC1/AC2/AC4/AC5): the factors region's first screen answers
+  // "which face loses the light" from the live document, and the expectations are HAND-COMPUTED
+  // from that document's unrounded factors — the oracle is the same cumulative rule the 3D
+  // labels use, never a pinned screenshot constant (the 读样's 97.2/2.73/2.65 are this corpus
+  // chain's values; the assertion derives them rather than quoting them). ----
+  {
+    const gui::PointQuerySession& point = gui::g_state.analysis.point;
+    LUMICE_PathPointInfo info{};
+    info.struct_size = sizeof(info);
+    IM_CHECK_RETV(LUMICE_PathPointGetInfo(point.adopted_result.get(), &info) == LUMICE_PATH_READ_OK, false);
+    IM_CHECK_RETV(info.faces != nullptr && info.face_count == 4, false);
+    LUMICE_PathPointSample sample{};
+    sample.struct_size = sizeof(sample);
+    const int stored0 = gui::PointValidSampleIndexAt(*point.adopted_result, 0, 0);
+    IM_CHECK_RETV(LUMICE_PathPointGetSample(point.adopted_result.get(), 0, static_cast<size_t>(stored0), &sample) ==
+                      LUMICE_PATH_READ_OK,
+                  false);
+    // The hand oracle: the cumulative over the sample's own factors, then the largest absolute
+    // drop. The chain's roles ride the sequence (entry / two internal / exit).
+    const size_t n = sample.interface_count;
+    IM_CHECK_RETV(n == 4, false);
+    double e[5] = { 1.0, 1.0, 1.0, 1.0, 1.0 };
+    for (size_t k = 0; k < n; ++k) {
+      e[k + 1] = e[k] * sample.interface_transmittances[k];
+    }
+    int loss_k = 0;
+    double best_drop = -1.0;
+    for (int k = 0; k < 4; ++k) {
+      const double drop = e[k] - e[k + 1];
+      if (drop > best_drop) {
+        best_drop = drop;
+        loss_k = k;
+      }
+    }
+    char expected_conclusion[96];
+    std::snprintf(
+        expected_conclusion, sizeof(expected_conclusion),
+        best_drop > 0.5 ? "Most light leaves this path at face %d." : "The largest drop along this path is at face %d.",
+        info.faces[loss_k]);
+    char expected_arrival[128];
+    std::snprintf(expected_arrival, sizeof(expected_arrival), "with %.3g%% of the incident light", e[loss_k] * 100.0);
+    const std::string pose_text = CaptureWindowFrameText(ctx, "Pose & trace");
+    IM_CHECK_RETV(pose_text.find(expected_conclusion) != std::string::npos, false);
+    IM_CHECK_RETV(pose_text.find(expected_arrival) != std::string::npos, false);
+    IM_CHECK_RETV(pose_text.find("incident light before the first contact as 100%") != std::string::npos, false);
+    IM_CHECK_RETV(pose_text.find("for this representative ray only") != std::string::npos, false);
+    // AC1 on the real chain: the internal rows are reflectances — the old all-transmittance
+    // formatter named the C03 internal faces wrong, so its exact old shape must be absent.
+    IM_CHECK_RETV(pose_text.find("internal reflection: transmittance") == std::string::npos, false);
+    // The first screen without scrolling: plain text items are not in the searchable registry,
+    // so the proof is structural — the DEFAULT layer's last fold header (the diagnostics group,
+    // submitted below the loss block) sits inside the scroll clip at the DEFAULT window
+    // geometry, and nothing has scrolled. Everything stacked above it — the conclusion, the
+    // readings, the basis line — is then on screen with the window as it opens.
+    {
+      ImGuiWindow* scroll = PoseRegionScrollChild("##AnalyzePoseFactors", "##PoseFactorsScroll");
+      IM_CHECK_RETV(scroll != nullptr, false);
+      const ImGuiTestItemInfo last_header =
+          ctx->ItemInfo("**/Pose diagnostics##pose_factors", ImGuiTestOpFlags_NoError);
+      IM_CHECK_RETV(last_header.ID != 0, false);
+      IM_CHECK_RETV(scroll->Scroll.y == 0.0f, false);
+      IM_CHECK_RETV(last_header.RectFull.Max.y <= scroll->InnerClipRect.Max.y + 0.5f, false);
+    }
+    // The face-detail expansion: the conditional denominator switch stated, the local factor
+    // spelled from the same chain. The expanded body must be ON SCREEN for the drawn-text
+    // capture, so each capture pins the clicked fold's header to the clip's top (the click's
+    // own auto-scroll lands wherever the item already was — the header's rect is the anchor).
+    const auto open_and_capture = [&](const char* fold_ref) -> std::string {
+      ctx->ItemClick(fold_ref);
+      ctx->Yield(2);
+      ImGuiWindow* fold_scroll = PoseRegionScrollChild("##AnalyzePoseFactors", "##PoseFactorsScroll");
+      if (fold_scroll != nullptr) {
+        const ImGuiTestItemInfo header = ctx->ItemInfo(ImGuiTestRef(fold_ref), ImGuiTestOpFlags_NoError);
+        if (header.ID != 0) {
+          const float desired = header.RectFull.Min.y - fold_scroll->InnerClipRect.Min.y + fold_scroll->Scroll.y;
+          fold_scroll->Scroll.y = desired > 0.0f ? desired : 0.0f;
+          ctx->Yield(2);
+        }
+      }
+      return CaptureWindowFrameText(ctx, "Pose & trace");
+    };
+    {
+      const std::string face_ref = std::string("**/View face ") + std::to_string(info.faces[loss_k]) + "##pose_factors";
+      const std::string open_text = open_and_capture(face_ref.c_str());
+      {
+        const size_t at = open_text.find("View face");
+        ctx->LogInfo("[v1 c03] open_text at View face: %s",
+                     at == std::string::npos ? "<absent>" : open_text.substr(at, 400).c_str());
+      }
+      IM_CHECK_RETV(open_text.find("read the light reaching this face as 100%") != std::string::npos, false);
+      char local_factor[96];
+      std::snprintf(local_factor, sizeof(local_factor), "reflectance = %.6g", sample.interface_transmittances[loss_k]);
+      IM_CHECK_RETV(open_text.find(local_factor) != std::string::npos, false);
+      char contact_line[128];
+      std::snprintf(contact_line, sizeof(contact_line), "Contact %d of 4 — face %d, %s.", loss_k + 1,
+                    info.faces[loss_k],
+                    loss_k == 0 ? "entry refraction" : (loss_k == 3 ? "exit refraction" : "internal reflection"));
+      IM_CHECK_RETV(open_text.find(contact_line) != std::string::npos, false);
+    }
+    // The per-face table: role rows with the labelled common-denominator light column.
+    {
+      const std::string open_text = open_and_capture("**/Per-face energy##pose_factors");
+      IM_CHECK_RETV(open_text.find("entry refraction: transmittance") != std::string::npos, false);
+      IM_CHECK_RETV(open_text.find("internal reflection: reflectance") != std::string::npos, false);
+      IM_CHECK_RETV(open_text.find("exit refraction: transmittance") != std::string::npos, false);
+      IM_CHECK_RETV(open_text.find("light after:") != std::string::npos, false);
+    }
+    // The pose factor strings stay reachable in their fold (nothing deleted).
+    {
+      const std::string open_text = open_and_capture("**/Pose factors##pose_factors");
+      IM_CHECK_RETV(open_text.find("A_P = ") != std::string::npos, false);
+      IM_CHECK_RETV(open_text.find("K = 1/(J+eps)") != std::string::npos, false);
+    }
+    ctx->ItemClick("**/Per-face energy##pose_factors");
+    ctx->ItemClick((std::string("**/View face ") + std::to_string(info.faces[loss_k]) + "##pose_factors").c_str());
+    ctx->ItemClick("**/Pose factors##pose_factors");
+    ctx->Yield(1);
+    ctx->LogInfo("[v1 c03] the loss readout legs: conclusion at face %d, arrival %.3g%%, expansions cycle closed",
+                 info.faces[loss_k], e[loss_k] * 100.0);
+  }
   IM_CHECK_RETV(RefusedTraceKeepsCrystalVisible(ctx, *identity), false);
   return true;
 }
@@ -5836,12 +6015,43 @@ bool IdentityClassShowsTheMassArmAndTheMapAnswers(ImGuiTestContext* ctx) {
     mass.struct_size = sizeof(mass);
     IM_CHECK_RETV(
         LUMICE_PathPointGetMass(gui::g_state.analysis.point.adopted_result.get(), &mass) == LUMICE_PATH_READ_OK, false);
-    const std::vector<std::string> mass_lines = gui::PointMassLines(mass);
+    const std::vector<std::string> mass_lines = gui::PointMassLines(info, mass);
     IM_CHECK_RETV(!mass_lines.empty(), false);
     IM_CHECK_RETV(gui::g_state.analysis.trace.intent_valid == false, false);
     IM_CHECK_RETV(gui::g_state.analysis.trace.adopted_result == nullptr, false);
     ctx->LogInfo("[v1 c15] point MASS at the sun image: %zu named line(s), no component, no trace intent",
                  mass_lines.size());
+  }
+
+  // The point image's map face on the ANSWERED map (AC3): the image is inked exactly once —
+  // by the map's own mass cell when the image sits at the sun's exact direction and the engine
+  // placed its mass cell (the reuse branch, no marker vertices), or by the dedicated marker
+  // (marker vertices in the rank-0 colour, which nothing else on the map draws). Never both,
+  // never neither. The branch predicate is the same exported structural gate the draw reads.
+  {
+    LUMICE_PathPointMass mass{};
+    mass.struct_size = sizeof(mass);
+    IM_CHECK_RETV(
+        LUMICE_PathPointGetMass(gui::g_state.analysis.point.adopted_result.get(), &mass) == LUMICE_PATH_READ_OK, false);
+    LUMICE_PathPointInfo point_info{};
+    point_info.struct_size = sizeof(point_info);
+    IM_CHECK_RETV(
+        LUMICE_PathPointGetInfo(gui::g_state.analysis.point.adopted_result.get(), &point_info) == LUMICE_PATH_READ_OK,
+        false);
+    LUMICE_PathMapPointMass map_mass{};
+    map_mass.struct_size = sizeof(map_mass);
+    IM_CHECK_RETV(
+        LUMICE_PathMapGetPointMass(gui::g_state.analysis.map.adopted_result.get(), &map_mass) == LUMICE_PATH_READ_OK,
+        false);
+    const bool reuse_licensed = gui::PointMassAtSunDirection(point_info, mass) && map_mass.pixel >= 0;
+    ctx->Yield(2);
+    const gui::OverlayLegendState legend = gui::LastMapOverlayLegend();
+    IM_CHECK_RETV(legend.point_image, false);
+    const int marker_vertices = MapWindowIndexCountForColour(gui::kPointMassColour);
+    ctx->LogInfo("[v1 c15] image (alt %.4f, az %.4f) at sun %d, engine mass pixel %lld, vertices %d, legend %d",
+                 mass.altitude_deg, mass.azimuth_deg, gui::PointMassAtSunDirection(point_info, mass) ? 1 : 0,
+                 map_mass.pixel, marker_vertices, legend.point_image ? 1 : 0);
+    IM_CHECK_RETV(reuse_licensed ? marker_vertices == 0 : marker_vertices > 0, false);
   }
 
   // The summary projection and the complete answer, on the fast arm (the identity survey
@@ -5862,7 +6072,7 @@ bool IdentityClassShowsTheMassArmAndTheMapAnswers(ImGuiTestContext* ctx) {
     IM_CHECK_RETV(frame_text.find("Class evidence") == std::string::npos, false);
     // The point summary's own closed-windows legs (§16.2): the mass answer in full, the target
     // line, and the pointer naming where its omitted caliber detail lives.
-    IM_CHECK_RETV(frame_text.find("Rank-0 point mass") != std::string::npos, false);
+    IM_CHECK_RETV(frame_text.find("Point image") != std::string::npos, false);
     IM_CHECK_RETV(frame_text.find("target: alt 20.000°") != std::string::npos, false);
   }
   // The env gate on the survey and point hosts, the shipped default: the evidence groups
@@ -11059,8 +11269,7 @@ bool PoseViewNarrowestBoundariesHoldBothEnds(ImGuiTestContext* ctx) {
       // sit past the visible clip at this extreme (registered, not contained — the same
       // addressable-is-not-visible distinction the narrowest case's lesson names), so the
       // standing claim here is reachability, not containment.
-      const ImGuiTestItemInfo physics_b =
-          ctx->ItemInfo("**/Interface transmission##pose_factors", ImGuiTestOpFlags_NoError);
+      const ImGuiTestItemInfo physics_b = ctx->ItemInfo("**/Per-face energy##pose_factors", ImGuiTestOpFlags_NoError);
       IM_CHECK_RETV(physics_b.ID != 0, false);
       ImGuiWindow* scroll_b = PoseRegionScrollChild("##AnalyzePoseFactors", "##PoseFactorsScroll");
       IM_CHECK_RETV(scroll_b != nullptr, false);
@@ -11531,15 +11740,14 @@ bool PoseCurveRegionDrawsAndMovesTheSharedCursor(ImGuiTestContext* ctx) {
     const ScopedDebugDetailsEnv env_unset(DebugDetailsState::kUnset);
     ctx->Yield(2);
     IM_CHECK_RETV(ctx->ItemInfo("**/Pose diagnostics##pose_factors", ImGuiTestOpFlags_NoError).ID != 0, false);
-    IM_CHECK_RETV(ctx->ItemInfo("**/Interface transmission##pose_factors", ImGuiTestOpFlags_NoError).ID != 0, false);
+    IM_CHECK_RETV(ctx->ItemInfo("**/Per-face energy##pose_factors", ImGuiTestOpFlags_NoError).ID != 0, false);
   }
   {
     const ScopedDebugDetailsEnv env_on(DebugDetailsState::kOn);
     ctx->Yield(2);
     ImGuiWindow* factors = PoseRegionWindow("##AnalyzePoseFactors");
     IM_CHECK_RETV(factors != nullptr, false);
-    const ImGuiTestItemInfo physics =
-        ctx->ItemInfo("**/Interface transmission##pose_factors", ImGuiTestOpFlags_NoError);
+    const ImGuiTestItemInfo physics = ctx->ItemInfo("**/Per-face energy##pose_factors", ImGuiTestOpFlags_NoError);
     IM_CHECK_RETV(physics.ID != 0, false);
     const ImGuiTestItemInfo calc = ctx->ItemInfo("**/Pose diagnostics##pose_factors", ImGuiTestOpFlags_NoError);
     IM_CHECK_RETV(calc.ID != 0, false);

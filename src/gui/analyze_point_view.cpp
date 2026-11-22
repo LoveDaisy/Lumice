@@ -268,9 +268,9 @@ std::vector<int> CollectValidSampleIndices(const LUMICE_SinglePathResult& result
 
 // The default layer's half (contract §16.1's ladder, §16.4's factors region): the pose itself
 // and the four factor conclusions — or their named-unavailable forms (R4: no zero stands in
-// for a quantity the engine did not produce). The per-interface rows below are T's optical
-// premises, the Interface transmission fold's rows; PointFactorLines is the one concatenation
-// (the tests' consumer — the production readers take the halves directly).
+// for a quantity the engine did not produce). The per-contact rows below are T's optical
+// premises, the per-face fold's rows; PointFactorLines is the one concatenation (the tests'
+// consumer — the production readers take the halves directly).
 std::vector<std::string> PointFactorHeadLines(const LUMICE_PathPointSample& sample) {
   std::vector<std::string> lines;
   char buf[192];
@@ -311,23 +311,274 @@ std::vector<std::string> PointFactorHeadLines(const LUMICE_PathPointSample& samp
   return lines;
 }
 
-std::vector<std::string> PointFactorInterfaceLines(const LUMICE_PathPointSample& sample) {
+PointFaceRole PointFaceRoleFor(size_t contact, size_t interface_count) {
+  if (interface_count <= 1) {
+    return PointFaceRole::kExternalReflection;
+  }
+  if (contact == 0) {
+    return PointFaceRole::kEntryRefraction;
+  }
+  if (contact == interface_count - 1) {
+    return PointFaceRole::kExitRefraction;
+  }
+  return PointFaceRole::kInternalReflection;
+}
+
+namespace {
+
+// The contact's role words and the factor's optical name — one spelling per role, shared by the
+// interface rows and the loss readout (a56: the role vocabulary has one implementation).
+const char* PointFaceRoleWords(PointFaceRole role) {
+  switch (role) {
+    case PointFaceRole::kExternalReflection:
+      return "external reflection";
+    case PointFaceRole::kEntryRefraction:
+      return "entry refraction";
+    case PointFaceRole::kInternalReflection:
+      return "internal reflection";
+    case PointFaceRole::kExitRefraction:
+      return "exit refraction";
+  }
+  return "contact";
+}
+
+const char* PointFaceFactorName(PointFaceRole role) {
+  // The point_result per-facet semantics: the entry and exit carry transmittances, the internal
+  // faces reflectances, a one-face path the external reflectance.
+  return role == PointFaceRole::kInternalReflection || role == PointFaceRole::kExternalReflection ? "reflectance" :
+                                                                                                    "transmittance";
+}
+
+// A single face's conditional denominator is the light reaching it (which for a one-face path IS
+// the incidence); a longer chain's factor is conditional on following this path.
+const char* PointFaceConditionalWords(PointFaceRole role) {
+  return role == PointFaceRole::kExternalReflection ? "conditional on the light reaching the face" :
+                                                      "conditional on this path";
+}
+
+// The percentage text the loss readout and the energy labels share the shape of: %.3g keeps tiny
+// non-zero values honest (1e-9 -> "1e-07%") without fabricating digits for the common range.
+std::string PointLossPercentText(double fraction) {
+  char buf[32];
+  std::snprintf(buf, sizeof(buf), "%.3g%%", fraction * 100.0);
+  return buf;
+}
+
+// The drop size under which an interface reads as keeping the light — the loss reading's and the
+// readout lines' shared "no drop" band (absolute: the energies are in [0,1] and double noise on
+// them is far below this).
+constexpr double kPointLossNoDropBand = 1e-9;
+
+}  // namespace
+
+std::vector<std::string> PointFactorInterfaceLines(const LUMICE_PathPointSample& sample, const int* faces,
+                                                   size_t face_count) {
   std::vector<std::string> lines;
   char buf[192];
-  const int interfaces = static_cast<int>(sample.interface_count);
-  for (int i = 0; i < interfaces; ++i) {
-    std::snprintf(buf, sizeof(buf), "interface %d/%d %s = %.6g (conditional on this path)", i + 1, interfaces,
-                  interfaces == 1 ? "reflectance" : "transmittance", sample.interface_transmittances[i]);
+  const size_t interfaces = sample.interface_count;
+  const bool have_faces = faces != nullptr && face_count == interfaces;
+  for (size_t i = 0; i < interfaces; ++i) {
+    const PointFaceRole role = PointFaceRoleFor(i, interfaces);
+    if (have_faces) {
+      std::snprintf(buf, sizeof(buf), "face %d, %s: %s = %.6g (%s)", faces[i], PointFaceRoleWords(role),
+                    PointFaceFactorName(role),
+                    sample.interface_transmittances != nullptr ? sample.interface_transmittances[i] : 0.0,
+                    PointFaceConditionalWords(role));
+    } else {
+      std::snprintf(buf, sizeof(buf), "contact %zu/%zu, %s: %s = %.6g (%s)", i + 1, interfaces,
+                    PointFaceRoleWords(role), PointFaceFactorName(role),
+                    sample.interface_transmittances != nullptr ? sample.interface_transmittances[i] : 0.0,
+                    PointFaceConditionalWords(role));
+    }
     lines.emplace_back(buf);
   }
   return lines;
 }
 
-std::vector<std::string> PointFactorLines(const LUMICE_PathPointSample& sample) {
+std::vector<std::string> PointFactorLines(const LUMICE_PathPointSample& sample, const int* faces, size_t face_count) {
   std::vector<std::string> lines = PointFactorHeadLines(sample);
-  for (std::string& line : PointFactorInterfaceLines(sample)) {
+  for (std::string& line : PointFactorInterfaceLines(sample, faces, face_count)) {
     lines.push_back(std::move(line));
   }
+  return lines;
+}
+
+PointLossReading PointLossReadingFor(const std::vector<RayTraceSegmentEnergy>& energies) {
+  // Derived from the cumulative array the caller already built (RayTraceCumulativeEnergies' own
+  // output) — no second accumulation of the chain. The usable prefix is where `valid` last held;
+  // drops compare ABSOLUTE amounts (E[i] - E[i+1]), the rounding band deciding "no drop".
+  PointLossReading out;
+  if (energies.size() < 2) {
+    return out;
+  }
+  size_t prefix = 0;  // energies[i].valid for i in [0, prefix]
+  while (prefix < energies.size() && energies[prefix].valid) {
+    ++prefix;
+  }
+  out.usable_contacts = static_cast<int>(prefix) - 1;  // contacts 0..prefix-2 have both ends usable
+  if (out.usable_contacts <= 0) {
+    out.usable_contacts = 0;
+    return out;
+  }
+  constexpr double kNoDropBand = kPointLossNoDropBand;  // drops within this read as kept energy
+  double best = -1.0;
+  int best_index = -1;
+  int ties = 0;
+  bool any_loss = false;
+  // The energies are monotone non-increasing over the valid prefix (the cumulative clamps each
+  // factor into [0,1]), so every drop lies in [0,1] and the first contact always seeds `best`;
+  // the tie branch below is therefore only ever reached from the second contact on.
+  for (int i = 0; i < out.usable_contacts; ++i) {
+    const double drop = energies[static_cast<size_t>(i)].value - energies[static_cast<size_t>(i) + 1].value;
+    if (drop > kNoDropBand) {
+      any_loss = true;
+    }
+    if (drop > best + kNoDropBand) {
+      best = drop;
+      best_index = i;
+      ties = 1;
+    } else if (drop >= best - kNoDropBand) {
+      ++ties;  // within the band of the current best — a tie, no single cause claimed
+    }
+    // else: strictly below the current best — not a tie, not a new best.
+  }
+  out.largest_drop = best > 0.0 ? best : 0.0;
+  out.loss_contact = best_index;
+  out.tie_count = ties;
+  out.majority = out.largest_drop > 0.5;
+  out.lossless = !any_loss;
+  if (out.lossless) {
+    out.loss_contact = -1;
+  }
+  return out;
+}
+
+std::vector<std::string> PointLossReadoutLines(const LUMICE_PathPointSample& sample, const int* faces,
+                                               size_t face_count) {
+  std::vector<std::string> lines;
+  const size_t interfaces = sample.interface_count;
+  const bool have_faces = faces != nullptr && face_count == interfaces;
+  if (interfaces == 0 || sample.interface_transmittances == nullptr) {
+    return lines;
+  }
+  // The ONE cumulative authority (the 3D labels' own rule) feeds both the reading and the
+  // sentences — no second accumulation, no early rounding.
+  const std::vector<RayTraceSegmentEnergy> energies =
+      RayTraceCumulativeEnergies(sample.interface_transmittances, interfaces);
+  const PointLossReading reading = PointLossReadingFor(energies);
+  if (reading.usable_contacts <= 0) {
+    return lines;
+  }
+  const auto contact_name = [&](size_t i) {
+    char buf[32];
+    if (have_faces) {
+      std::snprintf(buf, sizeof(buf), "face %d", faces[i]);
+    } else {
+      std::snprintf(buf, sizeof(buf), "contact %zu", i + 1);
+    }
+    return std::string(buf);
+  };
+  char buf[320];
+  // The conclusion: "most light" only where the largest absolute drop really exceeds half the
+  // incident light; a tie names no single cause; no loss says so.
+  if (reading.lossless) {
+    lines.emplace_back("No measurable loss along this path — every interface keeps the light.");
+  } else if (reading.tie_count > 1) {
+    std::string names;
+    for (int i = 0; i < reading.usable_contacts; ++i) {
+      const double drop = energies[static_cast<size_t>(i)].value - energies[static_cast<size_t>(i) + 1].value;
+      if (drop >= reading.largest_drop - kPointLossNoDropBand) {
+        if (!names.empty()) {
+          names += " and ";
+        }
+        names += contact_name(static_cast<size_t>(i));
+      }
+    }
+    std::snprintf(buf, sizeof(buf), "The largest drop along this path ties at %s — no single face carries it.",
+                  names.c_str());
+    lines.emplace_back(buf);
+  } else if (reading.majority) {
+    std::snprintf(buf, sizeof(buf), "Most light leaves this path at %s.",
+                  contact_name(static_cast<size_t>(reading.loss_contact)).c_str());
+    lines.emplace_back(buf);
+  } else {
+    std::snprintf(buf, sizeof(buf), "The largest drop along this path is at %s.",
+                  contact_name(static_cast<size_t>(reading.loss_contact)).c_str());
+    lines.emplace_back(buf);
+  }
+  // The readings for a unique loss contact: arrival / continuation / final exit, all against the
+  // shared incident denominator. A tie names no readings (the per-face table locates the drops).
+  if (!reading.lossless && reading.tie_count == 1) {
+    const int k = reading.loss_contact;
+    const size_t n = interfaces;
+    const double arrival = energies[static_cast<size_t>(k)].value;
+    const double after = energies[static_cast<size_t>(k) + 1].value;
+    const bool final_usable = energies[n].valid;
+    const double final_e = energies[n].value;
+    const PointFaceRole role = PointFaceRoleFor(static_cast<size_t>(k), n);
+    std::string sentence;
+    if (n == 1) {
+      // The single-face external reflection: the one contact is the whole story.
+      std::snprintf(buf, sizeof(buf),
+                    "The external reflection at %s keeps %s of the incident light; the rest leaves the path there.",
+                    contact_name(0).c_str(), PointLossPercentText(after).c_str());
+      sentence = buf;
+    } else if (k == 0) {
+      // Entry loss: the kept amount and the continuation are the same energy — the sentence
+      // names the entry and jumps to the final exit (the per-face table carries the middle).
+      std::snprintf(buf, sizeof(buf), "The %s at %s keeps %s of the incident light", PointFaceRoleWords(role),
+                    contact_name(0).c_str(), PointLossPercentText(after).c_str());
+      sentence = buf;
+      if (final_usable && n >= 2) {
+        std::snprintf(buf, sizeof(buf), "; %s finally leaves through %s", PointLossPercentText(final_e).c_str(),
+                      contact_name(n - 1).c_str());
+        sentence += buf;
+      }
+      sentence += ".";
+    } else {
+      std::snprintf(buf, sizeof(buf), "The light reaches %s with %s of the incident light",
+                    contact_name(static_cast<size_t>(k)).c_str(), PointLossPercentText(arrival).c_str());
+      sentence = buf;
+      if (k + 1 < static_cast<int>(n)) {
+        std::snprintf(buf, sizeof(buf), "; after the %s there, %s continues along %s → %s", PointFaceRoleWords(role),
+                      PointLossPercentText(after).c_str(), contact_name(static_cast<size_t>(k)).c_str(),
+                      contact_name(static_cast<size_t>(k) + 1).c_str());
+        sentence += buf;
+        if (final_usable) {
+          std::snprintf(buf, sizeof(buf), "; %s finally leaves through %s", PointLossPercentText(final_e).c_str(),
+                        contact_name(n - 1).c_str());
+          sentence += buf;
+        }
+      } else {
+        std::snprintf(buf, sizeof(buf), "; the %s there passes only %s", PointFaceRoleWords(role),
+                      PointLossPercentText(after).c_str());
+        sentence += buf;
+      }
+      sentence += ".";
+    }
+    lines.emplace_back(sentence);
+  }
+  // The basis: the shared denominator, the actual sequence and the representative-ray-only
+  // scope — the plan's 邻近交代, at the default layer beside the numbers it grounds.
+  std::string basis =
+      "Percentages take the incident light before the first contact as 100%, for this representative ray only";
+  if (have_faces) {
+    std::string seq;
+    for (size_t i = 0; i < face_count; ++i) {
+      if (!seq.empty()) {
+        seq += "-";
+      }
+      seq += std::to_string(faces[i]);
+    }
+    basis += " (faces " + seq + ")";
+  }
+  if (!reading.lossless && reading.usable_contacts < static_cast<int>(interfaces)) {
+    std::snprintf(buf, sizeof(buf), "; amounts stop at contact %d — the factor there is out of range",
+                  reading.usable_contacts + 1);
+    basis += buf;
+  }
+  basis += ".";
+  lines.emplace_back(basis);
   return lines;
 }
 
@@ -357,22 +608,80 @@ std::vector<std::string> PointCaliberLines(const LUMICE_PathPointInfo& info) {
   return lines;
 }
 
-std::vector<std::string> PointMassLines(const LUMICE_PathPointMass& mass) {
+bool PointMassAtSunDirection(const LUMICE_PathPointInfo& info, const LUMICE_PathPointMass& mass) {
+  const double dlat = mass.altitude_deg - info.sun_altitude_deg;
+  double dlon = mass.azimuth_deg - info.sun_azimuth_deg;
+  while (dlon > 180.0) {
+    dlon -= 360.0;
+  }
+  while (dlon < -180.0) {
+    dlon += 360.0;
+  }
+  constexpr double kAtSunDeg = 1e-6;
+  return std::fabs(dlat) < kAtSunDeg && std::fabs(dlon) < kAtSunDeg;
+}
+
+namespace {
+
+// The shared angular-distance words for the separation (AC3's "23.74°" shape).
+std::string PointMassSeparationText(const LUMICE_PathPointMass& mass) {
+  char buf[48];
+  std::snprintf(buf, sizeof(buf), "%.2f°", mass.target_separation_deg);
+  return buf;
+}
+
+}  // namespace
+
+std::vector<std::string> PointMassLines(const LUMICE_PathPointInfo& info, const LUMICE_PathPointMass& mass) {
   std::vector<std::string> lines;
   char buf[256];
-  std::snprintf(buf, sizeof(buf), "point mass at alt %.3f°, az %.3f° (target separation %.3e°)", mass.altitude_deg,
-                mass.azimuth_deg, mass.target_separation_deg);
+  if (PointMassAtSunDirection(info, mass)) {
+    std::snprintf(buf, sizeof(buf), "Point image at altitude %.3f°, azimuth %.3f° — the sun's own direction.",
+                  mass.altitude_deg, mass.azimuth_deg);
+  } else {
+    std::snprintf(buf, sizeof(buf), "Point image at altitude %.3f°, azimuth %.3f°.", mass.altitude_deg,
+                  mass.azimuth_deg);
+  }
+  lines.emplace_back(buf);
+  std::snprintf(buf, sizeof(buf), "Your target sits %s away (target separation).",
+                PointMassSeparationText(mass).c_str());
   lines.emplace_back(buf);
   if (mass.orbit_available != 0) {
-    std::snprintf(buf, sizeof(buf), "orbit integral over %s: %.6g (%d/%d samples kept)",
-                  PathTextToString(mass.measure_support).c_str(), mass.orbit_integral, mass.orbit_kept_count,
+    std::snprintf(buf, sizeof(buf), "Total light of this image: %.6g (the orbit integral over %s, %d/%d samples kept).",
+                  mass.orbit_integral, PathTextToString(mass.measure_support).c_str(), mass.orbit_kept_count,
                   mass.orbit_sample_count);
     lines.emplace_back(buf);
   } else {
-    std::snprintf(buf, sizeof(buf), "orbit integral: unavailable (%s)", PathTextToString(mass.orbit_reason).c_str());
+    std::snprintf(buf, sizeof(buf),
+                  "No total-light reading yet — the orbit integral is unavailable for this measure (%s).",
+                  PathTextToString(mass.orbit_reason).c_str());
+    lines.emplace_back(buf);
+  }
+  if (info.sun_diameter_deg > 0.0) {
+    // The point-sun premise (the plan's no-finite-sun-broadening rule): the answer names the
+    // sun's centre direction; the disk's spread is not promised into these numbers.
+    std::snprintf(
+        buf, sizeof(buf),
+        "Computed for the sun's centre direction (sun diameter %.2f°); a finite disk is not part of these numbers.",
+        info.sun_diameter_deg);
     lines.emplace_back(buf);
   }
   return lines;
+}
+
+std::string PointMassFooterLine(const LUMICE_PathPointInfo& info, const LUMICE_PathPointMass& mass) {
+  char buf[256];
+  if (PointMassAtSunDirection(info, mass)) {
+    std::snprintf(buf, sizeof(buf),
+                  "Point image at the sun's own direction (alt %.3f°, az %.3f°), %.2f° from your target",
+                  mass.altitude_deg, mass.azimuth_deg, mass.target_separation_deg);
+  } else {
+    std::snprintf(buf, sizeof(buf), "Point image at alt %.3f°, az %.3f°, %.2f° from your target", mass.altitude_deg,
+                  mass.azimuth_deg, mass.target_separation_deg);
+  }
+  std::string line = buf;
+  line += mass.orbit_available != 0 ? "; total light below." : "; no total-light reading yet.";
+  return line;
 }
 
 // ---- The contribution curve (756, audit §5's consumption contract) -----------------------------------
@@ -2792,7 +3101,11 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
       return;
     }
     if (info->outcome == LUMICE_PATH_POINT_MASS) {
-      DisabledWrappedText("A rank-0 point mass has no fiber curve — the details carry the mass numbers.");
+      // The point image is the whole answer (no fiber curve to draw); its reading lives in the
+      // factors region — this arm states the layout fact once, not a second "no fiber" story.
+      DisabledWrappedText(
+          "The point image is this answer's whole shape — there is no curve to draw; its "
+          "reading sits in the factors region.");
       return;
     }
     std::vector<PointComponentRow> rows;
@@ -2809,9 +3122,12 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
       }
       if (have_reach && !reach.target_in_range) {
         DisabledWrappedText(
-            "No fiber here: the target's deviation is outside the range of this path's deflection field.");
+            "No fiber here: the target's deviation lies outside this path's deflection range "
+            "at the reach probe's resolution.");
       } else {
-        DisabledWrappedText("No fiber component at this point — nothing to draw a curve along.");
+        DisabledWrappedText(
+            "No fiber component at this point — this search has not yet found a pose that "
+            "sends light here, so there is no curve to draw along.");
       }
       return;
     }
@@ -3126,13 +3442,50 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
   ImGui::EndChild();
 }
 
+// The per-face amounts fold's rows (AC4's shared-denominator table): each contact's role-named
+// factor with its own conditional denominator, and — separately labelled — the light after that
+// contact against the common incident denominator (RayTraceCumulativeEnergies' own output; the
+// table never re-accumulates). Past an unusable factor the light column reads "n/a", the factor
+// rows continue (the factors are the document's own payload).
+std::vector<std::string> PointFaceEnergyFoldLines(const LUMICE_PathPointSample& sample, const int* faces,
+                                                  size_t face_count) {
+  std::vector<std::string> lines;
+  const size_t interfaces = sample.interface_count;
+  const bool have_faces = faces != nullptr && face_count == interfaces;
+  if (interfaces == 0) {
+    return lines;
+  }
+  const std::vector<RayTraceSegmentEnergy> energies =
+      RayTraceCumulativeEnergies(sample.interface_transmittances, interfaces);
+  const auto contact_name = [&](size_t i) {
+    char buf[32];
+    if (have_faces) {
+      std::snprintf(buf, sizeof(buf), "face %d", faces[i]);
+    } else {
+      std::snprintf(buf, sizeof(buf), "contact %zu", i + 1);
+    }
+    return std::string(buf);
+  };
+  char buf[256];
+  for (size_t i = 0; i < interfaces; ++i) {
+    const PointFaceRole role = PointFaceRoleFor(i, interfaces);
+    const double factor = sample.interface_transmittances != nullptr ? sample.interface_transmittances[i] : 0.0;
+    std::snprintf(buf, sizeof(buf), "%s, %s: %s = %.6g (%s) · light after: %s", contact_name(i).c_str(),
+                  PointFaceRoleWords(role), PointFaceFactorName(role), factor, PointFaceConditionalWords(role),
+                  energies[i + 1].valid ? PointLossPercentText(energies[i + 1].value).c_str() : "n/a");
+    lines.emplace_back(buf);
+  }
+  return lines;
+}
+
 // The factors region — the right column's lower member (contract §16.4): the current pose's
-// factor readouts bound to view.sample_index — the ONE selection the slider, the globe, the 3D
-// trace and the curve canvas all write — plus the measure registration's note (a limitation
-// reads beside the numbers it limits, §16.4's default-readable rule) and the two §16.1 fold
-// groups. The curve canvas's hover tooltip is temporary display only
-// only; nothing here follows the hover — CurrentSampleOf reads view.sample_index, which hover
-// never writes.
+// loss answer and factor readouts bound to view.sample_index — the ONE selection the slider,
+// the globe, the 3D trace and the curve canvas all write — plus the measure registration's note
+// (a limitation reads beside the numbers it limits, §16.4's default-readable rule) and the
+// §16.1 fold groups. The default layer leads with the loss answer (where the light leaves this
+// path); the pose factor strings, the per-contact factors and the diagnostics are the folds.
+// The curve canvas's hover tooltip is temporary display only; nothing here follows the hover —
+// CurrentSampleOf reads view.sample_index, which hover never writes.
 void RenderPoseFactorsRegion(GuiState& state, const ImVec2& size) {
   ImGui::BeginChild("##AnalyzePoseFactors", size, ImGuiChildFlags_Borders);
   PointQuerySession& point = state.analysis.point;
@@ -3154,7 +3507,17 @@ void RenderPoseFactorsRegion(GuiState& state, const ImVec2& size) {
       return;
     }
     if (info->outcome == LUMICE_PATH_POINT_MASS) {
-      DisabledWrappedText("A rank-0 point mass has no per-pose factors — the details carry the mass numbers.");
+      // The rank-0 answer IS this region's answer here (AC3): the point image's own reading,
+      // not a "no per-pose factors" technical note.
+      LUMICE_PathPointMass mass{};
+      mass.struct_size = sizeof(mass);
+      if (LUMICE_PathPointGetMass(point.adopted_result.get(), &mass) == LUMICE_PATH_READ_OK) {
+        for (const std::string& line_text : PointMassLines(*info, mass)) {
+          ImGui::TextWrapped("%s", line_text.c_str());
+        }
+      } else {
+        DisabledWrappedText("The mass block did not answer its reader.");
+      }
       return;
     }
     std::vector<PointComponentRow> rows;
@@ -3171,9 +3534,12 @@ void RenderPoseFactorsRegion(GuiState& state, const ImVec2& size) {
       }
       if (have_reach && !reach.target_in_range) {
         DisabledWrappedText(
-            "No fiber here: the target's deviation is outside the range of this path's deflection field.");
+            "No fiber here: the target's deviation lies outside this path's deflection range "
+            "at the reach probe's resolution.");
       } else {
-        DisabledWrappedText("No fiber component at this point — there are no pose factors to read.");
+        DisabledWrappedText(
+            "No fiber component at this point — this search has not yet found a pose that "
+            "sends light here, so there are no pose factors to read.");
       }
       return;
     }
@@ -3196,12 +3562,14 @@ void RenderPoseFactorsRegion(GuiState& state, const ImVec2& size) {
       DisabledWrappedText("The current sample could not be read from the adopted document.");
       return;
     }
-    // ---- The default layer (§16.1's ladder): the factor conclusions, bound to the ONE
-    // selection; the measure registration's note beside them (a limitation reads where it
-    // limits, §16.4's default-readable rule). ----
+    // ---- The default layer (§16.1's ladder): the loss answer first — where the light leaves
+    // this path, with its readings and the shared-denominator basis line; the measure
+    // registration's note beside it (a limitation reads where it limits, §16.4's
+    // default-readable rule). The pose factor strings move to their fold below (the plan's
+    // default-no-longer-pushed-off-screen rule); nothing is deleted. ----
     DisabledWrappedText("Current sample:");
-    for (const std::string& line_text : PointFactorHeadLines(current->sample)) {
-      ImGui::Bullet();
+    const std::vector<std::string> loss_lines = PointLossReadoutLines(current->sample, info->faces, info->face_count);
+    for (const std::string& line_text : loss_lines) {
       ImGui::TextWrapped("%s", line_text.c_str());
     }
     LUMICE_PathMeasureRegistration reg{};
@@ -3210,17 +3578,63 @@ void RenderPoseFactorsRegion(GuiState& state, const ImVec2& size) {
         reg.registered_gap != 0 && reg.note.data != nullptr && reg.note.length > 0) {
       DisabledWrappedText("measure registration: %.*s", static_cast<int>(reg.note.length), reg.note.data);
     }
-    // ---- The two §16.1 fold groups: A1's label constants, one spelling (a56); the expansion
+    // ---- The §16.1 fold groups: A1's label constants, one spelling (a56); the expansion
     // state lives in the pose window's ImGui storage — session-sticky, no GuiState field, the
-    // same convention every answer host follows. Both render in every state: the diagnostics
-    // group is not env-gated (its deviation-grid toggle is a user-facing control; only the
-    // Class/Point/Map diagnostics groups stay behind LUMICE_ANALYZE_DEBUG_DETAILS). The
-    // toggle's display effect — the globe's backdrop — is gated at the globe's own draw site
+    // same convention every answer host follows. The face-detail fold names the loss contact
+    // (a tie names none — no single face to open); the per-face table and the pose factor
+    // strings keep every physical fact reachable; the diagnostics group is not env-gated (its
+    // deviation-grid toggle is a user-facing control; only the Class/Point/Map diagnostics
+    // groups stay behind LUMICE_ANALYZE_DEBUG_DETAILS). The toggle's display effect — the
+    // globe's backdrop — is gated at the globe's own draw site
     // (RenderAnalyzeSunGlobeRegion's have_grid), by the toggle and the payload alone. ----
-    if (FoldOpen(kPoseTransmissionLabel, "pose_factors")) {
-      // The per-interface transmittances: T's optical premises — the ladder's evidence rows,
-      // not the default layer's conclusions.
-      for (const std::string& line_text : PointFactorInterfaceLines(current->sample)) {
+    if (!loss_lines.empty()) {
+      const std::vector<RayTraceSegmentEnergy> energies =
+          RayTraceCumulativeEnergies(current->sample.interface_transmittances, current->sample.interface_count);
+      const PointLossReading reading = PointLossReadingFor(energies);
+      if (!reading.lossless && reading.tie_count == 1 && reading.loss_contact >= 0) {
+        char face_label[64];
+        if (info->faces != nullptr && info->face_count == current->sample.interface_count) {
+          std::snprintf(face_label, sizeof(face_label), "View face %d",
+                        info->faces[static_cast<size_t>(reading.loss_contact)]);
+        } else {
+          std::snprintf(face_label, sizeof(face_label), "View contact %d", reading.loss_contact + 1);
+        }
+        if (FoldOpen(face_label, "pose_factors")) {
+          const int k = reading.loss_contact;
+          const size_t n = current->sample.interface_count;
+          const PointFaceRole role = PointFaceRoleFor(static_cast<size_t>(k), n);
+          const bool have_faces = info->faces != nullptr && info->face_count == n;
+          char where[48];
+          if (have_faces) {
+            std::snprintf(where, sizeof(where), "face %d", info->faces[static_cast<size_t>(k)]);
+          } else {
+            std::snprintf(where, sizeof(where), "contact %d", k + 1);
+          }
+          char buf[256];
+          const double arrival = energies[static_cast<size_t>(k)].value;
+          std::snprintf(buf, sizeof(buf), "Contact %d of %zu — %s, %s. It receives %s of the incident light.", k + 1, n,
+                        where, PointFaceRoleWords(role), PointLossPercentText(arrival).c_str());
+          ImGui::TextWrapped("%s", buf);
+          ImGui::TextWrapped("From here the percentages read the light reaching this face as 100%%:");
+          const double factor = current->sample.interface_transmittances != nullptr ?
+                                    current->sample.interface_transmittances[static_cast<size_t>(k)] :
+                                    0.0;
+          ImGui::TextWrapped("%s = %.6g (%s).", PointFaceFactorName(role), factor, PointFaceConditionalWords(role));
+        }
+      }
+    }
+    if (FoldOpen(kPosePerFaceEnergyLabel, "pose_factors")) {
+      // The per-contact factors and the light they leave — the ladder's evidence rows, not the
+      // default layer's conclusions; each denominator is labelled in the row itself.
+      for (const std::string& line_text : PointFaceEnergyFoldLines(current->sample, info->faces, info->face_count)) {
+        ImGui::Bullet();
+        ImGui::TextWrapped("%s", line_text.c_str());
+      }
+    }
+    if (FoldOpen(kPoseFactorsLabel, "pose_factors")) {
+      // The pose's own factor strings: orientation, rho, A, T, J/K and the product — the
+      // physical evidence the loss answer summarizes, still one selection bound.
+      for (const std::string& line_text : PointFactorHeadLines(current->sample)) {
         ImGui::Bullet();
         ImGui::TextWrapped("%s", line_text.c_str());
       }
@@ -3274,7 +3688,14 @@ std::string PoseSelectionStatus(const GuiState& state, bool* warning) {
     return "The adopted point document did not answer its Info reader.";
   }
   if (info->outcome == LUMICE_PATH_POINT_MASS) {
-    return "A rank-0 point mass has no fiber or crystal-interior path; the details carry the mass numbers.";
+    // The footer carries the same core point-image answer the factors region gives (AC3), in
+    // the footer's one-line form.
+    LUMICE_PathPointMass mass{};
+    mass.struct_size = sizeof(mass);
+    if (LUMICE_PathPointGetMass(point.adopted_result.get(), &mass) == LUMICE_PATH_READ_OK) {
+      return PointMassFooterLine(*info, mass);
+    }
+    return "The mass block did not answer its reader.";
   }
   if (info->component_count == 0) {
     if (info->execution != LUMICE_PATH_OUTCOME_COMPLETED) {
@@ -3286,7 +3707,7 @@ std::string PoseSelectionStatus(const GuiState& state, bool* warning) {
       return "No fiber here: the target's deviation is outside the path's deflection range (at the reach probe's "
              "resolution).";
     }
-    return "No fiber component at this point: the finite crystal passes no pose along the queried deflection.";
+    return "No fiber component at this point — this search has not yet found a pose that sends light here.";
   }
   const auto valid_indices = CollectValidSampleIndices(
       *point.adopted_result,
@@ -3550,9 +3971,10 @@ bool DrawPointCompletedHead(const PointQuerySession& point, LUMICE_PathPointInfo
   return true;
 }
 
-// The no-component arm's conclusions: the reach's out-of-range fact or the finite-crystal
-// statement, then the discovery's own completeness note. An L1 pair — both hosts keep it
-// verbatim (the 覆盖律: 有限排除/完备性限定不得被折叠掉).
+// The no-component arm's conclusions: the reach's out-of-range fact or the search-scoped
+// statement (this search has not found a pose — never "the crystal has none"), then the
+// discovery's own completeness note. An L1 pair — both hosts keep it verbatim (the 覆盖律:
+// 有限排除/完备性限定不得被折叠掉).
 void DrawPointNoComponentConclusions(const PointQuerySession& point) {
   LUMICE_PathPointReach reach{};
   reach.struct_size = sizeof(reach);
@@ -3565,8 +3987,8 @@ void DrawPointNoComponentConclusions(const PointQuerySession& point) {
         reach.tolerance_rad);
   } else {
     ImGui::TextWrapped(
-        "No component at this point (the finite crystal passes no pose; the discovery's own "
-        "completeness note is below).");
+        "No component at this point (this search has not yet found a pose that sends light "
+        "here; the discovery's own completeness note is below).");
   }
   ImGui::PopStyleColor();
   LUMICE_PathPointDiscovery discovery{};
@@ -3598,8 +4020,8 @@ void DrawPointSummaryCompleted(GuiState& state, const LUMICE_PathPointInfo& info
     mass.struct_size = sizeof(mass);
     if (LUMICE_PathPointGetMass(point.adopted_result.get(), &mass) == LUMICE_PATH_READ_OK) {
       ImGui::Spacing();
-      ImGui::TextWrapped("Rank-0 point mass (no fiber, no playback — the mass is the whole answer):");
-      for (const std::string& line_text : PointMassLines(mass)) {
+      ImGui::TextWrapped("Point image (no fiber, no playback — this reading is the whole answer):");
+      for (const std::string& line_text : PointMassLines(info, mass)) {
         ImGui::Bullet();
         ImGui::TextWrapped("%s", line_text.c_str());
       }
@@ -3760,8 +4182,8 @@ void RenderPointAnswerBlock(GuiState& state) {
     mass.struct_size = sizeof(mass);
     if (LUMICE_PathPointGetMass(point.adopted_result.get(), &mass) == LUMICE_PATH_READ_OK) {
       ImGui::Spacing();
-      ImGui::TextWrapped("Rank-0 point mass (no fiber, no playback — the mass is the whole answer):");
-      for (const std::string& line_text : PointMassLines(mass)) {
+      ImGui::TextWrapped("Point image (no fiber, no playback — this reading is the whole answer):");
+      for (const std::string& line_text : PointMassLines(info, mass)) {
         ImGui::Bullet();
         ImGui::TextWrapped("%s", line_text.c_str());
       }

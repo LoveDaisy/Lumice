@@ -48,6 +48,7 @@ static_assert(kChromaticColourBlue == IM_COL32(96, 145, 240, 235), "the promoted
 static_assert(kReadoutBackingInk == IM_COL32(16, 17, 20, 170), "the promoted backing ink must equal its literal");
 static_assert(kProfileReadingColour == IM_COL32(244, 114, 182, 255), "the promoted rose must equal its literal");
 static_assert(kSurveyArcInk == IM_COL32(200, 205, 215, 215), "the promoted arc ink must equal its literal");
+static_assert(kPointMassColour == IM_COL32(250, 184, 74, 255), "the promoted mass colour must equal its literal");
 
 OverlayLegendState g_map_legend;
 MapObservationTiming g_map_observation_timing;
@@ -1392,6 +1393,76 @@ void DrawSkyPointMarker(ImDrawList* dl, const MapCanvasProjection& view, const S
   *out_marker_py = cy;
 }
 
+// The adopted point query's rank-0 image on the map (AC3): a dedicated marker in the rank-0
+// mass colour, drawn from the ADOPTED POINT RESULT only — the position is never borrowed from a
+// survey or map handle, and the user's sky-point marker keeps its own ink and its own place
+// (the image never moves the target). One reuse branch, structural on both sides: a matched,
+// adopted map whose own mass cell exists (the engine places it at the pixel containing the
+// incident direction) already inks an image that sits at the sun's exact direction — that cell
+// IS the image's ink and no second symbol draws. Outside the view or the gate: no ink, and the
+// point answer's text still carries the position — the marker's absence is never a no-image
+// claim.
+void DrawPointImageMarker(GuiState& state, const MapCanvasProjection& view, const ImVec2& pic_min, float pic_px,
+                          OverlayLegendState* legend) {
+  const PointQuerySession& point = state.analysis.point;
+  if (PointQueryStateFor(point) != PointQueryState::kCompleted || point.adopted_result == nullptr) {
+    return;
+  }
+  LUMICE_PathPointInfo info{};
+  info.struct_size = sizeof(info);
+  if (LUMICE_PathPointGetInfo(point.adopted_result.get(), &info) != LUMICE_PATH_READ_OK ||
+      info.outcome != LUMICE_PATH_POINT_MASS) {
+    return;
+  }
+  LUMICE_PathPointMass mass{};
+  mass.struct_size = sizeof(mass);
+  if (LUMICE_PathPointGetMass(point.adopted_result.get(), &mass) != LUMICE_PATH_READ_OK) {
+    return;
+  }
+  double travel[3];
+  AltAzToDir(mass.altitude_deg, mass.azimuth_deg, travel);
+  // The reuse leg, structural on both sides: the map's own mass cell is the pixel containing
+  // the INCIDENT direction (the engine's placement, LUMICE_PathMapPointMass.pixel), so when the
+  // image itself sits at the sun's exact direction (PointMassAtSunDirection's equality gate),
+  // that cell IS the image's ink — no second symbol. Identity is the documents' own records
+  // (crystal id, wavelength) plus these two structural facts — never a proximity judgement and
+  // never a re-derived cell lookup (the (delta, az) lattice is degenerate at delta 0, where
+  // this branch by construction lives).
+  const MapQuerySession& map = state.analysis.map;
+  if (map.adopted_result != nullptr && (map.adopted_id == map.intent_id) && PointMassAtSunDirection(info, mass)) {
+    LUMICE_PathMapInfo map_info{};
+    map_info.struct_size = sizeof(map_info);
+    LUMICE_PathMapPointMass map_mass{};
+    map_mass.struct_size = sizeof(map_mass);
+    if (LUMICE_PathMapGetInfo(map.adopted_result.get(), &map_info) == LUMICE_PATH_READ_OK &&
+        map_info.crystal_id == info.crystal_id && map_info.wavelength_nm == info.wavelength_nm &&
+        LUMICE_PathMapGetPointMass(map.adopted_result.get(), &map_mass) == LUMICE_PATH_READ_OK && map_mass.pixel >= 0) {
+      if (legend != nullptr) {
+        legend->point_image = true;  // the map's own sun cell carries the image
+      }
+      return;
+    }
+  }
+  const double pos[3] = { -travel[0], -travel[1], -travel[2] };
+  double x = 0.0;
+  double y = 0.0;
+  if (!ProjectToRect(view, pos, pic_min, pic_px, &x, &y)) {
+    return;
+  }
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  const ImU32 ink = static_cast<ImU32>(kPointMassColour);
+  const float r = UiPx(5.0f);
+  const ImVec2 c(static_cast<float>(x), static_cast<float>(y));
+  // A filled diamond: the mass colour with a dark rim, unmistakably not the sky-point
+  // crosshair beside it.
+  dl->AddTriangleFilled(ImVec2(c.x, c.y - r), ImVec2(c.x + r, c.y), ImVec2(c.x, c.y + r), ink);
+  dl->AddTriangleFilled(ImVec2(c.x, c.y - r), ImVec2(c.x - r, c.y), ImVec2(c.x, c.y + r), ink);
+  dl->AddCircle(c, r + UiPx(1.5f), IM_COL32(16, 17, 20, 255), 0, UiPx(1.2f));
+  if (legend != nullptr) {
+    legend->point_image = true;
+  }
+}
+
 }  // namespace
 
 // The legend keys' caliber words, ONE spelling per draw pass: the scope wavelength for the
@@ -2306,6 +2377,11 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   if (marker_px >= 0.0f) {
     legend.sky_point = true;
   }
+  // The adopted point query's rank-0 image (analysis ink): under the same Overlays gate as the
+  // survey layers; the text answer carries the position whatever the gate does.
+  if (overlays) {
+    DrawPointImageMarker(state, view, pic_min, pic_px, &legend);
+  }
 
   g_map_legend = legend;
 
@@ -2994,6 +3070,10 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
       ImGui::Bullet();
       ImGui::TextWrapped("sky-point marker");
     }
+    if (legend.point_image) {
+      ImGui::Bullet();
+      ImGui::TextWrapped("point image (rank-0 answer)");
+    }
     // The long dictionary: the entries' meanings and honesty qualifications, behind one
     // closed-by-default fold (the ledger's Legend explanations group).
     if (FoldOpen(kMapLegendExplanationsLabel, "map_legend")) {
@@ -3031,6 +3111,12 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
       }
       if (legend.sky_point) {
         ImGui::TextWrapped("sky-point marker — the target the point face queries");
+      }
+      if (legend.point_image) {
+        ImGui::TextWrapped(
+            "point image — the adopted point query's rank-0 answer, at the position the answer names; on a matched "
+            "map the mass cell itself carries the ink and no second symbol draws. The target marker stays the "
+            "user's own — the image never moves it");
       }
     }
     ImGui::PopStyleColor();

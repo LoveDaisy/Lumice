@@ -349,8 +349,9 @@ TEST(AnalyzePointView, FactorLinesSpellUnavailableNotZero) {
   const double interfaces_t[2] = { 0.977, 0.978 };
   sample.interface_transmittances = interfaces_t;
   sample.interface_count = 2;
+  const int faces_seq[2] = { 3, 7 };  // entry + exit: both factors are transmittances
 
-  const std::vector<std::string> lines = PointFactorLines(sample);
+  const std::vector<std::string> lines = PointFactorLines(sample, faces_seq, 2);
   std::string joined;
   for (const std::string& l : lines) {
     joined += l;
@@ -359,11 +360,12 @@ TEST(AnalyzePointView, FactorLinesSpellUnavailableNotZero) {
   EXPECT_NE(joined.find("unavailable"), std::string::npos);
   EXPECT_NE(joined.find("conditional on this path"), std::string::npos);
   EXPECT_EQ(joined.find("axis density × A/a^2 × T × K = "), std::string::npos);  // no product number without J
-  EXPECT_NE(joined.find("interface 1/2 transmittance = 0.977"), std::string::npos);
+  EXPECT_NE(joined.find("face 3, entry refraction: transmittance = 0.977"), std::string::npos);
+  EXPECT_NE(joined.find("face 7, exit refraction: transmittance = 0.978"), std::string::npos);
   EXPECT_EQ(joined.find("(degenerate)"), std::string::npos);  // not degenerate: the marker stays off
 
   sample.angles_degenerate = 1;
-  const std::vector<std::string> degenerate = PointFactorLines(sample);
+  const std::vector<std::string> degenerate = PointFactorLines(sample, faces_seq, 2);
   std::string joined_deg;
   for (const std::string& l : degenerate) {
     joined_deg += l;
@@ -378,7 +380,7 @@ TEST(AnalyzePointView, FactorLinesSpellUnavailableNotZero) {
   sample.singular_values[1] = 0.1;
   sample.k_carea = 2.0;
   sample.factor_product = 0.0083;
-  const std::vector<std::string> with_j = PointFactorLines(sample);
+  const std::vector<std::string> with_j = PointFactorLines(sample, faces_seq, 2);
   std::string joined2;
   for (const std::string& l : with_j) {
     joined2 += l;
@@ -386,6 +388,187 @@ TEST(AnalyzePointView, FactorLinesSpellUnavailableNotZero) {
   }
   EXPECT_NE(joined2.find("K = 1/(J+eps) = 2"), std::string::npos);
   EXPECT_NE(joined2.find("axis density × A/a^2 × T × K = 0.0083"), std::string::npos);
+}
+
+// ---- The per-contact roles and the loss reading (c03 AC1/AC2): the controlled chains ------------------
+
+TEST(AnalyzePointView, InterfaceRolesFollowTheContactPosition) {
+  LUMICE_PathPointSample sample{};
+  sample.struct_size = sizeof(sample);
+  const double one[1] = { 0.96 };
+  sample.interface_transmittances = one;
+  sample.interface_count = 1;
+  const int face_one[1] = { 4 };
+  // Single face: the one contact is the external reflection, its own conditional denominator.
+  std::string joined;
+  for (const std::string& l : PointFactorInterfaceLines(sample, face_one, 1)) {
+    joined += l + "\n";
+  }
+  EXPECT_NE(joined.find("face 4, external reflection: reflectance = 0.96 (conditional on the light reaching the face)"),
+            std::string::npos);
+
+  // The C03 shape: entry / two internal / exit; internal factors are reflectances. The repeated
+  // face keeps two contacts with their own names and their own roles — the sequence is the
+  // identity (face 5 internal at contact 1, face 5 exit at contact 3).
+  const double chain[4] = { 0.971918, 0.028083, 1.0, 0.971917 };
+  sample.interface_transmittances = chain;
+  sample.interface_count = 4;
+  const int faces_seq[4] = { 3, 5, 6, 5 };
+  joined.clear();
+  for (const std::string& l : PointFactorInterfaceLines(sample, faces_seq, 4)) {
+    joined += l + "\n";
+  }
+  EXPECT_NE(joined.find("face 3, entry refraction: transmittance = 0.971918"), std::string::npos);
+  EXPECT_NE(joined.find("face 5, internal reflection: reflectance = 0.028083"), std::string::npos);
+  EXPECT_NE(joined.find("face 6, internal reflection: reflectance = 1"), std::string::npos);
+  EXPECT_NE(joined.find("face 5, exit refraction: transmittance = 0.971917"), std::string::npos);
+  EXPECT_EQ(joined.find("transmittance = 0.028083"), std::string::npos);  // the internal row is a reflectance
+
+  // No sequence (or a mismatched one): contact indices, never a fabricated face number.
+  joined.clear();
+  for (const std::string& l : PointFactorInterfaceLines(sample, nullptr, 0)) {
+    joined += l + "\n";
+  }
+  EXPECT_NE(joined.find("contact 1/4, entry refraction"), std::string::npos);
+  EXPECT_EQ(joined.find("face"), std::string::npos);
+  joined.clear();
+  for (const std::string& l : PointFactorInterfaceLines(sample, faces_seq, 3)) {
+    joined += l + "\n";
+  }
+  EXPECT_NE(joined.find("contact 1/4"), std::string::npos);
+}
+
+TEST(AnalyzePointView, LossReadingPicksTheLargestAbsoluteDrop) {
+  // The C03 chain (hand-computed): energies 1 / 0.971918 / 0.02729 / 0.02729 / 0.02653. The
+  // largest ABSOLUTE drop sits at contact 1 (face 5) even though the smallest conditional
+  // factor also sits there — a different chain below separates the two rulers.
+  const double c03[4] = { 0.971918, 0.028083, 1.0, 0.971917 };
+  const auto energies = RayTraceCumulativeEnergies(c03, 4);
+  const PointLossReading reading = PointLossReadingFor(energies);
+  EXPECT_EQ(reading.usable_contacts, 4);
+  EXPECT_EQ(reading.loss_contact, 1);
+  EXPECT_EQ(reading.tie_count, 1);
+  EXPECT_TRUE(reading.majority);  // the drop 0.9446 exceeds half the incident light
+  EXPECT_FALSE(reading.lossless);
+  EXPECT_DOUBLE_EQ(reading.largest_drop, energies[1].value - energies[2].value);
+
+  // Max-drop ≠ min-factor: {0.6, 0.55, 0.9} gives energies 1 / 0.6 / 0.33 / 0.297 — drops 0.4,
+  // 0.27, 0.033. The largest ABSOLUTE drop sits at contact 0 while the SMALLEST conditional
+  // factor sits at contact 1: the ruler is the drop against the shared denominator.
+  const double sep[3] = { 0.6, 0.55, 0.9 };
+  const PointLossReading sep_reading = PointLossReadingFor(RayTraceCumulativeEnergies(sep, 3));
+  EXPECT_EQ(sep_reading.loss_contact, 0);
+  EXPECT_EQ(sep_reading.tie_count, 1);
+  EXPECT_FALSE(sep_reading.majority);  // 0.4 does not exceed half
+  EXPECT_DOUBLE_EQ(sep_reading.largest_drop, 0.4);
+
+  // The majority gate is strict: exactly half is not "most light".
+  const double half[1] = { 0.5 };
+  const PointLossReading half_reading = PointLossReadingFor(RayTraceCumulativeEnergies(half, 1));
+  EXPECT_FALSE(half_reading.majority);
+  EXPECT_EQ(half_reading.loss_contact, 0);
+
+  // A tie names no single cause: {0.6, 1/3} drops 0.4 at both contacts.
+  const double tie[2] = { 0.6, 1.0 / 3.0 };
+  const PointLossReading tie_reading = PointLossReadingFor(RayTraceCumulativeEnergies(tie, 2));
+  EXPECT_EQ(tie_reading.tie_count, 2);
+  EXPECT_EQ(tie_reading.loss_contact, 0);  // the first contact holds the seat, the tie speaks
+  EXPECT_FALSE(tie_reading.majority);
+
+  // No measurable loss: factors all 1 (the internal reflection keeps the energy).
+  const double keeps[2] = { 1.0, 1.0 };
+  const PointLossReading keeps_reading = PointLossReadingFor(RayTraceCumulativeEnergies(keeps, 2));
+  EXPECT_TRUE(keeps_reading.lossless);
+  EXPECT_EQ(keeps_reading.loss_contact, -1);
+
+  // An unusable factor stops the claims: the suffix contributes no contact.
+  const double broken[3] = { 0.5, std::nan(""), 0.9 };
+  const PointLossReading broken_reading = PointLossReadingFor(RayTraceCumulativeEnergies(broken, 3));
+  EXPECT_EQ(broken_reading.usable_contacts, 1);
+  EXPECT_EQ(broken_reading.loss_contact, 0);
+
+  // An exact zero is a LEGAL factor: the chain reads on through it (the energies stay valid at
+  // 0), and the zero contact's own 0.5 drop ties the entry's.
+  const double zeroed[3] = { 0.5, 0.0, 0.9 };
+  const PointLossReading zero_reading = PointLossReadingFor(RayTraceCumulativeEnergies(zeroed, 3));
+  EXPECT_EQ(zero_reading.usable_contacts, 3);
+  EXPECT_EQ(zero_reading.loss_contact, 0);
+  EXPECT_EQ(zero_reading.tie_count, 2);
+}
+
+TEST(AnalyzePointView, LossReadoutLinesCarryDenominatorAndScope) {
+  LUMICE_PathPointSample sample{};
+  sample.struct_size = sizeof(sample);
+  const int faces_seq[4] = { 3, 5, 6, 7 };
+  const double c03[4] = { 0.971918, 0.028083, 1.0, 0.971917 };
+  sample.interface_transmittances = c03;
+  sample.interface_count = 4;
+  std::string joined;
+  for (const std::string& l : PointLossReadoutLines(sample, faces_seq, 4)) {
+    joined += l + "\n";
+  }
+  // AC2's first screen: the face-5 conclusion, the three readings, the shared denominator,
+  // the sequence and the representative-ray-only scope.
+  EXPECT_NE(joined.find("Most light leaves this path at face 5."), std::string::npos);
+  EXPECT_NE(joined.find("The light reaches face 5 with 97.2% of the incident light"), std::string::npos);
+  EXPECT_NE(joined.find("after the internal reflection there, 2.73% continues along face 5 → face 6"),
+            std::string::npos);
+  EXPECT_NE(joined.find("2.65% finally leaves through face 7"), std::string::npos);
+  EXPECT_NE(joined.find("incident light before the first contact as 100%"), std::string::npos);
+  EXPECT_NE(joined.find("for this representative ray only"), std::string::npos);
+  EXPECT_NE(joined.find("(faces 3-5-6-7)"), std::string::npos);
+
+  // The exit-loss chain: the exit drop 0.9793 is itself the majority, so the conclusion takes
+  // the strong form; no "continues" clause, the exit's own wording.
+  const double exit_loss[2] = { 0.98, 0.000684 };
+  sample.interface_transmittances = exit_loss;
+  sample.interface_count = 2;
+  const int two_faces[2] = { 3, 7 };
+  joined.clear();
+  for (const std::string& l : PointLossReadoutLines(sample, two_faces, 2)) {
+    joined += l + "\n";
+  }
+  EXPECT_NE(joined.find("Most light leaves this path at face 7."), std::string::npos);
+  EXPECT_NE(joined.find("The light reaches face 7 with 98% of the incident light"), std::string::npos);
+  EXPECT_NE(joined.find("the exit refraction there passes only 0.067%"), std::string::npos);
+  EXPECT_EQ(joined.find("continues along"), std::string::npos);
+  EXPECT_NE(joined.find("(faces 3-7)"), std::string::npos);
+
+  // A non-majority unique loss keeps the reserved wording: {0.9, 0.9} drops 0.1 then 0.081.
+  const double mild[2] = { 0.9, 0.9 };
+  sample.interface_transmittances = mild;
+  joined.clear();
+  for (const std::string& l : PointLossReadoutLines(sample, two_faces, 2)) {
+    joined += l + "\n";
+  }
+  EXPECT_NE(joined.find("The largest drop along this path is at face 3."), std::string::npos);
+  EXPECT_EQ(joined.find("Most light"), std::string::npos);
+
+  // Lossless: the honest no-loss sentence, no readings, no face named.
+  const double keeps[2] = { 1.0, 1.0 };
+  sample.interface_transmittances = keeps;
+  joined.clear();
+  for (const std::string& l : PointLossReadoutLines(sample, two_faces, 2)) {
+    joined += l + "\n";
+  }
+  EXPECT_NE(joined.find("No measurable loss along this path"), std::string::npos);
+  EXPECT_EQ(joined.find("Most light"), std::string::npos);
+
+  // A tie: no single face, no readings ({0.6, 1/3} drops 0.4 at both contacts).
+  const double tie[2] = { 0.6, 1.0 / 3.0 };
+  sample.interface_transmittances = tie;
+  joined.clear();
+  for (const std::string& l : PointLossReadoutLines(sample, two_faces, 2)) {
+    joined += l + "\n";
+  }
+  EXPECT_NE(joined.find("ties at face 3 and face 7"), std::string::npos);
+  EXPECT_EQ(joined.find("finally leaves"), std::string::npos);
+
+  // No usable factor: empty — the caller falls back to the plain factor lines.
+  const double broken[1] = { std::nan("") };
+  sample.interface_transmittances = broken;
+  sample.interface_count = 1;
+  EXPECT_TRUE(PointLossReadoutLines(sample, nullptr, 0).empty());
 }
 
 TEST(AnalyzePointView, CaliberLinesEchoTheInfoVerbatim) {
@@ -421,6 +604,11 @@ TEST(AnalyzePointView, CaliberLinesEchoTheInfoVerbatim) {
 }
 
 TEST(AnalyzePointView, MassLinesSpellTheOrbitWords) {
+  LUMICE_PathPointInfo info{};
+  info.struct_size = sizeof(info);
+  info.sun_altitude_deg = 20.0;
+  info.sun_azimuth_deg = 0.0;
+  info.sun_diameter_deg = 0.0;
   LUMICE_PathPointMass mass{};
   mass.struct_size = sizeof(mass);
   mass.altitude_deg = 20.0;
@@ -433,19 +621,52 @@ TEST(AnalyzePointView, MassLinesSpellTheOrbitWords) {
   mass.orbit_sample_count = 1024;
   mass.orbit_kept_count = 1024;
   std::string joined;
-  for (const std::string& l : PointMassLines(mass)) {
+  for (const std::string& l : PointMassLines(info, mass)) {
     joined += l + "\n";
   }
+  // The image sits at the sun's exact direction: the structural fact is claimed (never a
+  // proximity guess — the same numbers 0.5° off must NOT claim it below).
+  EXPECT_NE(joined.find("the sun's own direction"), std::string::npos);
+  EXPECT_NE(joined.find("target separation"), std::string::npos);
   EXPECT_NE(joined.find("spin_orbit"), std::string::npos);
   EXPECT_NE(joined.find("1024/1024"), std::string::npos);
+  EXPECT_EQ(joined.find("sun's centre direction"), std::string::npos);  // a point sun needs no premise note
   mass.orbit_available = 0;
   const char* reason = "measure_support_not_spin_orbit";
   mass.orbit_reason = LUMICE_PathText{ reason, std::strlen(reason) };
   joined.clear();
-  for (const std::string& l : PointMassLines(mass)) {
+  for (const std::string& l : PointMassLines(info, mass)) {
     joined += l + "\n";
   }
-  EXPECT_NE(joined.find("unavailable (measure_support_not_spin_orbit)"), std::string::npos);
+  EXPECT_NE(joined.find("No total-light reading yet"), std::string::npos);
+  EXPECT_NE(joined.find("(measure_support_not_spin_orbit)"), std::string::npos);
+
+  // A finite sun carries the point-sun premise note; the numbers never promise the disk.
+  info.sun_diameter_deg = 0.5;
+  joined.clear();
+  for (const std::string& l : PointMassLines(info, mass)) {
+    joined += l + "\n";
+  }
+  EXPECT_NE(joined.find("sun's centre direction (sun diameter 0.50°)"), std::string::npos);
+
+  // The no-proximity rule: the image near the sun but not at it is a position, never the claim.
+  info.sun_diameter_deg = 0.0;
+  mass.altitude_deg = 20.5;
+  mass.orbit_available = 1;
+  joined.clear();
+  for (const std::string& l : PointMassLines(info, mass)) {
+    joined += l + "\n";
+  }
+  EXPECT_EQ(joined.find("the sun's own direction"), std::string::npos);
+
+  // The footer's one-line form: the sun-direction branch and the position branch.
+  mass.altitude_deg = 20.0;
+  const std::string at_sun = PointMassFooterLine(info, mass);
+  EXPECT_NE(at_sun.find("Point image at the sun's own direction"), std::string::npos);
+  mass.altitude_deg = 20.5;
+  const std::string elsewhere = PointMassFooterLine(info, mass);
+  EXPECT_EQ(elsewhere.find("the sun's own direction"), std::string::npos);
+  EXPECT_NE(elsewhere.find("Point image at alt 20.500°"), std::string::npos);
 }
 
 // ---- The contribution curve (756): the pure model ----------------------------------------------------
