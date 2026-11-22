@@ -1739,6 +1739,10 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   if (ImGui::Checkbox("Overlays##map", &overlays)) {
     storage->SetBool(overlay_key, overlays);
   }
+  // The Layers entry joins the checkbox's line: the master gate and the group face are one
+  // header row, and the canvas keeps the line the old header had (the checkbox ~90 pt + the
+  // button ~50 pt fit the narrowest map column the floors can produce).
+  ImGui::SameLine();
   // The five layer groups' session switches, beside the master gate (the layer plan's control
   // face): each row's two boxes are the Render habit's graphics/labels split — one group, one
   // graphics box and one labels box, one storage key pair per group. Storage keys ride the
@@ -1750,18 +1754,28 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   struct LayerKeyPair {
     const char* base;  // "ov_<group>": the graphics key; + "_l": the labels key
     SurveyLayerGate* gate;
-  };
+    ImGuiID graphics_key;  // resolved ONCE, in THIS child's ID scope — the popup's writes below
+    ImGuiID labels_key;    // reuse these very IDs (ImGui::GetID inside a popup hashes in the
+  } key_pairs[5];          // popup's own scope, which would fork the keys: the read here and the
+                           // write there would never meet)
   SurveyLayerGates gates;
   {
-    const LayerKeyPair pairs[5] = { { "ov_reach", &gates.reach },
-                                    { "ov_edge", &gates.edge },
-                                    { "ov_points", &gates.points },
-                                    { "ov_chromatic", &gates.chromatic },
-                                    { "ov_tir", &gates.tir } };
-    for (const LayerKeyPair& p : pairs) {
-      const std::string labels_key = std::string(p.base) + "_l";
-      p.gate->graphics = storage->GetBool(ImGui::GetID(p.base), true);
-      p.gate->labels = storage->GetBool(ImGui::GetID(labels_key.c_str()), true);
+    const struct {
+      const char* base;
+      SurveyLayerGate* gate;
+    } named[5] = { { "ov_reach", &gates.reach },
+                   { "ov_edge", &gates.edge },
+                   { "ov_points", &gates.points },
+                   { "ov_chromatic", &gates.chromatic },
+                   { "ov_tir", &gates.tir } };
+    for (int i = 0; i < 5; ++i) {
+      key_pairs[i].base = named[i].base;
+      key_pairs[i].gate = named[i].gate;
+      const std::string labels_key = std::string(named[i].base) + "_l";
+      key_pairs[i].graphics_key = ImGui::GetID(named[i].base);
+      key_pairs[i].labels_key = ImGui::GetID(labels_key.c_str());
+      key_pairs[i].gate->graphics = storage->GetBool(key_pairs[i].graphics_key, true);
+      key_pairs[i].gate->labels = storage->GetBool(key_pairs[i].labels_key, true);
     }
   }
   if (ImGui::SmallButton("Layers##map_layers")) {
@@ -1788,9 +1802,9 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
     const SurveyOverlayFacts& facts = cache.facts;
     struct LayerRow {
       const char* name;
-      const char* base;  // the storage key pair's base ("ov_<group>")
-      SurveyLayerGate* gate;
-      const char* absence;  // why this group cannot draw on THIS document; nullptr = has payload
+      LayerKeyPair key;            // the region-scope storage IDs and the live gate
+      const char* labels_item_id;  // the labels box's own label (its item ID inside the popup)
+      const char* absence;         // why this group cannot draw on THIS document; nullptr = has payload
     };
     const char* no_document = model.valid ? nullptr : "no document";
     const char* reach_absence =
@@ -1811,31 +1825,29 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
         model.valid ? (chromatic_available ? nullptr : "no chromatic positions") : no_document;
     const char* tir_absence = model.valid ? (facts.tir_turns.empty() ? "no visible turns" : nullptr) : no_document;
     const LayerRow rows[5] = {
-      { "Support range", "ov_reach", &gates.reach, reach_absence },
-      { "Sharp edges", "ov_edge", &gates.edge, edge_absence },
-      { "Point images", "ov_points", &gates.points, points_absence },
-      { "Red-blue shift", "ov_chromatic", &gates.chromatic, chromatic_absence },
-      { "Reflection turns", "ov_tir", &gates.tir, tir_absence },
+      { "Support range", key_pairs[0], "##ov_reach_labels", reach_absence },
+      { "Sharp edges", key_pairs[1], "##ov_edge_labels", edge_absence },
+      { "Point images", key_pairs[2], "##ov_points_labels", points_absence },
+      { "Red-blue shift", key_pairs[3], "##ov_chromatic_labels", chromatic_absence },
+      { "Reflection turns", key_pairs[4], "##ov_tir_labels", tir_absence },
     };
     for (const LayerRow& row : rows) {
-      // Read and write share ONE key spelling each (the entry read above): no ID-scope trickery —
-      // the graphics box's visible label is unique (the group's name), the labels box carries the
-      // group's base in its addressing suffix.
-      const ImGuiID g_key = ImGui::GetID(row.base);
-      const std::string l_id = std::string("##") + row.base + "_labels";
-      bool g = row.gate->graphics;
+      // The storage keys are the REGION-scope IDs precomputed at the entry read — the popup's
+      // own GetID would hash in the popup's scope and fork the keys (the bug this structure
+      // exists to prevent). The checkbox item IDs come from their labels alone.
+      bool g = row.key.gate->graphics;
       if (ImGui::Checkbox(row.name, &g)) {
-        row.gate->graphics = g;
-        storage->SetBool(g_key, g);
+        row.key.gate->graphics = g;
+        storage->SetBool(row.key.graphics_key, g);
       }
       if (ImGui::IsItemHovered()) {
         SetWrappedTooltip("Draw this group's ink.");
       }
-      bool l = row.gate->labels;
+      bool l = row.key.gate->labels;
       ImGui::SameLine();
-      if (ImGui::Checkbox(l_id.c_str(), &l)) {
-        row.gate->labels = l;
-        storage->SetBool(ImGui::GetID(l_id.c_str()), l);
+      if (ImGui::Checkbox(row.labels_item_id, &l)) {
+        row.key.gate->labels = l;
+        storage->SetBool(row.key.labels_key, l);
       }
       if (ImGui::IsItemHovered()) {
         SetWrappedTooltip("Show this group's readout labels. Hiding labels never hides the ink.");

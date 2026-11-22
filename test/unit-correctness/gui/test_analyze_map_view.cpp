@@ -2075,5 +2075,25 @@ TEST_F(ReferenceArcDraw, TirTurnDrawsItsPairWithOneLabelAndObeyItsGate) {
   }
 }
 
+// The fabrication detector: with every gate ON and NO delivered facts, nothing submits — no arc
+// ink, no readout, no legend bit. A layer that decorated an absence (a stroke or text without a
+// backing position) fails this on the draw-list evidence, not a bool.
+TEST_F(ReferenceArcDraw, EmptyFactsSubmitNothingWithEveryGateOn) {
+  const ViewProjection vp = SunCamera();
+  ImDrawList* dl = ImGui::GetBackgroundDrawList();
+  OverlayLegendState legend;
+  std::vector<MapReadoutLabel> sink;
+  ReferenceArcInput in = ArcInput(vp);  // all gates default on
+  in.legend = &legend;
+  in.labels_sink = &sink;
+  DrawReferenceArcs(dl, SurveyOverlayFacts{}, in);
+  EXPECT_EQ(IndexCountForColour(kSurveyArcInk), 0);
+  EXPECT_TRUE(SinkTexts(sink).empty());
+  EXPECT_FALSE(legend.reach_bounds);
+  EXPECT_FALSE(legend.edge_arcs);
+  EXPECT_FALSE(legend.edge_shared);
+  EXPECT_FALSE(legend.tir_turns);
+}
+
 }  // namespace
 }  // namespace lumice::gui

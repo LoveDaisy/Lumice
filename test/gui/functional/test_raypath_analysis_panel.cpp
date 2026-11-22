@@ -732,6 +732,35 @@ int MapWindowIndexCountForColour(ImU32 colour) {
   }
   return count;
 }
+
+// The same bucket minus its text glyphs: the survey arcs' readout labels draw in the arc colour
+// (each label's text uses its curve's colour), and a relabelled stroke ("edge · …" becoming
+// "support · …") changes the glyph count while the geometry stands still. The white-pixel UV
+// discriminator (the unit rig's GlyphRectForColour precedent) keeps only the geometry quads —
+// the stroke-count invariants read THIS counter, not the mixed one.
+int MapWindowGeometryIndexCountForColour(ImU32 colour) {
+  const ImGuiWindow* region = MapRegionWindow();
+  if (region == nullptr) {
+    return 0;
+  }
+  const ImDrawList* dl = region->DrawList;
+  const ImVec2 white = ImGui::GetIO().Fonts->TexUvWhitePixel;
+  int count = 0;
+  for (int i = 0; i + 5 < dl->IdxBuffer.Size; i += 6) {
+    bool matches = true;
+    for (int k = 0; k < 6; ++k) {
+      const ImDrawVert& v = dl->VtxBuffer[static_cast<int>(dl->IdxBuffer[i + k])];
+      if (v.col != colour || std::fabs(v.uv.x - white.x) >= 1e-3f || std::fabs(v.uv.y - white.y) >= 1e-3f) {
+        matches = false;
+        break;
+      }
+    }
+    if (matches) {
+      count += 6;
+    }
+  }
+  return count;
+}
 // The info region beside the map (##AnalyzeRaypathInfo): the wavelength, the caliber block
 // and the sky-point input. The D3 split (contract §4.2) puts the picture's
 // facts here; the containment asserts for those controls anchor to THIS child.
@@ -2976,412 +3005,26 @@ bool VerdictAnchorHoverAndToggleOnTheMap(ImGuiTestContext* ctx) {
   ctx->Yield(3);
   IM_CHECK_RETV(gui::LastMapOverlayLegend().verdict_anchor, false);
   IM_CHECK_RETV(MapWindowIndexCountForColour(gui::kChromaticColourBlue) > 0, false);
-  return true;
-}
-
-// The engine's named refusal, on the two-layer scene: a multi-layer class is a legitimate
-// selection and the survey answers it with multi_layer_unsupported — shown, not fabricated
-// around (R5/R7; the multi-layer evidence the plan's M3-5 asks to be on file).
-// The report window's colour-bucket count (the map face's own read, one window over): the
-// legend icons are the only consumers of their colours inside ##MapReport — the map's own markers
-// live in the map region's window.
-int MapReportIndexCountForColour(ImU32 colour) {
-  const ImGuiWindow* report = MapReportWindow();
-  if (report == nullptr) {
-    return 0;
-  }
-  const ImDrawList* dl = report->DrawList;
-  int count = 0;
-  for (int i = 0; i + 5 < dl->IdxBuffer.Size; i += 6) {
-    bool matches = true;
-    for (int k = 0; k < 6; ++k) {
-      if (dl->VtxBuffer[static_cast<int>(dl->IdxBuffer[i + k])].col != colour) {
-        matches = false;
-        break;
-      }
-    }
-    if (matches) {
-      count += 6;
-    }
-  }
-  return count;
-}
-
-// The row-highlight read: the bbox of one colour's vertices inside ##MapReport (the theme's
-// hovered-header ink the row backgrounds draw with), false when nothing drew in it.
-bool ReportHighlightBBox(ImU32 colour, ImVec2* out_min, ImVec2* out_max) {
-  const ImGuiWindow* report = MapReportWindow();
-  if (report == nullptr) {
-    return false;
-  }
-  const ImDrawList* dl = report->DrawList;
-  bool any = false;
-  for (int i = 0; i < dl->VtxBuffer.Size; ++i) {
-    const ImDrawVert& v = dl->VtxBuffer[i];
-    if (v.col != colour) {
-      continue;
-    }
-    *out_min = any ? ImVec2(std::min(out_min->x, v.pos.x), std::min(out_min->y, v.pos.y)) : ImVec2(v.pos.x, v.pos.y);
-    *out_max = any ? ImVec2(std::max(out_max->x, v.pos.x), std::max(out_max->y, v.pos.y)) : ImVec2(v.pos.x, v.pos.y);
-    any = true;
-  }
-  return any;
-}
-
-// Two rects intersect iff NEITHER axis separates them — the row highlight's own criterion. The
-// two axis separations join with OR: a highlight drawn one row above or below the target shares
-// the rows' x span, so only the OR rejects it (the AND-shaped mix the first draft had let exactly
-// that shape through).
-bool RowRectsIntersect(const ImRect& a, const ImRect& b) {
-  return (a.Min.x <= b.Max.x && a.Max.x >= b.Min.x) && (a.Min.y <= b.Max.y && a.Max.y >= b.Min.y);
-}
-
-// The 2026-11-12 feedback wave's interaction face (contract §16.1.3's extension): the class
-// answer's rows highlight where the pointer stands (AC1/AC3 — the ratio row's feedback is local
-// by design, it names no spatial payload), the three profile reading rows drive the map's profile
-// device one frame later (AC2 — a point at the edge/peak reading, the radial interval between
-// them for separation), the Overlays gate holds the device back while the row feedback stays (the
-// total gate's own leg), and the four anchor legend entries carry their icons (AC4). Fixture: the
-// narrow-plate scene — its arc rows route to the restricted plate family, whose survey runs the
-// probe. Flake attribution, should this ever red: the premise asserts below (the family arm's
-// probe readings, the azimuth availability, the sun echo) are the FIRST suspects — the survey's
-// quantification legs complete in seconds of an unseeded whole-sky analysis, so a red premise is
-// a data/ranking or budget-truncation event, not an interaction-chain defect.
-// The subject legs' complete-document acquisition: the panel's adopted survey can be a legal
-// deadline cut (the engine names it; the document keeps its arm and produced legs), and the
-// subject legs read the probe — a reading a cut need not carry. Rather than re-rolling the
-// same wall-clock budget, the test issues the survey itself through the engine-tier workspace
-// face (the same face the GUI executor wraps), where the budget is the caller's contract:
-// LUMICE_PATH_SURVEY_MAX_BUDGET_MS, four times the GUI path's default, so a load-slowed query
-// still lands. The scene comes from the ONE builder the executor's own scene came from —
-// BuildScene on the standing state (a LUMICE_SceneFromJson re-parse would carry the DECLARED
-// crystal ids, while LUMICE_SceneAddCrystal assigns positional ids, and the identity's
-// crystal_id is a positional one). The request comes from the ONE builder, the GUI's own,
-// with only the budget overridden. The query blocks its worker, so it runs on a thread of its
-// own while DriveUntil keeps the frames pumping (the executor's own shape, test side).
-std::shared_ptr<const LUMICE_PathSurvey> AcquireCompleteSurveyDocument(ImGuiTestContext* ctx,
-                                                                       const gui::SelectedClassIdentity& identity) {
-  gui::FilterOverflowInfo filter_overflow;
-  gui::ColorClassOverflowInfo color_overflow;
-  gui::ScenePtr scene = gui::BuildScene(gui::g_state, gui::SceneIntent::kSimCommit, &filter_overflow, &color_overflow);
-  if (scene == nullptr) {
-    ctx->LogError(
-        "[survey-acquire] the standing state would not build a scene (filter layer %d entry %d, color class %d)",
-        filter_overflow.layer_index, filter_overflow.entry_index, color_overflow.class_index);
-    return nullptr;
-  }
-  char err[512] = {};
-  LUMICE_PathWorkspace* raw_workspace = nullptr;
-  if (LUMICE_PathWorkspaceCreate(scene.get(), &raw_workspace, err, sizeof(err)) != LUMICE_OK) {
-    ctx->LogError("[survey-acquire] workspace create failed: %s", err);
-    return nullptr;
-  }
-  std::shared_ptr<LUMICE_PathWorkspace> workspace(raw_workspace, &LUMICE_PathWorkspaceDestroy);
-  std::vector<int> faces;
-  std::vector<int> counts;
-  LUMICE_PathSurveyRequest request = gui::MakeSurveyRequestForIdentity(identity, &faces, &counts);
-  request.budget_ms = LUMICE_PATH_SURVEY_MAX_BUDGET_MS;
-  LUMICE_PathQueryOptions options{};
-  options.struct_size = sizeof(options);
-  options.deadline_ms = LUMICE_PATH_SURVEY_MAX_BUDGET_MS;
-  auto mailbox = std::make_shared<std::shared_ptr<const LUMICE_PathSurvey>>();
-  std::atomic<bool> done{ false };
-  std::thread worker([&] {
-    LUMICE_PathSurvey* raw = nullptr;
-    if (LUMICE_PathWorkspaceQuerySurvey(workspace.get(), &request, &options, &raw, err, sizeof(err)) == LUMICE_OK &&
-        raw != nullptr) {
-      *mailbox = std::shared_ptr<const LUMICE_PathSurvey>(raw, gui::SurveyDeleter{});
-    }
-    done.store(true);
-  });
-  const bool landed = DriveUntil(ctx, [&] { return done.load(); }, 150);
-  worker.join();
-  if (!landed || *mailbox == nullptr) {
-    ctx->LogError("[survey-acquire] the test-issued query produced no document (landed=%d, engine says: %s)",
-                  landed ? 1 : 0, err);
-    return nullptr;
-  }
-  return *mailbox;
-}
-
-bool ProfileRowsHighlightAndDrawOnTheMap(ImGuiTestContext* ctx) {
-  ScopedServerGuard guard;
-  // The case's legal wait chain (the GUI survey up to its deadline, then up to two acquisition
-  // attempts at a 120s budget each, then the map's queued adoption) exceeds the engine
-  // watchdog's default kill threshold — a healthy truncation round would be killed mid-acquire
-  // before this case's own gates could say anything. The whole-case budget rides the same guard
-  // the suite's other long-chain cases use; RAII restores it on every exit.
-  ScopedWatchdogGuard watchdog(ctx->EngineIO);
-  IM_CHECK_RETV(BringUpScene(ctx, kNarrowPlateJson, /*infinite=*/false, /*gpu=*/false), false);
-  OpenWindow(ctx);
-  IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
-  // The explicit chain row: the first 2+ face row in the display order (single-face rows refuse
-  // as invalid paths; the traversal's rule is the explicit part, the premise asserts below are
-  // what make the physical basis real).
-  std::string target;
-  for (const size_t idx : gui::g_state.analysis_result.display_order) {
-    const std::string d = gui::g_state.analysis_result.payload->entries[idx].display;
-    if (d != "1-2" && d.find('-') != std::string::npos) {
-      target = d;
-      break;
-    }
-  }
-  IM_CHECK_RETV(!target.empty(), false);
-  SetListRef(ctx);
-  ctx->ItemClick((std::string("**/") + target).c_str());
-  ctx->SetRef("");
-  IM_CHECK_RETV(DriveUntil(
-                    ctx,
-                    [] {
-                      return gui::SurveyOverviewStateFor(gui::g_state.analysis.survey) ==
-                             gui::SurveyOverviewState::kCompleted;
-                    },
-                    60),
-                false);
-  // The contract check reads the panel's own adopted document and dispatches on what the
-  // engine named: COMPLETED goes straight to the subject legs; a deadline cut is a legal form
-  // (the document keeps its arm and produced legs) — recorded as an environmental event, then
-  // replaced for the subject legs by a test-issued survey (the acquisition above: the budget
-  // is the caller's contract at that face), because the legs read the probe, which a cut need
-  // not carry; CANCELLED or a refused probe names a product/data event and is red without
-  // retry — a retry cannot repair a deterministic state.
-  const auto log_survey_doc = [&](const gui::SurveyOverviewModel& m) {
-    ctx->LogInfo(
-        "[survey-doc] valid=%d execution=%d(%s) probe_count=%zu probe_state=%d probe_mode='%s' arm=%d "
-        "tint_available=%d tint_state=%d budget_ms=%d early_stopped=%d",
-        m.valid ? 1 : 0, m.execution, gui::SurveyOutcomeName(m.execution), m.probe_count, m.probe.state,
-        m.probe.mode.c_str(), static_cast<int>(m.arm), m.tint.available ? 1 : 0, m.tint.state, m.budget_ms,
-        m.early_stopped ? 1 : 0);
-  };
-  gui::SurveyOverviewModel model = gui::BuildSurveyOverviewModel(*gui::g_state.analysis.survey.adopted_result);
-  log_survey_doc(model);
-  IM_CHECK_RETV(model.valid && model.arm == gui::SurveyArm::kFamily, false);
-  if (model.execution == LUMICE_PATH_OUTCOME_CANCELLED) {
-    ctx->LogError("[survey-doc] %s: the adopted document names %s — a product or data event, not retried",
-                  target.c_str(), gui::SurveyOutcomeName(model.execution));
-    return false;
-  }
-  if (model.execution == LUMICE_PATH_OUTCOME_COMPLETED) {
-    // On a COMPLETED document a refused probe is the engine naming a structural refusal — a
-    // product/data event, deterministic, not retried.
-    if (model.probe.available && model.probe.state == LUMICE_PATH_STATE_REFUSED) {
-      ctx->LogError(
-          "[survey-doc] %s: the completed document's probe refused (mode '%s') — a product or data "
-          "event, not retried",
-          target.c_str(), model.probe.mode.c_str());
-      return false;
-    }
-  } else {
-    // Legal deadline cut. Whatever the probe block carries is part of the cut: the engine itself
-    // names a probe the deadline ran out on as refused/stop_requested (survey_probe.cpp appends
-    // the refused probe on a truncated line; the family arm passes the query's stop into the
-    // probe), so a refused probe here is NOT a structural refusal — the document is just not
-    // complete, and the subject legs read the probe: acquire.
-    ctx->LogInfo(
-        "[survey-doc] %s: legal deadline cut (probe_count=%zu probe_state=%d probe_mode='%s') — acquiring "
-        "a complete document for the subject legs",
-        target.c_str(), model.probe_count, model.probe.state, model.probe.mode.c_str());
-    // The selection is standing and does not change inside this case — one read, before the
-    // attempts (the checker's loop rule: no fatal assert inside a repeatedly-executing body).
-    const std::optional<gui::SelectedClassIdentity> identity = gui::SelectedClassIdentityFor(gui::g_state);
-    IM_CHECK_RETV(identity.has_value(), false);
-    gui::SurveyOverviewModel acquired_model;
-    bool complete = false;
-    for (int attempt = 1; attempt <= 2 && !complete; ++attempt) {
-      ctx->LogInfo("[survey-acquire] attempt %d begins (budget %d ms)", attempt, LUMICE_PATH_SURVEY_MAX_BUDGET_MS);
-      std::shared_ptr<const LUMICE_PathSurvey> acquired = AcquireCompleteSurveyDocument(ctx, *identity);
-      if (acquired != nullptr) {
-        gui::g_state.analysis.survey.adopted_result = std::move(acquired);
-        acquired_model = gui::BuildSurveyOverviewModel(*gui::g_state.analysis.survey.adopted_result);
-        log_survey_doc(acquired_model);
-        complete = acquired_model.valid && acquired_model.execution == LUMICE_PATH_OUTCOME_COMPLETED &&
-                   acquired_model.probe.available;
-      }
-    }
-    if (!complete) {
-      ctx->LogError(
-          "[survey-acquire] subject precondition not met: both attempts ended legally truncated or produced no "
-          "document (each attempt's [survey-doc] line above carries its execution) — subject validation not "
-          "executed, this round does not count as green");
-      return false;
-    }
-    model = acquired_model;
-  }
-  // The subject legs: the strong probe readings, on a complete document, unchanged.
-  IM_CHECK_RETV(model.probe.available && model.probe.edge_available && model.probe.peak_available &&
-                    model.probe.separation_available,
-                false);
-  IM_CHECK_RETV(model.probe.azimuth_available, false);
-  IM_CHECK_RETV(model.sun_available, false);
-  ctx->LogInfo("[profile hover] %s: edge %.3f peak %.3f sep %.3f az %.1f sun %.1f/%.1f", target.c_str(),
-               model.probe.edge_deg, model.probe.peak_deg, model.probe.separation_deg, model.probe.azimuth_deg,
-               model.sun_altitude_deg, model.sun_azimuth_deg);
-  // The row click opened the Raypath view (§16.3's content shortcut); the full-sky rectangular
-  // view — written directly, the shared presets being retired — is the robust aim (the verdict
-  // face's lesson): every reading keeps in-view samples there.
-  IM_CHECK_RETV(gui::g_state.analyze_raypath_view_open, false);
-  gui::SelectLensType(gui::g_state, gui::kLensTypeRectangular);
-  gui::g_state.renderer.visible = gui::kVisibleFull;
-  gui::g_state.renderer.front = false;
-  ctx->Yield(3);
-  // Establish the map's adopted baseline before observing display-only actions: an idle worker
-  // can still have a finished result waiting for the GUI pump. The probe itself does not need a
-  // map, but the legend and the retained-source assertion do. Drain queued requests as well as
-  // the running one, so legitimate work cannot enter the display-only pickup counter later.
-  IM_CHECK_RETV(
-      DriveUntil(
-          ctx, [] { return gui::MapQueryStateFor(gui::g_state.analysis.map) == gui::MapQueryState::kCompleted; }, 60),
-      false);
-  IM_CHECK_RETV(DriveUntil(ctx, [] { return !gui::g_survey_executor.QueryOutstanding(); }, 90), false);
-  const auto map_id = gui::g_state.analysis.map.intent_id;
-  const auto survey_id = gui::g_state.analysis.survey.intent_id;
-  const auto point_id = gui::g_state.analysis.point.intent_id;
-  const auto trace_id = gui::g_state.analysis.trace.intent_id;
-  const auto original_map = gui::g_state.analysis.map.adopted_result;
-  ctx->LogInfo("[profile display baseline] map_present=%d map_state=%d", original_map != nullptr,
-               static_cast<int>(gui::MapQueryStateFor(gui::g_state.analysis.map)));
-  const auto sky = gui::g_state.analysis.sky_point;
-  const auto roi_mode = gui::g_state.analysis.roi_mode;
-  const auto sample = gui::g_state.analysis.point_view.sample_index;
-  const auto playing = gui::g_state.analysis.point_view.playing;
-  auto display_pickups = std::make_shared<std::atomic<int>>(0);
-  gui::g_survey_executor.SetPickupGateForTest([display_pickups](gui::QueryFace) { ++*display_pickups; });
-  struct DisplayPickupLease {
-    ~DisplayPickupLease() { gui::g_survey_executor.SetPickupGateForTest(nullptr); }
-  } display_pickup_lease;
-  ctx->MouseMove("**/" ICON_FA_CIRCLE_INFO "##map_overlays_help");
-  ctx->Yield(3);
-  const std::string help = CaptureFrameText(ctx);
-  IM_CHECK_RETV(help.find("Hover Profile edge") != std::string::npos &&
-                    help.find("reference profile (not an all-sky peak)") != std::string::npos,
-                false);
-  ctx->MouseMoveToPos(ImVec2(2, 2));
-  ctx->Yield(3);
-  // The default frame: no hover, no profile ink — the map is the picture it always was.
-  const ImU32 hovered_ink = ImGui::GetColorU32(ImGuiCol_HeaderHovered);
-  IM_CHECK_RETV(gui::g_state.analysis.profile_row_hover == gui::SurveyProfileHover::kNone, false);
-  IM_CHECK_RETV(MapWindowIndexCountForColour(gui::kProfileReadingColour) == 0, false);
-  // The intersection predicate's own legs, before the rows lean on it: the adjacent-row shape the
-  // OR form exists to reject (horizontal overlap, vertical separation — above and below), and a
-  // genuine overlap the predicate must still accept.
-  IM_CHECK_RETV(!RowRectsIntersect(ImRect(0, 0, 100, 10), ImRect(0, 20, 100, 30)), false);
-  IM_CHECK_RETV(!RowRectsIntersect(ImRect(0, 0, 100, 10), ImRect(0, -30, 100, -20)), false);
-  IM_CHECK_RETV(RowRectsIntersect(ImRect(0, 0, 100, 10), ImRect(0, 5, 100, 15)), false);
-  IM_CHECK_RETV(RowRectsIntersect(ImRect(0, 0, 100, 10), ImRect(50, 0, 150, 10)), false);
-  auto hover_row = [&](const char* id, gui::SurveyProfileHover expect) -> bool {
-    ctx->ScrollToItem(id, ImGuiAxis_Y);
-    ctx->Yield(1);
-    const ImVec2 center = ctx->ItemInfo(id).RectFull.GetCenter();
-    ctx->MouseMoveToPos(center);
-    ctx->Yield(3);
-    if (gui::g_state.analysis.profile_row_hover != expect) {
-      ctx->LogError("[profile hover] %s: session identity is %d, expected %d", id,
-                    static_cast<int>(gui::g_state.analysis.profile_row_hover), static_cast<int>(expect));
-      return false;
-    }
-    // The row's own highlight, THIS frame: the theme ink's bbox in the report window intersects
-    // the row's own rect (the background rides the text, under it — the text stays foreground).
-    ImVec2 hmin(0.0f, 0.0f);
-    ImVec2 hmax(0.0f, 0.0f);
-    if (!ReportHighlightBBox(hovered_ink, &hmin, &hmax)) {
-      ctx->LogError("[profile hover] %s: no highlight ink in the report window", id);
-      return false;
-    }
-    const ImRect row = ctx->ItemInfo(id).RectFull;
-    const ImRect highlight(hmin, hmax);
-    if (!RowRectsIntersect(highlight, row)) {
-      ctx->LogError(
-          "[profile hover] %s: highlight bbox (%.0f,%.0f)-(%.0f,%.0f) misses the row rect (%.0f,%.0f)-(%.0f,%.0f)", id,
-          hmin.x, hmin.y, hmax.x, hmax.y, row.Min.x, row.Min.y, row.Max.x, row.Max.y);
-      return false;
-    }
-    return true;
-  };
-  // The edge row: the point device on the map, the highlight on the row.
-  IM_CHECK_RETV(hover_row("**/###profile_edge_row", gui::SurveyProfileHover::kEdge), false);
-  IM_CHECK_RETV(MapWindowIndexCountForColour(gui::kProfileReadingColour) > 0, false);
-  // The peak row: the point moves (the readings differ by tens of degrees — the count alone
-  // cannot tell a stuck point from a moved one, so this leg reads the session identity and the
-  // ink's existence; the unit tier owns the positions).
-  IM_CHECK_RETV(hover_row("**/###profile_peak_row", gui::SurveyProfileHover::kPeak), false);
-  IM_CHECK_RETV(MapWindowIndexCountForColour(gui::kProfileReadingColour) > 0, false);
-  // The separation row: the interval device. Same-source frames for the human eye: the row
-  // highlight and the interval are the two things a screenshot judges better than a bucket read.
-  IM_CHECK_RETV(hover_row("**/###profile_separation_row", gui::SurveyProfileHover::kSeparation), false);
-  IM_CHECK_RETV(MapWindowIndexCountForColour(gui::kProfileReadingColour) > 0, false);
-  IM_CHECK_RETV(SaveWindowPng(ctx, "//Raypath view", GuiTestTempPath("analysis_profile_hover_separation.png").string()),
-                false);
-  // Off the rows: both the identity and the ink leave (the overwrite's own closure).
-  ctx->MouseMoveToPos(ImVec2(-100.0f, -100.0f));
-  ctx->Yield(3);
-  IM_CHECK_RETV(gui::g_state.analysis.profile_row_hover == gui::SurveyProfileHover::kNone, false);
-  IM_CHECK_RETV(MapWindowIndexCountForColour(gui::kProfileReadingColour) == 0, false);
-  {
-    ImVec2 hmin(0.0f, 0.0f);
-    ImVec2 hmax(0.0f, 0.0f);
-    IM_CHECK_RETV(!ReportHighlightBBox(hovered_ink, &hmin, &hmax), false);
-  }
-  // The Overlays gate: off, the row's highlight and identity stand, the map draws nothing —
-  // the profile device nests under the gate exactly like the verdict anchor does.
-  ctx->ItemClick("**/Overlays##map");
+  // The chromatic GROUP's negative control (the layer plan's AC3): the red-blue group off
+  // removes the verdict anchor and its readout with it — while the neutral reach arcs keep
+  // theirs (the two vocabularies are independent inks). The 1-3-2 document delivers support
+  // intervals, so its reach layer either drew bound arcs or stated the full range in text;
+  // either way the neutral layer survives the chromatic gate.
+  const int arc_ink_with_chromatic = MapWindowIndexCountForColour(gui::kSurveyArcInk);
+  const bool reach_drew = arc_ink_with_chromatic > 0 || gui::LastMapOverlayLegend().reach_full_range_text;
+  IM_CHECK_RETV(reach_drew, false);
+  ctx->ItemClick("**/Layers##map_layers");
   ctx->Yield(2);
-  IM_CHECK_RETV(hover_row("**/###profile_edge_row", gui::SurveyProfileHover::kEdge), false);
-  IM_CHECK_RETV(MapWindowIndexCountForColour(gui::kProfileReadingColour) == 0, false);
-  ctx->ItemClick("**/Overlays##map");
-  ctx->Yield(2);
-  // The ratio row: highlight present, no map geometry (AC3's honest local feedback).
-  IM_CHECK_RETV(hover_row("**/###tint_ratio_row", gui::g_state.analysis.profile_row_hover), false);
-  IM_CHECK_RETV(MapWindowIndexCountForColour(gui::kProfileReadingColour) == 0, false);
-  // The verdict row (AC1's existing-rows leg): the two pilot rows now highlight too — the anchor
-  // draw itself is the verdict face's own test.
-  IM_CHECK_RETV(hover_row("**/###diagnose_verdict_row", gui::g_state.analysis.profile_row_hover), false);
-  ctx->MouseMoveToPos(ImVec2(-100.0f, -100.0f));
+  ctx->ItemClick("**/Red-blue shift");
   ctx->Yield(3);
-  // The legend icons (AC4): scroll the report to its legend, then assert the icons' colour
-  // buckets — the frame anchors drew (full sky), so the sun's gold and the zenith/horizon greys
-  // stand; qualified verdicts join Overlays by default. The adopted map's sun echo was required
-  // before the display-only baseline, so this leg must not wait for a new source to arrive.
-  if (ImGuiWindow* report = MapReportWindow()) {
-    report->Scroll.y = report->ScrollMax.y;
-  }
-  ctx->Yield(2);
-  // The state before the ink — two independent assertions, each localizing its own mechanism:
-  // the state bit false names the anchor draw (the adopted map's echo and its projection),
-  // ink absent under a true state names the report side. The readout line carries the anchor
-  // bits for the round log.
-  const gui::OverlayLegendState legend_at_assert = gui::LastMapOverlayLegend();
-  ctx->LogInfo("[map-legend] sun=%d zenith=%d horizon=%d verdict=%d sky_point=%d", legend_at_assert.anchor_sun ? 1 : 0,
-               legend_at_assert.anchor_zenith ? 1 : 0, legend_at_assert.anchor_horizon ? 1 : 0,
-               legend_at_assert.verdict_anchor ? 1 : 0, legend_at_assert.sky_point ? 1 : 0);
-  IM_CHECK_RETV(legend_at_assert.anchor_sun, false);
-  IM_CHECK_RETV(MapReportIndexCountForColour(IM_COL32(255, 231, 168, 255)) > 0, false);
-  IM_CHECK_RETV(MapReportIndexCountForColour(IM_COL32(200, 205, 215, 110)) > 0, false);
+  IM_CHECK_RETV(MapWindowIndexCountForColour(gui::kChromaticColourBlue) == 0, false);
+  IM_CHECK_RETV(MapWindowIndexCountForColour(gui::kSurveyArcInk) == arc_ink_with_chromatic, false);
+  IM_CHECK_RETV(!gui::LastMapOverlayLegend().verdict_anchor, false);
+  IM_CHECK_RETV(gui::LastMapOverlayLegend().reach_bounds, false);
+  ctx->ItemClick("**/Red-blue shift");
+  ctx->Yield(3);
+  IM_CHECK_RETV(MapWindowIndexCountForColour(gui::kChromaticColourBlue) > 0, false);
   IM_CHECK_RETV(gui::LastMapOverlayLegend().verdict_anchor, false);
-  const ImU32 anchor_ink = gui::LastMapOverlayLegend().verdict_anchor_colour;
-  IM_CHECK_RETV(MapReportIndexCountForColour(anchor_ink) > 0, false);
-  IM_CHECK_RETV(SaveWindowPng(ctx, "//Raypath view", GuiTestTempPath("analysis_legend_icons.png").string()), false);
-  IM_CHECK_RETV(display_pickups->load() == 0, false);
-  IM_CHECK_RETV(gui::g_state.analysis.map.intent_id == map_id && gui::g_state.analysis.survey.intent_id == survey_id &&
-                    gui::g_state.analysis.point.intent_id == point_id &&
-                    gui::g_state.analysis.trace.intent_id == trace_id,
-                false);
-  ctx->LogInfo(
-      "[profile display baseline] map_present=%d map_same=%d sky_valid_same=%d sky_dir_same=%d roi_same=%d "
-      "sample_same=%d playing_same=%d",
-      original_map != nullptr, gui::g_state.analysis.map.adopted_result == original_map,
-      gui::g_state.analysis.sky_point.valid == sky.valid,
-      std::equal(sky.dir, sky.dir + 3, gui::g_state.analysis.sky_point.dir), gui::g_state.analysis.roi_mode == roi_mode,
-      gui::g_state.analysis.point_view.sample_index == sample, gui::g_state.analysis.point_view.playing == playing);
-  IM_CHECK_RETV(
-      gui::g_state.analysis.map.adopted_result == original_map && gui::g_state.analysis.sky_point.valid == sky.valid &&
-          std::equal(sky.dir, sky.dir + 3, gui::g_state.analysis.sky_point.dir) &&
-          gui::g_state.analysis.roi_mode == roi_mode && gui::g_state.analysis.point_view.sample_index == sample &&
-          gui::g_state.analysis.point_view.playing == playing,
-      false);
-  ctx->LogInfo(
-      "[profile hover] display-only toggle/hover: zero query pickups; camera, ROI, sky point and sample retained");
-  ctx->WindowClose("//Raypath view");
-  ctx->Yield(1);
   return true;
 }
 
@@ -6844,6 +6487,648 @@ struct ScopedUiScaleAndBasisLease {
     ctx->Yield(3);
   }
 };
+
+// The C01 3-5 class on the fully random prism — the layer plan's AC1/AC2 real-input face: the
+// support range and the sharp edge share ONE stroke at the inner bound (the card's own
+// coincidence declaration), each group's gate keeps or removes exactly its own interpretation,
+// and the whole switch face is pure display (no query moves). The real-timing pool: the class's
+// survey quantification legs are wall-clock.
+bool SupportEdgeLayersShareOneStrokeAndGateIndependently(ImGuiTestContext* ctx) {
+  ScopedServerGuard guard;
+  IM_CHECK_RETV(BringUpScene(ctx, kFullyRandomJson, /*infinite=*/false, /*gpu=*/false), false);
+  OpenWindow(ctx);
+  IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
+  SetListRef(ctx);
+  ctx->ItemClick("**/3-5");
+  ctx->SetRef("");
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      return gui::SurveyOverviewStateFor(gui::g_state.analysis.survey) ==
+                             gui::SurveyOverviewState::kCompleted;
+                    },
+                    90),
+                false);
+  // The document's own premise, read before anything draws: one merged support range (C01's two
+  // delivered intervals meet at their shared endpoint) and an edge card declaring the
+  // coincidence — the same facts the composition tier pins.
+  const gui::SurveyOverlayFacts facts = gui::BuildSurveyOverlayFacts(*gui::g_state.analysis.survey.adopted_result);
+  IM_CHECK_RETV(facts.reach_intervals.size() == 1, false);
+  IM_CHECK_RETV(!facts.edges.empty() && facts.edges.front().coincident_with_support, false);
+  ctx->LogInfo("[support edge] merged reach %.3f-%.3f, edge %.3f", facts.reach_intervals.front().lower_deg,
+               facts.reach_intervals.front().upper_deg, facts.edges.front().position_deg);
+  // The row click opens the Raypath view; the full-sky rectangular lens puts every bound in view.
+  IM_CHECK_RETV(gui::g_state.analyze_raypath_view_open, false);
+  gui::SelectLensType(gui::g_state, gui::kLensTypeRectangular);
+  gui::g_state.renderer.visible = gui::kVisibleFull;
+  gui::g_state.renderer.front = false;
+  ctx->Yield(3);
+  ctx->Yield(3);
+  ctx->MouseMoveToPos(ImVec2(-100.0f, -100.0f));
+  ctx->Yield(3);
+  const auto query_ids = [] {
+    struct Ids {
+      decltype(gui::g_state.analysis.survey.intent_id) survey_intent;
+      const LUMICE_PathSurvey* survey_result;
+      decltype(gui::g_state.analysis.map.intent_id) map_intent;
+      decltype(gui::g_state.analysis.map.adopted_id) map_adopted;
+    } ids;
+    ids.survey_intent = gui::g_state.analysis.survey.intent_id;
+    ids.survey_result = gui::g_state.analysis.survey.adopted_result.get();
+    ids.map_intent = gui::g_state.analysis.map.intent_id;
+    ids.map_adopted = gui::g_state.analysis.map.adopted_id;
+    return ids;
+  };
+  const auto ids_before = query_ids();
+  // Default frame: the shared stroke drew — reach bounds and the edge with its sharing named.
+  const gui::OverlayLegendState legend0 = gui::LastMapOverlayLegend();
+  IM_CHECK_RETV(legend0.reach_bounds && legend0.edge_arcs && legend0.edge_shared, false);
+  const int ink_shared = MapWindowIndexCountForColour(gui::kSurveyArcInk);
+  IM_CHECK_RETV(ink_shared > 0, false);
+  // The stroke invariants read the GEOMETRY-only counter: the arcs' readout labels draw in the
+  // arc colour too, and a relabelled stroke ("edge · …" -> "support · …") moves the glyph count
+  // while the geometry stands still.
+  const int geo_shared = MapWindowGeometryIndexCountForColour(gui::kSurveyArcInk);
+  IM_CHECK_RETV(geo_shared > 0 && geo_shared <= ink_shared, false);
+  ctx->LogInfo("[support edge] shared stroke ink %d (geometry %d, bounds %d)", ink_shared, geo_shared,
+               legend0.reach_bound_count);
+  // The layer popup: edge off — AC2's half-open world, the line REMAINS (one walk), the legend
+  // keeps the reach name and drops both edge names.
+  ctx->ItemClick("**/Layers##map_layers");
+  ctx->Yield(2);
+  ctx->ItemClick("**/Sharp edges");
+  ctx->Yield(3);
+  IM_CHECK_RETV(MapWindowGeometryIndexCountForColour(gui::kSurveyArcInk) == geo_shared, false);
+  {
+    const gui::OverlayLegendState legend = gui::LastMapOverlayLegend();
+    IM_CHECK_RETV(legend.reach_bounds && !legend.edge_arcs && !legend.edge_shared, false);
+  }
+  // Edge back on: the same ink count and the sharing named again.
+  ctx->ItemClick("**/Sharp edges");
+  ctx->Yield(3);
+  IM_CHECK_RETV(MapWindowGeometryIndexCountForColour(gui::kSurveyArcInk) == geo_shared, false);
+  {
+    const gui::OverlayLegendState legend = gui::LastMapOverlayLegend();
+    IM_CHECK_RETV(legend.edge_arcs && legend.edge_shared, false);
+  }
+  // Reach off: the edge alone — exactly half the shared frame's ink (its own stroke, no bounds).
+  ctx->ItemClick("**/Support range");
+  ctx->Yield(3);
+  const int geo_edge_only = MapWindowGeometryIndexCountForColour(gui::kSurveyArcInk);
+  IM_CHECK_RETV(geo_edge_only > 0 && geo_edge_only * 2 == geo_shared, false);
+  {
+    const gui::OverlayLegendState legend = gui::LastMapOverlayLegend();
+    IM_CHECK_RETV(!legend.reach_bounds && legend.edge_arcs && !legend.edge_shared, false);
+  }
+  // Reach back on: the shared frame restored.
+  ctx->ItemClick("**/Support range");
+  ctx->Yield(3);
+  IM_CHECK_RETV(MapWindowGeometryIndexCountForColour(gui::kSurveyArcInk) == geo_shared, false);
+  // The labels split (one real click): the reach labels box flips. Hiding labels removes the
+  // labels' own ink (their glyphs AND the layout's colour-matched leader lines — 2 quads here),
+  // never the strokes: the legend's reach bit reads the walks' SUBMITTED line count and stays
+  // lit, the strokes remain the frame's largest arc-coloured share, and the labels' ink total
+  // returns byte-identically when the box flips back.
+  ctx->ItemClick("**/##ov_reach_labels");
+  ctx->Yield(3);
+  const int ink_labels_off = MapWindowIndexCountForColour(gui::kSurveyArcInk);
+  IM_CHECK_RETV(ink_labels_off < ink_shared, false);  // the labels' ink left with the toggle
+  IM_CHECK_RETV(MapWindowGeometryIndexCountForColour(gui::kSurveyArcInk) > 0, false);
+  {
+    const gui::OverlayLegendState legend = gui::LastMapOverlayLegend();
+    IM_CHECK_RETV(legend.reach_bounds && legend.edge_arcs, false);  // the strokes still drew
+  }
+  ctx->ItemClick("**/##ov_reach_labels");
+  ctx->Yield(3);
+  IM_CHECK_RETV(MapWindowIndexCountForColour(gui::kSurveyArcInk) == ink_shared, false);
+  // The points group's real click: the positioned objects' markers leave and come back (AC1's
+  // per-group observable, on the marker vocabulary the arcs never borrowed). Whether THIS
+  // document carries positioned markers is its own fact — read from the legend (a marker draws
+  // an entry only when it drew): with markers, the toggle empties and restores the kinds list
+  // while the arcs stand still; without any, the empty kind list is the document's honest
+  // empty state and the row's absence note names it.
+  ctx->ItemClick("**/Layers##map_layers");
+  ctx->Yield(2);
+  const size_t kinds_before = gui::LastMapOverlayLegend().object_kinds.size();
+  IM_CHECK_RETV(ctx->ItemInfo("**/Point images", ImGuiTestOpFlags_NoError).ID != 0, false);
+  IM_CHECK_RETV(ctx->ItemInfo("**/Reflection turns", ImGuiTestOpFlags_NoError).ID != 0, false);
+  ctx->ItemClick("**/Point images");
+  ctx->Yield(3);
+  IM_CHECK_RETV(MapWindowGeometryIndexCountForColour(gui::kSurveyArcInk) == geo_shared, false);
+  {
+    const gui::OverlayLegendState legend = gui::LastMapOverlayLegend();
+    if (kinds_before > 0) {
+      IM_CHECK_RETV(legend.object_kinds.empty(), false);  // the markers left with their gate
+    } else {
+      // No positioned markers on this document: the empty kind list IS the honest empty state,
+      // and the row's absence note names it.
+      IM_CHECK_RETV(legend.object_kinds.empty(), false);
+      ctx->LogInfo("[support edge] no positioned markers on this document; the points row names its empty state");
+    }
+  }
+  ctx->ItemClick("**/Point images");
+  ctx->Yield(3);
+  IM_CHECK_RETV(gui::LastMapOverlayLegend().object_kinds.size() == kinds_before, false);
+  // AC5's master gate: switching Overlays OFF removes every analysis layer — arcs, markers,
+  // chromatic ink and every readout label — while the sky point keeps its white ring and the
+  // fixed anchors keep theirs, and switching back restores the same groups' ink (the storage
+  // preferences were never touched). The fixed anchors read the adopted map's own sun echo, so
+  // the map completes first; then a valid sky point intent gives the preserved side its own ink.
+  IM_CHECK_RETV(
+      DriveUntil(
+          ctx, [] { return gui::MapQueryStateFor(gui::g_state.analysis.map) == gui::MapQueryState::kCompleted; }, 120),
+      false);
+  SetSkyPointTarget(20.0, 90.0);
+  ctx->Yield(3);
+  const int total_before_master = MapWindowIndexCountForColour(gui::kSurveyArcInk);
+  const int white_before = MapWindowIndexCountForColour(IM_COL32(255, 255, 255, 235));
+  IM_CHECK_RETV(white_before > 0, false);
+  IM_CHECK_RETV(gui::LastMapOverlayLegend().anchor_sun, false);
+  ctx->ItemClick("**/Overlays##map");
+  ctx->Yield(3);
+  IM_CHECK_RETV(MapWindowIndexCountForColour(gui::kSurveyArcInk) == 0, false);
+  IM_CHECK_RETV(MapWindowIndexCountForColour(gui::kChromaticColourBlue) == 0, false);
+  IM_CHECK_RETV(MapWindowIndexCountForColour(IM_COL32(255, 255, 255, 235)) == white_before, false);
+  {
+    const gui::OverlayLegendState legend = gui::LastMapOverlayLegend();
+    IM_CHECK_RETV(!legend.reach_bounds && !legend.edge_arcs && !legend.verdict_anchor && legend.object_kinds.empty(),
+                  false);
+    // The fixed anchors are not the master gate's subjects: sun, zenith and horizon keep their
+    // entries (the sun's own gold stays in the bucket — it IS the anchor's, not a marker's)
+    // while every analysis layer's entry is gone.
+    IM_CHECK_RETV(legend.anchor_sun && legend.anchor_zenith && legend.anchor_horizon, false);
+  }
+  ctx->ItemClick("**/Overlays##map");
+  ctx->Yield(3);
+  IM_CHECK_RETV(MapWindowIndexCountForColour(gui::kSurveyArcInk) == total_before_master, false);
+  IM_CHECK_RETV(MapWindowIndexCountForColour(IM_COL32(255, 255, 255, 235)) == white_before, false);
+  // AC1: the whole switch face moved no query — the survey and the map keep the intents they
+  // were dispatched with (a re-armed query would carry a new intent id), both faces end
+  // completed, and the adopted survey document is the very object the case started from.
+  const auto ids_after = query_ids();
+  IM_CHECK_RETV(ids_after.survey_intent == ids_before.survey_intent &&
+                    ids_after.survey_result == ids_before.survey_result &&
+                    ids_after.map_intent == ids_before.map_intent,
+                false);
+  IM_CHECK_RETV(gui::SurveyOverviewStateFor(gui::g_state.analysis.survey) == gui::SurveyOverviewState::kCompleted,
+                false);
+  IM_CHECK_RETV(gui::MapQueryStateFor(gui::g_state.analysis.map) == gui::MapQueryState::kCompleted, false);
+  IM_CHECK_RETV(SaveWindowPng(ctx, "//Raypath view", GuiTestTempPath("map_support_edge_layers.png").string()), false);
+  // The control face's reachability at the window's own size floor and at the 1.5x/2x scales
+  // (the layer plan's AC6): the popup opens, the chromatic group's box really toggles its ink,
+  // every time.
+  const auto chromatic_toggle_reaches = [&](const char* what) -> bool {
+    ctx->ItemClick("**/Layers##map_layers");
+    ctx->Yield(2);
+    const ImGuiID chromatic = ctx->ItemInfo("**/Red-blue shift", ImGuiTestOpFlags_NoError).ID;
+    if (chromatic == 0) {
+      ctx->LogError("[layer popup] %s: the chromatic box did not submit", what);
+      return false;
+    }
+    ctx->ItemClick(chromatic);
+    ctx->Yield(3);
+    if (MapWindowIndexCountForColour(gui::kChromaticColourBlue) != 0 ||
+        MapWindowIndexCountForColour(gui::kChromaticColourRed) != 0) {
+      ctx->LogError("[layer popup] %s: chromatic ink survived the gate", what);
+      return false;
+    }
+    ctx->ItemClick(chromatic);
+    ctx->Yield(3);
+    if (MapWindowIndexCountForColour(gui::kChromaticColourBlue) == 0) {
+      ctx->LogError("[layer popup] %s: the chromatic ink did not come back", what);
+      return false;
+    }
+    return true;
+  };
+  ctx->WindowResize("//Raypath view", ImVec2(480.0f, 360.0f));
+  ctx->Yield(3);
+  IM_CHECK_RETV(chromatic_toggle_reaches("480x360"), false);
+  {
+    ScopedUiScaleAndBasisLease scale_lease(ctx);
+    gui::SetUiScaleMultiplierImmediate(1.5f);
+    IM_CHECK_RETV(DriveUntil(ctx, [] { return !gui::g_ui_scale_dirty && gui::CurrentUiScale() == 1.5f; }, 5), false);
+    PinRaypathViewOnScreen(ctx);
+    ctx->Yield(3);
+    IM_CHECK_RETV(chromatic_toggle_reaches("1.5x"), false);
+    gui::SetUiScaleMultiplierImmediate(2.0f);
+    IM_CHECK_RETV(DriveUntil(ctx, [] { return !gui::g_ui_scale_dirty && gui::CurrentUiScale() == 2.0f; }, 5), false);
+    g_window_size_test.width = 1024;
+    g_window_size_test.height = 640;
+    g_window_size_test.done.store(false);
+    g_window_size_test.requested.store(true);
+    IM_CHECK_RETV(DriveUntil(ctx, [] { return g_window_size_test.done.load(); }, 5), false);
+    PinRaypathViewOnScreen(ctx);
+    ctx->Yield(3);
+    IM_CHECK_RETV(chromatic_toggle_reaches("2x"), false);
+  }
+  return true;
+}
+
+// The engine's named refusal, on the two-layer scene: a multi-layer class is a legitimate
+// selection and the survey answers it with multi_layer_unsupported — shown, not fabricated
+// around (R5/R7; the multi-layer evidence the plan's M3-5 asks to be on file).
+// The report window's colour-bucket count (the map face's own read, one window over): the
+// legend icons are the only consumers of their colours inside ##MapReport — the map's own markers
+// live in the map region's window.
+int MapReportIndexCountForColour(ImU32 colour) {
+  const ImGuiWindow* report = MapReportWindow();
+  if (report == nullptr) {
+    return 0;
+  }
+  const ImDrawList* dl = report->DrawList;
+  int count = 0;
+  for (int i = 0; i + 5 < dl->IdxBuffer.Size; i += 6) {
+    bool matches = true;
+    for (int k = 0; k < 6; ++k) {
+      if (dl->VtxBuffer[static_cast<int>(dl->IdxBuffer[i + k])].col != colour) {
+        matches = false;
+        break;
+      }
+    }
+    if (matches) {
+      count += 6;
+    }
+  }
+  return count;
+}
+
+// The row-highlight read: the bbox of one colour's vertices inside ##MapReport (the theme's
+// hovered-header ink the row backgrounds draw with), false when nothing drew in it.
+bool ReportHighlightBBox(ImU32 colour, ImVec2* out_min, ImVec2* out_max) {
+  const ImGuiWindow* report = MapReportWindow();
+  if (report == nullptr) {
+    return false;
+  }
+  const ImDrawList* dl = report->DrawList;
+  bool any = false;
+  for (int i = 0; i < dl->VtxBuffer.Size; ++i) {
+    const ImDrawVert& v = dl->VtxBuffer[i];
+    if (v.col != colour) {
+      continue;
+    }
+    *out_min = any ? ImVec2(std::min(out_min->x, v.pos.x), std::min(out_min->y, v.pos.y)) : ImVec2(v.pos.x, v.pos.y);
+    *out_max = any ? ImVec2(std::max(out_max->x, v.pos.x), std::max(out_max->y, v.pos.y)) : ImVec2(v.pos.x, v.pos.y);
+    any = true;
+  }
+  return any;
+}
+
+// Two rects intersect iff NEITHER axis separates them — the row highlight's own criterion. The
+// two axis separations join with OR: a highlight drawn one row above or below the target shares
+// the rows' x span, so only the OR rejects it (the AND-shaped mix the first draft had let exactly
+// that shape through).
+bool RowRectsIntersect(const ImRect& a, const ImRect& b) {
+  return (a.Min.x <= b.Max.x && a.Max.x >= b.Min.x) && (a.Min.y <= b.Max.y && a.Max.y >= b.Min.y);
+}
+
+// The 2026-11-12 feedback wave's interaction face (contract §16.1.3's extension): the class
+// answer's rows highlight where the pointer stands (AC1/AC3 — the ratio row's feedback is local
+// by design, it names no spatial payload), the three profile reading rows drive the map's profile
+// device one frame later (AC2 — a point at the edge/peak reading, the radial interval between
+// them for separation), the Overlays gate holds the device back while the row feedback stays (the
+// total gate's own leg), and the four anchor legend entries carry their icons (AC4). Fixture: the
+// narrow-plate scene — its arc rows route to the restricted plate family, whose survey runs the
+// probe. Flake attribution, should this ever red: the premise asserts below (the family arm's
+// probe readings, the azimuth availability, the sun echo) are the FIRST suspects — the survey's
+// quantification legs complete in seconds of an unseeded whole-sky analysis, so a red premise is
+// a data/ranking or budget-truncation event, not an interaction-chain defect.
+// The subject legs' complete-document acquisition: the panel's adopted survey can be a legal
+// deadline cut (the engine names it; the document keeps its arm and produced legs), and the
+// subject legs read the probe — a reading a cut need not carry. Rather than re-rolling the
+// same wall-clock budget, the test issues the survey itself through the engine-tier workspace
+// face (the same face the GUI executor wraps), where the budget is the caller's contract:
+// LUMICE_PATH_SURVEY_MAX_BUDGET_MS, four times the GUI path's default, so a load-slowed query
+// still lands. The scene comes from the ONE builder the executor's own scene came from —
+// BuildScene on the standing state (a LUMICE_SceneFromJson re-parse would carry the DECLARED
+// crystal ids, while LUMICE_SceneAddCrystal assigns positional ids, and the identity's
+// crystal_id is a positional one). The request comes from the ONE builder, the GUI's own,
+// with only the budget overridden. The query blocks its worker, so it runs on a thread of its
+// own while DriveUntil keeps the frames pumping (the executor's own shape, test side).
+std::shared_ptr<const LUMICE_PathSurvey> AcquireCompleteSurveyDocument(ImGuiTestContext* ctx,
+                                                                       const gui::SelectedClassIdentity& identity) {
+  gui::FilterOverflowInfo filter_overflow;
+  gui::ColorClassOverflowInfo color_overflow;
+  gui::ScenePtr scene = gui::BuildScene(gui::g_state, gui::SceneIntent::kSimCommit, &filter_overflow, &color_overflow);
+  if (scene == nullptr) {
+    ctx->LogError(
+        "[survey-acquire] the standing state would not build a scene (filter layer %d entry %d, color class %d)",
+        filter_overflow.layer_index, filter_overflow.entry_index, color_overflow.class_index);
+    return nullptr;
+  }
+  char err[512] = {};
+  LUMICE_PathWorkspace* raw_workspace = nullptr;
+  if (LUMICE_PathWorkspaceCreate(scene.get(), &raw_workspace, err, sizeof(err)) != LUMICE_OK) {
+    ctx->LogError("[survey-acquire] workspace create failed: %s", err);
+    return nullptr;
+  }
+  std::shared_ptr<LUMICE_PathWorkspace> workspace(raw_workspace, &LUMICE_PathWorkspaceDestroy);
+  std::vector<int> faces;
+  std::vector<int> counts;
+  LUMICE_PathSurveyRequest request = gui::MakeSurveyRequestForIdentity(identity, &faces, &counts);
+  request.budget_ms = LUMICE_PATH_SURVEY_MAX_BUDGET_MS;
+  LUMICE_PathQueryOptions options{};
+  options.struct_size = sizeof(options);
+  options.deadline_ms = LUMICE_PATH_SURVEY_MAX_BUDGET_MS;
+  auto mailbox = std::make_shared<std::shared_ptr<const LUMICE_PathSurvey>>();
+  std::atomic<bool> done{ false };
+  std::thread worker([&] {
+    LUMICE_PathSurvey* raw = nullptr;
+    if (LUMICE_PathWorkspaceQuerySurvey(workspace.get(), &request, &options, &raw, err, sizeof(err)) == LUMICE_OK &&
+        raw != nullptr) {
+      *mailbox = std::shared_ptr<const LUMICE_PathSurvey>(raw, gui::SurveyDeleter{});
+    }
+    done.store(true);
+  });
+  const bool landed = DriveUntil(ctx, [&] { return done.load(); }, 150);
+  worker.join();
+  if (!landed || *mailbox == nullptr) {
+    ctx->LogError("[survey-acquire] the test-issued query produced no document (landed=%d, engine says: %s)",
+                  landed ? 1 : 0, err);
+    return nullptr;
+  }
+  return *mailbox;
+}
+
+bool ProfileRowsHighlightAndDrawOnTheMap(ImGuiTestContext* ctx) {
+  ScopedServerGuard guard;
+  // The case's legal wait chain (the GUI survey up to its deadline, then up to two acquisition
+  // attempts at a 120s budget each, then the map's queued adoption) exceeds the engine
+  // watchdog's default kill threshold — a healthy truncation round would be killed mid-acquire
+  // before this case's own gates could say anything. The whole-case budget rides the same guard
+  // the suite's other long-chain cases use; RAII restores it on every exit.
+  ScopedWatchdogGuard watchdog(ctx->EngineIO);
+  IM_CHECK_RETV(BringUpScene(ctx, kNarrowPlateJson, /*infinite=*/false, /*gpu=*/false), false);
+  OpenWindow(ctx);
+  IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
+  // The explicit chain row: the first 2+ face row in the display order (single-face rows refuse
+  // as invalid paths; the traversal's rule is the explicit part, the premise asserts below are
+  // what make the physical basis real).
+  std::string target;
+  for (const size_t idx : gui::g_state.analysis_result.display_order) {
+    const std::string d = gui::g_state.analysis_result.payload->entries[idx].display;
+    if (d != "1-2" && d.find('-') != std::string::npos) {
+      target = d;
+      break;
+    }
+  }
+  IM_CHECK_RETV(!target.empty(), false);
+  SetListRef(ctx);
+  ctx->ItemClick((std::string("**/") + target).c_str());
+  ctx->SetRef("");
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      return gui::SurveyOverviewStateFor(gui::g_state.analysis.survey) ==
+                             gui::SurveyOverviewState::kCompleted;
+                    },
+                    60),
+                false);
+  // The contract check reads the panel's own adopted document and dispatches on what the
+  // engine named: COMPLETED goes straight to the subject legs; a deadline cut is a legal form
+  // (the document keeps its arm and produced legs) — recorded as an environmental event, then
+  // replaced for the subject legs by a test-issued survey (the acquisition above: the budget
+  // is the caller's contract at that face), because the legs read the probe, which a cut need
+  // not carry; CANCELLED or a refused probe names a product/data event and is red without
+  // retry — a retry cannot repair a deterministic state.
+  const auto log_survey_doc = [&](const gui::SurveyOverviewModel& m) {
+    ctx->LogInfo(
+        "[survey-doc] valid=%d execution=%d(%s) probe_count=%zu probe_state=%d probe_mode='%s' arm=%d "
+        "tint_available=%d tint_state=%d budget_ms=%d early_stopped=%d",
+        m.valid ? 1 : 0, m.execution, gui::SurveyOutcomeName(m.execution), m.probe_count, m.probe.state,
+        m.probe.mode.c_str(), static_cast<int>(m.arm), m.tint.available ? 1 : 0, m.tint.state, m.budget_ms,
+        m.early_stopped ? 1 : 0);
+  };
+  gui::SurveyOverviewModel model = gui::BuildSurveyOverviewModel(*gui::g_state.analysis.survey.adopted_result);
+  log_survey_doc(model);
+  IM_CHECK_RETV(model.valid && model.arm == gui::SurveyArm::kFamily, false);
+  if (model.execution == LUMICE_PATH_OUTCOME_CANCELLED) {
+    ctx->LogError("[survey-doc] %s: the adopted document names %s — a product or data event, not retried",
+                  target.c_str(), gui::SurveyOutcomeName(model.execution));
+    return false;
+  }
+  if (model.execution == LUMICE_PATH_OUTCOME_COMPLETED) {
+    // On a COMPLETED document a refused probe is the engine naming a structural refusal — a
+    // product/data event, deterministic, not retried.
+    if (model.probe.available && model.probe.state == LUMICE_PATH_STATE_REFUSED) {
+      ctx->LogError(
+          "[survey-doc] %s: the completed document's probe refused (mode '%s') — a product or data "
+          "event, not retried",
+          target.c_str(), model.probe.mode.c_str());
+      return false;
+    }
+  } else {
+    // Legal deadline cut. Whatever the probe block carries is part of the cut: the engine itself
+    // names a probe the deadline ran out on as refused/stop_requested (survey_probe.cpp appends
+    // the refused probe on a truncated line; the family arm passes the query's stop into the
+    // probe), so a refused probe here is NOT a structural refusal — the document is just not
+    // complete, and the subject legs read the probe: acquire.
+    ctx->LogInfo(
+        "[survey-doc] %s: legal deadline cut (probe_count=%zu probe_state=%d probe_mode='%s') — acquiring "
+        "a complete document for the subject legs",
+        target.c_str(), model.probe_count, model.probe.state, model.probe.mode.c_str());
+    // The selection is standing and does not change inside this case — one read, before the
+    // attempts (the checker's loop rule: no fatal assert inside a repeatedly-executing body).
+    const std::optional<gui::SelectedClassIdentity> identity = gui::SelectedClassIdentityFor(gui::g_state);
+    IM_CHECK_RETV(identity.has_value(), false);
+    gui::SurveyOverviewModel acquired_model;
+    bool complete = false;
+    for (int attempt = 1; attempt <= 2 && !complete; ++attempt) {
+      ctx->LogInfo("[survey-acquire] attempt %d begins (budget %d ms)", attempt, LUMICE_PATH_SURVEY_MAX_BUDGET_MS);
+      std::shared_ptr<const LUMICE_PathSurvey> acquired = AcquireCompleteSurveyDocument(ctx, *identity);
+      if (acquired != nullptr) {
+        gui::g_state.analysis.survey.adopted_result = std::move(acquired);
+        acquired_model = gui::BuildSurveyOverviewModel(*gui::g_state.analysis.survey.adopted_result);
+        log_survey_doc(acquired_model);
+        complete = acquired_model.valid && acquired_model.execution == LUMICE_PATH_OUTCOME_COMPLETED &&
+                   acquired_model.probe.available;
+      }
+    }
+    if (!complete) {
+      ctx->LogError(
+          "[survey-acquire] subject precondition not met: both attempts ended legally truncated or produced no "
+          "document (each attempt's [survey-doc] line above carries its execution) — subject validation not "
+          "executed, this round does not count as green");
+      return false;
+    }
+    model = acquired_model;
+  }
+  // The subject legs: the strong probe readings, on a complete document, unchanged.
+  IM_CHECK_RETV(model.probe.available && model.probe.edge_available && model.probe.peak_available &&
+                    model.probe.separation_available,
+                false);
+  IM_CHECK_RETV(model.probe.azimuth_available, false);
+  IM_CHECK_RETV(model.sun_available, false);
+  ctx->LogInfo("[profile hover] %s: edge %.3f peak %.3f sep %.3f az %.1f sun %.1f/%.1f", target.c_str(),
+               model.probe.edge_deg, model.probe.peak_deg, model.probe.separation_deg, model.probe.azimuth_deg,
+               model.sun_altitude_deg, model.sun_azimuth_deg);
+  // The row click opened the Raypath view (§16.3's content shortcut); the full-sky rectangular
+  // view — written directly, the shared presets being retired — is the robust aim (the verdict
+  // face's lesson): every reading keeps in-view samples there.
+  IM_CHECK_RETV(gui::g_state.analyze_raypath_view_open, false);
+  gui::SelectLensType(gui::g_state, gui::kLensTypeRectangular);
+  gui::g_state.renderer.visible = gui::kVisibleFull;
+  gui::g_state.renderer.front = false;
+  ctx->Yield(3);
+  // Establish the map's adopted baseline before observing display-only actions: an idle worker
+  // can still have a finished result waiting for the GUI pump. The probe itself does not need a
+  // map, but the legend and the retained-source assertion do. Drain queued requests as well as
+  // the running one, so legitimate work cannot enter the display-only pickup counter later.
+  IM_CHECK_RETV(
+      DriveUntil(
+          ctx, [] { return gui::MapQueryStateFor(gui::g_state.analysis.map) == gui::MapQueryState::kCompleted; }, 60),
+      false);
+  IM_CHECK_RETV(DriveUntil(ctx, [] { return !gui::g_survey_executor.QueryOutstanding(); }, 90), false);
+  const auto map_id = gui::g_state.analysis.map.intent_id;
+  const auto survey_id = gui::g_state.analysis.survey.intent_id;
+  const auto point_id = gui::g_state.analysis.point.intent_id;
+  const auto trace_id = gui::g_state.analysis.trace.intent_id;
+  const auto original_map = gui::g_state.analysis.map.adopted_result;
+  ctx->LogInfo("[profile display baseline] map_present=%d map_state=%d", original_map != nullptr,
+               static_cast<int>(gui::MapQueryStateFor(gui::g_state.analysis.map)));
+  const auto sky = gui::g_state.analysis.sky_point;
+  const auto roi_mode = gui::g_state.analysis.roi_mode;
+  const auto sample = gui::g_state.analysis.point_view.sample_index;
+  const auto playing = gui::g_state.analysis.point_view.playing;
+  auto display_pickups = std::make_shared<std::atomic<int>>(0);
+  gui::g_survey_executor.SetPickupGateForTest([display_pickups](gui::QueryFace) { ++*display_pickups; });
+  struct DisplayPickupLease {
+    ~DisplayPickupLease() { gui::g_survey_executor.SetPickupGateForTest(nullptr); }
+  } display_pickup_lease;
+  ctx->MouseMove("**/" ICON_FA_CIRCLE_INFO "##map_overlays_help");
+  ctx->Yield(3);
+  const std::string help = CaptureFrameText(ctx);
+  IM_CHECK_RETV(help.find("Hover Profile edge") != std::string::npos &&
+                    help.find("reference profile (not an all-sky peak)") != std::string::npos,
+                false);
+  ctx->MouseMoveToPos(ImVec2(2, 2));
+  ctx->Yield(3);
+  // The default frame: no hover, no profile ink — the map is the picture it always was.
+  const ImU32 hovered_ink = ImGui::GetColorU32(ImGuiCol_HeaderHovered);
+  IM_CHECK_RETV(gui::g_state.analysis.profile_row_hover == gui::SurveyProfileHover::kNone, false);
+  IM_CHECK_RETV(MapWindowIndexCountForColour(gui::kProfileReadingColour) == 0, false);
+  // The intersection predicate's own legs, before the rows lean on it: the adjacent-row shape the
+  // OR form exists to reject (horizontal overlap, vertical separation — above and below), and a
+  // genuine overlap the predicate must still accept.
+  IM_CHECK_RETV(!RowRectsIntersect(ImRect(0, 0, 100, 10), ImRect(0, 20, 100, 30)), false);
+  IM_CHECK_RETV(!RowRectsIntersect(ImRect(0, 0, 100, 10), ImRect(0, -30, 100, -20)), false);
+  IM_CHECK_RETV(RowRectsIntersect(ImRect(0, 0, 100, 10), ImRect(0, 5, 100, 15)), false);
+  IM_CHECK_RETV(RowRectsIntersect(ImRect(0, 0, 100, 10), ImRect(50, 0, 150, 10)), false);
+  auto hover_row = [&](const char* id, gui::SurveyProfileHover expect) -> bool {
+    ctx->ScrollToItem(id, ImGuiAxis_Y);
+    ctx->Yield(1);
+    const ImVec2 center = ctx->ItemInfo(id).RectFull.GetCenter();
+    ctx->MouseMoveToPos(center);
+    ctx->Yield(3);
+    if (gui::g_state.analysis.profile_row_hover != expect) {
+      ctx->LogError("[profile hover] %s: session identity is %d, expected %d", id,
+                    static_cast<int>(gui::g_state.analysis.profile_row_hover), static_cast<int>(expect));
+      return false;
+    }
+    // The row's own highlight, THIS frame: the theme ink's bbox in the report window intersects
+    // the row's own rect (the background rides the text, under it — the text stays foreground).
+    ImVec2 hmin(0.0f, 0.0f);
+    ImVec2 hmax(0.0f, 0.0f);
+    if (!ReportHighlightBBox(hovered_ink, &hmin, &hmax)) {
+      ctx->LogError("[profile hover] %s: no highlight ink in the report window", id);
+      return false;
+    }
+    const ImRect row = ctx->ItemInfo(id).RectFull;
+    const ImRect highlight(hmin, hmax);
+    if (!RowRectsIntersect(highlight, row)) {
+      ctx->LogError(
+          "[profile hover] %s: highlight bbox (%.0f,%.0f)-(%.0f,%.0f) misses the row rect (%.0f,%.0f)-(%.0f,%.0f)", id,
+          hmin.x, hmin.y, hmax.x, hmax.y, row.Min.x, row.Min.y, row.Max.x, row.Max.y);
+      return false;
+    }
+    return true;
+  };
+  // The edge row: the point device on the map, the highlight on the row.
+  IM_CHECK_RETV(hover_row("**/###profile_edge_row", gui::SurveyProfileHover::kEdge), false);
+  IM_CHECK_RETV(MapWindowIndexCountForColour(gui::kProfileReadingColour) > 0, false);
+  // The peak row: the point moves (the readings differ by tens of degrees — the count alone
+  // cannot tell a stuck point from a moved one, so this leg reads the session identity and the
+  // ink's existence; the unit tier owns the positions).
+  IM_CHECK_RETV(hover_row("**/###profile_peak_row", gui::SurveyProfileHover::kPeak), false);
+  IM_CHECK_RETV(MapWindowIndexCountForColour(gui::kProfileReadingColour) > 0, false);
+  // The separation row: the interval device. Same-source frames for the human eye: the row
+  // highlight and the interval are the two things a screenshot judges better than a bucket read.
+  IM_CHECK_RETV(hover_row("**/###profile_separation_row", gui::SurveyProfileHover::kSeparation), false);
+  IM_CHECK_RETV(MapWindowIndexCountForColour(gui::kProfileReadingColour) > 0, false);
+  IM_CHECK_RETV(SaveWindowPng(ctx, "//Raypath view", GuiTestTempPath("analysis_profile_hover_separation.png").string()),
+                false);
+  // Off the rows: both the identity and the ink leave (the overwrite's own closure).
+  ctx->MouseMoveToPos(ImVec2(-100.0f, -100.0f));
+  ctx->Yield(3);
+  IM_CHECK_RETV(gui::g_state.analysis.profile_row_hover == gui::SurveyProfileHover::kNone, false);
+  IM_CHECK_RETV(MapWindowIndexCountForColour(gui::kProfileReadingColour) == 0, false);
+  {
+    ImVec2 hmin(0.0f, 0.0f);
+    ImVec2 hmax(0.0f, 0.0f);
+    IM_CHECK_RETV(!ReportHighlightBBox(hovered_ink, &hmin, &hmax), false);
+  }
+  // The Overlays gate: off, the row's highlight and identity stand, the map draws nothing —
+  // the profile device nests under the gate exactly like the verdict anchor does.
+  ctx->ItemClick("**/Overlays##map");
+  ctx->Yield(2);
+  IM_CHECK_RETV(hover_row("**/###profile_edge_row", gui::SurveyProfileHover::kEdge), false);
+  IM_CHECK_RETV(MapWindowIndexCountForColour(gui::kProfileReadingColour) == 0, false);
+  ctx->ItemClick("**/Overlays##map");
+  ctx->Yield(2);
+  // The ratio row: highlight present, no map geometry (AC3's honest local feedback).
+  IM_CHECK_RETV(hover_row("**/###tint_ratio_row", gui::g_state.analysis.profile_row_hover), false);
+  IM_CHECK_RETV(MapWindowIndexCountForColour(gui::kProfileReadingColour) == 0, false);
+  // The verdict row (AC1's existing-rows leg): the two pilot rows now highlight too — the anchor
+  // draw itself is the verdict face's own test.
+  IM_CHECK_RETV(hover_row("**/###diagnose_verdict_row", gui::g_state.analysis.profile_row_hover), false);
+  ctx->MouseMoveToPos(ImVec2(-100.0f, -100.0f));
+  ctx->Yield(3);
+  // The legend icons (AC4): scroll the report to its legend, then assert the icons' colour
+  // buckets — the frame anchors drew (full sky), so the sun's gold and the zenith/horizon greys
+  // stand; qualified verdicts join Overlays by default. The adopted map's sun echo was required
+  // before the display-only baseline, so this leg must not wait for a new source to arrive.
+  if (ImGuiWindow* report = MapReportWindow()) {
+    report->Scroll.y = report->ScrollMax.y;
+  }
+  ctx->Yield(2);
+  // The state before the ink — two independent assertions, each localizing its own mechanism:
+  // the state bit false names the anchor draw (the adopted map's echo and its projection),
+  // ink absent under a true state names the report side. The readout line carries the anchor
+  // bits for the round log.
+  const gui::OverlayLegendState legend_at_assert = gui::LastMapOverlayLegend();
+  ctx->LogInfo("[map-legend] sun=%d zenith=%d horizon=%d verdict=%d sky_point=%d", legend_at_assert.anchor_sun ? 1 : 0,
+               legend_at_assert.anchor_zenith ? 1 : 0, legend_at_assert.anchor_horizon ? 1 : 0,
+               legend_at_assert.verdict_anchor ? 1 : 0, legend_at_assert.sky_point ? 1 : 0);
+  IM_CHECK_RETV(legend_at_assert.anchor_sun, false);
+  IM_CHECK_RETV(MapReportIndexCountForColour(IM_COL32(255, 231, 168, 255)) > 0, false);
+  IM_CHECK_RETV(MapReportIndexCountForColour(IM_COL32(200, 205, 215, 110)) > 0, false);
+  IM_CHECK_RETV(gui::LastMapOverlayLegend().verdict_anchor, false);
+  const ImU32 anchor_ink = gui::LastMapOverlayLegend().verdict_anchor_colour;
+  IM_CHECK_RETV(MapReportIndexCountForColour(anchor_ink) > 0, false);
+  IM_CHECK_RETV(SaveWindowPng(ctx, "//Raypath view", GuiTestTempPath("analysis_legend_icons.png").string()), false);
+  IM_CHECK_RETV(display_pickups->load() == 0, false);
+  IM_CHECK_RETV(gui::g_state.analysis.map.intent_id == map_id && gui::g_state.analysis.survey.intent_id == survey_id &&
+                    gui::g_state.analysis.point.intent_id == point_id &&
+                    gui::g_state.analysis.trace.intent_id == trace_id,
+                false);
+  ctx->LogInfo(
+      "[profile display baseline] map_present=%d map_same=%d sky_valid_same=%d sky_dir_same=%d roi_same=%d "
+      "sample_same=%d playing_same=%d",
+      original_map != nullptr, gui::g_state.analysis.map.adopted_result == original_map,
+      gui::g_state.analysis.sky_point.valid == sky.valid,
+      std::equal(sky.dir, sky.dir + 3, gui::g_state.analysis.sky_point.dir), gui::g_state.analysis.roi_mode == roi_mode,
+      gui::g_state.analysis.point_view.sample_index == sample, gui::g_state.analysis.point_view.playing == playing);
+  IM_CHECK_RETV(
+      gui::g_state.analysis.map.adopted_result == original_map && gui::g_state.analysis.sky_point.valid == sky.valid &&
+          std::equal(sky.dir, sky.dir + 3, gui::g_state.analysis.sky_point.dir) &&
+          gui::g_state.analysis.roi_mode == roi_mode && gui::g_state.analysis.point_view.sample_index == sample &&
+          gui::g_state.analysis.point_view.playing == playing,
+      false);
+  ctx->LogInfo(
+      "[profile hover] display-only toggle/hover: zero query pickups; camera, ROI, sky point and sample retained");
+  ctx->WindowClose("//Raypath view");
+  ctx->Yield(1);
+  return true;
+}
 
 // Independent draw-list oracle: recover actual backing quads, then require all glyph UVs of
 // each complete expected string inside its own patch. No production layout feedback is read.
@@ -18646,6 +18931,13 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
   {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "verdict_anchor_hover_and_toggle_on_the_map");
     t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(VerdictAnchorHoverAndToggleOnTheMap(ctx)); };
+  }
+  // The layer plan's AC1/AC2/AC6 real-input face (the C01 3-5 survey is wall-clock): shared
+  // stroke, per-group gates, query silence, and the popup's three-scale reachability.
+  {
+    ImGuiTest* t =
+        IM_REGISTER_TEST(engine, "raypath_analysis", "support_edge_layers_share_one_stroke_and_gate_independently");
+    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(SupportEdgeLayersShareOneStrokeAndGateIndependently(ctx)); };
   }
   {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "survey_refuses_multilayer_class_by_name");

@@ -259,11 +259,20 @@ globe 分开读近侧/选点方向与远侧提示，近侧被裁掉时不能拿�
 不算 map、不自动开 Pose & trace。报告内滚不透传相机。**Overlays** 仍逐字消费 survey 的对象位置与色散圆，
 同位置对象归入一个 tooltip，图例只列实际画出的东西；几何位置不是整圈贡献证书。
 
-**锚点与剖线联动。** 合格的颜色 verdict 圈随 **Overlays** 默认常显，没有独立开关；无位置、不 visible
-或不支持的 kind 不画，coverage 不完整仍用虚线弱化，图例只列实际画出的锚。关闭 Overlays 不关用户天空点
-或太阳/地平线参照。类答案的 **Profile edge / Profile peak / Peak–edge separation** 上方提供 hover 提示：
-悬停前两行定位参考剖线上的点，悬停 separation 定位两读数间径向区间；不是全天峰值圆圈。离开行后撤回，
-Overlays 关闭时仍有行反馈但无临时地图墨迹。缺读数、未知方位、拒答或端点离屏都不补位置。
+**锚点与剖线联动。** 合格的颜色 verdict 圈随 **Overlays** 默认常显，归属 **Red-blue shift**
+图层组；无位置、不 visible 或不支持的 kind 不画，coverage 不完整仍用虚线弱化，图例只列实际
+画出的锚。关闭 Overlays 不关用户天空点或太阳/地平线参照。类答案的 **Profile edge / Profile
+peak / Peak–edge separation** 上方提供 hover 提示：悬停前两行定位参考剖线上的点，悬停
+separation 定位两读数间径向区间；不是全天峰值圆圈。离开行后撤回，Overlays 关闭时仍有行反馈
+但无临时地图墨迹。缺读数、未知方位、拒答或端点离屏都不补位置。
+
+**图层组开关。** Overlays 旁的 **Layers** 按钮打开逐组开关——Support range / Sharp edges /
+Point images / Red-blue shift / Reflection turns——每组各有图形与标签两个框（藏标签不藏墨迹，
+关墨迹连同其标签一起撤）。开关只过滤已算好的结果：不重算、不发请求，本会话内随切类与关开
+窗口保留。support 区间界与锐边按 survey 自身参考波长画成角距参照弧——这是「类在哪里能亮」的
+边界，不是发光圈；覆盖整个 0–180° 时用一行文字代替满天空圈。edge 卡声明与 support 界重合时
+两组共用一条笔画，图例并列两个名字。内反射转折把可见 TIR 特征在两个参考波长上的代表角距画成
+中性的一对圆加一条合并读数——是参照对，不是整圈变色声明。每组只在真实画出时才进图例。
 
 **读数与选点可读性。** 红蓝色散及 verdict 标签共同避让，完整保留波长/角度/`arc in view`。
 多标签联排时引线指回各自原曲线，包括窄图中标明 `Readouts (stacked)` 的换行栈；单标签只钳制到

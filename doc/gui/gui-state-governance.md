@@ -52,6 +52,16 @@ verdict 常驻墨迹；没有 verdict-only 会话开关。profile hover 是逐�
 T-session 瞬态，Overlays 关闭只阻止其地图墨迹，不阻止行反馈。标签避让/紧凑读回与 sky point 暗底笔
 纯属本帧显示，不写选点、样本、播放或查询，不进配置/快照/用户默认值；sky point 仍不受 Overlays 控制。
 
+**图层组开关（2026-11-22 图层组修订）**：Overlays 总门之外新增五组会话开关（Support range /
+Sharp edges / Point images / Red-blue shift / Reflection turns），每组一对 graphics/labels 键
+（`ov_<group>` / `ov_<group>_l`），与总门同一窗口 `ImGuiStorage` 寿命（T-session 显示偏好：随
+换类、采纳结果、窗口关开保留，新进程回出厂全开），不进 `.lmc`、导出、`ConfigSnapshot`、user
+defaults，不产生 dirty 或查询。storage 键 ID 在地图子窗口的 ID 作用域一次性解析并供弹出区
+复用（popup 内 `GetID` 会落入 popup 作用域造成同语义双键分叉——写读永不相遇，此为已验证坑）。
+五组开关是纯显示路径：只过滤 overlay cache 已读回的显示事实（`SurveyOverlayFacts`，按采纳身份
+重建一次，非每帧/每次开关重建），不触发 survey/map 重算。区域着色子项单列禁用（无载荷，非
+开关状态，不占 storage）。
+
 > **Raypath view 的共享相机机制**：唯一合同见 [raypath-view-camera.md](raypath-view-camera.md) §6–8，验证边界见§10。
 > map已移除私有圆盘与相机副本互抄；两个画面消费上述T-view的同一有效帧输入，Look At仍由既有owner解析，空主图也reconcile。
 > 单一全天空map的计算意图、完成代门与句柄归T-session；原格/frame/前缀是冻结结果，不是live renderer的副本。
