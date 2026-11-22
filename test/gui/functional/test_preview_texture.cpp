@@ -817,6 +817,32 @@ void SetStripRowsAndWait(ImGuiTestContext* ctx, int max_rows) {
   IM_CHECK(g_fault.strip_rows_done);
 }
 
+// The exposure premise the direct-upload pixel witnesses need: after a bare DoNew the GuiState
+// carries snapshot_intensity 0, the relative-EV branch divides by it, and the shader's XYZ term
+// multiplies by ZERO — every arm would compare an empty source contribution and a strip-row
+// error could not turn the picture. Seeding intensity 2.0 with ev_auto 1.0 puts the applied
+// intensity_scale at exactly 1.0 (2^(0+1)/2), so the ±1.0 coordinate patterns render inside the
+// gamut with nothing saturating.
+void SeedVisibleExposure() {
+  gui::g_state.snapshot_intensity = 2.0f;
+  gui::g_state.ev_auto = 1.0f;
+}
+
+// The premise check proper: the preview params the live frames render with must carry a POSITIVE
+// scale, and the capture must actually carry the frame's content (a different pattern produces a
+// different picture). Both arms of every pixel comparison below ride this.
+void ExpectVisibleExposurePremise(ImGuiTestContext* ctx, const std::vector<float>& frame, int w, int h) {
+  SeedVisibleExposure();
+  UploadXyzAndWait(ctx, frame, w, h);
+  IM_CHECK(g_fault.uploadxyz_result.ok);
+  ctx->Yield(1);  // let the preview params recompute from the seeded state
+  if (!(gui::g_preview_vp.params.exposure.intensity_scale > 0.0f)) {
+    IM_ERRORF("%s",
+              "premise: the rendered frame applies a non-zero exposure, or the captures below are empty of "
+              "source");
+  }
+}
+
 void UploadUint8ViaFaultAndWait(ImGuiTestContext* ctx, const std::vector<unsigned char>& srgb, int w, int h) {
   g_fault.Reset();
   g_fault.srgb = &srgb;
@@ -2906,13 +2932,27 @@ void RegisterPreviewTextureTests(ImGuiTestEngine* engine) {
       const std::vector<float> frame = XyzCoordinatePattern(kW, kH, /*seed=*/41);
 
       // Arm 1: the production cut of this small frame is one strip (the budget rule caps at
-      // 2 MiB of rows, far above what 10 rows hold).
+      // 2 MiB of rows, far above what 10 rows hold). The upload rides the exposure premise: a
+      // positive intensity_scale and a pattern that actually reaches the pixels.
       SetStripRowsAndWait(ctx, 0);
-      UploadXyzAndWait(ctx, frame, kW, kH);
-      IM_CHECK(g_fault.uploadxyz_result.ok);
+      ExpectVisibleExposurePremise(ctx, frame, kW, kH);
       const float single_scale = gui::g_preview.GetXyzTextureScale();
       const std::vector<unsigned char> single_frame = CapturePreviewFullFrame(ctx);
       IM_CHECK(!single_frame.empty());
+
+      // The witness's teeth: a DIFFERENT pattern must produce a DIFFERENT picture (a capture
+      // pipeline that showed nothing would pass every equality below).
+      std::vector<float> other(frame.size());
+      for (size_t i = 0; i < other.size(); ++i) {
+        other[i] = -frame[i];
+      }
+      UploadXyzAndWait(ctx, other, kW, kH);
+      IM_CHECK(g_fault.uploadxyz_result.ok);
+      const std::vector<unsigned char> other_frame = CapturePreviewFullFrame(ctx);
+      IM_CHECK_EQ(other_frame.size(), single_frame.size());
+      if (std::memcmp(other_frame.data(), single_frame.data(), other_frame.size()) == 0) {
+        IM_ERRORF("%s", "witness premise broken: a different pattern rendered an identical picture");
+      }
 
       // Arm 2: the same frame cut into 5 strips of 2 rows — 4 slot handoffs, a fence wait on
       // every strip from the third one on, and a full (2-row) tail never even reached.
@@ -2928,6 +2968,38 @@ void RegisterPreviewTextureTests(ImGuiTestEngine* engine) {
         IM_ERRORF("%s", "the strip cut changed the picture");
       }
       IM_CHECK_EQ(gui::g_preview.GetXyzTextureScale(), single_scale);
+
+      // Directed red-state: strip 1's rows replaced by strip 0's — the wrong-row defect a broken
+      // strip hand would produce — must be REJECTED by this same witness. If the equality above
+      // could hold for this frame, it would hold below too; it must not.
+      // The wrong-content defect shape: every strip after the first carries strip 0's rows —
+      // what a stuck slot ping-pong would deliver. (A two-row displacement was tried first and
+      // proved display-invariant: the default preview's sampled source region does not include
+      // that band, which is itself a useful fact about screen-level witnessing — a red-state
+      // must live where the view actually samples.) 8 of the 10 rows change, unambiguously.
+      std::vector<float> wrong(frame);
+      for (int strip = 1; strip < 5; ++strip) {
+        std::copy_n(frame.begin(), 2 * kW * 3, wrong.begin() + strip * 2 * kW * 3);
+      }
+      {
+        const size_t differing =
+            static_cast<size_t>(std::mismatch(wrong.begin(), wrong.end(), frame.begin()).first - wrong.begin());
+        if (differing == wrong.size()) {
+          IM_ERRORF("%s", "red-state construction broken: the wrong-content frame equals the correct frame");
+        }
+      }
+      UploadXyzAndWait(ctx, wrong, kW, kH);
+      IM_CHECK(g_fault.uploadxyz_result.ok);
+      const std::vector<unsigned char> wrong_frame = CapturePreviewFullFrame(ctx);
+      IM_CHECK_EQ(wrong_frame.size(), multi_frame.size());
+      if (std::memcmp(wrong_frame.data(), multi_frame.data(), wrong_frame.size()) == 0) {
+        // Temporary red-state forensics: dump both captures for eyeballing.
+        gui::WriteRgbaBufferToPng(GuiTestTempPath("redstate_multi.png").string(), gui::g_preview_vp.vp_w,
+                                  gui::g_preview_vp.vp_h, multi_frame);
+        gui::WriteRgbaBufferToPng(GuiTestTempPath("redstate_wrong.png").string(), gui::g_preview_vp.vp_w,
+                                  gui::g_preview_vp.vp_h, wrong_frame);
+        IM_ERRORF("%s", "red-state premise broken: a wrong-row frame rendered identically to the correct one");
+      }
 
       // The slots: both ping-pong slots carry a strip-sized store, each within the budget, and
       // each holding a fraction of the frame (a slot that secretly held the whole frame would
@@ -3001,8 +3073,7 @@ void RegisterPreviewTextureTests(ImGuiTestEngine* engine) {
       const std::vector<float> frame = XyzCoordinatePattern(kW, kH, /*seed=*/43);
 
       SetStripRowsAndWait(ctx, 0);
-      UploadXyzAndWait(ctx, frame, kW, kH);
-      IM_CHECK(g_fault.uploadxyz_result.ok);
+      ExpectVisibleExposurePremise(ctx, frame, kW, kH);
       const std::vector<unsigned char> single_frame = CapturePreviewFullFrame(ctx);
       IM_CHECK(!single_frame.empty());
 
@@ -3111,11 +3182,12 @@ void RegisterPreviewTextureTests(ImGuiTestEngine* engine) {
       std::vector<uint16_t> bits(components);
       gui::QuantizeXyzToHalf(frame.data(), components, scale, bits.data());
 
-      // Arm 1 — the float path (quantize inside the upload).
+      // Arm 1 — the float path (quantize inside the upload), under the exposure premise: the
+      // half arms' equality below witnesses CONTENT only if a positive scale puts the pattern on
+      // screen.
       gui::g_preview.ClearTexture();
       ctx->Yield(2);
-      UploadXyzAndWait(ctx, frame, kW, kH);
-      IM_CHECK(g_fault.uploadxyz_result.ok);
+      ExpectVisibleExposurePremise(ctx, frame, kW, kH);
       const std::vector<unsigned char> float_frame = CapturePreviewFullFrame(ctx);
       IM_CHECK(!float_frame.empty());
 

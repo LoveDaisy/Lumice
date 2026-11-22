@@ -69,17 +69,17 @@ double g_bench_rep_ms = 0.0;  // written on the main thread; the done-atomic is 
 const std::vector<float>* g_bench_frame = nullptr;
 int g_bench_w = 0;
 int g_bench_h = 0;
-// Test-only fence-fault injection (never set in production): while above zero, the instrument's
-// next fence wait fails synthetically (each failure consumes one count) — the failure-path
-// witness drives THIS branch, the same branch a real null fence or GL_WAIT_FAILED takes.
+// Test-only fence-fault injection (never set in production): the phase whose fence fails
+// synthetically — 1 = the DRAIN fence, 2 = the COMPLETION fence, 0 = off. The failure-path
+// witness drives BOTH branches, the same branches a real null fence or GL_WAIT_FAILED takes.
 std::atomic<int> g_bench_fence_fault_for_test{ 0 };
 
 namespace {
 // One instrument fence: create, wait, delete, and report whether the boundary it witnesses was
 // actually reached. Only an explicit signalled state counts; a null fence, a timeout or a wait
 // failure is a failed boundary (the caller records the raw status and voids the sample).
-bool BenchFenceWait(int* out_status) {
-  if (g_bench_fence_fault_for_test.fetch_sub(1) > 0) {
+bool BenchFenceWait(int phase, int* out_status) {
+  if (g_bench_fence_fault_for_test.load() == phase) {
     *out_status = kGlWaitFailed;
     return false;
   }
@@ -137,7 +137,7 @@ void AcceptanceOpenGuiFunc(ImGuiTestContext* /*ctx*/) {
     // A failed fence records phase + raw status and voids the sample — it never produces a
     // timing line a performance reading could mistake for a completed-boundary measurement.
     int drain_status = 0;
-    if (!BenchFenceWait(&drain_status)) {
+    if (!BenchFenceWait(/*phase=*/1, &drain_status)) {
       g_bench_rep_fail_phase = 1;
       g_bench_fence_status = drain_status;
       g_bench_rep_ok = false;
@@ -147,7 +147,7 @@ void AcceptanceOpenGuiFunc(ImGuiTestContext* /*ctx*/) {
     const auto t0 = std::chrono::steady_clock::now();
     const gui::UploadResult r = gui::g_preview.UploadXyzTexture(g_bench_frame->data(), g_bench_w, g_bench_h);
     int complete_status = 0;
-    const bool complete_ok = BenchFenceWait(&complete_status);
+    const bool complete_ok = BenchFenceWait(/*phase=*/2, &complete_status);
     const auto t1 = std::chrono::steady_clock::now();
     g_bench_rep_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
     g_bench_rep_ok = r.ok && complete_ok;
@@ -181,7 +181,7 @@ void RegisterFullArchiveAcceptanceTests(ImGuiTestEngine* engine) {
       constexpr int kH = 32;
       std::vector<float> frame(static_cast<size_t>(kW) * kH * 3, 0.5f);
 
-      g_bench_fence_fault_for_test = 1;  // the next fence wait fails synthetically
+      g_bench_fence_fault_for_test = 1;  // the DRAIN fence fails synthetically
       g_bench_frame = &frame;
       g_bench_w = kW;
       g_bench_h = kH;
@@ -193,15 +193,20 @@ void RegisterFullArchiveAcceptanceTests(ImGuiTestEngine* engine) {
       IM_CHECK_EQ(g_bench_rep_fail_phase.load(), 1);
       IM_CHECK_EQ(g_bench_fence_status.load(), kGlWaitFailed);
 
-      // The fault is consumed: a plain rep is a valid sample again.
+      // Phase 2 — the drain succeeds, the upload itself succeeds, and the COMPLETION fence
+      // fails: the rep is still INVALID. A future edit that dropped the fence verdict from the
+      // sample validity (ok = r.ok alone) would turn this arm green-by-accident back into a
+      // "valid" line and this check would catch it.
+      g_bench_fence_fault_for_test = 2;
       g_bench_rep_requested = true;
       g_bench_rep_done = false;
-      g_bench_rep_fail_phase = 0;
-      g_bench_fence_status = 0;
       ctx->Yield(2);
       IM_CHECK(g_bench_rep_done.load());
-      IM_CHECK(g_bench_rep_ok.load());
-      IM_CHECK_EQ(g_bench_rep_fail_phase.load(), 0);
+      IM_CHECK(!g_bench_rep_ok.load());
+      IM_CHECK_EQ(g_bench_rep_fail_phase.load(), 2);
+      IM_CHECK_EQ(g_bench_fence_status.load(), kGlWaitFailed);
+
+      // The fault is off: a plain rep is a valid sample again.
       g_bench_fence_fault_for_test = 0;
     };
   }
