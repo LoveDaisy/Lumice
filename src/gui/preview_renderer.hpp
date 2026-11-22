@@ -2,6 +2,7 @@
 #define LUMICE_GUI_PREVIEW_RENDERER_HPP
 
 #include <array>
+#include <atomic>
 #include <functional>
 #include <optional>
 #include <vector>
@@ -251,10 +252,12 @@ struct UploadResult {
     kTexUpdate,        // glTexSubImage2D failed
     kFenceCreate,      // glFenceSync failed (frame itself committed; the slot is torn down)
     kStorageMismatch,  // post-define level-0 storage query disagrees with the request
+    kCpuAllocation,    // a host-side buffer allocation threw std::bad_alloc (no GL call made)
   };
   Stage stage = Stage::kNone;
   // GLenum observed at the failing stage; 0 when the stage failed without a reported error
-  // (e.g. a null map pointer) or nothing failed.
+  // (e.g. a null map pointer, a CPU allocation, or nothing failed). For kFenceWait the drained
+  // driver error flag when one was set, otherwise the sync return status.
   int gl_error = 0;
   int request_width = 0;
   int request_height = 0;
@@ -387,6 +390,33 @@ class PreviewRenderer {
   // before the next candidate's error reads. Deliberately not drained here.
   static void RaiseRealGlInvalidOperationForTest();
 
+  // Test seam (gui/unit tests; never set in production): a hook consulted for EVERY renderer
+  // instance after its own per-instance hook — the degraded-export witness must fail the
+  // TRANSIENT full-source renderer's upload, which the app creates internally and tests cannot
+  // reach. 0 = let the real call proceed, same contract as the per-instance hook.
+  static void SetUploadFaultHookForAllForTest(UploadFaultHook hook);
+
+  // Test seam (gui_test main thread; never set in production): while the counter is above zero,
+  // shader compilation fails (each failure consumes one count), so a witness can drive Init's
+  // partial-failure cleanup without hand-crafting a bad GLSL string.
+  static void SetShaderCompileFaultForTest(int remaining_failures);
+  static bool ShaderCompileFaultArmedForTest() {
+    if (s_shader_compile_fault_for_test_ <= 0) {
+      return false;
+    }
+    --s_shader_compile_fault_for_test_;
+    return true;
+  }
+
+  // Conservative revoke under a SHARED-CONTEXT OOM (GL spec §2.5: after the error the whole GL
+  // state is undefined, and that state is shared by every renderer in the context — the
+  // transient full-source export renderer included). A revoke that answers only the object that
+  // happened to make the failing call leaves the preview sampling a texture nothing can vouch
+  // for; the caller of a transient renderer that saw a real OOM invokes this so the display
+  // stops being sampleable until a verified rebuild. Same body as ConservativeRevoke; public
+  // because the caller is outside this object.
+  void RevokeDisplayForContextOom();
+
   // Background image texture management (GL upload only, no file I/O)
   void UploadBgTexture(const unsigned char* data, int width, int height);
   void ClearBackground();
@@ -450,8 +480,20 @@ class PreviewRenderer {
   // test/gui/functional/test_preview_texture.cpp. Install through SetUploadFaultHookForTest
   // (public, above).
   UploadFaultHook upload_fault_hook_;
-  // The hook's verdict for one stage, or 0 to proceed with the real call.
-  int HookFaultFor(UploadResult::Stage stage) const { return upload_fault_hook_ ? upload_fault_hook_(stage) : 0; }
+  // The all-instances test hook above; defined in preview_renderer.cpp.
+  static UploadFaultHook s_upload_fault_hook_all_;
+  static int s_shader_compile_fault_for_test_;
+  // The hook's verdict for one stage, or 0 to proceed with the real call; the all-instances test
+  // hook is consulted after this instance's own.
+  int HookFaultFor(UploadResult::Stage stage) const {
+    if (upload_fault_hook_) {
+      const int forced = upload_fault_hook_(stage);
+      if (forced != 0) {
+        return forced;
+      }
+    }
+    return s_upload_fault_hook_all_ ? s_upload_fault_hook_all_(stage) : 0;
+  }
 
   // Deferred GL blank request. ClearTexture() sets this from any thread
   // (callable from coroutine workers without a GL context); Render() (main

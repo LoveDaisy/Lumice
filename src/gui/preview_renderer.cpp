@@ -1325,6 +1325,9 @@ static unsigned int CheckCompiledShader(unsigned int shader) {
 }
 
 static unsigned int CompileShader(unsigned int type, const char* source) {
+  if (PreviewRenderer::ShaderCompileFaultArmedForTest()) {
+    return 0;  // test seam: a compile failure with nothing created
+  }
   unsigned int shader = glCreateShader(type);
   glShaderSource(shader, 1, &source, nullptr);
   glCompileShader(shader);
@@ -1333,6 +1336,9 @@ static unsigned int CompileShader(unsigned int type, const char* source) {
 
 // The fragment shader from its parts — version, optional define, body; see kFragmentShader.
 static unsigned int CompileFragmentShader(bool globe_back_fade) {
+  if (PreviewRenderer::ShaderCompileFaultArmedForTest()) {
+    return 0;  // test seam: a compile failure with nothing created
+  }
   unsigned int shader = glCreateShader(GL_FRAGMENT_SHADER);
   const char* parts[5] = { kFragmentShaderVersion, globe_back_fade ? kGlobeBackFadeDefine : "", kFragmentShader,
                            kProjectionShader, kFragmentAfterProjection };
@@ -1365,12 +1371,36 @@ bool PreviewRenderer::Init() {
   unsigned int fs = CompileFragmentShader(false);
   unsigned int fs_back_fade = CompileFragmentShader(true);
   if (!vs || !fs || !fs_back_fade) {
+    // Partial-init cleanup: this renderer used to only exist at process scope, where a failed
+    // init preceded exit and the leak was invisible; the transient full-source export renderer
+    // can now fail init repeatedly inside a live application, and every shader left here would
+    // stay leaked in a context that keeps running.
+    if (vs != 0) {
+      glDeleteShader(vs);
+    }
+    if (fs != 0) {
+      glDeleteShader(fs);
+    }
+    if (fs_back_fade != 0) {
+      glDeleteShader(fs_back_fade);
+    }
     return false;
   }
 
   shader_program_ = LinkProgram(vs, fs);
   globe_back_fade_program_ = LinkProgram(vs, fs_back_fade);
   if (!shader_program_ || !globe_back_fade_program_) {
+    if (shader_program_ != 0) {
+      glDeleteProgram(shader_program_);
+      shader_program_ = 0;
+    }
+    if (globe_back_fade_program_ != 0) {
+      glDeleteProgram(globe_back_fade_program_);
+      globe_back_fade_program_ = 0;
+    }
+    glDeleteShader(vs);
+    glDeleteShader(fs);
+    glDeleteShader(fs_back_fade);
     return false;
   }
 
@@ -1603,6 +1633,23 @@ UploadResult PreviewRenderer::UploadRadianceTexture(const unsigned char* data, i
 
 // Human-readable stage names for the upload logs: the log is what an owner without a debugger
 // reads first, and a bare integer stage code would have to be decoded against the header.
+PreviewRenderer::UploadFaultHook PreviewRenderer::s_upload_fault_hook_all_ = nullptr;
+int PreviewRenderer::s_shader_compile_fault_for_test_ = 0;
+
+void PreviewRenderer::SetUploadFaultHookForAllForTest(UploadFaultHook hook) {
+  s_upload_fault_hook_all_ = std::move(hook);
+}
+
+void PreviewRenderer::SetShaderCompileFaultForTest(int remaining_failures) {
+  s_shader_compile_fault_for_test_ = remaining_failures;
+}
+
+void PreviewRenderer::RevokeDisplayForContextOom() {
+  // The conservative revoke itself logs the ruling; the caller supplies the context by being the
+  // one that observed the OOM on a renderer sharing this context.
+  ConservativeRevoke(UploadResult::Stage::kTexImage, GL_OUT_OF_MEMORY, tex_width_, tex_height_);
+}
+
 const char* UploadStageName(UploadResult::Stage stage) {
   switch (stage) {
     case UploadResult::Stage::kNone:
@@ -1625,6 +1672,8 @@ const char* UploadStageName(UploadResult::Stage stage) {
       return "fence-create";
     case UploadResult::Stage::kStorageMismatch:
       return "storage-mismatch";
+    case UploadResult::Stage::kCpuAllocation:
+      return "cpu-allocation";
   }
   return "unknown";
 }
@@ -1938,8 +1987,20 @@ UploadResult PreviewRenderer::UploadXyzTextureNoStaging(const float* data, int w
   // staging cost: one plane of half bits, freed at return, no second full-size GL allocation.
   const size_t component_count = static_cast<size_t>(width) * height * 3;
   const float scale = ComputeXyzHalfScale(data, component_count);
-  std::vector<uint16_t> half_bits(component_count);
-  QuantizeXyzToHalf(data, component_count, scale, half_bits.data());
+  std::vector<uint16_t> half_bits;
+  try {
+    half_bits.resize(component_count);
+    QuantizeXyzToHalf(data, component_count, scale, half_bits.data());
+  } catch (const std::bad_alloc&) {
+    // The host could not hold the client-memory staging copy: report it like any other failed
+    // stage instead of letting std::bad_alloc escape the recovery state machine — an exhausted
+    // machine must land in the latch-and-unavailable state, not terminate the process. No GL
+    // call was made, so there is nothing to clean up or attribute.
+    GUI_LOG_ERROR("[GL] UploadXyzTextureNoStaging: host allocation failed ({} components), skipping frame",
+                  component_count);
+    r.stage = UploadResult::Stage::kCpuAllocation;
+    return r;
+  }
 
   // No staging buffer may be bound through the define: with one bound, the "client pointer"
   // argument would be read as a PBO offset and the upload would take garbage.
