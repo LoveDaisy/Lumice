@@ -948,11 +948,20 @@ bool ExportDualFisheyeEqualAreaPng(const std::filesystem::path& path) {
       return false;  // the failure is already logged; no file may be written
     }
   } else {
-    rgba = RenderExportToRgba(g_preview, params, out_w, out_h);
-  }
-  if (rgba.empty()) {
-    GUI_LOG_ERROR("[GUI] Export dual fisheye: RenderExportToRgba empty (size={}x{})", out_w, out_h);
-    return false;
+    int render_gl_error = 0;
+    rgba = RenderExportToRgba(g_preview, params, out_w, out_h, /*curve_labels=*/{}, /*dpi_scale_x=*/1.0f,
+                              /*dpi_scale_y=*/1.0f, &render_gl_error);
+    if (rgba.empty()) {
+      GUI_LOG_ERROR("[GUI] Export dual fisheye: RenderExportToRgba empty (size={}x{} gl_error=0x{:04X})", out_w, out_h,
+                    render_gl_error);
+      if (render_gl_error == 0x0505) {
+        // The export target's allocation OOM'd in the shared context: the §2.5 ruling applies
+        // to the whole context, the preview included, however healthy the source upload looked.
+        g_preview.RevokeDisplayForContextOom();
+        RebuildPreviewAfterContextOom();
+      }
+      return false;
+    }
   }
   if (!WriteRgbaBufferToPng(path, out_w, out_h, rgba)) {
     GUI_LOG_ERROR("[GUI] Export dual fisheye: PNG write failed path={}", PathToU8(path));
@@ -1011,9 +1020,17 @@ bool ExportEquirectangularPng(const std::filesystem::path& path) {
     dst_w = 2 * src_short;
     dst_h = src_short;
   } else {
-    rgba = RenderExportToRgba(g_preview, params, dst_w, dst_h);
+    int render_gl_error = 0;
+    rgba = RenderExportToRgba(g_preview, params, dst_w, dst_h, /*curve_labels=*/{}, /*dpi_scale_x=*/1.0f,
+                              /*dpi_scale_y=*/1.0f, &render_gl_error);
     if (rgba.empty()) {
-      GUI_LOG_ERROR("[GUI] Export equirect: RenderExportToRgba empty (size={}x{})", dst_w, dst_h);
+      GUI_LOG_ERROR("[GUI] Export equirect: RenderExportToRgba empty (size={}x{} gl_error=0x{:04X})", dst_w, dst_h,
+                    render_gl_error);
+      if (render_gl_error == 0x0505) {
+        // Same shared-context ruling as the dual-fisheye branch above.
+        g_preview.RevokeDisplayForContextOom();
+        RebuildPreviewAfterContextOom();
+      }
       return false;
     }
   }
@@ -2548,7 +2565,7 @@ static XyzUploadCycle RunXyzUploadCycle(const float* xyz, int width, int height,
     const UploadResult r = UploadXyzAtTier(xyz, width, height, tier);
     if (r.ok) {
       out.displayed_tier = tier;
-      return out;
+      break;
     }
     if (!first_failure_recorded) {
       RecordUploadIncident(r, tier, texture_serial);
@@ -2556,7 +2573,7 @@ static XyzUploadCycle RunXyzUploadCycle(const float* xyz, int width, int height,
       first_failure_recorded = true;
     }
     if (!probe_full_ladder) {
-      return out;  // the established tier's single attempt is the whole cycle
+      break;  // the established tier's single attempt is the whole cycle
     }
     // Termination: is there a NEXT candidate? DowngradedSize with steps = tier+1 asks exactly
     // that (and must get REAL out-pointers — the null form is its "arguments invalid" refusal,
@@ -2567,9 +2584,18 @@ static XyzUploadCycle RunXyzUploadCycle(const float* xyz, int width, int height,
     // The NEXT candidate is tier+1, whose step count is (tier+1)-1 = tier — querying tier+1
     // STEPS here skipped one legal candidate and the floor-sized tier was never attempted.
     if (tier > 0 && !DowngradedSize(width, height, tier, &next_w, &next_h)) {
-      return out;
+      break;
     }
   }
+  // A tier at or above 1 — or no display at all — has no further use for the full-size staging
+  // slots: at 8192x4096 each slot's nominal storage is 192 MiB, and a document that settles at
+  // a reduced tier, or into the explicit unavailable state, would otherwise carry both slots
+  // and their fences until Destroy. The PBO path re-allocates its slot lazily if a later cycle
+  // re-establishes tier 0.
+  if (out.displayed_tier != 0) {
+    g_preview.ReleaseStagingSlots();
+  }
+  return out;
 }
 
 // Display upload gate (I1/I6) — pure predicate, see app.hpp. Uploads a payload only when it is a

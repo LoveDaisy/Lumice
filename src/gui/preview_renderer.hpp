@@ -417,6 +417,20 @@ class PreviewRenderer {
   // because the caller is outside this object.
   void RevokeDisplayForContextOom();
 
+  // End the staging slots' lifecycle when the upload path stops using them (a recovery tier at
+  // or above 1 uploads from client memory; the explicit-unavailable state uploads nothing): each
+  // full-size slot is nominal 192 MiB at an 8192x4096 source, and a document that settles at a
+  // reduced tier would otherwise carry both slots — and their fences — until Destroy. The PBO
+  // path re-allocates its slot lazily if a later cycle re-establishes tier 0. Fence deletion
+  // without a wait is safe by the spec: GL defers the underlying storage's reclamation while a
+  // command stream still references it.
+  void ReleaseStagingSlots();
+
+  // Test-only observability (gui_test main thread): the registered byte count of one staging
+  // slot, 0 once released — the lifecycle witness reads this, since no aggregate GL query names
+  // buffer storage.
+  size_t StagingSlotByteCountForTest(int slot) const { return pbo_byte_count_[slot]; }
+
   // Background image texture management (GL upload only, no file I/O)
   void UploadBgTexture(const unsigned char* data, int width, int height);
   void ClearBackground();
