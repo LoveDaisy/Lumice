@@ -125,6 +125,15 @@ void DestroyPreviewFrameFbo();
 void ConfigureDualFisheyeExportParams(PreviewParams& params);
 void ConfigureEquirectExportParams(PreviewParams& params);
 
+// Test seam (gui_test main thread; never set in production): while the counter is above zero,
+// the next N RGBA8 renderbuffer-storage creations report a failed allocation (gl_error =
+// GL_OUT_OF_MEMORY, incomplete framebuffer) without touching the driver — the exact failure
+// shape a real target out-of-memory produces, consumed through the production branches. This is
+// the witness seam for the §2.5 shared-context ruling at the EXPORT-TARGET level: the upload
+// fault hooks cannot reach a renderbuffer allocation, and the reviewers' bar was witnesses that
+// hit the target allocation itself, not the source upload ahead of it.
+void SetRgba8StorageFaultForTest(int remaining_failures);
+
 }  // namespace lumice::gui
 
 #endif  // LUMICE_GUI_EXPORT_FBO_RENDERER_HPP

@@ -464,6 +464,9 @@ static XyzUploadCycle RunXyzUploadCycle(const float* xyz, int width, int height,
 // The incident record's single writer (defined beside the upload machinery); the open's uint8
 // branches reach it through this declaration.
 static void RecordUploadIncident(const UploadResult& result, int tier_tried, unsigned long long texture_serial);
+// The effective composite preference (defined beside the mode adjudication below); the
+// shared-context rebuild reads it from its earlier definition site.
+static bool EffectiveShowCompositePreview();
 
 // The FILE-side complete-source fact (814 §3.1/§3.3): a document opened from a .lmc carries its
 // full source in the renderer's CPU mirror — the open writes those bytes whether or not the GPU
@@ -743,25 +746,115 @@ static bool IsDisplayDegradedAgainstSource() {
 // tier is re-established, or the explicit exhausted/no-image state stands — never continued
 // sampling of a texture nothing can vouch for. Bounded: one cycle, the same machinery a live
 // failure uses.
+//
+// The rebuilt display is the display that was ACCEPTED, not whatever the full source could
+// provide (the r4 defect): an accepted composite live frame re-uploads its composite bake — a
+// single plain re-upload, the ladder's linear-radiance low-pass does not apply to it — while a
+// document's own file re-uploads in its own TextureMode, and only an XYZ source walks the
+// ladder. The mode verdict is ONE adjudication for the upload selection and the success commit,
+// the same contract SyncFromPoller and Retry run under; a rebuild that silently switched the
+// display to XYZ under a composite record would show a picture the next sync's serial/mode
+// gates would never correct (the terminal frame's serial did not change).
 static void RebuildPreviewAfterContextOom() {
   const ResolvedPreviewSource src = ResolvePreviewSource();
-  if (src.xyz_pixels == nullptr || src.width <= 0 || src.height <= 0) {
+  if (src.role == ResolvedPreviewSource::Role::kNone || src.width <= 0 || src.height <= 0) {
     return;  // nothing holds a rebuildable source; the no-image state stands
   }
-  const XyzUploadCycle cycle =
-      RunXyzUploadCycle(src.xyz_pixels, src.width, src.height, src.serial, /*probe_full_ladder=*/true);
-  if (cycle.displayed_tier >= 0) {
-    g_recovery.xyz_tier = cycle.displayed_tier;
-    g_recovery.exhausted = false;
-    GUI_LOG_INFO("[GUI] Export: the preview was rebuilt at {}x{} after the export's out-of-memory",
-                 src.width >> (cycle.displayed_tier >= 1 ? cycle.displayed_tier - 1 : 0),
-                 src.height >> (cycle.displayed_tier >= 1 ? cycle.displayed_tier - 1 : 0));
-  } else {
-    g_recovery.exhausted = true;  // the cycle recorded its own real first failure
-    GUI_LOG_ERROR(
-        "[GUI] Export: the preview could not be rebuilt after the export's out-of-memory — "
-        "preview unavailable, source retained");
+  bool use_composite = false;
+  switch (src.role) {
+    case ResolvedPreviewSource::Role::kAcceptedLive:
+    case ResolvedPreviewSource::Role::kPendingUndisplayed:
+      use_composite = src.payload != nullptr &&
+                      ShouldUseCompositeUpload(src.payload->is_composite, EffectiveShowCompositePreview());
+      break;
+    case ResolvedPreviewSource::Role::kFileMirror:
+      use_composite = g_file_source.mode == PreviewRenderer::TextureMode::kSrgbComposited;
+      break;
+    case ResolvedPreviewSource::Role::kNone:
+      break;
   }
+  UploadResult upload_result;
+  int tier = -1;
+  if (src.role == ResolvedPreviewSource::Role::kFileMirror) {
+    // The document's own bytes re-upload in their own mode (the r4 gap: a uint8 file used to
+    // fall out of the rebuild with the display revoked and no exhausted flag, no incident and
+    // no retry exit — a healthy tier-0 document stranded without a picture and without a way
+    // back). The pixels come from the CPU mirror, where the open wrote them.
+    switch (g_file_source.mode) {
+      case PreviewRenderer::TextureMode::kXyz: {
+        const XyzUploadCycle cycle =
+            RunXyzUploadCycle(src.xyz_pixels, src.width, src.height, /*texture_serial=*/0, /*probe_full_ladder=*/true);
+        tier = cycle.displayed_tier;
+        upload_result = cycle.first_failure;
+        upload_result.ok = tier >= 0;
+        break;
+      }
+      case PreviewRenderer::TextureMode::kSrgbRadiance:
+        upload_result = g_preview.UploadRadianceTexture(src.rgb_pixels, src.width, src.height);
+        if (!upload_result.ok) {
+          RecordUploadIncident(upload_result, /*tier_tried=*/0, /*texture_serial=*/0);
+        }
+        break;
+      case PreviewRenderer::TextureMode::kSrgbComposited:
+        upload_result = g_preview.UploadTexture(src.rgb_pixels, src.width, src.height);
+        if (!upload_result.ok) {
+          RecordUploadIncident(upload_result, /*tier_tried=*/0, /*texture_serial=*/0);
+        }
+        break;
+    }
+  } else if (use_composite && src.rgb_pixels != nullptr) {
+    // An accepted composite keeps its own display semantics: one plain re-upload of the bake,
+    // success or the same incident any other single-shot failure lands.
+    upload_result = g_preview.UploadRadianceTexture(src.rgb_pixels, src.width, src.height);
+    if (!upload_result.ok) {
+      RecordUploadIncident(upload_result, /*tier_tried=*/0, src.serial);
+    }
+  } else if (src.xyz_pixels != nullptr) {
+    // One authorized XYZ walk; the cycle records its own real first failure.
+    const XyzUploadCycle cycle =
+        RunXyzUploadCycle(src.xyz_pixels, src.width, src.height, src.serial, /*probe_full_ladder=*/true);
+    tier = cycle.displayed_tier;
+    upload_result = cycle.first_failure;
+    upload_result.ok = tier >= 0;
+  } else {
+    return;  // nothing uploadable in the resolved source's shape; the no-image state stands
+  }
+  if (!upload_result.ok) {
+    // The rebuild ran out: the explicit unavailable state stands, and the generation latch
+    // SyncFromPoller arms goes up too — a live run's next frames must not self-authorize
+    // another walk at the poll rate.
+    g_recovery.exhausted = true;
+    g_state.upload_latched = true;
+    g_state.upload_latch_epoch = g_state.committed_epoch;
+    GUI_LOG_ERROR(
+        "[GUI] Export: the preview could not be rebuilt after the export's out-of-memory (stage={} "
+        "gl_error=0x{:04X} request={}x{}) — preview unavailable, source retained, auto-upload latched",
+        UploadStageName(upload_result.stage), upload_result.gl_error, upload_result.request_width,
+        upload_result.request_height);
+    return;
+  }
+  // Success. The accepted source stays accepted — the exact-once cursor is untouched, because
+  // the display describes the same frame it described before the revoke (moving the cursor
+  // would un-dedup the poller's stream). The display-mode record, the counters and the recovery
+  // state describe the picture re-accepted above; the tier memory follows the same rule as
+  // Retry (a plain single-shot re-upload lands at 0, a ladder walk at the tier it established).
+  g_state.last_uploaded_as_composite = use_composite;
+  g_recovery.xyz_tier = tier >= 0 ? tier : 0;
+  g_recovery.exhausted = false;
+  g_state.texture_upload_count++;
+  g_state.upload_latched = false;
+  if (src.role == ResolvedPreviewSource::Role::kFileMirror && !use_composite) {
+    // The file's XYZ exposure facts: the same commit a Retry of this source makes. A failed
+    // open never committed them, so without this the rebuilt display could be lit off the
+    // previous document's stale state.
+    g_state.snapshot_intensity = g_file_source.snapshot_intensity;
+    g_state.snapshot_emitted_energy = g_file_source.emitted_energy;
+    g_state.effective_pixels = g_file_source.effective_pixels;
+    g_state.p99_raw_y = g_file_source.mono_anchor;
+    g_state.ev_auto = LUMICE_ComputeEvAuto(g_state.p99_raw_y, g_state.snapshot_intensity, g_state.target_white);
+  }
+  GUI_LOG_INFO("[GUI] Export: the preview was rebuilt ({}x{}, {}) after the export's out-of-memory", src.width,
+               src.height, use_composite ? "composite" : (tier >= 1 ? "xyz, recovery tier" : "xyz"));
 }
 
 static std::vector<unsigned char> RenderExportFromFullSource(const PreviewParams& params, int out_w, int out_h) {
@@ -778,46 +871,61 @@ static std::vector<unsigned char> RenderExportFromFullSource(const PreviewParams
         "refusing to upscale a baked source");
     return {};
   }
-  PreviewRenderer export_renderer;
-  if (!export_renderer.Init()) {
-    GUI_LOG_ERROR("[GUI] Export: the transient full-source renderer failed to initialize");
-    return {};
-  }
-  const UploadResult upload = export_renderer.UploadXyzTextureNoStaging(src.xyz_pixels, src.width, src.height);
+  // The transient renderer lives in its own scope so that a shared-context OOM can end the
+  // OBJECT — not just its GL names — before the recovery cycle walks (the r4 release-timing
+  // ruling: the retired resource leaves before the next strategy allocates, and the rebuild
+  // must not run while the failed export's renderer still exists to hold it).
+  bool shared_context_oom = false;
   std::vector<unsigned char> rgba;
-  if (!upload.ok) {
-    GUI_LOG_ERROR(
-        "[GUI] Export: uploading the full source failed (stage={} gl_error=0x{:04X} request={}x{}) — no "
-        "file written",
-        UploadStageName(upload.stage), upload.gl_error, upload.request_width, upload.request_height);
-    if (upload.stage == UploadResult::Stage::kTexImage && upload.gl_error == 0x0505) {
-      // A REAL out-of-memory is a SHARED-CONTEXT fact, not the transient renderer's private one
-      // (GL spec §2.5, the ruling this file's own upload path already applies): the transient
-      // object's conservative revoke answers its own storage, not whether the preview's texture
-      // is still provable. Stop sampling the unprovable display, then rebuild one authorized
-      // cycle from the retained source — a smaller trusted tier or the explicit no-image state.
-      g_preview.RevokeDisplayForContextOom();
-      RebuildPreviewAfterContextOom();
+  {
+    PreviewRenderer export_renderer;
+    if (!export_renderer.Init()) {
+      GUI_LOG_ERROR("[GUI] Export: the transient full-source renderer failed to initialize");
+      return {};
     }
-  } else {
-    int render_gl_error = 0;
-    rgba = RenderExportToRgba(export_renderer, params, out_w, out_h, /*curve_labels=*/{}, /*dpi_scale_x=*/1.0f,
-                              /*dpi_scale_y=*/1.0f, &render_gl_error);
-    if (rgba.empty()) {
+    const UploadResult upload = export_renderer.UploadXyzTextureNoStaging(src.xyz_pixels, src.width, src.height);
+    if (!upload.ok) {
       GUI_LOG_ERROR(
-          "[GUI] Export: rendering the full source failed (target {}x{} gl_error=0x{:04X}) — no "
+          "[GUI] Export: uploading the full source failed (stage={} gl_error=0x{:04X} request={}x{}) — no "
           "file written",
-          out_w, out_h, render_gl_error);
-      if (render_gl_error == 0x0505) {
-        // The export TARGET's allocation (a full-size RGBA8 renderbuffer) hit a real
-        // out-of-memory in the shared context — the same §2.5 ruling as the source-upload path
-        // above: the preview stops being sampled until a verified rebuild stands.
-        g_preview.RevokeDisplayForContextOom();
-        RebuildPreviewAfterContextOom();
+          UploadStageName(upload.stage), upload.gl_error, upload.request_width, upload.request_height);
+      if (upload.stage == UploadResult::Stage::kTexImage && upload.gl_error == 0x0505) {
+        // A REAL out-of-memory is a SHARED-CONTEXT fact, not the transient renderer's private
+        // one (GL spec §2.5, the ruling this file's own upload path already applies): the
+        // transient object's conservative revoke answers its own storage, not whether the
+        // preview's texture is still provable. Stop sampling the unprovable display, then
+        // rebuild one authorized cycle from the retained source — a smaller trusted tier or
+        // the explicit no-image state. The transient's storage is released first, below, by
+        // the scope exit.
+        export_renderer.Destroy();
+        shared_context_oom = true;
+      }
+    } else {
+      int render_gl_error = 0;
+      rgba = RenderExportToRgba(export_renderer, params, out_w, out_h, /*curve_labels=*/{}, /*dpi_scale_x=*/1.0f,
+                                /*dpi_scale_y=*/1.0f, &render_gl_error);
+      if (rgba.empty()) {
+        GUI_LOG_ERROR(
+            "[GUI] Export: rendering the full source failed (target {}x{} gl_error=0x{:04X}) — no "
+            "file written",
+            out_w, out_h, render_gl_error);
+        if (render_gl_error == 0x0505) {
+          // The export TARGET's allocation (a full-size RGBA8 renderbuffer) hit a real
+          // out-of-memory in the shared context — the same §2.5 ruling as the source-upload
+          // path above: the preview stops being sampled until a verified rebuild stands.
+          // Same order: the transient's full-size source storage leaves before the rebuild
+          // walks.
+          export_renderer.Destroy();
+          shared_context_oom = true;
+        }
       }
     }
+  }  // the transient's destructor runs here — before the revoke and the rebuild cycle
+  if (shared_context_oom) {
+    g_preview.RevokeDisplayForContextOom();
+    RebuildPreviewAfterContextOom();
+    return {};
   }
-  export_renderer.Destroy();
   return rgba;
 }
 
@@ -880,7 +988,18 @@ ScreenshotRender RenderScreenshot(const ScreenshotExportSelection& sel) {
   out.w = w;
   out.h = h;
   out.has_labels = !curve_labels.empty();
-  out.rgba = RenderExportToRgba(g_preview, params, w, h, curve_labels, dpi_x, dpi_y);
+  int render_gl_error = 0;
+  out.rgba = RenderExportToRgba(g_preview, params, w, h, curve_labels, dpi_x, dpi_y, &render_gl_error);
+  if (out.rgba.empty() && render_gl_error == 0x0505) {
+    // The screenshot's own RGBA8 target allocation hit a real out-of-memory in the shared
+    // context: the same §2.5 ruling the two all-sky exports and the degraded route already
+    // apply (the r4 gap — the screenshot was the one production consumer still reading the
+    // helper through the defaulted out-param, so a failed target allocation left the preview's
+    // display qualification standing over unprovable storage). The FBO target is already
+    // released inside RenderExportToRgba; stop sampling and run one authorized rebuild cycle.
+    g_preview.RevokeDisplayForContextOom();
+    RebuildPreviewAfterContextOom();
+  }
   return out;
 }
 
@@ -2562,6 +2681,17 @@ static XyzUploadCycle RunXyzUploadCycle(const float* xyz, int width, int height,
   XyzUploadCycle out;
   bool first_failure_recorded = false;
   for (int tier = probe_full_ladder ? 0 : g_recovery.xyz_tier;; ++tier) {
+    // Stepping off the PBO path retires BOTH staging slots now, not at the cycle's exit (the r4
+    // release-timing ruling: a retired resource's storage leaves before the next strategy
+    // allocates). From this candidate on the walk uploads from client memory, and the other
+    // slot's full-size storage — 192 MiB a slot at 8192x4096 — is part of the allocation
+    // pressure this candidate walks against: a walk that would fit once the slots are retired
+    // must not fail, or drop a further tier, while dead storage is still held. Idempotent at an
+    // established tier >= 1 (already released when the walk established it); the tier-0 path
+    // re-allocates its slot lazily if a later cycle re-establishes it.
+    if (tier == 1) {
+      g_preview.ReleaseStagingSlots();
+    }
     const UploadResult r = UploadXyzAtTier(xyz, width, height, tier);
     if (r.ok) {
       out.displayed_tier = tier;
@@ -2587,11 +2717,10 @@ static XyzUploadCycle RunXyzUploadCycle(const float* xyz, int width, int height,
       break;
     }
   }
-  // A tier at or above 1 — or no display at all — has no further use for the full-size staging
-  // slots: at 8192x4096 each slot's nominal storage is 192 MiB, and a document that settles at
-  // a reduced tier, or into the explicit unavailable state, would otherwise carry both slots
-  // and their fences until Destroy. The PBO path re-allocates its slot lazily if a later cycle
-  // re-establishes tier 0.
+  // The in-loop retirement above releases the slots on every walk that reaches tier 1; this
+  // exit still owns the shape that never gets there — an established-tier-0 attempt (or a
+  // tier-0-terminated walk) that failed hard leaves the slots' fence/buffer lifecycle ended
+  // here rather than carried into the unavailable state. The tier-0 path re-allocates lazily.
   if (out.displayed_tier != 0) {
     g_preview.ReleaseStagingSlots();
   }
