@@ -852,6 +852,7 @@ int main(int argc, char** argv) {
   RegisterScreenshotExportOptionsTests(engine);
   RegisterPreviewPixelTests(engine);
   RegisterPreviewTextureTests(engine);
+  RegisterFullArchiveAcceptanceTests(engine);
   RegisterPreviewBackgroundTests(engine);
   RegisterPreviewGlobeBackFadeTests(engine);
   RegisterPreviewPrintModeTests(engine);
