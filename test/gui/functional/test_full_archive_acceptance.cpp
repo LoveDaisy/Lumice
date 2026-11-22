@@ -18,6 +18,7 @@
 // the cross-machine investigation; this leg's job is "loads, displays at full size, no failure
 // record", which is a state check plus a screenshot, not a tolerance question.
 
+#include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -39,10 +40,35 @@ bool g_accept_open_requested = false;
 bool g_accept_open_done = false;
 std::string g_accept_open_path;
 
+// The upload-bench request channel: ONE rep per request, serviced on the main thread — the GL
+// upload must run where the context lives (the same boundary every GL-adjacent request in the
+// gui_test suites crosses; a renderer call made from the TestFunc coroutine has no context, the
+// map comes back null and the drained error flag reads 0, which looks exactly like a driver
+// failure and measures nothing). The timing is taken INSIDE the GuiFunc, around the real call.
+std::atomic<bool> g_bench_rep_requested{ false };
+std::atomic<bool> g_bench_rep_done{ false };
+std::atomic<bool> g_bench_rep_ok{ false };
+std::atomic<int> g_bench_rep_stage{ 0 };
+std::atomic<int> g_bench_rep_gl_error{ 0 };
+double g_bench_rep_ms = 0.0;  // written on the main thread; the done-atomic is the happens-before
+const std::vector<float>* g_bench_frame = nullptr;
+int g_bench_w = 0;
+int g_bench_h = 0;
+
 void AcceptanceOpenGuiFunc(ImGuiTestContext* /*ctx*/) {
   if (g_accept_open_requested && !g_accept_open_done) {
     gui::DoOpen(g_accept_open_path);
     g_accept_open_done = true;
+  }
+  if (g_bench_rep_requested && !g_bench_rep_done) {
+    const auto t0 = std::chrono::steady_clock::now();
+    const gui::UploadResult r = gui::g_preview.UploadXyzTexture(g_bench_frame->data(), g_bench_w, g_bench_h);
+    const auto t1 = std::chrono::steady_clock::now();
+    g_bench_rep_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+    g_bench_rep_ok = r.ok;
+    g_bench_rep_stage = static_cast<int>(r.stage);
+    g_bench_rep_gl_error = r.gl_error;
+    g_bench_rep_done = true;
   }
 }
 
@@ -159,17 +185,25 @@ void RegisterFullArchiveAcceptanceTests(ImGuiTestEngine* engine) {
     }
     constexpr int kReps = 7;
     for (int rep = 0; rep < kReps; ++rep) {
-      const auto t0 = std::chrono::steady_clock::now();
-      const gui::UploadResult r = gui::g_preview.UploadXyzTexture(frame.data(), kW, kH);
-      const auto t1 = std::chrono::steady_clock::now();
-      if (!r.ok) {
-        IM_ERRORF("upload bench rep %d failed: stage=%d gl_error=0x%04X", rep, static_cast<int>(r.stage), r.gl_error);
-        continue;  // non-fatal on purpose (loop-fatal-assert rule): report every rep's number
+      g_bench_frame = &frame;
+      g_bench_w = kW;
+      g_bench_h = kH;
+      g_bench_rep_requested = true;
+      g_bench_rep_done = false;
+      for (int i = 0; i < 8 && !g_bench_rep_done.load(); ++i) {
+        ctx->Yield(1);  // one upload is one frame of work; the bound is a hang safety net
       }
-      const double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
-      fprintf(stderr, "[highres-upload-bench] rep %d: %.1f ms (staging slot0=%zu slot1=%zu)\n", rep, ms,
+      if (!g_bench_rep_done.load()) {
+        IM_ERRORF("upload bench rep %d never landed", rep);
+        continue;  // non-fatal on purpose (loop-fatal-assert rule): report every rep's outcome
+      }
+      if (!g_bench_rep_ok.load()) {
+        IM_ERRORF("upload bench rep %d failed: stage=%d gl_error=0x%04X", rep, g_bench_rep_stage.load(),
+                  g_bench_rep_gl_error.load());
+        continue;
+      }
+      fprintf(stderr, "[highres-upload-bench] rep %d: %.1f ms (staging slot0=%zu slot1=%zu)\n", rep, g_bench_rep_ms,
               gui::g_preview.StagingSlotByteCountForTest(0), gui::g_preview.StagingSlotByteCountForTest(1));
-      ctx->Yield(1);
     }
   };
 }
