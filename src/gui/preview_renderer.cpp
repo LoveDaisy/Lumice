@@ -1626,6 +1626,14 @@ UploadResult PreviewRenderer::UploadRadianceTexture(const unsigned char* data, i
 // Human-readable stage names for the upload logs: the log is what an owner without a debugger
 // reads first, and a bare integer stage code would have to be decoded against the header.
 PreviewRenderer::UploadFaultHook PreviewRenderer::s_upload_fault_hook_all_ = nullptr;
+std::atomic<int> PreviewRenderer::s_live_instances_for_test_{ 0 };
+
+PreviewRenderer::PreviewRenderer() {
+  ++s_live_instances_for_test_;
+}
+PreviewRenderer::~PreviewRenderer() {
+  --s_live_instances_for_test_;
+}
 int PreviewRenderer::s_shader_compile_fault_for_test_ = 0;
 
 void PreviewRenderer::SetUploadFaultHookForAllForTest(UploadFaultHook hook) {

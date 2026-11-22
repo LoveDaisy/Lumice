@@ -271,6 +271,9 @@ const char* UploadStageName(UploadResult::Stage stage);
 
 class PreviewRenderer {
  public:
+  PreviewRenderer();
+  ~PreviewRenderer();
+
   // What the source texture's samples MEAN, and therefore how much of the display chain the
   // shader still owes them. Mirrored by the kTexMode* constants in the GLSL (preview_renderer.cpp)
   // — the two enumerations are one contract and their values must stay in step.
@@ -431,6 +434,15 @@ class PreviewRenderer {
   // buffer storage.
   size_t StagingSlotByteCountForTest(int slot) const { return pbo_byte_count_[slot]; }
 
+  // Test-only observability (gui_test): how many PreviewRenderer instances are alive right now.
+  // The transient full-source export renderer's lifetime is what the shared-context OOM's
+  // resource ordering turns on — the rebuild cycle must not walk while the failed export's
+  // renderer still holds its full-size source texture — and this counter is the witness read:
+  // a hook fired at the rebuild's first upload captures it, where a still-alive transient shows
+  // as the baseline plus one. Atomic because the test coroutine reads it while the main thread
+  // constructs and destroys renderers.
+  static int LiveInstanceCountForTest() { return s_live_instances_for_test_.load(); }
+
   // Background image texture management (GL upload only, no file I/O)
   void UploadBgTexture(const unsigned char* data, int width, int height);
   void ClearBackground();
@@ -497,6 +509,9 @@ class PreviewRenderer {
   // The all-instances test hook above; defined in preview_renderer.cpp.
   static UploadFaultHook s_upload_fault_hook_all_;
   static int s_shader_compile_fault_for_test_;
+  // LiveInstanceCountForTest's counter; incremented/decremented by the constructor/destructor
+  // (defined in preview_renderer.cpp).
+  static std::atomic<int> s_live_instances_for_test_;
   // The hook's verdict for one stage, or 0 to proceed with the real call; the all-instances test
   // hook is consulted after this instance's own.
   int HookFaultFor(UploadResult::Stage stage) const {

@@ -28,6 +28,7 @@
 // two runs ago — or a file that will not open at all because its declared size does not match its
 // payload.
 
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cstdio>
@@ -38,6 +39,7 @@
 #include <string>
 #include <vector>
 
+#include "gui/export_fbo_renderer.hpp"
 #include "gui/gui_state.hpp"
 #include "gui/preview_downgrade.hpp"
 #include "test_gui_shared.hpp"
@@ -113,6 +115,24 @@ struct FaultUploadRequest {
   std::atomic<bool> dfe_done{ false };
   bool dfe_result = false;
   std::string dfe_path;
+  // Captured INSIDE the export request, on the main thread, before the next SyncFromPoller can
+  // run: what the target-OOM rebuild committed is observable here without a normal sync being
+  // able to re-fire the mode-change branch first (same shape as retry_snap_*).
+  std::atomic<int> dfe_snap_tex_mode{ -1 };
+  std::atomic<int> dfe_snap_as_composite{ -1 };
+  std::atomic<int> dfe_snap_notice_kind{ -1 };
+  std::atomic<unsigned long long> dfe_snap_serial{ 0 };
+  std::atomic<unsigned long long> dfe_snap_upload_count{ 0 };
+  std::atomic<bool> equi_requested{ false };  // equirectangular export (no-dialog seam)
+  std::atomic<bool> equi_done{ false };
+  bool equi_result = false;
+  std::string equi_path;
+  std::atomic<bool> shot_requested{ false };  // RenderScreenshot, no dialog and no file
+  std::atomic<bool> shot_done{ false };
+  gui::ScreenshotRender shot_result;
+  std::atomic<bool> storage_fault_requested{ false };  // RGBA8 target-allocation fault (main thread)
+  std::atomic<bool> storage_fault_done{ false };
+  int storage_fault_count = 0;
   gui::UploadResult upload8_result;
   gui::UploadResult uploadxyz_result;
   const std::vector<unsigned char>* srgb = nullptr;
@@ -160,6 +180,21 @@ struct FaultUploadRequest {
     dfe_done = false;
     dfe_result = false;
     dfe_path.clear();
+    dfe_snap_tex_mode = -1;
+    dfe_snap_as_composite = -1;
+    dfe_snap_notice_kind = -1;
+    dfe_snap_serial = 0;
+    dfe_snap_upload_count = 0;
+    equi_requested = false;
+    equi_done = false;
+    equi_result = false;
+    equi_path.clear();
+    shot_requested = false;
+    shot_done = false;
+    shot_result = gui::ScreenshotRender{};
+    storage_fault_requested = false;
+    storage_fault_done = false;
+    storage_fault_count = 0;
     srgb = nullptr;
     xyz = nullptr;
     bg_pixels.clear();
@@ -243,7 +278,26 @@ void FaultUploadGuiFunc(ImGuiTestContext* /*ctx*/) {
   }
   if (g_fault.dfe_requested && !g_fault.dfe_done) {
     g_fault.dfe_result = gui::ExportDualFisheyeEqualAreaPng(g_fault.dfe_path);
+    // Captured before the handler returns: the next SyncFromPoller cannot have run yet, so the
+    // commit snapshot below is what the export's rebuild left, not a later correction.
+    g_fault.dfe_snap_tex_mode = static_cast<int>(gui::g_preview.GetTextureMode());
+    g_fault.dfe_snap_as_composite = gui::g_state.last_uploaded_as_composite ? 1 : 0;
+    g_fault.dfe_snap_notice_kind = gui::PreviewRecoveryNoticeKind();
+    g_fault.dfe_snap_serial = gui::g_state.last_uploaded_texture_serial;
+    g_fault.dfe_snap_upload_count = gui::g_state.texture_upload_count;
     g_fault.dfe_done = true;
+  }
+  if (g_fault.equi_requested && !g_fault.equi_done) {
+    g_fault.equi_result = gui::ExportEquirectangularPng(g_fault.equi_path);
+    g_fault.equi_done = true;
+  }
+  if (g_fault.shot_requested && !g_fault.shot_done) {
+    g_fault.shot_result = gui::RenderScreenshot(gui::ScreenshotExportSelection{});
+    g_fault.shot_done = true;
+  }
+  if (g_fault.storage_fault_requested && !g_fault.storage_fault_done) {
+    gui::SetRgba8StorageFaultForTest(g_fault.storage_fault_count);
+    g_fault.storage_fault_done = true;
   }
   if (g_fault.upload8_requested && !g_fault.upload8_done) {
     g_fault.upload8_result = gui::g_preview.UploadTexture(g_fault.srgb->data(), g_fault.width, g_fault.height);
@@ -317,6 +371,105 @@ void SetAllHookAndWait(ImGuiTestContext* ctx, std::function<int(gui::UploadResul
     ctx->Yield(2);
     IM_CHECK(g_fault.allhook_cleared);
   }
+}
+
+// The recovery-order capture: every kTexImage hook call records the live-instance count and both
+// staging-slot byte counts AT THE MOMENT THE HOOK FIRES (main thread, inside the upload path).
+// A pure-observer hook returns 0 (every upload proceeds) and the witness reads the capture after
+// the request completes — the done-atomic provides the happens-before, so plain reads are safe.
+struct RecoveryOrderCapture {
+  static constexpr int kMaxCalls = 16;
+  std::atomic<int> calls{ 0 };
+  std::array<std::atomic<int>, kMaxCalls> instances{};
+  std::array<std::atomic<unsigned long long>, kMaxCalls> slot0{};
+  std::array<std::atomic<unsigned long long>, kMaxCalls> slot1{};
+
+  void Reset() {
+    calls = 0;
+    for (int i = 0; i < kMaxCalls; ++i) {
+      instances[i] = -1;  // -1 = not captured (calls is the authority for which indices hold data)
+      slot0[i] = 0;
+      slot1[i] = 0;
+    }
+  }
+};
+RecoveryOrderCapture g_order_capture;
+
+// Pure observer over every kTexImage in the context: records instance count and slot bytes per
+// call, never forces anything. (std::array<std::atomic<...>> value-initializes each element.)
+std::function<int(gui::UploadResult::Stage)> MakeOrderObserverHook() {
+  g_order_capture.Reset();
+  return [](gui::UploadResult::Stage s) -> int {
+    if (s != gui::UploadResult::Stage::kTexImage) {
+      return 0;
+    }
+    const int idx = g_order_capture.calls.fetch_add(1);
+    if (idx < RecoveryOrderCapture::kMaxCalls) {
+      g_order_capture.instances[idx] = gui::PreviewRenderer::LiveInstanceCountForTest();
+      g_order_capture.slot0[idx] = gui::g_preview.StagingSlotByteCountForTest(0);
+      g_order_capture.slot1[idx] = gui::g_preview.StagingSlotByteCountForTest(1);
+    }
+    return 0;
+  };
+}
+
+// Observer + fail: the same capture, but every kTexImage is forced to `gl_error` — the
+// exhausted-walk witnesses need both the per-candidate capture and a walk that never succeeds.
+std::function<int(gui::UploadResult::Stage)> MakeOrderCaptureFailHook(int gl_error) {
+  g_order_capture.Reset();
+  return [gl_error](gui::UploadResult::Stage s) -> int {
+    if (s != gui::UploadResult::Stage::kTexImage) {
+      return 0;
+    }
+    const int idx = g_order_capture.calls.fetch_add(1);
+    if (idx < RecoveryOrderCapture::kMaxCalls) {
+      g_order_capture.instances[idx] = gui::PreviewRenderer::LiveInstanceCountForTest();
+      g_order_capture.slot0[idx] = gui::g_preview.StagingSlotByteCountForTest(0);
+      g_order_capture.slot1[idx] = gui::g_preview.StagingSlotByteCountForTest(1);
+    }
+    return gl_error;
+  };
+}
+
+// Arm (or clear) the RGBA8 target-allocation fault through the main-thread channel — the same
+// boundary every GL-adjacent seam here crosses (the counter lives behind the export renderer's
+// FBO creation and is consumed on the render thread).
+void SetStorageFaultAndWait(ImGuiTestContext* ctx, int remaining_failures) {
+  g_fault.Reset();
+  if (remaining_failures > 0) {
+    g_fault.storage_fault_count = remaining_failures;
+    g_fault.storage_fault_requested = true;
+    ctx->Yield(2);
+    IM_CHECK(g_fault.storage_fault_done);
+  }
+}
+
+// Drive the no-dialog equirectangular export body on the main thread (same shape as
+// ExportDualFisheyeAndWait).
+bool ExportEquirectAndWait(ImGuiTestContext* ctx, const std::string& path) {
+  g_fault.equi_path = path;
+  g_fault.equi_result = false;
+  g_fault.equi_requested = true;
+  g_fault.equi_done = false;
+  for (int i = 0; i < 6 && !g_fault.equi_done.load(); ++i) {
+    ctx->Yield(1);
+  }
+  return g_fault.equi_done && g_fault.equi_result;
+}
+
+// Drive RenderScreenshot on the main thread and hand back what it produced. Bounded yield loop,
+// not IM_CHECK — this helper returns a value and the check macro's failure path is a bare
+// `return;` (same shape as ExportDualFisheyeAndWait).
+gui::ScreenshotRender ScreenshotAndWait(ImGuiTestContext* ctx) {
+  g_fault.shot_requested = true;
+  g_fault.shot_done = false;
+  for (int i = 0; i < 6 && !g_fault.shot_done.load(); ++i) {
+    ctx->Yield(1);
+  }
+  if (!g_fault.shot_done) {
+    return gui::ScreenshotRender{};
+  }
+  return g_fault.shot_result;
 }
 
 // Run Init on a THROWAWAY renderer on the main thread and report what happened (Init result and,
@@ -1978,6 +2131,433 @@ void RegisterPreviewTextureTests(ImGuiTestEngine* engine) {
       IM_CHECK_EQ(gui::g_preview.GetTextureWidth(), kW);
       IM_CHECK_EQ(gui::g_preview.GetTextureHeight(), kH);
 
+      std::remove(path.c_str());
+    };
+  }
+
+  // The screenshot's RGBA8 target was the last production consumer reading the shared FBO helper
+  // through the defaulted out-param (the r4 gap): a failed target allocation left the display's
+  // sampling qualification standing over unprovable storage. Now the same §2.5 ruling applies —
+  // revoke, one authorized rebuild against the document's own source, cursor and mode record
+  // untouched — and a healthy screenshot still renders afterwards.
+  {
+    ImGuiTest* t =
+        IM_REGISTER_TEST(engine, "preview_texture", "a_screenshot_target_oom_revokes_and_rebuilds_the_preview");
+    t->GuiFunc = FaultUploadGuiFunc;
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      SetFaultAndWait(ctx, -1, 0);
+      constexpr int kW = 256;
+      constexpr int kH = 128;
+      const std::vector<float> baked = XyzCoordinatePattern(kW, kH, /*seed=*/41);
+      const std::string path = GuiTestTempPath("lumice_preview_texture_shot_target_oom.lmc").string();
+      gui::XyzTextureMeta meta;
+      meta.snapshot_intensity = 7.0f;
+      IM_CHECK(WriteXyzLmcFile(path, baked, kW, kH, meta));
+      g_open_requested = true;
+      g_open_done = false;
+      g_open_path = path;
+      YieldUntilOpenDone(ctx);
+      IM_CHECK(g_open_done);
+      ctx->Yield(2);
+      IM_CHECK_EQ(gui::g_preview.GetTextureWidth(), kW);
+      const int vp_w = gui::g_preview_vp.vp_w;
+      const int vp_h = gui::g_preview_vp.vp_h;
+
+      const unsigned long long serial_before = gui::g_state.last_uploaded_texture_serial;
+      const unsigned long long count_before = gui::g_state.texture_upload_count;
+      SetStorageFaultAndWait(ctx, 1);
+      const gui::ScreenshotRender shot = ScreenshotAndWait(ctx);
+      IM_CHECK(shot.rgba.empty());  // the target never came up; nothing is written anywhere
+      // The rebuild stood the display back up from the document's own source.
+      IM_CHECK(gui::g_preview.HasTexture());
+      IM_CHECK_EQ(gui::g_preview.GetTextureWidth(), kW);
+      IM_CHECK_EQ(gui::g_preview.GetTextureHeight(), kH);
+      IM_CHECK(gui::g_preview.GetTextureMode() == gui::PreviewRenderer::TextureMode::kXyz);
+      IM_CHECK(!gui::g_state.last_uploaded_as_composite);
+      IM_CHECK_EQ(gui::g_state.texture_upload_count, count_before + 1);
+      IM_CHECK_EQ(gui::g_state.last_uploaded_texture_serial, serial_before);  // cursor untouched
+      IM_CHECK_EQ(gui::PreviewRecoveryNoticeKind(), 0);
+      IM_CHECK(!gui::PreviewRecoveryRetryAvailable());
+
+      // The fault was one-shot: the screenshot's healthy path still renders the viewport.
+      SetStorageFaultAndWait(ctx, 0);
+      const gui::ScreenshotRender healthy = ScreenshotAndWait(ctx);
+      IM_CHECK(!healthy.rgba.empty());
+      IM_CHECK_EQ(healthy.w, vp_w);
+      IM_CHECK_EQ(healthy.h, vp_h);
+
+      std::remove(path.c_str());
+    };
+  }
+
+  // Both all-sky exports' NORMAL-resolution branches now consume the target's real allocation
+  // error (the r3 sites), driven at the target-allocation level this time: one fault per branch,
+  // each revoking and rebuilding in full from the file source.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "preview_texture",
+                                    "an_all_sky_export_target_oom_propagates_from_both_normal_branches");
+    t->GuiFunc = FaultUploadGuiFunc;
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      SetFaultAndWait(ctx, -1, 0);
+      constexpr int kW = 256;
+      constexpr int kH = 128;
+      const std::vector<float> baked = XyzCoordinatePattern(kW, kH, /*seed=*/43);
+      const std::string path = GuiTestTempPath("lumice_preview_texture_allsky_target_oom.lmc").string();
+      gui::XyzTextureMeta meta;
+      meta.snapshot_intensity = 7.0f;
+      IM_CHECK(WriteXyzLmcFile(path, baked, kW, kH, meta));
+      g_open_requested = true;
+      g_open_done = false;
+      g_open_path = path;
+      YieldUntilOpenDone(ctx);
+      IM_CHECK(g_open_done);
+      ctx->Yield(2);
+      IM_CHECK_EQ(gui::g_preview.GetTextureWidth(), kW);
+
+      // Dual-fisheye, display healthy: the normal branch renders g_preview at its own extent.
+      unsigned long long count_before = gui::g_state.texture_upload_count;
+      SetStorageFaultAndWait(ctx, 1);
+      const std::string png_a = GuiTestTempPath("lumice_preview_texture_allsky_target_oom_a.png").string();
+      std::remove(png_a.c_str());
+      IM_CHECK(!ExportDualFisheyeAndWait(ctx, png_a));
+      IM_CHECK(!std::filesystem::exists(png_a));
+      IM_CHECK(gui::g_preview.HasTexture());
+      IM_CHECK_EQ(gui::g_preview.GetTextureWidth(), kW);  // rebuilt in full from the file source
+      IM_CHECK(gui::g_preview.GetTextureMode() == gui::PreviewRenderer::TextureMode::kXyz);
+      IM_CHECK_EQ(gui::g_state.texture_upload_count, count_before + 1);
+      IM_CHECK_EQ(gui::PreviewRecoveryNoticeKind(), 0);
+
+      // Equirect, same story: a second fault, a second revoke and rebuild.
+      count_before = gui::g_state.texture_upload_count;
+      SetStorageFaultAndWait(ctx, 1);
+      const std::string png_b = GuiTestTempPath("lumice_preview_texture_allsky_target_oom_b.png").string();
+      std::remove(png_b.c_str());
+      IM_CHECK(!ExportEquirectAndWait(ctx, png_b));
+      IM_CHECK(!std::filesystem::exists(png_b));
+      IM_CHECK(gui::g_preview.HasTexture());
+      IM_CHECK_EQ(gui::g_preview.GetTextureWidth(), kW);
+      IM_CHECK_EQ(gui::g_state.texture_upload_count, count_before + 1);
+      IM_CHECK_EQ(gui::PreviewRecoveryNoticeKind(), 0);
+
+      std::remove(path.c_str());
+      std::remove(png_a.c_str());
+      std::remove(png_b.c_str());
+    };
+  }
+
+  // The degraded export's transient full-source renderer must be DESTROYED before the rebuild
+  // cycle walks (the r4 release-timing ruling): its full-size source texture is exactly the
+  // dead storage the recovery ladder must not carry. The observer hook captures the live
+  // instance count at every kTexImage, so the pair (transient alive at its own upload, gone at
+  // the rebuild's first upload) is read straight off the interleaving.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "preview_texture",
+                                    "a_degraded_export_destroys_its_transient_renderer_before_rebuilding");
+    t->GuiFunc = FaultUploadGuiFunc;
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      SetFaultAndWait(ctx, -1, 0);
+      constexpr int kW = 256;
+      constexpr int kH = 128;
+      const std::vector<float> baked = XyzCoordinatePattern(kW, kH, /*seed=*/44);
+      const std::string path = GuiTestTempPath("lumice_preview_texture_degraded_target_oom.lmc").string();
+      gui::XyzTextureMeta meta;
+      meta.snapshot_intensity = 7.0f;
+      IM_CHECK(WriteXyzLmcFile(path, baked, kW, kH, meta));
+
+      // Degraded open: the two full-size candidates fail, the first prefiltered tier displays.
+      SetCustomHookAndWait(ctx,
+                           FailFirstNThenPass(gui::UploadResult::Stage::kTexImage, /*fail_count=*/2, kGlOutOfMemory));
+      g_open_requested = true;
+      g_open_done = false;
+      g_open_path = path;
+      YieldUntilOpenDone(ctx);
+      IM_CHECK(g_open_done);
+      ctx->Yield(2);
+      IM_CHECK_EQ(gui::g_preview.GetTextureWidth(), kW / 2);
+      SetFaultAndWait(ctx, -1, 0);
+
+      const int baseline = gui::PreviewRenderer::LiveInstanceCountForTest();
+      const unsigned long long count_before = gui::g_state.texture_upload_count;
+      SetAllHookAndWait(ctx, MakeOrderObserverHook());
+      SetStorageFaultAndWait(ctx, 1);
+      const std::string png = GuiTestTempPath("lumice_preview_texture_degraded_target_oom.png").string();
+      std::remove(png.c_str());
+      IM_CHECK(!ExportDualFisheyeAndWait(ctx, png));
+      IM_CHECK(!std::filesystem::exists(png));
+
+      // ORDER: every kTexImage before the first baseline-counted call ran while the transient
+      // was alive (its Init blank and its source upload); the first baseline-counted call is
+      // the rebuild's first upload — the transient was already destroyed there.
+      IM_CHECK(g_order_capture.calls >= 3);
+      int rebuild_index = -1;
+      int prefix_mismatch = 0;
+      for (int i = 0; i < g_order_capture.calls.load(); ++i) {
+        if (rebuild_index < 0) {
+          if (g_order_capture.instances[i] == baseline) {
+            rebuild_index = i;
+          } else if (g_order_capture.instances[i] != baseline + 1) {
+            ++prefix_mismatch;
+          }
+        }
+      }
+      // Asserts outside the scan loop (loop-fatal-assert rule): every capture before the first
+      // baseline-counted call ran with the transient alive (baseline + 1), and the first
+      // baseline-counted call is the rebuild's first upload — the transient was gone there.
+      IM_CHECK(rebuild_index >= 2);
+      IM_CHECK_EQ(prefix_mismatch, 0);
+      // The rebuild re-established tier 0 from the file source, and the tier-0 path lazily
+      // re-allocated its slot.
+      IM_CHECK(gui::g_preview.HasTexture());
+      IM_CHECK_EQ(gui::g_preview.GetTextureWidth(), kW);
+      IM_CHECK(gui::g_preview.StagingSlotByteCountForTest(0) > 0);
+      IM_CHECK_EQ(gui::g_state.texture_upload_count, count_before + 1);
+      IM_CHECK_EQ(gui::PreviewRecoveryNoticeKind(), 0);
+
+      SetAllHookAndWait(ctx, nullptr);
+      std::remove(path.c_str());
+      std::remove(png.c_str());
+    };
+  }
+
+  // An accepted composite live frame must rebuild as ITS composite (the r4 defect: the rebuild
+  // walked the XYZ ladder because the payload also carries spectrum floats, leaving a full-
+  // spectrum GPU picture under a composite mode record the terminal frame's sync would never
+  // correct). The commit is read INSIDE the export request, before any sync can re-fire.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "preview_texture",
+                                    "a_composite_display_rebuilds_as_its_composite_after_export_target_oom");
+    t->GuiFunc = FaultUploadGuiFunc;
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ScopedRunServer scene;
+      IM_CHECK(scene.ok());
+      SetFaultAndWait(ctx, -1, 0);
+      gui::g_state.raypath_color.push_back(MakeColorMatchAllClass(1.0f, 0.0f, 0.0f, /*z_order=*/0));
+      gui::g_state.show_composite_preview = true;
+      gui::g_state.renderer.display_mode = LUMICE_DISPLAY_MODE_NORMAL;
+
+      SeedFiniteRun(/*millions=*/0.1f);
+      gui::DoRun(/*user_initiated=*/true);
+      IM_CHECK(WaitForSimRestartAtLeast(ctx, /*baseline_upload_count=*/0, /*timeout_ms=*/20000));
+      IM_CHECK(gui::g_state.last_uploaded_as_composite);
+      IM_CHECK(gui::g_preview.GetTextureMode() == gui::PreviewRenderer::TextureMode::kSrgbRadiance);
+      IM_CHECK(DriveUntil(
+          ctx,
+          [] {
+            return gui::g_state.sim_state == SimState::kDone && gui::g_state.run_intent == RunIntent::kRunCompleted;
+          },
+          20));
+      // Arm the fault FIRST, then settle INSIDE the armed window: the terminal frame's own
+      // acceptance lags kDone by machine timing, and the baselines below must describe a
+      // quiescent document or the commit assertions would race it. The fault only consumes at
+      // renderbuffer storage — a poll sync never touches it.
+      SetStorageFaultAndWait(ctx, 1);
+      unsigned long long settled_count = 0;
+      IM_CHECK(DriveUntil(
+          ctx,
+          [&settled_count] {
+            const unsigned long long now = gui::g_state.texture_upload_count;
+            if (now != settled_count && now > 0) {
+              settled_count = now;
+              return false;
+            }
+            return now > 0;
+          },
+          10));
+
+      const unsigned long long serial_before = gui::g_state.last_uploaded_texture_serial;
+      const unsigned long long count_before = gui::g_state.texture_upload_count;
+      const int disp_w_before = gui::g_preview.GetTextureWidth();
+      const int disp_h_before = gui::g_preview.GetTextureHeight();
+
+      const std::string png = GuiTestTempPath("lumice_preview_texture_composite_target_oom.png").string();
+      std::remove(png.c_str());
+      IM_CHECK(!ExportDualFisheyeAndWait(ctx, png));
+      IM_CHECK(!std::filesystem::exists(png));
+      IM_CHECK_EQ(g_fault.dfe_snap_tex_mode.load(), static_cast<int>(gui::PreviewRenderer::TextureMode::kSrgbRadiance));
+      IM_CHECK_EQ(g_fault.dfe_snap_as_composite.load(), 1);
+      IM_CHECK_EQ(g_fault.dfe_snap_serial.load(), serial_before);  // the same accepted frame
+      IM_CHECK_EQ(g_fault.dfe_snap_upload_count.load(), count_before + 1);
+      IM_CHECK_EQ(g_fault.dfe_snap_notice_kind.load(), 0);
+      IM_CHECK(gui::g_preview.HasTexture());
+      IM_CHECK_EQ(gui::g_preview.GetTextureWidth(), disp_w_before);
+      IM_CHECK_EQ(gui::g_preview.GetTextureHeight(), disp_h_before);
+
+      // Frozen terminal frame: the settled syncs must not re-upload — the mode record already
+      // matches the effective preference, so nothing corrects or re-fires.
+      ctx->Yield(10);
+      const unsigned long long settled = gui::g_state.texture_upload_count;
+      ctx->Yield(5);
+      IM_CHECK_EQ(gui::g_state.texture_upload_count, settled);
+      IM_CHECK(gui::g_preview.GetTextureMode() == gui::PreviewRenderer::TextureMode::kSrgbRadiance);
+      IM_CHECK(gui::g_state.last_uploaded_as_composite);
+    };
+  }
+
+  // The two baked uint8 modes rebuild in their OWN modes after an export target OOM (the r4
+  // gap: the rebuild ignored them entirely — display revoked, no unavailable state, no retry
+  // exit). Third leg: when the rebuild itself cannot land, the explicit unavailable state stands
+  // with a real incident and the retry exit open, and the retry walks the document's own source.
+  {
+    ImGuiTest* t =
+        IM_REGISTER_TEST(engine, "preview_texture", "a_uint8_file_rebuilds_in_its_own_mode_after_export_target_oom");
+    t->GuiFunc = FaultUploadGuiFunc;
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      SetFaultAndWait(ctx, -1, 0);
+      constexpr int kW = 256;
+      constexpr int kH = 128;
+
+      // Radiance leg.
+      const std::vector<unsigned char> rad = SolidPattern(kW, kH, 200, 60, 30);
+      gui::g_preview.UpdateCpuTextureData(rad.data(), kW, kH);  // defaults to radiance-only
+      const std::string rad_path = GuiTestTempPath("lumice_preview_texture_uint8_rad_rebuild.lmc").string();
+      IM_CHECK(gui::SaveLmcFile(rad_path, gui::g_state, gui::g_preview, /*save_texture=*/true));
+      g_open_requested = true;
+      g_open_done = false;
+      g_open_path = rad_path;
+      YieldUntilOpenDone(ctx);
+      IM_CHECK(g_open_done);
+      ctx->Yield(2);
+      IM_CHECK(gui::g_preview.GetTextureMode() == gui::PreviewRenderer::TextureMode::kSrgbRadiance);
+      unsigned long long count_before = gui::g_state.texture_upload_count;
+      SetStorageFaultAndWait(ctx, 1);
+      const std::string rad_png = GuiTestTempPath("lumice_preview_texture_uint8_rad_rebuild.png").string();
+      std::remove(rad_png.c_str());
+      IM_CHECK(!ExportDualFisheyeAndWait(ctx, rad_png));
+      IM_CHECK(!std::filesystem::exists(rad_png));
+      IM_CHECK_EQ(g_fault.dfe_snap_tex_mode.load(), static_cast<int>(gui::PreviewRenderer::TextureMode::kSrgbRadiance));
+      IM_CHECK_EQ(g_fault.dfe_snap_as_composite.load(), 0);
+      IM_CHECK_EQ(g_fault.dfe_snap_upload_count.load(), count_before + 1);
+      IM_CHECK(gui::g_preview.HasTexture());
+      IM_CHECK_EQ(gui::g_preview.GetTextureWidth(), kW);
+      SetStorageFaultAndWait(ctx, 0);
+
+      // Composited leg: the second open resets the document wholesale.
+      const std::vector<unsigned char> comp = SolidPattern(kW, kH, 30, 90, 200);
+      gui::g_preview.UpdateCpuTextureData(comp.data(), kW, kH, gui::PreviewRenderer::TextureMode::kSrgbComposited);
+      const std::string comp_path = GuiTestTempPath("lumice_preview_texture_uint8_comp_rebuild.lmc").string();
+      IM_CHECK(gui::SaveLmcFile(comp_path, gui::g_state, gui::g_preview, /*save_texture=*/true));
+      g_open_requested = true;
+      g_open_done = false;
+      g_open_path = comp_path;
+      YieldUntilOpenDone(ctx);
+      IM_CHECK(g_open_done);
+      ctx->Yield(2);
+      IM_CHECK(gui::g_preview.GetTextureMode() == gui::PreviewRenderer::TextureMode::kSrgbComposited);
+      count_before = gui::g_state.texture_upload_count;
+      SetStorageFaultAndWait(ctx, 1);
+      const std::string comp_png = GuiTestTempPath("lumice_preview_texture_uint8_comp_rebuild.png").string();
+      std::remove(comp_png.c_str());
+      IM_CHECK(!ExportDualFisheyeAndWait(ctx, comp_png));
+      IM_CHECK(!std::filesystem::exists(comp_png));
+      IM_CHECK_EQ(g_fault.dfe_snap_tex_mode.load(),
+                  static_cast<int>(gui::PreviewRenderer::TextureMode::kSrgbComposited));
+      IM_CHECK_EQ(g_fault.dfe_snap_as_composite.load(), 1);
+      IM_CHECK_EQ(g_fault.dfe_snap_upload_count.load(), count_before + 1);
+      IM_CHECK(gui::g_preview.HasTexture());
+      SetStorageFaultAndWait(ctx, 0);
+
+      // Failure leg: the rebuild's own upload cannot land either. Explicit unavailable, real
+      // incident, retry exit open — and the retry recovers once the pressure is gone.
+      g_open_requested = true;
+      g_open_done = false;
+      g_open_path = comp_path;
+      YieldUntilOpenDone(ctx);
+      IM_CHECK(g_open_done);
+      ctx->Yield(2);
+      IM_CHECK(gui::g_preview.HasTexture());
+      SetStorageFaultAndWait(ctx, 1);
+      SetAllHookAndWait(ctx, [](gui::UploadResult::Stage st) -> int {
+        return st == gui::UploadResult::Stage::kTexImage ? kGlOutOfMemory : 0;
+      });
+      const std::string fail_png = GuiTestTempPath("lumice_preview_texture_uint8_comp_rebuild_fail.png").string();
+      std::remove(fail_png.c_str());
+      IM_CHECK(!ExportDualFisheyeAndWait(ctx, fail_png));
+      IM_CHECK(!std::filesystem::exists(fail_png));
+      IM_CHECK(!gui::g_preview.HasTexture());
+      IM_CHECK_EQ(g_fault.dfe_snap_notice_kind.load(), 2);
+      IM_CHECK(gui::PreviewRecoveryRetryAvailable());
+      const gui::PreviewUploadIncident incident = gui::GetPreviewUploadIncident();
+      IM_CHECK(incident.has_incident);
+      IM_CHECK(incident.stage == static_cast<int>(gui::UploadResult::Stage::kTexImage));
+      IM_CHECK_EQ(incident.gl_error, kGlOutOfMemory);
+      IM_CHECK_EQ(incident.request_width, kW);
+      IM_CHECK_EQ(incident.request_height, kH);
+
+      SetStorageFaultAndWait(ctx, 0);
+      SetAllHookAndWait(ctx, nullptr);
+      RetryAndWait(ctx);
+      IM_CHECK(gui::g_preview.HasTexture());
+      IM_CHECK(gui::g_preview.GetTextureMode() == gui::PreviewRenderer::TextureMode::kSrgbComposited);
+
+      std::remove(rad_path.c_str());
+      std::remove(comp_path.c_str());
+      std::remove(rad_png.c_str());
+      std::remove(comp_png.c_str());
+      std::remove(fail_png.c_str());
+    };
+  }
+
+  // The ladder retires BOTH staging slots before its first client-memory candidate (the r4
+  // release-timing ruling): from tier 1 on, the walk uploads from client memory, and the other
+  // slot's full-size storage is part of the allocation pressure that candidate walks against.
+  // The capture reads the slot bytes at each kTexImage, so the retirement moment is witnessed
+  // between the tier-0 attempt and the tier-1 attempt, not at the cycle's exit.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "preview_texture",
+                                    "the_ladder_retires_both_staging_slots_before_its_first_client_memory_candidate");
+    t->GuiFunc = FaultUploadGuiFunc;
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      SetFaultAndWait(ctx, -1, 0);
+      constexpr int kW = 256;
+      constexpr int kH = 128;
+      const std::vector<float> baked = XyzCoordinatePattern(kW, kH, /*seed=*/42);
+      const std::string path = GuiTestTempPath("lumice_preview_texture_slot_retirement.lmc").string();
+      gui::XyzTextureMeta meta;
+      meta.snapshot_intensity = 7.0f;
+      IM_CHECK(WriteXyzLmcFile(path, baked, kW, kH, meta));
+
+      // Two healthy opens = two tier-0 uploads = both staging slots hold storage (unrolled —
+      // the open channel's IM_CHECKs cannot sit in a loop body, loop-fatal-assert rule).
+      g_open_requested = true;
+      g_open_done = false;
+      g_open_path = path;
+      YieldUntilOpenDone(ctx);
+      IM_CHECK(g_open_done);
+      ctx->Yield(2);
+      g_open_requested = true;
+      g_open_done = false;
+      g_open_path = path;
+      YieldUntilOpenDone(ctx);
+      IM_CHECK(g_open_done);
+      ctx->Yield(2);
+      IM_CHECK(gui::g_preview.StagingSlotByteCountForTest(0) > 0);
+      IM_CHECK(gui::g_preview.StagingSlotByteCountForTest(1) > 0);
+
+      // The third open walks the ladder into a wall: every candidate's kTexImage is captured
+      // and forced to fail. The walk's tier-0 attempt still has both slots; by the time the
+      // FIRST client-memory candidate fires, both slots must already be retired.
+      SetAllHookAndWait(ctx, MakeOrderCaptureFailHook(kGlOutOfMemory));
+      g_open_requested = true;
+      g_open_done = false;
+      g_open_path = path;
+      YieldUntilOpenDone(ctx);
+      IM_CHECK(g_open_done);
+      ctx->Yield(2);
+      IM_CHECK(g_order_capture.calls >= 3);
+      IM_CHECK(g_order_capture.slot0[0] > 0);  // the tier-0 attempt's own slot, re-armed
+      IM_CHECK(g_order_capture.slot1[0] > 0);  // the OTHER slot, still held from the two uploads
+      IM_CHECK_EQ(g_order_capture.slot0[1].load(), 0ull);
+      IM_CHECK_EQ(g_order_capture.slot1[1].load(), 0ull);  // retired BEFORE the client-memory candidate
+      IM_CHECK(!gui::g_preview.HasTexture());
+      IM_CHECK_EQ(gui::PreviewRecoveryNoticeKind(), 2);
+      IM_CHECK(gui::PreviewRecoveryRetryAvailable());
+
+      SetAllHookAndWait(ctx, nullptr);
       std::remove(path.c_str());
     };
   }
