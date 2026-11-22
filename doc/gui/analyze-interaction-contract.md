@@ -901,7 +901,7 @@ nav 焦点无（InvisibleButton 默认 NoNav）。主窗路径不传读出参数
 | Probe / Tint / Witness | 边与峰的区分在 conclusions（全维臂）；色调读数其余臂浮默认；见证句在拒答 conclusions | 剖面曲线+量程进 Physics；kept 计数进 Calc；tint caliber 进 Physics；见证权重与来源进 Physics、lattice 计数进 Calc |
 | TIR / Family / Objects | TIR 份额读数+拒答态默认；族臂存活后果句默认；对象+N 提示在清单处 | 接口数/维度枚举 Physics；各级计数 Calc；对象卡整块 Physics |
 | 点 target/deviation、member/λ/n/source | 主窗摘要带 target 行；Raypath view 答案带 target＋λ（默认层前两行） | member faces 进 pt Physics；n/source 随 λ 行默认（量纲）；execution 三元组进 pt Calc |
-| rank-0 | 主窗摘要给点像读数（位置、太阳本方向的结构事实、分离角、总光量或不可用、点太阳前提——`PointMassLines` 读样句式，标题「Point image」） | 完整点像答案同段在 Raypath view；无 fiber 不等于无答案。Raypath view 地图按同一采纳点结果画点像标记（rank-0 质量色填充菱形，identity 绑采纳点文档）；matched 地图自身 mass cell 在太阳本方向已承载该墨迹时不叠画第二符号（复用分支＝引擎 `PathMapPointMass.pixel` 记录＋at-sun 结构判据，不做格网重推导或邻近拼接）；用户目标标记保持自身墨迹与位置，图像永不移动目标；Overlays 关时标记随组隐藏、文字定位仍在，标记缺席不作无像声明 |
+| rank-0 | 主窗摘要给点像读数（位置、太阳本方向的结构事实、分离角、总光量或不可用、点太阳前提——`PointMassLines` 读样句式，标题「Point image」） | 完整点像答案同段在 Raypath view；无 fiber 不等于无答案。Raypath view 地图按同一采纳点结果画点像标记（rank-0 质量色填充菱形，identity 绑采纳点文档）——**专用菱形是点像的唯一承载者**：地图光栅的点采样 shader 可能整格丢失细小 cell（delta-0 极圈正是此类），文档侧的 mass cell 记录证明不了屏上墨迹，故标记不把可见性委托给地图自身的 mass cell（评审三轮裁定的退役；cell 恰好可见时菱形叠于其上——同语义同色，同一表达）；用户目标标记保持自身墨迹与位置，图像永不移动目标；Overlays 与 Point images 组关时标记随组隐藏、文字定位仍在，标记缺席不作无像声明 |
 | 无分量 reach 与 discovery 完备性 | 两窗都保短结论及完备性限定（共享 `DrawPointNoComponentConclusions`）；in-range 零分量的措辞是**本次搜索口径**（「this search has not yet found a pose…」），不是「有限晶体无姿态」的绝对表述；probe 越界补分辨率限定（reach tolerance 数值随短结论行），两态不折叠 | reach tolerance 数值随短结论行 |
 | 分量清单、端点、积分、覆盖、无有效样本 | 主窗：分量计数＋kinds＋不可用限定＋选中分量无有效样本 | Raypath view：完整证据行+tooltip、选中分量 fiber integral、cap 提示在 pt Physics；valid/total 计数在 pt Calc；无有效样本默认 |
 | 当前姿态因素/各接口透射 | Pose 右下文字区（未动） | 不复制到主窗或类报告 |

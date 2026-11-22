@@ -6097,41 +6097,37 @@ bool IdentityClassShowsTheMassArmAndTheMapAnswers(ImGuiTestContext* ctx) {
                  mass_lines.size());
   }
 
-  // The point image's map face on the ANSWERED map (AC3): the image is inked exactly once —
-  // by the map's own mass cell when the image sits at the sun's exact direction and the engine
-  // placed its mass cell (the reuse branch, no marker vertices), or by the dedicated marker
-  // (marker vertices in the rank-0 colour, which nothing else on the map draws). Never both,
-  // never neither. The branch predicate is the same exported structural gate the draw reads.
+  // The point image's map face on the ANSWERED map (AC3): the dedicated diamond is the image's
+  // ONE carrier — the reuse branch (letting the map's own mass cell stand for the ink) was
+  // retired because the raster's point-sampled shader can drop the sliver mass cell entirely
+  // while the map submits fine, so a document-side cell record never proves on-screen ink. In
+  // view: marker vertices present in the rank-0 colour (which nothing else on the map draws in
+  // draw-list ink), the legend names the image; where the map's amber cell shows, the diamond
+  // sits on it — same semantics, same colour, one expression.
   {
     LUMICE_PathPointMass mass{};
     mass.struct_size = sizeof(mass);
     IM_CHECK_RETV(
         LUMICE_PathPointGetMass(gui::g_state.analysis.point.adopted_result.get(), &mass) == LUMICE_PATH_READ_OK, false);
-    LUMICE_PathPointInfo point_info{};
-    point_info.struct_size = sizeof(point_info);
-    IM_CHECK_RETV(
-        LUMICE_PathPointGetInfo(gui::g_state.analysis.point.adopted_result.get(), &point_info) == LUMICE_PATH_READ_OK,
-        false);
     LUMICE_PathMapPointMass map_mass{};
     map_mass.struct_size = sizeof(map_mass);
     IM_CHECK_RETV(
         LUMICE_PathMapGetPointMass(gui::g_state.analysis.map.adopted_result.get(), &map_mass) == LUMICE_PATH_READ_OK,
         false);
-    const bool reuse_licensed = gui::PointMassAtSunDirection(point_info, mass) && map_mass.pixel >= 0;
     ctx->Yield(2);
     const gui::OverlayLegendState legend = gui::LastMapOverlayLegend();
     IM_CHECK_RETV(legend.point_image, false);
     const int marker_vertices = MapWindowIndexCountForColour(gui::kPointMassColour);
-    ctx->LogInfo("[v1 c15] image (alt %.4f, az %.4f) at sun %d, engine mass pixel %lld, vertices %d, legend %d",
-                 mass.altitude_deg, mass.azimuth_deg, gui::PointMassAtSunDirection(point_info, mass) ? 1 : 0,
-                 map_mass.pixel, marker_vertices, legend.point_image ? 1 : 0);
-    IM_CHECK_RETV(reuse_licensed ? marker_vertices == 0 : marker_vertices > 0, false);
+    IM_CHECK_RETV(marker_vertices > 0, false);
+    ctx->LogInfo(
+        "[v1 c15] image (alt %.4f, az %.4f), engine mass pixel %lld: the dedicated diamond carries the "
+        "image (%d vertices), legend names it",
+        mass.altitude_deg, mass.azimuth_deg, map_mass.pixel, marker_vertices);
   }
 
   // The shared visibility rule's off-view leg: with the camera aimed away from the sun, the
-  // reused mass cell is off-frame — the legend goes silent (it records what the frame actually
-  // drew, not what the document could carry), and the answer's text still names the position.
-  // Camera back, the legend names the image again.
+  // marker is off-frame — the legend goes silent (it records what the frame actually drew, not
+  // what the document could carry). Camera back, the legend names the image again.
   {
     const float saved_az = gui::g_state.renderer.azimuth;
     const float saved_el = gui::g_state.renderer.elevation;

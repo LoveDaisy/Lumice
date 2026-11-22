@@ -1398,20 +1398,19 @@ void DrawSkyPointMarker(ImDrawList* dl, const MapCanvasProjection& view, const S
 // survey or map handle, and the user's sky-point marker keeps its own ink and its own place
 // (the image never moves the target). The image rides the EXISTING Point images group gate
 // (gates.points.graphics) beside the Overlays master: no parallel switch — closing the group
-// removes the dedicated marker and the reuse branch's legend naming with it. One reuse branch,
-// structural on both sides: the map's raster actually DREW this frame (`map_picture_drawn` — a
-// failed upload or FBO submits no picture, so nothing is reused off a pictureless frame), the
-// map is matched and adopted, its own mass cell exists (the engine places it at the pixel
-// containing the incident direction), and the image sits at the sun's exact direction — that
-// cell IS the image's ink and no second symbol draws. BOTH branches obey the same visibility
-// rule: the image's position must project into this frame's view — the legend records what the
-// frame actually drew, never a document-side potential object. Outside the view or the gates:
-// no ink, and the point answer's text still carries the position.
+// removes the marker and its legend naming, the answer's text still carries the position (a
+// hidden layer is never a no-image claim). The marker is the image's ONE carrier: the review
+// chain retired the "reuse the matched map's mass cell" branch — the raster's point-sampled
+// shader can drop a sliver cell entirely (the delta-0 pole ring is exactly such a cell) while
+// the map submits fine, so a document-side cell record never proves on-screen ink, and the
+// legend would name a picture that carries none. Where the map's own amber cell DOES show, the
+// diamond sits on it — same rank-0 semantics, same colour, one expression. The image's position
+// must project into this frame's view: the legend records what the frame actually drew, never a
+// document-side potential object.
 void DrawPointImageMarker(GuiState& state, const MapCanvasProjection& view, const ImVec2& pic_min, float pic_px,
-                          bool points_graphics_on, bool map_picture_drawn, OverlayLegendState* legend) {
-  // The Point images group's graphics gate: the same eligibility for the dedicated draw and the
-  // reuse branch's legend bit — one group, one visibility rule (the layer plan's AC1; the
-  // master Overlays gate is the caller's).
+                          bool points_graphics_on, OverlayLegendState* legend) {
+  // The Point images group's graphics gate: one group, one visibility rule (the layer plan's
+  // AC1; the master Overlays gate is the caller's).
   if (!points_graphics_on) {
     return;
   }
@@ -1435,35 +1434,10 @@ void DrawPointImageMarker(GuiState& state, const MapCanvasProjection& view, cons
   const double pos[3] = { -travel[0], -travel[1], -travel[2] };
   double x = 0.0;
   double y = 0.0;
-  // The visibility rule is SHARED: the dedicated marker and the reused map cell sit at the same
-  // sky point (the at-sun gate), so one projection gates both — off-view means off-frame, the
-  // legend stays silent whatever the document carries.
+  // The visibility rule: off-view means off-frame, the legend stays silent whatever the
+  // document carries.
   if (!ProjectToRect(view, pos, pic_min, pic_px, &x, &y)) {
     return;
-  }
-  // The reuse leg, structural on both sides: the map's own mass cell is the pixel containing
-  // the INCIDENT direction (the engine's placement, LUMICE_PathMapPointMass.pixel), so when the
-  // image itself sits at the sun's exact direction (PointMassAtSunDirection's equality gate),
-  // that cell IS the image's ink — no second symbol. Identity is the documents' own records
-  // (crystal id, wavelength) plus these two structural facts — never a proximity judgement and
-  // never a re-derived cell lookup (the (delta, az) lattice is degenerate at delta 0, where
-  // this branch by construction lives). The raster must have DREW: a pictureless frame reuses
-  // nothing.
-  const MapQuerySession& map = state.analysis.map;
-  if (map_picture_drawn && map.adopted_result != nullptr && (map.adopted_id == map.intent_id) &&
-      PointMassAtSunDirection(info, mass)) {
-    LUMICE_PathMapInfo map_info{};
-    map_info.struct_size = sizeof(map_info);
-    LUMICE_PathMapPointMass map_mass{};
-    map_mass.struct_size = sizeof(map_mass);
-    if (LUMICE_PathMapGetInfo(map.adopted_result.get(), &map_info) == LUMICE_PATH_READ_OK &&
-        map_info.crystal_id == info.crystal_id && map_info.wavelength_nm == info.wavelength_nm &&
-        LUMICE_PathMapGetPointMass(map.adopted_result.get(), &map_mass) == LUMICE_PATH_READ_OK && map_mass.pixel >= 0) {
-      if (legend != nullptr) {
-        legend->point_image = true;  // the map's own sun cell carries the image, in this view
-      }
-      return;
-    }
   }
   ImDrawList* dl = ImGui::GetWindowDrawList();
   const ImU32 ink = static_cast<ImU32>(kPointMassColour);
@@ -2397,9 +2371,7 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   // The adopted point query's rank-0 image (analysis ink): under the Overlays master gate AND
   // the existing Point images group's graphics gate — one group, one visibility rule.
   if (overlays) {
-    // The map raster actually submitted this frame — the reuse branch's premise (a failed
-    // upload or FBO draws no picture, so nothing is reused off one).
-    DrawPointImageMarker(state, view, pic_min, pic_px, gates.points.graphics, display.texture != 0, &legend);
+    DrawPointImageMarker(state, view, pic_min, pic_px, gates.points.graphics, &legend);
   }
 
   g_map_legend = legend;

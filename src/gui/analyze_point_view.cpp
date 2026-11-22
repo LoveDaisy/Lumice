@@ -3462,31 +3462,23 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
 // rows continue (the factors are the document's own payload).
 std::vector<std::string> PointFaceEnergyFoldLines(const LUMICE_PathPointSample& sample, const int* faces,
                                                   size_t face_count) {
-  std::vector<std::string> lines;
   const size_t interfaces = sample.interface_count;
-  const bool have_faces = faces != nullptr && face_count == interfaces;
   if (interfaces == 0) {
-    return lines;
+    return {};
   }
+  // The row's role/face/factor half is PointFactorInterfaceLines' own output — the fold table
+  // adds only the common-denominator light column, so the two spellings cannot drift (a56: the
+  // unit pins on the base rows bind the fold's rows by construction).
+  const std::vector<std::string> base_rows = PointFactorInterfaceLines(sample, faces, face_count);
   const std::vector<RayTraceSegmentEnergy> energies =
       RayTraceCumulativeEnergies(sample.interface_transmittances, interfaces);
-  const auto contact_name = [&](size_t i) {
-    char buf[32];
-    if (have_faces) {
-      std::snprintf(buf, sizeof(buf), "face %d", faces[i]);
-    } else {
-      std::snprintf(buf, sizeof(buf), "contact %zu", i + 1);
-    }
-    return std::string(buf);
-  };
-  char buf[256];
-  for (size_t i = 0; i < interfaces; ++i) {
-    const PointFaceRole role = PointFaceRoleFor(i, interfaces);
-    const double factor = sample.interface_transmittances != nullptr ? sample.interface_transmittances[i] : 0.0;
-    std::snprintf(buf, sizeof(buf), "%s, %s: %s = %.6g (%s) · light after: %s", contact_name(i).c_str(),
-                  PointFaceRoleWords(role), PointFaceFactorName(role), factor, PointFaceConditionalWords(role),
+  std::vector<std::string> lines;
+  lines.reserve(base_rows.size());
+  char suffix[64];
+  for (size_t i = 0; i < base_rows.size(); ++i) {
+    std::snprintf(suffix, sizeof(suffix), " · light after: %s",
                   energies[i + 1].valid ? PointLossPercentText(energies[i + 1].value).c_str() : "n/a");
-    lines.emplace_back(buf);
+    lines.emplace_back(base_rows[i] + suffix);
   }
   return lines;
 }
