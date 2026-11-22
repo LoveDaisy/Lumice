@@ -3,6 +3,8 @@
 
 #include <array>
 #include <atomic>
+#include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <optional>
 #include <vector>
@@ -270,6 +272,31 @@ struct UploadResult {
 // preview_renderer.cpp.
 const char* UploadStageName(UploadResult::Stage stage);
 
+// The strip staging budget: each of the two staging slots is allocated at this target, so a
+// full-size upload's staging never exceeds ~4 MiB regardless of the frame's size (8192x4096
+// lands at 2 x 1.97 MiB — the 4 MiB is a budget the row granularity can undershoot, not a
+// capacity every resolution fills). This replaces the two full-size slots — 2 x 192 MiB at
+// 8192x4096 — whose nominal byte count used to dominate the preview's GL footprint.
+inline constexpr size_t kXyzStagingSlotTargetBytes = 2u * 1024u * 1024u;
+
+// How one full-size XYZ upload is cut into staging strips. Pure arithmetic over the frame's
+// shape (unit-testable without a window); the renderer consumes one plan per attempt and never
+// re-derives a second cut of the same frame. rows_per_strip is a whole number of ROWS (the strip
+// is a band of full-width rows — GL_UNPACK_ALIGNMENT 2 covers every width because a row is
+// width*3*2 bytes, always even), so the tail strip's valid data length is its remaining row
+// count and the slots' allocation is rows_per_strip * row_bytes — the CAPACITY a slot holds,
+// which the tail strip's glTexSubImage2D height deliberately does not have to fill.
+struct XyzStripPlan {
+  int rows_per_strip = 0;  // >= 1, <= height
+  int strip_count = 0;     // ceil(height / rows_per_strip)
+  size_t row_bytes = 0;    // width * 3 * sizeof(uint16_t): one row of half bits
+  size_t slot_bytes = 0;   // rows_per_strip * row_bytes: what one staging slot is allocated at
+};
+
+// The plan for a (width, height) half-bit frame. `max_rows_override` > 0 caps rows_per_strip
+// (the test seam above); it can only shrink the strips, never grow them past the budget rule.
+XyzStripPlan ComputeXyzStripPlan(int width, int height, int max_rows_override);
+
 class PreviewRenderer {
  public:
   PreviewRenderer();
@@ -320,13 +347,29 @@ class PreviewRenderer {
   // instead — see UpdateCpuXyzTextureData.
   UploadResult UploadXyzTexture(const float* data, int width, int height);
 
-  // Full-resolution XYZ upload WITHOUT the double PBO staging: the quantize happens into a
-  // transient CPU buffer and glTexImage2D copies from client memory, synchronously. Recovery
-  // tier 1 — what a PBO allocation/map/wait failure falls back to when the texture itself still
-  // fits (plan 814 §3.2: "低 staging 压力的完整上传路径"). Same UploadResult contract, same
-  // witness, same commit as the PBO path; no fence is created because no async DMA exists to
-  // guard.
+  // Upload a frame that is ALREADY the quantized half bits at storage scale `scale` — a v6 .lmc's
+  // texture section exactly as the file held it (LmcTexture::xyz_half). The bits are the upload
+  // INPUT, not a preview of floats: no dequantize, no re-quantize, no full-frame float mirror, and
+  // the held scale becomes tex_xyz_scale_ unchanged. That is what keeps a reopened document's GPU
+  // texture bit-identical to the live one's while the CPU side never holds anything but the file's
+  // own 192 MiB (at 8192x4096): quantize(dequantize(quantize(x))) == quantize(x) made the v6
+  // round trip exact, and this path skips even the first quantize. Same UploadResult contract,
+  // same strip-staged path, same one-scale-per-attempt rule as UploadXyzTexture.
+  UploadResult UploadXyzHalfTexture(const uint16_t* half_bits, int width, int height, float scale);
+
+  // Full-resolution XYZ upload WITHOUT the staging slots: recovery tier 1 — what a staging
+  // allocation/map/wait failure falls back to when the texture itself still fits (plan 814 §3.2:
+  // "低 staging 压力的完整上传路径"). The float variant quantizes into one strip-sized CPU scratch
+  // (never a full-frame transient — the memory-pressure situation this tier serves is exactly
+  // where a 192 MiB scratch would throw) and uploads strip-wise from client memory; no fence is
+  // created because no async DMA exists to guard. Same UploadResult contract, same witness, same
+  // commit as the staging path.
   UploadResult UploadXyzTextureNoStaging(const float* data, int width, int height);
+
+  // The half twin of UploadXyzTextureNoStaging: client-memory strips read STRAIGHT from the held
+  // bits — no staging slot and no transient copy, because the upload's source is already in
+  // client memory and already quantized. Recovery tier 1 for a half file source.
+  UploadResult UploadXyzHalfTextureNoStaging(const uint16_t* half_bits, int width, int height, float scale);
 
   // Render preview into the given viewport region (in framebuffer pixels)
   void Render(int vp_x, int vp_y, int vp_w, int vp_h, const PreviewParams& params);
@@ -361,13 +404,31 @@ class PreviewRenderer {
   // so Save copies it once, at Save time.
   void UpdateCpuXyzTextureData(const float* data, int width, int height, const XyzTextureMeta& meta);
 
-  // CPU-side mirror access (for .lmc file save). The two data getters are mutually exclusive by
-  // construction: whichever of the mirrors was written last cleared the other, and
-  // GetCpuTextureMode() says which one is live — kXyz reads GetXyzTextureData(), the two sRGB
-  // modes read GetTextureData(). A caller must branch on the mode, not on which pointer is null.
+  // The half twin of UpdateCpuXyzTextureData: the kXyz mirror takes a frame ALREADY held as
+  // binary16 + scale — a v6 open's writer. The bits are stored as they came, so a re-save writes
+  // exactly the file's own texels and an upload consumes them without a representation change.
+  // Clears the other two mirrors, like every mirror writer.
+  void UpdateCpuXyzHalfTextureData(const uint16_t* half_bits, int width, int height, float scale,
+                                   const XyzTextureMeta& meta);
+
+  // CPU-side mirror access (for .lmc file save). The mirror holds exactly one frame in exactly
+  // one of three representations, and GetCpuTextureMode() names the MEANING, not the storage:
+  // kXyz reads one of GetXyzTextureData() (float32 — a live frame refreshed at Save, or a v5
+  // file) or GetXyzHalfTextureData() (binary16 + GetXyzHalfTextureScale() — a v6 file's own
+  // bits, held in the form the file carries; CpuXyzStorageIsHalf() is the discriminator), the
+  // two sRGB modes read GetTextureData(). A caller must branch on the mode (and, under kXyz, on
+  // the storage query), not on which pointer is null.
   TextureMode GetCpuTextureMode() const { return cpu_tex_mode_; }
   const unsigned char* GetTextureData() const { return tex_data_.empty() ? nullptr : tex_data_.data(); }
   const float* GetXyzTextureData() const { return tex_xyz_data_.empty() ? nullptr : tex_xyz_data_.data(); }
+  const uint16_t* GetXyzHalfTextureData() const {
+    return tex_xyz_half_data_.empty() ? nullptr : tex_xyz_half_data_.data();
+  }
+  float GetXyzHalfTextureScale() const { return tex_xyz_half_scale_; }
+  // Which storage the kXyz CPU mirror holds. False (float32) is the historical shape; true means
+  // the frame is held as binary16 + scale exactly as a v6 file stored it, so Save re-encodes the
+  // held bits and an upload consumes them without a representation change.
+  bool CpuXyzStorageIsHalf() const { return !tex_xyz_half_data_.empty(); }
   const XyzTextureMeta& GetXyzTextureMeta() const { return tex_xyz_meta_; }
   int GetTextureWidth() const { return tex_width_; }
   int GetTextureHeight() const { return tex_height_; }
@@ -412,6 +473,14 @@ class PreviewRenderer {
     return true;
   }
 
+  // Test-only strip-size seam (gui_test main thread; never set in production): caps the strip
+  // staging's rows per strip, so a small test image — the quick suite cannot afford a 8192x4096
+  // frame — is still cut into MULTIPLE strips and exercises the per-strip fence wait, the slot
+  // ping-pong and the tail strip. 0 = the production size rule. Production reads no env var and
+  // takes no option for this: the seam exists so witnesses can reach states the default plan
+  // only reaches at sizes the quick suite must not allocate.
+  static void SetXyzStripRowsForTest(int max_rows);
+
   // Conservative revoke under a SHARED-CONTEXT OOM (GL spec §2.5: after the error the whole GL
   // state is undefined, and that state is shared by every renderer in the context — the
   // transient full-source export renderer included). A revoke that answers only the object that
@@ -422,12 +491,14 @@ class PreviewRenderer {
   void RevokeDisplayForContextOom();
 
   // End the staging slots' lifecycle when the upload path stops using them (a recovery tier at
-  // or above 1 uploads from client memory; the explicit-unavailable state uploads nothing): each
-  // full-size slot is nominal 192 MiB at an 8192x4096 source, and a document that settles at a
-  // reduced tier would otherwise carry both slots — and their fences — until Destroy. The PBO
-  // path re-allocates its slot lazily if a later cycle re-establishes tier 0. Fence deletion
-  // without a wait is safe by the spec: GL defers the underlying storage's reclamation while a
-  // command stream still references it.
+  // or above 1 uploads from client memory; the explicit-unavailable state uploads nothing) AND
+  // whenever a strip attempt is revoked before completing: each slot is nominal ~2 MiB (a
+  // two-slot full-size store — 2 x 192 MiB at 8192x4096 — is what the strip plan replaced), a
+  // document that settles at a reduced tier would otherwise carry both slots — and their
+  // fences — until Destroy, and a revoked display must not leave guards behind for a recovery
+  // path to inherit. The PBO path re-allocates its slot lazily if a later cycle re-establishes
+  // tier 0. Fence deletion without a wait is safe by the spec: GL defers the underlying
+  // storage's reclamation while a command stream still references it.
   void ReleaseStagingSlots();
 
   // Test-only observability (gui_test main thread): the registered byte count of one staging
@@ -476,9 +547,11 @@ class PreviewRenderer {
   // refreshed only at Save / Open time, so the two can legitimately disagree in between — and
   // since 814 their SIZES are separate fields too (cpu_tex_width_/height_), so a display-side
   // failure can never resize the save source and a mirror refresh can never resize the display.
-  std::vector<unsigned char> tex_data_;  // RGB uint8 (kSrgbComposited / kSrgbRadiance)
-  std::vector<float> tex_xyz_data_;      // linear XYZ float (kXyz)
-  XyzTextureMeta tex_xyz_meta_;          // companion of tex_xyz_data_
+  std::vector<unsigned char> tex_data_;      // RGB uint8 (kSrgbComposited / kSrgbRadiance)
+  std::vector<float> tex_xyz_data_;          // linear XYZ float32 (kXyz, float storage)
+  std::vector<uint16_t> tex_xyz_half_data_;  // linear XYZ binary16 (kXyz, half storage — a v6 file's own bits)
+  float tex_xyz_half_scale_ = 0.0f;          // companion of tex_xyz_half_data_: the storage scale the file recorded
+  XyzTextureMeta tex_xyz_meta_;              // companion of either XYZ representation
   TextureMode cpu_tex_mode_ = TextureMode::kSrgbComposited;
   int cpu_tex_width_ = 0;
   int cpu_tex_height_ = 0;
@@ -520,6 +593,8 @@ class PreviewRenderer {
   // The all-instances test hook above; defined in preview_renderer.cpp.
   static UploadFaultHook s_upload_fault_hook_all_;
   static int s_shader_compile_fault_for_test_;
+  // SetXyzStripRowsForTest's override; defined in preview_renderer.cpp.
+  static int s_strip_rows_override_for_test_;
   // LiveInstanceCountForTest's counter; incremented/decremented by the constructor/destructor
   // (defined in preview_renderer.cpp).
   static std::atomic<int> s_live_instances_for_test_;
@@ -552,13 +627,34 @@ class PreviewRenderer {
   // GL body shared by UploadTexture / UploadRadianceTexture; see the definition.
   UploadResult UploadUint8Texture(const unsigned char* data, int width, int height, TextureMode mode);
 
-  // The tail both XYZ paths share, from the define call through the commit: error-checked
-  // define-or-update of the already-quantized half bits at (width, height), the level-0 storage
-  // witness, the OOM/ordinary failure branches, the staging-slot fence (only when staging_slot
-  // >= 0 — the client-memory path has no DMA in flight to guard), and on success the display
-  // commit. Caller has texture_ bound; define_data is the client pointer for a client-memory
-  // define, or null while a PIXEL_UNPACK_BUFFER is bound (the pointer-as-offset mechanism).
-  UploadResult UploadXyzBitsTail(const void* define_data, int width, int height, float scale, int staging_slot);
+  // One XYZ upload attempt's input: the frame either as linear floats (quantized here, once, at
+  // one frame-wide scale) or as already-encoded half bits with their storage scale. Exactly one
+  // of the two pointers is non-null; the four public XYZ entry points are thin constructors of
+  // this plus a use_staging flag.
+  struct XyzUploadInput {
+    const float* floats = nullptr;
+    const uint16_t* half_bits = nullptr;
+    float half_scale = 1.0f;
+    int width = 0;
+    int height = 0;
+  };
+
+  // The strip-staged upload core all four XYZ entry points share — the frame-level acceptance
+  // boundary of plan H1 §3.2. One attempt = one complete pass over ComputeXyzStripPlan's strips,
+  // each strip written through one of the two staging slots (strip k -> slot k&1, the slot's
+  // fence waited before its reuse) or — with use_staging false — straight from client memory.
+  // The display metadata, the no-sample gate and the pending-blank flag commit together, once,
+  // AFTER the storage witness has verified the whole frame's storage; any earlier failure leaves
+  // them describing whatever truthfully displayed before. The per-failure ruling is the frame's,
+  // not the strip's: an ordinary GL error BEFORE this attempt has modified the texture (the
+  // hook/skip convention means "touched" is still false) leaves the previous frame provably
+  // standing (old_frame_retained true); ANY failure — ordinary or OOM — after a successful
+  // define or strip write takes the conservative revoke, because the texture then holds a mix
+  // of the old frame and this attempt's strips and nothing can vouch for it as either. OOM takes
+  // the revoke wherever it lands (the 814 unified §2.5 ruling: the GL's whole state is
+  // undefined), and a revoked attempt ends the staging slots' lifecycle so no unguarded slot or
+  // orphan fence survives into the recovery path.
+  UploadResult UploadXyzStrips(const XyzUploadInput& input, bool use_staging);
 
   // Drop one staging slot's buffer object and forget its registered size, so the next cycle in
   // that slot allocates a fresh store instead of writing into a buffer whose guard is gone (a
@@ -575,12 +671,13 @@ class PreviewRenderer {
   // failure by design.
   UploadResult ConservativeRevoke(UploadResult::Stage stage, int gl_error, int req_w, int req_h);
 
-  // PBO double-buffer for async XYZ texture upload (GLsync stored as void* to
-  // avoid including GL headers in this header; cast to GLsync in the .cpp).
+  // Strip staging slots for async XYZ upload — TWO slots of ~2 MiB each (kXyzStagingSlotTargetBytes),
+  // ping-ponged per strip: strip k writes slot k&1, whose fence (from strip k-2) is waited before
+  // the reuse. The full-size double-PBO pair this replaced stored 2 x 192 MiB at 8192x4096.
+  // GLsync stored as void* to avoid including GL headers in this header; cast to GLsync in the .cpp.
   std::array<unsigned int, 2> pbo_ = { 0, 0 };
   std::array<void*, 2> pbo_fence_ = { nullptr, nullptr };
   std::array<size_t, 2> pbo_byte_count_ = { 0, 0 };
-  int pbo_index_ = 0;
 
   // Background image texture (no CPU-side copy — loaded from file path)
   unsigned int bg_texture_ = 0;

@@ -30,6 +30,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -1023,4 +1024,125 @@ TEST(PreviewDowngrade, LadderStopsAtTheMinimumDualDiscFloor) {
   // A frame already at the floor has no next candidate; steps == 0 is the frame itself.
   EXPECT_TRUE(lumice::gui::DowngradedSize(128, 64, 0, &w, &h));
   EXPECT_FALSE(lumice::gui::DowngradedSize(128, 64, 1, &w, &h));
+}
+
+// The half-source twin must be INDISTINGUISHABLE from the float twin run on the canonical values:
+// a held frame's bits ARE its canonical values (the bits were produced by QuantizeXyzToHalf), so
+// dequantizing one row is exactly the float twin's quantize-then-dequantize of that row. Pinning
+// byte equality between the twins is what forbids the half variant from ever growing a second
+// averaging path that drifts.
+TEST(PreviewDowngrade, HalfSourceTwinMatchesTheFloatTwinOnTheCanonicalValues) {
+  // 512x256 takes two steps to the floor-sized 128x64; a 256x128 plane would cross the floor on
+  // the second step and the step would (correctly) refuse.
+  constexpr int kW = 512;
+  constexpr int kH = 256;
+  const auto coordinate = [](int x, int y, int c) {
+    return static_cast<float>(((x * 7 + y * 5 + c * 13) % 61) - 30) / 30.0f * 40.0f;
+  };
+  std::vector<float> floats(static_cast<size_t>(kW) * kH * 3);
+  for (int y = 0; y < kH; ++y) {
+    for (int x = 0; x < kW; ++x) {
+      for (int c = 0; c < 3; ++c) {
+        floats[(static_cast<size_t>(y) * kW + x) * 3 + c] = coordinate(x, y, c);
+      }
+    }
+  }
+  const float scale = lumice::gui::ComputeXyzHalfScale(floats.data(), floats.size());
+  std::vector<uint16_t> bits(floats.size());
+  lumice::gui::QuantizeXyzToHalf(floats.data(), floats.size(), scale, bits.data());
+
+  std::vector<float> from_floats;
+  int fw = 0;
+  int fh = 0;
+  ASSERT_TRUE(lumice::gui::DowngradeXyzPlaneBounded(floats.data(), kW, kH, 2, &fw, &fh, from_floats));
+  std::vector<float> from_bits;
+  int bw = 0;
+  int bh = 0;
+  ASSERT_TRUE(lumice::gui::DowngradeXyzHalfPlaneBounded(bits.data(), scale, kW, kH, 2, &bw, &bh, from_bits));
+  ASSERT_EQ(fw, bw);
+  ASSERT_EQ(fh, bh);
+  ASSERT_EQ(from_floats.size(), from_bits.size());
+  for (size_t i = 0; i < from_floats.size(); ++i) {
+    EXPECT_EQ(from_floats[i], from_bits[i]) << "texel " << i << ": the twins disagree";
+  }
+
+  // Law 1 still holds through the twin: a constant half plane downgrades to the same constant.
+  std::vector<float> constant(static_cast<size_t>(kW) * kH * 3, 8.0f);
+  const float c_scale = lumice::gui::ComputeXyzHalfScale(constant.data(), constant.size());
+  std::vector<uint16_t> c_bits(constant.size());
+  lumice::gui::QuantizeXyzToHalf(constant.data(), constant.size(), c_scale, c_bits.data());
+  std::vector<float> c_dst;
+  int cw = 0;
+  int ch = 0;
+  ASSERT_TRUE(lumice::gui::DowngradeXyzHalfPlaneBounded(c_bits.data(), c_scale, kW, kH, 1, &cw, &ch, c_dst));
+  ASSERT_EQ(cw, kW / 2);
+  ASSERT_EQ(ch, kH / 2);
+  for (size_t i = 0; i < c_dst.size(); ++i) {
+    EXPECT_NEAR(c_dst[i], 8.0f, 8.0f * 2e-3f) << "texel " << i << " of a constant half plane moved";
+  }
+
+  // Every candidate derives from the ORIGINAL plane by step count — the twin reads the caller's
+  // bits, so re-running it must reproduce the same candidate (no compounding across attempts).
+  std::vector<float> again;
+  int aw = 0;
+  int ah = 0;
+  ASSERT_TRUE(lumice::gui::DowngradeXyzHalfPlaneBounded(bits.data(), scale, kW, kH, 2, &aw, &ah, again));
+  ASSERT_EQ(again, from_bits);
+
+  // The allocation fault propagates from the twin like it does from the float twin.
+  lumice::gui::SetDowngradeAllocFaultForTest(1);
+  std::vector<float> faulted;
+  int xw = 0;
+  int xh = 0;
+  EXPECT_THROW(lumice::gui::DowngradeXyzHalfPlaneBounded(bits.data(), scale, kW, kH, 1, &xw, &xh, faulted),
+               std::bad_alloc);
+  lumice::gui::SetDowngradeAllocFaultForTest(0);
+}
+
+// The strip staging plan: rows are what the budget buys, the override only shrinks, a small
+// frame is one strip, the tail strip is the remaining rows (never an empty strip), and the slot
+// allocation is the capacity the plan actually holds — the numbers the renderer maps, fences and
+// subimages against, asserted here so the GL code never re-derives a second cut.
+TEST(XyzStripPlan, BudgetOverrideAndTailAreAllRowGranular) {
+  namespace g = lumice::gui;
+  // The production cut of the archive size: the budget buys whole rows, the count is the ceil,
+  // and the two slots together stay inside the ~4 MiB staging budget.
+  const g::XyzStripPlan big = g::ComputeXyzStripPlan(8192, 4096, 0);
+  EXPECT_EQ(big.row_bytes, static_cast<size_t>(8192) * 3 * sizeof(uint16_t));
+  EXPECT_GT(big.rows_per_strip, 0);
+  EXPECT_EQ(big.slot_bytes, static_cast<size_t>(big.rows_per_strip) * big.row_bytes);
+  EXPECT_EQ(big.strip_count, (4096 + big.rows_per_strip - 1) / big.rows_per_strip);
+  EXPECT_LE(2 * big.slot_bytes, 2 * g::kXyzStagingSlotTargetBytes);
+  EXPECT_LT(2 * big.slot_bytes, 8192.0 * 4096.0 * 3.0 * 2.0) << "staging is a fraction of the frame, not a copy";
+
+  // A small frame is ONE strip: the plan never invents empty strips, and the slot is exactly the
+  // frame's own byte count.
+  const g::XyzStripPlan small = g::ComputeXyzStripPlan(16, 10, 0);
+  EXPECT_EQ(small.rows_per_strip, 10);
+  EXPECT_EQ(small.strip_count, 1);
+  EXPECT_EQ(small.slot_bytes, static_cast<size_t>(16) * 10 * 3 * sizeof(uint16_t));
+
+  // The override only shrinks: 2-row strips of a 9-row frame are 2,2,2,2,1 — four full strips
+  // and a one-row tail, the cut the multi-strip witnesses ride.
+  const g::XyzStripPlan capped = g::ComputeXyzStripPlan(16, 9, 2);
+  EXPECT_EQ(capped.rows_per_strip, 2);
+  EXPECT_EQ(capped.strip_count, 5);
+  EXPECT_EQ(capped.slot_bytes, 2 * capped.row_bytes);
+  // The override cannot push past the budget rule: a cap above what ~2 MiB buys is ignored.
+  const g::XyzStripPlan uncapped = g::ComputeXyzStripPlan(8192, 4096, 100000);
+  EXPECT_EQ(uncapped.rows_per_strip, big.rows_per_strip);
+
+  // Odd width: a row is still one unit (width*6 bytes, even, alignment 2), never split.
+  const g::XyzStripPlan odd = g::ComputeXyzStripPlan(15, 9, 2);
+  EXPECT_EQ(odd.row_bytes, static_cast<size_t>(15) * 3 * sizeof(uint16_t));
+  EXPECT_EQ(odd.strip_count, 5);
+
+  // Degenerate sizes stay sane: a one-row frame is one one-row strip; a width so wide the
+  // budget buys less than a row still gets that row.
+  const g::XyzStripPlan tiny = g::ComputeXyzStripPlan(4, 1, 0);
+  EXPECT_EQ(tiny.rows_per_strip, 1);
+  EXPECT_EQ(tiny.strip_count, 1);
+  const g::XyzStripPlan wide = g::ComputeXyzStripPlan(400000, 3, 0);
+  EXPECT_EQ(wide.rows_per_strip, 1);
+  EXPECT_EQ(wide.strip_count, 3);
 }

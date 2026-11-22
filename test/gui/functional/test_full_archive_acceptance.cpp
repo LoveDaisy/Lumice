@@ -18,6 +18,7 @@
 // the cross-machine investigation; this leg's job is "loads, displays at full size, no failure
 // record", which is a state check plus a screenshot, not a tolerance question.
 
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <string>
@@ -83,6 +84,28 @@ void RegisterFullArchiveAcceptanceTests(ImGuiTestEngine* engine) {
     IM_CHECK(gui::g_preview.GetTextureMode() == gui::PreviewRenderer::TextureMode::kXyz);
     IM_CHECK(gui::g_state.snapshot_intensity > 0.0f);
 
+    // The high-res-preview witnesses (the reason this leg exists beyond the 814 form). The
+    // reopened document's complete source is the file's own HALF representation — 8192x4096x3
+    // binary16 = exactly 192 MiB held as bits, with NO full-float mirror beside it (the +384 MiB
+    // expansion the strip-staging work removed) — and the staging the tier-0 upload walked away
+    // with is two strip-sized slots inside the ~4 MiB budget, not the two full-size stores the
+    // previous upload scheme carried (2 x 192 MiB at this size).
+    IM_CHECK(gui::g_preview.CpuXyzStorageIsHalf());
+    IM_CHECK(gui::g_preview.GetXyzTextureData() == nullptr);  // no float mirror beside the half bits
+    const size_t mirror_bytes = static_cast<size_t>(8192) * 4096 * 3 * sizeof(uint16_t);
+    IM_CHECK_EQ(mirror_bytes, 201326592u);  // the nominal account: 192 MiB of half bits
+    const size_t slot0 = gui::g_preview.StagingSlotByteCountForTest(0);
+    const size_t slot1 = gui::g_preview.StagingSlotByteCountForTest(1);
+    IM_CHECK(slot0 > 0);  // the staged upload allocated its first slot
+    IM_CHECK(slot1 > 0);  // a 98-strip cut of 8192x4096 writes both ping-pong slots
+    IM_CHECK(slot0 <= gui::kXyzStagingSlotTargetBytes);
+    IM_CHECK(slot1 <= gui::kXyzStagingSlotTargetBytes);
+    fprintf(stderr,
+            "[highres-acceptance] staging slots: %zu + %zu bytes (budget %zu each); mirror: %zu half bytes; "
+            "scale %f\n",
+            slot0, slot1, gui::kXyzStagingSlotTargetBytes, mirror_bytes,
+            static_cast<double>(gui::g_preview.GetXyzHalfTextureScale()));
+
     // The screenshot: the live preview viewport's pixels, saved next to the log for eyeballing.
     // Size tolerance ±2 px absorbs the viewport fitting the window basis of whatever session
     // runs this; the DISPLAY metadata above is the exact-size witness, this is the picture.
@@ -112,5 +135,41 @@ void RegisterFullArchiveAcceptanceTests(ImGuiTestEngine* engine) {
     // And the negative-space witness: no incident recorded (a failure anywhere in the open's
     // upload would have armed the incident record the recovery surface keeps).
     IM_CHECK(!gui::GetPreviewUploadIncident().has_incident);
+  };
+
+  // The live-upload timing leg: N wall-clock reps of one production UploadXyzTexture call at the
+  // archive's own 8192x4096 size, each number printed on one line for the paired baseline/new
+  // comparison the acceptance record needs. This case deliberately asserts NOTHING about the
+  // numbers — the comparison is between two builds of this same case on the same machine (the
+  // un-staged upload path and the strip path), recorded by the operator, not an in-test
+  // threshold. The reps run on the real renderer with the real strip plan; the fence waits the
+  // ping-pong needs are part of the per-snapshot cost and are not excluded.
+  ImGuiTest* bench = IM_REGISTER_TEST(engine, "full_archive_acceptance", "the_8192_live_upload_is_timed");
+  bench->GuiFunc = AcceptanceOpenGuiFunc;
+  bench->TestFunc = [](ImGuiTestContext* ctx) {
+    ResetTestState();
+    gui::g_preview.SetUploadFaultHookForTest(nullptr);
+    constexpr int kW = 8192;
+    constexpr int kH = 4096;
+    // A deterministic non-uniform frame, generated on the spot (the archive file is not needed
+    // for the timing; the SIZE is what the strip plan and the cost structure key on).
+    std::vector<float> frame(static_cast<size_t>(kW) * kH * 3);
+    for (size_t i = 0; i < frame.size(); ++i) {
+      frame[i] = static_cast<float>(static_cast<double>(i % 9973) / 9973.0);
+    }
+    constexpr int kReps = 7;
+    for (int rep = 0; rep < kReps; ++rep) {
+      const auto t0 = std::chrono::steady_clock::now();
+      const gui::UploadResult r = gui::g_preview.UploadXyzTexture(frame.data(), kW, kH);
+      const auto t1 = std::chrono::steady_clock::now();
+      if (!r.ok) {
+        IM_ERRORF("upload bench rep %d failed: stage=%d gl_error=0x%04X", rep, static_cast<int>(r.stage), r.gl_error);
+        continue;  // non-fatal on purpose (loop-fatal-assert rule): report every rep's number
+      }
+      const double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+      fprintf(stderr, "[highres-upload-bench] rep %d: %.1f ms (staging slot0=%zu slot1=%zu)\n", rep, ms,
+              gui::g_preview.StagingSlotByteCountForTest(0), gui::g_preview.StagingSlotByteCountForTest(1));
+      ctx->Yield(1);
+    }
   };
 }

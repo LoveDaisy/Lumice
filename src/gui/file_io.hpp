@@ -1,6 +1,7 @@
 #ifndef LUMICE_GUI_FILE_IO_HPP
 #define LUMICE_GUI_FILE_IO_HPP
 
+#include <cstdint>
 #include <filesystem>
 #include <map>
 #include <memory>
@@ -237,16 +238,28 @@ bool SaveLmcFile(const std::filesystem::path& path, const GuiState& state, const
 //                     EV/Print still need original XYZ. Run then Save replaces either old bake.
 //   kXyz            — v5+: the unexposed linear XYZ energy the live preview itself uploads, with
 //                     the measurements (`meta`) that expose it. Same shader branch as a live run.
-// Exactly one of `srgb` / `xyz` is non-empty when HasPixels(), and `mode` names it.
+// Exactly one of `srgb` / `xyz` / `xyz_half` is non-empty when HasPixels(), and `mode` names the
+// meaning. Under kXyz the STORAGE is one of two representations: `xyz` (float32, a v5 section)
+// or `xyz_half` + `xyz_half_scale` (binary16, a v6 section — the bits exactly as the file held
+// them). The half representation is deliberate: dequantizing at load time is the full-float
+// mirror (+384 MiB and a re-quantize on every upload at 8192x4096) the high-res preview task
+// exists to remove, and the file's own bits upload directly
+// (PreviewRenderer::UploadXyzHalfTexture) while still exposing linear values wherever a consumer
+// truly needs them, one bounded row at a time.
 struct LmcTexture {
   int width = 0;  // 0x0 = the file carried no texture section
   int height = 0;
   PreviewRenderer::TextureMode mode = PreviewRenderer::TextureMode::kSrgbComposited;
   std::vector<unsigned char> srgb;  // kSrgbComposited / kSrgbRadiance: width*height*3 bytes
-  std::vector<float> xyz;           // kXyz: width*height*3 floats
+  std::vector<float> xyz;           // kXyz, float32 storage: width*height*3 floats (v5)
+  std::vector<uint16_t> xyz_half;   // kXyz, binary16 storage: width*height*3 bits (v6)
+  float xyz_half_scale = 0.0f;      // companion of xyz_half: the storage scale the file recorded
   XyzTextureMeta meta;              // kXyz only; default (all zero) otherwise
 
   bool HasPixels() const { return width > 0 && height > 0; }
+  // Which kXyz storage this texture holds. False for a v5 section (or a non-XYZ one, where the
+  // answer is meaningless); true for a v6 section.
+  bool XyzStorageIsHalf() const { return !xyz_half.empty(); }
 };
 
 // Load .lmc binary file. If a texture section is present, it is decoded into `tex`.
