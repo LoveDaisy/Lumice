@@ -288,6 +288,28 @@ TEST(RunLifecycleChain, ABackendSwapClearsTheFenceTheOldServersEpochsRaised) {
   EXPECT_TRUE(ShouldUploadPayload(fresh, st.last_uploaded_texture_serial, st.display_epoch_floor));
 }
 
+// 814 — a failed upload pauses auto-uploads for the generation it failed in, and nothing else
+// un-pauses them: not the poll rate (a constrained machine must not re-attempt a giant allocation
+// once per poll), not a newly minted serial (the serial cursor is the exact-once mechanism, not an
+// authorization). What re-authorizes is a new generation — a Run mints committed_epoch+1 and the
+// recorded latch epoch stops matching — or a document switch, which clears the latch outright
+// (ResetFrontendState). The latch also has nothing to say once the bool is false: a success, a
+// backend swap and a document switch all write it false.
+TEST(RunLifecycleChain, AnUploadFailureLatchBlocksOnlyItsOwnGeneration) {
+  const unsigned long long kGen = 4;
+
+  // Latched in generation 4: every poll of the same generation is blocked, whatever the serial.
+  EXPECT_TRUE(ShouldBlockUploadForLatch(/*upload_latched=*/true, /*latch_epoch=*/kGen, /*committed_epoch=*/kGen));
+
+  // A new Run mints committed_epoch+1: exactly one cycle is re-authorized, and a fresh failure
+  // would re-latch against the new generation.
+  EXPECT_FALSE(ShouldBlockUploadForLatch(/*upload_latched=*/true, /*latch_epoch=*/kGen, /*committed_epoch=*/kGen + 1));
+
+  // An explicit clear (document switch, backend swap, or the success branch's defensive write)
+  // lifts the pause regardless of epochs.
+  EXPECT_FALSE(ShouldBlockUploadForLatch(/*upload_latched=*/false, /*latch_epoch=*/kGen, /*committed_epoch=*/kGen));
+}
+
 // ---------------------------------------------------------------------------------------------
 // E7 — the state the user reads off the screen is a function of intent, epoch and the last
 // observation, and of nothing else.

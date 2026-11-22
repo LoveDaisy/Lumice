@@ -1682,6 +1682,10 @@ struct GuiState {
     committed_epoch = 0;
     display_epoch_floor = 0;
     last_uploaded_texture_serial = 0;
+    // A reconstructed server is a new world for uploads too: a latch recorded against the old
+    // backend's generation must not suppress the fresh backend's first frame.
+    upload_latched = false;
+    upload_latch_epoch = 0;
     snapshot_intensity = 0;  // immediate clear; the new backend's first payload fills it back in
     snapshot_emitted_energy = 0;
     p99_raw_y = 0.0f;
@@ -1975,6 +1979,16 @@ struct GuiState {
   // Consumer-side exact-once upload cursor (migrated from a SyncFromPoller file-scope static in
   // 1.4). SyncFromPoller uploads a payload only when its snapshot texture_serial differs.
   unsigned long long last_uploaded_texture_serial = 0;
+
+  // Upload failure latch (814): the last auto-upload attempt failed, and auto-uploads stay paused
+  // so a constrained machine is not made to re-attempt a giant allocation at the poll rate. The
+  // latch is bound to the generation it failed in (upload_latch_epoch = committed_epoch at
+  // failure): SyncFromPoller skips the upload branch while both hold, and a new Run (which mints
+  // committed_epoch+1) or a document switch re-authorizes exactly one cycle. Explicit retries and
+  // the recovery ladder that consumes this state are 814 Step 3. Like the cursor above this is
+  // consumer runtime state, not document state — never persisted.
+  bool upload_latched = false;
+  unsigned long long upload_latch_epoch = 0;
 
   // Stats from last poll
   LUMICE_RayCount stats_ray_seg_num = 0;
