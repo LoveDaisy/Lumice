@@ -101,6 +101,14 @@ struct FaultUploadRequest {
   bool init_probe_has_texture = false;
   std::atomic<bool> retry_requested{ false };
   std::atomic<bool> retry_done{ false };
+  // Captured INSIDE the retry request, on the main thread, before the next SyncFromPoller runs:
+  // what the retry committed is observable here without a normal sync being able to re-fire the
+  // mode-change branch and correct the record first.
+  std::atomic<int> retry_snap_tex_mode{ -1 };
+  std::atomic<int> retry_snap_as_composite{ -1 };
+  std::atomic<unsigned long long> retry_snap_upload_count{ 0 };
+  std::atomic<int> retry_snap_show_composite{ -1 };
+  std::atomic<int> retry_snap_display_mode{ -1 };
   std::atomic<bool> dfe_requested{ false };  // dual-fisheye equal-area export (no-dialog seam)
   std::atomic<bool> dfe_done{ false };
   bool dfe_result = false;
@@ -143,6 +151,11 @@ struct FaultUploadRequest {
     init_probe_has_texture = false;
     retry_requested = false;
     retry_done = false;
+    retry_snap_tex_mode = -1;
+    retry_snap_as_composite = -1;
+    retry_snap_upload_count = 0;
+    retry_snap_show_composite = -1;
+    retry_snap_display_mode = -1;
     dfe_requested = false;
     dfe_done = false;
     dfe_result = false;
@@ -201,7 +214,10 @@ void FaultUploadGuiFunc(ImGuiTestContext* /*ctx*/) {
   }
   if (g_fault.init_probe_requested && !g_fault.init_probe_done) {
     // A THROWAWAY renderer: Init's partial-failure exits must leave a context the next Init can
-    // build a fully working renderer in.
+    // build a fully working renderer in. Destroy runs on EVERY exit path while the main thread
+    // still holds the context — a successful probe that skipped Destroy would leak its
+    // programs/VAO/VBO/textures into the suite's shared context, the exact defect the witness
+    // exists to reject.
     gui::PreviewRenderer probe;
     g_fault.init_probe_result = probe.Init();
     if (g_fault.init_probe_result) {
@@ -209,6 +225,7 @@ void FaultUploadGuiFunc(ImGuiTestContext* /*ctx*/) {
       g_fault.init_probe_upload_ok = probe.UploadXyzTexture(px, 1, 1).ok;
       g_fault.init_probe_has_texture = probe.HasTexture();
     }
+    probe.Destroy();
     g_fault.init_probe_done = true;
   }
   if (g_fault.hook_clear_requested && !g_fault.hook_cleared) {
@@ -217,6 +234,11 @@ void FaultUploadGuiFunc(ImGuiTestContext* /*ctx*/) {
   }
   if (g_fault.retry_requested && !g_fault.retry_done) {
     gui::RetryPreviewUpload();
+    g_fault.retry_snap_tex_mode = static_cast<int>(gui::g_preview.GetTextureMode());
+    g_fault.retry_snap_as_composite = gui::g_state.last_uploaded_as_composite ? 1 : 0;
+    g_fault.retry_snap_upload_count = gui::g_state.texture_upload_count;
+    g_fault.retry_snap_show_composite = gui::g_state.show_composite_preview ? 1 : 0;
+    g_fault.retry_snap_display_mode = gui::g_state.renderer.display_mode;
     g_fault.retry_done = true;
   }
   if (g_fault.dfe_requested && !g_fault.dfe_done) {
@@ -1858,21 +1880,26 @@ void RegisterPreviewTextureTests(ImGuiTestEngine* engine) {
           20));
       ctx->Yield(2);
 
-      // The retry re-attempts the spectrum: XYZ on the GPU, the mode record saying so, and the
-      // retained frame accepted exactly once by THE RETRY (the baseline is read while still
-      // latched — no upload can run between it and the retry call — so the delta measures the
-      // retry alone; the run's own tail frames may still be accepted afterwards and are not
-      // this witness).
-      SetFaultAndWait(ctx, -1, 0);
-      const unsigned long long baseline = gui::g_state.texture_upload_count;
+      // The retry re-attempts the spectrum. The commit is read INSIDE the retry request, before
+      // the next SyncFromPoller runs, so no normal sync can re-fire the mode-change branch and
+      // correct the record first — the commit-time fork shape this guards against.
+      SetFaultAndWait(ctx, -1, 0);  // the failure is over: the retry may succeed
+      const unsigned long long before_retry = gui::g_state.texture_upload_count;
       RetryAndWait(ctx);
-      IM_CHECK(gui::g_preview.HasTexture());
+      IM_CHECK_EQ(g_fault.retry_snap_show_composite.load(), 1);
+      IM_CHECK_EQ(g_fault.retry_snap_display_mode.load(), LUMICE_DISPLAY_MODE_CHANNEL_BR);
+      IM_CHECK_EQ(g_fault.retry_snap_tex_mode.load(), static_cast<int>(gui::PreviewRenderer::TextureMode::kXyz));
+      IM_CHECK_EQ(g_fault.retry_snap_as_composite.load(), 0);
+      IM_CHECK_EQ(g_fault.retry_snap_upload_count.load(), before_retry + 1);
+
+      // Settle the run's tail, then the frozen terminal frame must stay silent: the committed
+      // mode matches the effective preference, so no mode-change re-upload of the same serial.
+      ctx->Yield(10);
+      const unsigned long long settled = gui::g_state.texture_upload_count;
+      ctx->Yield(5);
+      IM_CHECK_EQ(gui::g_state.texture_upload_count, settled);
       IM_CHECK(gui::g_preview.GetTextureMode() == gui::PreviewRenderer::TextureMode::kXyz);
       IM_CHECK(!gui::g_state.last_uploaded_as_composite);
-      // At least the retry's own commit: the run's tail frames may still be accepted inside the
-      // same yield window (the latch cleared at the retry's authorization), so an exact delta
-      // would measure scheduling, not the contract.
-      IM_CHECK_GE(gui::g_state.texture_upload_count, baseline + 1);
       IM_CHECK(gui::g_preview.GetTextureWidth() == 1024);
       IM_CHECK(gui::g_preview.GetTextureHeight() == 512);
     };

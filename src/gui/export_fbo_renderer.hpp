@@ -52,7 +52,8 @@ inline float DeviceToLogical(int device_px, float dpi) {
 //     name their own canvas size in pixels and pass no labels at all).
 std::vector<unsigned char> RenderExportToRgba(PreviewRenderer& renderer, const PreviewParams& params, int dst_w,
                                               int dst_h, const std::vector<CurveLabelSet>& curve_labels = {},
-                                              float dpi_scale_x = 1.0f, float dpi_scale_y = 1.0f);
+                                              float dpi_scale_x = 1.0f, float dpi_scale_y = 1.0f,
+                                              int* out_gl_error = nullptr);
 
 // Render one on-screen preview frame through the SAME core the export above uses, then blit it
 // back onto the caller's framebuffer at the viewport rect `(dst_x, dst_y, dst_w, dst_h)`.

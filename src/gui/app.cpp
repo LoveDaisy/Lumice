@@ -800,9 +800,21 @@ static std::vector<unsigned char> RenderExportFromFullSource(const PreviewParams
       RebuildPreviewAfterContextOom();
     }
   } else {
-    rgba = RenderExportToRgba(export_renderer, params, out_w, out_h);
+    int render_gl_error = 0;
+    rgba = RenderExportToRgba(export_renderer, params, out_w, out_h, /*curve_labels=*/{}, /*dpi_scale_x=*/1.0f,
+                              /*dpi_scale_y=*/1.0f, &render_gl_error);
     if (rgba.empty()) {
-      GUI_LOG_ERROR("[GUI] Export: rendering the full source failed (target {}x{}) — no file written", out_w, out_h);
+      GUI_LOG_ERROR(
+          "[GUI] Export: rendering the full source failed (target {}x{} gl_error=0x{:04X}) — no "
+          "file written",
+          out_w, out_h, render_gl_error);
+      if (render_gl_error == 0x0505) {
+        // The export TARGET's allocation (a full-size RGBA8 renderbuffer) hit a real
+        // out-of-memory in the shared context — the same §2.5 ruling as the source-upload path
+        // above: the preview stops being sampled until a verified rebuild stands.
+        g_preview.RevokeDisplayForContextOom();
+        RebuildPreviewAfterContextOom();
+      }
     }
   }
   export_renderer.Destroy();
@@ -3128,6 +3140,15 @@ void RetryPreviewUpload() {
   g_state.upload_latched = false;
   g_recovery.exhausted = false;
   g_recovery.notice_dismissed = false;
+  // The target's display mode, adjudicated ONCE (a review round caught the fork): the upload
+  // selection below AND
+  // both success-commit branches consume this one verdict. Re-reading the raw preference at
+  // commit time re-forked the mode under the channel-B-R diagnostic — the retry uploads XYZ
+  // while recording the display as composite, and the next sync's mode-change branch then
+  // re-uploads the very frame the retry just accepted.
+  const bool use_composite = target_is_file ?
+                                 g_file_source.mode == PreviewRenderer::TextureMode::kSrgbComposited :
+                                 ShouldUseCompositeUpload(target->is_composite, EffectiveShowCompositePreview());
   UploadResult upload_result;
   int tier = -1;
   if (target_is_file) {
@@ -3157,7 +3178,6 @@ void RetryPreviewUpload() {
     }
   } else {
     const TexturePayload& payload = *target;
-    const bool use_composite = ShouldUseCompositeUpload(payload.is_composite, EffectiveShowCompositePreview());
     if (use_composite) {
       // A composite keeps its own display semantics: the composite bake is uint8 and the
       // ladder's linear-radiance low-pass does not apply to it — one plain re-upload, success or
@@ -3218,13 +3238,13 @@ void RetryPreviewUpload() {
       g_state.p99_raw_y = g_file_source.mono_anchor;
       g_state.ev_auto = LUMICE_ComputeEvAuto(g_state.p99_raw_y, g_state.snapshot_intensity, g_state.target_white);
     }
-    g_state.last_uploaded_as_composite = g_file_source.mode == PreviewRenderer::TextureMode::kSrgbComposited;
+    g_state.last_uploaded_as_composite = use_composite;
   } else if (from_accepted_live) {
     // The accepted pointer stays the accepted pointer; drop the retained copy if one existed.
     g_pending_upload_source.reset();
     g_pending_upload_serial = 0;
     const TexturePayload& payload = *target;
-    g_state.last_uploaded_as_composite = ShouldUseCompositeUpload(payload.is_composite, g_state.show_composite_preview);
+    g_state.last_uploaded_as_composite = use_composite;
     g_state.snapshot_intensity = payload.snapshot_intensity;
     g_state.snapshot_emitted_energy = payload.emitted_energy;
     g_state.effective_pixels = payload.effective_pixels;
@@ -3238,7 +3258,7 @@ void RetryPreviewUpload() {
     g_pending_upload_serial = 0;
     g_state.last_uploaded_texture_serial = retried_serial;
     const TexturePayload& payload = *g_last_uploaded_payload;
-    g_state.last_uploaded_as_composite = ShouldUseCompositeUpload(payload.is_composite, g_state.show_composite_preview);
+    g_state.last_uploaded_as_composite = use_composite;
     g_state.snapshot_intensity = payload.snapshot_intensity;
     g_state.snapshot_emitted_energy = payload.emitted_energy;
     g_state.effective_pixels = payload.effective_pixels;
