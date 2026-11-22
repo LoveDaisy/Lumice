@@ -250,14 +250,47 @@ TEST(AnalyzeOverviewChain, FullDimensionalDispersionAnchorsToTheClosedForm) {
     FAIL() << "the C01 class's caustic edge should carry the closed-form certificate";
   }
 
-  // The edge/bright split (AC3): a certified geometric edge card and a separate bright-domain
-  // card whose peak is a probe reading. The conclusions keep the two apart, and name the
-  // dispersion line.
-  EXPECT_TRUE(HasLine(model.conclusions, "Sharp edge"));
-  EXPECT_TRUE(HasLine(model.conclusions, "certified by the closed-form minimum"));
-  EXPECT_TRUE(HasLine(model.conclusions, "Brightness peaks near"));
-  EXPECT_TRUE(HasLine(model.conclusions, "Wavelength dispersion"));
+  // The edge/bright split (AC3), organized as the first-class inner-edge object (817.2): the
+  // class answer's FIRST line is the object's main sentence (about 21.92°, the light-begins
+  // claim), the premise note names the whole-sky fact at the survey's fixed λ, and the four
+  // readings live in the object's view — the flat lines they came from do not repeat. The
+  // support set keeps its own line (another structure, still readable).
+  ASSERT_FALSE(model.conclusions.empty());
+  EXPECT_EQ(model.conclusions.front().find("Inner edge (3-5): about 21.92° from the sun"), 0u)
+      << model.conclusions.front();
+  EXPECT_NE(model.conclusions.front().find("light begins"), std::string::npos);
+  EXPECT_TRUE(HasLine(std::vector<std::string>{ model.inner_edge.premise_note }, "Whole-sky"));
+  EXPECT_NE(model.inner_edge.premise_note.find("550 nm"), std::string::npos) << model.inner_edge.premise_note;
   EXPECT_TRUE(HasLine(model.conclusions, "Support:"));
+
+  // The qualified object itself: the geometric edge (the certificate card's own number), the
+  // profile cut's two finite-resolution readings, and the fixed chromatic pair — the four
+  // readings' numbers pinned to the same closed-form anchors the dispersion block holds above.
+  ASSERT_TRUE(model.inner_edge.qualified);
+  EXPECT_EQ(model.inner_edge.name, std::string("3-5"));
+  EXPECT_GE(model.inner_edge.edge_object_index, 0);
+  EXPECT_NEAR(model.inner_edge.edge_deg, 21.9161264398004, 1e-9);
+  EXPECT_TRUE(model.inner_edge.certificate_available);
+  EXPECT_NEAR(model.inner_edge.wavelength_nm, model.wavelength_nm, 1e-9);
+  ASSERT_TRUE(model.inner_edge.first_bin.available);
+  EXPECT_NEAR(model.inner_edge.first_bin.deg, 21.95, 1e-9);
+  ASSERT_TRUE(model.inner_edge.highest_bin.available);
+  EXPECT_NEAR(model.inner_edge.highest_bin.deg, 22.05, 1e-9);
+  EXPECT_NEAR(model.inner_edge.bin_deg, 0.1, 1e-9);
+  EXPECT_EQ(model.inner_edge.name, std::string("3-5"));
+  EXPECT_TRUE(model.inner_edge.member_kind_available);
+  EXPECT_EQ(model.inner_edge.member_kind, LUMICE_PATH_MEMBER_PHYSICAL_L2);
+  ASSERT_TRUE(model.inner_edge.dispersion_available);
+  EXPECT_NEAR(model.inner_edge.dispersion_red_deg, model.dispersion.value_red_deg, 1e-12);
+  EXPECT_NEAR(model.inner_edge.dispersion_blue_deg, model.dispersion.value_blue_deg, 1e-12);
+  EXPECT_NEAR(model.inner_edge.dispersion_gap_deg, 0.5809619687491399, 1e-9);
+  EXPECT_EQ(model.inner_edge.dispersion_red_label, std::string("650nm"));
+  EXPECT_EQ(model.inner_edge.dispersion_blue_label, std::string("450nm"));
+  // The migrated readings leave no flat echo behind: the qualified card's edge line, the
+  // member-matched bright peak and the dispersion summary are the object's now.
+  EXPECT_FALSE(HasLine(model.conclusions, "Sharp edge at"));
+  EXPECT_FALSE(HasLine(model.conclusions, "Brightness peaks near"));
+  EXPECT_FALSE(HasLine(model.conclusions, "Wavelength dispersion"));
 
   // The probe block: the reference-wavelength profile, with readings and samples whose empty
   // bins are NaN gaps (the profile's far wings hold empty bins — the gap rule is load-bearing).
@@ -301,6 +334,10 @@ TEST(AnalyzeOverviewChain, FamilyArmOrganizesAsTheFreezingLadder) {
   const SurveyOverviewModel model = BuildSurveyOverviewModel(*survey);
   ASSERT_TRUE(model.valid);
   ASSERT_EQ(model.arm, SurveyArm::kFamily);
+  // The first-class inner-edge object is the random family's own: a family-restricted measure is
+  // not rotation invariant, so its readable angular distances never upgrade to the whole-sky
+  // object, whatever cards the ladder delivers beside it.
+  EXPECT_FALSE(model.inner_edge.qualified);
 
   ASSERT_TRUE(model.family.available);
   ASSERT_GE(model.family.levels.size(), 2u);
@@ -423,13 +460,36 @@ TEST(AnalyzeOverviewChain, OverlayFactsReadBackSupportEdgeAndTurns) {
   EXPECT_LE(facts.reach_intervals.front().upper_deg, 180.0);
 
   // The edge layer: the class's certified caustic edge, whose card declares the coincidence with
-  // support — the flag the map's shared stroke keys on, passing through verbatim.
+  // support — the flag the map's shared stroke keys on, passing through verbatim. `object_index`
+  // is the card's own object index — the selection's owner key — and names the SAME card the
+  // overview model's qualified inner-edge object points at.
   ASSERT_GE(facts.edges.size(), 1u);
   EXPECT_TRUE(facts.edges.front().coincident_with_support);
   EXPECT_TRUE(facts.edges.front().certificate_available);
   EXPECT_TRUE(facts.edges.front().concluded);
   EXPECT_NEAR(facts.edges.front().position_deg, facts.reach_intervals.front().lower_deg, 0.05)
       << "the shared stroke's geometry: the edge sits at the support's inner bound";
+  {
+    // The card's index, read back the way the builder reads it: the first caustic-edge object.
+    int edge_index = -1;
+    LUMICE_PathSurveyInfo info{};
+    info.struct_size = sizeof(info);
+    ASSERT_EQ(LUMICE_PathSurveyGetInfo(survey.get(), &info), LUMICE_PATH_READ_OK);
+    for (size_t i = 0; i < info.object_count; ++i) {
+      LUMICE_PathSurveyObject obj{};
+      obj.struct_size = sizeof(obj);
+      if (LUMICE_PathSurveyGetObject(survey.get(), i, &obj) == LUMICE_PATH_READ_OK &&
+          obj.kind == LUMICE_PATH_SURVEY_CAUSTIC_EDGE) {
+        edge_index = static_cast<int>(i);
+        break;
+      }
+    }
+    ASSERT_GE(edge_index, 0);
+    EXPECT_EQ(facts.edges.front().object_index, static_cast<size_t>(edge_index));
+    const SurveyOverviewModel model = BuildSurveyOverviewModel(*survey);
+    ASSERT_TRUE(model.inner_edge.qualified);
+    EXPECT_EQ(model.inner_edge.edge_object_index, edge_index);
+  }
 
   // The turn layer: whatever visible internal-reflection discriminants the document carries,
   // each is a parsed turn (a face number from the source grammar, positions inside the axis) —
@@ -533,6 +593,13 @@ TEST(AnalyzeOverviewChain, ChromaticDocumentCarriesLabelsAndTurnsWithoutMinRow) 
   ASSERT_FALSE(facts.tir_turns.empty()) << "the same document carries visible internal-reflection turns";
   for (const SurveyOverlayFacts::TirTurn& turn : facts.tir_turns) {
     EXPECT_GE(turn.step, 0) << turn.source;
+  }
+  // If this document qualifies an inner edge (a concluded, coincident edge card), the pair's
+  // absence is the object's named state — never a silent reading (AC5's honesty at the object
+  // tier). Unqualified documents keep the pair in the flat conclusion as before.
+  if (model.inner_edge.qualified) {
+    EXPECT_FALSE(model.inner_edge.dispersion_available);
+    EXPECT_FALSE(model.inner_edge.dispersion_unavailable.empty());
   }
 }
 

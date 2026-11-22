@@ -2209,5 +2209,34 @@ TEST(AnalyzeMapView, PointMarkerVisibleMapsEachKindToItsOwnGate) {
   EXPECT_FALSE(PointMarkerVisible(support, gates));
 }
 
+// The stationary-click selection's distance test (817.2): the point-to-segment distance in
+// points and the stroke's hit predicate — the geometry the map's release frame tests against.
+// The stroke records only submitted segments, so the ideal circle's uncovered parts are not
+// pickable, and the tolerance is the caller's own.
+TEST(AnalyzeMapView, ArcStrokeHitTestsSubmittedSegmentsOnly) {
+  // Point-on-segment, endpoint cases, and the interior projection clamp.
+  EXPECT_NEAR(PointSegmentDistanceSq(1.0f, 1.0f, 0.0f, 0.0f, 2.0f, 0.0f), 1.0f, 1e-5f);  // perpendicular
+  EXPECT_NEAR(PointSegmentDistanceSq(0.0f, 0.0f, 0.0f, 0.0f, 2.0f, 0.0f), 0.0f, 1e-5f);  // an endpoint
+  EXPECT_NEAR(PointSegmentDistanceSq(3.0f, 0.0f, 0.0f, 0.0f, 2.0f, 0.0f), 1.0f, 1e-5f);  // beyond → clamped
+  EXPECT_NEAR(PointSegmentDistanceSq(1.0f, 0.0f, 0.0f, 0.0f, 2.0f, 0.0f), 0.0f, 1e-5f);  // on the segment
+  EXPECT_NEAR(PointSegmentDistanceSq(0.0f, 0.0f, 1.0f, 1.0f, 1.0f, 1.0f), 2.0f, 1e-5f);  // degenerate: the point itself
+
+  // The stroke's hit: a stroke whose segments cover (0,0)-(2,0) and (4,0)-(6,0); the gap between
+  // them is NOT the stroke, and the tolerance decides the pick.
+  ReferenceArcStroke stroke;
+  stroke.owned_by_edge = true;
+  stroke.edge_object_index = 3;
+  stroke.segments = { 0.0f, 0.0f, 2.0f, 0.0f, 4.0f, 0.0f, 6.0f, 0.0f };
+  const float tight = 0.25f;  // (0.5 pt)^2
+  EXPECT_TRUE(ArcStrokeHit(stroke, 1.0f, 0.4f, tight));
+  EXPECT_FALSE(ArcStrokeHit(stroke, 3.0f, 0.0f, tight)) << "the segment gap is not the stroke";
+  EXPECT_FALSE(ArcStrokeHit(stroke, 1.0f, 2.0f, tight));
+  EXPECT_TRUE(ArcStrokeHit(stroke, 5.0f, 0.4f, tight));
+  // A stroke with no submitted segments never hits — a walk that grazed the view collects no
+  // click surface.
+  ReferenceArcStroke empty;
+  EXPECT_FALSE(ArcStrokeHit(empty, 1.0f, 0.0f, 1e9f));
+}
+
 }  // namespace
 }  // namespace lumice::gui

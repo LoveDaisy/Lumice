@@ -148,10 +148,13 @@ TEST(AnalyzeOverviewModel, IdentityArmReadsBackSourceImageAndTint) {
   EXPECT_NEAR(model.objects[0].position_altitude_deg, model.sun_altitude_deg, 1e-9);
 
   // Nothing else ran: no probe, no family ladder, no witness, and the TIR block does not apply
-  // to a direction-invariant class.
+  // to a direction-invariant class. The first-class inner-edge object is the random family's own
+  // (817.2): the identity arm's whole-sky direction-invariance is a different fact, and its
+  // answer organizes as before — no inner-edge object, no whole-circle edge claim.
   EXPECT_FALSE(model.probe.available);
   EXPECT_FALSE(model.family.available);
   EXPECT_FALSE(model.witness.available);
+  EXPECT_FALSE(model.inner_edge.qualified);
 }
 
 // The pure helpers the renderer and the tests share: the state vocabulary is the survey face's

@@ -1936,6 +1936,29 @@ struct GuiState {
     // construction. READER: the canvas's profile device draw (analyze_map_view.cpp
     // DrawSurveyOverlays).
     SurveyProfileHover profile_row_hover = SurveyProfileHover::kNone;
+    // The class answer's first-class inner-edge object selection (817.2): the C01 presentation's
+    // session pick, made from the class answer's text entry or the map's visible arc. Bound to
+    // the ADOPTED identity it was made under — the document handle (weak, so the selection never
+    // pins a replaced document's memory) and the intent id — so a class switch, a new generation
+    // or a lost document reads inactive without any explicit clear; a window close/open keeps
+    // it. Display-session state like every field here: never persisted, not in ConfigSnapshot or
+    // the dirty diff, it writes no query and no sky point. The map region and the class-answer
+    // host are the only writers (through SelectInnerEdgeObject), InnerEdgeSelectionActive the
+    // only reader.
+    bool inner_edge_selected = false;
+    std::weak_ptr<const LUMICE_PathSurvey> inner_edge_document;
+    SurveyQueryId inner_edge_id;
+    // One-shot scroll/expand request: the map-side commit asks the class answer's entry scrolled
+    // into view. Set by the map region's click path, consumed (cleared) by the interactive
+    // host's render — the single reader. Cleared with the session like every field here.
+    bool inner_edge_scroll_hint = false;
+    // The map canvas's press provenance, snapshotted while a press is held: the workspace frame
+    // entry resets map_press_owner to kNone on every release frame BEFORE the map region renders,
+    // so the release cannot read the owner it needs — this int does. Written by the map region
+    // on press/held frames, read and cleared by it on the release frame; the stationary-click
+    // structure selection fires only for a plain camera press. Frame-transient interaction
+    // state, session tier (a document switch clears it with the session).
+    int map_canvas_press_owner = 0;  // PanoramaPressOwner as int; 0 = kNone
     // The sun the frozen scene binding was built with, captured at DoAnalyze (the GUI's sun is
     // always due north). The map request's window geometry derives from the sun the ENGINE will
     // evaluate against — the executor's frozen scene, not the live document, which the user may

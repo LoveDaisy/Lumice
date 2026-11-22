@@ -499,6 +499,50 @@ OverlayLegendState LastMapOverlayLegend() {
   return g_map_legend;
 }
 
+// ---- The inner-edge selection (817.2) ---------------------------------------------------------------
+
+bool InnerEdgeSelectionActive(const GuiState& state) {
+  const auto& s = state.analysis;
+  // The binding is the adopted identity itself: the document handle it was made under, still
+  // the survey's adopted result, and still the survey's current intent id. A class switch, a
+  // new generation or a lost document breaks it without any explicit clear.
+  return s.inner_edge_selected && !s.inner_edge_document.expired() &&
+         s.inner_edge_document.lock() == s.survey.adopted_result && s.inner_edge_id == s.survey.intent_id;
+}
+
+void SelectInnerEdgeObject(GuiState& state) {
+  auto& s = state.analysis;
+  s.inner_edge_selected = true;
+  s.inner_edge_document = s.survey.adopted_result;
+  s.inner_edge_id = s.survey.intent_id;
+}
+
+float PointSegmentDistanceSq(float px, float py, float ax, float ay, float bx, float by) {
+  const float dx = bx - ax;
+  const float dy = by - ay;
+  const float len_sq = dx * dx + dy * dy;
+  float t = 0.0f;
+  if (len_sq > 0.0f) {
+    t = ((px - ax) * dx + (py - ay) * dy) / len_sq;
+    t = std::clamp(t, 0.0f, 1.0f);
+  }
+  const float cx = ax + t * dx;
+  const float cy = ay + t * dy;
+  const float ex = px - cx;
+  const float ey = py - cy;
+  return ex * ex + ey * ey;
+}
+
+bool ArcStrokeHit(const ReferenceArcStroke& stroke, float px, float py, float tolerance_sq) {
+  for (size_t i = 0; i + 3 < stroke.segments.size(); i += 4) {
+    if (PointSegmentDistanceSq(px, py, stroke.segments[i], stroke.segments[i + 1], stroke.segments[i + 2],
+                               stroke.segments[i + 3]) <= tolerance_sq) {
+      return true;
+    }
+  }
+  return false;
+}
+
 bool InitMapView() {
   return InitializeFrozenMapDisplay();
 }
@@ -705,7 +749,7 @@ void DrawProfilePointMarker(ImDrawList* dl, const ProfileScreenPoint& pt) {
 
 IsoDeltaWalk WalkIsoDeltaCircle(ImDrawList* dl, const MapCanvasProjection& view, const ImVec2& pic_min, float pic_px,
                                 const double sun_pos[3], double delta_deg, ImU32 colour, float thickness,
-                                bool dashed = false) {
+                                bool dashed = false, std::vector<float>* segment_sink = nullptr) {
   constexpr int kDashCycleSegments = 4;  // one dash phase = 4 samples: 4 drawn, then 4 skipped
                                          // (the %2 alternation makes the period 8) — a run broken
                                          // by the view disk does not restart the phase
@@ -743,6 +787,14 @@ IsoDeltaWalk WalkIsoDeltaCircle(ImDrawList* dl, const MapCanvasProjection& view,
         dl->AddLine(ImVec2(static_cast<float>(x0), static_cast<float>(y0)),
                     ImVec2(static_cast<float>(x1), static_cast<float>(y1)), colour, thickness);
         ++walk.lines_submitted;
+        if (segment_sink != nullptr) {
+          // The click surface records exactly what was submitted — the clipped, continuous
+          // segments only, never the ideal circle.
+          segment_sink->push_back(static_cast<float>(x0));
+          segment_sink->push_back(static_cast<float>(y0));
+          segment_sink->push_back(static_cast<float>(x1));
+          segment_sink->push_back(static_cast<float>(y1));
+        }
         if (!walk.have_top || std::min(y0, y1) < walk.top_y) {
           walk.have_top = true;
           walk.top_x = y0 < y1 ? x0 : x1;
@@ -1082,7 +1134,8 @@ const SurveyOverlayCache& RefreshSurveyOverlayCache(const SurveyQuerySession& su
 }
 
 void DrawSurveyOverlays(ImDrawList* dl, GuiState& state, const MapCanvasProjection& view, const ImVec2& pic_min,
-                        float pic_px, OverlayLegendState* legend, const SurveyLayerGates& gates) {
+                        float pic_px, OverlayLegendState* legend, const SurveyLayerGates& gates,
+                        int selected_edge_object_index, std::vector<ReferenceArcStroke>* stroke_sink) {
   SurveyQuerySession& survey = state.analysis.survey;
   if (survey.adopted_result == nullptr) {
     return;
@@ -1111,6 +1164,10 @@ void DrawSurveyOverlays(ImDrawList* dl, GuiState& state, const MapCanvasProjecti
   arcs.tir = gates.tir;
   arcs.legend = legend;
   arcs.labels_sink = &labels;
+  // The selected object's feedback and this frame's click surfaces (817.2): the selection reads,
+  // the sink fills — neither recomputes anything.
+  arcs.selected_edge_object_index = selected_edge_object_index;
+  arcs.stroke_sink = stroke_sink;
   // The arcs' FIXED reference calibers, read off the cached model: the survey's own scope
   // wavelength names the reach/edge bounds (whatever the map's λ slider shows), and the turn
   // pairs quote the chromatic pair's wavelength words — a turn's two deltas are that pair's
@@ -1374,12 +1431,14 @@ void DrawReferenceArcs(ImDrawList* dl, const SurveyOverlayFacts& facts, const Re
   };
   // One submitted stroke: the geometry (a delta about the sun), its weakened form, and the owners
   // the legend must name. The reach/edge shared stroke merges owners onto one submission — one
-  // walk, both names — never two walks at the same delta (alpha would stack).
+  // walk, both names — never two walks at the same delta (alpha would stack). `edge_object_index`
+  // is the owning edge card's object index when an edge owns the stroke — the selection's key.
   struct ArcSubmission {
     double delta_deg;
     bool dashed;
     bool owned_by_reach;
     bool owned_by_edge;
+    size_t edge_object_index = 0;
   };
   std::vector<ArcSubmission> submissions;
   // The reach bounds first: the merged intervals' own endpoints, in the one neutral ink.
@@ -1436,32 +1495,75 @@ void DrawReferenceArcs(ImDrawList* dl, const SurveyOverlayFacts& facts, const Re
         }
         if (nearest != nullptr) {
           nearest->owned_by_edge = true;
+          nearest->edge_object_index = edge.object_index;
           merged = true;
         }
       }
       if (!merged) {
-        submissions.push_back({ edge.position_deg, !edge.concluded, false, true });
+        submissions.push_back({ edge.position_deg, !edge.concluded, false, true, edge.object_index });
       }
     }
   }
   // One walk per submission — the whole point of the merge above. The legend and the labels read
   // the SUBMITTED line count (a walk that grazed the disk draws no stroke and earns no entry),
   // the dispersion pair's own precedents. The evidence level and the reference λ ride the
-  // legend's explanations and the layer control, not the arc text.
+  // legend's explanations and the layer control, not the arc text. The selected object's stroke
+  // draws its feedback in the same pass: thicker ink (the selection's one visual emphasis), the
+  // readout worded as the object's with the light-outside fact and its fixed λ, and the outward
+  // hint tick at the label anchor — the circle's far side from the sun IS the light side (the
+  // support starts at this bound), so the tick names the side the words claim.
   for (const ArcSubmission& s : submissions) {
+    const bool selected = s.owned_by_edge &&
+                          s.edge_object_index == static_cast<size_t>(std::max(0, in.selected_edge_object_index)) &&
+                          in.selected_edge_object_index >= 0;
+    std::vector<float> segments;
     const IsoDeltaWalk walk =
-        WalkIsoDeltaCircle(dl, view, pic_min, in.pic_px, sun_pos, s.delta_deg, kSurveyArcInk, 1.4f, s.dashed);
+        WalkIsoDeltaCircle(dl, view, pic_min, in.pic_px, sun_pos, s.delta_deg, kSurveyArcInk,
+                           selected ? UiPx(3.0f) : 1.4f, s.dashed, in.stroke_sink != nullptr ? &segments : nullptr);
     if (walk.lines_submitted == 0) {
       continue;
+    }
+    if (in.stroke_sink != nullptr) {
+      in.stroke_sink->push_back({ s.owned_by_edge, s.owned_by_reach, s.edge_object_index, std::move(segments) });
     }
     // The label OWNER obeys the labels switches, not the geometry ownership alone: the edge
     // word only when the edge owns the stroke AND its labels are on; the support word when the
     // reach's labels are on; both off, the stroke draws unlabeled — a shared stroke's text can
-    // never speak through an owner whose labels are switched off.
+    // never speak through an owner whose labels are switched off. The selected object's label
+    // worded as the object's (the same labels bit owns it).
     const bool edge_label = s.owned_by_edge && in.edge.labels;
     const bool reach_label = s.owned_by_reach && in.reach.labels;
-    push_label(edge_label || reach_label, walk.top_x, walk.top_y, s.delta_deg, edge_label ? "edge" : "support",
-               walk.partial());
+    if ((edge_label || reach_label) && selected && in.labels_sink != nullptr) {
+      char line[128];
+      if (in.reference_lambda_available) {
+        std::snprintf(line, sizeof(line), "inner edge — light outside · %.0f nm ref",
+                      static_cast<double>(in.reference_lambda_nm));
+      } else {
+        std::snprintf(line, sizeof(line), "inner edge — light outside");
+      }
+      in.labels_sink->push_back(
+          { static_cast<float>(walk.top_x), static_cast<float>(walk.top_y), kSurveyArcInk, line });
+      // The outward hint tick: the anchor's own radially-outward direction on screen (the circle
+      // is centred on the sun, so the anchor-minus-sun direction is the light side locally).
+      double sx = 0.0;
+      double sy = 0.0;
+      if (ProjectToRect(view, sun_pos, pic_min, in.pic_px, &sx, &sy)) {
+        const float dx = static_cast<float>(walk.top_x - sx);
+        const float dy = static_cast<float>(walk.top_y - sy);
+        const float len = std::sqrt(dx * dx + dy * dy);
+        if (len > 1e-3f) {
+          const float tick = UiPx(12.0f);
+          const float ex = static_cast<float>(walk.top_x) + dx / len * tick;
+          const float ey = static_cast<float>(walk.top_y) + dy / len * tick;
+          dl->AddLine(ImVec2(static_cast<float>(walk.top_x), static_cast<float>(walk.top_y)), ImVec2(ex, ey),
+                      kSurveyArcInk, UiPx(2.0f));
+          dl->AddCircleFilled(ImVec2(ex, ey), UiPx(2.0f), kSurveyArcInk);
+        }
+      }
+    } else {
+      push_label(edge_label || reach_label, walk.top_x, walk.top_y, s.delta_deg, edge_label ? "edge" : "support",
+                 walk.partial());
+    }
     if (in.legend != nullptr) {
       if (s.owned_by_reach) {
         in.legend->reach_bounds = true;
@@ -2031,8 +2133,20 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   if (have_anchor_info) {
     DrawFrameAnchors(dl, view, anchor_info, pic_min, pic_px, &legend);
   }
+  // The inner-edge selection's map half (817.2): the selected object's stroke feedback draws
+  // through the same overlay pass, and the frame's submitted strokes collect as this frame's
+  // click surfaces (consumed by the stationary-release test below; frame-transient, never
+  // stored). The cache read is idempotent and already warm — no rebuild, no re-read.
+  std::vector<ReferenceArcStroke> arc_strokes;
+  int selected_edge_object_index = -1;
+  if (InnerEdgeSelectionActive(state)) {
+    const SurveyOverlayCache& sel_cache = RefreshSurveyOverlayCache(state.analysis.survey);
+    if (sel_cache.model.valid && sel_cache.model.inner_edge.qualified) {
+      selected_edge_object_index = sel_cache.model.inner_edge.edge_object_index;
+    }
+  }
   if (overlays) {
-    DrawSurveyOverlays(dl, state, view, pic_min, pic_px, &legend, gates);
+    DrawSurveyOverlays(dl, state, view, pic_min, pic_px, &legend, gates, selected_edge_object_index, &arc_strokes);
   }
 
   float marker_px = -1.0f;
@@ -2093,6 +2207,40 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
     if (owner == Owner::kCamera && !LensIsFullSky(view.camera.lens_type) &&
         ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
       ApplyCameraOrbitDrag(state, io.MouseDelta, view.width, view.height);
+    }
+  }
+  // The press provenance snapshot: written while a press is held, so the release frame — which
+  // the workspace entry reaches with map_press_owner already reset — can still tell a plain
+  // camera press from one the marker/pick/direct-point paths own. The Escape-cancelled press
+  // lands here as kCancelled on the frame after the key, killing the pending selection.
+  if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+    state.analysis.map_canvas_press_owner = static_cast<int>(owner);
+  }
+  if (ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
+    const int press_owner = state.analysis.map_canvas_press_owner;
+    state.analysis.map_canvas_press_owner = 0;
+    // The stationary-click structure selection (817.2): a plain camera press released without a
+    // drag, tested at the press position against the strokes THIS frame submitted — a part of
+    // the circle no line covered cannot be picked, the master gate and the edge graphics gate
+    // leave nothing to test when off, and the marker/pick/direct-point presses never reach here
+    // (their owners are not kCamera). A miss commits nothing: the existing point-selection
+    // features are untouched, and an existing selection is not cleared.
+    if (press_owner == static_cast<int>(Owner::kCamera) && !ImGui::IsMouseDragging(ImGuiMouseButton_Left) &&
+        !explicit_pick) {
+      const SurveyOverlayCache& hit_cache = RefreshSurveyOverlayCache(state.analysis.survey);
+      if (hit_cache.model.valid && hit_cache.model.inner_edge.qualified) {
+        const float tolerance_sq = UiPx(6.0f) * UiPx(6.0f);
+        const ImVec2 press_pos = io.MouseClickedPos[ImGuiMouseButton_Left];
+        for (const ReferenceArcStroke& stroke : arc_strokes) {
+          if (stroke.owned_by_edge &&
+              stroke.edge_object_index == static_cast<size_t>(hit_cache.model.inner_edge.edge_object_index) &&
+              ArcStrokeHit(stroke, press_pos.x, press_pos.y, tolerance_sq)) {
+            SelectInnerEdgeObject(state);
+            state.analysis.inner_edge_scroll_hint = true;
+            break;
+          }
+        }
+      }
     }
   }
   if (wheel_standing && canvas_hovered && !explicit_pick && (owner == Owner::kNone || owner == Owner::kCamera) &&
@@ -2410,10 +2558,21 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
     ImGui::TextDisabled("Class answer");
     // The profile rows' read (§16.1.3): this class-answer host owns the standing's overwrite
     // every frame (hover or explicit none); the canvas consumes it next frame. The verdict and
-    // Position rows keep their highlight feedback local, without a session standing.
+    // Position rows keep their highlight feedback local, without a session standing. The
+    // inner-edge entry's wiring (817.2): the selection's liveness, the arc layers' visibility
+    // fact this frame (the master gate and the edge graphics gate), the one-shot scroll hint —
+    // consumed inside — and the click the entry's surface may have taken.
     SurveyRowHoverReadout row_readout;
-    RenderSurveyOverviewModel(survey_model, &row_readout);
+    SurveyInnerEdgeInteraction inner_edge;
+    inner_edge.selected = InnerEdgeSelectionActive(state);
+    inner_edge.map_layer_draws = overlays && gates.edge.graphics;
+    inner_edge.entry_request_scroll = state.analysis.inner_edge_scroll_hint;
+    RenderSurveyOverviewModel(survey_model, &row_readout, &inner_edge);
     state.analysis.profile_row_hover = row_readout.profile;
+    if (inner_edge.select_requested) {
+      SelectInnerEdgeObject(state);  // the text entry commits against the same adopted identity
+    }
+    state.analysis.inner_edge_scroll_hint = false;  // this render was the sole reader
     ImGui::Separator();
   } else {
     // The class answer's absent frame (no adopted document): no rows render, so the overwrite

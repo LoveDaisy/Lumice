@@ -102,6 +102,72 @@ struct SurveyDispersionView {
   double certificate_tolerance_deg = 0.0;
 };
 
+// One of the inner-edge object's four readings: the value with its own evidence-level words, or
+// the named absence. An unavailable reading carries its reason — never a zero stand-in, never a
+// constant (R7; AC5's 措辞语法承载证据等级 lives in `caliber`).
+struct SurveyInnerEdgeReading {
+  bool available = false;
+  double deg = 0.0;
+  std::string caliber;      // the short evidence-level word the reading is stated under
+  std::string unavailable;  // why, when !available (the engine's or the read's own named state)
+};
+
+// The C01 first-class inner-edge object (the random 3->5 presentation): the qualified corridor's
+// named edge with its four readings — the geometric edge (the edge card's certificate), the
+// profile's first occupied bin centre and highest bin centre (the built-in probe's representative
+// cut), and the fixed chromatic pair's minimum-deviation row. PURE read-back, organized by
+// `BuildSurveyOverviewModel` beside the conclusions it feeds.
+//
+// The qualification gate is the engine's own routing verdict plus the cards' own declarations —
+// never a GUI-side guess: the arm must be full-dimensional (the only route the engine enters with
+// the uniform random pose family — the rotation invariance the whole-circle wording rests on), and
+// a CONCLUDED edge card (certified or finite) must declare coincidence with the support set (the
+// productioner's own declaration; the GUI re-derives no tolerance). Any other arm or card state
+// leaves `qualified` false and the display at its existing lines — a non-canonical input's
+// readable angular distance keeps its own name, never upgraded to the first-class object.
+struct SurveyInnerEdgeView {
+  bool qualified = false;
+  std::string premise_note;    // the whole-sky premise + fixed-λ caliber under the main sentence
+  std::string name;            // the corridor's written faces, "3-5" — the representative the probe and the
+                               // chromatic legs evaluated (the probe's own member list; the request's
+                               // layer falls back when no probe ran)
+  int edge_object_index = -1;  // the qualified edge card's object index (the map stroke's owner)
+  double edge_deg = 0.0;       // the geometric edge — the object's main number
+  bool certificate_available = false;
+  bool measure_limit_available = false;
+  double measure_limit = 0.0;
+  double wavelength_nm = 0.0;  // the survey's fixed reference (the readings' premise; never the
+                               // map's λ — AC3's fixed-reference branch)
+  double bin_deg = 0.0;        // the profile's actual bin width (the finite-resolution caliber)
+  bool member_kind_available = false;
+  int member_kind = 0;                 // LUMICE_PATH_MEMBER_* when available — the member scope's own kind
+  std::string dispersion_unavailable;  // why the pair is absent, when !dispersion_available
+  SurveyInnerEdgeReading first_bin;    // first occupied bin centre on this cut
+  SurveyInnerEdgeReading highest_bin;  // highest bin centre on this cut (never a row or all-sky
+                                       // peak claim — the caliber says so)
+  bool dispersion_available = false;
+  double dispersion_red_deg = 0.0;
+  double dispersion_blue_deg = 0.0;
+  double dispersion_gap_deg = 0.0;
+  std::string dispersion_red_label;
+  std::string dispersion_blue_label;
+  std::string dispersion_direction;  // the engine's raw token ("red_inner_blue_outer")
+};
+
+// The interactive host's inner-edge entry wiring (the Raypath view's class answer only; the main
+// window's summary passes nothing). Plain values — the session types stay in the callers' TU, so
+// this header keeps gui_state.hpp off its include chain. The renderer reads `selected` /
+// `map_layer_draws` / `entry_request_scroll` and writes `select_requested`; the map region applies
+// the click to its session the same frame.
+struct SurveyInnerEdgeInteraction {
+  bool selected = false;              // the session selection is live on this document's object
+  bool map_layer_draws = true;        // the edge arc's graphics gate stands (drives the hidden-layer
+                                      // note; the selection itself is kept regardless)
+  bool entry_request_scroll = false;  // in/out: a map-side commit asks the entry scrolled into
+                                      // view; consumed by the host render (single reader)
+  bool select_requested = false;      // out: the entry's click surface was activated this frame
+};
+
 // The survey's built-in solar radial probe: the class's brightness profile at the document's
 // reference wavelength, as readings plus the samples themselves. `sample_values` keeps the
 // engine's NaN for an empty bin — the renderer and the tests read gaps as gaps.
@@ -228,6 +294,7 @@ struct SurveyOverviewModel {
 
   SurveyDispersionView dispersion;
   SurveyDiagnoseView diagnose;
+  SurveyInnerEdgeView inner_edge;
   SurveyProbeView probe;
   SurveyFamilyView family;
   SurveyTintView tint;
@@ -267,7 +334,9 @@ struct SurveyOverlayFacts {
 
   // The sharp-edge layer: each delivered edge card's position, with the claim's own honesty
   // fields — the coincidence declaration and the certificate/measure-limit levels pass through
-  // verbatim; the layer never upgrades an evidence level.
+  // verbatim; the layer never upgrades an evidence level. `object_index` is the card's own object
+  // index — which card a stroke belongs to, the selection's owner key read back for the map's
+  // stationary-click test.
   struct EdgeArc {
     double position_deg = 0.0;
     bool coincident_with_support = false;  // the card's own declaration (the engine's tolerance,
@@ -277,6 +346,7 @@ struct SurveyOverlayFacts {
     double measure_limit = 0.0;
     bool concluded = false;  // certified/finite state: solid; an unevaluated-but-delivered
                              // position draws the weakened dashed form, a refused card no arc
+    size_t object_index = 0;
   };
   std::vector<EdgeArc> edges;
 
@@ -327,7 +397,8 @@ inline bool FoldOpen(const char* label, const char* suffix_id) {
 // verdict/Position and ratio rows keep their feedback local. Null (the default) submits the same
 // rows as plain text, no extra items or interaction state — the main window's summary path
 // passes nothing and renders byte-identically.
-void RenderSurveyOverviewModel(const SurveyOverviewModel& model, SurveyRowHoverReadout* row_readout = nullptr);
+void RenderSurveyOverviewModel(const SurveyOverviewModel& model, SurveyRowHoverReadout* row_readout = nullptr,
+                               SurveyInnerEdgeInteraction* inner_edge = nullptr);
 
 // The main window's summary projection (contract §16.2): the SAME model read through the SAME
 // default-layer renderer the complete answer uses — the summary is a read of it, never a second

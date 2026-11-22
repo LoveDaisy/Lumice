@@ -350,7 +350,32 @@ struct ReferenceArcInput {
   float reference_lambda_nm = 0.0f;
   bool reference_lambda_available = false;
   std::string tir_lambda_text;
+  // The selected inner-edge object (817.2): the qualified edge card's object index, or -1 for
+  // none. The owned stroke draws its selected feedback (thicker ink, the object's readout with
+  // the light-outside wording and the outward hint tick) — the answer's selection and the map's
+  // ink are one state read by two consumers.
+  int selected_edge_object_index = -1;
+  // The frame's submitted-stroke click surfaces (the stationary-click selection's input; null =
+  // no collection). A stroke records only the segments the walk actually submitted this frame —
+  // post-clip, screen points — so a part of the circle no line covered cannot be picked.
+  std::vector<struct ReferenceArcStroke>* stroke_sink = nullptr;
 };
+
+// One submitted reference-arc stroke's click surface: whose stroke it is, and the segments the
+// walk actually drew this frame as flat screen-point quadruples (x0, y0, x1, y1, ...). Plain
+// floats — this header stays off imgui.h. Frame-transient display state: filled by the draw
+// pass, read by the same frame's click handling, never stored.
+struct ReferenceArcStroke {
+  bool owned_by_edge = false;
+  bool owned_by_reach = false;
+  size_t edge_object_index = 0;
+  std::vector<float> segments;
+};
+
+// The stationary-click selection's distance test: squared point-to-segment distance in points,
+// compared against a squared tolerance. Pure — the unit layer drives the geometry directly.
+float PointSegmentDistanceSq(float px, float py, float ax, float ay, float bx, float by);
+bool ArcStrokeHit(const ReferenceArcStroke& stroke, float px, float py, float tolerance_sq);
 
 // The reach/edge/turn arcs, drawn in the ONE shared neutral ink (kSurveyArcInk). The shared
 // stroke (the layer plan's AC2): an edge whose card declares coincidence with support takes its
@@ -412,6 +437,16 @@ void PumpMapQuery(GuiState& state, SurveyExecutor& executor, double now_s, MapSo
 // Explicit quality actions. Retry repeats the current full-sky request.
 void RetryMap(GuiState& state, SurveyExecutor& executor, double now_s);
 void CancelMap(GuiState& state, SurveyExecutor& executor);
+
+// The inner-edge selection's liveness (817.2): the stored selection names the survey document
+// and intent it was made under, and is live only while that exact adopted identity stands — a
+// class switch, a new generation or a lost document reads false (the binding, not a timestamp).
+// Selection changes never touch a query; this predicate is the only way anything reads it.
+bool InnerEdgeSelectionActive(const GuiState& state);
+// Commits the selection against the CURRENT adopted survey identity (the caller has checked the
+// object exists): display-session writes only — no query, no sky point, no camera. The one
+// writer of the selection fields.
+void SelectInnerEdgeObject(GuiState& state);
 
 // The Raypath view window's body — formerly the depth band's map cell (755.4 moved the whole
 // capability into the window in one piece). Draws the D3 split (contract §4.2): the LEFT
