@@ -509,10 +509,13 @@ void ExpectXyzMetaRoundTripped(const LmcTexture& tex) {
 }
 
 // The point of the v6 encoding: what Open hands back is the writer's own quantization of what
-// Save was handed — to the bit, and a fixed point of the codec, so re-quantizing it (which is what
-// the GL upload does to it) lands on the same half bits the live frame's upload landed on. That
-// fixed point, not float equality, is what "saved == reopened" means from v6 on, and it is exact,
-// hence memcmp rather than EXPECT_FLOAT_EQ. The exposure measurements ride along untouched.
+// Save was handed — to the bit. And since the preview task removed the full-float mirror, the
+// loader hands back exactly the file's STORED FORM: the half bits and the scale they were
+// quantized at, with no float plane between them. The fixed point the GL upload relies on is
+// trivial now — the upload consumes the bits as they lie — but the proposition "the reopened
+// document holds the writer's own quantization, not a second opinion about it" is still what
+// this case pins, hence memcmp rather than EXPECT_FLOAT_EQ. The exposure measurements ride along
+// untouched.
 TEST(LmcLoadAtomicityChain, XyzHalfTextureRoundTripsToTheWritersOwnQuantizationWithItsExposureMeta) {
   TempFile f{ TempPath("lumice_lmc_xyz_roundtrip.lmc") };
   ASSERT_TRUE(WriteValidXyzLmc(f.path));
@@ -545,30 +548,24 @@ TEST(LmcLoadAtomicityChain, XyzHalfTextureRoundTripsToTheWritersOwnQuantizationW
   EXPECT_EQ(tex.height, 4);
   EXPECT_EQ(tex.mode, PreviewRenderer::TextureMode::kXyz);
   EXPECT_TRUE(tex.srgb.empty()) << "the sRGB and XYZ payloads are exclusive; a float section must not fill both";
-  const std::vector<float> expected = XyzTexelsAsTheWriterStoresThem();
-  ASSERT_EQ(tex.xyz.size(), expected.size());
-  for (size_t i = 0; i < expected.size(); ++i) {
-    EXPECT_EQ(std::memcmp(&tex.xyz[i], &expected[i], sizeof(float)), 0)
-        << "texel float " << i << " is not the writer's quantization, bit for bit";
-  }
+  EXPECT_TRUE(tex.XyzStorageIsHalf()) << "a v6 section decodes to the half representation";
+  // The writer's own half bits, bit for bit — no dequantize-then-requantize in between, and no
+  // full-float mirror either.
+  std::vector<uint16_t> half_written(px.size());
+  QuantizeXyzToHalf(px.data(), px.size(), scale, half_written.data());
+  ASSERT_EQ(tex.xyz_half.size(), half_written.size());
+  EXPECT_EQ(tex.xyz_half, half_written) << "the file's own bits come back as stored";
+  EXPECT_EQ(std::memcmp(&tex.xyz_half_scale, &scale, sizeof(float)), 0) << "the storage scale rides with the bits";
+  EXPECT_TRUE(tex.xyz.empty()) << "no float plane is built for a v6 section";
   // Premise of the proposition: the quantization did change the values (a 65x-over-white texel
   // with a fractional part cannot survive 11 significant bits), so "equal to the writer's
   // quantization" is a different statement from "equal to the input".
   bool any_moved = false;
-  for (size_t i = 0; i < expected.size(); ++i) {
-    any_moved = any_moved || std::memcmp(&expected[i], &px[i], sizeof(float)) != 0;
+  for (size_t i = 0; i < px.size(); ++i) {
+    any_moved = any_moved || HalfBitsToFloat(half_written[i]) * scale != px[i];
   }
   EXPECT_TRUE(any_moved) << "premise broken: float16 reproduced every input float, so this case cannot tell the "
                             "writer's quantization from the input";
-  // The fixed point the GL upload of a reopened document relies on: re-quantizing what came back,
-  // under the scale recomputed from it, lands on the bits the file holds.
-  const float scale_again = ComputeXyzHalfScale(tex.xyz.data(), tex.xyz.size());
-  EXPECT_EQ(std::memcmp(&scale_again, &scale, sizeof(float)), 0);
-  std::vector<uint16_t> half_in(px.size());
-  std::vector<uint16_t> half_back(px.size());
-  QuantizeXyzToHalf(px.data(), px.size(), scale, half_in.data());
-  QuantizeXyzToHalf(tex.xyz.data(), tex.xyz.size(), scale_again, half_back.data());
-  EXPECT_EQ(half_in, half_back);
   ExpectXyzMetaRoundTripped(tex);
 }
 

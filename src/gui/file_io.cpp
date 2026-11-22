@@ -4046,6 +4046,44 @@ static bool EncodeXyzHalfTextureSection(const float* xyz, int w, int h, const Xy
   return true;
 }
 
+// Encodes the v>=6 texture section from bits the renderer ALREADY holds as binary16 + scale — a
+// v6 document's mirror (UpdateCpuXyzHalfTextureData). The quantize step of
+// EncodeXyzHalfTextureSection is absent on purpose: these bits ARE quantized, by the same codec
+// at the scale riding with them, and dequantizing them just to re-quantize would rebuild the
+// full-float mirror this representation exists to never create. Same header, same zlib
+// discipline; a save-reopen-save cycle reproduces the same texels and the same scale (and, the
+// compressor being deterministic on identical input, the same stream — though only the texels
+// and metadata are the contract, per the format comment above).
+static bool EncodeHeldXyzHalfTextureSection(const uint16_t* half, int w, int h, float scale, const XyzTextureMeta& meta,
+                                            std::vector<unsigned char>& out) {
+  out.clear();
+  const size_t component_count = static_cast<size_t>(w) * h * 3;
+  const size_t raw_bytes = component_count * sizeof(uint16_t);
+  if (raw_bytes > static_cast<size_t>(std::numeric_limits<int>::max())) {
+    return false;  // stb's API takes int lengths
+  }
+  int zlen = 0;
+  // stbi_zlib_compress reads its input only; the non-const parameter is stb's C heritage, and the
+  // const_cast mirrors the same call above.
+  unsigned char* zdata = stbi_zlib_compress(reinterpret_cast<unsigned char*>(const_cast<uint16_t*>(half)),
+                                            static_cast<int>(raw_bytes), &zlen, kLmcXyzZlibQuality);
+  if (!zdata) {
+    return false;
+  }
+  out.reserve(kLmcXyzTextureHeaderSize + static_cast<size_t>(zlen));
+  AppendU32(out, static_cast<uint32_t>(w));
+  AppendU32(out, static_cast<uint32_t>(h));
+  AppendF32(out, meta.snapshot_intensity);
+  AppendF32(out, meta.emitted_energy);
+  AppendF32(out, meta.mono_anchor);
+  AppendU32(out, static_cast<uint32_t>(meta.effective_pixels));
+  AppendU32(out, static_cast<uint32_t>(raw_bytes));
+  AppendF32(out, scale);
+  out.insert(out.end(), zdata, zdata + zlen);
+  std::free(zdata);
+  return true;
+}
+
 // The two halves both XYZ decoders share: the 32-byte header, validated, and the inflate into a
 // caller-sized buffer. What differs between v5 and v6 — how many bytes a texel is and what to do
 // with them once inflated — stays in the two decoders below. Every failure returns false having
@@ -4107,6 +4145,22 @@ static void FillXyzTexture(const LmcXyzTextureHeader& hdr, std::vector<float>&& 
   tex.height = static_cast<int>(hdr.height);
   tex.mode = PreviewRenderer::TextureMode::kXyz;
   tex.xyz = std::move(xyz);
+  tex.xyz_half.clear();
+  tex.xyz_half_scale = 0.0f;
+  tex.meta.snapshot_intensity = hdr.snapshot_intensity;
+  tex.meta.emitted_energy = hdr.emitted_energy;
+  tex.meta.mono_anchor = hdr.mono_anchor;
+  tex.meta.effective_pixels = static_cast<int>(hdr.effective_pixels);
+}
+
+static void FillXyzHalfTexture(const LmcXyzTextureHeader& hdr, std::vector<uint16_t>&& half, float scale,
+                               LmcTexture& tex) {
+  tex.width = static_cast<int>(hdr.width);
+  tex.height = static_cast<int>(hdr.height);
+  tex.mode = PreviewRenderer::TextureMode::kXyz;
+  tex.xyz.clear();
+  tex.xyz_half = std::move(half);
+  tex.xyz_half_scale = scale;
   tex.meta.snapshot_intensity = hdr.snapshot_intensity;
   tex.meta.emitted_energy = hdr.emitted_energy;
   tex.meta.mono_anchor = hdr.mono_anchor;
@@ -4114,9 +4168,9 @@ static void FillXyzTexture(const LmcXyzTextureHeader& hdr, std::vector<float>&& 
 }
 
 // Decodes a v5 (float32) texture section into `tex`. Read-only compatibility: no writer produces
-// this any more. The floats go to the caller as they were stored; UploadXyzTexture quantizes them
-// on the way to the GPU exactly as it quantizes a live frame, so the picture is the one a v6
-// re-save of this file shows.
+// this any more. The floats go to the caller as they were stored; the upload quantizes them
+// exactly as it quantizes a live frame, so the picture is the one a v6 re-save of this file
+// shows.
 static bool DecodeXyzFloatTextureSection(const std::vector<unsigned char>& section, LmcTexture& tex) {
   LmcXyzTextureHeader hdr;
   if (!ParseXyzTextureHeader(section, sizeof(float), hdr)) {
@@ -4130,9 +4184,14 @@ static bool DecodeXyzFloatTextureSection(const std::vector<unsigned char>& secti
   return true;
 }
 
-// Decodes a v>=6 (float16 + scale) texture section into `tex`, dequantized to float32 through the
-// same codec that quantized it — so LmcTexture::xyz has one meaning whichever section it came
-// from, and everything downstream of the loader is unaware the two encodings exist.
+// Decodes a v>=6 (float16 + scale) texture section into `tex` — as the half bits and the scale
+// they were stored with, NOT dequantized to float: the file's own bits are the document's
+// complete source from here on. The upload consumes them directly
+// (PreviewRenderer::UploadXyzHalfTexture), so a reopened document's GPU texture is bit-identical
+// to the live frame's without the load ever building a full-float mirror (+384 MiB at
+// 8192x4096) or re-quantizing anything. Consumers that genuinely need linear values (the
+// recovery ladder's downgrade) read them out one bounded row at a time
+// (DowngradeXyzHalfPlaneBounded) instead of through a whole-frame expansion.
 static bool DecodeXyzHalfTextureSection(const std::vector<unsigned char>& section, LmcTexture& tex) {
   LmcXyzTextureHeader hdr;
   if (!ParseXyzTextureHeader(section, sizeof(uint16_t), hdr)) {
@@ -4147,9 +4206,7 @@ static bool DecodeXyzHalfTextureSection(const std::vector<unsigned char>& sectio
   if (!InflateXyzTextureStream(section, half.data(), component_count * sizeof(uint16_t))) {
     return false;
   }
-  std::vector<float> xyz(component_count);
-  DequantizeHalfToXyz(half.data(), component_count, hdr.scale, xyz.data());
-  FillXyzTexture(hdr, std::move(xyz), tex);
+  FillXyzHalfTexture(hdr, std::move(half), hdr.scale, tex);
   return true;
 }
 
@@ -4172,8 +4229,19 @@ bool SaveLmcFile(const std::filesystem::path& path, const GuiState& state, const
     const int h = preview.GetCpuTextureHeight();
     switch (preview.GetCpuTextureMode()) {
       case PreviewRenderer::TextureMode::kXyz:
-        if (preview.GetXyzTextureData() != nullptr &&
-            EncodeXyzHalfTextureSection(preview.GetXyzTextureData(), w, h, preview.GetXyzTextureMeta(), tex_bytes)) {
+        if (preview.CpuXyzStorageIsHalf()) {
+          // A v6 document reopened and re-saved: the mirror holds the file's own half bits, and
+          // they are written back as they stand — no dequantize, no re-quantize, no second
+          // full-frame float copy. Save stays a pure storage read off the held representation.
+          if (preview.GetXyzHalfTextureData() != nullptr &&
+              EncodeHeldXyzHalfTextureSection(preview.GetXyzHalfTextureData(), w, h, preview.GetXyzHalfTextureScale(),
+                                              preview.GetXyzTextureMeta(), tex_bytes)) {
+            has_texture = true;
+            tex_flags = kLmcFlagHasTexture | kLmcFlagTextureRadianceOnly | kLmcFlagTextureXyzHalf;
+          }
+        } else if (preview.GetXyzTextureData() != nullptr &&
+                   EncodeXyzHalfTextureSection(preview.GetXyzTextureData(), w, h, preview.GetXyzTextureMeta(),
+                                               tex_bytes)) {
           has_texture = true;
           tex_flags = kLmcFlagHasTexture | kLmcFlagTextureRadianceOnly | kLmcFlagTextureXyzHalf;
         }

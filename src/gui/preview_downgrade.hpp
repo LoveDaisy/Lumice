@@ -149,6 +149,61 @@ inline bool DowngradeXyzPlaneBounded(const float* src, int w, int h, int steps, 
   return true;
 }
 
+// The half-source twin of DowngradeXyzPlaneBounded: the original plane is a frame held as
+// binary16 + scale (a v6 document's own bits), and the canonical values it quantize→dequantize
+// round-trips every float row through ARE those bits — so the twin reads them directly.
+// DequantizeHalfToXyz on a row is the identical canonical row the float twin computes with two
+// codec calls, which is what makes "each candidate always derives from the complete original
+// source" hold for a v6 document without ever building the full-float mirror: the working set is
+// the destination plane plus ONE dequantized row, no matter how large the source, and the box
+// average below is character for character the float twin's.
+//
+// The scale is the file's own storage scale — the value the bits were quantized at — not a
+// recomputed one: re-scanning the dequantized rows would return the same scale (the brightest
+// component is exactly 2^15 * scale) through a full-frame pass this function exists to skip.
+// Same allocation discipline as the float twin (allocates its buffers, lets std::bad_alloc
+// propagate to the caller's failure contract), same test-only allocation fault.
+inline bool DowngradeXyzHalfPlaneBounded(const uint16_t* src, float scale, int w, int h, int steps, int* out_w,
+                                         int* out_h, std::vector<float>& dst) {
+  if (steps < 0 || out_w == nullptr || out_h == nullptr) {
+    return false;
+  }
+  int dw = 0;
+  int dh = 0;
+  if (!DowngradedSize(w, h, steps, &dw, &dh)) {
+    return false;
+  }
+  const int block = 1 << steps;
+  const size_t row_floats = static_cast<size_t>(w) * 3;
+  if (g_downgrade_alloc_fault_for_test.fetch_sub(1) > 0) {
+    throw std::bad_alloc();
+  }
+  dst.assign(static_cast<size_t>(dw) * dh * 3, 0.0f);
+  std::vector<float> canon_row(row_floats);
+  const float inv = 1.0f / static_cast<float>(block * block);
+  for (int oy = 0; oy < dh; ++oy) {
+    float* acc = dst.data() + static_cast<size_t>(oy) * dw * 3;
+    for (int by = 0; by < block; ++by) {
+      const uint16_t* srow = src + (static_cast<size_t>(oy) * block + by) * row_floats;
+      DequantizeHalfToXyz(srow, row_floats, scale, canon_row.data());
+      for (int ox = 0; ox < dw; ++ox) {
+        const float* first = canon_row.data() + static_cast<size_t>(ox) * block * 3;
+        for (int bx = 0; bx < block; ++bx) {
+          for (int c = 0; c < 3; ++c) {
+            acc[ox * 3 + c] += first[bx * 3 + c];
+          }
+        }
+      }
+    }
+    for (size_t i = 0; i < static_cast<size_t>(dw) * 3; ++i) {
+      acc[i] *= inv;
+    }
+  }
+  *out_w = dw;
+  *out_h = dh;
+  return true;
+}
+
 }  // namespace lumice::gui
 
 #endif  // LUMICE_GUI_PREVIEW_DOWNGRADE_HPP

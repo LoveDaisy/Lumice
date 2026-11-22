@@ -457,7 +457,20 @@ struct XyzUploadCycle {
   int displayed_tier = -1;
   UploadResult first_failure;
 };
-static XyzUploadCycle RunXyzUploadCycle(const float* xyz, int width, int height, unsigned long long texture_serial,
+// The XYZ frame an upload cycle walks, in whichever of its two CPU representations the source
+// holds: linear float32 (a live poller payload, a v5 file) or binary16 + scale (a v6 file's own
+// bits). Exactly one pointer is non-null. The ladder is representation-blind from here down —
+// tier 0 and tier 1 upload the held representation directly, tier >= 2 downgrades through one
+// bounded-row decode — which is what keeps a v6 document on the SAME recovery ladder as a live
+// run, with no second state machine and no full-float mirror.
+struct XyzSourceView {
+  const float* floats = nullptr;
+  const uint16_t* half_bits = nullptr;
+  float half_scale = 0.0f;
+  int width = 0;
+  int height = 0;
+};
+static XyzUploadCycle RunXyzUploadCycle(const XyzSourceView& src, unsigned long long texture_serial,
                                         bool probe_full_ladder);
 // The incident record's single writer (defined beside the upload machinery); the open's uint8
 // branches reach it through this declaration.
@@ -519,7 +532,13 @@ struct ResolvedPreviewSource {
   // kFileMirror: a view into the renderer's CPU mirror, valid on the main thread for this
   // document's lifetime — no consumer retains it across a mirror write. A live payload carries
   // xyz_pixels in BOTH display shapes (mono and composite) plus rgb_pixels when composite.
+  // Under kXyz the mirror's STORAGE is one of two representations — float32 (xyz_pixels, a live
+  // frame or a v5 file) or binary16 + scale (xyz_half_pixels, a v6 file's own bits). Exactly one
+  // of the three pixel pointers names the source; the upload and downgrade consumers branch on
+  // the representation, never on which pointer is merely non-null alongside another.
   const float* xyz_pixels = nullptr;
+  const uint16_t* xyz_half_pixels = nullptr;
+  float xyz_half_scale = 0.0f;
   const unsigned char* rgb_pixels = nullptr;
   int width = 0;
   int height = 0;
@@ -558,17 +577,21 @@ static ResolvedPreviewSource ResolvePreviewSource() {
   }
   // Priority 2: the document's own file bytes. The facts and the mirror were written together by
   // the open; if the mirror view is gone anyway the state is inconsistent and resolves as
-  // nothing rather than as a half-named source.
+  // nothing rather than as a half-named source. The kXyz representation follows the mirror: a v6
+  // document's bits resolve as half + scale, a live-refreshed or v5 mirror as float32.
   if (g_file_source.valid) {
-    const float* xyz =
-        g_file_source.mode == PreviewRenderer::TextureMode::kXyz ? g_preview.GetXyzTextureData() : nullptr;
-    const unsigned char* rgb =
-        g_file_source.mode != PreviewRenderer::TextureMode::kXyz ? g_preview.GetTextureData() : nullptr;
-    if (xyz != nullptr || rgb != nullptr) {
+    const bool xyz_mode = g_file_source.mode == PreviewRenderer::TextureMode::kXyz;
+    const bool half_storage = xyz_mode && g_preview.CpuXyzStorageIsHalf();
+    const float* xyz = xyz_mode && !half_storage ? g_preview.GetXyzTextureData() : nullptr;
+    const uint16_t* xyz_half = half_storage ? g_preview.GetXyzHalfTextureData() : nullptr;
+    const unsigned char* rgb = !xyz_mode ? g_preview.GetTextureData() : nullptr;
+    if (xyz != nullptr || xyz_half != nullptr || rgb != nullptr) {
       out.role = ResolvedPreviewSource::Role::kFileMirror;
       out.width = g_file_source.width;
       out.height = g_file_source.height;
       out.xyz_pixels = xyz;
+      out.xyz_half_pixels = xyz_half;
+      out.xyz_half_scale = half_storage ? g_preview.GetXyzHalfTextureScale() : 0.0f;
       out.rgb_pixels = rgb;
       out.snapshot_intensity = g_file_source.snapshot_intensity;
       out.emitted_energy = g_file_source.emitted_energy;
@@ -587,6 +610,19 @@ static ResolvedPreviewSource ResolvePreviewSource() {
     return out;
   }
   return out;  // kNone
+}
+
+// The resolver's XYZ content as an upload-cycle input: the representation it holds, verbatim.
+// A view with null pixel pointers means the source carries no XYZ at all (the two baked uint8
+// modes) — callers gate on floats/half_bits before walking a cycle with it.
+static XyzSourceView XyzSourceViewFrom(const ResolvedPreviewSource& src) {
+  XyzSourceView view;
+  view.floats = src.xyz_pixels;
+  view.half_bits = src.xyz_half_pixels;
+  view.half_scale = src.xyz_half_scale;
+  view.width = src.width;
+  view.height = src.height;
+  return view;
 }
 
 // Refresh the renderer's CPU-side mirror with the linear XYZ energy behind the picture on screen,
@@ -780,8 +816,10 @@ static void RebuildPreviewAfterContextOom() {
     // back). The pixels come from the CPU mirror, where the open wrote them.
     switch (g_file_source.mode) {
       case PreviewRenderer::TextureMode::kXyz: {
+        // The mirror's own representation (v6 half bits or float32) is what the walk consumes —
+        // XyzSourceViewFrom carries whichever the open wrote.
         const XyzUploadCycle cycle =
-            RunXyzUploadCycle(src.xyz_pixels, src.width, src.height, /*texture_serial=*/0, /*probe_full_ladder=*/true);
+            RunXyzUploadCycle(XyzSourceViewFrom(src), /*texture_serial=*/0, /*probe_full_ladder=*/true);
         tier = cycle.displayed_tier;
         upload_result = cycle.first_failure;
         upload_result.ok = tier >= 0;
@@ -808,9 +846,13 @@ static void RebuildPreviewAfterContextOom() {
       RecordUploadIncident(upload_result, /*tier_tried=*/0, src.serial);
     }
   } else if (src.xyz_pixels != nullptr) {
-    // One authorized XYZ walk; the cycle records its own real first failure.
-    const XyzUploadCycle cycle =
-        RunXyzUploadCycle(src.xyz_pixels, src.width, src.height, src.serial, /*probe_full_ladder=*/true);
+    // One authorized XYZ walk; the cycle records its own real first failure. A live payload's
+    // XYZ is always float32 — the half representation is a file-source shape.
+    XyzSourceView live_view;
+    live_view.floats = src.xyz_pixels;
+    live_view.width = src.width;
+    live_view.height = src.height;
+    const XyzUploadCycle cycle = RunXyzUploadCycle(live_view, src.serial, /*probe_full_ladder=*/true);
     tier = cycle.displayed_tier;
     upload_result = cycle.first_failure;
     upload_result.ok = tier >= 0;
@@ -873,10 +915,11 @@ static void RecordExportTargetOomIncident(int target_w, int target_h) {
 static std::vector<unsigned char> RenderExportFromFullSource(const PreviewParams& params, int out_w, int out_h) {
   // The resolver names the same source a Save of this document would write (one adjudication,
   // review r4); the export reads its pixels directly instead of round-tripping them through the
-  // CPU mirror.
+  // CPU mirror — in the representation the source holds, so a v6 document's export never builds
+  // the full-float mirror either.
   const ResolvedPreviewSource src = ResolvePreviewSource();
-  if (src.xyz_pixels == nullptr || src.width <= 0 || src.height <= 0) {
-    // A degraded display over a source with no linear floats (the two baked uint8 modes) has
+  if ((src.xyz_pixels == nullptr && src.xyz_half_pixels == nullptr) || src.width <= 0 || src.height <= 0) {
+    // A degraded display over a source with no linear XYZ (the two baked uint8 modes) has
     // nothing to rebuild from. Explicit refusal, not a guess: upscaling the bake would be the
     // exact pseudo-full-resolution delivery the plan forbids.
     GUI_LOG_ERROR(
@@ -908,7 +951,13 @@ static std::vector<unsigned char> RenderExportFromFullSource(const PreviewParams
       GUI_LOG_ERROR("[GUI] Export: the transient full-source renderer failed to initialize");
       return {};
     }
-    const UploadResult upload = export_renderer.UploadXyzTextureNoStaging(src.xyz_pixels, src.width, src.height);
+    // The transient upload reads the resolver's representation: float32 as before, or a v6
+    // document's own half bits (which need neither a dequantize nor a staging slot to reach the
+    // GPU — the client-memory strips read them where they lie).
+    const UploadResult upload = src.xyz_pixels != nullptr ?
+                                    export_renderer.UploadXyzTextureNoStaging(src.xyz_pixels, src.width, src.height) :
+                                    export_renderer.UploadXyzHalfTextureNoStaging(src.xyz_half_pixels, src.width,
+                                                                                  src.height, src.xyz_half_scale);
     if (!upload.ok) {
       GUI_LOG_ERROR(
           "[GUI] Export: uploading the full source failed (stage={} gl_error=0x{:04X} request={}x{}) — no "
@@ -1408,15 +1457,26 @@ void ResetFrontendState(GuiState& state, FrontendResetReason reason, const LmcTe
           // The open runs the SAME upload cycle a live upload and a Retry run: ONE authorized
           // walk from candidate 0 (the r4-counted defect here was a tier-0 attempt outside the
           // ladder followed by a walk from candidate 0 — two full-size PBO passes in one cycle,
-          // and a first-failure record that could not see the pre-ladder attempt).
-          const XyzUploadCycle cycle =
-              RunXyzUploadCycle(baked->xyz.data(), baked->width, baked->height, /*texture_serial=*/0,
-                                /*probe_full_ladder=*/true);
+          // and a first-failure record that could not see the pre-ladder attempt). The walk
+          // consumes the file's own representation: a v6 section uploads its half bits directly
+          // (no full-float mirror, no re-quantize), a v5 section its float32.
+          XyzSourceView file_view;
+          file_view.floats = baked->XyzStorageIsHalf() ? nullptr : baked->xyz.data();
+          file_view.half_bits = baked->XyzStorageIsHalf() ? baked->xyz_half.data() : nullptr;
+          file_view.half_scale = baked->xyz_half_scale;
+          file_view.width = baked->width;
+          file_view.height = baked->height;
+          const XyzUploadCycle cycle = RunXyzUploadCycle(file_view, /*texture_serial=*/0, /*probe_full_ladder=*/true);
           // The mirror + the source fact: the file's own bytes and their metadata, whether or
-          // not the GPU accepted the display upload (UpdateCpuXyzTextureData copies). THIS — not
-          // a payload wrapped around the caller's stack buffer, whose floats die when DoOpen
+          // not the GPU accepted the display upload — in the file's own representation. THIS —
+          // not a payload wrapped around the caller's stack buffer, whose pixels die when DoOpen
           // returns — is the retry and save-source fact from here on.
-          g_preview.UpdateCpuXyzTextureData(baked->xyz.data(), baked->width, baked->height, baked->meta);
+          if (baked->XyzStorageIsHalf()) {
+            g_preview.UpdateCpuXyzHalfTextureData(baked->xyz_half.data(), baked->width, baked->height,
+                                                  baked->xyz_half_scale, baked->meta);
+          } else {
+            g_preview.UpdateCpuXyzTextureData(baked->xyz.data(), baked->width, baked->height, baked->meta);
+          }
           g_file_source.valid = true;
           g_file_source.width = baked->width;
           g_file_source.height = baked->height;
@@ -2551,43 +2611,54 @@ static void RecordUploadIncident(const UploadResult& result, int tier_tried, uns
   g_recovery.texture_serial = texture_serial;
 }
 
-// Execute ONE ladder candidate against a payload: tier 0 = the normal PBO path, tier 1 = full
-// resolution from client memory (no staging), tier >= 2 = prefiltered 2^(tier-1) per axis from
-// the ORIGINAL floats, still client memory. Each candidate is attempted at most once per cycle;
-// the prefilter cost is paid only on the recovery path, never on a healthy full-size upload.
-static UploadResult UploadXyzAtTier(const float* xyz, int width, int height, int tier) {
+// Execute ONE ladder candidate against a source view: tier 0 = the normal staged path (the
+// frame's own representation), tier 1 = full resolution from client memory (no staging; a half
+// source reads straight from its held bits — no scratch at all), tier >= 2 = prefiltered
+// 2^(tier-1) per axis from the ORIGINAL source, still client memory. Each candidate is attempted
+// at most once per cycle; the prefilter cost is paid only on the recovery path, never on a
+// healthy full-size upload.
+static UploadResult UploadXyzAtTier(const XyzSourceView& src, int tier) {
   if (tier <= 0) {
-    return g_preview.UploadXyzTexture(xyz, width, height);
+    return src.floats != nullptr ? g_preview.UploadXyzTexture(src.floats, src.width, src.height) :
+                                   g_preview.UploadXyzHalfTexture(src.half_bits, src.width, src.height, src.half_scale);
   }
   if (tier == 1) {
-    return g_preview.UploadXyzTextureNoStaging(xyz, width, height);
+    return src.floats != nullptr ?
+               g_preview.UploadXyzTextureNoStaging(src.floats, src.width, src.height) :
+               g_preview.UploadXyzHalfTextureNoStaging(src.half_bits, src.width, src.height, src.half_scale);
   }
   const int steps = tier - 1;
   int dst_w = 0;
   int dst_h = 0;
-  if (!DowngradedSize(width, height, steps, &dst_w, &dst_h)) {
+  if (!DowngradedSize(src.width, src.height, steps, &dst_w, &dst_h)) {
     // Past the ladder's end: nothing to try (the caller's cycle should have stopped already).
     UploadResult r;
     r.stage = UploadResult::Stage::kInvalidInput;
-    r.request_width = width;
-    r.request_height = height;
+    r.request_width = src.width;
+    r.request_height = src.height;
     return r;
   }
-  // The bounded candidate (see DowngradeXyzPlaneBounded): canonical-half input, one-pass box
-  // average, and a working set of the destination plane plus ONE source row — no full-size
-  // canonical plane, no full-size half plane, no quarter scratch. A machine too tight for even
-  // that fails the allocation, and the failure is REPORTED like any other stage: an
-  // std::bad_alloc escaping the recovery state machine would terminate the process exactly when
-  // the latch-and-unavailable state is what the plan asks for.
+  // The bounded candidate (see DowngradeXyzPlaneBounded / DowngradeXyzHalfPlaneBounded):
+  // canonical-half input, one-pass box average, and a working set of the destination plane plus
+  // ONE source row — no full-size canonical plane, no full-size half plane, no quarter scratch,
+  // and for a half source no full-float decode either. A machine too tight for even that fails
+  // the allocation, and the failure is REPORTED like any other stage: an std::bad_alloc escaping
+  // the recovery state machine would terminate the process exactly when the latch-and-unavailable
+  // state is what the plan asks for.
   try {
     std::vector<float> downgraded;
     int applied_w = 0;
     int applied_h = 0;
-    if (!DowngradeXyzPlaneBounded(xyz, width, height, steps, &applied_w, &applied_h, downgraded)) {
+    const bool ok =
+        src.floats != nullptr ?
+            DowngradeXyzPlaneBounded(src.floats, src.width, src.height, steps, &applied_w, &applied_h, downgraded) :
+            DowngradeXyzHalfPlaneBounded(src.half_bits, src.half_scale, src.width, src.height, steps, &applied_w,
+                                         &applied_h, downgraded);
+    if (!ok) {
       UploadResult r;
       r.stage = UploadResult::Stage::kInvalidInput;
-      r.request_width = width;
-      r.request_height = height;
+      r.request_width = src.width;
+      r.request_height = src.height;
       return r;
     }
     return g_preview.UploadXyzTextureNoStaging(downgraded.data(), applied_w, applied_h);
@@ -2595,11 +2666,11 @@ static UploadResult UploadXyzAtTier(const float* xyz, int width, int height, int
     GUI_LOG_ERROR(
         "[GUI] Ladder: host allocation failed for a {}x{} recovery candidate — reported as a "
         "failed stage",
-        width, height);
+        src.width, src.height);
     UploadResult r;
     r.stage = UploadResult::Stage::kCpuAllocation;
-    r.request_width = width;
-    r.request_height = height;
+    r.request_width = src.width;
+    r.request_height = src.height;
     return r;
   }
 }
@@ -2615,23 +2686,20 @@ static UploadResult UploadXyzAtTier(const float* xyz, int width, int height, int
 // legitimately supersedes the previous cycle's, and successes never erase the record). The
 // XyzUploadCycle it fills is declared beside the other source-adjudication state above, where
 // the open path first calls this.
-static XyzUploadCycle RunXyzUploadCycle(const float* xyz, int width, int height, unsigned long long texture_serial,
+static XyzUploadCycle RunXyzUploadCycle(const XyzSourceView& src, unsigned long long texture_serial,
                                         bool probe_full_ladder) {
   XyzUploadCycle out;
   bool first_failure_recorded = false;
   for (int tier = probe_full_ladder ? 0 : g_recovery.xyz_tier;; ++tier) {
-    // Stepping off the PBO path retires BOTH staging slots now, not at the cycle's exit (the r4
-    // release-timing ruling: a retired resource's storage leaves before the next strategy
-    // allocates). From this candidate on the walk uploads from client memory, and the other
-    // slot's full-size storage — 192 MiB a slot at 8192x4096 — is part of the allocation
-    // pressure this candidate walks against: a walk that would fit once the slots are retired
-    // must not fail, or drop a further tier, while dead storage is still held. Idempotent at an
-    // established tier >= 1 (already released when the walk established it); the tier-0 path
+    // Stepping off the staged path retires BOTH staging slots now, not at the cycle's exit (the
+    // r4 release-timing ruling: a retired resource's storage leaves before the next strategy
+    // allocates). From this candidate on the walk uploads from client memory. Idempotent at an
+    // established tier >= 1 (already released when the walk established it); the staged path
     // re-allocates its slot lazily if a later cycle re-establishes it.
     if (tier == 1) {
       g_preview.ReleaseStagingSlots();
     }
-    const UploadResult r = UploadXyzAtTier(xyz, width, height, tier);
+    const UploadResult r = UploadXyzAtTier(src, tier);
     if (r.ok) {
       out.displayed_tier = tier;
       break;
@@ -2652,14 +2720,14 @@ static XyzUploadCycle RunXyzUploadCycle(const float* xyz, int width, int height,
     int next_h = 0;
     // The NEXT candidate is tier+1, whose step count is (tier+1)-1 = tier — querying tier+1
     // STEPS here skipped one legal candidate and the floor-sized tier was never attempted.
-    if (tier > 0 && !DowngradedSize(width, height, tier, &next_w, &next_h)) {
+    if (tier > 0 && !DowngradedSize(src.width, src.height, tier, &next_w, &next_h)) {
       break;
     }
   }
   // The in-loop retirement above releases the slots on every walk that reaches tier 1; this
-  // exit still owns the shape that never gets there — an established-tier-0 attempt (or a
-  // tier-0-terminated walk) that failed hard leaves the slots' fence/buffer lifecycle ended
-  // here rather than carried into the unavailable state. The tier-0 path re-allocates lazily.
+  // exit still owns the shape that never gets there — an established-staged attempt (or a
+  // staged-terminated walk) that failed hard leaves the slots' fence/buffer lifecycle ended
+  // here rather than carried into the unavailable state. The staged path re-allocates lazily.
   if (out.displayed_tier != 0) {
     g_preview.ReleaseStagingSlots();
   }
@@ -3058,9 +3126,13 @@ void SyncFromPoller() {
       // is set — one attempt per frame, never re-probing bigger candidates at the poll rate —
       // otherwise one full walk from candidate 0. The cycle's REAL first failure is what the
       // failure block below logs and what the incident record carries; nothing is synthesized.
+      // A live payload's XYZ is always float32, so the view names the float representation.
+      XyzSourceView live_view;
+      live_view.floats = payload->xyz_buffer;
+      live_view.width = payload->width;
+      live_view.height = payload->height;
       const XyzUploadCycle cycle =
-          RunXyzUploadCycle(payload->xyz_buffer, payload->width, payload->height, snap->texture_serial,
-                            /*probe_full_ladder=*/g_recovery.xyz_tier <= 0);
+          RunXyzUploadCycle(live_view, snap->texture_serial, /*probe_full_ladder=*/g_recovery.xyz_tier <= 0);
       if (cycle.displayed_tier >= 0) {
         upload_result.ok = true;
         if (g_recovery.xyz_tier <= 0 && cycle.displayed_tier > 0) {
@@ -3242,9 +3314,11 @@ void RetryPreviewUpload() {
   if (target_is_file) {
     switch (g_file_source.mode) {
       case PreviewRenderer::TextureMode::kXyz: {
-        const XyzUploadCycle cycle = RunXyzUploadCycle(g_preview.GetXyzTextureData(), g_file_source.width,
-                                                       g_file_source.height, /*texture_serial=*/0,
-                                                       /*probe_full_ladder=*/true);
+        // The mirror's own representation (v6 half bits or float32) is what the retry walks —
+        // the resolver reads it off the same mirror the open wrote.
+        const ResolvedPreviewSource mirror = ResolvePreviewSource();
+        const XyzUploadCycle cycle =
+            RunXyzUploadCycle(XyzSourceViewFrom(mirror), /*texture_serial=*/0, /*probe_full_ladder=*/true);
         tier = cycle.displayed_tier;
         upload_result = cycle.first_failure;
         upload_result.ok = tier >= 0;
@@ -3278,9 +3352,13 @@ void RetryPreviewUpload() {
       // The cycle records its own first failure — the retry block below must NOT record again,
       // or it would overwrite the concrete stage/GL error/request size with a placeholder (the
       // r4 defect that turned a real texture OOM into a fabricated invalid-input report). The
-      // cycle's real result is what the failure log carries, same as SyncFromPoller's.
-      const XyzUploadCycle cycle = RunXyzUploadCycle(payload.xyz_buffer, payload.width, payload.height, target_serial,
-                                                     /*probe_full_ladder=*/true);
+      // cycle's real result is what the failure log carries, same as SyncFromPoller's. A live
+      // payload's XYZ is always float32.
+      XyzSourceView live_view;
+      live_view.floats = payload.xyz_buffer;
+      live_view.width = payload.width;
+      live_view.height = payload.height;
+      const XyzUploadCycle cycle = RunXyzUploadCycle(live_view, target_serial, /*probe_full_ladder=*/true);
       tier = cycle.displayed_tier;
       upload_result = cycle.first_failure;
       upload_result.ok = tier >= 0;
