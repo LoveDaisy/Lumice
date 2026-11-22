@@ -1673,6 +1673,17 @@ const char* UploadStageName(UploadResult::Stage stage) {
 // The GL store backing one staging slot is gone: drop the buffer object and forget its size so
 // the slot's next cycle allocates fresh. See TearDownPboSlot in the header for why deleting a
 // buffer that an in-flight DMA may still be reading is safe.
+void PreviewRenderer::ReleaseStagingSlots() {
+  for (int slot = 0; slot < 2; ++slot) {
+    if (pbo_fence_[slot] != nullptr) {
+      glDeleteSync(static_cast<GLsync>(pbo_fence_[slot]));
+      pbo_fence_[slot] = nullptr;
+    }
+    TearDownPboSlot(slot);
+  }
+  pbo_index_ = 0;
+}
+
 void PreviewRenderer::TearDownPboSlot(int slot) {
   if (pbo_[slot] != 0) {
     glDeleteBuffers(1, &pbo_[slot]);

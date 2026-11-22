@@ -1552,6 +1552,11 @@ void RegisterPreviewTextureTests(ImGuiTestEngine* engine) {
       IM_CHECK_EQ(gui::g_preview.GetTextureHeight(), kH / 2);
       IM_CHECK_EQ(gui::PreviewRecoveryNoticeKind(), 1);
       IM_CHECK(gui::PreviewRecoveryRetryAvailable());
+      // The tier-0 attempt's full-size staging slots ended their lifecycle when the walk
+      // established a client-memory tier — a reduced-tier document does not carry two dead
+      // full-size PBOs until Destroy.
+      IM_CHECK_EQ(gui::g_preview.StagingSlotByteCountForTest(0), 0u);
+      IM_CHECK_EQ(gui::g_preview.StagingSlotByteCountForTest(1), 0u);
 
       SetFaultAndWait(ctx, -1, 0);
       RetryAndWait(ctx);
@@ -1559,6 +1564,8 @@ void RegisterPreviewTextureTests(ImGuiTestEngine* engine) {
       IM_CHECK_EQ(gui::g_preview.GetTextureHeight(), kH);
       IM_CHECK(!gui::PreviewRecoveryRetryAvailable());
       IM_CHECK_EQ(gui::PreviewRecoveryNoticeKind(), 0);
+      // The re-established tier-0 path re-allocated its slot lazily.
+      IM_CHECK(gui::g_preview.StagingSlotByteCountForTest(0) > 0);
 
       std::remove(path.c_str());
     };
