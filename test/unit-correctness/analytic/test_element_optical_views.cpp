@@ -136,6 +136,9 @@ TEST(ElementOpticalViews, DeviationGridOrbitIdentityIsBitExact) {
         ADD_FAILURE() << "validity mask mismatch at cell (" << i << ", " << j << ")";
         continue;
       }
+      if (!four_two.valid[cell]) {
+        continue;  // both invalid: the stored deviation is NaN, nothing to compare
+      }
       EXPECT_EQ(four_two.deviation[cell], eight_one.deviation[image])
           << "deviation mismatch at cell (" << i << ", " << j << ")";
       ++compared;
