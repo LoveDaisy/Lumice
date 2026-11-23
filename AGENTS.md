@@ -275,12 +275,17 @@ fails the check.
   `[Unreleased]` section to keep current between releases. The tag is the owner's to create, on
   the merge commit. Steps, in order, are in `CONTRIBUTING.md` "Release Process" — that is the one
   copy; do not restate them here.
-- CI (`.github/workflows/ci.yml`) triggers on `pull_request` and on `push` **filtered to `main`**.
+- CI (`.github/workflows/ci.yml`) triggers on `pull_request` and on `push` **filtered to `main` and
+  `release/**`** (the release filter added 2026-11-23 so a merged release line's combined head gets
+  its own validated run — release PRs each validated only their own view).
   Every job therefore runs exactly once per commit: once while the change is a PR, once again when
-  it lands on `main`. The filter is what makes that true — without it a push to a PR branch fires
-  both events and every unguarded job runs twice. The consequence when adding a job: on a PR branch
-  there is no `push` event at all, so a guard of `github.event_name == 'push'` means "`main` only"
-  (which `benchmark-summary` genuinely wants, since it writes the gh-pages benchmark history) and
+  it lands on `main` or a `release/X.Y.Z` branch. The filter is what makes that true — without it a
+  push to a PR branch fires both events and every unguarded job runs twice. The consequence when
+  adding a job: on a PR branch there is no `push` event at all, so a guard of
+  `github.event_name == 'push'` paired with `github.ref == 'refs/heads/main'` means "`main` only"
+  (cache saves, `bench-ipo`, and `benchmark-summary` genuinely want that — the last writes the
+  gh-pages benchmark history and release-line results must not enter it), while `e2e-test` /
+  `e2e-slow` additionally admit `refs/heads/release/*`; a bare `github.event_name == 'push'` guard
   is a silent loss of PR coverage anywhere it was meant to mean "always".
   The `on:` block's own comment in `ci.yml` is the authority on this — it is the thing that has to
   be right for the workflow to behave, and it carries the details this summary leaves out (what the
