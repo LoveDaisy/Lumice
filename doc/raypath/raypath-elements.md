@@ -124,6 +124,27 @@ confirmed):
 | roll shift by −60k | `roll → roll − 60k°` (P_k, S_k) | roll full-turn uniform (`IsPApplicable`); the pole-fold gluing keeps the k=3 half-turn (`GluingRetainsHalfTurn`) |
 | roll reflection about −a·30° | `roll → −roll − 60a°` (H_a, σ_a) | the roll anchor names `σ_a`: `ComputeSigmaA(roll mean) = a` is exactly this statement |
 
+Three exactness rules the reflection half carries, and one deliberate divergence:
+
+- The centre-symmetric roll families (Dirac, uniform band, Gaussian, legacy Gaussian, Laplacian)
+  keep exactly the reflection whose fixed point is their centre. **kZigzag is refused**: its law
+  |A·sin(t)+B| has no reflection-symmetry proof about any centre (centre 0 with B = 0 even
+  carries one-sided support — positive density at +A, none at −A). The OLD per-bit D answer
+  keeps its own type-erased anchor check — the frozen filter approximation — so on a kZigzag
+  roll the per-bit D and the per-element answers deliberately disagree; the bits serve the old
+  consumers bit-for-bit, the exact layer refuses what it cannot prove.
+- The action `roll → −roll − 60a` also decomposes as reflect-about-c after a shift by s
+  whenever 2c ≡ s − 60a (mod 360°), and the measure keeps the element if ANY decomposition's
+  both halves keep it. The s = 180° branch is what makes the retained inventory CLOSED UNDER
+  COMPOSITION: σ_0·P_3 = σ_3 keeps a pole-folded axis (shift 180° by the fold, reflect about
+  the anchor 0°) even though its canonical centre −90° names nothing. The inventory is closed
+  to the fixed point over the 24 members, so the local-class orbits and their transport facts
+  consume a genuine subgroup — every class member's carrier maps it onto the representative in
+  ONE step, verifiable per member.
+- A roll reflection whose reflection branch the s = 180° composition cannot rescue (the centre
+  neither names −ψ_a nor −ψ_a − 90°'s shifted partner) stays refused; a missed merge is safe
+  where a wrong one is not.
+
 Two structural warnings the tests pin:
 
 - **Judge the composite as a whole.** H_a's retention = (az uniform) ∧ (zen symmetric) ∧ (roll

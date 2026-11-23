@@ -578,6 +578,38 @@ double LatitudeDensity::FlipProbability(double phi_rad) const {
   return 0.0;
 }
 
+void LatitudeDensity::EvaluateLogBranches(double phi_rad, double* log_branch_a, double* log_branch_b) const {
+  const double neg_inf = -std::numeric_limits<double>::infinity();
+  switch (kind_) {
+    case LatitudeLawKind::kFullSphere:
+      // The full-sphere branch never flips: all the mass is branch A.
+      *log_branch_a =
+          (phi_rad > -math::kHalfPi && phi_rad < math::kHalfPi) ? std::log(std::cos(phi_rad) * 0.5) : neg_inf;
+      *log_branch_b = neg_inf;
+      return;
+    case LatitudeLawKind::kFoldedArea:
+    case LatitudeLawKind::kFoldedNoArea: {
+      if (phi_rad <= -math::kHalfPi || phi_rad >= math::kHalfPi) {
+        *log_branch_a = neg_inf;
+        *log_branch_b = neg_inf;
+        return;
+      }
+      // The kWindowed log forms the EvaluateLog overload recombines by log-sum-exp — now kept
+      // SEPARATE so the joint flip mixture weights its branches from log masses alone.
+      *log_branch_a = FoldedProposalLogDensity(proposal_, phi_rad, false);
+      *log_branch_b = FoldedProposalLogDensity(proposal_, phi_rad, true);
+      return;
+    }
+    case LatitudeLawKind::kDiracUnfolded:
+    case LatitudeLawKind::kDiracFolded:
+      *log_branch_a = neg_inf;
+      *log_branch_b = neg_inf;
+      return;
+  }
+  *log_branch_a = neg_inf;
+  *log_branch_b = neg_inf;
+}
+
 double LatitudeDensity::TotalMass() const {
   // The same fold-aware panel split the Z normalization uses: the plain rule underreads a
   // kZigzag proposal's arcsine spikes badly (the Z measurement: ~24%) and a kinked law's
@@ -672,23 +704,31 @@ double DeclaredPoseLogDensity(const LatitudeDensity& lat, const AxisDistribution
     return neg_inf;  // singular in phi; the mass is carried by UMarginal's support kinds
   }
   bool az_dirac = false, roll_dirac = false;
-  const double log_phi = lat.EvaluateLog(phi_rad);
   const double log_az = WrappedSlotLogDensity(axis.azimuth_dist, lambda_out_rad, &az_dirac);
   const double log_roll = WrappedSlotLogDensity(axis.roll_dist, roll_out_rad, &roll_dirac);
-  if (az_dirac || roll_dirac || log_phi == neg_inf) {
+  if (az_dirac || roll_dirac) {
     return neg_inf;  // singular in that slot; same rule as the linear form
   }
-  const double f = lat.FlipProbability(phi_rad);
+  // The flip mixture weights each branch by its OWN preimage family's log mass relative to the
+  // two families' log-sum-exp — never through the linear FlipProbability, whose pa/pb underflow
+  // to 0 (or round their ratio onto 1) exactly in the deep tails this log form exists to spell.
+  double log_branch_a = neg_inf, log_branch_b = neg_inf;
+  lat.EvaluateLogBranches(phi_rad, &log_branch_a, &log_branch_b);
+  const double log_denominator = LogSumExp(log_branch_a, log_branch_b);
+  if (log_denominator == neg_inf) {
+    return neg_inf;  // the latitude law answers nothing here
+  }
   const double log_az_shifted = WrappedSlotLogDensity(axis.azimuth_dist, lambda_out_rad - math::kPiD, &az_dirac);
   const double log_roll_shifted = WrappedSlotLogDensity(axis.roll_dist, roll_out_rad - math::kPiD, &roll_dirac);
   if (az_dirac || roll_dirac) {
     return neg_inf;
   }
-  // The two flip branches as log products, then log-sum-exp; log1p(−f) is the stable log(1−f)
-  // and answers −inf at f = 1 exactly like the linear form's zeroed branch.
-  const double log_branch_a = std::log1p(-f) + log_az + log_roll;
-  const double log_branch_b = (f > 0.0 ? std::log(f) : neg_inf) + log_az_shifted + log_roll_shifted;
-  return log_phi + LogSumExp(log_branch_a, log_branch_b);
+  // log(phi) re-enters through the same branch masses (plus the law's own scaling) — spelled as
+  // EvaluateLog so the mixture and the marginal cannot drift apart.
+  const double log_phi = lat.EvaluateLog(phi_rad);
+  const double branch_a = (log_branch_a - log_denominator) + log_az + log_roll;
+  const double branch_b = (log_branch_b - log_denominator) + log_az_shifted + log_roll_shifted;
+  return log_phi + LogSumExp(branch_a, branch_b);
 }
 
 // ---------------------------------------------------------------------------

@@ -1487,4 +1487,48 @@ TEST(LocalClassCApi, NullArgumentsAndUnknownCrystalAreRejected) {
   LUMICE_PathWorkspaceDestroy(workspace);
 }
 
+TEST(LocalClassCApi, IllegalCallerInputIsRefusedNotFatal) {
+  // The element algebra answers illegal face numbers with an unrecoverable invariant, so the C
+  // entry must refuse them BEFORE the algebra: a hostile face sequence once aborted the host
+  // (SIGABRT through the boundary, uncatchable). The bit set is checked at full width before
+  // the uint8 narrowing, and the sky point against the coordinate contract.
+  const ScenePtr scene = MakeScene(kParryScene);
+  LUMICE_PathWorkspace* workspace = nullptr;
+  ASSERT_EQ(LUMICE_PathWorkspaceCreate(scene.get(), &workspace, nullptr, 0), LUMICE_OK);
+  LUMICE_LocalClassRequest request{};
+  request.struct_size = sizeof(request);
+  request.crystal_id = 1;
+  request.representative_face_count = 2;
+  request.target_altitude_deg = 36.0;
+  request.target_azimuth_deg = -52.0;
+  LUMICE_LocalClass* result = nullptr;
+  char err[256];
+
+  static const int illegal_faces[2] = { 9, 1 };
+  request.representative_faces = illegal_faces;
+  request.symmetry_bits = 7;
+  EXPECT_EQ(LUMICE_PathWorkspaceQueryLocalClasses(workspace, &request, nullptr, &result, err, sizeof(err)),
+            LUMICE_ERR_INVALID_VALUE)
+      << err;
+  EXPECT_NE(std::string(err).find("legal face"), std::string::npos);
+  EXPECT_EQ(result, nullptr);
+
+  static const int legal_faces[2] = { 4, 1 };
+  request.representative_faces = legal_faces;
+  request.symmetry_bits = 256;  // the narrowing trap: 256 must not become 0
+  EXPECT_EQ(LUMICE_PathWorkspaceQueryLocalClasses(workspace, &request, nullptr, &result, err, sizeof(err)),
+            LUMICE_ERR_INVALID_VALUE)
+      << err;
+  EXPECT_NE(std::string(err).find("P|B|D mask"), std::string::npos);
+
+  request.symmetry_bits = 7;
+  request.target_azimuth_deg = std::nan("");
+  EXPECT_EQ(LUMICE_PathWorkspaceQueryLocalClasses(workspace, &request, nullptr, &result, err, sizeof(err)),
+            LUMICE_ERR_INVALID_VALUE)
+      << err;
+  EXPECT_NE(std::string(err).find("finite"), std::string::npos);
+  EXPECT_EQ(result, nullptr);
+  LUMICE_PathWorkspaceDestroy(workspace);
+}
+
 }  // namespace

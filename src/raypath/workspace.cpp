@@ -1,7 +1,10 @@
 #include "raypath/workspace.hpp"
 
 #include <chrono>
+#include <cmath>
 
+#include "core/crystal.hpp"
+#include "core/crystal_kind.hpp"
 #include "raypath/detail/local_class.hpp"
 #include "raypath/detail/survey/survey_assembly.hpp"
 #include "raypath/query_control.hpp"
@@ -205,6 +208,23 @@ Error AnalysisWorkspace::QueryLocalClasses(const LocalClassQuery& query, std::ve
   }
   if (query.representative.empty()) {
     return { ErrorCode::kInvalidPath, "local classes: empty representative" };
+  }
+  // Caller input is refused before any element algebra runs: ApplyToFace answers illegal face
+  // numbers with an unrecoverable invariant (an abort, not an error), so the faces are checked
+  // against the crystal kind's own legal set here, and the sky point against the query's
+  // coordinate contract.
+  const CrystalKind kind = std::holds_alternative<PrismCrystalParam>(configured->second.param_) ? CrystalKind::kPrism :
+                                                                                                  CrystalKind::kPyramid;
+  for (const int face : query.representative) {
+    if (!IsLegalFace(kind, face)) {
+      return { ErrorCode::kFaceNotInCrystal, "local classes: representative face " + std::to_string(face) +
+                                                 " is not a legal face number of this crystal" };
+    }
+  }
+  if (!std::isfinite(query.target_altitude_deg) || !std::isfinite(query.target_azimuth_deg) ||
+      query.target_altitude_deg < -90.0 || query.target_altitude_deg > 90.0) {
+    return { ErrorCode::kInvalidTarget,
+             "local classes: the target altitude must be finite and in [-90, 90], the azimuth finite" };
   }
   // The row scope through the same resolution the member lists elsewhere carry: the expansion
   // runs under the physical gating derived from the snapshot's own crystal config, so the

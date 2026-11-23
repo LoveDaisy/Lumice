@@ -544,19 +544,6 @@ TEST(ElementRetention, ColumnAxisRetainsEverything) {
   EXPECT_EQ(FilterByFamily(retained, CrystalElement::Family::kRotoMirror).size(), 6u);
 }
 
-TEST(ElementRetention, PlateAxisKeepsTheGluedHalfTurnAndTheAnchoredMirrorOnly) {
-  // Zenith pole-centred (latitude 90±1): the pole fold glues the 180° rotation (P_3, the
-  // GluingRetainsHalfTurn mechanism, not a roll-uniformity one); B fails (zenith not symmetric
-  // about 90); the roll anchor at 0 names σ_0; B's az conjunct is met everywhere here.
-  const auto retained = DeriveRetainedElements(kFullHexagonalSymmetry, PlateAxis());
-  EXPECT_EQ(retained.size(), 3u);
-  EXPECT_TRUE(Contains(retained, CrystalElement::Family::kIdentity, 0));
-  EXPECT_TRUE(Contains(retained, CrystalElement::Family::kCAxisRotation, 3));
-  EXPECT_TRUE(Contains(retained, CrystalElement::Family::kVerticalMirror, 0));
-  EXPECT_TRUE(FilterByFamily(retained, CrystalElement::Family::kHorizontalHalfTurn).empty());
-  EXPECT_TRUE(FilterByFamily(retained, CrystalElement::Family::kRotoMirror).empty());
-}
-
 TEST(ElementRetention, RollAnchorNamesTheMirrorIndex) {
   // Roll gauss centred at 90°: n = 3, a = 3 — the anchor names σ_3 (and H_3), not σ_0.
   const AxisDistribution axis =
@@ -627,13 +614,13 @@ TEST(ElementRetention, PerElementAnswerProjectsOntoThePerBitGatesExactly) {
   }
 }
 
-TEST(ElementNaming, ReduceRaypathByElementsNamesTheScenarioClasses) {
+TEST(ElementNaming, ReduceRaypathByPeriodElementFormNamesTheScenarioClasses) {
   // The Parry −52° pair: {4-2, 8-1} under H_0 names 4-2; the identity-only set names the input.
   const CrystalElement h0{ CrystalElement::Family::kHorizontalHalfTurn, 0 };
   std::vector<CrystalElement> elements{ h0 };
-  EXPECT_EQ(ReduceRaypathByElements({ 4, 2 }, elements, kHexagonalFnPeriod), (std::vector<IdType>{ 4, 2 }));
-  EXPECT_EQ(ReduceRaypathByElements({ 8, 1 }, elements, kHexagonalFnPeriod), (std::vector<IdType>{ 4, 2 }));
-  EXPECT_EQ(ReduceRaypathByElements({ 4, 1 }, elements, kHexagonalFnPeriod), (std::vector<IdType>{ 4, 1 }));
+  EXPECT_EQ(ReduceRaypathByPeriod({ 4, 2 }, elements, kHexagonalFnPeriod), (std::vector<IdType>{ 4, 2 }));
+  EXPECT_EQ(ReduceRaypathByPeriod({ 8, 1 }, elements, kHexagonalFnPeriod), (std::vector<IdType>{ 4, 2 }));
+  EXPECT_EQ(ReduceRaypathByPeriod({ 4, 1 }, elements, kHexagonalFnPeriod), (std::vector<IdType>{ 4, 1 }));
   // The column tangent-arc pair's twelve members under all twelve proper elements collapse to
   // 3-5 — one orbit, one lexicographic representative.
   std::vector<CrystalElement> proper;
@@ -647,13 +634,119 @@ TEST(ElementNaming, ReduceRaypathByElementsNamesTheScenarioClasses) {
     for (int shift = 0; shift < 6; ++shift) {
       const std::vector<IdType> member = { static_cast<IdType>(3 + (pri_a + shift) % 6),
                                            static_cast<IdType>(3 + (pri_a + 2 + shift) % 6) };
-      EXPECT_EQ(ReduceRaypathByElements(member, proper, kHexagonalFnPeriod), (std::vector<IdType>{ 3, 5 }))
+      EXPECT_EQ(ReduceRaypathByPeriod(member, proper, kHexagonalFnPeriod), (std::vector<IdType>{ 3, 5 }))
           << "member " << member[0] << "-" << member[1];
     }
   }
+  // The row-scoped form: the class lives inside the row's member list — a partial row keeps a
+  // member the full orbit's minimum would leave (the issue's "within the selected row's member
+  // range"). {8-1} in a row that lacks 4-2 names 8-1, not the orbit's 4-2.
+  const std::vector<std::vector<IdType>> partial_row{ { 4, 1 }, { 8, 1 } };
+  EXPECT_EQ(ReduceRaypathByPeriod({ 8, 1 }, elements, kHexagonalFnPeriod, partial_row), (std::vector<IdType>{ 8, 1 }));
   // Degenerate inputs pass through.
-  EXPECT_EQ(ReduceRaypathByElements({ 4, 2 }, {}, kHexagonalFnPeriod), (std::vector<IdType>{ 4, 2 }));
-  EXPECT_EQ(ReduceRaypathByElements({ 4, 2 }, elements, -1), (std::vector<IdType>{ 4, 2 }));
+  EXPECT_EQ(ReduceRaypathByPeriod({ 4, 2 }, {}, kHexagonalFnPeriod), (std::vector<IdType>{ 4, 2 }));
+  EXPECT_EQ(ReduceRaypathByPeriod({ 4, 2 }, elements, -1), (std::vector<IdType>{ 4, 2 }));
+}
+
+TEST(ElementRetention, RetainedSetIsClosedUnderComposition) {
+  // The retained inventory is the preserved subgroup's label inventory: every product of two
+  // retained elements must be retained (the closure the transport facts consume as complete).
+  // Each axis here also re-checks every D6h product lands back in the set.
+  std::vector<AxisDistribution> axes;
+  axes.push_back(ParryAxis());
+  axes.push_back(ColumnAxis());
+  axes.push_back(PlateAxis());
+  AxisDistribution anchor90 =
+      AxisAzUniformZenRoll(DistributionType::kGaussian, 0.0f, 1.0f, DistributionType::kGaussian, 90.0f, 1.0f);
+  axes.push_back(anchor90);
+  AxisDistribution odd_roll =
+      AxisAzUniformZenRoll(DistributionType::kGaussian, 0.0f, 1.0f, DistributionType::kGaussian, 15.0f, 1.0f);
+  axes.push_back(odd_roll);
+  AxisDistribution tilted_roll =
+      AxisAzUniformZenRoll(DistributionType::kGaussian, 0.0f, 1.0f, DistributionType::kGaussian, 60.0f, 1.0f);
+  axes.push_back(tilted_roll);
+  AxisDistribution zigzag_roll =
+      AxisAzUniformZenRoll(DistributionType::kGaussian, 0.0f, 1.0f, DistributionType::kZigzag, 0.0f, 5.0f);
+  axes.push_back(zigzag_roll);
+  for (const AxisDistribution& axis : axes) {
+    const auto retained = DeriveRetainedElements(kFullHexagonalSymmetry, axis);
+    for (const CrystalElement& a : retained) {
+      for (const CrystalElement& b : retained) {
+        CrystalElement product;
+        {
+          double ma[9];
+          a.BodyMatrix(ma);
+          double mb[9];
+          b.BodyMatrix(mb);
+          double m[9];
+          for (int i = 0; i < 3; ++i) {
+            for (int j = 0; j < 3; ++j) {
+              m[i * 3 + j] =
+                  ma[i * 3 + 0] * mb[0 * 3 + j] + ma[i * 3 + 1] * mb[1 * 3 + j] + ma[i * 3 + 2] * mb[2 * 3 + j];
+            }
+          }
+          // Name the product through the inventory's own matrices (the production closure's
+          // rule, restated here independently).
+          bool named = false;
+          for (const CrystalElement& candidate : AllCrystalElements()) {
+            double mc[9];
+            candidate.BodyMatrix(mc);
+            bool same = true;
+            for (int i = 0; i < 9 && same; ++i) {
+              same = std::fabs(m[i] - mc[i]) <= 1e-12;
+            }
+            if (same) {
+              product = candidate;
+              named = true;
+            }
+          }
+          if (!named) {
+            ADD_FAILURE() << "the product of two retained members left the D6h inventory";
+            continue;
+          }
+        }
+        EXPECT_TRUE(Contains(retained, product.family, product.index))
+            << "axis roll centre " << axis.roll_dist.center << ": product of two retained members left the set";
+      }
+    }
+  }
+}
+
+TEST(ElementRetention, ZigzagRollIsConservativelyRefusedEverywhere) {
+  // The declared Zigzag roll law |A·sin(t)+B| has no reflection-symmetry proof about any centre
+  // (centre 0 with B = 0 even carries one-sided support: positive density at +5°, none at −5°).
+  // The exact layer refuses every element whose only roll claim is that reflection — the
+  // per-bit D answer keeps its own frozen anchor approximation beside it.
+  AxisDistribution axis =
+      AxisAzUniformZenRoll(DistributionType::kGaussian, 90.0f, 0.3f, DistributionType::kZigzag, 0.0f, 5.0f);
+  axis.azimuth_dist = Distribution{ DistributionType::kUniform, 0.0f, 360.0f };
+  const auto retained = DeriveRetainedElements(kFullHexagonalSymmetry, axis);
+  EXPECT_TRUE(FilterByFamily(retained, CrystalElement::Family::kVerticalMirror).empty());
+  EXPECT_TRUE(FilterByFamily(retained, CrystalElement::Family::kHorizontalHalfTurn).empty());
+  // The shift-only families keep their own roll-shift conditions: the pole-centred latitude
+  // glues P_3 (the fold mechanism is roll-law-blind — it pairs roll with roll+180 through the
+  // latitude, whatever law the roll slot carries), while every other rotation fails the
+  // zigzag's absence of shift-invariance. Every REFLECTING family is refused outright.
+  EXPECT_TRUE(Contains(retained, CrystalElement::Family::kIdentity, 0));
+  EXPECT_TRUE(Contains(retained, CrystalElement::Family::kCAxisRotation, 3));
+  EXPECT_EQ(FilterByFamily(retained, CrystalElement::Family::kCAxisRotation).size(), 1u);
+  EXPECT_TRUE(FilterByFamily(retained, CrystalElement::Family::kRotoMirror).empty());
+}
+
+TEST(ElementRetention, PlateAxisKeepsTheGluedHalfTurnTheAnchoredMirrorAndTheirComposite) {
+  // Zenith pole-centred (latitude 90±1): the pole fold glues the 180° rotation (P_3, the
+  // GluingRetainsHalfTurn mechanism, not a roll-uniformity one); B fails (zenith not symmetric
+  // about 90); the roll anchor at 0 names σ_0 — and the composition closure adds σ_3 =
+  // σ_0·P_3, whose canonical reflection centre −90° names nothing but whose two provable
+  // halves (shift 180° by the fold, reflect about the anchor 0°) keep it exactly.
+  const auto retained = DeriveRetainedElements(kFullHexagonalSymmetry, PlateAxis());
+  EXPECT_EQ(retained.size(), 4u);
+  EXPECT_TRUE(Contains(retained, CrystalElement::Family::kIdentity, 0));
+  EXPECT_TRUE(Contains(retained, CrystalElement::Family::kCAxisRotation, 3));
+  EXPECT_TRUE(Contains(retained, CrystalElement::Family::kVerticalMirror, 0));
+  EXPECT_TRUE(Contains(retained, CrystalElement::Family::kVerticalMirror, 3));
+  EXPECT_TRUE(FilterByFamily(retained, CrystalElement::Family::kHorizontalHalfTurn).empty());
+  EXPECT_TRUE(FilterByFamily(retained, CrystalElement::Family::kRotoMirror).empty());
 }
 
 }  // namespace

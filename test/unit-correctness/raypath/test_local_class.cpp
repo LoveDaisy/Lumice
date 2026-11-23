@@ -201,5 +201,40 @@ TEST(LocalClass, PlateSidesAreSingletonsOnBothSidesAndMergeOnlyOnTheSunPlane) {
   EXPECT_EQ(literal_classes[0].representative, (std::vector<int>{ 1, 3, 4, 2 }));
 }
 
+TEST(LocalClass, PlateAxisOnPlaneFormsOneClassAndCarriesEveryMemberByALabelVerifiedElement) {
+  // The production scope, unmodified: the plate axis (zenith pole-centred, roll gauss 0±5)
+  // under full P|B|D bits — the physical gating keeps {identity, P_3, σ_0} plus the composition
+  // closure's σ_3 = σ_0·P_3, whose canonical reflection centre names nothing. On the sun's
+  // vertical plane all four retained elements fix the sky point, so the row's four members are
+  // ONE orbit-class named by the authority — and every member's carrier must map it onto the
+  // representative label-for-label (the transport facts' contract, the one a silent identity
+  // default used to break when the closure missed σ_3).
+  AxisDistribution axis;
+  axis.azimuth_dist = Distribution{ DistributionType::kUniform, 0.0f, 360.0f };
+  axis.latitude_dist = Distribution{ DistributionType::kGaussian, 90.0f, 1.0f };
+  axis.roll_dist = Distribution{ DistributionType::kGaussian, 0.0f, 5.0f };
+  const float rhombic[6] = { 1.5f, 1.0f, 1.0f, 1.5f, 1.0f, 1.0f };
+  PhysicalMemberScope row = MakeRow(axis, rhombic, { 1, 3, 4, 2 }, sym::kSymP | sym::kSymB | sym::kSymD);
+  ASSERT_EQ(row.members.size(), 4u) << "the production scope: P_3 shifts and the σ_0 mirrors";
+  LocalClassRequest request;
+  request.target_altitude_deg = 36.0;
+  request.target_azimuth_deg = 180.0;  // the sun's vertical plane: every retained element fixes q
+  request.sun_azimuth_deg = 180.0;
+  std::vector<LocalClass> classes;
+  ASSERT_TRUE(ResolveLocalClasses(row, request, &classes).Ok());
+  ASSERT_EQ(classes.size(), 1u) << "the closed retained set makes the row one orbit on this q";
+  EXPECT_EQ(classes[0].representative, (std::vector<int>{ 1, 3, 4, 2 }));
+  ASSERT_EQ(classes[0].member_indices.size(), 4u);
+  for (size_t i = 0; i < classes[0].member_indices.size(); ++i) {
+    const auto& member = row.members[classes[0].member_indices[i]];
+    std::vector<int> image = member;
+    for (int& face : image) {
+      face = static_cast<int>(classes[0].to_representative[i].ApplyToFace(static_cast<IdType>(face)));
+    }
+    EXPECT_EQ(image, classes[0].representative)
+        << "member " << member[0] << "-" << member[1] << "-" << member[2] << "-" << member[3];
+  }
+}
+
 }  // namespace
 }  // namespace lumice::raypath

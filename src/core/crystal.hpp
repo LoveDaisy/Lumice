@@ -652,13 +652,21 @@ bool ShapeAdmitsElement(const CrystalElement& element, const GeometricSymmetry& 
 // pinned equal to this set's per-family subsets.
 std::vector<CrystalElement> DeriveRetainedElements(const GeometricSymmetry& shape, const AxisDistribution& axis_dist);
 
-// The naming authority's element-set form: the lexicographically smallest sequence in the orbit
-// of `rp` under the given elements' label actions (the orbit IS the local class; the minimum is
-// its representative). The per-bit ReduceRaypathByPeriod keeps the old entries' behaviour
-// bit-for-bit; this overload exists because a local class's element set is not expressible as
-// P/B/D bits. `fn_period < 0` or an empty element set returns `rp` unchanged.
-std::vector<IdType> ReduceRaypathByElements(const std::vector<IdType>& rp, const std::vector<CrystalElement>& elements,
-                                            int fn_period);
+// The naming authority's element-set form — the SAME ReduceRaypathByPeriod entry, so there is
+// one naming rule, not a second reduction beside it: the lexicographic minimum of `rp`'s orbit
+// under the given elements' label actions (the orbit IS the local class; the minimum is its
+// representative). The per-bit overload above keeps the old entries' walk bit-for-bit; this
+// form is what a local class consumes (an element set is not expressible as P/B/D bits).
+// `fn_period < 0` or an empty element set returns `rp` unchanged.
+std::vector<IdType> ReduceRaypathByPeriod(const std::vector<IdType>& rp, const std::vector<CrystalElement>& elements,
+                                          int fn_period);
+
+// The row-scoped form of the same authority: the orbit minimum CLAMPED to `row` — a partial-bit
+// row's member list is a strict subset of the orbit, and the class (the issue's definition:
+// "within the selected row's member range") lives inside that clamp. The local-class resolver
+// calls exactly this; it owns only the sky-fixing selection, no naming rule of its own.
+std::vector<IdType> ReduceRaypathByPeriod(const std::vector<IdType>& rp, const std::vector<CrystalElement>& elements,
+                                          int fn_period, const std::vector<std::vector<IdType>>& row);
 
 // The first element in AllCrystalElements()' fixed order whose label action maps `from` onto `to`
 // face-for-face (same size, same band structure), restricted to proper elements when
@@ -808,15 +816,27 @@ enum class SymmetrySemantics {
 // `p_retained` is the physical regime's retained-rotation set: the measure's own periodicities
 // (DeriveSymmetryGating intersects them with the shape's) — the label regime passes Full() and
 // the reductions consume its GeneratorStep() as the P modulus.
+//
+// `retained_elements` is the same authority's EXACT layer: the per-element preservation answers
+// (the per-bit fields are the old consumers' frozen approximation contract, produced alongside —
+// never reinterpreted). For kPhysical it is the shape-and-measure-retained element inventory,
+// CLOSED UNDER COMPOSITION (the per-family predicates can miss a composite whose canonical form
+// names no single anchor, e.g. σ_0·P_3 = σ_3 on a pole-folded axis) and sorted in
+// AllCrystalElements()' fixed order; for kLabel it is the full 24-element inventory.
 struct SymmetryGating {
   GeometricSymmetry geom;
   PRotationSet p_retained;
   bool b_applicable;
+  std::vector<CrystalElement> retained_elements;
 };
 
 // The one authority translating a SymmetrySemantics into the gating a reduction reads. kLabel
 // ignores both `shape_geom` and `axis_dist` and answers the full D6h with P and B admitted;
 // kPhysical answers `shape_geom` with the ensemble's retained P rotations and its B condition.
+// One producer, two contracts: the per-bit fields keep the old consumers' exact frozen semantics
+// (their approximation clauses included), the element layer answers exactly and conservatively —
+// where the two disagree (a kZigzag roll's anchor-position vs its unproven reflection symmetry)
+// the divergence is deliberate and documented in doc/raypath/raypath-elements.md.
 SymmetryGating DeriveSymmetryGating(SymmetrySemantics semantics, const GeometricSymmetry& shape_geom,
                                     const AxisDistribution& axis_dist);
 

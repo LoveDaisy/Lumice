@@ -192,6 +192,14 @@ class LatitudeDensity {
   // folded sum recombines its two preimage branches — and the k shifts inside each — by
   // log-sum-exp, so a tail proposal's branch that the linear sum underflows away still counts.
   double EvaluateLog(double phi_rad) const;
+  // The two preimage families' LOG masses separately (branch A = no flip, branch B = the
+  // reflected family), the same quantities EvaluateLog recombines by log-sum-exp. A consumer
+  // that must SPLIT the branches (the joint pose law's flip mixture) forms its weights from
+  // these log masses — never from the linear FlipProbability, whose pa/pb underflow to 0 (or
+  // round their ratio to 1) exactly in the deep tails where the log form exists to stay
+  // honest. kFullSphere answers log_pb = −inf (it never flips); the Dirac kinds answer both
+  // −inf.
+  void EvaluateLogBranches(double phi_rad, double* log_branch_a, double* log_branch_b) const;
   // P(flip | phi), the branch-B share of the folded law (0 for kFullSphere/kDiracUnfolded).
   double FlipProbability(double phi_rad) const;
   // The Dirac point of a kDiracUnfolded law (radians).

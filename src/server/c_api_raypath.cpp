@@ -1455,6 +1455,20 @@ LUMICE_ErrorCode LUMICE_PathWorkspaceQueryLocalClasses(LUMICE_PathWorkspace* wor
     WriteError(err_buf, err_size, "invalid_argument: representative_face_count is negative");
     return LUMICE_ERR_INVALID_VALUE;
   }
+  // The bit set is validated at FULL width before the narrowing cast: 256 as unsigned would
+  // truncate to 0 and silently change the scope. The mask's domain is the P|B|D bits (0..7).
+  if (request->symmetry_bits > 7) {
+    WriteError(err_buf, err_size, "invalid_argument: symmetry_bits is outside the P|B|D mask (0..7)");
+    return LUMICE_ERR_INVALID_VALUE;
+  }
+  // The coordinate contract is checked here like the point face's own (a NaN altitude must not
+  // reach the algebra as a quiet LUMICE_OK).
+  if (!std::isfinite(request->target_altitude_deg) || !std::isfinite(request->target_azimuth_deg) ||
+      request->target_altitude_deg < -90.0 || request->target_altitude_deg > 90.0) {
+    WriteError(err_buf, err_size,
+               "invalid_argument: target altitude must be finite and in [-90, 90], the azimuth finite");
+    return LUMICE_ERR_INVALID_VALUE;
+  }
   if (const auto error = ValidateQueryOptions(options, false, err_buf, err_size); error != LUMICE_OK) {
     return error;
   }

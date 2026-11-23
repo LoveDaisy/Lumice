@@ -21,6 +21,7 @@
 #include <vector>
 
 #include "analytic/pose_density.hpp"
+#include "core/crystal.hpp"
 #include "core/lat_lut.hpp"
 #include "raypath/detail/measure/declared_density.hpp"
 
@@ -997,6 +998,32 @@ TEST(DeclaredDensityLog, ParryRollHalfTurnRatioIsTheAnalyticExponential) {
   const double linear_ratio =
       DeclaredPoseDensity(parry, 0.5, 0.0, roll + kPi) / DeclaredPoseDensity(parry, 0.5, 0.0, roll);
   EXPECT_EQ(linear_ratio, 0.0);
+}
+
+TEST(DeclaredDensityLog, RetainedShiftTransportKeepsTheLogDensity) {
+  // The C12-plate axis (azimuth uniform, latitude 90±1, roll gauss 0±5): the pole fold glues
+  // P_3 (MeasureRetainsElement pins it), so the fold's equal-weight leaves must make the log
+  // density at phi = 0 EQUAL at roll and roll + pi — the composed angles are the fold's paired
+  // leaves, and the P_3 compensation pairs the roll slot by exactly that shift. The branch
+  // weights must come from the preimage families' LOG masses: forming them through the linear
+  // FlipProbability loses a leaf to underflow here and reads a ~647-nat gap that contradicts
+  // the element algebra's own retention answer.
+  AxisDistribution plate;
+  plate.azimuth_dist = Uniform(0.0, 360.0);
+  plate.latitude_dist = Gauss(90.0, 1.0);
+  plate.roll_dist = Gauss(0.0, 5.0);
+  const CrystalElement p3{ CrystalElement::Family::kCAxisRotation, 3 };
+  EXPECT_TRUE(MeasureRetainsElement(p3, plate)) << "the fixture must be one the algebra calls retained";
+  const double lambda = 0.7;
+  const double phi = 0.0;  // the fold boundary: both preimage families weigh in
+  const double log_at_zero = DeclaredPoseLogDensity(plate, lambda, phi, 0.0);
+  const double log_at_pi = DeclaredPoseLogDensity(plate, lambda, phi, kPi);
+  ASSERT_TRUE(std::isfinite(log_at_zero));
+  ASSERT_TRUE(std::isfinite(log_at_pi));
+  // Deep in the gauss tail both leaves underflow the LINEAR form — the log forms must agree to
+  // their own floating noise, which is the retention statement spelled numerically.
+  EXPECT_NEAR(log_at_zero, log_at_pi, 1e-6) << "P_3 is retained: the paired leaves cannot differ";
+  EXPECT_LT(log_at_zero, -100.0) << "the probe sits ~23 sigma out: the deep-tail regime is in force";
 }
 
 
