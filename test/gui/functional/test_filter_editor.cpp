@@ -801,6 +801,143 @@ void RegisterFilterEditorTests(ImGuiTestEngine* engine) {
     };
   }
 
+  // The handoff itself must carry the cancel: press Enter, then Esc on the very next frame —
+  // before the inserted row ever became an editor. Nothing consumes a key there unless the flow
+  // routes it to the row it is undoing; a dropped cancel would leave the creation alive and hand
+  // it the focus anyway.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "filter_editor", "esc_during_the_enter_handoff_cancels_the_creation");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      ctx->Yield(2);
+      OpenFilterModal(ctx);
+      AuthorRow(ctx, 0, "1-2");
+      ctx->ItemInput("**/##row_text_0");
+      ctx->Yield(2);
+      ctx->KeySetEx(ImGuiKey_Enter, true, 0.0f);
+      ctx->Yield();  // the row is inserted, the focus request armed, the new box NOT yet active
+      ctx->KeySetEx(ImGuiKey_Enter, false, 0.0f);
+      ctx->KeySetEx(ImGuiKey_Escape, true, 0.0f);  // the handoff frame: cancel before any focus
+      ctx->Yield();
+      ctx->KeySetEx(ImGuiKey_Escape, false, 0.0f);
+      ctx->Yield(4);
+
+      auto rows = RowTexts();
+      IM_CHECK_EQ(rows.size(), static_cast<size_t>(1));  // the creation is gone
+      IM_CHECK_STR_EQ(rows[0].c_str(), "1-2");
+      IM_CHECK(!ctx->ItemExists("**/##row_text_1"));
+      IM_CHECK_EQ(ImGui::GetActiveID(), ctx->ItemInfo("**/##row_text_0").ID);  // back on the source
+
+      ctx->ItemClick(kCancel);
+      ctx->Yield(2);
+    };
+  }
+
+  // Keystrokes parked during a handoff must read exactly like the same keystrokes typed after the
+  // handoff settles. The recycled previous editor skips the activation select-all, so BOTH
+  // timings append — the case pins that agreement with two legs and one expected text.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "filter_editor",
+                                    "parked_and_settled_keystrokes_read_identically_on_the_refocused_row");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      // Leg A: the keystrokes land inside the handoff frames.
+      ResetTestState();
+      ctx->Yield(2);
+      OpenFilterModal(ctx);
+      AuthorRow(ctx, 0, "1-2");
+      ctx->ItemInput("**/##row_text_0");
+      ctx->Yield(2);
+      ctx->KeySetEx(ImGuiKey_Enter, true, 0.0f);
+      ctx->Yield();
+      ctx->KeySetEx(ImGuiKey_Enter, false, 0.0f);
+      ctx->KeySetEx(ImGuiKey_Escape, true, 0.0f);  // cancel the creation...
+      ctx->Yield();                                // ...the source row is the refocus target
+      ctx->KeySetEx(ImGuiKey_Escape, false, 0.0f);
+      ctx->KeyChars("99");  // land in the handoff frames themselves
+      ctx->Yield(4);
+      auto rows = RowTexts();
+      IM_CHECK_EQ(rows.size(), static_cast<size_t>(1));
+      IM_CHECK_STR_EQ(rows[0].c_str(), "1-299");
+
+      // Leg B: the same keystrokes typed after the handoff has fully settled.
+      ResetTestState();
+      ctx->Yield(2);
+      OpenFilterModal(ctx);
+      AuthorRow(ctx, 0, "1-2");
+      ctx->ItemInput("**/##row_text_0");
+      ctx->Yield(2);
+      ctx->KeySetEx(ImGuiKey_Enter, true, 0.0f);
+      ctx->Yield();
+      ctx->KeySetEx(ImGuiKey_Enter, false, 0.0f);
+      ctx->KeyPress(ImGuiKey_Escape);
+      ctx->Yield(4);
+      ctx->ItemInput("**/##row_text_0");  // re-focus the source row, as the parked flow left it
+      ctx->KeyChars("99");
+      ctx->Yield(4);
+      rows = RowTexts();
+      IM_CHECK_EQ(rows.size(), static_cast<size_t>(1));
+      IM_CHECK_STR_EQ(rows[0].c_str(), "1-299");  // identical to leg A
+
+      ctx->ItemClick(kCancel);
+      ctx->Yield(2);
+    };
+  }
+
+  // A parked focus request yields to a control the user chose meanwhile: clicking another control
+  // while the handoff is in flight must not have the row grab the focus on a later frame, and
+  // must not delete the row either — only the request ends.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "filter_editor", "a_focus_request_yields_to_a_control_the_user_chose");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      ctx->Yield(2);
+      OpenFilterModal(ctx);
+      AuthorRow(ctx, 0, "1-2");
+      ctx->ItemInput("**/##row_text_0");
+      ctx->Yield(2);
+      ctx->KeySetEx(ImGuiKey_Enter, true, 0.0f);
+      ctx->Yield();
+      ctx->KeySetEx(ImGuiKey_Enter, false, 0.0f);
+      ctx->ItemClick("**/Filter In##filter_action");  // the user chose another control mid-handoff
+      ctx->Yield(4);
+
+      IM_CHECK(ctx->ItemExists("**/##row_text_1"));                            // the creation itself survives
+      IM_CHECK_NE(ImGui::GetActiveID(), ctx->ItemInfo("**/##row_text_1").ID);  // ...without the focus
+
+      ctx->ItemClick(kCancel);
+      ctx->Yield(2);
+    };
+  }
+
+  // The click half of the attribution boundary, in the adjacency the harness can drive (a click
+  // and a keydown in the SAME frame has no deterministic primitive — MouseClick's internal yields
+  // always land the key one frame apart): click away, then Esc next frame. The left row is not
+  // the owner entering its call anymore, so the key belongs to nobody — the row's identity is the
+  // observable, exactly as in the tab adjacency.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "filter_editor", "esc_right_after_clicking_away_does_not_delete");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      ctx->Yield(2);
+      OpenFilterModal(ctx);
+      ctx->ItemInput("**/##row_text_0");
+      ctx->Yield(2);
+      ctx->ItemClick("**/Filter In##filter_action");  // the click-away deactivation
+      ctx->KeySetEx(ImGuiKey_Escape, true, 0.0f);     // adjacent frame
+      ctx->Yield();
+      ctx->KeySetEx(ImGuiKey_Escape, false, 0.0f);
+      ctx->Yield(4);
+
+      IM_CHECK(ctx->ItemExists("**/##row_text_0"));   // uid 0: the SAME row, kept
+      IM_CHECK(!ctx->ItemExists("**/##row_text_1"));  // no refill
+      IM_CHECK_STR_EQ(RowTexts()[0].c_str(), "");
+      IM_CHECK_NE(ImGui::GetActiveID(), ctx->ItemInfo("**/##row_text_0").ID);
+
+      ctx->ItemClick(kCancel);
+      ctx->Yield(2);
+    };
+  }
+
   // ---------------------------------------------------------------------------------------------
   // Committing what was authored.
   // ---------------------------------------------------------------------------------------------
