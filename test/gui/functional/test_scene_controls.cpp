@@ -217,12 +217,10 @@ void RegisterSceneControlTests(ImGuiTestEngine* engine) {
     };
   }
 
-  // P82, rewritten by the unlock task. The ray total is ONE control, and since the stored-choice
-  // split it stays live under `infinite` too (the registry carries the "not used right now"
-  // sentence as an inactive_note instead of the grey-out) — what makes "there is only one"
-  // observable is unchanged: both states are asserted on the same widget id, so a reintroduced
-  // second call site would be a different item, and the id that exists in one state would have to
-  // stop existing in the other.
+  // P82. The ray total is ONE control greyed by the registry, not two call sites picked between by
+  // an if. Both states are asserted on the same widget id, which is what makes "there is only one"
+  // observable: a reintroduced second call site under `infinite` would be a different item, and the
+  // id that exists in one state would have to stop existing in the other.
   {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "scene_controls", "the_ray_total_is_one_control_the_registry_greys");
     t->TestFunc = [](ImGuiTestContext* ctx) {
@@ -241,8 +239,8 @@ void RegisterSceneControlTests(ImGuiTestEngine* engine) {
 
       gui::g_state.sim.infinite = true;
       ctx->Yield(3);
-      IM_CHECK(ctx->ItemExists(kRays));             // still the same item, and still submitted
-      IM_CHECK(!IsDisabled(ctx->ItemInfo(kRays)));  // stored choice, editable while inert
+      IM_CHECK(ctx->ItemExists(kRays));  // still the same item, and still submitted
+      IM_CHECK(IsDisabled(ctx->ItemInfo(kRays)));
 
       gui::g_state.sim.infinite = false;
       ctx->Yield(3);

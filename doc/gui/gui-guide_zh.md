@@ -84,11 +84,14 @@ GUI 需要 display server 和支持 OpenGL 3.2 Core Profile 的 GPU。
   分别显示工作默认来源和当前预览。Entry Edit 内的样式 Combo 仍是临时会话选择，关闭重开、New/Open/Revert
   及 Reset View 都不重置，也不会反写默认。**Reset all my defaults** 只清文档默认勾选，不清应用偏好。
 
-  几乎所有列出的设置都可就地编辑：当前配置用不到的字段（另一色调下的地面色、无图时的背景变换、
-  Infinite rays 开启时的 `Rays(M)`、Globe 下的 `Roll`）保持可编辑，悬停说明取值被保留、待其生效
-  条件满足时采用。两类行有意保持只读并在悬停说明原因：`renderer.ray_color`（GUI 构建始终使用
-  材质自身光谱色，该值由 CLI 或 config JSON 设置），以及全屏镜头下的四个视角角（帧循环会在任何
-  保存生效前把它们归零）。`Presets` 区可调每个可存储预设（Column / Plate / Parry / Lowitz 与 Random；旧
+  几乎所有列出的设置都可就地编辑。存值在当前配置下暂不消费的字段——另一色调下的地面色、非 Globe
+  lens 下的 `Back fade`、不可翻转预设下的横竖屏方向——保持可编辑，悬停说明取值被保留、待其生效
+  条件满足时采用。当前模式完全用不到的控件则置灰并在悬停说明原因：Infinite rays 开启时的
+  `Rays(M)`、Globe 下的 `Roll`、full-sky lens 与 Globe 下的 `Front`、Print 下的 `Show As`、
+  Print / Channel B-R / 无图 / Show 关闭时的背景各行、Print 下的 overlay 与 marker 色板——主界面
+  按同一规则同步置灰，控件不会许诺画面给不出的效果。另有两类行有意保持只读并在悬停说明原因：
+  `renderer.ray_color`（GUI 构建始终使用材质自身光谱色，该值由 CLI 或 config JSON 设置），以及
+  full-sky lens 下的四个视角角（帧循环会在任何保存生效前把它们归零）。`Presets` 区可调每个可存储预设（Column / Plate / Parry / Lowitz 与 Random；旧
   文件缺 Random 覆盖时回退其内置定义）每根轴的每个面——分布类型、均值、离散度；每条已存 wedge
   预设的 Miller 指数可就地编辑（角度随之重算）。
 - **⚠ Revert**：位于顶栏右端、右面板折叠按钮左侧。仅当模拟结束后又改了参数（状态 `Modified`）时出现；用于把配置还原到产生上次结果时的状态。隐藏时它的位置仍被保留，所以它出现时栏上其他按钮都不会移动。
@@ -165,7 +168,7 @@ GUI 需要 display server 和支持 OpenGL 3.2 Core Profile 的 GPU。
 
 ### View（视图）
 
-- **Projection**：`Lens Type` 提供 11 种 lens 投影 —— Linear、Rectangular、Globe、Fisheye（Equidistant / Equal Area / Stereographic / Orthographic）以及 Dual Fisheye（Equidistant / Equal Area / Stereographic / Orthographic）。Combo 中按分组排序，使 Orthographic 变体紧邻其 fisheye / dual-fisheye 同族；`FOV` 由具体 lens 限定上限。`Visibility` 中 `Upper` / `Full` / `Lower` 选择天空的垂直范围，独立的 `Front` 复选框再裁掉相机背向半球；full-sky lens 会禁用 FOV 与视角滑条（全天投影没有视角姿态），而 `Visibility` 与 `Front` 仍可编辑——其选择被保留、只是当前不生效，悬停有说明。Globe 下视图固定 `Roll` 为 0（滑条编辑的是存储值，切回会用到 roll 的 lens 时恢复），另显示 `Back fade`：让球体背面的光与网格像雾一样透过近侧（0–2；0 只显示近侧）。
+- **Projection**：`Lens Type` 提供 11 种 lens 投影 —— Linear、Rectangular、Globe、Fisheye（Equidistant / Equal Area / Stereographic / Orthographic）以及 Dual Fisheye（Equidistant / Equal Area / Stereographic / Orthographic）。Combo 中按分组排序，使 Orthographic 变体紧邻其 fisheye / dual-fisheye 同族；`FOV` 由具体 lens 限定上限。`Visibility` 中 `Upper` / `Full` / `Lower` 选择天空的垂直范围，独立的 `Front` 复选框再裁掉相机背向半球；full-sky lens 同时禁用两者，Globe 则禁用 `Front`。Globe 下另显示 `Back fade`：让球体背面的光与网格像雾一样透过近侧（0–2；0 只显示近侧）。
 - **Camera**：`Elevation`、`Azimuth`、`Roll`。Dual-fisheye 这些 full-sky lens 会禁用三者并使用规范化的零姿态。
   底行依次为 `Reset` → `Look At` → `Lock`。`Look At` 下拉框会立即把相机指向一个具名方向：Overlay 面板能画出的六个参考点（Zenith、Nadir、Sun、Subsun、Anthelion、Antisolar），以及一组相对太阳的 **Horizon** 地平线方位——`Toward sun`、`Sun +90°`、`Away from sun`、`Sun -90°`（仰角 0；标签里的数就是选中后 `Azimuth` 滑条会显示的数，因为太阳固定在方位角 0）。选择只写 `Elevation` 与 `Azimuth`，`Roll` 与 `FOV` 保持原取景。勾选 `Lock` 后，太阳高度等场景值变化时相机会持续跟随所选方向，无须先 Run。手动修改 `Elevation` / `Azimuth` 或在预览中拖动旋转会关闭 Lock 并保留本次手动视角；修改 `Roll`、`FOV` 或滚轮缩放不会解锁。所选目标仍会保留，再次勾选 Lock 即可恢复跟随。`Reset`、切换到不同 lens、文档 New/Open/Revert 都会关闭 Lock；文档切换还会把所选目标恢复为 Sun。Full-sky lens 下两个控件均禁用。
 

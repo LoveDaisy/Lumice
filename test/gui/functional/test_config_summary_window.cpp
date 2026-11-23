@@ -388,11 +388,12 @@ void RegisterConfigSummaryWindowTests(ImGuiTestEngine* engine) {
   }
 
   {
-    // The unlock task retired this page's tone-following: the two ground colours and Show As are
-    // stored settings with no applicability gate, so the page lists BOTH grounds and Show As under
-    // every tone (the panel's swatch keeps its own view rule — one at a time, decided locally by
-    // the tone — and that swap is test_view_display_controls.cpp's). Driven through the state
-    // rather than the combo so the case is about the page, not about finding a combo.
+    // The page follows the gates that remain, and only those: switching Mode to Print drops the
+    // Show As row (the display mode is greyed under print again, and the page mirrors the gate),
+    // while BOTH ground rows stay — the two ground colours are stored settings with no
+    // applicability gate (the panel's swatch keeps its own view rule — one at a time, decided
+    // locally by the tone — and that swap is test_view_display_controls.cpp's). Driven through the
+    // state rather than the combo so the case is about the page, not about finding a combo.
     ImGuiTest* t = IM_REGISTER_TEST(engine, "config_summary", "print_mode_swaps_sky_color_for_paper_color");
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
@@ -413,11 +414,12 @@ void RegisterConfigSummaryWindowTests(ImGuiTestEngine* engine) {
       page = gui::BuildConfigSummary(gui::g_state);
       IM_CHECK(HasRow(page, "Render", "Sky Color"));
       IM_CHECK(HasRow(page, "Render", "Paper Color"));
-      // Nothing swapped and nothing dropped under Print: the rows are stored settings, listed
-      // whether or not the current operator consumes them — the page used to drop the inert half,
-      // which was the grey-out's page half, retired with it. What is on screen is that count.
-      IM_CHECK(HasRow(page, "Render", "Show As"));
-      IM_CHECK_EQ(RenderedSettingsLineCount(ctx, static_cast<int>(page.settings.size())), lines_screen);
+      // One row dropped, nothing swapped: Show As is greyed under Print (the channel-B-R display
+      // has no separate R and B to subtract there), so the page drops it the way it drops every
+      // greyed field — while the two ground rows, stored settings both, stay listed. What is on
+      // screen is that count.
+      IM_CHECK(!HasRow(page, "Render", "Show As"));
+      IM_CHECK_EQ(RenderedSettingsLineCount(ctx, static_cast<int>(page.settings.size())), lines_screen - 1);
 
       gui::g_state.renderer.tone = LUMICE_TONE_SCREEN;
       ctx->Yield(3);

@@ -1259,11 +1259,8 @@ void RenderOverlayRowsTable(const char* table_id, const OverlayRowSpec* rows, in
     ImGui::BeginDisabled(!color_c.enabled);
     ImGui::ColorEdit3(row.color_id, row.color, ImGuiColorEditFlags_NoInputs);
     ImGui::EndDisabled();
-    // Enabled-with-a-note is the stored-choice shape (the unlock task): the swatch is live and
-    // the "not consumed right now" sentence rides inactive_note — the same sentence the defaults
-    // panel's cell shows for the same key.
-    if (color_c.inactive_note != nullptr && ImGui::IsItemHovered()) {
-      ImGui::SetTooltip("%s", color_c.inactive_note);
+    if (color_c.disabled_reason != nullptr && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+      ImGui::SetTooltip("%s", color_c.disabled_reason);
     }
 
     ImGui::TableSetColumnIndex(1);
@@ -1507,9 +1504,8 @@ void RenderMarkersSection() {
     ImGui::ColorEdit3((std::string("##marker_color_") + kMarkerSerialNames[i]).c_str(), m.color,
                       ImGuiColorEditFlags_NoInputs);
     ImGui::EndDisabled();
-    // Same stored-choice shape as the family rows above: live swatch, note under print.
-    if (marker_color_c.inactive_note != nullptr && ImGui::IsItemHovered()) {
-      ImGui::SetTooltip("%s", marker_color_c.inactive_note);
+    if (marker_color_c.disabled_reason != nullptr && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+      ImGui::SetTooltip("%s", marker_color_c.disabled_reason);
     }
 
     ImGui::TableSetColumnIndex(1);
@@ -1670,7 +1666,7 @@ void RenderRightPanel(GLFWwindow* window, float window_width, float window_heigh
     // a hand-paired nest — `BeginDisabled()` under `full_sky` on the outside, `BeginDisabled(
     // is_globe)` under `!full_sky` on the inside — whose NET effect each widget saw had to be read
     // off the interleaving of four `if`s. The two gates are already registered (renderer.visible →
-    // NotUnderFullSky, renderer.front → FrontClipAppliesNote), and each already folds the
+    // NotUnderFullSky, renderer.front → WhenFrontClipApplies), and each already folds the
     // full-sky case in, so the call site needs no nesting: one flat pair per field.
     const FieldEditorConstraint visible_c = ConstraintFor("renderer.visible", g_state);
     ImGui::BeginDisabled(!visible_c.enabled);
@@ -2110,16 +2106,19 @@ void RenderRightPanel(GLFWwindow* window, float window_width, float window_heigh
       DoClearBackground();
     }
     ImGui::SameLine();
-    // Show's gate is the panel's own view rule now (the BeginDisabled(no_bg) above): since the
-    // defaults-panel unlock task the registry's bg_show is a stored setting with no applicability
-    // gate at all (the "not consumed right now" sentence lives in its constraint as a note), so
-    // the old ConstraintFor read here would always be enabled and its disabled_reason always null.
-    // The one state this panel still refuses — nothing to show — carries its own sentence.
+    // Show's own gate, nested inside it and read through ConstraintFor rather than from the local
+    // `no_bg`, so this control and the defaults panel's row for the same field answer with ONE
+    // predicate. They used to be two — `no_bg` here, WhenBackgroundLoaded there — which agreed for
+    // as long as "is an image loaded" was the only reason to disable, and stopped agreeing the
+    // moment Print became a second one. A doubly-pushed disabled state is idempotent, so the nesting
+    // costs nothing; what it buys is the tooltip, which the outer scope cannot carry because the
+    // row's controls each have their own reason.
+    const FieldEditorConstraint bg_show_c = ConstraintFor("bg_show", g_state);
+    ImGui::BeginDisabled(!bg_show_c.enabled);
     Checkbox("Show##display_bg", &g_state.bg_show);
-    // AllowWhenDisabled: no_bg is exactly when the box is disabled, which is when the sentence
-    // has to be readable — the same flag every other disabled-control tooltip here carries.
-    if (no_bg && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-      ImGui::SetTooltip("No background image is loaded (Load Bg above).");
+    ImGui::EndDisabled();
+    if (bg_show_c.disabled_reason != nullptr && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+      ImGui::SetTooltip("%s", bg_show_c.disabled_reason);
     }
     ImGui::EndDisabled();
 
@@ -2183,7 +2182,7 @@ void RenderRightPanel(GLFWwindow* window, float window_width, float window_heigh
     // The disabled state the rest of the section shares — Alpha, the three transform sliders and
     // the pan/zoom hint below.
     ImGui::BeginDisabled(no_bg);
-    // bg_alpha's own note (BackgroundShownNote) already covers BOTH "no image loaded" and "image
+    // bg_alpha's own gate (WhenBackgroundShown) already covers BOTH "no image loaded" and "image
     // hidden", so it subsumes the reopened disabled scope this sits inside; the scope itself is
     // what keeps the pan/zoom hint honest when none is loaded.
     const FieldEditorConstraint bg_alpha_c = ConstraintFor("bg_alpha", g_state);
@@ -2242,8 +2241,7 @@ namespace {
 // The display mode's one entry point: a segmented control, one segment per kDisplayModeNames entry,
 // in the top-right corner of the preview's content region. Display-time — it writes
 // renderer.display_mode, which the preview shader reads on the next frame, and re-runs nothing.
-// Its registry note is DisplayModeNote (via ConstraintFor) — the display mode is a stored
-// setting, live under every tone since the unlock task — and the same sentence the
+// Its gate is the registry's (DisplayModeUnderScreenTone, via ConstraintFor), the same one the
 // Settings panel and the Summary window read; it greys the control under Print, which has no
 // separate R and B to subtract, and keeps the value.
 //
@@ -2306,8 +2304,8 @@ bool RenderDisplayModeControl() {
   // trustworthy, and a user who only ever hovers must still meet them. With the segment names as
   // the only label, it is also where "Channel B-R" is explained at all.
   if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-    if (dm_c.inactive_note != nullptr) {
-      ImGui::SetTooltip("%s", dm_c.inactive_note);
+    if (!dm_c.enabled) {
+      ImGui::SetTooltip("%s", dm_c.disabled_reason);
     } else {
       ImGui::SetTooltip(
           "Normal: the rendered image.\n\n"
@@ -2555,7 +2553,7 @@ void RenderPreviewPanel(GLFWwindow* window, float window_width, float window_hei
     // set it, so switching Mode back to Screen brings the photograph straight back. Read through
     // BgPhotoOnScreen rather than spelled out again here, so the eyedropper and the photo gestures
     // cannot disagree with the frame about whether the photo is in it. See the matching
-    // BackgroundStoredChoice note in field_editor_registry.cpp for why additive-over-subtractive is
+    // WhenBackgroundLoaded gate in field_editor_registry.cpp for why additive-over-subtractive is
     // wrong in kind and not merely in taste.
     pp.bg.enabled = BgPhotoOnScreen(g_state);
     pp.bg.alpha = g_state.bg_alpha;
@@ -3421,8 +3419,8 @@ void RenderScreenshotExportOptionsPopup() {
   }
 
   // The display mode is a choice between two pictures, not a layer, so either may be exported —
-  // a stored setting, live under every tone (the registry carries the print sentence as its
-  // note), and only where the texture on screen can draw it (ScreenshotDisplayModeRenderable).
+  // under the preview control's own applicability (ConstraintFor, the one rule both read), and
+  // only where the texture on screen can draw it (ScreenshotDisplayModeRenderable).
   ImGui::SeparatorText(PanelLabel("renderer.display_mode").c_str());
   const FieldEditorConstraint dm_c = ConstraintFor("renderer.display_mode", g_state);
   const ScreenshotFrameFacts facts = CurrentScreenshotFrameFacts();
@@ -3435,8 +3433,8 @@ void RenderScreenshotExportOptionsPopup() {
     }
     ImGui::EndDisabled();
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-      if (dm_c.inactive_note != nullptr) {
-        ImGui::SetTooltip("%s", dm_c.inactive_note);
+      if (!dm_c.enabled) {
+        ImGui::SetTooltip("%s", dm_c.disabled_reason);
       } else if (!renderable) {
         ImGui::SetTooltip(
             "With the Colored raypath composite on, Normal and Channel B-R are drawn from two different\n"
