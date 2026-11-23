@@ -302,13 +302,6 @@ struct SummandHandoff {
 };
 static SummandHandoff g_summand_handoff;
 static ImVector<ImWchar> g_summand_handoff_chars;
-// One-frame baton between RenderSummandTabGuard (which runs before the modal's tab bar) and the
-// row list (inside the pane child): the Tab was claimed by the crossing this frame, and the
-// re-issued tabbing request must be submitted from inside the row list's own window — the nav
-// scoring only considers items of g.NavWindow, and SetNavWindow has to point at the pane child
-// for the rows (and their delete buttons) to be candidates at all.
-static bool g_summand_tab_reissue_pending = false;
-static ImGuiID g_summand_tab_reissue_anchor = 0;
 
 void AppendCharsToRowBuffer(char* row_text, const ImVector<ImWchar>& chars);  // defined beside the row renderer
 
@@ -347,15 +340,25 @@ static void EndSummandHandoff() {
       g->NavActivateFlags = ImGuiActivateFlags_None;
     }
     // The settle frame arms a deferred buffer reload on the (single, global) InputTextState for
-    // the target's next call. If the transaction ends before that call — a user click moved the
-    // shared state to another box, or the session died — the flag must not survive the ownership
-    // switch: it would move the caret of whatever box now owns the state (plan §3.3: the row-end
-    // policy is for auto handoffs only, never for ordinary mouse focus). Scoped to our own
-    // settle: the deferred flag is only ours when this transaction settled. (A pull reload
-    // landing inside this one-frame window would be dropped with it — the pull re-arms on its
-    // next diff, an edge accepted for keeping the ownership clean.)
+    // the target's next call. Two effects ride on it, and they die differently when the
+    // transaction ends first (plan §3.3: the row-end policy is for auto handoffs only, never for
+    // ordinary mouse focus). The TEXT SYNC — the delivered keystrokes live in the row buffer and
+    // reach the editor's internal copy through that reload — must complete while the target
+    // still owns the shared state: withdrawn, the state's stale internal copy would overwrite
+    // the delivered characters on its next call. Its row-end CARET policy must not: a plain
+    // click has since decided the caret, so the conversion keeps the current selection instead
+    // of forcing the end. When the state has already moved to another box, none of the pending
+    // reload may fire there — withdraw it entirely (a pull reload landing inside this one-frame
+    // window would be dropped with it; the pull re-arms on its next diff, an edge accepted for
+    // keeping the ownership clean).
     if (g_summand_handoff.settled_frame >= 0) {
-      g->InputTextState.WantReloadUserBuf = false;
+      if (ImGuiInputTextState* state = ImGui::GetInputTextState(g_summand_handoff.target_id)) {
+        if (state->WantReloadUserBuf) {
+          state->ReloadUserBufAndKeepSelection();
+        }
+      } else {
+        g->InputTextState.WantReloadUserBuf = false;
+      }
     }
   }
   g_summand_handoff = {};
@@ -2030,20 +2033,29 @@ static void RenderSummandTabGuard() {
   // frame's ApplyResult has already pointed NavId at the target before the widgets ran, so nav's
   // own request was created from the correct anchor and has scored the full candidate set —
   // cancelling it here would discard exactly the candidates ahead of the list that backward
-  // tabbing needs. The re-issue itself happens inside the row list (the nav scoring only
-  // considers g.NavWindow's items, and the rows live in the pane child) — the one-frame baton.
+  // tabbing needs. THIS call site is what makes the re-issue complete: it runs before the pane
+  // child has submitted any item, so the re-issued request scores the whole candidate set — the
+  // tab headers included, which is what backward tabbing from the first row lands on — while
+  // g.NavWindow (this child) keeps the rows and their delete buttons scoreable too.
   ImGuiContext* g = ImGui::GetCurrentContext();
-  // The re-issue is needed exactly when nav's own request is in its init form (NavTabbingDir 0:
-  // no nav cursor, no active editor — the crossing's standing state). That request scores the
-  // transaction's own target as its result and would re-activate the very row being tabbed away
-  // from on the next frame. A DIRECTIONAL request (Dir +-1) is already anchored wherever NavId
-  // lives — at the activation boundary that is the target itself, scored across the full
-  // candidate set — and cancelling it would discard the candidates behind the list that backward
-  // tabbing needs (code-review round 2, finding 2).
-  if (g->NavTabbingDir == 0) {
+  // Two independent reasons to replace nav's own request, by handoff stage. On the CROSSING
+  // frames the request is anchored on the global NavId, which is by construction not the
+  // transaction's target yet — the pre-handoff row, or (after an Esc-deleted row) the row just
+  // removed — and a backward scan from such an anchor collects no candidate before it and wraps
+  // past the whole list. On the ACTIVATION boundary the frame's ApplyResult has already anchored
+  // NavId on the target and the full candidate set has scored, so a directional request is left
+  // untouched (cancelling it would discard the candidates behind the list that backward tabbing
+  // needs); the init-form request (Dir 0: no nav cursor, no active editor) however resolves to
+  // the target itself and would re-activate the very row being tabbed away from — it is
+  // re-issued from the target so that Tab actually leaves the row.
+  if (g_summand_handoff.settled_frame < 0 || g->NavTabbingDir == 0) {
+    ImGui::SetFocusID(anchor_id, g->CurrentWindow);
     ImGui::NavMoveRequestCancel();
-    g_summand_tab_reissue_pending = true;
-    g_summand_tab_reissue_anchor = anchor_id;
+    g->NavTabbingDir = ImGui::GetIO().KeyShift ? -1 : +1;
+    ImGui::NavMoveRequestSubmit(ImGuiDir_None, g->NavTabbingDir < 0 ? ImGuiDir_Up : ImGuiDir_Down,
+                                ImGuiNavMoveFlags_IsTabbing | ImGuiNavMoveFlags_Activate,
+                                ImGuiScrollFlags_KeepVisibleEdgeX | ImGuiScrollFlags_KeepVisibleEdgeY);
+    g->NavTabbingCounter = -1;
   }
 }
 
@@ -2080,24 +2092,6 @@ static void RenderSummandRowList() {
       g->NavActivateId = g->NavActivateDownId = g->NavActivatePressedId = 0;
       g->NavActivateFlags = ImGuiActivateFlags_None;
     }
-  }
-
-  // The Tab claim handed over by RenderSummandTabGuard re-issues the user's navigation HERE —
-  // inside the row list's own window — because the nav scoring only considers g.NavWindow's
-  // items, and SetNavWindow must point at the pane child for the rows (and their delete buttons)
-  // to be candidates. Anchored on the transaction's logical target, the destination is identical
-  // whichever frame of the handoff the Tab landed on; backward (Shift+Tab) reaches the controls
-  // ahead of the list through the same request.
-  if (g_summand_tab_reissue_pending) {
-    g_summand_tab_reissue_pending = false;
-    ImGuiContext* g = ImGui::GetCurrentContext();
-    ImGui::SetNavWindow(g->CurrentWindow);
-    ImGui::SetFocusID(g_summand_tab_reissue_anchor, g->CurrentWindow);
-    g->NavTabbingDir = ImGui::GetIO().KeyShift ? -1 : +1;
-    ImGui::NavMoveRequestSubmit(ImGuiDir_None, g->NavTabbingDir < 0 ? ImGuiDir_Up : ImGuiDir_Down,
-                                ImGuiNavMoveFlags_IsTabbing | ImGuiNavMoveFlags_Activate,
-                                ImGuiScrollFlags_KeepVisibleEdgeX | ImGuiScrollFlags_KeepVisibleEdgeY);
-    g->NavTabbingCounter = -1;
   }
 
   // Reserve exactly the width the trailing "x" SmallButton needs (glyph + horizontal
@@ -3636,10 +3630,6 @@ void RenderEditModals(GuiState& state, GLFWwindow* window) {
   // content taller than this still scrolls, while the fixed size keeps the modal centered on appear.
   const float kModalContentHeight = kToolRow + 17.0f * ImGui::GetFrameHeightWithSpacing() + kVPad;
 
-  // The crossing's Tab ownership must be settled before ANY modal item submits (the tab bar's
-  // items included) — see the function comment for why the candidate set has to be intact.
-  RenderSummandTabGuard();
-
   if (state.modal_layout_compact) {
     // Upper pane: preview, full modal width, fixed height.
     ImGui::BeginChild("##modal_top_pane", ImVec2(-FLT_MIN, kPreviewChildHeight), ImGuiChildFlags_None,
@@ -3652,6 +3642,10 @@ void RenderEditModals(GuiState& state, GLFWwindow* window) {
         "##modal_bottom_pane",
         ImVec2(-FLT_MIN, EditModalFlexPaneHeight(kModalContentHeight, kEditModalFlexPaneMinRows * kToolRow, max_h)),
         ImGuiChildFlags_None, ImGuiWindowFlags_None);
+    // The crossing's Tab ownership is settled here: inside the pane child, before its first item
+    // (the tab bar's included) has submitted — see RenderSummandTabGuard's comment for why the
+    // re-issued request has to precede every candidate it is meant to score.
+    RenderSummandTabGuard();
     RenderModalTabBar(state, crystal_label, axis_label, filter_label, crystal_flags, axis_flags, filter_flags);
     ImGui::EndChild();
   } else {
