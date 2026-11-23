@@ -88,6 +88,17 @@ struct FaultUploadRequest {
   std::atomic<bool> uploadxyz_done{ false };
   std::atomic<bool> uploadnstaging_requested{ false };
   std::atomic<bool> uploadnstaging_done{ false };
+  std::atomic<bool> uploadhalf_requested{ false };
+  std::atomic<bool> uploadhalf_done{ false };
+  std::atomic<bool> uploadhalfnstaging_requested{ false };
+  std::atomic<bool> uploadhalfnstaging_done{ false };
+  std::atomic<bool> strip_rows_requested{ false };
+  std::atomic<bool> strip_rows_done{ false };
+  int strip_rows_value = 0;
+  gui::UploadResult uploadhalf_result;
+  gui::UploadResult uploadhalfnstaging_result;
+  const std::vector<uint16_t>* half = nullptr;
+  float half_scale = 1.0f;
   std::atomic<bool> bg_requested{ false };
   std::atomic<bool> bg_done{ false };
   std::atomic<bool> custom_hook_requested{ false };
@@ -156,6 +167,13 @@ struct FaultUploadRequest {
     uploadxyz_done = false;
     uploadnstaging_requested = false;
     uploadnstaging_done = false;
+    uploadhalf_requested = false;
+    uploadhalf_done = false;
+    uploadhalfnstaging_requested = false;
+    uploadhalfnstaging_done = false;
+    strip_rows_requested = false;
+    strip_rows_done = false;
+    strip_rows_value = 0;
     bg_requested = false;
     bg_done = false;
     custom_hook_requested = false;
@@ -311,6 +329,20 @@ void FaultUploadGuiFunc(ImGuiTestContext* /*ctx*/) {
     g_fault.uploadxyz_result =
         gui::g_preview.UploadXyzTextureNoStaging(g_fault.xyz->data(), g_fault.width, g_fault.height);
     g_fault.uploadnstaging_done = true;
+  }
+  if (g_fault.uploadhalf_requested && !g_fault.uploadhalf_done) {
+    g_fault.uploadhalf_result =
+        gui::g_preview.UploadXyzHalfTexture(g_fault.half->data(), g_fault.width, g_fault.height, g_fault.half_scale);
+    g_fault.uploadhalf_done = true;
+  }
+  if (g_fault.uploadhalfnstaging_requested && !g_fault.uploadhalfnstaging_done) {
+    g_fault.uploadhalfnstaging_result = gui::g_preview.UploadXyzHalfTextureNoStaging(
+        g_fault.half->data(), g_fault.width, g_fault.height, g_fault.half_scale);
+    g_fault.uploadhalfnstaging_done = true;
+  }
+  if (g_fault.strip_rows_requested && !g_fault.strip_rows_done) {
+    gui::PreviewRenderer::SetXyzStripRowsForTest(g_fault.strip_rows_value);
+    g_fault.strip_rows_done = true;
   }
   if (g_fault.bg_requested && !g_fault.bg_done) {
     gui::g_preview.UploadBgTexture(g_fault.bg_pixels.data(), g_fault.bg_width, g_fault.bg_height);
@@ -563,6 +595,21 @@ std::function<int(gui::UploadResult::Stage)> FailFirstNThenPass(gui::UploadResul
   };
 }
 
+// Fail ONLY the Nth consult of `stage` (1-based) and let every other call through. The strip
+// core consults per-strip stages once per strip, so "the Nth consult" names one strip of one
+// attempt — the pin the mid-attempt failure witnesses need (a failure at strip 2 of 4 must see
+// strips 0 and 1 already accepted, which fail-first-N would prevent by killing the attempt at
+// strip 0). The counter is main-thread-only (the hook runs there); the atomic is for the TestFunc.
+std::function<int(gui::UploadResult::Stage)> FailOnlyNthConsult(gui::UploadResult::Stage stage, int n, int gl_error) {
+  auto counter = std::make_shared<std::atomic<int>>(0);
+  return [stage, n, gl_error, counter](gui::UploadResult::Stage s) -> int {
+    if (s != stage) {
+      return 0;
+    }
+    return counter->fetch_add(1) + 1 == n ? gl_error : 0;
+  };
+}
+
 // The smallest scene that still produces a real frame, at a chosen simulation resolution index
 // (0 = 512x256 all-sky) and a finite budget, for the cases that must drive SyncFromPoller
 // through a real run. `millions` is dyadic so the ray count is exact.
@@ -731,6 +778,69 @@ void UploadXyzAndWait(ImGuiTestContext* ctx, const std::vector<float>& xyz, int 
   g_fault.uploadxyz_requested = true;
   ctx->Yield(2);
   IM_CHECK(g_fault.uploadxyz_done);
+}
+
+// The half-bits twin of UploadXyzAndWait: drives UploadXyzHalfTexture (staged) on the main
+// thread through the shared request channel.
+void UploadXyzHalfAndWait(ImGuiTestContext* ctx, const std::vector<uint16_t>& bits, float scale, int w, int h) {
+  g_fault.Reset();
+  g_fault.half = &bits;
+  g_fault.half_scale = scale;
+  g_fault.width = w;
+  g_fault.height = h;
+  g_fault.uploadhalf_requested = true;
+  ctx->Yield(2);
+  IM_CHECK(g_fault.uploadhalf_done);
+}
+
+// Same channel, for the client-memory half entry (recovery tier 1's representation).
+void UploadXyzHalfNoStagingAndWait(ImGuiTestContext* ctx, const std::vector<uint16_t>& bits, float scale, int w,
+                                   int h) {
+  g_fault.Reset();
+  g_fault.half = &bits;
+  g_fault.half_scale = scale;
+  g_fault.width = w;
+  g_fault.height = h;
+  g_fault.uploadhalfnstaging_requested = true;
+  ctx->Yield(2);
+  IM_CHECK(g_fault.uploadhalfnstaging_done);
+}
+
+// Cap the strip staging's rows per strip through the main-thread channel (0 = the production
+// size rule). Every case that raises the cap clears it on the way out — the seam is
+// process-static, and a leaked cap would re-cut every later case's uploads.
+void SetStripRowsAndWait(ImGuiTestContext* ctx, int max_rows) {
+  g_fault.Reset();
+  g_fault.strip_rows_value = max_rows;
+  g_fault.strip_rows_requested = true;
+  ctx->Yield(2);
+  IM_CHECK(g_fault.strip_rows_done);
+}
+
+// The exposure premise the direct-upload pixel witnesses need: after a bare DoNew the GuiState
+// carries snapshot_intensity 0, the relative-EV branch divides by it, and the shader's XYZ term
+// multiplies by ZERO — every arm would compare an empty source contribution and a strip-row
+// error could not turn the picture. Seeding intensity 2.0 with ev_auto 1.0 puts the applied
+// intensity_scale at exactly 1.0 (2^(0+1)/2), so the ±1.0 coordinate patterns render inside the
+// gamut with nothing saturating.
+void SeedVisibleExposure() {
+  gui::g_state.snapshot_intensity = 2.0f;
+  gui::g_state.ev_auto = 1.0f;
+}
+
+// The premise check proper: the preview params the live frames render with must carry a POSITIVE
+// scale, and the capture must actually carry the frame's content (a different pattern produces a
+// different picture). Both arms of every pixel comparison below ride this.
+void ExpectVisibleExposurePremise(ImGuiTestContext* ctx, const std::vector<float>& frame, int w, int h) {
+  SeedVisibleExposure();
+  UploadXyzAndWait(ctx, frame, w, h);
+  IM_CHECK(g_fault.uploadxyz_result.ok);
+  ctx->Yield(1);  // let the preview params recompute from the seeded state
+  if (!(gui::g_preview_vp.params.exposure.intensity_scale > 0.0f)) {
+    IM_ERRORF("%s",
+              "premise: the rendered frame applies a non-zero exposure, or the captures below are empty of "
+              "source");
+  }
 }
 
 void UploadUint8ViaFaultAndWait(ImGuiTestContext* ctx, const std::vector<unsigned char>& srgb, int w, int h) {
@@ -2550,6 +2660,11 @@ void RegisterPreviewTextureTests(ImGuiTestEngine* engine) {
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
       SetFaultAndWait(ctx, -1, 0);
+      // The strip cap: with the production cut this 256x128 frame is ONE strip and only slot 0
+      // ever allocates — the ping-pong needs multiple strips per attempt to involve both slots,
+      // which is the shape this witness is about (a slot the tier walk retires must be one the
+      // staged path actually held). 2-row strips make the open's tier-0 attempt a 64-strip cut.
+      SetStripRowsAndWait(ctx, 2);
       constexpr int kW = 256;
       constexpr int kH = 128;
       const std::vector<float> baked = XyzCoordinatePattern(kW, kH, /*seed=*/42);
@@ -2797,6 +2912,437 @@ void RegisterPreviewTextureTests(ImGuiTestEngine* engine) {
       IM_CHECK(recovered.init_ok);
       IM_CHECK(recovered.upload_ok);
       IM_CHECK(recovered.has_texture);
+    };
+  }
+
+  // The strip staging cut delivers the SAME picture the single-shot cut does, through multiple
+  // slots, with one scale per attempt. The witness is the on-screen frame (the whole live
+  // viewport, byte for byte), not the mirror — the proposition is about GL texels, so the
+  // comparison arms differ ONLY in how many strips the upload was cut into. The bounded-staging
+  // witness rides along: with the cap at 2 rows a 16x10 frame is 5 strips, both slots carry a
+  // strip-sized store, and neither can hold the whole frame.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "preview_texture", "a_multi_strip_cut_lands_the_frame_the_single_cut_does");
+    t->GuiFunc = FaultUploadGuiFunc;
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      SetFaultAndWait(ctx, -1, 0);
+      constexpr int kW = 16;
+      constexpr int kH = 10;
+      const std::vector<float> frame = XyzCoordinatePattern(kW, kH, /*seed=*/41);
+
+      // Arm 1: the production cut of this small frame is one strip (the budget rule caps at
+      // 2 MiB of rows, far above what 10 rows hold). The upload rides the exposure premise: a
+      // positive intensity_scale and a pattern that actually reaches the pixels.
+      SetStripRowsAndWait(ctx, 0);
+      ExpectVisibleExposurePremise(ctx, frame, kW, kH);
+      const float single_scale = gui::g_preview.GetXyzTextureScale();
+      const std::vector<unsigned char> single_frame = CapturePreviewFullFrame(ctx);
+      IM_CHECK(!single_frame.empty());
+
+      // The witness's teeth: a DIFFERENT pattern must produce a DIFFERENT picture (a capture
+      // pipeline that showed nothing would pass every equality below).
+      std::vector<float> other(frame.size());
+      for (size_t i = 0; i < other.size(); ++i) {
+        other[i] = -frame[i];
+      }
+      UploadXyzAndWait(ctx, other, kW, kH);
+      IM_CHECK(g_fault.uploadxyz_result.ok);
+      const std::vector<unsigned char> other_frame = CapturePreviewFullFrame(ctx);
+      IM_CHECK_EQ(other_frame.size(), single_frame.size());
+      if (std::memcmp(other_frame.data(), single_frame.data(), other_frame.size()) == 0) {
+        IM_ERRORF("%s", "witness premise broken: a different pattern rendered an identical picture");
+      }
+
+      // Arm 2: the same frame cut into 5 strips of 2 rows — 4 slot handoffs, a fence wait on
+      // every strip from the third one on, and a full (2-row) tail never even reached.
+      SetStripRowsAndWait(ctx, 2);
+      gui::g_preview.ClearTexture();
+      ctx->Yield(2);
+      UploadXyzAndWait(ctx, frame, kW, kH);
+      IM_CHECK(g_fault.uploadxyz_result.ok);
+      IM_CHECK_EQ(gui::g_preview.GetTextureWidth(), kW);
+      const std::vector<unsigned char> multi_frame = CapturePreviewFullFrame(ctx);
+      IM_CHECK_EQ(multi_frame.size(), single_frame.size());
+      if (std::memcmp(multi_frame.data(), single_frame.data(), multi_frame.size()) != 0) {
+        IM_ERRORF("%s", "the strip cut changed the picture");
+      }
+      IM_CHECK_EQ(gui::g_preview.GetXyzTextureScale(), single_scale);
+
+      // Directed red-state: strip 1's rows replaced by strip 0's — the wrong-row defect a broken
+      // strip hand would produce — must be REJECTED by this same witness. If the equality above
+      // could hold for this frame, it would hold below too; it must not.
+      // The wrong-content defect shape: every strip after the first carries strip 0's rows —
+      // what a stuck slot ping-pong would deliver. (A two-row displacement was tried first and
+      // proved display-invariant: the default preview's sampled source region does not include
+      // that band, which is itself a useful fact about screen-level witnessing — a red-state
+      // must live where the view actually samples.) 8 of the 10 rows change, unambiguously.
+      std::vector<float> wrong(frame);
+      for (int strip = 1; strip < 5; ++strip) {
+        std::copy_n(frame.begin(), 2 * kW * 3, wrong.begin() + strip * 2 * kW * 3);
+      }
+      {
+        const size_t differing =
+            static_cast<size_t>(std::mismatch(wrong.begin(), wrong.end(), frame.begin()).first - wrong.begin());
+        if (differing == wrong.size()) {
+          IM_ERRORF("%s", "red-state construction broken: the wrong-content frame equals the correct frame");
+        }
+      }
+      UploadXyzAndWait(ctx, wrong, kW, kH);
+      IM_CHECK(g_fault.uploadxyz_result.ok);
+      const std::vector<unsigned char> wrong_frame = CapturePreviewFullFrame(ctx);
+      IM_CHECK_EQ(wrong_frame.size(), multi_frame.size());
+      if (std::memcmp(wrong_frame.data(), multi_frame.data(), wrong_frame.size()) == 0) {
+        // Temporary red-state forensics: dump both captures for eyeballing.
+        gui::WriteRgbaBufferToPng(GuiTestTempPath("redstate_multi.png").string(), gui::g_preview_vp.vp_w,
+                                  gui::g_preview_vp.vp_h, multi_frame);
+        gui::WriteRgbaBufferToPng(GuiTestTempPath("redstate_wrong.png").string(), gui::g_preview_vp.vp_w,
+                                  gui::g_preview_vp.vp_h, wrong_frame);
+        IM_ERRORF("%s", "red-state premise broken: a wrong-row frame rendered identically to the correct one");
+      }
+
+      // The slots: both ping-pong slots carry a strip-sized store, each within the budget, and
+      // each holding a fraction of the frame (a slot that secretly held the whole frame would
+      // fail the fraction check, not just the budget one).
+      const size_t slot0 = gui::g_preview.StagingSlotByteCountForTest(0);
+      const size_t slot1 = gui::g_preview.StagingSlotByteCountForTest(1);
+      IM_CHECK(slot0 > 0);
+      if (!(slot1 > 0)) {
+        IM_ERRORF("%s", "a 5-strip attempt writes slots 0 and 1 in turn; both must be allocated");
+      }
+      IM_CHECK(slot0 <= gui::kXyzStagingSlotTargetBytes);
+      IM_CHECK(slot1 <= gui::kXyzStagingSlotTargetBytes);
+      const size_t frame_bytes = static_cast<size_t>(kW) * kH * 3 * sizeof(uint16_t);
+      if (!(slot0 < frame_bytes)) {
+        IM_ERRORF("%s", "a staging slot is a fraction of the frame, not a second full-size copy");
+      }
+      IM_CHECK(slot1 < frame_bytes);
+
+      // A second frame of the same shape, brighter: its own scale ruling (the scale read moves),
+      // and the same cut-invariance proposition at that scale. (The on-screen picture is
+      // deliberately NOT required to differ from the first frame's: the relative-EV shader
+      // branch and the display clamp swallow a uniform gain, so a visual inequality would
+      // assert nothing — the scale field and the texel-identical comparison are the witnesses.)
+      std::vector<float> brighter(frame.size());
+      for (size_t i = 0; i < frame.size(); ++i) {
+        brighter[i] = frame[i] * 100.0f;
+      }
+      SetStripRowsAndWait(ctx, 0);
+      UploadXyzAndWait(ctx, brighter, kW, kH);
+      IM_CHECK(g_fault.uploadxyz_result.ok);
+      const float brighter_single_scale = gui::g_preview.GetXyzTextureScale();
+      if (!(brighter_single_scale != single_scale)) {
+        IM_ERRORF("%s", "each attempt rules its own scale");
+      }
+      const std::vector<unsigned char> brighter_single = CapturePreviewFullFrame(ctx);
+      IM_CHECK(!brighter_single.empty());
+      // The multi arm re-arms the 2-row cap: a multi-strip attempt on a frame of a DIFFERENT
+      // scale (this one), reached by an update from the previous frame — the scale-change
+      // witness rides the same cut the first arm exercised.
+      SetStripRowsAndWait(ctx, 2);
+      UploadXyzAndWait(ctx, brighter, kW, kH);
+      IM_CHECK(g_fault.uploadxyz_result.ok);
+      IM_CHECK_EQ(gui::g_preview.GetXyzTextureScale(), brighter_single_scale);
+      const std::vector<unsigned char> brighter_multi = CapturePreviewFullFrame(ctx);
+      IM_CHECK_EQ(brighter_multi.size(), brighter_single.size());
+      if (std::memcmp(brighter_multi.data(), brighter_single.data(), brighter_multi.size()) != 0) {
+        IM_ERRORF("%s", "the strip cut changed the brighter frame's picture");
+      }
+      IM_CHECK(gui::g_preview.StagingSlotByteCountForTest(0) > 0);
+      if (!(gui::g_preview.StagingSlotByteCountForTest(1) > 0)) {
+        IM_ERRORF("%s", "the brighter frame's multi-strip attempt wrote both slots");
+      }
+
+      SetStripRowsAndWait(ctx, 0);
+      SetFaultAndWait(ctx, -1, 0);
+    };
+  }
+
+  // Odd width and the tail strip: 15x9 at 2 rows per strip is 2,2,2,2,1 — a one-row tail and
+  // rows that are 90 bytes (even but not 4-aligned; the unpack alignment is 2). The picture must
+  // equal the single-strip cut of the same frame: neither the tail's shorter read nor the
+  // alignment may skew texels (the quantization-skew class the timing probes hit).
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "preview_texture", "an_odd_width_multi_strip_cut_lands_its_tail_unchanged");
+    t->GuiFunc = FaultUploadGuiFunc;
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      SetFaultAndWait(ctx, -1, 0);
+      constexpr int kW = 15;
+      constexpr int kH = 9;
+      const std::vector<float> frame = XyzCoordinatePattern(kW, kH, /*seed=*/43);
+
+      SetStripRowsAndWait(ctx, 0);
+      ExpectVisibleExposurePremise(ctx, frame, kW, kH);
+      const std::vector<unsigned char> single_frame = CapturePreviewFullFrame(ctx);
+      IM_CHECK(!single_frame.empty());
+
+      SetStripRowsAndWait(ctx, 2);
+      gui::g_preview.ClearTexture();
+      ctx->Yield(2);
+      UploadXyzAndWait(ctx, frame, kW, kH);
+      IM_CHECK(g_fault.uploadxyz_result.ok);
+      const std::vector<unsigned char> multi_frame = CapturePreviewFullFrame(ctx);
+      IM_CHECK_EQ(multi_frame.size(), single_frame.size());
+      if (std::memcmp(multi_frame.data(), single_frame.data(), multi_frame.size()) != 0) {
+        IM_ERRORF("%s", "the odd-width strip cut (tail strip included) changed the picture");
+      }
+
+      SetStripRowsAndWait(ctx, 0);
+      SetFaultAndWait(ctx, -1, 0);
+    };
+  }
+
+  // The frame-level acceptance boundary: a failure AFTER the attempt has written strips must not
+  // claim the old frame retained — the texture is a mix of the old frame and this attempt's
+  // strips, and the ruling is the conservative revoke. The retained variant (failure BEFORE any
+  // write of the attempt) is the contrast arm: the old frame stands, displayable. Both arms ride
+  // the same counting hook at two different consult indices of the same stage.
+  {
+    ImGuiTest* t =
+        IM_REGISTER_TEST(engine, "preview_texture", "a_strip_failure_after_partial_writes_revokes_not_retains");
+    t->GuiFunc = FaultUploadGuiFunc;
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      SetFaultAndWait(ctx, -1, 0);
+      SetStripRowsAndWait(ctx, 2);
+      constexpr int kW = 8;
+      constexpr int kH = 8;  // 4 strips of 2 rows
+      const std::vector<float> first = XyzCoordinatePattern(kW, kH, /*seed=*/47);
+      UploadXyzAndWait(ctx, first, kW, kH);
+      IM_CHECK(g_fault.uploadxyz_result.ok);
+      const unsigned long long first_width = static_cast<unsigned long long>(gui::g_preview.GetTextureWidth());
+
+      // Arm 1 — ordinary kTexUpdate error at strip 2 (the THIRD consult; strips 0 and 1 of this
+      // attempt are already in the texture), so the old frame is provably NOT intact. Revoke.
+      SetCustomHookAndWait(ctx, FailOnlyNthConsult(gui::UploadResult::Stage::kTexUpdate, /*n=*/3, kGlInvalidValue));
+      const std::vector<float> second = XyzCoordinatePattern(kW, kH, /*seed=*/48);
+      UploadXyzAndWait(ctx, second, kW, kH);
+      SetFaultAndWait(ctx, -1, 0);
+      IM_CHECK(!g_fault.uploadxyz_result.ok);
+      IM_CHECK(g_fault.uploadxyz_result.stage == gui::UploadResult::Stage::kTexUpdate);
+      IM_CHECK(g_fault.uploadxyz_result.gl_error == kGlInvalidValue);
+      if (!(!g_fault.uploadxyz_result.old_frame_retained)) {
+        IM_ERRORF("%s", "two strips of the new frame are in the texture; the old frame cannot be called retained");
+      }
+      if (!(!gui::g_preview.HasTexture())) {
+        IM_ERRORF("%s", "the mixed candidate was revoked, not displayed");
+      }
+
+      // Arm 2 — fence-wait failure at strip 2 (the third wait consult; the first two waits guard
+      // the PREVIOUS accepted attempt's last two strips and pass, the third guards THIS attempt's
+      // own strip 0 with strips 0 and 1 already written): the same shape one stage earlier.
+      UploadXyzAndWait(ctx, first, kW, kH);
+      IM_CHECK(g_fault.uploadxyz_result.ok);
+      SetCustomHookAndWait(ctx, FailOnlyNthConsult(gui::UploadResult::Stage::kFenceWait, /*n=*/3, kGlWaitFailed));
+      UploadXyzAndWait(ctx, second, kW, kH);
+      SetFaultAndWait(ctx, -1, 0);
+      IM_CHECK(!g_fault.uploadxyz_result.ok);
+      IM_CHECK(g_fault.uploadxyz_result.stage == gui::UploadResult::Stage::kFenceWait);
+      IM_CHECK(!g_fault.uploadxyz_result.old_frame_retained);
+      IM_CHECK(!gui::g_preview.HasTexture());
+
+      // Contrast arm — the SAME fence-wait failure at the FIRST consult (strip 0): this attempt
+      // has written nothing, and the waited fence guarded the previous accepted frame, which
+      // stands.
+      UploadXyzAndWait(ctx, first, kW, kH);
+      IM_CHECK(g_fault.uploadxyz_result.ok);
+      SetCustomHookAndWait(ctx, FailOnlyNthConsult(gui::UploadResult::Stage::kFenceWait, /*n=*/1, kGlWaitFailed));
+      UploadXyzAndWait(ctx, second, kW, kH);
+      SetFaultAndWait(ctx, -1, 0);
+      IM_CHECK(!g_fault.uploadxyz_result.ok);
+      IM_CHECK(g_fault.uploadxyz_result.stage == gui::UploadResult::Stage::kFenceWait);
+      if (!(g_fault.uploadxyz_result.old_frame_retained)) {
+        IM_ERRORF("%s", "strip 0 had not written when the wait failed; the accepted frame stands");
+      }
+      IM_CHECK(gui::g_preview.HasTexture());
+      IM_CHECK_EQ(gui::g_preview.GetTextureWidth(), first_width);
+
+      SetStripRowsAndWait(ctx, 0);
+      SetFaultAndWait(ctx, -1, 0);
+    };
+  }
+
+  // The half-source upload: the held bits ARE the GPU texture, bit for bit — no re-quantize, no
+  // float plane. The witness arms all render the same pattern through the three routes (float
+  // staged, half staged, half client-memory) and require one picture; the CPU-mirror arm saves
+  // the held bits back out and requires the file to carry exactly them.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "preview_texture", "a_half_source_upload_is_the_bits_it_was_handed");
+    t->GuiFunc = FaultUploadGuiFunc;
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      SetFaultAndWait(ctx, -1, 0);
+      SetStripRowsAndWait(ctx, 2);  // every arm multi-strip: the representation, not the cut, is under test
+      constexpr int kW = 12;
+      constexpr int kH = 8;
+      const std::vector<float> frame = XyzCoordinatePattern(kW, kH, /*seed=*/53);
+      const size_t components = frame.size();
+      const float scale = gui::ComputeXyzHalfScale(frame.data(), components);
+      std::vector<uint16_t> bits(components);
+      gui::QuantizeXyzToHalf(frame.data(), components, scale, bits.data());
+
+      // Arm 1 — the float path (quantize inside the upload), under the exposure premise: the
+      // half arms' equality below witnesses CONTENT only if a positive scale puts the pattern on
+      // screen.
+      gui::g_preview.ClearTexture();
+      ctx->Yield(2);
+      ExpectVisibleExposurePremise(ctx, frame, kW, kH);
+      const std::vector<unsigned char> float_frame = CapturePreviewFullFrame(ctx);
+      IM_CHECK(!float_frame.empty());
+
+      // Arm 2 — the staged half path: same bits handed in directly.
+      gui::g_preview.ClearTexture();
+      ctx->Yield(2);
+      UploadXyzHalfAndWait(ctx, bits, scale, kW, kH);
+      IM_CHECK(g_fault.uploadhalf_result.ok);
+      if (!((gui::g_preview.GetXyzTextureScale()) == (scale))) {
+        IM_ERRORF("%s", "the held scale is the display scale, unchanged");
+      }
+      const std::vector<unsigned char> half_frame = CapturePreviewFullFrame(ctx);
+      IM_CHECK_EQ(half_frame.size(), float_frame.size());
+      if (std::memcmp(half_frame.data(), float_frame.data(), half_frame.size()) != 0) {
+        IM_ERRORF("%s", "the half upload sampled different GPU texels than the float one");
+      }
+
+      // Arm 3 — the client-memory half path (recovery tier 1's representation): no slots, no
+      // scratch, the strips read straight from the held bits.
+      gui::g_preview.ClearTexture();
+      ctx->Yield(2);
+      UploadXyzHalfNoStagingAndWait(ctx, bits, scale, kW, kH);
+      IM_CHECK(g_fault.uploadhalfnstaging_result.ok);
+      const std::vector<unsigned char> half_client_frame = CapturePreviewFullFrame(ctx);
+      IM_CHECK_EQ(half_client_frame.size(), float_frame.size());
+      IM_CHECK(std::memcmp(half_client_frame.data(), float_frame.data(), half_client_frame.size()) == 0);
+
+      // The CPU-mirror arm: the half mirror holds the bits as they came, and Save writes them
+      // back out unchanged — the round trip a v6 reopen-then-save rides.
+      gui::XyzTextureMeta meta;
+      meta.snapshot_intensity = 3.0f;
+      gui::g_preview.UpdateCpuXyzHalfTextureData(bits.data(), kW, kH, scale, meta);
+      IM_CHECK(gui::g_preview.CpuXyzStorageIsHalf());
+      IM_CHECK_EQ(gui::g_preview.GetXyzHalfTextureScale(), scale);
+      if (!(gui::g_preview.GetXyzTextureData() == nullptr)) {
+        IM_ERRORF("%s", "the float mirror is cleared, not kept alongside");
+      }
+      const std::string path = GuiTestTempPath("lumice_preview_texture_half_mirror.lmc").string();
+      IM_CHECK(gui::SaveLmcFile(path, gui::g_state, gui::g_preview, /*save_texture=*/true));
+      {
+        gui::GuiState scratch;
+        gui::LmcTexture tex;
+        IM_CHECK(gui::LoadLmcFile(path, scratch, tex));
+        IM_CHECK(tex.XyzStorageIsHalf());
+        if (!((tex.xyz_half) == (bits))) {
+          IM_ERRORF("%s", "the saved file holds exactly the bits the mirror held");
+        }
+        IM_CHECK_EQ(tex.xyz_half_scale, scale);
+        IM_CHECK(tex.xyz.empty());
+        IM_CHECK_EQ(tex.meta.snapshot_intensity, 3.0f);
+      }
+      std::remove(path.c_str());
+
+      SetStripRowsAndWait(ctx, 0);
+      SetFaultAndWait(ctx, -1, 0);
+    };
+  }
+
+  // The file→accepted-live boundary: a live frame's ACCEPTANCE retires the open's file source —
+  // the fact AND the mirror storage (a v6 document's retired half mirror is real memory) —
+  // while a FAILED live acceptance must leave it intact, because it is still the save/retry
+  // authority. Witnessed at the capacity level: a cleared-but-resident mirror passes the
+  // null-pointer queries and would hide the leak.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "preview_texture", "an_accepted_live_frame_retires_the_file_source");
+    t->GuiFunc = FaultUploadGuiFunc;
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      // ScopedRunServer resets the state itself; a SECOND ResetTestState here would run DoNew
+      // against the live server and leave the subsequent Run unable to commit.
+      ScopedRunServer scene;
+      IM_CHECK(scene.ok());
+      SetFaultAndWait(ctx, -1, 0);
+      constexpr int kFW = 8;
+      constexpr int kFH = 8;
+      const std::vector<float> baked = XyzCoordinatePattern(kFW, kFH, /*seed=*/61);
+      gui::XyzTextureMeta meta;
+      meta.snapshot_intensity = 2.0f;
+      const std::string path = GuiTestTempPath("lumice_preview_texture_file_source_retire.lmc").string();
+      IM_CHECK(WriteXyzLmcFile(path, baked, kFW, kFH, meta));
+      g_open_requested = true;
+      g_open_done = false;
+      g_open_path = path;
+      YieldUntilOpenDone(ctx);
+      IM_CHECK(g_open_done);
+      ctx->Yield(2);
+      IM_CHECK(gui::g_preview.HasTexture());
+      if (!(gui::g_preview.CpuMirrorCapacityBytesForTest() > 0)) {
+        IM_ERRORF("%s", "premise: the open mirrored the file bits");
+      }
+
+      // Arm 1 — a real run whose live frame is ACCEPTED retires the file source's storage, and
+      // the live frame becomes the save source.
+      SeedFiniteRun(/*millions=*/0.1f);
+      gui::DoRun(/*user_initiated=*/true);
+      IM_CHECK(DriveUntil(
+          ctx,
+          [] {
+            return gui::g_state.sim_state == SimState::kDone && gui::g_state.run_intent == RunIntent::kRunCompleted;
+          },
+          20));
+      ctx->Yield(2);
+      IM_CHECK_EQ(gui::g_preview.GetTextureWidth(), 1024);
+      if (gui::g_preview.CpuMirrorCapacityBytesForTest() != 0u) {
+        IM_ERRORF("%s", "the accepted live frame retired the file source's mirror storage");
+      }
+      const std::string saved = GuiTestTempPath("lumice_preview_texture_file_source_retire_saved.lmc").string();
+      // The PRODUCTION save chain (PerformSave → RefreshCpuTextureForSave → SaveLmcFile): after
+      // the retirement the mirror is empty until this refresh repopulates it from the accepted
+      // payload — saving through the serializer alone would skip exactly the step the production
+      // user takes.
+      gui::g_state.current_file_path = saved;
+      gui::PerformSave();
+      {
+        gui::GuiState scratch;
+        gui::LmcTexture tex;
+        IM_CHECK(gui::LoadLmcFile(saved, scratch, tex));
+        if (tex.width != 1024) {
+          IM_ERRORF("%s", "the save source is the accepted live frame, not the opened file");
+        }
+      }
+
+      // Arm 2 — a FAILED live acceptance leaves the file source intact: its bytes are still the
+      // save/retry authority. Re-opening the file is the document switch (its non-Revert reset
+      // clears the latch, the pending source and the file fact), without a state reset that
+      // would fight the live server.
+      SetFaultAndWait(ctx, -1, 0);
+      g_open_requested = true;
+      g_open_done = false;
+      g_open_path = path;
+      YieldUntilOpenDone(ctx);
+      IM_CHECK(g_open_done);
+      ctx->Yield(2);
+      IM_CHECK(gui::g_preview.GetTextureWidth() == kFW);
+      IM_CHECK(gui::g_preview.CpuMirrorCapacityBytesForTest() > 0);
+      SetFaultAndWait(ctx, static_cast<int>(gui::UploadResult::Stage::kTexImage), kGlInvalidValue);
+      SeedFiniteRun(/*millions=*/0.1f);
+      gui::DoRun(/*user_initiated=*/true);
+      IM_CHECK(DriveUntil(
+          ctx,
+          [] {
+            return gui::g_state.sim_state == SimState::kDone && gui::g_state.run_intent == RunIntent::kRunCompleted;
+          },
+          20));
+      ctx->Yield(2);
+      IM_CHECK(gui::g_state.upload_latched);
+      if (!(gui::g_preview.CpuMirrorCapacityBytesForTest() > 0)) {
+        IM_ERRORF("%s", "a failed live acceptance keeps the file source's bytes");
+      }
+      if (gui::PreviewSourcePixelCount() != static_cast<long>(kFW) * kFH) {
+        IM_ERRORF("%s", "the resolver still names the file frame");
+      }
+
+      SetFaultAndWait(ctx, -1, 0);
+      std::remove(path.c_str());
+      std::remove(saved.c_str());
     };
   }
 }
