@@ -669,7 +669,7 @@ TEST_F(SurveyCApi, ContextScopePreservesAutomaticExplicitAndLegacyContracts) {
       EXPECT_EQ(ResultDocument(point_result, LUMICE_SinglePathResultToJson)["survey_context"]["source"], "warm");
     } else {
       EXPECT_EQ(point_result, nullptr);
-      EXPECT_NE(std::string(err).find("config fingerprint gate"), std::string::npos);
+      EXPECT_NE(std::string(err).find("config fingerprint gate"), std::string::npos) << "point err: " << err;
     }
     LUMICE_SinglePathResultDestroy(point_result);
     ASSERT_EQ(LUMICE_AnalyzePathProbe(scene_.get(), &probe, &probe_result, err, sizeof(err)), expected) << err;
@@ -677,7 +677,7 @@ TEST_F(SurveyCApi, ContextScopePreservesAutomaticExplicitAndLegacyContracts) {
       EXPECT_EQ(ResultDocument(probe_result, LUMICE_PathProbeToJson)["context"]["source"], "warm");
     } else {
       EXPECT_EQ(probe_result, nullptr);
-      EXPECT_NE(std::string(err).find("config fingerprint gate"), std::string::npos);
+      EXPECT_NE(std::string(err).find("config fingerprint gate"), std::string::npos) << "probe err: " << err;
     }
     LUMICE_PathProbeDestroy(probe_result);
     point.warm_json = probe.warm_json = nullptr;
@@ -697,7 +697,19 @@ TEST_F(SurveyCApi, ContextScopePreservesAutomaticExplicitAndLegacyContracts) {
   };
   check_extent(kOldPointExtent, kOldProbeExtent, true);
   check_extent(kOldPointExtent + 1, kOldProbeExtent + 1, false);
-  check_extent(sizeof(point) - 1, sizeof(probe) - 1, false);
+  // The "intermediate" anchor is one byte below the context field's published complete extent
+  // (the bridge rounds a field end up to the scalar alignment), not sizeof-1: a later pure
+  // append (v4.63) grew the structs past the v4.62 complete extent, so sizeof-1 now lands
+  // ABOVE the context gate, where the poison below is legitimately validated and refused. One
+  // byte below the gate the poison stays genuinely unread, while both floors (point v4.50,
+  // probe v4.61) are cleared and the extent is still not a published complete one — the
+  // workspace refusal and the legacy warm path are both exercised exactly as before.
+  constexpr auto complete_prefix = [](size_t field_end) {
+    return (field_end + 7) / 8 * 8;  // the scalar-alignment rounding the bridge's gates apply
+  };
+  check_extent(complete_prefix(offsetof(LUMICE_SinglePathRequest, context_symmetry_bits_plus_one) + sizeof(int)) - 1,
+               complete_prefix(offsetof(LUMICE_PathProbeRequest, context_symmetry_bits_plus_one) + sizeof(int)) - 1,
+               false);
 
   // A complete extent must actually validate the new field, in both entry families.
   point.struct_size = sizeof(point);

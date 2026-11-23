@@ -176,6 +176,8 @@ constexpr size_t CompleteRequestPrefix(size_t end) {
 }
 constexpr size_t kRequestSizeV462 =
     CompleteRequestPrefix(offsetof(LUMICE_SinglePathRequest, context_symmetry_bits_plus_one) + sizeof(int));
+constexpr size_t kRequestSizeV463 =
+    CompleteRequestPrefix(offsetof(LUMICE_SinglePathRequest, ratio_reference_face_count) + sizeof(int));
 constexpr size_t kProbeRequestSizeV462 =
     CompleteRequestPrefix(offsetof(LUMICE_PathProbeRequest, context_symmetry_bits_plus_one) + sizeof(int));
 constexpr size_t kFeatureReportRequestSizeV1 = offsetof(LUMICE_PathFeatureReportRequest, sample_count) + sizeof(int);
@@ -274,6 +276,18 @@ LUMICE_ErrorCode Analyze(const LUMICE_Scene* scene, const LUMICE_SinglePathReque
     if (const auto error = ReadContextSymmetry(request.context_symmetry_bits_plus_one, &req, err_buf, err_size);
         error != LUMICE_OK) {
       return error;
+    }
+  }
+  if (request.struct_size >= kRequestSizeV463) {
+    if (request.ratio_reference_face_count < 0 ||
+        (request.ratio_reference_faces == nullptr && request.ratio_reference_face_count > 0)) {
+      return Refuse({ rp::ErrorCode::kInvalidArgument,
+                      "ratio reference: face count is negative, or the faces array is NULL with a non-zero count" },
+                    err_buf, err_size);
+    }
+    if (request.ratio_reference_face_count > 0) {
+      req.ratio_reference_faces.assign(request.ratio_reference_faces,
+                                       request.ratio_reference_faces + request.ratio_reference_face_count);
     }
   }
   if (workspace != nullptr) {
@@ -1317,8 +1331,8 @@ LUMICE_ErrorCode LUMICE_PathWorkspaceQueryPoint(LUMICE_PathWorkspace* workspace,
                                                 const LUMICE_PathQueryOptions* options, LUMICE_SinglePathResult** out,
                                                 char* err_buf, size_t err_size) {
   return RunWorkspaceQuery(
-      workspace, request, options, out, err_buf, err_size, { kRequestSizeV450, kRequestSizeV452, kRequestSizeV462 },
-      true, [&] {
+      workspace, request, options, out, err_buf, err_size,
+      { kRequestSizeV450, kRequestSizeV452, kRequestSizeV462, kRequestSizeV463 }, true, [&] {
         if (const auto error = ValidateWarm(request->warm_json, request->warm_json_len, options, err_buf, err_size);
             error != LUMICE_OK) {
           return error;
@@ -2428,6 +2442,43 @@ LUMICE_PathReadStatus LUMICE_PathPointGetSample(const LUMICE_SinglePathResult* r
   out->segment_direction_count = p.segment_directions.size();
   out->interface_transmittances = p.interface_transmittances.data();
   out->interface_count = p.interface_transmittances.size();
+  return LUMICE_PATH_READ_OK;
+}
+
+LUMICE_PathReadStatus LUMICE_PathPointGetSampleDensity(const LUMICE_SinglePathResult* result, size_t component,
+                                                       size_t index, LUMICE_PathPointDensity* out) {
+  if (const auto status = BeginRead(result, out); status != LUMICE_PATH_READ_OK) {
+    return status;
+  }
+  const auto& data = result->result.Data();
+  if (data.OutcomeValue() != lumice::raypath::Outcome::kDiscovered) {
+    return LUMICE_PATH_READ_INVALID_KIND;
+  }
+  const auto& components = data.Discovered().components;
+  if (component >= components.size() || index >= components[component].points.size()) {
+    return LUMICE_PATH_READ_INVALID_INDEX;
+  }
+  const auto& p = components[component].points[index];
+  out->log_rho = p.log_rho;
+  out->ref_log_density = p.ref_log_density;
+  out->log_ratio = p.log_ratio;
+  return LUMICE_PATH_READ_OK;
+}
+
+LUMICE_PathReadStatus LUMICE_PathPointGetInterpretivePose(const LUMICE_SinglePathResult* result,
+                                                          LUMICE_PathPointInterpretive* out) {
+  if (const auto status = BeginRead(result, out); status != LUMICE_PATH_READ_OK) {
+    return status;
+  }
+  const auto& data = result->result.Data();
+  if (data.OutcomeValue() != lumice::raypath::Outcome::kDiscovered) {
+    return LUMICE_PATH_READ_INVALID_KIND;
+  }
+  const auto& pose = data.Discovered().interpretive;
+  out->available = pose.available ? 1 : 0;
+  out->component_index = pose.component_index;
+  out->point_index = pose.point_index;
+  out->log_density = pose.log_density;
   return LUMICE_PATH_READ_OK;
 }
 

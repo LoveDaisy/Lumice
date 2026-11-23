@@ -73,6 +73,14 @@ struct SinglePathRequest : PathSelection {
   // The sky point, azimuth measured as the sun's (`analyze --center` convention).
   double target_altitude_deg = 0.0;
   double target_azimuth_deg = 0.0;
+  // Optional density-ratio reference: another member's single-layer face sequence. When set,
+  // every recovered point's ratio block carries the reference's log density at the algebraically
+  // corresponding pose (the proper element that maps this member onto the reference, applied
+  // through CompensatedPose, then re-verified against the world-ray identity) and the log ratio
+  // against it. Refused at entry when the reference is not a legal single-layer path or no
+  // proper element maps this member onto it — a mirror moves the sky point, so no same-point
+  // correspondence exists and the ratio question has no answer.
+  std::vector<int> ratio_reference_faces;
   // Unset: the config's wavelength if it names exactly one, else kDefaultWavelengthNm.
   std::optional<double> wavelength_nm;
   int sample_count = kDefaultSampleCount;

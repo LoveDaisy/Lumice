@@ -15,6 +15,7 @@
 #include "analytic/path_fiber.hpp"
 #include "analytic/path_rank.hpp"
 #include "analytic/so3.hpp"
+#include "core/crystal.hpp"
 #include "raypath/detail/input_scope.hpp"
 #include "raypath/detail/measure/declared_density.hpp"
 #include "raypath/detail/measure/fiber_quadrature.hpp"
@@ -272,6 +273,18 @@ class PathContext {
                                (90.0 - angles.zenith_deg) * math::kDegreeToRadD, angles.roll_deg * math::kDegreeToRadD);
   }
 
+  // The same declared density in log space, without the linear form's availability gate: a
+  // Dirac-slot measure that leaves PoseDensity NaN leaves the log −inf (no ordinary density —
+  // the honest state the u-marginal's support kinds carry), and a deep tail keeps a finite log
+  // where the linear rho underflows. The composed-angle extraction is the established convention
+  // (the degenerate poles' az+roll coupling reads through PoseToAngles, as rho always has).
+  double PoseLogDensity(const double pose[9]) const {
+    const PoseAngles angles = PoseToAngles(pose);
+    return DeclaredPoseLogDensity(lat_, axis_, angles.azimuth_deg * math::kDegreeToRadD,
+                                  (90.0 - angles.zenith_deg) * math::kDegreeToRadD,
+                                  angles.roll_deg * math::kDegreeToRadD);
+  }
+
   // Body-frame evaluation with the sun at u (pose = identity, incident = -u): what discovery's band
   // evaluates (discovery.cpp BuildBand). Returns validity; `out` the outgoing direction.
   bool EvaluateAtSun(const double u[3], double out[3]) const {
@@ -311,6 +324,7 @@ class PathContext {
     SunInCrystal(pose, incident_, d.sun_in_crystal);
     d.residual_norm = residual_norm;
     d.rho = PoseDensity(pose);
+    d.log_rho = PoseLogDensity(pose);
     d.jacobian_available = jacobian_available;
     if (jacobian_available) {
       d.jacobian = jacobian;
@@ -621,6 +635,87 @@ IncompleteComponent ToIncomplete(const analytic::IncompleteCandidate& c) {
     out.backward.pose_count = 0;
   }
   return out;
+}
+
+// The initial interpretation's pose: the recovered set's deterministic closed-form density argmax
+// (first occurrence wins ties). A pure read of the finished components — no discovery fact, no
+// sampling quantity and no discovery-order dependence can move it, and no threshold filters what
+// it may name: how small the winner's density is stays the log value's own statement.
+InterpretivePose SelectInterpretivePose(const std::vector<FiberComponent>& components) {
+  InterpretivePose out;
+  double best = -std::numeric_limits<double>::infinity();
+  for (size_t c = 0; c < components.size(); ++c) {
+    for (size_t k = 0; k < components[c].points.size(); ++k) {
+      const PointDetail& point = components[c].points[k];
+      // A valid pose carrying an ordinary density reading: isfinite rejects both the off-support
+      // −inf and any NaN, so the winner always explains a branch that exists and answers.
+      if (!point.valid || !std::isfinite(point.log_rho)) {
+        continue;
+      }
+      if (!(point.log_rho > best)) {
+        continue;  // strictly greater: the first among equals wins
+      }
+      best = point.log_rho;
+      out.available = true;
+      out.component_index = static_cast<int>(c);
+      out.point_index = static_cast<int>(k);
+      out.log_density = point.log_rho;
+    }
+  }
+  return out;
+}
+
+// The density-ratio reference leg. `carrier` is the proper element mapping the requested member
+// onto the reference (entry-refused otherwise), so CompensatedPose(carrier, pose) is the pose at
+// which the reference crystal realizes the SAME world ray — the equivariance the element algebra
+// is made of. That identity is re-verified per point (validity plus the outgoing directions'
+// agreement) instead of trusted: a wrong carrier or a pose the reference's finite geometry
+// refuses turns into this point's honest NaN, never into a plausible wrong ratio. The density
+// read is the same declared measure at the transported pose's composed angles.
+constexpr double kTransportVerifyToleranceRad = 1e-9;
+
+void AttachRatioReference(PathContext& ctx, const CrystalElement& carrier, const std::vector<int>& ref_slots,
+                          double sun_azimuth_rad, const analytic::DiscoveryStop& stop, DiscoveredPoint* discovered) {
+  const double nan = std::numeric_limits<double>::quiet_NaN();
+  // EvaluatePath's outputs write through these buffers (the invalid path zeroes them
+  // unconditionally), so the leg carries its own storage the way PathContext::Detail does.
+  std::vector<double> segments(3 * (ref_slots.size() + 1));
+  std::vector<double> transmittances(ref_slots.size());
+  for (FiberComponent& component : discovered->components) {
+    for (PointDetail& point : component.points) {
+      point.ref_log_density = nan;
+      point.log_ratio = nan;
+      // The world-ray identity needs the member pose's own outgoing direction; an invalid member
+      // point has none to compare against, and its ratio read is not offered.
+      if (!point.valid || stop.Stopped()) {
+        continue;
+      }
+      double transported[9];
+      CompensatedPose(carrier, point.pose, sun_azimuth_rad, transported);
+      analytic::PathOutputs outputs{};
+      outputs.segment_directions = segments.data();
+      outputs.interface_transmittances = transmittances.data();
+      if (!analytic::EvaluatePath(ctx.Table(), ref_slots.data(), static_cast<int>(ref_slots.size()), ctx.Index(),
+                                  ctx.Incident(), transported, &outputs)) {
+        continue;  // the reference's finite geometry refuses this pose: no ratio claimed here
+      }
+      double diff[3];
+      analytic::so3::Cross3(outputs.outgoing_direction, point.outgoing_direction, diff);
+      const double sine = analytic::so3::Norm3(diff);
+      const double cosine = analytic::so3::Dot3(outputs.outgoing_direction, point.outgoing_direction);
+      if (std::atan2(sine, cosine) > kTransportVerifyToleranceRad) {
+        continue;  // the transported pose does not carry the same world ray: refuse, don't report
+      }
+      const double ref_log = ctx.PoseLogDensity(transported);
+      point.ref_log_density = ref_log;
+      // Both sides off-support is incomparable (0/0), not zero; one side off-support against a
+      // finite reference keeps its signed infinity.
+      if (!std::isfinite(point.log_rho) && !std::isfinite(ref_log)) {
+        continue;
+      }
+      point.log_ratio = point.log_rho - ref_log;
+    }
+  }
 }
 
 void BuildSunGrid(int lat_count, PathContext* ctx, SunSphereGrid* grid, const analytic::DiscoveryStop* stop) {
@@ -990,6 +1085,27 @@ Error RunPointExecution(const ConfigManager& config, const SinglePathRequest& in
   static_cast<ScopeLocation&>(result.members) = survey::ResolveSelectionLocation(config, request);
   result.members.member_kind = MemberKind::kLiteral;
   result.members.members = { meta.faces };
+  // The density-ratio reference: resolved once at entry — a legal single-layer path and a proper
+  // element mapping this member onto it. A mirror moves the sky point, so an improper-only
+  // correspondence answers a different question and is refused rather than silently answered.
+  std::vector<int> ref_slots;
+  CrystalElement ratio_carrier;
+  const bool has_ratio_reference = !request.ratio_reference_faces.empty();
+  if (has_ratio_reference) {
+    if (Error e = ResolveSingleLayerPath({ request.ratio_reference_faces }, table, &ref_slots); !e.Ok()) {
+      return { ErrorCode::kInvalidArgument, "ratio reference: " + e.message };
+    }
+    // The element algebra is IdType-typed; the request's face sequences are int-typed — the
+    // conversion is exact (both spell the Lumice face numbers).
+    const std::vector<IdType> member_faces(meta.faces.begin(), meta.faces.end());
+    const std::vector<IdType> reference_faces(request.ratio_reference_faces.begin(),
+                                              request.ratio_reference_faces.end());
+    if (!FindLabelMappingElement(member_faces, reference_faces, /*proper_only=*/true, &ratio_carrier)) {
+      return { ErrorCode::kInvalidArgument,
+               "ratio reference: no proper element maps the requested member onto the reference "
+               "face sequence (no same-sky-point correspondence exists)" };
+    }
+  }
   QuantityContext quantity_context;
   quantity_context.members = result.members;
   quantity_context.crystal = crystal_it->second;
@@ -1162,6 +1278,16 @@ Error RunPointExecution(const ConfigManager& config, const SinglePathRequest& in
   for (const analytic::IncompleteCandidate& c : found.incomplete) {
     result.Discovered().incomplete.push_back(ToIncomplete(c));
   }
+  // The ratio reference rides the finished points (the same stop authority: a stop mid-leg leaves
+  // the unvisited points' block NaN — a partial document, marked so like every other leg).
+  if (has_ratio_reference) {
+    AttachRatioReference(ctx, ratio_carrier, ref_slots, meta.sun_azimuth_deg * math::kDegreeToRadD, stop,
+                         &result.Discovered());
+    if (stopped()) {
+      meta.interrupted = true;
+    }
+  }
+  result.Discovered().interpretive = SelectInterpretivePose(result.Discovered().components);
   meta.execution = OutcomeOf(stop);
   meta.interrupted = meta.interrupted || stop.Stopped();
   DiscoverySummary& s = result.Discovered().discovery;

@@ -205,6 +205,78 @@ TEST(SinglePathCApi, TypedReadersUseResultOwnedStorageAndBoundedExtents) {
   }
 }
 
+// The Parry-style axis (zenith gauss 90±1, azimuth full turn, roll gauss 0±1) spelled through the
+// scene JSON's axis distributions: the closed-form density facts in log space, the ratio
+// reference and the interpretive pose, all read through C (v4.63's pure append). Named apart
+// from the local-class face's kParryScene below (this one rides the classic {3,5} fixture).
+constexpr const char* kParryDensityScene = R"({
+  "crystal": [ { "id": 1, "type": "prism", "shape": { "height": 1.0 },
+    "axis": {
+      "zenith": { "type": "gauss", "mean": 90.0, "std": 1.0 },
+      "azimuth": { "type": "uniform", "mean": 180.0, "std": 360.0 },
+      "roll": { "type": "gauss", "mean": 0.0, "std": 1.0 }
+    } } ],
+  "filter": [],
+  "scene": {
+    "light_source": { "type": "sun", "altitude": 20.0, "spectrum": "D65" },
+    "ray_num": 1000,
+    "max_hits": 7,
+    "scattering": [ { "prob": 0.0, "entries": [ { "crystal": 1, "proportion": 1 } ] } ]
+  },
+  "render": []
+})";
+
+TEST(SinglePathCApi, DensityFactsAndInterpretivePoseReadThroughC) {
+  const ScenePtr scene = MakeScene(kParryDensityScene);
+  Req request({ 3, 5 }, { 2 }, 20.0, 25.0);
+  // The ratio reference {5,7}: the first proper element mapping {3,5} onto it is P_2, whose
+  // compensation shifts roll by −120° — the reference's density at the transported poses is the
+  // deep Gaussian tail the linear rho underflows away.
+  static const int kReference[] = { 5, 7 };
+  request.c.ratio_reference_faces = kReference;
+  request.c.ratio_reference_face_count = 2;
+  request.c.sample_count = 100000;
+  const Outcome outcome = Analyse(scene.get(), request);
+  ASSERT_EQ(outcome.code, LUMICE_OK) << outcome.error;
+
+  LUMICE_PathPointInterpretive interpretive{};
+  interpretive.struct_size = sizeof(interpretive);
+  ASSERT_EQ(LUMICE_PathPointGetInterpretivePose(outcome.result.get(), &interpretive), LUMICE_PATH_READ_OK);
+  ASSERT_EQ(interpretive.available, 1);
+  ASSERT_GE(interpretive.component_index, 0);
+  ASSERT_GE(interpretive.point_index, 0);
+  EXPECT_TRUE(std::isfinite(interpretive.log_density));
+
+  LUMICE_PathPointDensity density{};
+  density.struct_size = sizeof(density);
+  ASSERT_EQ(LUMICE_PathPointGetSampleDensity(outcome.result.get(), interpretive.component_index,
+                                             interpretive.point_index, &density),
+            LUMICE_PATH_READ_OK);
+  EXPECT_EQ(density.log_rho, interpretive.log_density);
+  EXPECT_LT(density.ref_log_density, -50.0);  // the transported roll sits ~120° off the anchor
+  EXPECT_GT(density.log_ratio, 50.0);
+
+  // The JSON document carries the same facts (additive keys; schema_version stays 1).
+  const auto json = nlohmann::json::parse(Json(outcome.result.get()));
+  EXPECT_EQ(json.at("schema_version"), 1);
+  EXPECT_EQ(json.at("interpretive_pose").at("available"), true);
+  EXPECT_EQ(json.at("interpretive_pose").at("component_index"), interpretive.component_index);
+  EXPECT_FALSE(json.at("components")[static_cast<size_t>(interpretive.component_index)]
+                   .at("points")[static_cast<size_t>(interpretive.point_index)]
+                   .at("ref_log_density")
+                   .is_null());
+
+  // The gates: an undersized caller extent is refused without writing; a bad index is named.
+  alignas(LUMICE_PathPointDensity) unsigned char small[sizeof(LUMICE_PathPointDensity) - 1];
+  auto* undersized = reinterpret_cast<LUMICE_PathPointDensity*>(small);
+  undersized->struct_size = sizeof(LUMICE_PathPointDensity) - 1;
+  EXPECT_EQ(LUMICE_PathPointGetSampleDensity(outcome.result.get(), 0, 0, undersized), LUMICE_PATH_READ_INVALID_SIZE);
+  EXPECT_EQ(LUMICE_PathPointGetSampleDensity(outcome.result.get(), 0, 99999999, &density),
+            LUMICE_PATH_READ_INVALID_INDEX);
+  interpretive.struct_size = sizeof(interpretive) - 1;
+  EXPECT_EQ(LUMICE_PathPointGetInterpretivePose(outcome.result.get(), &interpretive), LUMICE_PATH_READ_INVALID_SIZE);
+}
+
 TEST(SinglePathCApi, WorkspacePointWithoutContextDoesNotPublishContextView) {
   ScenePtr scene = MakeScene();
   LUMICE_PathWorkspace* raw_workspace = nullptr;

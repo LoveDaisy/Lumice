@@ -46,7 +46,7 @@ Link against the `lumice` static library.
 ```c
 // lumice_api_version.h — a leaf header; include it explicitly where the macro is used
 // (lumice_base.h deliberately does not include it, see below)
-#define LUMICE_API_VERSION 461        // ABI version, encoded major*100 + minor (v4.61)
+#define LUMICE_API_VERSION 463        // ABI version, encoded major*100 + minor (v4.63)
 
 // lumice_base.h
 #define LUMICE_MAX_RENDER_RESULTS 16  // Maximum capacity of the render result array
@@ -112,6 +112,28 @@ A Workspace only injects an automatic warm candidate after shared admission succ
 incompatible candidates are misses, not query errors. Explicit warm input is never replaced
 by the automatic slot, and incompatible explicit input still fails admission. The per-fact
 numeric qualification and independent result/warm lifetimes are unchanged. No export was added.
+
+From v4.63, the point face publishes its closed-form density facts in log space — a pure
+append, read-only by construction. `LUMICE_SinglePathRequest` appends
+`ratio_reference_faces`/`ratio_reference_face_count` (read only on the new complete extent;
+NULL and older extents keep the exact previous behavior): another member's single-layer face
+sequence. When present, `LUMICE_PathPointGetSampleDensity` reports, per recovered sample, the
+same declared measure's log density at the algebraically transported corresponding pose and
+`log_ratio` against it. The transport is the engine's element algebra (the first proper
+element mapping the requested member onto the reference; a mirror moves the sky point, so an
+improper-only correspondence is refused as `invalid_argument` — no same-sky-point ratio
+exists), and the world-ray identity is re-verified per point: a pose the reference's finite
+geometry refuses leaves that sample's reference fields NaN rather than a plausible number.
+`log_rho` itself keeps a deep tail's finite log where the linear `rho` underflows to a
+read-as-zero 0; −inf means off-support or a Dirac slot's slice, never darkness, and no
+threshold decides how small is small. Both sides off-support reads NaN (incomparable), a
+one-sided off-support keeps its signed infinity. `LUMICE_PathPointGetInterpretivePose` names
+the recovered set's deterministic closed-form density argmax (first among ties; claims no
+global maximum; unavailable = this search has not found one, not that none exists). New
+structs `LUMICE_PathPointDensity` and `LUMICE_PathPointInterpretive` join the readers; no
+existing reader struct grew and no existing symbol or behavior changed. The local-class
+answer face stays the only new query form: these are facts about one member's own point
+result, not transform primitives.
 
 Each result family has `GetInfo` plus named semantic-block and indexed getters. The caller sets an
 output record's `struct_size` to its compiled extent. A published complete extent or a larger

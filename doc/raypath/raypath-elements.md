@@ -162,7 +162,24 @@ Worked scenarios (the acceptance cases, restated in this algebra):
   sin(±2π) round to ≤ 2.5e-16), not a physical tolerance: a genuine off-plane azimuth of 1e-9 rad
   reads ≥ 1e-9·cos(altitude), five orders above the band.
 
-## 7. What this layer does not claim
+## 7. The transport correspondence and the density ratio's scope
+
+The equivariance behind the compensation works for EVERY element, retained or not: for a proper
+carrier h with h·m = r, the pose `R·hᵀ` makes the reference crystal r realize the same world ray
+the member m realizes at R. What retention decides is whether the two poses carry EQUAL measure
+weight; the transport itself only needs the geometry. The point face's ratio reference uses
+exactly this: it maps the requested member onto the reference member (first proper element in
+the inventory's fixed order — deterministic), lands the transported pose, re-verifies the
+world-ray identity per point (validity plus the outgoing directions' agreement), and reports
+the same declared measure's log density at the transported pose together with the per-pose
+log ratio. The scope is the named pose pair, never a member-wide bound; a member whose poses
+sit tens of sigmas off the measure's anchor keeps a finite huge-negative log where the linear
+rho underflows to a read-as-zero 0 — the log form's −inf stays reserved for off-support and
+Dirac slices, and both-sides-off-support is incomparable (NaN), not zero. An improper-only
+correspondence answers a different question (σ_h moves the sky point) and is refused rather
+than silently answered: same-point ratios do not exist across a mirror.
+
+## 8. What this layer does not claim
 
 - Retention predicates are stated per element for the repo's distribution families; a new
   distribution type extends the conjunct tables (the per-bit predicates' own switch statements),

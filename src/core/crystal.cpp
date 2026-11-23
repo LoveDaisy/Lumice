@@ -1680,5 +1680,29 @@ std::vector<IdType> ReduceRaypathByElements(const std::vector<IdType>& rp, const
   return *seen.begin();
 }
 
+bool FindLabelMappingElement(const std::vector<IdType>& from, const std::vector<IdType>& to, bool proper_only,
+                             CrystalElement* out) {
+  if (from.size() != to.size() || out == nullptr) {
+    return false;
+  }
+  for (const CrystalElement& element : AllCrystalElements()) {
+    if (proper_only && !element.IsProper()) {
+      continue;
+    }
+    bool maps = true;
+    for (size_t i = 0; i < from.size(); ++i) {
+      if (element.ApplyToFace(from[i]) != to[i]) {
+        maps = false;
+        break;
+      }
+    }
+    if (maps) {
+      *out = element;
+      return true;
+    }
+  }
+  return false;
+}
+
 
 }  // namespace lumice

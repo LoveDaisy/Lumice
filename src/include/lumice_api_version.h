@@ -577,6 +577,16 @@
 // LUMICE_PathProbeRequest. Zero and older complete extents retain physical P|B|D context;
 // one requests literal context. Point fibers and representative-member probe quantities are
 // unchanged. No symbols added; existing request prefixes retain their layout and behavior.
+// ADDED (v4.64): the point face's closed-form density facts in log space, a pure append —
+// ratio_reference_faces/ratio_reference_face_count appended to LUMICE_SinglePathRequest (read
+// only on the new complete extent; NULL and older extents keep the exact previous behavior),
+// the LUMICE_PathPointDensity and LUMICE_PathPointInterpretive structs with
+// LUMICE_PathPointGetSampleDensity and LUMICE_PathPointGetInterpretivePose. log_rho keeps a
+// deep tail's finite log where the linear rho underflows; the ratio reference reports the
+// reference member's log density at the algebraically transported corresponding pose
+// (world-ray identity re-verified per point) and the per-pose log ratio; the interpretive pose
+// is the recovered set's deterministic closed-form density argmax. No existing reader struct
+// grew and no symbol or behavior changed for existing callers.
 // ADDED (v4.63): symmetry_bits_plus_one appended to LUMICE_PathMapRequest, the survey request's
 // member encoding generalized to the map's two entries. Zero and the older complete extent keep
 // the all-members class the map always evaluated; 1..8 select the concrete P/B/D member set the
@@ -584,6 +594,6 @@
 // An extent that does not carry the field is never read for it; values outside [0, 8] are
 // refused. The reference map's caliber, lattice and readers are unchanged; no symbols added and
 // existing request prefixes retain their layout and behavior.
-#define LUMICE_API_VERSION 463
+#define LUMICE_API_VERSION 464
 
 #endif  // LUMICE_API_VERSION_H_

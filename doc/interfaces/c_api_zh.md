@@ -45,7 +45,7 @@ Lumice 的 C API 按能力拆成六个头文件，每个能力一个；按用到
 ```c
 // lumice_api_version.h——叶子头；在使用该宏的文件里显式包含
 //（lumice_base.h 刻意不包含它，原因见下）
-#define LUMICE_API_VERSION 461        // ABI 版本，编码为 major*100 + minor（v4.61）
+#define LUMICE_API_VERSION 463        // ABI 版本，编码为 major*100 + minor（v4.63）
 
 // lumice_base.h
 #define LUMICE_MAX_RENDER_RESULTS 16  // 渲染结果数组最大容量
@@ -95,6 +95,20 @@ Workspace 拒绝未发布的中间尺寸。Point fiber 本身始终为 literal�
 Workspace 只在共享准入通过后注入自动 warm 候选；不兼容自动候选视为 miss，不误拒查询。
 显式 warm 不被自动槽覆盖，失配仍严格拒绝。逐事实数值资格、结果/warm 独立寿命保持不变，
 没有新增导出符号。
+
+v4.63 把点面的闭式密度事实以 log 空间发布——纯追加、只读构造。`LUMICE_SinglePathRequest`
+尾部追加 `ratio_reference_faces`/`ratio_reference_face_count`（仅新完整 extent 读取；NULL 与
+旧 extent 行为逐字保持）：另一成员的单层面序列。存在时，`LUMICE_PathPointGetSampleDensity`
+逐样本报告同一声明测度在代数搬运对应姿态处的 log 密度及 `log_ratio`。搬运走引擎元素代数
+（第一个把请求成员映到参考的 proper 元素；镜面移动天空点，仅不正常可连时以 `invalid_argument`
+拒绝——同点比率不存在），世界射线恒等逐点复核：参考有限几何拒绝的姿态让该样本的参考字段
+保持 NaN，不给出貌似合理的数。`log_rho` 本身在深尾保持有限 log（线性 `rho` 在此下溢为
+read-as-zero 0）；−inf 表示离支撑或 Dirac 切片，绝非无光，也没有阈值规定多小算小。双方均
+离支撑读 NaN（不可比），单侧离支撑保留带号无穷。`LUMICE_PathPointGetInterpretivePose` 给出
+恢复集的确定性闭式密度 argmax（平局取首；不宣称全局最大；不可用=本次搜索尚未找到，非不存在）。
+新结构 `LUMICE_PathPointDensity` 与 `LUMICE_PathPointInterpretive` 加入读取面；既有 reader
+结构零增长，既有符号与行为不变。局部类答案面仍是唯一新增查询形态：这些是单成员自身点结果
+的事实，不是变换原语。
 
 四种结果各有 `GetInfo` 与按语义块命名的 indexed getter。调用方把输出记录的 `struct_size`
 设为编译时的完整 extent：已发布的完整 extent 或更大的未来尾部可接受；未发布的中间尺寸与
