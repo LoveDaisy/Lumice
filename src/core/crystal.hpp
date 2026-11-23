@@ -821,26 +821,27 @@ enum class SymmetrySemantics {
 // (DeriveSymmetryGating intersects them with the shape's) — the label regime passes Full() and
 // the reductions consume its GeneratorStep() as the P modulus.
 //
-// `retained_elements` is the same authority's EXACT layer: the per-element preservation answers
-// (the per-bit fields are the old consumers' frozen approximation contract, produced alongside —
-// never reinterpreted). For kPhysical it is the shape-and-measure-retained element inventory,
-// CLOSED UNDER COMPOSITION (the per-family predicates can miss a composite whose canonical form
-// names no single anchor, e.g. σ_0·P_3 = σ_3 on a pole-folded axis) and sorted in
-// AllCrystalElements()' fixed order; for kLabel it is the full 24-element inventory.
+// The struct carries the three frozen per-bit fields only. The same authority's EXACT layer — the
+// per-element preservation answers, CLOSED UNDER COMPOSITION (the per-family predicates can miss a
+// composite whose canonical form names no single anchor, e.g. σ_0·P_3 = σ_3 on a pole-folded axis)
+// and sorted in AllCrystalElements()' fixed order — is not materialized on this struct: it is the
+// directly callable DeriveRetainedElements(shape, axis) (kPhysical domain) / AllCrystalElements()
+// (kLabel), evaluated by the consumers that actually read per-element answers.
 struct SymmetryGating {
   GeometricSymmetry geom;
   PRotationSet p_retained;
   bool b_applicable;
-  std::vector<CrystalElement> retained_elements;
 };
 
 // The one authority translating a SymmetrySemantics into the gating a reduction reads. kLabel
 // ignores both `shape_geom` and `axis_dist` and answers the full D6h with P and B admitted;
 // kPhysical answers `shape_geom` with the ensemble's retained P rotations and its B condition.
 // One producer, two contracts: the per-bit fields keep the old consumers' exact frozen semantics
-// (their approximation clauses included), the element layer answers exactly and conservatively —
-// where the two disagree (a kZigzag roll's anchor-position vs its unproven reflection symmetry)
-// the divergence is deliberate and documented in doc/raypath/raypath-elements.md.
+// (their approximation clauses included), the element derivations (DeriveRetainedElements /
+// AllCrystalElements — the same inputs, evaluated by whoever reads per-element answers) answer
+// exactly and conservatively — where the two disagree (a kZigzag roll's anchor-position vs its
+// unproven reflection symmetry) the divergence is deliberate and documented in
+// doc/raypath/raypath-elements.md.
 SymmetryGating DeriveSymmetryGating(SymmetrySemantics semantics, const GeometricSymmetry& shape_geom,
                                     const AxisDistribution& axis_dist);
 
