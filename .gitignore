@@ -46,4 +46,6 @@ win_stdout.txt
 win_stderr.txt
 
 # ctest run from the repo root drops its cost log here; tests always run via scripts/test.sh
-Testing/
+# (root-anchored: unanchored `Testing/` also swallowed doc/testing/ for new files on
+# case-insensitive filesystems, where git applies the pattern case-folded)
+/Testing/

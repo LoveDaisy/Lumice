@@ -398,6 +398,7 @@ Valuable design/architecture docs live in `doc/` (tracked); most have a `_zh`/`.
   - `machines.md` — role → machine binding, the single source of truth; when machines change, change only this file.
   - `gpu-remote-cuda-build-testing.md` — the CUDA build + parity/correctness protocol (headless). Read before touching `cuda_trace_backend.*` / the three-backend shared headers / SimData / simulator.
   - `testing-architecture.md` — the authoritative test-organization spec; §7 = the test-scope contract, §4.11 = the comparison-ruler master table. Read before adding or reorganizing any test, claiming a change shortens CI, or picking a ruler for a new image comparison.
+  - `analyze-test-retention.md` — the per-case retention adjudication of PR #628's 21 new analyze-presentation gtest cases under the no-budget-raise ruling (cost scenarios from run 45052003928, the two-case absorption into the C01 anchor, both-scenario projections). Read before adding or removing analyze-overview/map/point/arc gtest cases or re-litigating the ctest duration overrun.
 - **Engineering policy**: `env-var-policy.md` — the env-var usage policy and the decision gate to answer before adding any new `getenv`.
 - Example config: `examples/config_example.json`
 
