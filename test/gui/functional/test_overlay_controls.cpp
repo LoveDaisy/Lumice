@@ -732,4 +732,72 @@ void RegisterOverlayControlTests(ImGuiTestEngine* engine) {
       ctx->Yield(2);
     };
   }
+
+  // The print half of the annotation-colour gate, at the two DRAWING PATHS that consume it — the
+  // main table's swatch cell and the reference-point section's swatch cell. The rule over every
+  // colour key is pinned at rule level in unit-correctness/gui/test_print_mode_colour_exclusions.cpp;
+  // what a ConstraintFor read cannot see is the call site actually wrapping the swatch in
+  // BeginDisabled(!enabled), so the assertions below go red if that wiring is removed — which is
+  // the restored contract's terminal behaviour, not the registry's answer about itself. One member
+  // per table is the witness (a table's colour rows share one cell body), and the same rows' Line
+  // checkboxes are the single-variable control: the grey must be the colour's own gate, not a scope
+  // wrapped around the whole row.
+  {
+    ImGuiTest* t =
+        IM_REGISTER_TEST(engine, "overlay_controls", "print_greys_the_swatch_cells_and_leaves_the_switches_live");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      ctx->Yield(3);
+      const ScopedRef panel_ref(ctx, "//##RightPanel");
+      gui::g_state.markers_section_open = true;
+      ctx->Yield(3);
+
+      // The swatches register no debug label (ColorButton never calls IMGUI_TEST_ENGINE_ITEM_INFO),
+      // so each id is reconstructed from the three seeds the_columns_line_up case documents —
+      // window, table override, ColorEdit3's PushID — with the window taken from the row's Line
+      // checkbox rather than assumed.
+      ImGuiID horizon_color_id = 0;
+      {
+        const ImGuiTestItemInfo line = ctx->ItemInfo("**/##horizon_line");
+        IM_CHECK_NE(line.ID, (ImGuiID)0);
+        if (line.Window != nullptr) {
+          const ImGuiID table_id = ImGui::GetIDWithSeed("##OverlaysTable", nullptr, line.Window->ID);
+          const ImGuiID swatch_group = ImGui::GetIDWithSeed("##horizon_color", nullptr, table_id);
+          horizon_color_id = ColorEditSwatchId(swatch_group);
+        }
+      }
+      ImGuiID zenith_color_id = 0;
+      {
+        const ImGuiTestItemInfo line = ctx->ItemInfo("**/##marker_line_zenith");
+        IM_CHECK_NE(line.ID, (ImGuiID)0);
+        if (line.Window != nullptr) {
+          const ImGuiID table_id = ImGui::GetIDWithSeed("##MarkersTable", nullptr, line.Window->ID);
+          const ImGuiID swatch_group = ImGui::GetIDWithSeed("##marker_color_zenith", nullptr, table_id);
+          zenith_color_id = ColorEditSwatchId(swatch_group);
+        }
+      }
+      IM_CHECK_NE(ctx->ItemInfo(horizon_color_id, ImGuiTestOpFlags_NoError).ID, (ImGuiID)0);
+      IM_CHECK_NE(ctx->ItemInfo(zenith_color_id, ImGuiTestOpFlags_NoError).ID, (ImGuiID)0);
+
+      // Screen: both swatches live.
+      IM_CHECK(!IsDisabled(ctx->ItemInfo(horizon_color_id, ImGuiTestOpFlags_NoError)));
+      IM_CHECK(!IsDisabled(ctx->ItemInfo(zenith_color_id, ImGuiTestOpFlags_NoError)));
+
+      gui::g_state.renderer.tone = LUMICE_TONE_PRINT;
+      ctx->Yield(3);
+      IM_CHECK(IsDisabled(ctx->ItemInfo(horizon_color_id, ImGuiTestOpFlags_NoError)));
+      IM_CHECK(IsDisabled(ctx->ItemInfo(zenith_color_id, ImGuiTestOpFlags_NoError)));
+      // The switches next to the greyed swatches stay reachable: the gate is per field, not a
+      // disabled scope over the row or the table.
+      IM_CHECK(!IsDisabled(ctx->ItemInfo("**/##horizon_line")));
+      IM_CHECK(!IsDisabled(ctx->ItemInfo("**/##marker_line_zenith")));
+
+      gui::g_state.renderer.tone = LUMICE_TONE_SCREEN;
+      ctx->Yield(3);
+      IM_CHECK(!IsDisabled(ctx->ItemInfo(horizon_color_id, ImGuiTestOpFlags_NoError)));
+      IM_CHECK(!IsDisabled(ctx->ItemInfo(zenith_color_id, ImGuiTestOpFlags_NoError)));
+      gui::g_state.markers_section_open = false;
+      ctx->Yield(2);
+    };
+  }
 }

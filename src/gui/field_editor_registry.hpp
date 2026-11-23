@@ -33,19 +33,20 @@
 //   1. every entry's `enabled` IS the BeginDisabled(...) expression at the field's main-UI call
 //      site — that call site reads this one — so the set of (field, configuration) pairs this table
 //      will WRITE is the same set the main UI will write. A field that does not apply is greyed
-//      here exactly when it is greyed there — with ONE declared exception, the background family
-//      (bg_show, bg_alpha, bg_offset_x/y, bg_scale): their main-UI controls keep the Display
-//      panel's own view rule (greyed with no image), while the registry carries them as stored
-//      settings (enabled everywhere, the sentence as a note) — "act on the live composite" and
-//      "store a default" are two different questions, and both sites saying so in their own
-//      comments is the contract, not a bug to unify. The defaults-panel unlock task split the rest
-//      of the population in two, and that split is by WRITER, not by mood: a field whose value the frame loop or a lens
-//      switch rewrites (view angles under a full-sky lens, fov) stays disabled, because an edit it
-//      erases within one frame is the "saved, then silently reset" wrong state; a field the frame
-//      loop never touches (background/paper tones, overlay colours under print, the background
-//      transform with no image, Rays(M) under infinite, roll under Globe — whose render sites read
-//      EffectiveRollForLens without writing back) became always-editable, and its `enabled` is
-//      true everywhere while `inactive_note` carries the "not consumed right now" sentence.
+//      here exactly when it is greyed there. Since the 2026-11-23 owner ruling (PR #592's
+//      default-unlock covered the Settings panel's listed rows only) the disabled side has TWO
+//      legs: writer-protected fields whose value the frame loop or a lens switch rewrites (the
+//      view angles under a full-sky lens), and mode-gated fields the current mode does not consume
+//      at all — Rays(M) under Infinite rays, Roll under Globe, Front under full-sky/Globe, the
+//      display mode under Print, the background family under print / Channel B-R / no image /
+//      Show off, and the annotation/marker colours under Print — greyed in BOTH places, with the
+//      historical reason on hover. The stored-choice NOTE leg (`inactive_note`, enabled stays
+//      true) is what remains of the unlock task's opening, and the ruling kept it for exactly the
+//      rows that opening was about: the two ground colours (the Display panel shows one or the
+//      other by its own view rule), globe_back_fade (the main UI draws it only under Globe), and
+//      the aspect orientation — "act on the live composite" and "store a default" are two
+//      different questions, and both sites saying so in their own comments is the contract, not a
+//      bug to unify.
 //   2. the renderer invariants in app_panels.cpp (RenderPreviewPanel) run every frame, panel open
 //      or not — this is a popup, not a replacement for the frame. Setting roll and THEN switching
 //      to a full-sky lens does not smuggle the pair through: roll is forced back to 0 on the next
@@ -129,6 +130,9 @@ struct FieldEditorConstraint {
   // configuration; the render reads it only where it applies). Null when the field either applies
   // now or is disabled outright (the disabled case explains itself through disabled_reason above).
   // The Settings panel's value cell is the reader; main-UI call sites keep their own hover copy.
+  // Scope note (2026-11-23 owner ruling): the mode-gated fields the same task had opened — the
+  // eight restored groups, see rule 1 — are back on the disabled side, so this note is the
+  // stored-choice leg of the retained set only, not a general "inert but editable" promise.
   const char* inactive_note = nullptr;
 };
 
