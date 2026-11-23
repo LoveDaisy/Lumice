@@ -17,12 +17,25 @@ on:
   #
   # A branch filter also drops tag pushes, which the unfiltered `push:` used to
   # catch: `v*` tags no longer run this workflow. That is intended, not lost
-  # coverage. A release tag is cut from a commit already on main, so this
-  # workflow has already run on that exact commit — a tag-push run was a third
-  # copy of the same result. Release artifacts are gated by release.yml, which
-  # keeps its own `push: tags: ['v*']` trigger and is unaffected by this filter.
+  # coverage. A release tag is cut from a commit this workflow has already run
+  # on — the pull_request leg validated it, whether that commit sits on main
+  # (the default flow) or on a release/X.Y.Z branch's merge commit (see
+  # CONTRIBUTING.md, "Releasing from a release branch") — so a tag-push run
+  # would be a third copy of the same result. Release artifacts are gated by
+  # release.yml, which keeps its own `push: tags: ['v*']` trigger and is
+  # unaffected by this filter.
+  #
+  # `release/**` is admitted on purpose (owner, 2026-11-23): a PR merged into a
+  # release/X.Y.Z branch produces a merge commit that exists only via the push
+  # event, and the combined release head is otherwise never validated as a whole
+  # — each PR validated its own view of the line. Merge commits cannot
+  # double-fire: they exist on the release branch only, so exactly one event
+  # carries each of them. Jobs that must stay main-only (cache saves, bench-ipo,
+  # benchmark-summary) pair `github.event_name == 'push'` with
+  # `github.ref == 'refs/heads/main'`; e2e-test / e2e-slow admit release refs
+  # explicitly so the post-merge run covers them.
   push:
-    branches: [main]
+    branches: [main, 'release/**']
   pull_request:
 
 concurrency:
@@ -1367,7 +1380,7 @@ jobs:
           key: ${{ steps.ccache_restore.outputs.cache-primary-key }}
 
   e2e-test:
-    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main' || startswith(github.ref, 'refs/heads/release/')
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
@@ -1504,7 +1517,7 @@ jobs:
           key: ${{ steps.cpm_restore.outputs.cache-primary-key }}
 
   e2e-slow:
-    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main' || startswith(github.ref, 'refs/heads/release/')
     strategy:
       fail-fast: false
       matrix:
@@ -2126,7 +2139,7 @@ jobs:
   # intent: this job publishes the benchmark history to gh-pages, and a PR must
   # not write to it.
   benchmark-summary:
-    if: always() && github.event_name == 'push'
+    if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: [bench-ipo]
     runs-on: ubuntu-24.04
     permissions:
