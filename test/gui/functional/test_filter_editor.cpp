@@ -661,6 +661,102 @@ void RegisterFilterEditorTests(ImGuiTestEngine* engine) {
     };
   }
 
+  // The handoff must not eat keystrokes: the first character typed right after Enter — arriving on
+  // the frame the focus request is still crossing between boxes — lands in the inserted row, whole.
+  // No settling yields before the typing: this case exists to fail on the transition-frame drop.
+  {
+    ImGuiTest* t =
+        IM_REGISTER_TEST(engine, "filter_editor", "the_first_keystroke_after_enter_lands_in_the_inserted_row");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      ctx->Yield(2);
+      OpenFilterModal(ctx);
+      AuthorRow(ctx, 0, "1-2");
+      AuthorRow(ctx, 1, "3-4");
+      ctx->ItemInput("**/##row_text_0");
+      ctx->Yield(2);
+      // Frame-exact choreography: the Enter is consumed on the frame the row is inserted, and the
+      // two keystrokes are queued for the handoff frame and the activation frame — the two frames
+      // a loose "press Enter, wait, then type" sequence would have sailed over.
+      ctx->KeySetEx(ImGuiKey_Enter, true, 0.0f);
+      ctx->Yield();
+      ctx->KeyChars("9");  // frame after the insert: the handoff frame itself
+      ctx->KeyChars("8");  // the activation frame
+      ctx->Yield(4);
+
+      auto rows = RowTexts();
+      IM_CHECK_EQ(rows.size(), static_cast<size_t>(3));
+      IM_CHECK_STR_EQ(rows[1].c_str(), "98");   // both keystrokes, in order, none eaten
+      IM_CHECK_STR_EQ(rows[0].c_str(), "1-2");  // the source row did not absorb them
+      IM_CHECK_STR_EQ(rows[2].c_str(), "3-4");
+      IM_CHECK_EQ(ImGui::GetActiveID(), ctx->ItemInfo("**/##row_text_2").ID);
+
+      ctx->ItemClick(kCancel);
+      ctx->Yield(2);
+    };
+  }
+
+  // The same no-loss rule for the Esc side: cancelling a creation refocuses the source row, and a
+  // keystroke sent on the handoff frame must land there, not vanish. The initial blank row keeps
+  // the surviving buffer empty, so the landed text is exact regardless of activation selection.
+  {
+    ImGuiTest* t =
+        IM_REGISTER_TEST(engine, "filter_editor", "the_first_keystroke_after_esc_lands_in_the_refocused_row");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      ctx->Yield(2);
+      OpenFilterModal(ctx);  // one blank row, uid 0
+      ctx->ItemInput("**/##row_text_0");
+      ctx->KeyPress(ImGuiKey_Enter);  // blank uid 1, focused
+      ctx->Yield(2);
+      ctx->KeyPress(ImGuiKey_Escape);  // uid 1 cancelled; the refill is a FRESH uid, not a recycle
+      ctx->KeyChars("7");              // the handoff frame itself
+      ctx->KeyChars("7");
+      ctx->Yield(4);
+
+      auto rows = RowTexts();
+      IM_CHECK_EQ(rows.size(), static_cast<size_t>(1));
+      IM_CHECK_STR_EQ(rows[0].c_str(), "77");  // both keystrokes landed in the refocused row
+      // uid 1 (the cancelled creation) had a live source — the original blank, uid 0 — so the
+      // fallback is the SOURCE row and the list never emptied (no refill, no fresh uid here).
+      IM_CHECK_EQ(ImGui::GetActiveID(), ctx->ItemInfo("**/##row_text_0").ID);
+
+      ctx->ItemClick(kCancel);
+      ctx->Yield(2);
+    };
+  }
+
+  // Negative control for event attribution (the shape a frame-level probe caught): tab away and
+  // press Enter on the very next frame — the box reports its deactivation across that window, but
+  // the Enter belongs to whatever navigation focused, not to the row just left. Nothing may be
+  // inserted, and the row keeps its text.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "filter_editor", "enter_right_after_tabbing_away_does_not_insert");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      ctx->Yield(2);
+      OpenFilterModal(ctx);
+      AuthorRow(ctx, 0, "1-2");
+      ctx->ItemInput("**/##row_text_0");
+      ctx->Yield(2);
+      ctx->KeySetEx(ImGuiKey_Tab, true, 0.0f);
+      ctx->Yield();  // the tabbing request goes out
+      ctx->KeySetEx(ImGuiKey_Tab, false, 0.0f);
+      ctx->KeySetEx(ImGuiKey_Enter, true, 0.0f);  // adjacent frame, as a fast typist lands them
+      ctx->Yield();
+      ctx->KeySetEx(ImGuiKey_Enter, false, 0.0f);
+      ctx->Yield(4);
+
+      auto rows = RowTexts();
+      IM_CHECK_EQ(rows.size(), static_cast<size_t>(1));  // the left row spawned nothing
+      IM_CHECK_STR_EQ(rows[0].c_str(), "1-2");
+      IM_CHECK_NE(ImGui::GetActiveID(), ctx->ItemInfo("**/##row_text_0").ID);  // no focus steal either
+
+      ctx->ItemClick(kCancel);
+      ctx->Yield(2);
+    };
+  }
+
   // ---------------------------------------------------------------------------------------------
   // Committing what was authored.
   // ---------------------------------------------------------------------------------------------

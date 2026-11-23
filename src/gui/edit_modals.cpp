@@ -38,6 +38,12 @@
 #include "gui/user_defaults.hpp"
 #include "gui/window_sizing.hpp"
 #include "imgui.h"
+// imgui_internal.h for exactly three things the row keyboard flow needs and the public API does
+// not expose: ImTextCharToUtf8 (parking the input queue's chars into a row buffer), and
+// ImGui::GetInputTextState / ImGuiInputTextState::ReloadUserBufAndMoveToEnd (appending to a box
+// that is already the active editor — the same remedy input_text_reload.hpp wraps for pull
+// reloads, with the cursor kept at the end so the next keystroke appends instead of replacing).
+#include "imgui_internal.h"
 #include "include/lumice_base.h"
 #include "include/lumice_editor.h"
 #include "include/lumice_engine.h"
@@ -276,6 +282,13 @@ static uint64_t g_next_summand_row_uid = 0;
 // rendered list (an external pull deleted it). Every uid-recycling boundary clears it explicitly,
 // so a parked request can never land on a row it was not created for.
 static uint64_t g_summand_pending_focus_uid = kNoSummandRowUid;
+
+// The row keyboard flow's event attribution (code-review round 1): which row is the active editor
+// and what its buffer said last frame. A row command (Esc cancel) may only fire on the first frame
+// the row stops being active AFTER having been the active editor — read from this record, never
+// from the global deactivated window, which also covers rows navigation already left.
+static uint64_t g_summand_row_edited_uid = kNoSummandRowUid;
+static char g_summand_row_live_text[kSummandRowBufSize] = { 0 };
 
 // Shared filter fields (name / action / sym_*). `param` is never mutated on
 // g_filter_top — it stays at the default-constructed SoP so operator== reduces
@@ -1861,6 +1874,29 @@ static int FirstFaceTheCrystalLacks(const char* row_text, const LUMICE_CrystalPa
   return 0;
 }
 
+// Park the input queue's characters into a row buffer, UTF-8 encoded, clamped at the row's
+// capacity. Called on the focus-handoff frame: the chars would otherwise be dropped (no active
+// box to consume them) or eaten (the box that just activated skips char processing while still
+// clearing the queue). One ImWchar per codepoint — the queue carries UTF-16 units and surrogate
+// pairs are not recombined here; row texts are the small AND grammar, ASCII in practice.
+void AppendCharsToRowBuffer(char* row_text, const ImVector<ImWchar>& chars) {
+  size_t used = std::strlen(row_text);
+  for (const ImWchar c : chars) {
+    if (c == 0) {
+      continue;
+    }
+    char utf8[5];
+    const char* encoded = ImTextCharToUtf8(utf8, static_cast<unsigned int>(c));
+    const size_t len = std::strlen(encoded);
+    if (used + len + 1 > kSummandRowBufSize) {
+      break;
+    }
+    std::memcpy(row_text + used, encoded, len);
+    used += len;
+  }
+  row_text[used] = '\0';
+}
+
 static void RenderSummandRowList() {
   const auto kind = CurrentValidationKind();
   LUMICE_CrystalParam crystal_param{};
@@ -1901,36 +1937,65 @@ static void RenderSummandRowList() {
     // actually went active — a focus ImGui stole leaves the request armed for the next frame.
     const bool wants_focus = (g_summand_pending_focus_uid == row.uid);
     if (wants_focus) {
+      // Keystrokes that arrive while the focus is crossing boxes would be dropped: no box is
+      // active to consume them (or the target just activated and its activation frame skips char
+      // processing while still clearing the queue). Park them into this row's buffer BEFORE
+      // activation snapshots it, so the first keystroke after Enter/Esc is never lost. The reload
+      // keeps the cursor at the end — the parked text reads as append, not as a selection to
+      // replace (code-review round 1, Major 1).
+      const ImGuiID input_id = ImGui::GetID(text_id);
+      ImGuiIO& io = ImGui::GetIO();
+      const ImGuiID active_id = ImGui::GetActiveID();
+      if (io.InputQueueCharacters.size() > 0 && (active_id == 0 || active_id == input_id)) {
+        AppendCharsToRowBuffer(row.text, io.InputQueueCharacters);
+        io.InputQueueCharacters.resize(0);
+        if (active_id == input_id) {
+          if (ImGuiInputTextState* state = ImGui::GetInputTextState(input_id)) {
+            state->ReloadUserBufAndMoveToEnd();
+          }
+        }
+      }
       ImGui::SetKeyboardFocusHere(0);
     }
-    ImGui::InputText(text_id, row.text, sizeof(row.text));
+    // EnterReturnsTrue makes the return value the Enter event itself: true only on the frame this
+    // box, while active, processed the key. A row navigation already left can never claim it
+    // (code-review round 1, Major 2).
+    const bool enter_accepted =
+        ImGui::InputText(text_id, row.text, sizeof(row.text), ImGuiInputTextFlags_EnterReturnsTrue);
     if (wants_focus && ImGui::IsItemActive()) {
       g_summand_pending_focus_uid = kNoSummandRowUid;
     }
     ImGui::PopItemWidth();
 
     // The row keyboard flow. Enter accepts this row and inserts a blank one right below it, its
-    // own identity, with the focus request parked on it. Esc lets the plain ImGui revert decide
-    // the post-cancel text — the revert rewrites row.text inside the InputText call above, so the
-    // emptiness read here is the post-cancel one — and an empty result deletes the row. Both keys
-    // reach the active InputText alone (Enter/KeypadEnter are in its always-owned key set, Esc is
-    // routed to it for as long as it keeps registering the shortcut), so no event arrives from a
-    // row the user was not editing. Cap-full Enter is a no-op — the same predicate the Add button
-    // reads — and a non-empty post-cancel text keeps the row untouched (the revert is the whole
-    // undo). The owner's gesture vocabulary is one word one meaning: Enter creates, Esc undoes a
-    // creation, navigation neither creates nor deletes.
-    if (ImGui::IsItemDeactivated()) {
-      const bool enter_pressed = ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter);
-      const bool esc_pressed = ImGui::IsKeyPressed(ImGuiKey_Escape);
-      if (enter_pressed) {
-        if (!AtSummandRowCap(g_summand_rows.size())) {
-          enter_insert_idx = i + 1;
-          enter_insert_source = row.uid;
-        }
-      } else if (esc_pressed && TrimRaypathSegment(row.text).empty()) {
+    // own identity, with the focus request parked on it. Cap-full Enter is a no-op — the same
+    // predicate the Add button reads. Esc is judged on the frame the row stops being the active
+    // editor: the plain ImGui revert has then already rewritten row.text inside the InputText call
+    // above, so the emptiness read there is the post-cancel one, and an empty result deletes the
+    // row. Both events belong to the box that WAS being edited — Enter via the return value, Esc
+    // via this row's own active→inactive transition, fired once — never to whatever the global
+    // deactivated window happens to cover. A non-empty post-cancel text keeps the row untouched
+    // (the revert is the whole undo). The owner's gesture vocabulary is one word one meaning:
+    // Enter creates, Esc undoes a creation, navigation neither creates nor deletes.
+    if (enter_accepted) {
+      if (!AtSummandRowCap(g_summand_rows.size())) {
+        enter_insert_idx = i + 1;
+        enter_insert_source = row.uid;
+      }
+    }
+    if (ImGui::IsItemActive()) {
+      // The active editor's live state, for its own later transition (the Esc discriminator).
+      g_summand_row_edited_uid = row.uid;
+      snprintf(g_summand_row_live_text, sizeof(g_summand_row_live_text), "%s", row.text);
+    } else if (row.uid == g_summand_row_edited_uid) {
+      // First frame this row is no longer active after having been the active editor. Esc down
+      // here is a cancel THIS box performed — its revert wrote row.text back above.
+      if (ImGui::IsKeyPressed(ImGuiKey_Escape) && TrimRaypathSegment(row.text).empty()) {
         // Whitespace-only counts as empty — the same blank definition the commit path strips by.
         esc_delete_idx = i;
       }
+      g_summand_row_edited_uid = kNoSummandRowUid;
+      g_summand_row_live_text[0] = '\0';
     }
     if (!is_empty) {
       ImGui::PopStyleColor();
