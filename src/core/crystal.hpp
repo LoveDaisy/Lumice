@@ -559,6 +559,73 @@ std::vector<std::vector<IdType>> ExpandRaypathByPeriod(const std::vector<IdType>
 // `sigma_a` / `d_applicable` are D's ensemble half (detail::DeriveDSymmetryParams).
 std::vector<IdType> LabelEquivalentFaces(IdType face, uint8_t symmetry, int sigma_a, bool d_applicable);
 
+// ---- the element algebra: one D6h group member, three views ---------------------------------
+//
+// The P/B/D bits and their per-bit gates (SymmetryGating above) name GENERATORS; a local class is
+// an orbit under whole GROUP ELEMENTS, and the composite B·σ_a half-turn is one element no bit
+// pattern names (its label action mixes D's prism reflection with B's basal/cone swap, and its
+// pose compensation reflects roll and zenith where neither generator's does both). So the
+// local-class algebra (doc/raypath/raypath-symmetry.md) is stated per element, and the element
+// carries its three views together:
+//   * the LABEL view — ApplyToFace, the face-number permutation the crystal-frame action
+//     induces (the transported face number, same bands as the bit generators' actions);
+//   * the MATRIX view — BodyMatrix, the crystal-frame orthogonal map itself (row-major, acting
+//     on body-frame column vectors; det = +1 or −1 as IsProper says);
+//   * the POSE/SKY views — for a PROPER element the compensation R·gᵀ keeps every world ray
+//     segment-for-segment (the sibling member carries the same light at the SAME sky direction),
+//     while an IMPROPER element needs the world mirror M whose plane contains the sun (the one
+//     reflection fixing the incident light), sends world rays to their mirror images, and
+//     therefore moves the sky point: σ_g = identity for proper, M for improper. CompensatedPose
+//     and ElementFixesSkyDirection are those two views' closed forms.
+// Every construction derives from one geometric fact — face 3's normal sits at crystal-frame
+// azimuth 0 (kHexFaceCos[0] = 1), prism face 3+i at i·60°, the basal faces at ±z — and from the
+// same phase tables the closed-form geometry uses, so the three views cannot drift apart: the
+// tests pin ApplyToFace against the matrix acting on the closed-form normals.
+struct CrystalElement {
+  enum class Family : uint8_t {
+    kIdentity,            // the trivial element
+    kCAxisRotation,       // P_k: right-rotation Rz(k·60°) about the c-axis (proper)
+    kHorizontalHalfTurn,  // H_a: 180° about the horizontal axis at azimuth a·30° = B·σ_a (proper)
+    kVerticalMirror,      // σ_a: vertical mirror plane at azimuth a·30° (improper)
+    kRotoMirror,          // S_k: σ_h·Rz(k·60°) (improper; k = 3 is the inversion)
+  };
+  Family family = Family::kIdentity;
+  int index = 0;  // k or a; always 0..5 (kIdentity ignores it)
+
+  bool IsProper() const;  // det = +1: the compensation stays in SO(3), the sky action is identity
+  bool IsIdentity() const { return family == Family::kIdentity; }
+  // The label view. `face` must be a legal face number (1, 2, 3..8, 13..18, 23..28 — the
+  // IsLegalFace universe); anything else is an unrecoverable invariant.
+  IdType ApplyToFace(IdType face) const;
+  // The matrix view: the element's crystal-frame orthogonal map, det = IsProper() ? +1 : −1.
+  void BodyMatrix(double out[9]) const;
+
+  bool operator==(const CrystalElement& o) const { return family == o.family && index == o.index; }
+  bool operator!=(const CrystalElement& o) const { return !(*this == o); }
+};
+
+// All 24 D6h elements, family-major in the fixed order identity, P_0..P_5, H_0..H_5, σ_0..σ_5,
+// S_0..S_5 (P_0 IS the identity, so the list has no duplicate and 24 entries).
+std::vector<CrystalElement> AllCrystalElements();
+
+// The pose view: the compensated orientation R' that lets member gP realize member P's world
+// rays — R·gᵀ for a proper element (same sky direction), M·R·gᵀ for an improper one, where M is
+// the world vertical mirror at azimuth `sun_azimuth_rad` (the only world reflection that fixes
+// the sun, hence the only one the mirrored scene may use). Row-major, like every pose on this
+// chain. This is a matrix-level contract by design: the closed-form angle maps (az+180°,
+// 180°−zen, −roll−60a for H_a and friends) hold in the canonical zenith interval and degenerate
+// at the poles, while the matrix form is exact everywhere; consumers that need angles extract
+// them from R' afterwards.
+void CompensatedPose(const CrystalElement& element, const double pose[9], double sun_azimuth_rad, double out[9]);
+
+// The sky view: whether the element's sky action σ_g fixes `direction` (a world unit vector —
+// the sky point a member would have to carry light at). Always true for a proper element;
+// otherwise `direction` must lie in the sun's vertical plane (azimuth ≡ sun azimuth or the
+// antipode, or either pole, which every vertical plane contains). The 1e-12 band is the
+// azimuth-wrap rounding allowance (sin(±π) and sin(±2π) round to ≤ 2.5e-16, a genuine off-plane
+// azimuth of 1e-9 rad reads ≥ 1e-9·cos(altitude)), the same calibre the pose identities use.
+bool ElementFixesSkyDirection(const CrystalElement& element, const double direction[3], double sun_azimuth_rad);
+
 namespace detail {
 // Internal — not part of public API.
 

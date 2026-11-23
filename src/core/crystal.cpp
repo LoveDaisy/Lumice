@@ -20,6 +20,7 @@
 #include "core/math.hpp"
 #include "core/optics.hpp"
 #include "core/shared/lat_path_selection.hpp"
+#include "util/fatal.hpp"
 #include "util/logger.hpp"
 
 namespace lumice {
@@ -1316,6 +1317,255 @@ SymmetryGating DeriveSymmetryGating(SymmetrySemantics semantics, const Geometric
       RollRetainedRotations(axis_dist.roll_dist),
       detail::GluingRetainsHalfTurn(axis_dist) ? PRotationSet::FromStep(3) : PRotationSet::Identity());
   return { shape_geom, RetainedOnShape(measure, shape_geom.p_step), detail::IsBApplicable(axis_dist) };
+}
+
+
+// ---- the element algebra: implementation ----------------------------------------------------
+//
+// Every formula here is derived once from face 3's normal sitting at crystal-frame azimuth 0
+// (the same phase tables the closed-form geometry uses), and the derivation — including the
+// improper-conjugation trap (a mirror conjugating a rotation flips the rotation's angle, so
+// F_y·Ry(θ)·F_y is Ry(θ), NOT Ry(−θ)) — is recorded in doc/raypath/raypath-elements.md.
+
+namespace {
+
+// cos/sin of a·30° for a = 0..5: the phase of the horizontal half-turn axes and the vertical
+// mirror planes (face normals sit on the 60° phase, hexagon vertices on the 30° one; the
+// element families need the half-step table the vertex table already carries, spelled flat).
+constexpr double kAxis30Cos[6] = { 1.0, kHexSqrt3Half, 0.5, 0.0, -0.5, -kHexSqrt3Half };
+constexpr double kAxis30Sin[6] = { 0.0, 0.5, kHexSqrt3Half, 1.0, kHexSqrt3Half, 0.5 };
+
+enum class FaceBand { kBasalUpper, kBasalLower, kPrism, kConeUpper, kConeLower };
+
+FaceBand BandOfFace(IdType face) {
+  if (face == 1) {
+    return FaceBand::kBasalUpper;
+  }
+  if (face == 2) {
+    return FaceBand::kBasalLower;
+  }
+  if (face >= 3 && face <= 8) {
+    return FaceBand::kPrism;
+  }
+  if (face >= 13 && face <= 18) {
+    return FaceBand::kConeUpper;
+  }
+  if (face >= 23 && face <= 28) {
+    return FaceBand::kConeLower;
+  }
+  FatalAbort("CrystalElement: face %d is not a legal face number", static_cast<int>(face));
+}
+
+// The prism index (0..5) of a face whose band carries one (prism sides, either cone ring).
+int PriOfFace(IdType face) {
+  const int pri = static_cast<int>(face % 10) - 3;
+  if (pri < 0 || pri >= kHexagonalFnPeriod) {
+    FatalAbort("CrystalElement: face %d has no prism index", static_cast<int>(face));
+  }
+  return pri;
+}
+
+IdType BandFace(FaceBand band, int pri) {
+  switch (band) {
+    case FaceBand::kPrism:
+      return static_cast<IdType>(pri + 3);
+    case FaceBand::kConeUpper:
+      return static_cast<IdType>(pri + 13);
+    case FaceBand::kConeLower:
+      return static_cast<IdType>(pri + 23);
+    default:
+      FatalAbort("CrystalElement: band %d carries no prism index", static_cast<int>(band));
+  }
+}
+
+int WrappedMod(int value, int period) {
+  return ((value % period) + period) % period;
+}
+
+// Rz(60°·k), rows; c/s are the exact 60°-phase table entries (kHexFaceCos/Sin[k]).
+void Rz60(int k, double out[9]) {
+  const double c = kHexFaceCos[k];
+  const double s = kHexFaceSin[k];
+  out[0] = c;
+  out[1] = -s;
+  out[2] = 0.0;
+  out[3] = s;
+  out[4] = c;
+  out[5] = 0.0;
+  out[6] = 0.0;
+  out[7] = 0.0;
+  out[8] = 1.0;
+}
+
+void MatMul3(const double a[9], const double b[9], double out[9]) {
+  double result[9];
+  for (int i = 0; i < 3; ++i) {
+    for (int j = 0; j < 3; ++j) {
+      result[i * 3 + j] = a[i * 3 + 0] * b[0 * 3 + j] + a[i * 3 + 1] * b[1 * 3 + j] + a[i * 3 + 2] * b[2 * 3 + j];
+    }
+  }
+  std::copy(result, result + 9, out);
+}
+
+void Transpose3(const double a[9], double out[9]) {
+  out[0] = a[0];
+  out[1] = a[3];
+  out[2] = a[6];
+  out[3] = a[1];
+  out[4] = a[4];
+  out[5] = a[7];
+  out[6] = a[2];
+  out[7] = a[5];
+  out[8] = a[8];
+}
+
+}  // namespace
+
+bool CrystalElement::IsProper() const {
+  return family == Family::kIdentity || family == Family::kCAxisRotation || family == Family::kHorizontalHalfTurn;
+}
+
+IdType CrystalElement::ApplyToFace(IdType face) const {
+  const FaceBand band = BandOfFace(face);
+  // The basal faces swap exactly for the elements carrying B (the horizontal mirror's label
+  // action); the c-axis rotation and the vertical mirror fix them (their matrices fix ±z).
+  if (band == FaceBand::kBasalUpper || band == FaceBand::kBasalLower) {
+    const bool swaps = family == Family::kHorizontalHalfTurn || family == Family::kRotoMirror;
+    return swaps ? (face == 1 ? IdType{ 2 } : IdType{ 1 }) : face;
+  }
+  const int pri = PriOfFace(face);
+  int new_pri = pri;
+  bool ring_swap = false;
+  switch (family) {
+    case Family::kIdentity:
+      break;
+    case Family::kCAxisRotation:
+      new_pri = WrappedMod(pri + index, kHexagonalFnPeriod);
+      break;
+    case Family::kHorizontalHalfTurn:
+      // B·σ_a: reflect the prism index in the a·30° plane, then swap the cone rings and the
+      // basal pair (the prism band has no ring to swap).
+      new_pri = WrappedMod(index - pri, kHexagonalFnPeriod);
+      ring_swap = true;
+      break;
+    case Family::kVerticalMirror:
+      new_pri = WrappedMod(index - pri, kHexagonalFnPeriod);
+      break;
+    case Family::kRotoMirror:
+      // σ_h·Rz(60k): shift the prism index, then swap the cone rings and the basal pair.
+      new_pri = WrappedMod(pri + index, kHexagonalFnPeriod);
+      ring_swap = true;
+      break;
+  }
+  FaceBand target = band;
+  if (ring_swap) {
+    if (band == FaceBand::kConeUpper) {
+      target = FaceBand::kConeLower;
+    } else if (band == FaceBand::kConeLower) {
+      target = FaceBand::kConeUpper;
+    }
+  }
+  return BandFace(target, new_pri);
+}
+
+void CrystalElement::BodyMatrix(double out[9]) const {
+  switch (family) {
+    case Family::kIdentity:
+      out[0] = 1.0;
+      out[1] = 0.0;
+      out[2] = 0.0;
+      out[3] = 0.0;
+      out[4] = 1.0;
+      out[5] = 0.0;
+      out[6] = 0.0;
+      out[7] = 0.0;
+      out[8] = 1.0;
+      return;
+    case Family::kCAxisRotation:
+      Rz60(index, out);
+      return;
+    case Family::kHorizontalHalfTurn: {
+      // The half-turn about the horizontal axis û at azimuth a·30° is 2·ûûᵀ − I (a proper
+      // involution). a = 0 spells diag(1, −1, −1), the x-axis half-turn the derivation uses.
+      const double ca = kAxis30Cos[index];
+      const double sa = kAxis30Sin[index];
+      out[0] = 2.0 * ca * ca - 1.0;
+      out[1] = 2.0 * ca * sa;
+      out[2] = 0.0;
+      out[3] = 2.0 * ca * sa;
+      out[4] = 2.0 * sa * sa - 1.0;
+      out[5] = 0.0;
+      out[6] = 0.0;
+      out[7] = 0.0;
+      out[8] = -1.0;
+      return;
+    }
+    case Family::kVerticalMirror:
+      // Rz(60°·a)·F_y: the vertical mirror plane at azimuth a·30°, fixing the basal pair.
+      Rz60(index, out);
+      out[1] = -out[1];
+      out[4] = -out[4];
+      out[7] = -out[7];
+      return;
+    case Family::kRotoMirror:
+      // σ_h·Rz(60°·k): the horizontal mirror after the c-axis rotation (σ_h commutes with Rz).
+      // k = 3 is the inversion −I.
+      Rz60(index, out);
+      out[6] = -out[6];
+      out[7] = -out[7];
+      out[8] = -out[8];
+      return;
+  }
+}
+
+std::vector<CrystalElement> AllCrystalElements() {
+  std::vector<CrystalElement> elements;
+  elements.reserve(24);
+  elements.push_back({ CrystalElement::Family::kIdentity, 0 });
+  for (int k = 0; k < kHexagonalFnPeriod; ++k) {
+    if (k != 0) {  // P_0 is the identity, already pushed
+      elements.push_back({ CrystalElement::Family::kCAxisRotation, k });
+    }
+    elements.push_back({ CrystalElement::Family::kHorizontalHalfTurn, k });
+    elements.push_back({ CrystalElement::Family::kVerticalMirror, k });
+    elements.push_back({ CrystalElement::Family::kRotoMirror, k });
+  }
+  return elements;
+}
+
+void CompensatedPose(const CrystalElement& element, const double pose[9], double sun_azimuth_rad, double out[9]) {
+  double g[9];
+  element.BodyMatrix(g);
+  double g_transposed[9];
+  Transpose3(g, g_transposed);
+  double compensated[9];
+  MatMul3(pose, g_transposed, compensated);
+  if (element.IsProper()) {
+    std::copy(compensated, compensated + 9, out);
+    return;
+  }
+  // M: the world vertical mirror at the sun's azimuth, Rz(2φ)·F_y spelled flat (symmetric, as
+  // every mirror is). Only a mirror whose plane contains the sun fixes the incident light, so
+  // only such an M turns member gP's mirrored world rays into a scene the same sun lights.
+  const double cos2 = std::cos(2.0 * sun_azimuth_rad);
+  const double sin2 = std::sin(2.0 * sun_azimuth_rad);
+  const double mirror[9] = { cos2, sin2, 0.0, sin2, -cos2, 0.0, 0.0, 0.0, 1.0 };
+  MatMul3(mirror, compensated, out);
+}
+
+bool ElementFixesSkyDirection(const CrystalElement& element, const double direction[3], double sun_azimuth_rad) {
+  if (element.IsProper()) {
+    return true;  // σ_g is the identity: every sky direction is fixed
+  }
+  // Improper: σ_g is the sun's vertical mirror; `direction` is fixed iff it lies in that plane.
+  // The plane's normal is the horizontal direction at azimuth φ + 90°, so the test reads
+  // cos(altitude)·sin(azimuth − φ): the poles (altitude ±90, cos = 0) are fixed in every
+  // vertical plane, and the 1e-12 band absorbs the wrapped azimuths' rounding (see the header
+  // comment).
+  const double plane_normal[3] = { -std::sin(sun_azimuth_rad), std::cos(sun_azimuth_rad), 0.0 };
+  const double off_plane =
+      direction[0] * plane_normal[0] + direction[1] * plane_normal[1] + direction[2] * plane_normal[2];
+  return std::fabs(off_plane) <= 1e-12;
 }
 
 
