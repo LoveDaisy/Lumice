@@ -1896,6 +1896,7 @@ bool DoAnalyze() {
   // geometry the trace ran against, not the live document's.
   g_state.analysis.frozen_sun_valid = true;
   g_state.analysis.frozen_sun_altitude = g_state.sun.altitude;
+  g_state.analysis.frozen_sun_diameter_deg = g_state.sun.diameter;
   g_state.analysis.frozen_crystals = g_state.crystals;
   g_survey_executor.SetScene(std::move(scene));
   // What this run was asked about, for the "centre has moved" hint: the request's own copy, so

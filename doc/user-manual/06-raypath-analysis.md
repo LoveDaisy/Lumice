@@ -194,11 +194,52 @@ survey's own located objects and dispersion circles, with one grouped tooltip an
 of what was actually drawn; geometry positions are not whole-circle contribution claims.
 
 **Verdict anchors.** **Overlays** includes qualified colour-verdict circles by default, at the
-verdict's own deviation. There is no separate switch. Verdict and Position rows still highlight
-on hover; they do not need to be hovered to keep the circle visible. Turning Overlays off hides
-these analysis circles, not your sky point or the sun/horizon references. A verdict that names
-itself **not visible**, has no position, or is not a supported positioned kind draws nothing;
-**incomplete coverage** draws a dashed circle. The legend only lists anchors actually drawn.
+verdict's own deviation, as part of the **Red-blue shift** layer group. Verdict and Position rows
+still highlight on hover; they do not need to be hovered to keep the circle visible. Turning
+Overlays off hides these analysis circles, not your sky point or the sun/horizon references. A
+verdict that names itself **not visible**, has no position, or is not a supported positioned kind
+draws nothing; **incomplete coverage** draws a dashed circle. The legend only lists anchors
+actually drawn.
+
+**Layer groups.** The **Layers** button beside Overlays opens the per-group switches — Support
+range, Sharp edges, Point images, Red-blue shift, Reflection turns — each with its own graphics
+and labels box (hiding labels never hides ink; hiding ink removes its labels with it). Point
+images carries three per-kind boxes — source image, regular image, family collapse — so images
+that happen to overlap on screen stay separately switchable; each marker's standing short name
+is that group's label, and the hover tooltip remains the details channel. The switches only
+filter what is already computed: nothing is recalculated, and your choices survive class
+switches and closing the window for this session. The support-range bounds and sharp edges
+draw as angular-distance reference arcs at the survey's own wavelength — boundaries of where the
+class can light, not glowing rings; a range that spans the whole 0–180° axis states itself in
+text instead of painting the sky. When an edge's card declares it coincides with the support's
+bound, both groups share one stroke and the legend names both owners. Internal-reflection turns
+show the visible TIR features' representative distances at the chromatic pair's two wavelengths
+as a neutral pair with one combined readout — the step number names the reflection step along
+the representative path, not a crystal face; a reference pair, not a whole-circle colour claim.
+The legend keys name the fixed caliber each layer quotes (the survey's own wavelength for the
+bounds and edges, the chromatic pair's for the turns), so a moved map wavelength never reads as
+these references'. Each group's entry appears in the legend only when it actually drew.
+
+**The inner-edge object.** When the survey's routing qualifies a class's inner edge — the engine
+entered its full-dimensional arm (the only route it takes with uniformly random orientations) and
+the edge card concluded while declaring coincidence with the support bound — the class answer
+opens on that object: **"Inner edge (3-5): about 21.92° from the sun — outside this circle the
+path's light begins."** The whole-sky wording is the random-orientation class's own fact, stated
+at the survey's fixed wavelength (never the map slider's). Clicking the sentence selects the
+object; the **Inner edge readings** group below it expands and gives the four readings, each
+under its own evidence level: the **geometric limit** (certified by the closed-form minimum, the
+support bound itself), the profile cut's **first occupied bin centre** and **highest bin centre
+on this cut** (stated at the bins' own precision, with the representative member, bin width and
+evaluated wavelength named — a cut fact, never a whole-row or all-sky peak), and the **fixed
+chromatic pair** (the minimum-deviation row's two wavelengths and their gap). A reading the
+document did not produce names why instead of showing a number. On the map, selecting the object
+thickens its arc, its readout becomes "inner edge — light outside · <λ> ref" with a tick pointing
+to the light side, and clicking the visible arc selects the same object back — the entry scrolls
+into view and stays selected after the mouse leaves. A drag never selects (the camera owns it);
+Alt-click keeps setting the sky point. Hiding the arc's layer groups hides the line and its
+picking with it, keeps the selection in the answer, and the entry says the map no longer draws
+it; switching classes or re-analyzing starts a new identity and clears the selection. Nothing in
+this flow recomputes or issues a query.
 
 **Row highlights and the reference profile's readings.** Every hoverable row in the class answer
 highlights while the pointer stands on it — the theme's own hover colour under the row's text —

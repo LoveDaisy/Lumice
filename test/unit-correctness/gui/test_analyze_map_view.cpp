@@ -1773,5 +1773,641 @@ TEST_F(VerdictAnchorDraw, WalkBreaksAtTheRectangularSeam) {
   EXPECT_EQ(too_wide, 0) << "no walk segment may span the longitude seam's canvas-wide jump";
 }
 
+// ---- The survey reference arcs (the layer plan's reach / edge / turn groups) ------------------------
+//
+// The same headless rig: the facts are the injection seam (SurveyOverlayFacts is a plain struct —
+// the builder's read-back legs live on the real document at the composition tier), so these tests
+// hold the DRAW rules: the shared stroke's owner algebra, the per-group gates, the labels split,
+// and the honesty forms (dashed unconcluded edges, the full-range text). All ink lands in the ONE
+// kSurveyArcInk bucket — the layers differ by owner, never by hue — so the counts compare walks.
+
+// A/B comparisons run in a FRESH frame per leg: the background list's cross-draw state (the
+// vertex index base, the AA flags, the initial command) is imgui-private, and a hand-rolled
+// buffer clear leaves the index base stale — the next leg's indices point past the cleared
+// buffers and read garbage. EndFrame+NewFrame is the reset that owns all of it.
+static void FreshFrame() {
+  ImGui::EndFrame();
+  ImGui::NewFrame();
+}
+
+class ReferenceArcDraw : public MapDeviceDrawRig {};
+
+namespace {
+SurveyOverlayFacts ReachFacts(double lower_deg, double upper_deg) {
+  SurveyOverlayFacts facts;
+  facts.reach_intervals.push_back({ lower_deg, upper_deg });
+  return facts;
+}
+SurveyOverlayFacts::EdgeArc EdgeFact(double position_deg, bool coincident, bool concluded) {
+  SurveyOverlayFacts::EdgeArc edge;
+  edge.position_deg = position_deg;
+  edge.coincident_with_support = coincident;
+  edge.certificate_available = concluded;
+  edge.concluded = concluded;
+  return edge;
+}
+SurveyOverlayFacts::TirTurn TirFact(int step, double red_deg, double blue_deg) {
+  SurveyOverlayFacts::TirTurn turn;
+  turn.source = "internal_" + std::to_string(step) + "_tir_discriminant";
+  turn.step = step;
+  turn.delta_red_deg = red_deg;
+  turn.delta_blue_deg = blue_deg;
+  return turn;
+}
+ReferenceArcInput ArcInput(const ViewProjection& vp) {
+  ReferenceArcInput in;
+  in.camera = &vp;
+  in.width_px = 600;
+  in.height_px = 600;
+  in.width_pt = 600.0f;
+  in.height_pt = 600.0f;
+  in.pic_min_x = 0.0f;
+  in.pic_min_y = 0.0f;
+  in.pic_px = 600.0f;
+  in.sun.altitude_deg = 20.0;
+  in.sun.azimuth_deg = 0.0;
+  return in;
+}
+std::vector<std::string> SinkTexts(const std::vector<MapReadoutLabel>& sink) {
+  std::vector<std::string> texts;
+  for (const MapReadoutLabel& l : sink) {
+    texts.push_back(l.text);
+  }
+  return texts;
+}
+}  // namespace
+
+// The shared stroke (the layer plan's AC2): an edge whose card declares support coincidence and
+// both gates on submits ONE walk at the shared bound — the bucket count equals each gate alone's
+// count, the legend names both owners, the label names the sharper one. Each gate alone keeps the
+// line; both off submit nothing. (The deltas stay inside the 180° camera's cone so every walk
+// submits.)
+TEST_F(ReferenceArcDraw, SharedStrokeSubmitsOnceAndTheLegendCarriesBothOwners) {
+  const ViewProjection vp = SunCamera();
+  const SurveyOverlayFacts facts = [] {
+    SurveyOverlayFacts f = ReachFacts(20.0, 60.0);
+    f.edges.push_back(EdgeFact(20.0, /*coincident=*/true, /*concluded=*/true));
+    return f;
+  }();
+  ImDrawList* dl = ImGui::GetBackgroundDrawList();
+  struct Comb {
+    const char* what;
+    bool reach;
+    bool edge;
+  };
+  const Comb combos[] = {
+    { "both on", true, true },
+    { "reach only", true, false },
+    { "edge only", false, true },
+  };
+  int both_on_count = -1;
+  for (const Comb& c : combos) {
+    FreshFrame();
+    dl = ImGui::GetBackgroundDrawList();
+    OverlayLegendState legend;
+    std::vector<MapReadoutLabel> sink;
+    ReferenceArcInput in = ArcInput(vp);
+    in.reach.graphics = c.reach;
+    in.edge.graphics = c.edge;
+    in.legend = &legend;
+    in.labels_sink = &sink;
+    DrawReferenceArcs(dl, facts, in);
+    const int count = IndexCountForColour(kSurveyArcInk);
+    if (std::strcmp(c.what, "both on") == 0) {
+      both_on_count = count;
+    } else if (c.reach) {
+      // The AC2 leg: closing the edge keeps the line — reach-only submits the SAME walks as
+      // both-on (the shared bound, plus the outer bound that was always reach's).
+      EXPECT_EQ(count, both_on_count) << c.what;
+    } else {
+      // Edge-only submits exactly its own stroke: half of both-on's ink — no reach bounds, no
+      // second stroke at the shared delta.
+      EXPECT_EQ(count * 2, both_on_count) << c.what;
+    }
+    EXPECT_GT(count, 0) << c.what;
+    if (c.reach) {
+      EXPECT_TRUE(legend.reach_bounds) << c.what;
+      // Both bounds count for reach — the shared 20 stroke IS a reach bound (owned by both);
+      // the outer 60 is the second. Reach off counts nothing.
+      EXPECT_EQ(legend.reach_bound_count, 2) << c.what;
+    } else {
+      EXPECT_FALSE(legend.reach_bounds) << c.what;
+    }
+    if (c.edge) {
+      EXPECT_TRUE(legend.edge_arcs) << c.what;
+      EXPECT_EQ(legend.edge_shared, c.reach) << c.what << ": shared only while both gates are on";
+    } else {
+      EXPECT_FALSE(legend.edge_arcs) << c.what;
+    }
+  }
+  // The labels: one readout per submitted stroke, named by the sharper owner when both share.
+  FreshFrame();
+  dl = ImGui::GetBackgroundDrawList();
+  std::vector<MapReadoutLabel> sink;
+  ReferenceArcInput in = ArcInput(vp);
+  in.labels_sink = &sink;
+  DrawReferenceArcs(dl, facts, in);
+  const std::vector<std::string> texts = SinkTexts(sink);
+  ASSERT_EQ(texts.size(), 2u) << "one label per stroke: the shared bound and the outer bound";
+  EXPECT_NE(std::find(texts.begin(), texts.end(), std::string("edge · 20.000°")), texts.end())
+      << "the shared stroke's label names the edge owner";
+  EXPECT_NE(std::find(texts.begin(), texts.end(), std::string("support · 60.000°")), texts.end())
+      << "the reach-only bound keeps its own label";
+}
+
+// A non-coincident edge never merges, even at the SAME delta as a bound (the card's own
+// declaration is the only merge authority — no screen-distance or formatted-angle approximation):
+// both gates on submit three walks (two bounds + the edge's own), the edge-only count is one
+// walk, and the legend names no sharing.
+TEST_F(ReferenceArcDraw, NonCoincidentEdgeNeverMergesEvenAtTheSameDelta) {
+  const ViewProjection vp = SunCamera();
+  ImDrawList* dl = ImGui::GetBackgroundDrawList();
+  OverlayLegendState legend;
+  SurveyOverlayFacts facts = ReachFacts(20.0, 60.0);
+  facts.edges.push_back(EdgeFact(20.0, /*coincident=*/false, /*concluded=*/true));
+  {
+    std::vector<MapReadoutLabel> sink;
+    ReferenceArcInput in = ArcInput(vp);
+    in.legend = &legend;
+    in.labels_sink = &sink;
+    DrawReferenceArcs(dl, facts, in);
+    const int both = IndexCountForColour(kSurveyArcInk);
+    FreshFrame();
+    dl = ImGui::GetBackgroundDrawList();
+    ReferenceArcInput reach_only = ArcInput(vp);
+    reach_only.edge.graphics = false;
+    reach_only.labels_sink = &sink;
+    DrawReferenceArcs(dl, ReachFacts(20.0, 60.0), reach_only);
+    const int reach_only_count = IndexCountForColour(kSurveyArcInk);
+    FreshFrame();
+    dl = ImGui::GetBackgroundDrawList();
+    SurveyOverlayFacts edge_only_facts;
+    edge_only_facts.edges.push_back(EdgeFact(20.0, false, true));
+    ReferenceArcInput edge_only = ArcInput(vp);
+    edge_only.reach.graphics = false;
+    DrawReferenceArcs(dl, edge_only_facts, edge_only);
+    const int edge_only_count = IndexCountForColour(kSurveyArcInk);
+    EXPECT_GT(reach_only_count, 0);
+    EXPECT_GT(edge_only_count, 0);
+    EXPECT_EQ(both, reach_only_count + edge_only_count) << "the edge owns its own stroke, merged into nothing";
+    EXPECT_FALSE(legend.edge_shared);
+    EXPECT_TRUE(legend.edge_arcs);
+    const std::vector<std::string> texts = SinkTexts(sink);
+    EXPECT_GE(std::count(texts.begin(), texts.end(), std::string("support · 20.000°")), 1);
+    EXPECT_GE(std::count(texts.begin(), texts.end(), std::string("edge · 20.000°")), 1);
+  }
+}
+
+// The labels split: a group's labels bit hides its readouts and keeps its ink; the graphics bit
+// removes both. Hiding labels never hides ink, and hiding ink removes the labels with it.
+// The coincidence identity holds across the display gates (the pickable rule's foundation): the
+// association is built from the producers' own declarations BEFORE any gate, so a coincident
+// edge whose position is NOT bit-equal to its bound keeps the identity when only the support's
+// gate shows the stroke — hiding an owner changes visibility, never the object identity, and no
+// numeric comparison re-derives the pairing.
+TEST_F(ReferenceArcDraw, CoincidenceIdentityHoldsAcrossTheDisplayGates) {
+  const ViewProjection vp = RectangularCamera();
+  SurveyOverlayFacts facts = ReachFacts(21.916, 43.5);
+  SurveyOverlayFacts::EdgeArc edge = EdgeFact(21.916 + 5e-12, /*coincident=*/true, /*concluded=*/true);
+  edge.object_index = 0;  // NOT bit-equal to the bound: one tolerance step off
+  facts.edges.push_back(edge);
+
+  // Both gates on: the shared stroke — one submission, both display owners, the identity on it.
+  {
+    ReferenceArcInput in = ArcInput(vp);
+    in.reach.graphics = in.reach.labels = true;
+    in.edge.graphics = in.edge.labels = true;
+    std::vector<ReferenceArcStroke> sink;
+    in.stroke_sink = &sink;
+    ImDrawList* dl = ImGui::GetBackgroundDrawList();
+    DrawReferenceArcs(dl, facts, in);
+    ASSERT_EQ(sink.size(), 2u) << "the shared stroke plus the far bound";
+    const ReferenceArcStroke* shared = nullptr;
+    for (const ReferenceArcStroke& stroke : sink) {
+      if (stroke.owned_by_edge) {
+        shared = &stroke;
+      }
+    }
+    ASSERT_NE(shared, nullptr);
+    EXPECT_TRUE(shared->carries_edge_identity);
+    EXPECT_EQ(shared->edge_object_index, 0u);
+    EXPECT_TRUE(shared->owned_by_reach);
+  }
+  FreshFrame();
+  // The edge gate OFF, the support's gate alone: the same bound carries the identity — the
+  // visible stroke is still the object's, pickable and selectable.
+  {
+    ReferenceArcInput in = ArcInput(vp);
+    in.reach.graphics = in.reach.labels = true;
+    in.edge.graphics = in.edge.labels = false;
+    std::vector<ReferenceArcStroke> sink;
+    in.stroke_sink = &sink;
+    ImDrawList* dl = ImGui::GetBackgroundDrawList();
+    DrawReferenceArcs(dl, facts, in);
+    ASSERT_EQ(sink.size(), 2u);
+    const ReferenceArcStroke* bound_stroke = nullptr;
+    for (const ReferenceArcStroke& stroke : sink) {
+      EXPECT_FALSE(stroke.owned_by_edge) << "the display ownership follows the gates";
+      if (stroke.carries_edge_identity) {
+        bound_stroke = &stroke;
+      }
+    }
+    ASSERT_NE(bound_stroke, nullptr);
+    EXPECT_EQ(bound_stroke->edge_object_index, 0u);
+    EXPECT_TRUE(bound_stroke->owned_by_reach);
+  }
+  FreshFrame();
+  // The support's gate OFF, the edge's alone: the solo stroke carries the same identity — both
+  // visibility states locate the SAME object.
+  {
+    ReferenceArcInput in = ArcInput(vp);
+    in.reach.graphics = in.reach.labels = false;
+    in.edge.graphics = in.edge.labels = true;
+    std::vector<ReferenceArcStroke> sink;
+    in.stroke_sink = &sink;
+    ImDrawList* dl = ImGui::GetBackgroundDrawList();
+    DrawReferenceArcs(dl, facts, in);
+    ASSERT_EQ(sink.size(), 1u);
+    EXPECT_TRUE(sink.front().carries_edge_identity);
+    EXPECT_EQ(sink.front().edge_object_index, 0u);
+    EXPECT_TRUE(sink.front().owned_by_edge);
+    EXPECT_FALSE(sink.front().owned_by_reach);
+  }
+}
+
+// The light-side tick's direction regression, on the reviewer's own reproduction: a sun on the
+// equator under the dual-fisheye family puts the topmost arc anchor in the OTHER disk from the
+// projected sun, where a screen-space sun-to-anchor direction points back INSIDE the circle.
+// The tick is built in sky space (the same azimuth, a larger deviation), so its tip must equal
+// the projection of that outward sky point — asserted against a test-local oracle (an
+// independent basis + the exposed projection), with the tip's larger angular distance checked
+// on the oracle side.
+TEST_F(ReferenceArcDraw, LightSideTickPointsOutwardAcrossTheFisheyeDiskSplit) {
+  const ViewProjection vp = DualFisheyeCamera();
+  constexpr double kDelta = 21.916126;
+  const SkySunAnchor sun{ 0.0, 0.0 };  // the equator: the split puts the sun far from the top anchor
+  const LightSideTick tick = LightSideTickFor(&vp, 1000, 500, 1000.0f, 500.0f, 0.0f, 0.0f, 1000.0f, sun, kDelta);
+  ASSERT_TRUE(tick.drawn) << "the reproduction's circle must carry the tick";
+
+  // The test-local oracle: the walk basis about the sun, the circle's samples through the
+  // exposed projection, the topmost same-run in-canvas sample, the eps ladder. Independent of
+  // the production code path by construction.
+  auto basis_and_project = [&](double delta, double phi, double* x, double* y) {
+    double sun_pos[3];
+    double alt = sun.altitude_deg * (3.14159265358979323846 / 180.0);
+    double az = sun.azimuth_deg * (3.14159265358979323846 / 180.0);
+    sun_pos[0] = std::cos(alt) * std::cos(az);
+    sun_pos[1] = std::cos(alt) * std::sin(az);
+    sun_pos[2] = std::sin(alt);
+    double u[3] = { 0.0, 0.0, 1.0 };
+    double dot = u[2] * sun_pos[2];
+    if (std::fabs(dot) > 0.9) {
+      u[0] = 1.0;
+      u[1] = 0.0;
+      u[2] = 0.0;
+      dot = u[0] * sun_pos[0] + u[2] * sun_pos[2];
+    }
+    for (int k = 0; k < 3; ++k) {
+      u[k] -= dot * sun_pos[k];
+    }
+    double n = std::sqrt(u[0] * u[0] + u[1] * u[1] + u[2] * u[2]);
+    for (int k = 0; k < 3; ++k) {
+      u[k] /= n;
+    }
+    double v[3] = { sun_pos[1] * u[2] - sun_pos[2] * u[1], sun_pos[2] * u[0] - sun_pos[0] * u[2],
+                    sun_pos[0] * u[1] - sun_pos[1] * u[0] };
+    const double d = delta * (3.14159265358979323846 / 180.0);
+    double p[3];
+    for (int k = 0; k < 3; ++k) {
+      p[k] = std::cos(d) * sun_pos[k] + std::sin(d) * (std::cos(phi) * u[k] + std::sin(phi) * v[k]);
+    }
+    const float travel[3] = { static_cast<float>(-p[0]), static_cast<float>(-p[1]), static_cast<float>(-p[2]) };
+    const std::array<float, 2> screen = ProjectWorldDirToScreen(vp, travel, 1000, 500, false);
+    *x = (screen[0] / 1000.0f + 0.5f) * 1000.0f;
+    *y = (0.5f - screen[1] / 500.0f) * 500.0f;
+    return true;
+  };
+  // The direction, on the oracle side: the anchor and the tip project from the SAME azimuth at
+  // deltas kDelta and kDelta + eps — the tip's angular distance from the sun is larger by
+  // construction; assert the production tick's tip is that outward point, not the screen-sun
+  // direction's endpoint (which lands INSIDE the circle here — the bug this pins).
+  {
+    // The anchor at the production tick: find its circle sample by nearest projected neighbour.
+    double best_phi = 0.0;
+    double best_dist = FLT_MAX;
+    for (int sample = 0; sample <= 96; ++sample) {
+      const double phi = 2.0 * 3.14159265358979323846 * sample / 96.0;
+      double x = 0.0;
+      double y = 0.0;
+      basis_and_project(kDelta, phi, &x, &y);
+      const double d = (x - tick.anchor_x) * (x - tick.anchor_x) + (y - tick.anchor_y) * (y - tick.anchor_y);
+      if (d < best_dist) {
+        best_dist = d;
+        best_phi = phi;
+      }
+    }
+    ASSERT_LT(best_dist, 4.0f * 4.0f) << "the anchor must sit on the circle's own samples";
+    double tx = 0.0;
+    double ty = 0.0;
+    basis_and_project(kDelta + tick.eps_deg, best_phi, &tx, &ty);
+    EXPECT_NEAR(tick.tip_x, tx, 1.0f);
+    EXPECT_NEAR(tick.tip_y, ty, 1.0f);
+    // The anchor is the circle's TOP: the tip below-left of nothing — its screen y must sit no
+    // more than a step above the anchor's, and the outward property itself is the equality
+    // above. The bug this pins: the screen-sun-direction tip, which here lands at a SMALLER
+    // angular distance; assert that too, so the regression cannot silently flip to it.
+    double sx = 0.0;
+    double sy = 0.0;
+    double sun_pos[3] = { 1.0, 0.0, 0.0 };
+    (void)sun_pos;
+    basis_and_project(0.0, 0.0, &sx, &sy);  // the projected sun (delta 0)
+    const double anchor_dx = tick.anchor_x - sx;
+    const double anchor_dy = tick.anchor_y - sy;
+    const double wrong_tip_x = tick.anchor_x + anchor_dx / std::hypot(anchor_dx, anchor_dy) * 12.0;
+    const double wrong_tip_y = tick.anchor_y + anchor_dy / std::hypot(anchor_dx, anchor_dy) * 12.0;
+    // The wrong tip is NOT what production returned.
+    EXPECT_FALSE(std::fabs(tick.tip_x - wrong_tip_x) < 0.5 && std::fabs(tick.tip_y - wrong_tip_y) < 0.5)
+        << "the tick must not be the screen-sun-direction point (the dark-side pointer)";
+  }
+}
+
+TEST_F(ReferenceArcDraw, LabelsSplitKeepsInkAndGraphicsRemovesBoth) {
+  const ViewProjection vp = SunCamera();
+  const SurveyOverlayFacts facts = ReachFacts(30.0, 120.0);
+  ImDrawList* dl = ImGui::GetBackgroundDrawList();
+  // Labels off: ink draws, no readout collects.
+  {
+    std::vector<MapReadoutLabel> sink;
+    ReferenceArcInput in = ArcInput(vp);
+    in.reach.labels = false;
+    in.labels_sink = &sink;
+    DrawReferenceArcs(dl, facts, in);
+    EXPECT_GT(IndexCountForColour(kSurveyArcInk), 0) << "labels off keeps the ink";
+    EXPECT_TRUE(SinkTexts(sink).empty()) << "labels off collects no readout";
+  }
+  FreshFrame();
+  dl = ImGui::GetBackgroundDrawList();
+  // Graphics off: neither ink nor labels.
+  {
+    std::vector<MapReadoutLabel> sink;
+    ReferenceArcInput in = ArcInput(vp);
+    in.reach.graphics = false;
+    in.labels_sink = &sink;
+    DrawReferenceArcs(dl, facts, in);
+    EXPECT_EQ(IndexCountForColour(kSurveyArcInk), 0) << "graphics off draws nothing";
+    EXPECT_TRUE(SinkTexts(sink).empty()) << "no ink, no labels";
+  }
+}
+
+// The honesty forms: an unconcluded-but-delivered edge draws the weakened dashed form (fewer
+// submitted segments than the concluded walk), and the full-range reach states itself in text —
+// no circle pair, one readout, the legend naming the form.
+TEST_F(ReferenceArcDraw, UnconcludedEdgeDrawsDashedAndFullRangeDrawsText) {
+  const ViewProjection vp = SunCamera();
+  ImDrawList* dl = ImGui::GetBackgroundDrawList();
+  // The concluded walk's count, measured once: a lone certified edge.
+  int concluded_count = 0;
+  {
+    SurveyOverlayFacts f;
+    f.edges.push_back(EdgeFact(60.0, false, true));
+    ReferenceArcInput in = ArcInput(vp);
+    DrawReferenceArcs(dl, f, in);
+    concluded_count = IndexCountForColour(kSurveyArcInk);
+  }
+  FreshFrame();
+  dl = ImGui::GetBackgroundDrawList();
+  {
+    SurveyOverlayFacts f;
+    f.edges.push_back(EdgeFact(60.0, false, false));
+    ReferenceArcInput in = ArcInput(vp);
+    DrawReferenceArcs(dl, f, in);
+    const int dashed_count = IndexCountForColour(kSurveyArcInk);
+    EXPECT_GT(dashed_count, 0) << "the delivered position still draws, weakened";
+    EXPECT_LT(dashed_count, concluded_count) << "the dash phase skips half its segments";
+  }
+  FreshFrame();
+  dl = ImGui::GetBackgroundDrawList();
+  {
+    SurveyOverlayFacts f = ReachFacts(0.0, 180.0);
+    f.reach_full_range = true;
+    OverlayLegendState legend;
+    std::vector<MapReadoutLabel> sink;
+    ReferenceArcInput in = ArcInput(vp);
+    in.legend = &legend;
+    in.labels_sink = &sink;
+    DrawReferenceArcs(dl, f, in);
+    EXPECT_EQ(IndexCountForColour(kSurveyArcInk), 0) << "a full range draws no circle pair";
+    const std::vector<std::string> texts = SinkTexts(sink);
+    ASSERT_EQ(texts.size(), 1u);
+    EXPECT_EQ(texts.front(), std::string("support · full 0–180° range"));
+    EXPECT_TRUE(legend.reach_bounds);
+    EXPECT_TRUE(legend.reach_full_range_text);
+  }
+}
+
+// The turns: one visible feature draws its TWO representative deltas in the neutral ink with ONE
+// paired readout; the tir gate removes both. The turn deltas never merge into a reach/edge stroke
+// (the two groups share no stroke; simultaneous gates each draw their own ink).
+TEST_F(ReferenceArcDraw, TirTurnDrawsItsPairWithOneLabelAndObeyItsGate) {
+  const ViewProjection vp = SunCamera();
+  ImDrawList* dl = ImGui::GetBackgroundDrawList();
+  SurveyOverlayFacts facts = ReachFacts(20.0, 60.0);
+  facts.tir_turns.push_back(TirFact(1, 40.0, 45.0));
+  {
+    OverlayLegendState legend;
+    std::vector<MapReadoutLabel> sink;
+    ReferenceArcInput in = ArcInput(vp);
+    in.legend = &legend;
+    in.labels_sink = &sink;
+    DrawReferenceArcs(dl, facts, in);
+    const int count = IndexCountForColour(kSurveyArcInk);
+    EXPECT_TRUE(legend.tir_turns);
+    EXPECT_EQ(legend.tir_turn_count, 1);
+    const std::vector<std::string> texts = SinkTexts(sink);
+    EXPECT_EQ(std::count(texts.begin(), texts.end(), std::string("TIR step 1 · 40.000°/45.000°")), 1)
+        << "ONE paired readout for the two-circle pair, named by its reflection step";
+    // The same facts with the turn's gate off: bounds only. The pair's two walks must add exactly
+    // one bounds-count worth of ink — the turn never merged into a bound stroke.
+    FreshFrame();
+    dl = ImGui::GetBackgroundDrawList();
+    std::vector<MapReadoutLabel> sink_without_tir;
+    ReferenceArcInput without_tir = ArcInput(vp);
+    without_tir.tir.graphics = false;
+    without_tir.legend = &legend;
+    without_tir.labels_sink = &sink_without_tir;
+    DrawReferenceArcs(dl, facts, without_tir);
+    const int bounds_only_count = IndexCountForColour(kSurveyArcInk);
+    EXPECT_GT(bounds_only_count, 0) << "the bounds must draw for the comparison to read";
+    EXPECT_EQ(count, bounds_only_count * 2) << "the pair added exactly its own two walks, merged into nothing";
+    // The gate off also removes the turn's readout and its legend entry, and leaves the bounds'.
+    const std::vector<std::string> after_texts = SinkTexts(sink_without_tir);
+    EXPECT_EQ(std::count(after_texts.begin(), after_texts.end(), std::string("TIR step 1 · 40.000°/45.000°")), 0);
+    EXPECT_GE(std::count(after_texts.begin(), after_texts.end(), std::string("support · 20.000°")), 1);
+  }
+}
+
+// The fabrication detector: with every gate ON and NO delivered facts, nothing submits — no arc
+// ink, no readout, no legend bit. A layer that decorated an absence (a stroke or text without a
+// backing position) fails this on the draw-list evidence, not a bool.
+TEST_F(ReferenceArcDraw, EmptyFactsSubmitNothingWithEveryGateOn) {
+  const ViewProjection vp = SunCamera();
+  ImDrawList* dl = ImGui::GetBackgroundDrawList();
+  OverlayLegendState legend;
+  std::vector<MapReadoutLabel> sink;
+  ReferenceArcInput in = ArcInput(vp);  // all gates default on
+  in.legend = &legend;
+  in.labels_sink = &sink;
+  DrawReferenceArcs(dl, SurveyOverlayFacts{}, in);
+  EXPECT_EQ(IndexCountForColour(kSurveyArcInk), 0);
+  EXPECT_TRUE(SinkTexts(sink).empty());
+  EXPECT_FALSE(legend.reach_bounds);
+  EXPECT_FALSE(legend.edge_arcs);
+  EXPECT_FALSE(legend.edge_shared);
+  EXPECT_FALSE(legend.tir_turns);
+}
+
+// The shared stroke's LABEL obeys each owner's labels switch, not the geometry ownership: with
+// both graphics on, the four labels combinations name and submit the shared stroke's readout
+// exactly per the switches — edge's word only through edge's own labels, support's word through
+// support's, both off leave the stroke drawn and unlabeled — while the geometry stays put.
+TEST_F(ReferenceArcDraw, SharedStrokeLabelObeysEachOwnerLabelsSwitch) {
+  const ViewProjection vp = SunCamera();
+  const SurveyOverlayFacts facts = [] {
+    SurveyOverlayFacts f = ReachFacts(20.0, 60.0);
+    f.edges.push_back(EdgeFact(20.0, /*coincident=*/true, /*concluded=*/true));
+    return f;
+  }();
+  ImDrawList* dl = ImGui::GetBackgroundDrawList();
+  struct Comb {
+    bool reach_labels;
+    bool edge_labels;
+  };
+  const Comb combos[] = {
+    { true, true },
+    { true, false },
+    { false, true },
+    { false, false },
+  };
+  int geometry_baseline = -1;
+  for (const Comb& c : combos) {
+    FreshFrame();
+    dl = ImGui::GetBackgroundDrawList();
+    std::vector<MapReadoutLabel> sink;
+    ReferenceArcInput in = ArcInput(vp);
+    in.reach.labels = c.reach_labels;
+    in.edge.labels = c.edge_labels;
+    in.labels_sink = &sink;
+    DrawReferenceArcs(dl, facts, in);
+    // The unit rig never renders the collected labels (no DrawMapReadoutLabels call), so the
+    // colour bucket IS pure geometry here — the mixed-bucket concern is the GUI counter's.
+    const int geometry = IndexCountForColour(kSurveyArcInk);
+    if (geometry_baseline < 0) {
+      geometry_baseline = geometry;
+    } else {
+      EXPECT_EQ(geometry, geometry_baseline) << "the stroke geometry is labels-independent";
+    }
+    const std::vector<std::string> texts = SinkTexts(sink);
+    if (c.reach_labels && c.edge_labels) {
+      if (texts.size() != 2u) {
+        ADD_FAILURE() << "expected two readouts, got " << texts.size();
+        continue;
+      }
+      EXPECT_NE(std::find(texts.begin(), texts.end(), std::string("edge · 20.000°")), texts.end());
+      EXPECT_NE(std::find(texts.begin(), texts.end(), std::string("support · 60.000°")), texts.end());
+    } else if (c.reach_labels) {
+      // The shared stroke falls back to the support's word; the outer bound keeps its own.
+      if (texts.size() != 2u) {
+        ADD_FAILURE() << "expected two readouts, got " << texts.size();
+        continue;
+      }
+      EXPECT_NE(std::find(texts.begin(), texts.end(), std::string("support · 20.000°")), texts.end());
+      EXPECT_NE(std::find(texts.begin(), texts.end(), std::string("support · 60.000°")), texts.end());
+    } else if (c.edge_labels) {
+      // The edge names the shared stroke; the outer bound's labels ride the reach switch (off).
+      if (texts.size() != 1u) {
+        ADD_FAILURE() << "expected one readout, got " << texts.size();
+        continue;
+      }
+      EXPECT_EQ(texts.front(), std::string("edge · 20.000°"));
+    } else {
+      EXPECT_TRUE(texts.empty()) << "both labels off: the stroke draws unlabeled";
+    }
+  }
+}
+
+// The points group's per-kind gates (AC4): the THREE positioned image kinds switch
+// independently inside the group, every other kind follows the parent gate alone — the
+// exhaustive mapping on synthetic rows, the same predicate the draw loop, the hit collection
+// and the legend consume. The regular/collapse pair IS the controlled co-location witness's
+// switching half: each gate hides exactly its own kind and never the other's.
+TEST(AnalyzeMapView, PointMarkerVisibleMapsEachKindToItsOwnGate) {
+  auto row_of = [](const char* kind) {
+    SurveyObjectRow row;
+    row.kind_name = kind;
+    row.position_available = true;
+    return row;
+  };
+  const SurveyObjectRow source = row_of("source image");
+  const SurveyObjectRow regular = row_of("regular image");
+  const SurveyObjectRow collapse = row_of("family collapse");
+  const SurveyObjectRow support = row_of("support set");  // a non-image kind with a position
+
+  SurveyLayerGates gates;  // everything on: every positioned row is visible
+  EXPECT_TRUE(PointMarkerVisible(source, gates));
+  EXPECT_TRUE(PointMarkerVisible(regular, gates));
+  EXPECT_TRUE(PointMarkerVisible(collapse, gates));
+  EXPECT_TRUE(PointMarkerVisible(support, gates));
+
+  // Each kind's gate hides exactly its own kind.
+  gates.points_kinds.regular_image = false;
+  EXPECT_FALSE(PointMarkerVisible(regular, gates));
+  EXPECT_TRUE(PointMarkerVisible(collapse, gates)) << "the co-located collapse keeps its own gate";
+  EXPECT_TRUE(PointMarkerVisible(source, gates));
+  gates.points_kinds.family_collapse = false;
+  EXPECT_FALSE(PointMarkerVisible(regular, gates));
+  EXPECT_FALSE(PointMarkerVisible(collapse, gates));
+  EXPECT_TRUE(PointMarkerVisible(source, gates));
+  gates.points_kinds.source_image = false;
+  EXPECT_FALSE(PointMarkerVisible(source, gates));
+  EXPECT_TRUE(PointMarkerVisible(support, gates)) << "kinds outside the sub-gate vocabulary follow the parent alone";
+
+  // The parent graphics gate removes them all, whatever the sub-gates say.
+  gates.points_kinds = SurveyPointKindGates{};  // all sub-gates back on
+  gates.points.graphics = false;
+  EXPECT_FALSE(PointMarkerVisible(source, gates));
+  EXPECT_FALSE(PointMarkerVisible(regular, gates));
+  EXPECT_FALSE(PointMarkerVisible(collapse, gates));
+  EXPECT_FALSE(PointMarkerVisible(support, gates));
+}
+
+// The stationary-click selection's distance test (817.2): the point-to-segment distance in
+// points and the stroke's hit predicate — the geometry the map's release frame tests against.
+// The stroke records only submitted segments, so the ideal circle's uncovered parts are not
+// pickable, and the tolerance is the caller's own.
+TEST(AnalyzeMapView, ArcStrokeHitTestsSubmittedSegmentsOnly) {
+  // Point-on-segment, endpoint cases, and the interior projection clamp.
+  EXPECT_NEAR(PointSegmentDistanceSq(1.0f, 1.0f, 0.0f, 0.0f, 2.0f, 0.0f), 1.0f, 1e-5f);  // perpendicular
+  EXPECT_NEAR(PointSegmentDistanceSq(0.0f, 0.0f, 0.0f, 0.0f, 2.0f, 0.0f), 0.0f, 1e-5f);  // an endpoint
+  EXPECT_NEAR(PointSegmentDistanceSq(3.0f, 0.0f, 0.0f, 0.0f, 2.0f, 0.0f), 1.0f, 1e-5f);  // beyond → clamped
+  EXPECT_NEAR(PointSegmentDistanceSq(1.0f, 0.0f, 0.0f, 0.0f, 2.0f, 0.0f), 0.0f, 1e-5f);  // on the segment
+  EXPECT_NEAR(PointSegmentDistanceSq(0.0f, 0.0f, 1.0f, 1.0f, 1.0f, 1.0f), 2.0f, 1e-5f);  // degenerate: the point itself
+
+  // The stroke's hit: a stroke whose segments cover (0,0)-(2,0) and (4,0)-(6,0); the gap between
+  // them is NOT the stroke, and the tolerance decides the pick.
+  ReferenceArcStroke stroke;
+  stroke.carries_edge_identity = true;
+  stroke.edge_object_index = 3;
+  stroke.segments = { 0.0f, 0.0f, 2.0f, 0.0f, 4.0f, 0.0f, 6.0f, 0.0f };
+  const float tight = 0.25f;  // (0.5 pt)^2
+  EXPECT_TRUE(ArcStrokeHit(stroke, 1.0f, 0.4f, tight));
+  EXPECT_FALSE(ArcStrokeHit(stroke, 3.0f, 0.0f, tight)) << "the segment gap is not the stroke";
+  EXPECT_FALSE(ArcStrokeHit(stroke, 1.0f, 2.0f, tight));
+  EXPECT_TRUE(ArcStrokeHit(stroke, 5.0f, 0.4f, tight));
+  // A stroke with no submitted segments never hits — a walk that grazed the view collects no
+  // click surface.
+  ReferenceArcStroke empty;
+  EXPECT_FALSE(ArcStrokeHit(empty, 1.0f, 0.0f, 1e9f));
+}
+
 }  // namespace
 }  // namespace lumice::gui

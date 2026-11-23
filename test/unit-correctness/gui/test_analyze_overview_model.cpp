@@ -79,6 +79,22 @@ bool HasLine(const std::vector<std::string>& lines, const std::string& needle) {
 
 }  // namespace
 
+// The map's overlay facts on the identity arm's document: the rank-0 class delivers no support
+// intervals, no edge card and no chromatic diagnose, so every arc layer's fact set is EMPTY —
+// the map has nothing to draw for this class, and the builder fabricates nothing (no coordinates
+// from the tint/quantity calibers).
+TEST(AnalyzeOverviewModel, OverlayFactsAreEmptyOnTheIdentityArm) {
+  const auto scene = MakeScene(kRandomPrismJson);
+  const auto survey = RunSurvey(scene.get(), { 1, 3, 6, 2 });
+  ASSERT_NE(survey.get(), nullptr);
+
+  const SurveyOverlayFacts facts = BuildSurveyOverlayFacts(*survey);
+  EXPECT_TRUE(facts.reach_intervals.empty());
+  EXPECT_FALSE(facts.reach_full_range);
+  EXPECT_TRUE(facts.edges.empty());
+  EXPECT_TRUE(facts.tir_turns.empty());
+}
+
 // The identity arm: the survey document of a rank-0 class reads back as exactly the two facts
 // the arm has — the certified source image at the sun, and the weight tint with its caliber —
 // with the positional-chromatic absence stated, not silent.
@@ -87,7 +103,7 @@ TEST(AnalyzeOverviewModel, IdentityArmReadsBackSourceImageAndTint) {
   const auto survey = RunSurvey(scene.get(), { 1, 3, 6, 2 });
   ASSERT_NE(survey.get(), nullptr);
 
-  const SurveyOverviewModel model = BuildSurveyOverviewModel(*survey);
+  const SurveyOverviewModel model = BuildSurveyOverviewModel(*survey, /*point_sun_premise=*/true);
   ASSERT_TRUE(model.valid);
   EXPECT_EQ(model.arm, SurveyArm::kIdentity);
   EXPECT_EQ(model.execution, LUMICE_PATH_OUTCOME_COMPLETED);
@@ -132,10 +148,13 @@ TEST(AnalyzeOverviewModel, IdentityArmReadsBackSourceImageAndTint) {
   EXPECT_NEAR(model.objects[0].position_altitude_deg, model.sun_altitude_deg, 1e-9);
 
   // Nothing else ran: no probe, no family ladder, no witness, and the TIR block does not apply
-  // to a direction-invariant class.
+  // to a direction-invariant class. The first-class inner-edge object is the random family's own
+  // (817.2): the identity arm's whole-sky direction-invariance is a different fact, and its
+  // answer organizes as before — no inner-edge object, no whole-circle edge claim.
   EXPECT_FALSE(model.probe.available);
   EXPECT_FALSE(model.family.available);
   EXPECT_FALSE(model.witness.available);
+  EXPECT_FALSE(model.inner_edge.qualified);
 }
 
 // The pure helpers the renderer and the tests share: the state vocabulary is the survey face's

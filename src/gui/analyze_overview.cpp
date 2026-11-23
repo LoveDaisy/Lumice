@@ -1,8 +1,12 @@
 #include "gui/analyze_overview.hpp"
 
+#include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdarg>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <string>
 
 #include "gui/analyze_ui_widgets.hpp"  // DisabledWrappedText — the wrapped disabled-colour pair
@@ -22,6 +26,27 @@ std::string FormatDeg(double value) {
   char buf[64];
   std::snprintf(buf, sizeof(buf), "%.3f°", value);
   return buf;
+}
+
+// The two-decimal degree form the object's bin readings and chromatic pair are stated in (the
+// finite-resolution readings' own precision — three decimals would overstate a 0.1° bin).
+std::string FormatDeg2(double value) {
+  char buf[64];
+  std::snprintf(buf, sizeof(buf), "%.2f°", value);
+  return buf;
+}
+
+// The corridor's written faces, "3-5" — the sequence the request spelled, the representative the
+// probe and the chromatic legs evaluated.
+std::string FaceSequenceLabel(const int* faces, size_t count) {
+  std::string out;
+  for (size_t i = 0; i < count; ++i) {
+    if (i > 0) {
+      out += '-';
+    }
+    out += std::to_string(faces[i]);
+  }
+  return out;
 }
 
 std::string FormatNum(double value) {
@@ -278,6 +303,162 @@ void ReadFamily(const LUMICE_PathSurvey& result, SurveyOverviewModel* model) {
   }
 }
 
+// The C01 first-class inner-edge object (817.2): the qualified corridor's four readings, read
+// back from the document the conclusions also read. The qualification gate is the engine's own
+// routing verdict plus the cards' own declarations (the header's contract): the full-dimensional
+// arm — the only route the engine enters with the uniform random pose family, so the rotation
+// invariance the whole-sky wording rests on is the engine's, not a GUI inference — and a
+// concluded edge card declaring coincidence with the support set. Everything else leaves the
+// view unqualified and the display at its existing lines.
+void BuildInnerEdgeView(const LUMICE_PathSurvey& result, SurveyOverviewModel* model, bool point_sun_premise) {
+  SurveyInnerEdgeView& view = model->inner_edge;
+  // The point-sun premise is the third gate leg, beside the arm and the card: the certificate
+  // is the single-direction minimum-deviation identity — with an extended sun the physical
+  // light begins before the certified bound (a 2° disc starts ~2° inside it), so "light begins
+  // outside this circle" would be false exactly where it reads as a fact. An unproven premise
+  // keeps the existing angular-distance presentation.
+  if (model->arm != SurveyArm::kFullDimensional || !point_sun_premise) {
+    return;
+  }
+  // The qualified edge card: the first card that is CONCLUDED, declares coincidence with the
+  // support set, and carries the closed-form certificate. The certificate is the lower-end
+  // proof, not decoration: the producer certifies only an interior-minimum fold (the closed form
+  // is the minimum-deviation identity), and the support's lower bound IS that minimum — so a
+  // certified coincident card is the support's inner bound, and "light begins outside" follows.
+  // A merely finite coincident card may be the support's UPPER bound (the producer's
+  // coincidence flag covers both ends; the max-fold corpus document delivers exactly such an
+  // upper card at ~149.085° with no certificate), where the outside of the circle is the dark
+  // side — upgrading it would invert the physics, so it keeps its existing flat presentation.
+  // The gate is the producers' own words end to end; no GUI-side tolerance or direction
+  // re-derivation.
+  for (size_t i = 0; i < model->object_count; ++i) {
+    LUMICE_PathSurveyObject obj{};
+    obj.struct_size = sizeof(obj);
+    if (LUMICE_PathSurveyGetObject(&result, i, &obj) != LUMICE_PATH_READ_OK ||
+        obj.kind != LUMICE_PATH_SURVEY_CAUSTIC_EDGE ||
+        (obj.state != LUMICE_PATH_STATE_CERTIFIED && obj.state != LUMICE_PATH_STATE_FINITE)) {
+      continue;
+    }
+    LUMICE_PathSurveyEdge card{};
+    card.struct_size = sizeof(card);
+    if (LUMICE_PathSurveyGetEdge(&result, i, &card) != LUMICE_PATH_READ_OK || card.coincident_with_support == 0 ||
+        card.certificate_available == 0) {
+      continue;
+    }
+    view.qualified = true;
+    view.edge_object_index = static_cast<int>(i);
+    view.edge_deg = card.position_deg;
+    view.certificate_available = card.certificate_available != 0;
+    view.measure_limit_available = card.measure_limit_available != 0;
+    view.measure_limit = card.measure_limit;
+    break;
+  }
+  if (!view.qualified) {
+    return;
+  }
+  view.wavelength_nm = model->wavelength_nm;
+  // The whole-sky premise: the rotation invariance is the engine's routing verdict (the
+  // full-dimensional arm's own), and the fixed λ is the survey's own scope — the note states
+  // both, so the main sentence's whole-circle claim never reads as a map-λ reading (AC3's
+  // fixed-reference branch).
+  {
+    char note[128];
+    std::snprintf(note, sizeof(note),
+                  "Whole-sky circle of this random-orientation class, at the survey's fixed %.0f nm.",
+                  view.wavelength_nm);
+    view.premise_note = note;
+  }
+  // The member scope's kind (the engine's own vocabulary): the physical class or the literal
+  // written sequence the request asked for.
+  LUMICE_PathSurveyScope scope{};
+  scope.struct_size = sizeof(scope);
+  if (LUMICE_PathSurveyGetScope(&result, &scope) == LUMICE_PATH_READ_OK) {
+    view.member_kind_available = true;
+    view.member_kind = scope.member_kind;
+  }
+  // The profile readings: the built-in solar radial probe. The bright card's own association
+  // names WHICH probe is the corridor's (the engine backfills only the member-matched card);
+  // without it the arm's single built-in probe is the read. A refused probe names why — its
+  // readings are not claimed.
+  size_t probe_index = 0;
+  bool probe_known = model->probe_count > 0;
+  for (size_t i = 0; i < model->object_count && probe_known; ++i) {
+    LUMICE_PathSurveyObject obj{};
+    obj.struct_size = sizeof(obj);
+    if (LUMICE_PathSurveyGetObject(&result, i, &obj) != LUMICE_PATH_READ_OK ||
+        obj.kind != LUMICE_PATH_SURVEY_BRIGHT_DOMAIN) {
+      continue;
+    }
+    LUMICE_PathSurveyBright bright{};
+    bright.struct_size = sizeof(bright);
+    if (LUMICE_PathSurveyGetBright(&result, i, &bright) != LUMICE_PATH_READ_OK || bright.probe_index_available == 0) {
+      continue;
+    }
+    if (bright.probe_index < model->probe_count) {
+      probe_index = bright.probe_index;
+    }
+    break;
+  }
+  if (probe_known) {
+    LUMICE_PathSurveyProbe probe{};
+    probe.struct_size = sizeof(probe);
+    if (LUMICE_PathSurveyGetProbe(&result, probe_index, &probe) != LUMICE_PATH_READ_OK) {
+      probe_known = false;
+    } else {
+      view.bin_deg = probe.bin_deg;
+      view.wavelength_nm = probe.wavelength_nm;  // the evaluated λ — the premise the readings quote
+      if (probe.representative != nullptr && probe.representative_count > 0) {
+        view.name = FaceSequenceLabel(probe.representative, probe.representative_count);
+      }
+      if (probe.state == LUMICE_PATH_STATE_REFUSED) {
+        const std::string why =
+            "probe refused (" +
+            (probe.reason.length > 0 ? SurveyTextString(probe.reason) : std::string("unspecified")) + ")";
+        view.first_bin.unavailable = why;
+        view.highest_bin.unavailable = why;
+      } else {
+        if (probe.edge_available != 0) {
+          view.first_bin.available = true;
+          view.first_bin.deg = probe.edge_deg;
+          view.first_bin.caliber = "first occupied bin centre";
+        } else {
+          view.first_bin.unavailable = "no occupied bin in this cut";
+        }
+        if (probe.peak_available != 0) {
+          view.highest_bin.available = true;
+          view.highest_bin.deg = probe.peak_deg;
+          view.highest_bin.caliber = "highest bin centre on this cut";
+        } else {
+          view.highest_bin.unavailable = "no occupied bin in this cut";
+        }
+      }
+    }
+  }
+  if (view.name.empty()) {
+    // No probe named its member: the request's own written faces are the corridor's name.
+    LUMICE_PathFaceSequence layer{};
+    layer.struct_size = sizeof(layer);
+    if (LUMICE_PathSurveyGetRequestLayer(&result, 0, &layer) == LUMICE_PATH_READ_OK && layer.faces != nullptr &&
+        layer.face_count > 0) {
+      view.name = FaceSequenceLabel(layer.faces, layer.face_count);
+    }
+  }
+  // The fixed chromatic pair: the engine's minimum-deviation row, verbatim.
+  if (model->dispersion.available && model->dispersion.min_row_available) {
+    view.dispersion_available = true;
+    view.dispersion_red_deg = model->dispersion.value_red_deg;
+    view.dispersion_blue_deg = model->dispersion.value_blue_deg;
+    view.dispersion_gap_deg = model->dispersion.displacement_deg;
+    view.dispersion_red_label = model->dispersion.red_label;
+    view.dispersion_blue_label = model->dispersion.blue_label;
+    view.dispersion_direction = model->dispersion.direction;
+  } else if (model->dispersion.available) {
+    view.dispersion_unavailable = "no minimum-deviation row in this class";
+  } else {
+    view.dispersion_unavailable = "the chromatic dispersion leg did not produce a row";
+  }
+}
+
 // The main conclusions, per arm. Each line is a fact the document already carries — organized
 // and worded here, never invented.
 void BuildConclusions(const LUMICE_PathSurvey& result, SurveyOverviewModel* model) {
@@ -324,6 +505,17 @@ void BuildConclusions(const LUMICE_PathSurvey& result, SurveyOverviewModel* mode
       break;
     }
     case SurveyArm::kFullDimensional: {
+      const SurveyInnerEdgeView& edge_view = model->inner_edge;
+      // The qualified object's main sentence leads (AC2: the class answer's first read is the
+      // inner-edge object, before any other structure); its four readings render in the
+      // interactive host's expander, so the flat lines they came from do not repeat here.
+      if (edge_view.qualified) {
+        char sentence[192];
+        std::snprintf(sentence, sizeof(sentence),
+                      "Inner edge (%s): about %.2f° from the sun — outside this circle the path's light begins.",
+                      edge_view.name.c_str(), edge_view.edge_deg);
+        lines.push_back(sentence);
+      }
       for (size_t i = 0; i < model->object_count; ++i) {
         LUMICE_PathSurveyObject obj{};
         obj.struct_size = sizeof(obj);
@@ -337,6 +529,9 @@ void BuildConclusions(const LUMICE_PathSurvey& result, SurveyOverviewModel* mode
           }
         }
         if (obj.kind == LUMICE_PATH_SURVEY_CAUSTIC_EDGE && obj.state != LUMICE_PATH_STATE_REFUSED) {
+          if (edge_view.qualified && static_cast<int>(i) == edge_view.edge_object_index) {
+            continue;  // the qualified card's line became the object's main sentence + reading
+          }
           LUMICE_PathSurveyEdge edge{};
           edge.struct_size = sizeof(edge);
           if (LUMICE_PathSurveyGetEdge(&result, i, &edge) == LUMICE_PATH_READ_OK) {
@@ -349,6 +544,10 @@ void BuildConclusions(const LUMICE_PathSurvey& result, SurveyOverviewModel* mode
           bright.struct_size = sizeof(bright);
           if (LUMICE_PathSurveyGetBright(&result, i, &bright) == LUMICE_PATH_READ_OK) {
             if (bright.peak_available != 0) {
+              if (edge_view.qualified && bright.probe_index_available != 0) {
+                continue;  // the member-matched card's peak is the probe's own reading — the
+                           // object's highest-bin reading owns it now, no echo
+              }
               lines.push_back(std::string("Brightness peaks near ") + FormatDeg(bright.peak_delta_deg) +
                               " — a probe reading at finite resolution, distinct from the geometric edge.");
             } else {
@@ -360,9 +559,11 @@ void BuildConclusions(const LUMICE_PathSurvey& result, SurveyOverviewModel* mode
         }
       }
       if (model->dispersion.available && model->dispersion.min_row_available) {
-        lines.push_back("Wavelength dispersion: the " + model->dispersion.red_label + " inner edge sits " +
-                        FormatDeg(model->dispersion.displacement_deg) + " inside the " + model->dispersion.blue_label +
-                        " one (" + DirectionProse(model->dispersion.direction) + ").");
+        if (!edge_view.qualified) {
+          lines.push_back("Wavelength dispersion: the " + model->dispersion.red_label + " inner edge sits " +
+                          FormatDeg(model->dispersion.displacement_deg) + " inside the " +
+                          model->dispersion.blue_label + " one (" + DirectionProse(model->dispersion.direction) + ").");
+        }
       }
       break;
     }
@@ -376,6 +577,141 @@ std::string SurveyTextString(const LUMICE_PathText& text) {
     return {};
   }
   return std::string(text.data, text.length);
+}
+
+// ---- The map overlay facts builder -------------------------------------------------------------------
+
+namespace {
+
+// The TIR turn's source grammar, the one the engine writes (dp_boundary's MarginName, fed by
+// dp_weight_kink's margin = 2*step + 1): `internal_<step>_tir_discriminant`, where <step> is the
+// reflection step's 1-based index along the representative slot sequence — NOT a crystal face
+// number (the slot at that step is whatever face the path visits there). Anything else is not an
+// internal-reflection turn the map can name — no fuzzy matching, no substring guessing.
+bool ParseTirTurnStep(const std::string& source, int* step) {
+  constexpr const char* kPrefix = "internal_";
+  constexpr const char* kSuffix = "_tir_discriminant";
+  if (source.size() <= std::strlen(kPrefix) + std::strlen(kSuffix)) {
+    return false;
+  }
+  if (source.compare(0, std::strlen(kPrefix), kPrefix) != 0 ||
+      source.compare(source.size() - std::strlen(kSuffix), std::strlen(kSuffix), kSuffix) != 0) {
+    return false;
+  }
+  const std::string middle =
+      source.substr(std::strlen(kPrefix), source.size() - std::strlen(kPrefix) - std::strlen(kSuffix));
+  if (middle.empty() ||
+      !std::all_of(middle.begin(), middle.end(), [](unsigned char c) { return std::isdigit(c) != 0; })) {
+    return false;
+  }
+  *step = std::atoi(middle.c_str());
+  return true;
+}
+
+}  // namespace
+
+SurveyOverlayFacts BuildSurveyOverlayFacts(const LUMICE_PathSurvey& result) {
+  SurveyOverlayFacts facts;
+  // The reach layer reads every delivered support interval, whichever object carries them (the
+  // reader is the gate — no second kind table of ours), then merges the document's own adjacency:
+  // an upper equal to the next lower is one continuous range, so no unreachable gap is invented
+  // between exactly-touching intervals (C01's two intervals meet at their shared endpoint).
+  std::vector<SurveyOverlayFacts::ReachInterval> raw;
+  LUMICE_PathSurveyInfo info{};
+  info.struct_size = sizeof(info);
+  if (LUMICE_PathSurveyGetInfo(&result, &info) == LUMICE_PATH_READ_OK) {
+    for (size_t i = 0; i < info.object_count; ++i) {
+      LUMICE_PathSurveySupport support{};
+      support.struct_size = sizeof(support);
+      if (LUMICE_PathSurveyGetSupport(&result, i, &support) != LUMICE_PATH_READ_OK) {
+        continue;
+      }
+      for (size_t k = 0; k < support.interval_count; ++k) {
+        LUMICE_PathSurveyInterval interval{};
+        interval.struct_size = sizeof(interval);
+        if (LUMICE_PathSurveyGetSupportInterval(&result, i, k, &interval) != LUMICE_PATH_READ_OK) {
+          continue;
+        }
+        raw.push_back({ interval.lower_deg, interval.upper_deg });
+      }
+    }
+  }
+  if (!raw.empty()) {
+    std::sort(raw.begin(), raw.end(),
+              [](const SurveyOverlayFacts::ReachInterval& a, const SurveyOverlayFacts::ReachInterval& b) {
+                return a.lower_deg < b.lower_deg;
+              });
+    SurveyOverlayFacts::ReachInterval merged = raw.front();
+    for (size_t i = 1; i < raw.size(); ++i) {
+      if (raw[i].lower_deg == merged.upper_deg) {
+        // Exact adjacency (the document's own numbers, no epsilon): one continuous range.
+        merged.upper_deg = std::max(merged.upper_deg, raw[i].upper_deg);
+      } else if (raw[i].lower_deg > merged.upper_deg) {
+        facts.reach_intervals.push_back(merged);
+        merged = raw[i];
+      } else {
+        // Overlapping deliveries: the union's outer bound, never a fabricated interior edge.
+        merged.upper_deg = std::max(merged.upper_deg, raw[i].upper_deg);
+      }
+    }
+    facts.reach_intervals.push_back(merged);
+    facts.reach_full_range = facts.reach_intervals.size() == 1 && facts.reach_intervals.front().lower_deg <= 0.0 &&
+                             facts.reach_intervals.front().upper_deg >= 180.0;
+  }
+  // The edge layer reads each delivered edge card. The refused cards draw no arc (the conclusions'
+  // rule); an unevaluated-but-delivered position draws the weakened dashed form (its claim did
+  // not conclude); certified/finite draw solid.
+  if (LUMICE_PathSurveyGetInfo(&result, &info) == LUMICE_PATH_READ_OK) {
+    for (size_t i = 0; i < info.object_count; ++i) {
+      LUMICE_PathSurveyObject obj{};
+      obj.struct_size = sizeof(obj);
+      if (LUMICE_PathSurveyGetObject(&result, i, &obj) != LUMICE_PATH_READ_OK ||
+          obj.kind != LUMICE_PATH_SURVEY_CAUSTIC_EDGE || obj.state == LUMICE_PATH_STATE_REFUSED) {
+        continue;
+      }
+      LUMICE_PathSurveyEdge edge{};
+      edge.struct_size = sizeof(edge);
+      if (LUMICE_PathSurveyGetEdge(&result, i, &edge) != LUMICE_PATH_READ_OK) {
+        continue;
+      }
+      SurveyOverlayFacts::EdgeArc arc;
+      arc.position_deg = edge.position_deg;
+      arc.coincident_with_support = edge.coincident_with_support != 0;
+      arc.certificate_available = edge.certificate_available != 0;
+      arc.measure_limit_available = edge.measure_limit_available != 0;
+      arc.measure_limit = edge.measure_limit;
+      arc.concluded = obj.state == LUMICE_PATH_STATE_CERTIFIED || obj.state == LUMICE_PATH_STATE_FINITE;
+      arc.object_index = i;
+      facts.edges.push_back(arc);
+    }
+  }
+  // The turn layer reads the diagnose features the document delivered: only a feature the engine
+  // names visible AND names as an internal-reflection discriminant is a drawable turn. The
+  // TIR quantity/share readers are calibers — they never enter this builder (no coordinates live
+  // there, and none are invented).
+  LUMICE_PathDiagnose diagnose{};
+  diagnose.struct_size = sizeof(diagnose);
+  if (LUMICE_PathSurveyGetDiagnose(&result, &diagnose) == LUMICE_PATH_READ_OK) {
+    for (size_t i = 0; i < diagnose.feature_count; ++i) {
+      LUMICE_PathDiagnoseFeature feature{};
+      feature.struct_size = sizeof(feature);
+      if (LUMICE_PathSurveyGetDiagnoseFeature(&result, i, &feature) != LUMICE_PATH_READ_OK || feature.visible == 0) {
+        continue;
+      }
+      const std::string source = SurveyTextString(feature.source);
+      int step = -1;
+      if (!ParseTirTurnStep(source, &step)) {
+        continue;
+      }
+      SurveyOverlayFacts::TirTurn turn;
+      turn.source = source;
+      turn.step = step;
+      turn.delta_red_deg = feature.delta_red_deg;
+      turn.delta_blue_deg = feature.delta_blue_deg;
+      facts.tir_turns.push_back(std::move(turn));
+    }
+  }
+  return facts;
 }
 
 const char* SurveyStateName(int state) {
@@ -425,7 +761,7 @@ const char* SurveyObjectKindName(int kind) {
   }
 }
 
-SurveyOverviewModel BuildSurveyOverviewModel(const LUMICE_PathSurvey& result) {
+SurveyOverviewModel BuildSurveyOverviewModel(const LUMICE_PathSurvey& result, bool point_sun_premise) {
   SurveyOverviewModel model;
   LUMICE_PathSurveyInfo info{};
   info.struct_size = sizeof(info);
@@ -537,6 +873,7 @@ SurveyOverviewModel BuildSurveyOverviewModel(const LUMICE_PathSurvey& result) {
     }
   }
 
+  BuildInnerEdgeView(result, &model, point_sun_premise);
   BuildConclusions(result, &model);
   return model;
 }
@@ -576,6 +913,84 @@ bool HoverableRow(const char* id, bool highlight_armed) {
   return hovered;
 }
 
+// The qualified inner-edge object's readings expander (the interactive host only — the summary
+// hosts no folds). The four readings, each under its own evidence-level words (AC5): the
+// geometric edge's certificate caliber, the profile cut's two finite-resolution readings with
+// their shared representative/bins/λ premise, and the fixed chromatic pair. Unavailable readings
+// name why — never a zero stand-in. While selected the group is forced open (the selected
+// object's readings stay on show) and a one-shot scroll hint brings the entry into view.
+void RenderInnerEdgeExpander(const SurveyInnerEdgeView& edge, SurveyInnerEdgeInteraction* inner_edge) {
+  if (inner_edge->selected) {
+    ImGui::SetNextItemOpen(true);  // the selected object's readings stay open while it is selected
+  }
+  const bool open = ImGui::CollapsingHeader("Inner edge readings##sv_inner_edge");
+  if (!open) {
+    return;
+  }
+  // Reading 1 — the geometric edge, the certificate's own evidence level.
+  if (edge.certificate_available) {
+    TextDeg("Geometric limit", edge.edge_deg);
+    DisabledWrappedText(
+        "Certified by the closed-form minimum — the support set's own lower bound (one stroke with it).");
+  } else {
+    TextDeg("Geometric edge", edge.edge_deg);
+    DisabledWrappedText("Concluded without the closed-form certificate%s.",
+                        edge.measure_limit_available ? "" : " and without a measure limit");
+    if (edge.measure_limit_available) {
+      DisabledWrappedText("Measure limit %s.", FormatDeg(edge.measure_limit).c_str());
+    }
+  }
+  // Readings 2 and 3 — the profile cut's finite-resolution readings, stated at the bin's own
+  // two-decimal precision (three decimals would overstate a 0.1° bin). Their shared premise (the
+  // representative member, the actual bin width, the evaluated λ, the cut-only scope) rides once
+  // beneath them: the highest bin is this cut's fact, never a row or all-sky peak claim.
+  const bool any_bin = edge.first_bin.available || edge.highest_bin.available;
+  if (edge.first_bin.available) {
+    ImGui::TextWrapped("First occupied bin centre %s", FormatDeg2(edge.first_bin.deg).c_str());
+  } else {
+    DisabledWrappedText("First occupied bin centre: %s.", edge.first_bin.unavailable.c_str());
+  }
+  if (edge.highest_bin.available) {
+    ImGui::TextWrapped("Highest bin centre on this cut %s", FormatDeg2(edge.highest_bin.deg).c_str());
+  } else {
+    DisabledWrappedText("Highest bin centre on this cut: %s.", edge.highest_bin.unavailable.c_str());
+  }
+  if (any_bin) {
+    DisabledWrappedText(
+        "The representative %s cut — %.1f° bins at %.0f nm, this profile only. Not the class sum, a "
+        "whole-row or an all-sky peak.",
+        edge.name.c_str(), edge.bin_deg, edge.wavelength_nm);
+    if (edge.member_kind_available) {
+      DisabledWrappedText(edge.member_kind == LUMICE_PATH_MEMBER_PHYSICAL_L2 ?
+                              "Member scope: the physical class's members; this cut is its representative's." :
+                              "Member scope: the literal written sequence.");
+    }
+  }
+  // Reading 4 — the fixed chromatic pair, the engine's minimum-deviation row.
+  if (edge.dispersion_available) {
+    ImGui::TextWrapped("Fixed chromatic pair: %s at %s, %s at %s — %s apart (%s).", edge.dispersion_red_label.c_str(),
+                       FormatDeg2(edge.dispersion_red_deg).c_str(), edge.dispersion_blue_label.c_str(),
+                       FormatDeg2(edge.dispersion_blue_deg).c_str(), FormatDeg2(edge.dispersion_gap_deg).c_str(),
+                       DirectionProse(edge.dispersion_direction).c_str());
+    DisabledWrappedText("The minimum-deviation row on the representative %s — the fixed pair's own wavelengths.",
+                        edge.name.c_str());
+  } else {
+    DisabledWrappedText("Fixed chromatic pair: %s.", edge.dispersion_unavailable.c_str());
+  }
+  // The profile's curve itself draws in the evidence fold (the one copy); the readings above
+  // point at it rather than redrawing it.
+  DisabledWrappedText("The cut's curve draws under Class evidence → Reference profile.");
+  if (inner_edge->selected) {
+    // The selection's map half: when the arc's layer is off, the object survives in the answer
+    // and the map's silence is stated, never silent.
+    if (!inner_edge->map_layer_draws) {
+      DisabledWrappedText(
+          "The map's reference layers are off — the selected edge is not drawn there; the selection "
+          "is kept.");
+    }
+  }
+}
+
 // The default layer (the disposition ladder's L1/L2): the answers, their limits and their
 // premises — everything that must stay readable with the fold groups closed (the coverage law:
 // an L1 fact is never demoted into a fold for space). Shared verbatim by the complete answer
@@ -590,7 +1005,11 @@ bool HoverableRow(const char* id, bool highlight_armed) {
 // standing the canvas consumes next frame; verdict/Position and ratio feedback stays local.
 // The highlight channel split wraps exactly the row-carrying body; the main-window summary
 // passes null and renders byte-identically to its previous shape.
-void RenderSurveyDefaultLayer(const SurveyOverviewModel& model, SurveyRowHoverReadout* row_readout = nullptr) {
+// `inner_edge` is the qualified object's entry wiring (the interactive host only): the main
+// sentence's click surface, the selected highlight, the readings expander and the hidden-layer
+// note. Null keeps the summary's shape.
+void RenderSurveyDefaultLayer(const SurveyOverviewModel& model, SurveyRowHoverReadout* row_readout = nullptr,
+                              SurveyInnerEdgeInteraction* inner_edge = nullptr) {
   // The interactive host's highlight channel: the window's own splitter, channel 1 carrying all
   // normal content, the hover backgrounds landing in channel 0 — the merge below puts them under
   // the text. No split on the summary host (null readout): no extra commands, byte-identical.
@@ -621,10 +1040,57 @@ void RenderSurveyDefaultLayer(const SurveyOverviewModel& model, SurveyRowHoverRe
   // The main conclusions wrap: they are the region's primary content, and a 400px panel must
   // show every word of them — BulletText would clip at the panel edge exactly where a sentence
   // gets interesting (the screenshot that caught this reads "...certified by the closed-form
-  // minimu").
-  for (const std::string& line : model.conclusions) {
+  // minimu"). The qualified inner-edge object's main sentence leads (AC2: the entry reads
+  // before the other structures); the interactive host adds its click surface — one click is
+  // the selection request — and the persistent selected highlight on the same row. The premise
+  // note rides beneath in both hosts: the whole-sky claim states its fixed λ, never a map
+  // wavelength.
+  size_t first_conclusion = 0;
+  if (model.inner_edge.qualified && !model.conclusions.empty()) {
+    first_conclusion = 1;
     ImGui::Bullet();
-    ImGui::TextWrapped("%s", line.c_str());
+    ImGui::TextWrapped("%s", model.conclusions.front().c_str());
+    const ImVec2 entry_min = ImGui::GetItemRectMin();
+    const ImVec2 entry_max = ImGui::GetItemRectMax();
+    if (row_readout != nullptr && inner_edge != nullptr) {
+      // The entry surface over the sentence row itself (HoverableRow's placement discipline: the
+      // button re-submits the text item's own rect, so the layout below is unchanged): one click
+      // is the selection request; the persistent selected highlight and the transient hover
+      // share the same channel discipline (background channel, under the text).
+      ImGui::SetCursorScreenPos(entry_min);
+      ImGui::InvisibleButton("###inner_edge_entry", ImVec2(entry_max.x - entry_min.x, entry_max.y - entry_min.y));
+      if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
+        inner_edge->select_requested = true;
+      }
+      if (inner_edge->selected || ImGui::IsItemHovered()) {
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        dl->ChannelsSetCurrent(0);
+        dl->AddRectFilled(entry_min, entry_max,
+                          ImGui::GetColorU32(inner_edge->selected ? ImGuiCol_Header : ImGuiCol_HeaderHovered));
+        dl->ChannelsSetCurrent(1);
+      }
+      if (inner_edge->entry_request_scroll) {
+        // The scroll request is the ENTRY's, consumed at the entry's own item (the click surface
+        // is the current item here): the map-side commit brings THE OBJECT back into view, not a
+        // later group's header — on a narrow column the wrapped sentence, premise and support
+        // conclusions between the two can exceed half the viewport, and centering the header
+        // would scroll the entry off. 0.0f puts the entry's own top at the viewport top, fully
+        // visible whenever the viewport can hold it; the item's rect stands even when the item
+        // is clipped away (LastItemData is the submitted rect, not the test registry's).
+        inner_edge->entry_request_scroll = false;
+        ImGui::SetScrollHereY(0.0f);
+      }
+    }
+    DisabledWrappedText("%s", model.inner_edge.premise_note.c_str());
+  }
+  for (size_t i = first_conclusion; i < model.conclusions.size(); ++i) {
+    ImGui::Bullet();
+    ImGui::TextWrapped("%s", model.conclusions[i].c_str());
+  }
+  // The qualified object's readings expander: the interactive host's detail group, right where
+  // the main sentence stands. The summary host renders no folds and no interaction.
+  if (row_readout != nullptr && inner_edge != nullptr && model.inner_edge.qualified) {
+    RenderInnerEdgeExpander(model.inner_edge, inner_edge);
   }
   // The chromatic block that ran neither half states so in the engine's own words — an
   // unevaluated leg is a fact on show, never a silent absence (R7).
@@ -962,12 +1428,13 @@ void RenderSurveyClassDiagnostics(const SurveyOverviewModel& model) {
 
 }  // namespace
 
-void RenderSurveyOverviewModel(const SurveyOverviewModel& model, SurveyRowHoverReadout* row_readout) {
+void RenderSurveyOverviewModel(const SurveyOverviewModel& model, SurveyRowHoverReadout* row_readout,
+                               SurveyInnerEdgeInteraction* inner_edge) {
   if (!model.valid) {
     ImGui::TextUnformatted("Survey document unreadable.");
     return;
   }
-  RenderSurveyDefaultLayer(model, row_readout);
+  RenderSurveyDefaultLayer(model, row_readout, inner_edge);
   ImGui::Spacing();
   if (FoldOpen(kSurveyClassEvidenceLabel, "sv_answer")) {
     RenderSurveyClassEvidence(model);

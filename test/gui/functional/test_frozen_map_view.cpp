@@ -776,7 +776,7 @@ bool OverlayCoverageWitness(ImGuiTestContext* ctx) {
   g_pressure.survey = gui::SurveyHandle(survey, gui::SurveyDeleter{});
   gui::g_state.analysis.survey.adopted_result = g_pressure.survey;
   gui::g_state.analysis.survey.intent_id = gui::g_survey_executor.NextId(1785);
-  const auto model = gui::BuildSurveyOverviewModel(*g_pressure.survey);
+  const auto model = gui::BuildSurveyOverviewModel(*g_pressure.survey, gui::g_state.analysis.FrozenPointSunPremise());
   IM_CHECK_RETV(model.dispersion.available && model.dispersion.min_row_available && model.sun_available, false);
   // No standing selection/query intent: the adopted, physically computed results are immutable.
   g_pressure.prepare = true;
@@ -1279,7 +1279,8 @@ bool MaximumTimingWitness(ImGuiTestContext* ctx) {
     { "source_cells", dense.pixel_count },
     { "dense_positive_cells", positive },
     { "map_gui_capacity_peak_bytes", gui_capacity_peak },
-    { "overlay_model_capacity_bytes", ModelCapacityBytes(gui::BuildSurveyOverviewModel(*g_pressure.survey)) },
+    { "overlay_model_capacity_bytes", ModelCapacityBytes(gui::BuildSurveyOverviewModel(
+                                          *g_pressure.survey, gui::g_state.analysis.FrozenPointSunPremise())) },
     { "adoptions", adoptions },
     { "input_frames", latencies.size() },
     { "latency_p95_ms", p95 },

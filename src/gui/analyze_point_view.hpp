@@ -111,33 +111,60 @@ int PointValidSampleIndexAt(const LUMICE_SinglePathResult& result, int component
 // behind the adoption gate, so a per-frame build is consistent; anything hotter caches it above.
 std::vector<int> CollectValidSampleIndices(const LUMICE_SinglePathResult& result, int component);
 
-// The per-sample factor lines (R4's vocabulary): the current sample's orientation angles, rho,
-// A_P and A/a^2, T (total), J with its named-unavailable state, K = 1/(J+eps), the product
-// rho*A/a^2*T*K, and the per-interface transmittances labelled as conditional-on-this-path —
-// the engine's names and units, never an additive percentage, never a fabricated number.
-std::vector<std::string> PointFactorLines(const LUMICE_PathPointSample& sample);
+// The per-sample factor lines (R4's vocabulary): the head lines (orientation angles, rho, A_P
+// and A/a^2, T (total), J with its named-unavailable state, K = 1/(J+eps), the product) followed
+// by the role-named per-contact factor lines — the engine's names and units, never an additive
+// percentage, never a fabricated number. Signature and spellings live with the two halves below.
 
 // The two §16.1 ladder halves of the factor readouts (contract §16.4's factors region): the
 // head lines are the default layer's factor conclusions (pose, rho, A_P/A_a^2, T, J/K/product
 // or their named-unavailable forms); the interface lines are T's optical premises — the
-// per-interface transmittances, conditional on this path — the Interface transmission fold's
-// rows. The production callers are the factors region's two arms (default layer + fold); the
-// concatenated spelling below survives as the partition's single-source anchor and the tests'
-// consumer (unit-correctness pins the per-state spellings, the functional chain asserts the
-// engine-facing read) — the halves and the concatenation cannot drift apart because the
-// concatenation IS their composition.
+// per-contact factors under their EVENT ROLES, conditional on this path — the per-face fold's
+// rows. The production callers are the factors region's arms; the concatenated spelling below
+// survives as the partition's single-source anchor and the tests' consumer (unit-correctness
+// pins the per-state spellings, the functional chain asserts the engine-facing read) — the
+// halves and the concatenation cannot drift apart because the concatenation IS their
+// composition.
 std::vector<std::string> PointFactorHeadLines(const LUMICE_PathPointSample& sample);
-std::vector<std::string> PointFactorInterfaceLines(const LUMICE_PathPointSample& sample);
+
+// One contact's event role along the chain (the point_result per-facet semantics: T at the
+// entry and exit, R at the internal faces, a one-face path a single external R). Derived from
+// the contact's POSITION in the sequence — the sequence is the identity, so a repeated face
+// stays two contacts with their own roles.
+enum class PointFaceRole { kExternalReflection, kEntryRefraction, kInternalReflection, kExitRefraction };
+PointFaceRole PointFaceRoleFor(size_t contact, size_t interface_count);
+
+// The per-contact factor lines under their roles (AC1): entry/internal/exit spelled from the
+// contact's position, the face number taken from the actual sequence `faces` (one name per
+// contact — `face_count` must equal the sample's `interface_count`, else the rows fall back to
+// contact indices and never fabricate a face number), and the factor value with its
+// conditional denominator. Pure; the unit layer pins the spellings.
+std::vector<std::string> PointFactorInterfaceLines(const LUMICE_PathPointSample& sample, const int* faces,
+                                                   size_t face_count);
+std::vector<std::string> PointFactorLines(const LUMICE_PathPointSample& sample, const int* faces, size_t face_count);
 
 // The identity/echo lines (AC1): the result's OWN Info read back — target labels + deviation,
 // member faces, crystal id, wavelength + its source, refractive index, sample tier and budget
 // echo. The engine's echo, not a GUI restatement of the request.
 std::vector<std::string> PointCaliberLines(const LUMICE_PathPointInfo& info);
 
-// The rank-0 mass arm's lines (AC5): direction labels, target separation, and the orbit factors'
-// own availability words (support kind, kept/total, integral) — presented WITHOUT a fiber, never
+// The rank-0 mass arm's lines (AC3): the point image's own answer — position, the sun-direction
+// fact when the result itself shows the image at the sun's exact direction (a structural
+// equality, never a proximity guess), the target separation, and the orbit integral's own
+// availability words. The Info rides along for the sun position and the point-sun premise note
+// (a finite sun's disk is NOT promised into the point answer). Presented WITHOUT a fiber, never
 // forced into the discovered arm's widgets.
-std::vector<std::string> PointMassLines(const LUMICE_PathPointMass& mass);
+std::vector<std::string> PointMassLines(const LUMICE_PathPointInfo& info, const LUMICE_PathPointMass& mass);
+
+// The mass answer compressed to the footer's one line: position, the sun-direction fact under
+// the same exact-equality gate, and the total-light availability. Single line, no wrap.
+std::string PointMassFooterLine(const LUMICE_PathPointInfo& info, const LUMICE_PathPointMass& mass);
+
+// Whether the point image sits at the sun's own direction: the engine-level structural equality
+// (the plate's direct transmission answers at the sun to ~1e-12°), read as exact — a NEAR miss
+// is a position, never the sun-direction claim. One gate for every consumer (the text lines,
+// the footer and the map's reuse branch): the sun-direction fact has one implementation.
+bool PointMassAtSunDirection(const LUMICE_PathPointInfo& info, const LUMICE_PathPointMass& mass);
 
 // ---- The contribution curve (the Pose & trace window's D5 lower region, 756) ------------------------
 // The multi-factor curve along ONE component's real SO(3) arclength — rho, A/a^2, T, K and their
@@ -381,6 +408,35 @@ struct RayTracePolyline {
 // physics rewrite), and everything from the first unusable factor on is marked unavailable.
 // Pure; the gui_test's hand anchors live in the unit test.
 std::vector<RayTraceSegmentEnergy> RayTraceCumulativeEnergies(const double* factors, size_t count);
+
+// The loss reading over one chain (AC2): derived from RayTraceCumulativeEnergies' OWN output —
+// the same cumulative and availability authority the 3D labels and widths read, never a second
+// accumulation. `loss_contact` is the contact whose ABSOLUTE drop E[i]-E[i+1] is largest over
+// the usable prefix — not the smallest conditional factor. `majority` gates the "most light"
+// claim (the drop must exceed half the incident light); `tie_count > 1` names a tie (no single
+// cause is claimed); `lossless` says every usable factor keeps the energy (all drops within the
+// rounding band); `usable_contacts` is the prefix length loss claims may cover;
+// `chain_complete` says that prefix spans the whole chain — only then may conclusions speak of
+// "this path" as a whole; an incomplete chain's lossless/largest/tie conclusions are
+// prefix-scoped and the stop position shows unconditionally.
+struct PointLossReading {
+  int usable_contacts = 0;
+  int loss_contact = -1;
+  double largest_drop = 0.0;
+  int tie_count = 0;
+  bool majority = false;
+  bool lossless = false;
+  bool chain_complete = false;
+};
+PointLossReading PointLossReadingFor(const std::vector<RayTraceSegmentEnergy>& energies);
+
+// The first-screen loss readout (AC2/AC4/AC5): the conclusion line, the
+// arrival/continuation/exit readings computed from the unrounded chain, and the basis line
+// naming the shared denominator (the incident light before the first contact = 100%), the
+// actual face sequence and the representative-ray-only scope. Empty when the chain carries no
+// usable factor — the caller renders the plain factor lines then.
+std::vector<std::string> PointLossReadoutLines(const LUMICE_PathPointSample& sample, const int* faces,
+                                               size_t face_count);
 
 // The visual line width (live UI scale) for a cumulative relative energy: the fixed sqrt
 // monotone mapping over the positive range; E <= 0 answers 0 — the renderer draws no ink for a

@@ -21,6 +21,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -31,6 +32,7 @@
 
 #include "core/optics.hpp"  // IceRefractiveIndex: the engine's dispersion table, independent of any document echo
 #include "gui/analysis_panel.hpp"
+#include "gui/analyze_map_view.hpp"  // PointMarkerVisible — the one per-kind visibility rule
 #include "gui/analyze_overview.hpp"
 #include "gui/analyze_point_view.hpp"
 #include "gui/file_io.hpp"
@@ -184,7 +186,7 @@ TEST(AnalyzeOverviewChain, FullDimensionalDispersionAnchorsToTheClosedForm) {
   const auto survey = RunSurvey(scene.get(), { 3, 5 });
   ASSERT_NE(survey.get(), nullptr);
 
-  const SurveyOverviewModel model = BuildSurveyOverviewModel(*survey);
+  const SurveyOverviewModel model = BuildSurveyOverviewModel(*survey, /*point_sun_premise=*/true);
   ASSERT_TRUE(model.valid);
   ASSERT_EQ(model.arm, SurveyArm::kFullDimensional);
   EXPECT_EQ(model.execution, LUMICE_PATH_OUTCOME_COMPLETED);
@@ -248,14 +250,47 @@ TEST(AnalyzeOverviewChain, FullDimensionalDispersionAnchorsToTheClosedForm) {
     FAIL() << "the C01 class's caustic edge should carry the closed-form certificate";
   }
 
-  // The edge/bright split (AC3): a certified geometric edge card and a separate bright-domain
-  // card whose peak is a probe reading. The conclusions keep the two apart, and name the
-  // dispersion line.
-  EXPECT_TRUE(HasLine(model.conclusions, "Sharp edge"));
-  EXPECT_TRUE(HasLine(model.conclusions, "certified by the closed-form minimum"));
-  EXPECT_TRUE(HasLine(model.conclusions, "Brightness peaks near"));
-  EXPECT_TRUE(HasLine(model.conclusions, "Wavelength dispersion"));
+  // The edge/bright split (AC3), organized as the first-class inner-edge object (817.2): the
+  // class answer's FIRST line is the object's main sentence (about 21.92°, the light-begins
+  // claim), the premise note names the whole-sky fact at the survey's fixed λ, and the four
+  // readings live in the object's view — the flat lines they came from do not repeat. The
+  // support set keeps its own line (another structure, still readable).
+  ASSERT_FALSE(model.conclusions.empty());
+  EXPECT_EQ(model.conclusions.front().find("Inner edge (3-5): about 21.92° from the sun"), 0u)
+      << model.conclusions.front();
+  EXPECT_NE(model.conclusions.front().find("light begins"), std::string::npos);
+  EXPECT_TRUE(HasLine(std::vector<std::string>{ model.inner_edge.premise_note }, "Whole-sky"));
+  EXPECT_NE(model.inner_edge.premise_note.find("550 nm"), std::string::npos) << model.inner_edge.premise_note;
   EXPECT_TRUE(HasLine(model.conclusions, "Support:"));
+
+  // The qualified object itself: the geometric edge (the certificate card's own number), the
+  // profile cut's two finite-resolution readings, and the fixed chromatic pair — the four
+  // readings' numbers pinned to the same closed-form anchors the dispersion block holds above.
+  ASSERT_TRUE(model.inner_edge.qualified);
+  EXPECT_EQ(model.inner_edge.name, std::string("3-5"));
+  EXPECT_GE(model.inner_edge.edge_object_index, 0);
+  EXPECT_NEAR(model.inner_edge.edge_deg, 21.9161264398004, 1e-9);
+  EXPECT_TRUE(model.inner_edge.certificate_available);
+  EXPECT_NEAR(model.inner_edge.wavelength_nm, model.wavelength_nm, 1e-9);
+  ASSERT_TRUE(model.inner_edge.first_bin.available);
+  EXPECT_NEAR(model.inner_edge.first_bin.deg, 21.95, 1e-9);
+  ASSERT_TRUE(model.inner_edge.highest_bin.available);
+  EXPECT_NEAR(model.inner_edge.highest_bin.deg, 22.05, 1e-9);
+  EXPECT_NEAR(model.inner_edge.bin_deg, 0.1, 1e-9);
+  EXPECT_EQ(model.inner_edge.name, std::string("3-5"));
+  EXPECT_TRUE(model.inner_edge.member_kind_available);
+  EXPECT_EQ(model.inner_edge.member_kind, LUMICE_PATH_MEMBER_PHYSICAL_L2);
+  ASSERT_TRUE(model.inner_edge.dispersion_available);
+  EXPECT_NEAR(model.inner_edge.dispersion_red_deg, model.dispersion.value_red_deg, 1e-12);
+  EXPECT_NEAR(model.inner_edge.dispersion_blue_deg, model.dispersion.value_blue_deg, 1e-12);
+  EXPECT_NEAR(model.inner_edge.dispersion_gap_deg, 0.5809619687491399, 1e-9);
+  EXPECT_EQ(model.inner_edge.dispersion_red_label, std::string("650nm"));
+  EXPECT_EQ(model.inner_edge.dispersion_blue_label, std::string("450nm"));
+  // The migrated readings leave no flat echo behind: the qualified card's edge line, the
+  // member-matched bright peak and the dispersion summary are the object's now.
+  EXPECT_FALSE(HasLine(model.conclusions, "Sharp edge at"));
+  EXPECT_FALSE(HasLine(model.conclusions, "Brightness peaks near"));
+  EXPECT_FALSE(HasLine(model.conclusions, "Wavelength dispersion"));
 
   // The probe block: the reference-wavelength profile, with readings and samples whose empty
   // bins are NaN gaps (the profile's far wings hold empty bins — the gap rule is load-bearing).
@@ -287,6 +322,235 @@ TEST(AnalyzeOverviewChain, FullDimensionalDispersionAnchorsToTheClosedForm) {
 
   // The dispersion basis names its geometry in the engine's own words (the口径 the user reads).
   EXPECT_NE(model.dispersion.evidence_basis.find("index pair"), std::string::npos);
+
+  // ---- This document's own shape at the facts layer (both read off the SAME survey above) ----
+  //
+  // The two blocks below are the former FullDimensionalDocumentCarriesNoPositionedCards and
+  // OverlayFactsReadBackSupportEdgeAndTurns cases, absorbed here: they surveyed this exact
+  // scene/faces/request a second and third time only to read more faces of the one document the
+  // anchor already holds. The assertions are unchanged; the duplicate engine solves are not.
+  //
+  // The full-dimensional document carries no positioned object cards (its support/edge/bright
+  // cards are deviation-axis structures), so the map's points group names the honest empty state
+  // for this class — the per-kind gates stand with nothing to hide.
+  {
+    bool any_positioned = false;
+    for (const SurveyObjectRow& row : model.objects) {
+      any_positioned = any_positioned || row.position_available;
+    }
+    EXPECT_FALSE(any_positioned);
+  }
+
+  // The map overlay layers' display facts (the layer plan's Step 1), read back from the real C01
+  // 3-5 document — the reach/edge payloads the map's arc layers draw. Every number here is a
+  // typed reader's own: the merged range's endpoints trace to LUMICE_PathSurveyGetSupportInterval,
+  // the edge's coincidence flag to the card's own declaration, and the turn positions to the
+  // diagnose features' visible discriminants — never to the TIR quantity/share calibers.
+  {
+    const SurveyOverlayFacts facts = BuildSurveyOverlayFacts(*survey);
+
+    // The reach layer: C01's two delivered intervals meet at their shared endpoint, so the merged
+    // reach is ONE continuous range — no unreachable gap invented between exactly-touching
+    // intervals, and not the full [0, 180] range (the bounds draw as arcs, not as the text form).
+    ASSERT_EQ(facts.reach_intervals.size(), 1u);
+    EXPECT_FALSE(facts.reach_full_range);
+    EXPECT_GT(facts.reach_intervals.front().lower_deg, 21.0);
+    EXPECT_LT(facts.reach_intervals.front().lower_deg, 23.0);
+    EXPECT_GT(facts.reach_intervals.front().upper_deg, 43.5);
+    EXPECT_LE(facts.reach_intervals.front().upper_deg, 180.0);
+
+    // The edge layer: the class's certified caustic edge, whose card declares the coincidence with
+    // support — the flag the map's shared stroke keys on, passing through verbatim. `object_index`
+    // is the card's own object index — the selection's owner key — and names the SAME card the
+    // overview model's qualified inner-edge object points at.
+    ASSERT_GE(facts.edges.size(), 1u);
+    EXPECT_TRUE(facts.edges.front().coincident_with_support);
+    EXPECT_TRUE(facts.edges.front().certificate_available);
+    EXPECT_TRUE(facts.edges.front().concluded);
+    EXPECT_NEAR(facts.edges.front().position_deg, facts.reach_intervals.front().lower_deg, 0.05)
+        << "the shared stroke's geometry: the edge sits at the support's inner bound";
+    {
+      // The card's index, read back the way the builder reads it: the first caustic-edge object.
+      int edge_index = -1;
+      LUMICE_PathSurveyInfo info{};
+      info.struct_size = sizeof(info);
+      ASSERT_EQ(LUMICE_PathSurveyGetInfo(survey.get(), &info), LUMICE_PATH_READ_OK);
+      for (size_t i = 0; i < info.object_count; ++i) {
+        LUMICE_PathSurveyObject obj{};
+        obj.struct_size = sizeof(obj);
+        if (LUMICE_PathSurveyGetObject(survey.get(), i, &obj) == LUMICE_PATH_READ_OK &&
+            obj.kind == LUMICE_PATH_SURVEY_CAUSTIC_EDGE) {
+          edge_index = static_cast<int>(i);
+          break;
+        }
+      }
+      ASSERT_GE(edge_index, 0);
+      EXPECT_EQ(facts.edges.front().object_index, static_cast<size_t>(edge_index));
+      EXPECT_EQ(model.inner_edge.edge_object_index, edge_index);
+    }
+
+    // The turn layer: whatever visible internal-reflection discriminants the document carries,
+    // each is a parsed turn (a face number from the source grammar, positions inside the axis) —
+    // and the TIR quantity/share readers never produce a position on their own (a share without a
+    // visible discriminant feature leaves the layer empty, not decorated).
+    for (const SurveyOverlayFacts::TirTurn& turn : facts.tir_turns) {
+      EXPECT_GE(turn.step, 0) << turn.source;
+      EXPECT_GT(turn.delta_red_deg, 0.0);
+      EXPECT_LT(turn.delta_red_deg, 180.0);
+      EXPECT_GT(turn.delta_blue_deg, 0.0);
+      EXPECT_LT(turn.delta_blue_deg, 180.0);
+    }
+    bool has_visible_tir_feature = false;
+    LUMICE_PathDiagnose diagnose{};
+    diagnose.struct_size = sizeof(diagnose);
+    if (LUMICE_PathSurveyGetDiagnose(survey.get(), &diagnose) == LUMICE_PATH_READ_OK) {
+      for (size_t i = 0; i < diagnose.feature_count; ++i) {
+        LUMICE_PathDiagnoseFeature feature{};
+        feature.struct_size = sizeof(feature);
+        if (LUMICE_PathSurveyGetDiagnoseFeature(survey.get(), i, &feature) != LUMICE_PATH_READ_OK ||
+            feature.visible == 0) {
+          continue;
+        }
+        const std::string source = SurveyTextString(feature.source);
+        if (source.rfind("internal_", 0) == 0 && source.find("_tir_discriminant") != std::string::npos) {
+          has_visible_tir_feature = true;
+        }
+      }
+    }
+    EXPECT_EQ(facts.tir_turns.empty(), !has_visible_tir_feature)
+        << "the turn layer reads exactly the visible internal-reflection discriminants";
+  }
+}
+
+// The max-fold upper edge (the corpus's C09 document): a finite caustic card that DECLARES
+// coincidence with the support — with the support's UPPER bound, the dark side outside — and
+// carries no closed-form certificate (the producer certifies only an interior-minimum fold).
+// The coincidence flag covers both ends and carries no direction, so the inner-edge object gate
+// reads the certificate as the lower-end proof and refuses this card: no object, no success
+// sentence, no light-outside anything; the card keeps its existing flat presentation.
+TEST(AnalyzeOverviewChain, MaxFoldUpperEdgeDoesNotQualifyAsTheInnerEdgeObject) {
+  const auto scene = SceneFromConfig("raypath_feature_max_fold_pyramid.json");
+  const auto survey = RunSurvey(scene.get(), { 13, 15, 26, 28 });
+  ASSERT_NE(survey.get(), nullptr);
+
+  const SurveyOverviewModel model = BuildSurveyOverviewModel(*survey, /*point_sun_premise=*/true);
+  ASSERT_TRUE(model.valid);
+  ASSERT_EQ(model.arm, SurveyArm::kFullDimensional);
+
+  // The card's own shape, read back through the typed readers: exactly the premises that must
+  // NOT qualify — finite, coincident, uncertified, at the support's upper bound. Row reads fail
+  // non-fatally inside the loops (one row's early failure must not skip the rows after it); the
+  // found card's propositions assert after the hunt.
+  bool saw_edge_card = false;
+  LUMICE_PathSurveyEdge card{};
+  card.struct_size = sizeof(card);
+  LUMICE_PathSurveyInfo info{};
+  info.struct_size = sizeof(info);
+  ASSERT_EQ(LUMICE_PathSurveyGetInfo(survey.get(), &info), LUMICE_PATH_READ_OK);
+  for (size_t i = 0; i < info.object_count && !saw_edge_card; ++i) {
+    LUMICE_PathSurveyObject obj{};
+    obj.struct_size = sizeof(obj);
+    if (LUMICE_PathSurveyGetObject(survey.get(), i, &obj) != LUMICE_PATH_READ_OK) {
+      ADD_FAILURE() << "object row " << i << " unreadable";
+      continue;
+    }
+    if (obj.kind != LUMICE_PATH_SURVEY_CAUSTIC_EDGE) {
+      continue;
+    }
+    if (LUMICE_PathSurveyGetEdge(survey.get(), i, &card) != LUMICE_PATH_READ_OK) {
+      ADD_FAILURE() << "edge card row " << i << " unreadable";
+      continue;
+    }
+    saw_edge_card = true;
+    EXPECT_NE(obj.state, LUMICE_PATH_STATE_REFUSED);
+    EXPECT_TRUE(card.coincident_with_support != 0);
+    EXPECT_FALSE(card.certificate_available != 0)
+        << "the corpus upper card carries no closed form; if the producer begins certifying it, "
+        << "this gate and its premise must be re-derived";
+    EXPECT_NEAR(card.position_deg, 149.0849, 0.05);
+  }
+  ASSERT_TRUE(saw_edge_card) << "the corpus document must carry the counterexample card";
+  {
+    // The upper end: the SUPPORT card's (a separate object's) own intervals reach up to the
+    // card, not down to it — the card sits far from the support's lower bound.
+    bool saw_support = false;
+    for (size_t k = 0; k < info.object_count && !saw_support; ++k) {
+      LUMICE_PathSurveyObject sup_obj{};
+      sup_obj.struct_size = sizeof(sup_obj);
+      if (LUMICE_PathSurveyGetObject(survey.get(), k, &sup_obj) != LUMICE_PATH_READ_OK) {
+        ADD_FAILURE() << "object row " << k << " unreadable";
+        continue;
+      }
+      if (sup_obj.kind != LUMICE_PATH_SURVEY_SUPPORT_SET) {
+        continue;
+      }
+      LUMICE_PathSurveySupport support{};
+      support.struct_size = sizeof(support);
+      if (LUMICE_PathSurveyGetSupport(survey.get(), k, &support) != LUMICE_PATH_READ_OK ||
+          support.interval_count < 1u) {
+        ADD_FAILURE() << "support card row " << k << " unreadable";
+        continue;
+      }
+      LUMICE_PathSurveyInterval first{};
+      first.struct_size = sizeof(first);
+      if (LUMICE_PathSurveyGetSupportInterval(survey.get(), k, 0, &first) != LUMICE_PATH_READ_OK) {
+        ADD_FAILURE() << "support interval row " << k << " unreadable";
+        continue;
+      }
+      saw_support = true;
+      EXPECT_GT(card.position_deg, first.lower_deg + 1.0)
+          << "the card sits far from the support's lower bound — the upper end, not the inner edge";
+    }
+    ASSERT_TRUE(saw_support) << "the corpus document must carry the support card";
+  }
+
+  // The gate holds: no object, no success sentence, no light-side claim; the flat edge line
+  // stays exactly as it was.
+  EXPECT_FALSE(model.inner_edge.qualified);
+  EXPECT_FALSE(HasLine(model.conclusions, "light begins"));
+  EXPECT_FALSE(HasLine(model.conclusions, "Inner edge"));
+  EXPECT_TRUE(HasLine(model.conclusions, "Sharp edge at"));
+}
+
+// The extended sun (the corpus's C01 scene with a 2° solar disc): the routing and the cards are
+// unchanged — the survey still delivers the certified, coincident card at the same deviation
+// (the certificate is the single-direction minimum) — but the physical light then begins BEFORE
+// the certified bound, so the whole-sky "light begins outside" claim is false. The point-sun
+// premise is the GUI's frozen judgment, threaded into the builder: false leaves the display at
+// the existing angular-distance lines; the same document under a proven point-sun premise
+// qualifies (the gate reads the caller's judgment, and this pair pins which one owns the flip).
+TEST(AnalyzeOverviewChain, ExtendedSunKeepsTheAngularDistancePresentation) {
+  const auto scene = SceneFromConfig("raypath_feature_random_regular_extended_sun.json");
+  const auto survey = RunSurvey(scene.get(), { 3, 5 });
+  ASSERT_NE(survey.get(), nullptr);
+
+  // The document's own shape: the certified coincident card the reviewer's probe confirmed —
+  // the routing and the cards cannot see the disc.
+  {
+    const SurveyOverlayFacts facts = BuildSurveyOverlayFacts(*survey);
+    ASSERT_GE(facts.edges.size(), 1u);
+    EXPECT_TRUE(facts.edges.front().coincident_with_support);
+    EXPECT_TRUE(facts.edges.front().certificate_available);
+    EXPECT_NEAR(facts.edges.front().position_deg, 21.9161264398004, 1e-6);
+  }
+
+  // Without the premise: no object, no success sentence, no light-side wording; the flat lines
+  // stay (the angular-distance reference the reviewer's boundary asks to keep).
+  {
+    const SurveyOverviewModel model = BuildSurveyOverviewModel(*survey, /*point_sun_premise=*/false);
+    ASSERT_TRUE(model.valid);
+    EXPECT_FALSE(model.inner_edge.qualified);
+    EXPECT_FALSE(HasLine(model.conclusions, "light begins"));
+    EXPECT_FALSE(HasLine(model.conclusions, "Inner edge"));
+    EXPECT_TRUE(HasLine(model.conclusions, "Sharp edge at"));
+  }
+  // With the premise: the same document qualifies — the flip is the premise's own.
+  {
+    const SurveyOverviewModel model = BuildSurveyOverviewModel(*survey, /*point_sun_premise=*/true);
+    ASSERT_TRUE(model.valid);
+    EXPECT_TRUE(model.inner_edge.qualified);
+    EXPECT_EQ(model.conclusions.front().find("Inner edge (3-5): about 21.92° from the sun"), 0u);
+  }
 }
 
 // The family arm: the freezing ladder the engine walked organizes as levels — frozen dims with
@@ -296,9 +560,13 @@ TEST(AnalyzeOverviewChain, FamilyArmOrganizesAsTheFreezingLadder) {
   const auto survey = RunSurvey(scene.get(), { 3, 5 });
   ASSERT_NE(survey.get(), nullptr);
 
-  const SurveyOverviewModel model = BuildSurveyOverviewModel(*survey);
+  const SurveyOverviewModel model = BuildSurveyOverviewModel(*survey, /*point_sun_premise=*/true);
   ASSERT_TRUE(model.valid);
   ASSERT_EQ(model.arm, SurveyArm::kFamily);
+  // The first-class inner-edge object is the random family's own: a family-restricted measure is
+  // not rotation invariant, so its readable angular distances never upgrade to the whole-sky
+  // object, whatever cards the ladder delivers beside it.
+  EXPECT_FALSE(model.inner_edge.qualified);
 
   ASSERT_TRUE(model.family.available);
   ASSERT_GE(model.family.levels.size(), 2u);
@@ -383,7 +651,7 @@ TEST(AnalyzeOverviewChain, DeadlineDocumentKeepsItsArmAndItsProducedLegs) {
   EXPECT_EQ(info.execution, LUMICE_PATH_OUTCOME_DEADLINE_EXCEEDED);
   EXPECT_EQ(info.early_stopped, 0);
 
-  const SurveyOverviewModel model = BuildSurveyOverviewModel(*survey);
+  const SurveyOverviewModel model = BuildSurveyOverviewModel(*survey, /*point_sun_premise=*/true);
   ASSERT_TRUE(model.valid);
   EXPECT_EQ(model.execution, LUMICE_PATH_OUTCOME_DEADLINE_EXCEEDED);
   EXPECT_FALSE(model.early_stopped);
@@ -395,6 +663,70 @@ TEST(AnalyzeOverviewChain, DeadlineDocumentKeepsItsArmAndItsProducedLegs) {
   for (const std::string& line : model.conclusions) {
     EXPECT_EQ(line.find("Source image"), std::string::npos) << line;
     EXPECT_EQ(line.find("certified"), std::string::npos) << line;
+  }
+}
+
+// The layer plan's AC4 switching half, integrated on real documents at this tier: the
+// identity arm's document carries THE positioned row the map's points group draws (the
+// certified source image at the sun), and the per-kind predicate — the one rule the draw loop,
+// hit collection and legend consume — hides exactly that row under its own gate while the
+// parent gate removes everything. The full two-kind switching matrix lives at the unit tier
+// (the controlled fixture: all six kinds, both sides of every gate); no canonical corpus
+// document currently carries two positioned kinds, so the real-row leg holds the integration,
+// not the matrix.
+TEST(AnalyzeOverviewChain, IdentityDocumentRowSwitchesUnderItsOwnKindGate) {
+  const auto scene = SceneFromConfig("raypath_feature_random_regular.json");
+  const auto survey = RunSurvey(scene.get(), { 1, 3, 6, 2 });
+  ASSERT_NE(survey.get(), nullptr);
+
+  const SurveyOverviewModel model = BuildSurveyOverviewModel(*survey, /*point_sun_premise=*/true);
+  ASSERT_TRUE(model.valid);
+  ASSERT_EQ(model.arm, SurveyArm::kIdentity) << "the rank-0 chain routes to the identity arm on this scene";
+  ASSERT_EQ(model.objects.size(), 1u);
+  ASSERT_TRUE(model.objects[0].position_available);
+  EXPECT_EQ(model.objects[0].kind_name, "source image");
+
+  SurveyLayerGates gates;  // everything on: the positioned row is visible
+  EXPECT_TRUE(PointMarkerVisible(model.objects[0], gates));
+  // The row's own kind gate hides exactly it; another kind's gate (the co-located pair's other
+  // half) would not — asserted here on the real row for the source-image half, the pair's
+  // regular/collapse halves at the unit tier's controlled fixture.
+  gates.points_kinds.source_image = false;
+  EXPECT_FALSE(PointMarkerVisible(model.objects[0], gates));
+  gates.points_kinds = SurveyPointKindGates{};
+  gates.points.graphics = false;
+  EXPECT_FALSE(PointMarkerVisible(model.objects[0], gates));
+}
+
+// The TIR caliber's metadata premise, on the real chromatic document the layer's turns draw
+// from: the dispersion block can carry its red/blue wavelength labels WITHOUT a minimum-deviation
+// row (the producer fills the labels unconditionally, the min row is its own conditional), and
+// the same document can hold visible internal-reflection discriminants — the exact shape where a
+// min-row-gated caliber would wrongly report "wavelength unknown". The draw-side wiring is the
+// unit tier's; this holds the document shape the assembly must read.
+TEST(AnalyzeOverviewChain, ChromaticDocumentCarriesLabelsAndTurnsWithoutMinRow) {
+  const auto scene = SceneFromConfig("raypath_feature_random_regular.json");
+  const auto survey = RunSurvey(scene.get(), { 3, 1, 5 });
+  ASSERT_NE(survey.get(), nullptr);
+
+  const SurveyOverviewModel model = BuildSurveyOverviewModel(*survey, /*point_sun_premise=*/true);
+  ASSERT_TRUE(model.valid);
+  ASSERT_TRUE(model.dispersion.available) << "the chromatic document carries the dispersion block";
+  EXPECT_FALSE(model.dispersion.red_label.empty());
+  EXPECT_FALSE(model.dispersion.blue_label.empty());
+  EXPECT_FALSE(model.dispersion.min_row_available) << "the witness shape: labels without a minimum-deviation row";
+
+  const SurveyOverlayFacts facts = BuildSurveyOverlayFacts(*survey);
+  ASSERT_FALSE(facts.tir_turns.empty()) << "the same document carries visible internal-reflection turns";
+  for (const SurveyOverlayFacts::TirTurn& turn : facts.tir_turns) {
+    EXPECT_GE(turn.step, 0) << turn.source;
+  }
+  // If this document qualifies an inner edge (a concluded, coincident edge card), the pair's
+  // absence is the object's named state — never a silent reading (AC5's honesty at the object
+  // tier). Unqualified documents keep the pair in the flat conclusion as before.
+  if (model.inner_edge.qualified) {
+    EXPECT_FALSE(model.inner_edge.dispersion_available);
+    EXPECT_FALSE(model.inner_edge.dispersion_unavailable.empty());
   }
 }
 

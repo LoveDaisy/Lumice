@@ -194,7 +194,8 @@ constexpr const char* kPointEvidenceLabel = "Point evidence";
 constexpr const char* kPointDiagnosticsLabel = "Point diagnostics";
 constexpr const char* kMapCaliberPremisesLabel = "Map quantity & premises";
 constexpr const char* kMapCaliberDiagnosticsLabel = "Map diagnostics";
-constexpr const char* kPoseTransmissionLabel = "Interface transmission";
+constexpr const char* kPosePerFaceEnergyLabel = "Per-face energy";
+constexpr const char* kPoseFactorsLabel = "Pose factors";
 constexpr const char* kPoseDiagnosticsLabel = "Pose diagnostics";
 constexpr const char* kMapLegendExplanationsLabel = "Legend explanations";
 // The split strips' thickness (the workspace dividers' 8 pt recipe, shared by the pose window's

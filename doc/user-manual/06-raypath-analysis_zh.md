@@ -259,11 +259,38 @@ globe 分开读近侧/选点方向与远侧提示，近侧被裁掉时不能拿�
 不算 map、不自动开 Pose & trace。报告内滚不透传相机。**Overlays** 仍逐字消费 survey 的对象位置与色散圆，
 同位置对象归入一个 tooltip，图例只列实际画出的东西；几何位置不是整圈贡献证书。
 
-**锚点与剖线联动。** 合格的颜色 verdict 圈随 **Overlays** 默认常显，没有独立开关；无位置、不 visible
-或不支持的 kind 不画，coverage 不完整仍用虚线弱化，图例只列实际画出的锚。关闭 Overlays 不关用户天空点
-或太阳/地平线参照。类答案的 **Profile edge / Profile peak / Peak–edge separation** 上方提供 hover 提示：
-悬停前两行定位参考剖线上的点，悬停 separation 定位两读数间径向区间；不是全天峰值圆圈。离开行后撤回，
-Overlays 关闭时仍有行反馈但无临时地图墨迹。缺读数、未知方位、拒答或端点离屏都不补位置。
+**锚点与剖线联动。** 合格的颜色 verdict 圈随 **Overlays** 默认常显，归属 **Red-blue shift**
+图层组；无位置、不 visible 或不支持的 kind 不画，coverage 不完整仍用虚线弱化，图例只列实际
+画出的锚。关闭 Overlays 不关用户天空点或太阳/地平线参照。类答案的 **Profile edge / Profile
+peak / Peak–edge separation** 上方提供 hover 提示：悬停前两行定位参考剖线上的点，悬停
+separation 定位两读数间径向区间；不是全天峰值圆圈。离开行后撤回，Overlays 关闭时仍有行反馈
+但无临时地图墨迹。缺读数、未知方位、拒答或端点离屏都不补位置。
+
+**内缘一等对象。** 当 survey 路由判定一个类的内缘合格——引擎进入其 full-dimensional 臂（唯一
+以均匀随机姿态族进入的路线，整圈措辞所依赖的旋转不变性即来自该判定）且 edge 卡已结论并声明
+与 support 界重合——类答案首行即该对象：**"Inner edge (3-5): about 21.92° from the sun —
+outside this circle the path's light begins."** 整圈措辞是该随机取向类自身的事实，按 survey
+固定波长陈述（绝不是底图滑杆的波长）。单击主句即选中该对象；其下 **Inner edge readings** 组
+展开给出四读数，各带自己的证据等级：**geometric limit**（闭式极小认证，即 support 界本身）、
+剖线此次截线的 **first occupied bin centre** 与 **highest bin centre**（按分箱自身精度陈述，
+明写代表成员/分箱宽/评估波长——是此次截线的事实，不升级为整行或全天峰）、以及 **fixed
+chromatic pair**（min-deviation 行的两个波长与间距）。文档未产出的读数写具名原因而非数字。
+地图上选中后该弧加粗、读数变为 "inner edge — light outside · <λ> ref" 并带指向有光侧的短刻；
+单击图上可见弧也选中同一对象——右栏入口滚入视口并在鼠标离开后保持选中。拖动永不选中（归相机
+）；Alt 单击仍是设天空点。隐藏弧所在图层组即藏线且不可点击，选择在右栏保留，入口注明地图不再
+绘制；切换类或重新分析即换身份并清除选择。整个流程不重算、不发查询。
+
+**图层组开关。** Overlays 旁的 **Layers** 按钮打开逐组开关——Support range / Sharp edges /
+Point images / Red-blue shift / Reflection turns——每组各有图形与标签两个框（藏标签不藏墨迹，
+关墨迹连同其标签一起撤）。Point images 组内另有三个逐类框（source image / regular image /
+family collapse），屏上碰巧重叠的像各自独立开关；标记旁的常驻短名是该组的标签，悬停详情不属
+标签门。开关只过滤已算好的结果：不重算、不发请求，本会话内随切类与关开
+窗口保留。support 区间界与锐边按 survey 自身参考波长画成角距参照弧——这是「类在哪里能亮」的
+边界，不是发光圈；覆盖整个 0–180° 时用一行文字代替满天空圈。edge 卡声明与 support 界重合时
+两组共用一条笔画，图例并列两个名字。内反射转折把可见 TIR 特征在色散对两波长上的代表角距画成
+中性的一对圆加一条合并读数——步号只指代表光路的反射步序，不是晶体面号；是参照对，不是整圈
+变色声明。图例键行标注各层引用的固定口径（support/edge 记 survey 自身波长，转折记色散对），
+底图换波长不会把这些参照误读成当前波长的产物。每组只在真实画出时才进图例。
 
 **读数与选点可读性。** 红蓝色散及 verdict 标签共同避让，完整保留波长/角度/`arc in view`。
 多标签联排时引线指回各自原曲线，包括窄图中标明 `Readouts (stacked)` 的换行栈；单标签只钳制到

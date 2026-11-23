@@ -660,8 +660,7 @@ Windows/Linux 真机输入已测。最终执行结果存于测试报告；这些
   旧实现里四个宿主共享同名 `Physics details` / `Calculation details` 两词面，四对同名组互相
   混淆，已按宿主语义去同名（拼写单源 `gui_constants.hpp`）：survey 类答案 `Class evidence` /
   `Class diagnostics`、sky point 答案 `Point evidence` / `Point diagnostics`、地图口径
-  `Map quantity & premises` / `Map diagnostics`、Pose 因素区 `Interface transmission` /
-  `Pose diagnostics`。**诊断组整体受 `LUMICE_ANALYZE_DEBUG_DETAILS` 门控**（`env::
+  `Map quantity & premises` / `Map diagnostics`、Pose 因素区 `View face N`（损失界面细节）/ `Per-face energy` / `Pose factors` / `Pose diagnostics`。**诊断组整体受 `LUMICE_ANALYZE_DEBUG_DETAILS` 门控**（`env::
   AnalyzeDebugDetails`，`doc/env-var-policy.md` §2 A 类登记）：开发诊断展示通道，默认关
   （未设置/空/`0`），关时诊断组头与 body 均不提交渲染（门控先于 `CollapsingHeader`，不是
   仅隐藏已展开 body）；开时可展开访问全部保留细节。门控只改展示资格，不删数据读取与计算；
@@ -771,12 +770,63 @@ dispersion 双圈与 verdict 锚定同走线同措辞）；②弧 = 带方位向
 - **虚线弱化（画出）**：`coverage_complete=0` 且 verdict 带位——有限计算进视觉语法而非缺席；
   文字层同名限定行（"Coverage incomplete — …"）与虚线形态同源。owner 可推翻（缺席派读法）。
 
-**常驻管理（2026-11-18 上手反馈修订）**：Raypath view 图侧只有 **Overlays** 总门（默认开，
-沿用窗口 storage 寿命）；合格 verdict 与对象/色散一起常显，不再有独立开关或隐藏抑制位。
-关总门也不画 profile 临时设备；太阳/天顶/地平线和用户 sky point 不属此门。
-verdict/Position 行保留 hover 面与本帧本地高亮，不产生会话 hover 身份；它们不决定常驻锚的出墨权限。
-profile 行仍逐帧覆写瞬态身份，地图消费上一帧（一帧延迟）；类答案缺席、关闭/裁剪窗口清身份。
-开关、hover 和标签避让不改冻结结果、共享相机或查询身份，不发新请求。
+**常驻管理（2026-11-22 图层组修订，演进自 2026-11-18 形态）**：Raypath view 图侧保留 **Overlays**
+总门（默认开，沿用窗口 storage 寿命），旁置随时可开的 **Layers** 弹出控制区：五个图层组——
+Support range（support 区间界的角距参照弧）/ Sharp edges（edge 卡的角距位置）/ Point images
+（有位对象标记）/ Red-blue shift（dispersion 双圈 + 合格 verdict 锚，默认开）/ Reflection turns
+（可见 `internal_<n>_tir_discriminant` 特征的双代表角距，中性墨）——每组一对开关（图形/标签），
+沿 Render 逐项图形/标签分开的习惯；键随总门同一 T-session 窗口 storage 寿命，换类、采纳结果与
+关开窗口保留，新进程回出厂全开。Point images 组内另有三个逐类子开关（source image / regular
+image / family collapse，AC4 的常规像与折叠对象独立显隐；标记旁的常驻短名是该组标签框的消费
+端，hover 详情是交互细节不属标签门），其余种类随父门。区域着色子项单列且禁用（无区域通量
+载荷，诚实缺席）。所有开关是纯显示路径：只过滤既有事实并重投影/重绘，不重算、不发请求、不进
+`.lmc`/导出/user defaults。
+总关撤掉全部分析墨迹（弧、标记、色散、verdict、标签、profile 临时设备），保留太阳/天顶/地平线
+与用户 sky point；再开恢复原分组选项而非全量重置。关任一组标签只撤读数不撤墨迹；关图形墨迹与
+标签一起撤（无注解对象）。
+
+**参考弧与共笔画（as-built 2026-11-22）**：三组弧（范围界/锐边/内反射转折）共用一种中性墨
+（`kSurveyArcInk`，锚灰系）——图层以**名字**区分，不以色相区分，图例逐 owner 记账，键行标注各层引用的固定口径（support/edge 记 survey 自身 scope 波长，
+转折记色散对的两波长——底图 λ 滑杆的值不冒充这些参照的口径；scope 缺失时明写 unknown）。C01 的
+support 内界与 certified edge 同址：edge 卡自带 `coincident_with_support` 声明成立且两组门
+同时开时，两解释共用**一份笔画**（一次 walk，图例两名字并在，读数标 edge 名）；任一门单独开
+保留该线；非重合 edge 无论屏上多近都各走各的圈（禁止屏幕距离/格式化近似合并）。0–180° 全覆盖
+的 support 用文字一行（不画全天空圈对）；0/180° 退化界不画（即太阳锚与对跖点自身）。转折层每
+特征画双代表角距两圈 + 一条成对读数（`TIR step <n> · red°/blue°`；<n> 是代表光路的反射步序
+——`internal_<n>` 的 n 由 dp_weight_kink 的 margin=2·step+1 经 dp_boundary 的 MarginName 编码，
+不是晶体面号，显示不作面归属），与红蓝组不建共笔画（两组同时开各自出墨、图例分别记账）；红蓝
+组关时中性转折仍可独立显示。红蓝组语义墨的完整撤除（AC 负
+对照：1-3-2 verdict 案例的蓝桶清零）由组门一并关掉 dispersion 与 verdict 两源实现。
+profile hover 设备仍只受总门控制，不被任一数据组门截断。
+
+**C01 一等内缘对象（as-built 2026-11-22，817.2）**：合格输入（full-dimensional 臂——引擎侧唯一
+以均匀随机姿态族进入的路线，即整圈措辞所依赖的旋转不变性是引擎自己的路由判定——加 concluded
+edge 卡与其自带的 `coincident_with_support` 声明；资格沿生产者声明，GUI 不复算容差）的类答案
+首行是该对象的主句：`Inner edge (3-5): about 21.92° from the sun — outside this circle the
+path's light begins.`，其下的前提行明写「random-orientation class + survey 固定 λ」（AC3 固定
+参照分支：换图 λ 后措辞仍是 survey 自身 λ，绝不说「当前 λ 内缘」）。交互宿主（Raypath view 类
+答案）在主句行携带点击面（`###inner_edge_entry`）：单击即选择请求，选中期行有常驻高亮，展开器
+（`Inner edge readings##sv_inner_edge`）强制展开并给出四读数——geometric limit（证书口径）、
+first occupied bin centre / highest bin centre on this cut（各自 2 位小数=0.1° 分箱自身精度，
+共享前提行明写 representative 序列/分箱宽/评估 λ/仅此截线，不升级为整行或全天峰）、fixed
+chromatic pair（min-deviation 行，红蓝标签与间距原样）——缺席读数写具名原因，不以零顶替。主窗
+摘要宿主读同一主句与前提（零交互面，无展开器）。原平铺读数迁入对象后不再重复输出（support 行
+是 support 集自己的答案，保留）。
+地图侧选中反馈：该对象名下笔画加粗、读数改 `inner edge — light outside · <λ> ref`、锚点向外
+指示短刻（外侧=远离太阳侧=support 起点），标签位随 edge 组标签门。**双向选择**：图上可见弧的
+静止轻点（按压未越过拖动阈）与文字入口提交同一会话选择，点中使右栏入口滚入视口并展开，鼠标
+离开不清除；Alt（直接设点）、marker 拖动、显式 picker 占用的按压不触发选择，拖动归相机不选中
+，未命中不消灭既有选点功能、不清除既有选择。**共笔画可拾取规则**：该线在任一 owner 门可见时
+可拾取——命中按 edge 卡 index 或（边门关、support 门独扛时）文档自身恒等的 delta 匹配；两组
+全关（或总关）既不可见也不可拾取，标签门不影响命中；隐藏不清除选择，入口注明「地图未画、选择
+保留」。选择绑定采纳身份（换类/换代/失文档即失效，关开窗口保留），全程零查询、零 sky point、
+零相机写入。有光侧短刻与选中/拾取身份都在**天空空间/生产者声明**上建立：短刻锚点是圆自身
+最高在盘样本、短刻尖是同一圆方位角上**更大离日角**的投影点（天空空间外指；屏幕上太阳连线在
+双鱼眼跨盘时指向暗侧，禁用）；共笔画的 edge↔support 端点配对由生产者 `coincident_with_support`
+声明在**任何显示门之外**确定（最近端点、文档自身数值），门只改可见性不改对象身份，GUI 不做
+任何数值容差复算。**内缘资格的下端证明是闭式证书**：生产者只对 interior-minimum 折叠给证书，
+certified + coincident 即 support 内界；仅 finite 的重合卡可能是上端（C09 语料 149.085° 实卡），
+外侧是暗侧，保持既有平铺呈现、不升格为对象。
 
 **行可寻址化的交互面增量（as-built 形态；2026-11-12 反馈波推翻高亮形态）**：联动行保留
 `Bullet + TextWrapped` 逐字节渲染（wrap 纪律：Selectable 的 RenderTextClipped 不换行，弃用）；
@@ -851,8 +901,8 @@ nav 焦点无（InvisibleButton 默认 NoNav）。主窗路径不传读出参数
 | Probe / Tint / Witness | 边与峰的区分在 conclusions（全维臂）；色调读数其余臂浮默认；见证句在拒答 conclusions | 剖面曲线+量程进 Physics；kept 计数进 Calc；tint caliber 进 Physics；见证权重与来源进 Physics、lattice 计数进 Calc |
 | TIR / Family / Objects | TIR 份额读数+拒答态默认；族臂存活后果句默认；对象+N 提示在清单处 | 接口数/维度枚举 Physics；各级计数 Calc；对象卡整块 Physics |
 | 点 target/deviation、member/λ/n/source | 主窗摘要带 target 行；Raypath view 答案带 target＋λ（默认层前两行） | member faces 进 pt Physics；n/source 随 λ 行默认（量纲）；execution 三元组进 pt Calc |
-| rank-0 | 主窗摘要必须给位置＋orbit integral/测度或 unavailable（整段 `PointMassLines` 默认层） | 完整质量答案同段在 Raypath view；无 fiber 不等于无答案 |
-| 无分量 reach 与 discovery 完备性 | 两窗都保短结论及完备性限定（共享 `DrawPointNoComponentConclusions`） | reach tolerance 数值随短结论行 |
+| rank-0 | 主窗摘要给点像读数（位置、太阳本方向的结构事实、分离角、总光量或不可用、点太阳前提——`PointMassLines` 读样句式，标题「Point image」） | 完整点像答案同段在 Raypath view；无 fiber 不等于无答案。Raypath view 地图按同一采纳点结果画点像标记（rank-0 质量色填充菱形，identity 绑采纳点文档）——**专用菱形是点像的唯一承载者**：地图光栅的点采样 shader 可能整格丢失细小 cell（delta-0 极圈正是此类），文档侧的 mass cell 记录证明不了屏上墨迹，故标记不把可见性委托给地图自身的 mass cell（评审三轮裁定的退役；cell 恰好可见时菱形叠于其上——同语义同色，同一表达）；用户目标标记保持自身墨迹与位置，图像永不移动目标；Overlays 与 Point images 组关时标记随组隐藏、文字定位仍在，标记缺席不作无像声明 |
+| 无分量 reach 与 discovery 完备性 | 两窗都保短结论及完备性限定（共享 `DrawPointNoComponentConclusions`）；in-range 零分量的措辞是**本次搜索口径**（「this search has not yet found a pose…」），不是「有限晶体无姿态」的绝对表述；probe 越界补分辨率限定（reach tolerance 数值随短结论行），两态不折叠 | reach tolerance 数值随短结论行 |
 | 分量清单、端点、积分、覆盖、无有效样本 | 主窗：分量计数＋kinds＋不可用限定＋选中分量无有效样本 | Raypath view：完整证据行+tooltip、选中分量 fiber integral、cap 提示在 pt Physics；valid/total 计数在 pt Calc；无有效样本默认 |
 | 当前姿态因素/各接口透射 | Pose 右下文字区（未动） | 不复制到主窗或类报告 |
 
@@ -1063,13 +1113,24 @@ ImGui 原生滚动（有可滚宿主则滚动，否则 no-op），不伤地图/3
 底部零行及伴读 current/hover 读数行已退役，X 三刻度、rad 和顶部 seed 保留。
 
 历史 2026-11-13 的 wheel/pan、P1 与两行 footer 设计已被上述 owner 裁决替换，不是现役合同。
-因素区（`RenderPoseFactorsRegion`）承载：`PointFactorLines` 的默认层读数（永远绑
-`view.sample_index`，hover 不改它所指样本）＋measure note（默认可见）＋`Interface transmission`
-折叠组（逐接口透射率——T 的光学前提，判据梯 L3 证据行）＋`Pose diagnostics` 折叠组
-（deviation grid 开关自 globe 常驻栈迁入，no-grid 注记随 toggle；整组不设 env 门——开关是
-用户面控制项而非实现级条目——任何环境都提交，globe 本体与其余姿态功能不随门控）。
-§16.1 判据梯逐行机械套用：
-接口透射率行=P3 证据行；因素结论=L1/L2 默认层。积分/测度不可用等限制在相关读数旁默认可读。
+因素区（`RenderPoseFactorsRegion`）承载（2026-11-23 起的 as-built）：**损失首屏**——
+`PointLossReadoutLines` 的结论行（最大绝对下降所在界面；「most light」判据＝该下降确实超过
+入射光一半，并列不编唯一主因，无损失如实报）、到达/继续/出射三读数（自同一未舍入链计算）
+与基准行（共同入射分母＝接触第一个面之前 100%、实际面序、仅此代表光线），永远绑
+`view.sample_index`，hover 不改它所指样本；measure note（默认可见）在其后。折叠组：
+`View face N`（损失界面的角色与条件分母切换声明——此下面百分比以到达该面的光为 100%；
+并列损失无单一界面，不出此组）、`Per-face energy`（逐接触角色行＋共同分母光量列，两口径在
+行内各自标注，不混称）、`Pose factors`（姿态角/ρ/A/T/J/K/乘积串——物理证据折叠未删除）、
+`Pose diagnostics`（deviation grid 开关自 globe 常驻栈迁入，no-grid 注记随 toggle；整组不设
+env 门——开关是用户面控制项而非实现级条目——任何环境都提交，globe 本体与其余姿态功能不随
+门控）。rank-0 臂给点像自己的读数（`PointMassLines`：位置、太阳本方向的结构事实
+（`PointMassAtSunDirection` 精确相等判据，不做邻近推断）、分离角、总光量或不可用、点太阳
+前提注），不是「无 per-pose 因素」技术注。累计与可用性唯一权威是 `RayTraceCumulativeEnergies`
+（3D 线宽/标签同源），损失表达不二次累计、不早舍入、不从字符串反解析；逐接触角色由序列位置
+单源推导（`PointFaceRoleFor`），同一面重复出现保持两个接触各自命名；不可用因子截断其后缀的
+损失断言，保留有效前缀。
+§16.1 判据梯逐行机械套用：损失结论/读数＝L1/L2 默认层；逐接触因素行与姿态因素串＝P3 证据行；
+积分/测度不可用等限制在相关读数旁默认可读。
 右上保 globe/分量/姿态游标/播放。
 
 **投影视角 Fit/Full（2026-11-17 反馈片）**：globe 的 Lambert 投影基有两种取心，标题带的
