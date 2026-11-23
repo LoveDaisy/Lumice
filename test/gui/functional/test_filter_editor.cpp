@@ -796,6 +796,85 @@ void RegisterFilterEditorTests(ImGuiTestEngine* engine) {
     };
   }
 
+  // The frame AFTER the activation is part of the handoff too: the activation frame itself skips
+  // key processing (a just-activated editor registers no shortcuts), so an Esc landing on the
+  // next frame must still find the transaction owning the keyboard — revert to the pre-crossing
+  // baseline, delete the empty creation, hand the keyboard back. Without that coverage the cancel
+  // dies in the navigation cancel (box cleared without a revert, text kept, focus lost).
+  {
+    ImGuiTest* t =
+        IM_REGISTER_TEST(engine, "filter_editor", "esc_on_the_frame_after_activation_still_cancels_the_creation");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      ctx->Yield(2);
+      OpenFilterModal(ctx);
+      AuthorRow(ctx, 0, "1-2");
+      AuthorRow(ctx, 1, "3-4");
+      ctx->ItemInput("**/##row_text_0");
+      ctx->Yield(2);
+      ctx->KeySetEx(ImGuiKey_Enter, true, 0.0f);
+      ctx->Yield();  // frame N: the blank is inserted, the focus request armed
+      ctx->KeySetEx(ImGuiKey_Enter, false, 0.0f);
+      ctx->KeyChars("9");                          // frame N+1: the crossing frame
+      ctx->KeyChars("8");                          // frame N+2: the activation frame
+      ctx->KeySetEx(ImGuiKey_Escape, true, 0.0f);  // frame N+3: the frame after activation
+      ctx->Yield();
+      ctx->KeySetEx(ImGuiKey_Escape, false, 0.0f);
+      ctx->Yield(4);
+
+      auto rows = RowTexts();
+      IM_CHECK_EQ(rows.size(), static_cast<size_t>(2));
+      IM_CHECK_STR_EQ(rows[0].c_str(), "1-2");  // "98" was cancelled input: reverted, not kept
+      IM_CHECK_STR_EQ(rows[1].c_str(), "3-4");
+      IM_CHECK(!ctx->ItemExists("**/##row_text_2"));
+      IM_CHECK_EQ(ImGui::GetActiveID(), ctx->ItemInfo("**/##row_text_0").ID);  // keyboard handed back
+
+      ctx->KeyChars("7");  // no click: the source is the editor again
+      ctx->Yield(3);
+      IM_CHECK_STR_EQ(RowTexts()[0].c_str(), "1-27");
+
+      ctx->ItemClick(kCancel);
+      ctx->Yield(2);
+    };
+  }
+
+  // A click on a row that renders AFTER the handoff target, landing on the crossing frame itself:
+  // the user's choice must survive the request the crossing just submitted — the next frame's
+  // activation must not clear the clicked control and steal the focus back. Whatever renders
+  // later in the frame is still the user's pick.
+  {
+    ImGuiTest* t =
+        IM_REGISTER_TEST(engine, "filter_editor", "a_click_on_a_later_row_during_the_crossing_keeps_the_user_s_choice");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      ctx->Yield(2);
+      OpenFilterModal(ctx);
+      AuthorRow(ctx, 0, "1-2");
+      AuthorRow(ctx, 1, "3-4");
+      ctx->ItemInput("**/##row_text_0");
+      ctx->Yield(2);
+      ctx->MouseMoveToPos(ctx->ItemInfo("**/##row_text_1").RectFull.GetCenter());  // hover the later row
+      ctx->Yield(2);
+      ctx->KeySetEx(ImGuiKey_Enter, true, 0.0f);
+      ctx->Yield();  // frame N: the blank is inserted, the focus request armed
+      ctx->KeySetEx(ImGuiKey_Enter, false, 0.0f);
+      ctx->MouseDown(0);  // frame N+1: the crossing frame — the click lands after the submission
+      ctx->MouseUp(0);    // frame N+2: release
+      ctx->Yield(4);
+
+      IM_CHECK_EQ(ImGui::GetActiveID(), ctx->ItemInfo("**/##row_text_1").ID);  // the clicked row kept the focus
+      IM_CHECK_STR_EQ(RowTexts()[1].c_str(), "");                              // the crossing stayed empty
+      IM_CHECK_NE(ImGui::GetActiveID(), ctx->ItemInfo("**/##row_text_2").ID);  // no late steal
+
+      ctx->KeyCharsReplace("7");  // the clicked row is the editor: typing lands there
+      ctx->Yield(3);
+      IM_CHECK_STR_EQ(RowTexts()[2].c_str(), "7");
+
+      ctx->ItemClick(kCancel);
+      ctx->Yield(2);
+    };
+  }
+
   // Negative control for event attribution (the shape a frame-level probe caught): tab away and
   // press Enter on the very next frame — the box reports its deactivation across that window, but
   // the Enter belongs to whatever navigation focused, not to the row just left. Nothing may be
@@ -991,6 +1070,35 @@ void RegisterFilterEditorTests(ImGuiTestEngine* engine) {
       IM_CHECK(ctx->ItemExists("**/##row_text_2"));                            // the creation itself survives
       IM_CHECK_NE(ImGui::GetActiveID(), ctx->ItemInfo("**/##row_text_2").ID);  // ...without the focus
 
+      // Second flow: the click lands on the row that renders AFTER the handoff target, on the
+      // activation frame itself. The programmatic activation must not outrun it (an activation
+      // blocks same-frame clicks on later widgets): the clicked row takes the editor, the
+      // crossing's row keeps its accepted keystroke.
+      ResetTestState();
+      ctx->Yield(2);
+      OpenFilterModal(ctx);
+      AuthorRow(ctx, 0, "1-2");
+      AuthorRow(ctx, 1, "3-4");
+      ctx->ItemInput("**/##row_text_0");
+      ctx->Yield(2);
+      ctx->MouseMoveToPos(ctx->ItemInfo("**/##row_text_1").RectFull.GetCenter());  // hover the later row
+      ctx->Yield(2);
+      ctx->KeySetEx(ImGuiKey_Enter, true, 0.0f);
+      ctx->Yield();  // frame N: the blank is inserted, the focus request armed
+      ctx->KeySetEx(ImGuiKey_Enter, false, 0.0f);
+      ctx->KeyChars("9");  // frame N+1: the crossing frame
+      ctx->MouseDown(0);   // frame N+2: the activation frame — the click is on the later row
+      ctx->MouseUp(0);     // frame N+3: release
+      ctx->Yield(4);
+      ctx->KeyCharsReplace("7");
+      ctx->Yield(3);
+
+      rows = RowTexts();
+      IM_CHECK_EQ(rows.size(), static_cast<size_t>(3));
+      IM_CHECK_STR_EQ(rows[1].c_str(), "9");  // the accepted keystroke stays in the crossing's row
+      IM_CHECK_STR_EQ(rows[2].c_str(), "7");  // the clicked later row got the typing
+      IM_CHECK_EQ(ImGui::GetActiveID(), ctx->ItemInfo("**/##row_text_1").ID);  // the click decided, not the request
+
       ctx->ItemClick(kCancel);
       ctx->Yield(2);
     };
@@ -1120,6 +1228,32 @@ void RegisterFilterEditorTests(ImGuiTestEngine* engine) {
       ctx->KeyChars("5");
       ctx->Yield(3);
       IM_CHECK_STR_EQ(RowTexts()[1].c_str(), "9");
+
+      // Leg C: the Tab lands on the ACTIVATION frame itself — the crossing has just submitted its
+      // request and the navigation state points at the target. The user's Tab must not turn into
+      // a re-activation of that target: no focus steal, the accepted text stays, later typing
+      // does not reflow into the row.
+      ResetTestState();
+      ctx->Yield(2);
+      OpenFilterModal(ctx);
+      AuthorRow(ctx, 0, "1-2");
+      ctx->ItemInput("**/##row_text_0");
+      ctx->Yield(2);
+      ctx->KeySetEx(ImGuiKey_Enter, true, 0.0f);
+      ctx->Yield();  // frame N: blank uid1 inserted, request armed
+      ctx->KeySetEx(ImGuiKey_Enter, false, 0.0f);
+      ctx->KeyChars("9");                       // frame N+1: the crossing frame
+      ctx->KeySetEx(ImGuiKey_Tab, true, 0.0f);  // frame N+2: the activation frame
+      ctx->Yield();
+      ctx->KeySetEx(ImGuiKey_Tab, false, 0.0f);
+      ctx->Yield(4);
+      rows = RowTexts();
+      IM_CHECK_EQ(rows.size(), static_cast<size_t>(2));
+      IM_CHECK_STR_EQ(rows[1].c_str(), "9");  // the accepted keystroke stayed in the row
+      IM_CHECK_NE(ImGui::GetActiveID(), ctx->ItemInfo("**/##row_text_1").ID);  // not re-activated by the old request
+      ctx->KeyChars("5");
+      ctx->Yield(3);
+      IM_CHECK_STR_EQ(RowTexts()[1].c_str(), "9");  // nothing reflows into the row
 
       ctx->ItemClick(kCancel);
       ctx->Yield(2);
