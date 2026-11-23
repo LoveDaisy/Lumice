@@ -38,11 +38,14 @@
 #include "gui/user_defaults.hpp"
 #include "gui/window_sizing.hpp"
 #include "imgui.h"
-// imgui_internal.h for exactly three things the row keyboard flow needs and the public API does
-// not expose: ImTextCharToUtf8 (parking the input queue's chars into a row buffer), and
-// ImGui::GetInputTextState / ImGuiInputTextState::ReloadUserBufAndMoveToEnd (appending to a box
-// that is already the active editor — the same remedy input_text_reload.hpp wraps for pull
-// reloads, with the cursor kept at the end so the next keystroke appends instead of replacing).
+// imgui_internal.h for the row keyboard flow's needs beyond the public API: ImTextCharToUtf8
+// (parking the input queue's chars into a row buffer); ImGui::GetInputTextState /
+// ImGuiInputTextState::ReloadUserBufAndMoveToEnd (appending to a box that is already the active
+// editor — the same remedy input_text_reload.hpp wraps for pull reloads, with the cursor kept at
+// the end so the next keystroke appends instead of replacing); and the ImGuiContext nav fields
+// (NavActivateId/DownId/PressedId/Flags) that carry an in-flight programmatic activation — the
+// handoff transaction reads its own target's id there and revokes it there when it ends, so a
+// cancelled or superseded crossing cannot steal the focus on a later frame.
 #include "imgui_internal.h"
 #include "include/lumice_base.h"
 #include "include/lumice_editor.h"
@@ -274,36 +277,76 @@ static std::vector<SummandRowBuf> g_summand_rows;
 static SumOfProducts g_summand_rows_snapshot;
 static uint64_t g_next_summand_row_uid = 0;
 
-// The keyboard flow's one parked focus request: armed when Enter inserts a blank row, consumed on
-// the frame that row's InputText actually reports active (a stolen focus re-arms for the next
-// frame), and invalidated — never silently redirected — whenever its session ends: modal close
-// (any reason), open (including a card-to-card switch in Immediate mode), document reset, Remove
-// Filter's uid rewind, a tab switch away from Filter, or the target uid going missing from the
-// rendered list (an external pull deleted it). Every uid-recycling boundary clears it explicitly,
-// so a parked request can never land on a row it was not created for.
-static uint64_t g_summand_pending_focus_uid = kNoSummandRowUid;
+// The row keyboard flow's ONE open handoff transaction (plan §3.1): the crossing between "some
+// row should now hold the keyboard" and "that row's box is the settled editor consuming input".
+// It carries what a crossing needs and nothing else — which row the keyboard is being handed to
+// (its uid and its resolved widget id, the latter being the scope key for revoking whatever
+// activation the flow submitted to ImGui), and the keystrokes typed while the focus was still
+// crossing (parked here because no editor can consume them yet; delivered exactly once, or
+// dropped as cancelled input when the transaction is cancelled). Armed when Enter inserts a
+// blank row and when an Esc-deleted row's survivor takes the keyboard back; the two origins are
+// told apart by the target row's own `source_uid` (the Enter source) — never by the transaction's
+// existence, which is why nothing here reads as a delete authorization: any deletion is authorized
+// by the post-cancel text judgment of the very row it would remove.
+struct SummandHandoff {
+  bool active = false;
+  uint64_t target_uid = kNoSummandRowUid;
+  ImGuiID target_id = 0;  // resolved at arm time; stable while the same tab renders the list
+};
+static SummandHandoff g_summand_handoff;
+static ImVector<ImWchar> g_summand_handoff_chars;
 
+void AppendCharsToRowBuffer(char* row_text, const ImVector<ImWchar>& chars);  // defined beside the row renderer
 
-// Keystrokes that arrive while a parked focus request is still crossing boxes have no settled
-// editor to land in: no box is active to consume them, or the target just activated and its
-// activation frame skips char processing while still clearing the queue. They are parked here
-// (tagged to their row) and delivered AFTER that row's box is the active editor — an append to
-// the live edit with the cursor moved to the end — never written into the buffer before
-// activation: a pre-activation write would be snapshotted as the row's undo baseline (an Esc on
-// a new blank row would then restore the parked text instead of empty) and re-selected away by
-// the activation's select-all (code-review round 2).
-static uint64_t g_summand_focus_stash_uid = kNoSummandRowUid;
-static ImVector<ImWchar> g_summand_focus_stash_chars;
+// Resolve the InputText widget id of a row uid exactly the way the row loop does (same window,
+// same PushID(uid) + "##row_text_<uid>" chain), so the stored target_id compares equal to the
+// in-loop `input_id`. Only meaningful while the Filter tab is the one rendering.
+static ImGuiID ResolveSummandRowInputId(uint64_t uid) {
+  char text_id[64];
+  snprintf(text_id, sizeof(text_id), "##row_text_%llu", static_cast<unsigned long long>(uid));
+  ImGui::PushID(static_cast<int>(uid));
+  const ImGuiID id = ImGui::GetID(text_id);
+  ImGui::PopID();
+  return id;
+}
 
-// One reset for everything the row keyboard flow parks between frames — the focus request, the
-// keystrokes parked for it, and the parked Esc judgment. Every session boundary calls this
-// (open, close, document reset, Remove Filter's uid rewind, leaving the Filter tab) so no parked
-// state can outlive the session it was parked in; the RenderSummandRowList sweep additionally
-// clears targets that vanished mid-session (an external pull deleting them).
+// End the open transaction, if any, and revoke what it submitted to ImGui: the activation armed
+// for its own target is cleared by the stored target_id, so a cancelled or session-dead crossing
+// can never steal the focus on a later frame. The scope is exactly this transaction's id — a
+// user's freshly chosen control, or any other pending request, is untouched (plan §3.2).
+// (Imgui internals: NavActivateId/DownId/PressedId are the in-flight activation state the frame's
+// widgets consume — see the imgui_internal.h include note at the top of this file.)
+static void EndSummandHandoff() {
+  if (ImGuiContext* g = ImGui::GetCurrentContext();
+      g != nullptr && g_summand_handoff.active && g->NavActivateId == g_summand_handoff.target_id) {
+    g->NavActivateId = g->NavActivateDownId = g->NavActivatePressedId = 0;
+    g->NavActivateFlags = ImGuiActivateFlags_None;
+  }
+  g_summand_handoff = {};
+  g_summand_handoff_chars.clear();
+}
+
+// Arm a new transaction, replacing any open one. One crossing at a time: the intercepted
+// crossing-Enter and the post-delete refocus both end the previous transaction first.
+static void ArmSummandHandoff(uint64_t target_uid) {
+  EndSummandHandoff();
+  g_summand_handoff.active = true;
+  g_summand_handoff.target_uid = target_uid;
+  g_summand_handoff.target_id = ResolveSummandRowInputId(target_uid);
+}
+
+// Deliver the transaction's parked keystrokes into a row buffer, exactly once, and clear them.
+static void DeliverSummandHandoffChars(char* row_text) {
+  AppendCharsToRowBuffer(row_text, g_summand_handoff_chars);
+  g_summand_handoff_chars.clear();
+}
+
+// One reset for everything the row keyboard flow parks between frames. Every session boundary
+// calls this (open, close, document reset, Remove Filter's uid rewind, leaving the Filter tab) so
+// no parked state can outlive the session it was parked in; the RenderSummandRowList sweep
+// additionally clears targets that vanished mid-session (an external pull deleting them).
 void ClearSummandKeyboardSession() {
-  g_summand_pending_focus_uid = kNoSummandRowUid;
-  g_summand_focus_stash_uid = kNoSummandRowUid;
-  g_summand_focus_stash_chars.clear();
+  EndSummandHandoff();
 }
 
 // Shared filter fields (name / action / sym_*). `param` is never mutated on
@@ -1930,6 +1973,21 @@ static void RenderSummandRowList() {
   uint64_t enter_insert_source = kNoSummandRowUid;
   size_t esc_delete_idx = static_cast<size_t>(-1);
 
+  // While a handoff is crossing and no editor is active, the keyboard belongs to the transaction
+  // (plan §3.1): nav's own Space/Enter manual activation — polled unowned at frame start, since
+  // no editor is active to have routed those keys — would arm an activation for whatever g.NavId
+  // points at and hand the user's in-flight keystroke to a box the transaction was never crossing
+  // into. Revoke it here, before any row renders (an earlier row's InputText would otherwise
+  // consume it first). The transaction's own transfer — the activation aimed at its target — is
+  // kept: that one is the handoff doing its job.
+  if (g_summand_handoff.active && ImGui::GetActiveID() == 0) {
+    ImGuiContext* g = ImGui::GetCurrentContext();
+    if (g->NavActivateId != 0 && g->NavActivateId != g_summand_handoff.target_id) {
+      g->NavActivateId = g->NavActivateDownId = g->NavActivatePressedId = 0;
+      g->NavActivateFlags = ImGuiActivateFlags_None;
+    }
+  }
+
   // Reserve exactly the width the trailing "x" SmallButton needs (glyph + horizontal
   // FramePadding on each side) plus one ItemSpacing for SameLine(). Formula mirrors
   // panels.cpp's crystal-card hover-button sizing so per-row layout stays consistent
@@ -1954,51 +2012,77 @@ static void RenderSummandRowList() {
     const ImGuiID input_id = ImGui::GetID(text_id);
     ImGui::PushItemWidth(row_item_width);  // leave room for the trailing "x" delete button
     const ImGuiID active_id = ImGui::GetActiveID();
-    // Serve the parked focus request on its own row only, and only count it served when the box
-    // actually went active — a focus ImGui stole leaves the request armed for the next frame.
-    const bool wants_focus = (g_summand_pending_focus_uid == row.uid);
-    // Deliver parked handoff keystrokes once this box IS the active editor (the handoff settled,
-    // so the focus request is no longer armed for it), appended at the cursor moved to the end:
-    // an activation that recycles the previous editor's state skips the select-all, so the same
-    // keystrokes typed right after the handoff would append too — delivery and typing agree. The
-    // activation snapshot stays untouched — a cancel still restores the pre-handoff text.
-    if (!g_summand_focus_stash_chars.empty() && g_summand_focus_stash_uid == row.uid && !wants_focus &&
-        active_id == input_id) {
-      AppendCharsToRowBuffer(row.text, g_summand_focus_stash_chars);
-      g_summand_focus_stash_chars.clear();
-      g_summand_focus_stash_uid = kNoSummandRowUid;
-      if (ImGuiInputTextState* state = ImGui::GetInputTextState(input_id)) {
-        state->ReloadUserBufAndMoveToEnd();
-      }
-    }
-    // A request the user has already superseded — another control holds the active id — ends
-    // here: their choice wins, the focus is not grabbed on a later frame, and the parked
-    // keystrokes (if any) die with the request (code-review round 3).
-    if (wants_focus && active_id != 0 && active_id != input_id) {
-      ClearSummandKeyboardSession();
-    } else if (wants_focus) {
-      // Esc while the handoff is still crossing boxes reaches no editor at all: the target box is
-      // not active yet and has never registered the shortcut. Routed to the row it undoes, it
-      // cancels the creation right here (code-review round 3).
+    // The crossing's keyboard ownership (plan §3.1): while this row's handoff is still crossing
+    // boxes, the keystrokes and commands the user types belong to IT — no other box may consume
+    // them, and none of them may fall into the gap (the toolkit's activation frame skips key and
+    // char processing while clearing the queue, so anything reaching that frame unserved is lost).
+    // Everything here runs BEFORE this row's InputText call — the only point that can act on the
+    // crossing frames, because the call itself will not process keys on them.
+    const bool handoff_row = g_summand_handoff.active && g_summand_handoff.target_id == input_id;
+    if (handoff_row && active_id != 0 && active_id != input_id) {
+      // The user chose another control while the crossing was in flight: their choice wins. The
+      // in-flight activation dies here — before this row's own InputText call could consume it
+      // and steal the focus back — the crossing ends, and the keystrokes already accepted into
+      // it are delivered into the row's buffer exactly once (the same text as if they had been
+      // typed right before navigating away). Nothing is deleted, nothing is grabbed back, and
+      // this frame's own keystrokes belong to the control the user picked.
+      DeliverSummandHandoffChars(row.text);
+      EndSummandHandoff();
+    } else if (handoff_row && active_id == 0) {
       ImGuiIO& io = ImGui::GetIO();
-      if (active_id == 0 && ImGui::IsKeyPressed(ImGuiKey_Escape)) {
-        esc_delete_idx = i;
-        ClearSummandKeyboardSession();
+      if (ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+        // Esc mid-crossing belongs to the transaction it undoes. The crossing dies here — the
+        // in-flight activation included, so a row that was never the editor cannot become one on
+        // the very frame it is deleted — and the parked keystrokes die with it as cancelled
+        // input. The row command below is then the SAME post-cancel emptiness judgment a settled
+        // Esc runs: identity never authorizes a delete, so a non-empty refocus target keeps its
+        // text and its uid. Same-frame characters are cancelled input too: dropping them (and
+        // letting the frame-end queue clear take them) is the settled behavior's own rule.
+        EndSummandHandoff();
+        if (TrimRaypathSegment(row.text).empty()) {
+          esc_delete_idx = i;
+        }
+      } else if (ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter)) {
+        // Enter mid-crossing accepts the row's edit as it stands — parked and same-frame
+        // keystrokes included — and creates the next blank below it: the outcome typing after
+        // the handoff settled would have had. The key is consumed here because the activation
+        // frame would never process it (just-activated editors skip key handling entirely), and
+        // the in-flight activation is revoked so the row stays inactive and cannot swallow the
+        // new handoff's crossing into a supersession.
+        DeliverSummandHandoffChars(row.text);
+        AppendCharsToRowBuffer(row.text, io.InputQueueCharacters);
+        io.InputQueueCharacters.resize(0);
+        EndSummandHandoff();
+        if (!AtSummandRowCap(g_summand_rows.size())) {
+          enter_insert_idx = i + 1;
+          enter_insert_source = row.uid;
+        }
+      } else if (ImGui::IsKeyPressed(ImGuiKey_Tab)) {
+        // Tab mid-crossing is the user navigating (one gesture, one meaning: navigation neither
+        // creates nor deletes, and the user's navigation outranks the auto-focus). The crossing
+        // ends — the in-flight activation dies, the accepted keystrokes land in the row — and the
+        // tabbing request this frame's NavUpdate already started is left alone: submitting ours
+        // here would overwrite the same nav slot and eat the user's Tab.
+        DeliverSummandHandoffChars(row.text);
+        AppendCharsToRowBuffer(row.text, io.InputQueueCharacters);
+        io.InputQueueCharacters.resize(0);
+        EndSummandHandoff();
       } else {
-        // Keystrokes that arrive while the focus is crossing boxes would be dropped: no box is
-        // active to consume them (or the target just activated and its activation frame skips
-        // char processing while still clearing the queue). Park them here — tagged to this row —
-        // for delivery once the box is the active editor (block above), so the first keystroke
-        // after Enter/Esc is never lost and never becomes part of the row's undo baseline.
-        if (io.InputQueueCharacters.size() > 0 && (active_id == 0 || active_id == input_id)) {
-          g_summand_focus_stash_uid = row.uid;
+        // Still crossing. Keystrokes would be dropped — no editor is active to consume them, and
+        // the char queue is cleared at frame end regardless — so park them for the settle frame.
+        // The focus request goes out exactly once per crossing: on the frame the activation is
+        // already in flight (this very call consumes it) re-arming would make the next frame's
+        // ApplyResult ClearActiveID whatever the user focused meanwhile and re-activate this row
+        // over their choice.
+        if (io.InputQueueCharacters.size() > 0) {
           for (const ImWchar c : io.InputQueueCharacters) {
-            g_summand_focus_stash_chars.push_back(c);
+            g_summand_handoff_chars.push_back(c);
           }
           io.InputQueueCharacters.resize(0);
         }
-        if (active_id == 0) {
-          ImGui::SetKeyboardFocusHere(0);  // only while nothing else holds the focus
+        ImGuiContext* g = ImGui::GetCurrentContext();
+        if (g->NavActivateId != input_id) {
+          ImGui::SetKeyboardFocusHere(0);
         }
       }
     }
@@ -2008,22 +2092,37 @@ static void RenderSummandRowList() {
     const ImGuiID active_before_input = active_id;  // this frame's owner of the box, entering the call
     const bool enter_accepted =
         ImGui::InputText(text_id, row.text, sizeof(row.text), ImGuiInputTextFlags_EnterReturnsTrue);
-    if (wants_focus && ImGui::IsItemActive()) {
-      g_summand_pending_focus_uid = kNoSummandRowUid;  // served: parked keystrokes deliver next frame
+    if (g_summand_handoff.active && g_summand_handoff.target_id == input_id && ImGui::IsItemActive()) {
+      // The handoff settled: the box IS the active editor. Deliver the parked keystrokes into
+      // this same editable transaction and normalize the caret to the row end with no selection —
+      // the unified row-end/no-selection policy every auto handoff runs (plan §3.3), whether the
+      // activation recycled a previous editor's state (cursor restored wherever it was) or
+      // started fresh (select-all, which would turn the next keystroke into a replace).
+      // ReloadUserBufAndMoveToEnd is consumed by the next call's init block: cursor to the end,
+      // selection cleared, the undo stack reconciled with the appended text — and TextToRevertTo
+      // (snapshotted at activation, before any of this) untouched, so a later Esc still restores
+      // the pre-handoff text and the emptiness judgment reads the row's own baseline.
+      DeliverSummandHandoffChars(row.text);
+      if (ImGuiInputTextState* state = ImGui::GetInputTextState(input_id)) {
+        state->ReloadUserBufAndMoveToEnd();
+      }
+      EndSummandHandoff();
     }
     ImGui::PopItemWidth();
 
-    // The row keyboard flow. Enter accepts this row and inserts a blank one right below it, its
-    // own identity, with the focus request parked on it. Cap-full Enter is a no-op — the same
-    // predicate the Add button reads. Esc is attributed by the call boundary: the box was the
-    // active editor ENTERING its own InputText call and the active id is gone right after — a
-    // cancel only the box's own processing can have performed, the revert included. A deactivation
-    // ImGui applied from outside (navigation above all) happens before the call, so the box is no
-    // longer the owner entering it and cannot claim any key, whichever order the two landed in
-    // (code-review rounds 1-2). The revert has then already rewritten row.text inside the call, so
-    // an empty post-cancel text deletes the row and a non-empty one keeps it (the revert is the
-    // whole undo). The owner's gesture vocabulary is one word one meaning: Enter creates, Esc
-    // undoes a creation, navigation neither creates nor deletes.
+    // The row keyboard flow's settled half. Enter accepts this row and inserts a blank one right
+    // below it, its own identity, with a handoff parked on the blank. Cap-full Enter is a no-op —
+    // the same predicate the Add button reads. Esc is attributed by the call boundary: the box
+    // was the active editor ENTERING its own InputText call and the active id is gone right after
+    // — a cancel only the box's own processing can have performed, the revert included. A
+    // deactivation ImGui applied from outside (navigation above all) happens before the call, so
+    // the box is no longer the owner entering it and cannot claim any key, whichever order the
+    // two landed in (code-review rounds 1-2). The crossing half above owns every command typed
+    // while the focus was still in flight; from this frame on, the box's own InputText owns the
+    // keyboard again. The revert has already rewritten row.text inside the call, so an empty
+    // post-cancel text deletes the row and a non-empty one keeps it (the revert is the whole
+    // undo). The owner's gesture vocabulary is one word one meaning: Enter creates, Esc undoes a
+    // creation, navigation neither creates nor deletes.
     if (enter_accepted) {
       if (!AtSummandRowCap(g_summand_rows.size())) {
         enter_insert_idx = i + 1;
@@ -2107,7 +2206,12 @@ static void RenderSummandRowList() {
       AppendBlankSummandRow();
       refocus_uid = g_summand_rows.back().uid;
     }
-    g_summand_pending_focus_uid = refocus_uid;
+    // The surviving row takes the keyboard back: a refocus handoff, same crossing machinery as a
+    // creation. The dying row's own `source_uid` is what made the survivor "the Enter source" —
+    // the transaction needs no identity of its own beyond the target.
+    if (refocus_uid != kNoSummandRowUid) {
+      ArmSummandHandoff(refocus_uid);
+    }
     // A mouse delete of another row in the same frame is pathological (the click itself ends the
     // edit without an Esc key), but compensating the index keeps that frame defined anyway.
     if (delete_idx != static_cast<size_t>(-1)) {
@@ -2130,22 +2234,18 @@ static void RenderSummandRowList() {
     blank.source_uid = enter_insert_source;
     blank.text[0] = '\0';
     g_summand_rows.insert(g_summand_rows.begin() + static_cast<std::ptrdiff_t>(enter_insert_idx), blank);
-    g_summand_pending_focus_uid = blank.uid;
+    ArmSummandHandoff(blank.uid);
   }
 
-  // Parked state whose target is not in this frame's list is dead — an external pull deleted the
-  // row (uids are never recycled within a session, and every recycling boundary clears the parked
-  // state explicitly), and parking it would hijack whichever future row reuses the id.
+  // A handoff whose target is not in this frame's list is dead — an external pull deleted the
+  // row (uids are never recycled within a session, and every recycling boundary clears the
+  // transaction explicitly), and letting it survive would hand the keyboard to whichever future
+  // row reuses the id.
   {
     const auto uid_alive = [](uint64_t uid) { return [uid](const SummandRowBuf& r) { return r.uid == uid; }; };
-    if (g_summand_pending_focus_uid != kNoSummandRowUid &&
-        std::none_of(g_summand_rows.begin(), g_summand_rows.end(), uid_alive(g_summand_pending_focus_uid))) {
+    if (g_summand_handoff.active &&
+        std::none_of(g_summand_rows.begin(), g_summand_rows.end(), uid_alive(g_summand_handoff.target_uid))) {
       ClearSummandKeyboardSession();
-    }
-    if (g_summand_focus_stash_uid != kNoSummandRowUid &&
-        std::none_of(g_summand_rows.begin(), g_summand_rows.end(), uid_alive(g_summand_focus_stash_uid))) {
-      g_summand_focus_stash_uid = kNoSummandRowUid;
-      g_summand_focus_stash_chars.clear();
     }
   }
 
