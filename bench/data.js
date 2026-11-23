@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795457447963,
+  "lastUpdate": 1795457453481,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -4818,54 +4818,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "be2288de2d204daa735f6abd653f3303a0dda03e",
-          "message": "Merge pull request #512 from LoveDaisy/feat/raypath-survey-c15-tint\n\nfeat(raypath): survey C15 slice — weight_tint chromatic leg (smoke trilogy finale)",
-          "timestamp": "2026-10-18T20:59:11+08:00",
-          "tree_id": "15694e43ea5a96e16d4ddd53b45ecd9d8fdb14d6",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/be2288de2d204daa735f6abd653f3303a0dda03e"
-        },
-        "date": 1792328621934,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 921335.5,
-            "unit": "rays/sec",
-            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 1009248.7,
-            "unit": "rays/sec",
-            "extra": "CPU: Neoverse-N2\\nCores: 4"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 1115990,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 9V45 96-Core Processor\\nCores: 4"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 685259,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 9V74 80-Core Processor                \\nCores: 4"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "6edfd93e4b15b31fb7103c58cbe8e08d64ea0770",
           "message": "Merge pull request #513 from LoveDaisy/feat/axis-preset-memory\n\nGUI: axis chips switch label and parameters, Reset row replaces apply combo",
           "timestamp": "2026-10-19T08:29:50+08:00",
@@ -9602,6 +9554,54 @@ window.BENCHMARK_DATA = {
             "value": 583131.8,
             "unit": "rays/sec",
             "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "349a4270504e39cc3c291c4257052477bfb36888",
+          "message": "Merge pull request #636 from LoveDaisy/feat/local-class-algebra\n\nfeat(raypath,capi): local-class algebra — point-selection representatives, log density facts, interpretive chain",
+          "timestamp": "2026-11-24T02:07:01+08:00",
+          "tree_id": "594868057c65dc035af6aee5110e333dc189228c",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/349a4270504e39cc3c291c4257052477bfb36888"
+        },
+        "date": 1795457452816,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 936662.3,
+            "unit": "rays/sec",
+            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 1013364.4,
+            "unit": "rays/sec",
+            "extra": "CPU: Neoverse-N2\\nCores: 4"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 1044838.4,
+            "unit": "rays/sec",
+            "extra": "CPU: Intel(R) Xeon(R) 6975P-C\\nCores: 4"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 694891.1,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 9V74 80-Core Processor                \\nCores: 4"
           }
         ]
       }
