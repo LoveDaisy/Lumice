@@ -10,6 +10,7 @@ add_executable(gui_test
     functional/test_export.cpp
     functional/test_screenshot_export_options.cpp
     functional/test_file_ops.cpp
+    functional/test_diagnostics_export.cpp
     functional/test_color_window.cpp
     functional/test_edit_modal.cpp
     functional/test_filter_editor.cpp

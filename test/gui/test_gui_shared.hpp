@@ -693,6 +693,7 @@ void RegisterEntryManagementTests(ImGuiTestEngine* engine);
 void RegisterBackgroundOverlayTests(ImGuiTestEngine* engine);
 void RegisterBgColorPickerModeTests(ImGuiTestEngine* engine);
 void RegisterFileOpsTests(ImGuiTestEngine* engine);
+void RegisterDiagnosticsTests(ImGuiTestEngine* engine);
 void RegisterColorWindowTests(ImGuiTestEngine* engine);
 void RegisterFilterEditorTests(ImGuiTestEngine* engine);
 void RegisterEditModalTests(ImGuiTestEngine* engine);
