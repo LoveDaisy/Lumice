@@ -774,8 +774,7 @@ void RegisterFilterEditorTests(ImGuiTestEngine* engine) {
       ctx->Yield();  // frame N: the blank is inserted, the focus request armed
       ctx->KeySetEx(ImGuiKey_Enter, false, 0.0f);
       ctx->KeyChars("9");  // frame N+1: the crossing frame — accepted into the crossing, undelivered
-      ctx->Yield();
-      ctx->KeySetEx(ImGuiKey_Escape, true, 0.0f);  // frame N+2: the activation frame — cancel + revoke in flight
+      ctx->KeySetEx(ImGuiKey_Escape, true, 0.0f);  // frame N+2: the ACTIVATION frame — cancel + revoke in flight
       ctx->Yield();
       ctx->KeySetEx(ImGuiKey_Escape, false, 0.0f);
       ctx->Yield(4);
@@ -1044,9 +1043,8 @@ void RegisterFilterEditorTests(ImGuiTestEngine* engine) {
       ctx->KeySetEx(ImGuiKey_Enter, true, 0.0f);
       ctx->Yield();  // frame N: blank uid2 inserted, request armed
       ctx->KeySetEx(ImGuiKey_Enter, false, 0.0f);
-      ctx->KeyChars("9");  // frame N+1: the crossing frame
-      ctx->Yield();
-      ctx->KeySetEx(ImGuiKey_Enter, true, 0.0f);  // frame N+2: the activation frame — the key is intercepted
+      ctx->KeyChars("9");                         // frame N+1: the crossing frame
+      ctx->KeySetEx(ImGuiKey_Enter, true, 0.0f);  // frame N+2: the ACTIVATION frame — the key is intercepted
       ctx->Yield();
       ctx->KeySetEx(ImGuiKey_Enter, false, 0.0f);
       ctx->Yield(4);
@@ -1085,10 +1083,8 @@ void RegisterFilterEditorTests(ImGuiTestEngine* engine) {
       ctx->KeySetEx(ImGuiKey_Enter, true, 0.0f);
       ctx->Yield();  // frame N: blank uid1 inserted, request armed
       ctx->KeySetEx(ImGuiKey_Enter, false, 0.0f);
-      ctx->KeyChars("9");  // frame N+1: the crossing frame
-      ctx->Yield();
-      ctx->KeySetEx(ImGuiKey_Tab, true, 0.0f);  // frame N+2: the user navigates mid-handoff
-      ctx->Yield();
+      ctx->KeySetEx(ImGuiKey_Tab, true, 0.0f);  // queued with the keystroke below
+      ctx->KeyChars("9");  // frame N+1: the crossing frame — "9" accepted, Tab lands the same frame
       ctx->KeySetEx(ImGuiKey_Tab, false, 0.0f);
       ctx->Yield(4);
       auto rows = RowTexts();
