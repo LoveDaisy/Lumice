@@ -788,6 +788,221 @@ void RegisterEntryManagementTests(ImGuiTestEngine* engine) {
     };
   }
 
+  // P-821.3 state 1. Duplicating the very card the editor is open on is the whole point of the
+  // focus semantics: the pending edit goes in first ("duplicate what you see"), and the editor
+  // comes back bound to the COPY — what the user was editing is now the clone, active border with
+  // it. Driven through the real Duplicate button, which in Immediate mode is exactly how a user
+  // reaches it (the editor is a plain window; the cards behind it stay live).
+  {
+    ImGuiTest* t =
+        IM_REGISTER_TEST(engine, "entry_management", "duplicating_the_edited_card_rebinds_the_editor_to_the_clone");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      ctx->Yield(2);
+      OpenImmediateEditorOnEntry(ctx, 0);
+      const float h0 = gui::g_state.crystals[gui::g_state.layers[0].entries[0].crystal_id].height.center;
+      ctx->ItemInputValue("**/##Height##modal_cr_input", h0 + 1.5f);
+      ctx->Yield(2);  // Immediate commits at the modal's render tail: the pool already has the edit
+
+      ctx->ItemClick("**/" ICON_FA_COPY "##dup_0_0");
+      ctx->Yield(2);
+
+      // The editor stayed open and followed the clone: same tab, binding moved to the new slot.
+      IM_CHECK(gui::IsEditModalOpen());
+      IM_CHECK_EQ(gui::GetEditModalTarget().layer_idx, 0);
+      IM_CHECK_EQ(gui::GetEditModalTarget().entry_idx, 1);
+      // The clone carries the committed edit on its own pool slot...
+      const int src_cid = gui::g_state.layers[0].entries[0].crystal_id;
+      const int dup_cid = gui::g_state.layers[0].entries[1].crystal_id;
+      IM_CHECK_NE(dup_cid, src_cid);
+      IM_CHECK_EQ(gui::g_state.crystals[dup_cid].height.center, h0 + 1.5f);
+      IM_CHECK_EQ(gui::g_state.crystals[src_cid].height.center, h0 + 1.5f);
+      // ...and state 1 arms no flash: the active border IS the focus signal here.
+      IM_CHECK(!gui::g_state.duplicate_flash.has_value());
+      // Continuing on the clone must not write the source: the rebind reinstalled the buffers
+      // from the clone's slot, so the next edit lands there and only there.
+      ctx->ItemInputValue("**/##Height##modal_cr_input", h0 + 2.5f);
+      ctx->Yield(2);
+      IM_CHECK_EQ(gui::g_state.crystals[dup_cid].height.center, h0 + 2.5f);
+      IM_CHECK_EQ(gui::g_state.crystals[src_cid].height.center, h0 + 1.5f);
+    };
+  }
+
+  // P-821.3 state 1, Staged transaction half. With Immediate off the pending edit is REAL — the
+  // buffer differs from the pool until something commits it — and Duplicate must commit it before
+  // the clone snapshots the pool. A Staged modal blocks card clicks, so this leg drives the same
+  // production entry the click path runs, in-frame: it is the data-transaction witness and
+  // deliberately NOT a mouse-reachability claim (plan §6, AC1 row).
+  {
+    ImGuiTest* t =
+        IM_REGISTER_TEST(engine, "entry_management", "staged_pending_edit_commits_into_the_duplicate_transaction");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();  // Staged is the process default (modal_immediate_mode=false)
+      ctx->Yield(2);
+      const ScopedPopups popup_guard(ctx);
+      OpenCardEditor(ctx, 0, kCrystalTabRef);
+      const float h0 = gui::g_state.crystals[gui::g_state.layers[0].entries[0].crystal_id].height.center;
+      ctx->ItemInputValue("**/##Height##modal_cr_input", h0 + 1.25f);
+      ctx->Yield(2);
+      // The premise the transaction is about: Staged keeps the edit in the buffer, the pool is
+      // still the old value. Without this assertion the rest proves nothing about committing.
+      IM_CHECK_EQ(gui::GetEditModalBuffers().crystal.height.center, h0 + 1.25f);
+      IM_CHECK_EQ(gui::g_state.crystals[gui::g_state.layers[0].entries[0].crystal_id].height.center, h0);
+
+      const int below = gui::DuplicateEntryWithFocusFollow(gui::g_state, 0, 0);
+      IM_CHECK_EQ(below, 1);
+      ctx->Yield(2);
+
+      // Source committed, clone carries the committed value on its own slot.
+      IM_CHECK_EQ(gui::g_state.crystals[gui::g_state.layers[0].entries[0].crystal_id].height.center, h0 + 1.25f);
+      const int dup_cid = gui::g_state.layers[0].entries[1].crystal_id;
+      IM_CHECK_NE(dup_cid, gui::g_state.layers[0].entries[0].crystal_id);
+      IM_CHECK_EQ(gui::g_state.crystals[dup_cid].height.center, h0 + 1.25f);
+      // Editor rebound to the clone with its buffers reinstalled from the clone's slot.
+      IM_CHECK(gui::IsEditModalOpen());
+      IM_CHECK_EQ(gui::GetEditModalTarget().entry_idx, 1);
+      IM_CHECK_EQ(gui::GetEditModalBuffers().crystal.height.center, h0 + 1.25f);
+      // A further edit is Staged again: the buffer moves, both pool slots hold until OK.
+      ctx->ItemInputValue("**/##Height##modal_cr_input", h0 + 2.25f);
+      ctx->Yield(2);
+      IM_CHECK_EQ(gui::GetEditModalBuffers().crystal.height.center, h0 + 2.25f);
+      IM_CHECK_EQ(gui::g_state.crystals[dup_cid].height.center, h0 + 1.25f);
+      IM_CHECK_EQ(gui::g_state.crystals[gui::g_state.layers[0].entries[0].crystal_id].height.center, h0 + 1.25f);
+    };
+  }
+
+  // The reject half of the same gate: a pending draft the commit refuses to write (a half-typed
+  // filter row — exactly what disables the Staged OK button) must REJECT the duplicate wholesale,
+  // before any pool append and before the rebind — a rebind would reinstall the buffers from the
+  // clone and silently drop the draft. Same production entry, same in-frame form as above.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "entry_management", "duplicate_rejects_while_a_filter_draft_cannot_commit");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      ctx->Yield(2);
+      const ScopedPopups popup_guard(ctx);
+      OpenCardEditor(ctx, 0, kFilterTabRef);
+      // Type an incomplete row and leave the box focused — no Enter: under the summand keyboard
+      // flow an Enter inside a row inserts one (the same reason test_filter_editor's fixture
+      // edits end without one).
+      ctx->ItemInput("**/##row_text_0");
+      ctx->KeyCharsReplace("3-");
+      ctx->Yield(2);
+      const auto draft_rows = gui::GetEditModalBuffers().filter_rows;
+      IM_CHECK(static_cast<int>(draft_rows.size()) > 0 && draft_rows[0] == "3-");
+      IM_CHECK(!gui::g_state.layers[0].entries[0].filter_id.has_value());
+
+      const int entries_before = static_cast<int>(gui::g_state.layers[0].entries.size());
+      const int crystals_before = static_cast<int>(gui::g_state.crystals.size());
+      const int filters_before = static_cast<int>(gui::g_state.filters.size());
+      const int rc = gui::DuplicateEntryWithFocusFollow(gui::g_state, 0, 0);
+      IM_CHECK_EQ(rc, -1);
+      // Nothing half-done anywhere: no clone, no pool growth, the session still on the source,
+      // and the draft intact in the buffers for the user to finish or discard.
+      IM_CHECK_EQ(static_cast<int>(gui::g_state.layers[0].entries.size()), entries_before);
+      IM_CHECK_EQ(static_cast<int>(gui::g_state.crystals.size()), crystals_before);
+      IM_CHECK_EQ(static_cast<int>(gui::g_state.filters.size()), filters_before);
+      IM_CHECK(gui::IsEditModalOpen());
+      IM_CHECK_EQ(gui::GetEditModalTarget().entry_idx, 0);
+      IM_CHECK(!gui::g_state.duplicate_flash.has_value());
+      IM_CHECK_STR_EQ(gui::GetEditModalBuffers().filter_rows[0].c_str(), "3-");
+    };
+  }
+
+  // P-821.3 state 3. Duplicating one card while editing another is a pure list operation: the
+  // open editor keeps its entry (identity, in-flight content and active border with it) through
+  // the insertion's index shift, and nothing flashes — the edit is not this card's.
+  {
+    ImGuiTest* t =
+        IM_REGISTER_TEST(engine, "entry_management", "duplicating_another_card_leaves_the_open_editor_alone");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      MakeThreeIndependentEntries(ctx);
+      OpenImmediateEditorOnEntry(ctx, 1);  // the editor is on card Y (index 1)
+      const float h1 = gui::g_state.crystals[gui::g_state.layers[0].entries[1].crystal_id].height.center;
+      ctx->ItemInputValue("**/##Height##modal_cr_input", h1 + 1.0f);
+      ctx->Yield(2);
+
+      ctx->ItemClick("**/" ICON_FA_COPY "##dup_0_0");  // duplicate card X (index 0)
+      ctx->Yield(2);
+
+      // X's clone sits directly below X; Y slid down one slot and kept everything.
+      IM_CHECK_EQ(static_cast<int>(gui::g_state.layers[0].entries.size()), 4);
+      IM_CHECK(gui::IsEditModalOpen());
+      IM_CHECK_EQ(gui::GetEditModalTarget().entry_idx, 2);
+      const int y_cid = gui::g_state.layers[0].entries[2].crystal_id;
+      IM_CHECK_EQ(gui::g_state.crystals[y_cid].height.center, h1 + 1.0f);  // the in-flight edit survives
+      IM_CHECK(!gui::g_state.duplicate_flash.has_value());                 // and state 3 arms no flash
+      // The clone is X's content on its own slot, placed at 1.
+      IM_CHECK_NE(gui::g_state.layers[0].entries[1].crystal_id, gui::g_state.layers[0].entries[0].crystal_id);
+      IM_CHECK_EQ(gui::g_state.crystals[gui::g_state.layers[0].entries[1].crystal_id].height.center, 1.0f);
+    };
+  }
+
+  // P-821.3 state 2. With the editor closed, the duplicate's focus gesture is the flash: the new
+  // card's border fades once from the active form down to its resting look over
+  // kDuplicateFlashSeconds, and no modal pops. Evidence is split the way the plan asks: the
+  // session anchor proves the state, the card's actual border ring (four edges, the hover case's
+  // method) proves the draw consumes it, and the pointer is parked off every card so hover cannot
+  // ride along. A sibling sharing the clone's crystal is the negative control: the flash names the
+  // ENTRY, not the pool crystal, so it stays cold.
+  {
+    ImGuiTest* t =
+        IM_REGISTER_TEST(engine, "entry_management", "a_duplicate_with_the_editor_closed_flashes_once_and_fades");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      // A second card SHARING entry 0's crystal: linked entries are the case where an identity
+      // keyed by pool slot would light both cards.
+      gui::EntryCard sibling;
+      sibling.crystal_id = gui::g_state.layers[0].entries[0].crystal_id;
+      gui::g_state.layers[0].entries.push_back(sibling);
+      ctx->Yield(3);
+
+      ctx->ItemClick("**/" ICON_FA_COPY "##dup_0_0");
+      ctx->Yield(1);
+      IM_CHECK_EQ(static_cast<int>(gui::g_state.layers[0].entries.size()), 3);
+      // The owner's hard constraint: no modal pops — the flash IS the gesture.
+      IM_CHECK(!gui::IsEditModalOpen());
+      IM_CHECK(gui::g_state.duplicate_flash.has_value());
+      IM_CHECK_EQ(gui::g_state.duplicate_flash->layer_idx, 0);
+      IM_CHECK_EQ(gui::g_state.duplicate_flash->entry_idx, 1);
+      const float s0 = gui::DuplicateFlashStrength(gui::g_state, 0, 1);
+      IM_CHECK_GT(s0, 0.9f);  // armed this frame; fixed-dt makes the age exact
+
+      // Park the pointer off every card: the click left it on the source's rail, and a hover
+      // border on the source would confound the source's negative control below.
+      ctx->MouseMoveToPos(PointOffEveryCard());
+      ctx->Yield(2);
+
+      std::vector<unsigned char> clone_start, clone_mid, clone_end, clone_rest, src_start, src_end, sib_start, sib_end;
+      int w = 0, h = 0;
+      IM_CHECK(CaptureCardRect(ctx, 1, clone_start, w, h));  // the clone, early in its fade
+      ctx->Yield(30);                                        // 1/60 fixed dt: ~0.5s in
+      const float s_mid = gui::DuplicateFlashStrength(gui::g_state, 0, 1);
+      IM_CHECK_GT(s_mid, 0.2f);  // still mid-fade — the fade is gradual, not a one-frame pop
+      IM_CHECK(CaptureCardRect(ctx, 1, clone_mid, w, h));
+      ctx->Yield(40);                                       // past the 1.0s deadline
+      IM_CHECK(!gui::g_state.duplicate_flash.has_value());  // the tick dropped it
+      IM_CHECK(CaptureCardRect(ctx, 1, clone_end, w, h));
+      IM_CHECK(CaptureCardRect(ctx, 1, clone_rest, w, h));
+      IM_CHECK(CaptureCardRect(ctx, 0, src_start, w, h));  // the source, settled after the click
+      IM_CHECK(CaptureCardRect(ctx, 0, src_end, w, h));
+      IM_CHECK(CaptureCardRect(ctx, 2, sib_start, w, h));  // the linked sibling (slid to index 2)
+      IM_CHECK(CaptureCardRect(ctx, 2, sib_end, w, h));
+
+      // The clone's border actually moved, on all four edges, across the fade...
+      IM_CHECK(EdgeRingDiff(clone_start, clone_mid, w, h, 2).AllChanged());
+      IM_CHECK(EdgeRingDiff(clone_mid, clone_end, w, h, 2).AllChanged());
+      // ...and is back at rest: two captures after expiry agree everywhere.
+      IM_CHECK(EdgeRingDiff(clone_end, clone_rest, w, h, 2).AllZero());
+      // The source card ran no flash: its ring is identical across the same window. So is the
+      // sibling's — sharing the clone's crystal does not share the flash: the gesture names the
+      // entry, not the pool slot.
+      IM_CHECK(EdgeRingDiff(src_start, src_end, w, h, 2).AllZero());
+      IM_CHECK(EdgeRingDiff(sib_start, sib_end, w, h, 2).AllZero());
+    };
+  }
+
   // ================================================================================
   // Opening the modal from a card.
   // ================================================================================
