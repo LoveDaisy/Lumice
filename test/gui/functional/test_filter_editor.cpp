@@ -709,29 +709,87 @@ void RegisterFilterEditorTests(ImGuiTestEngine* engine) {
     };
   }
 
-  // The same no-loss rule for the Esc side: cancelling a creation refocuses the source row, and a
-  // keystroke sent on the handoff frame must land there, not vanish. The initial blank row keeps
-  // the surviving buffer empty, so the landed text is exact regardless of activation selection.
+  // The identity witness: with the new row ACTUALLY activated first, the cancel hands focus back
+  // to the non-empty source — and an Esc landing during THAT refocus handoff must not read the
+  // crossing as a delete authorization. The source row keeps its uid and its text; no blank is
+  // refilled behind it. This is the case a pending-presence delete used to fail: it erased the
+  // "1-2" row and refilled a blank, losing the user's expression.
   {
-    ImGuiTest* t =
-        IM_REGISTER_TEST(engine, "filter_editor", "the_first_keystroke_after_esc_lands_in_the_refocused_row");
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "filter_editor", "esc_during_the_refocus_handoff_keeps_a_nonempty_source");
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
       ctx->Yield(2);
-      OpenFilterModal(ctx);  // one blank row, uid 0
+      OpenFilterModal(ctx);
+      AuthorRow(ctx, 0, "1-2");
       ctx->ItemInput("**/##row_text_0");
-      ctx->KeyPress(ImGuiKey_Enter);  // blank uid 1, focused
       ctx->Yield(2);
-      ctx->KeyPress(ImGuiKey_Escape);  // uid 1 cancelled; the refill is a FRESH uid, not a recycle
-      ctx->KeyChars("7");              // the handoff frame itself
-      ctx->KeyChars("7");
+      ctx->KeySetEx(ImGuiKey_Enter, true, 0.0f);
+      ctx->Yield();  // frame N: the blank is inserted, the focus request armed
+      ctx->KeySetEx(ImGuiKey_Enter, false, 0.0f);
+      ctx->Yield(2);
+      IM_CHECK_EQ(ImGui::GetActiveID(), ctx->ItemInfo("**/##row_text_1").ID);  // premise: the new row took the editor
+
+      ctx->KeySetEx(ImGuiKey_Escape, true, 0.0f);  // frame M: the activated blank is cancelled
+      ctx->Yield();
+      ctx->KeySetEx(ImGuiKey_Escape, false, 0.0f);
+      ctx->KeySetEx(ImGuiKey_Escape, true, 0.0f);  // frame M+1: the refocus handoff crossing itself
+      ctx->Yield();
+      ctx->KeySetEx(ImGuiKey_Escape, false, 0.0f);
       ctx->Yield(4);
 
       auto rows = RowTexts();
       IM_CHECK_EQ(rows.size(), static_cast<size_t>(1));
-      IM_CHECK_STR_EQ(rows[0].c_str(), "77");  // both keystrokes landed in the refocused row
-      // uid 1 (the cancelled creation) had a live source — the original blank, uid 0 — so the
-      // fallback is the SOURCE row and the list never emptied (no refill, no fresh uid here).
+      IM_CHECK(ctx->ItemExists("**/##row_text_0"));  // the SOURCE row: same uid, not a refill
+      IM_CHECK(!ctx->ItemExists("**/##row_text_1"));
+      IM_CHECK(!ctx->ItemExists("**/##row_text_2"));  // no blank refilled behind the kept row
+      IM_CHECK_STR_EQ(rows[0].c_str(), "1-2");        // the text survived the second Esc
+
+      ctx->ItemInput("**/##row_text_0");  // and the kept row is still directly editable
+      ctx->KeyCharsReplace("1-9");
+      ctx->Yield(3);
+      IM_CHECK_STR_EQ(RowTexts()[0].c_str(), "1-9");
+
+      ctx->ItemClick(kCancel);
+      ctx->Yield(2);
+    };
+  }
+
+  // The two-end-cancel witness: Esc landing on the ACTIVATION frame — after the focus request was
+  // submitted and while the toolkit activation is in flight — must cancel the creation AND that
+  // in-flight activation, so the deleted row never becomes the active editor and the source
+  // refocus survives it. Typing straight afterwards (no click) proves the keyboard actually
+  // returned to the source; a dead-row active id used to eat the refocus here.
+  {
+    ImGuiTest* t =
+        IM_REGISTER_TEST(engine, "filter_editor", "esc_on_the_activation_frame_returns_keyboard_to_the_source");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      ctx->Yield(2);
+      OpenFilterModal(ctx);
+      AuthorRow(ctx, 0, "1-2");
+      AuthorRow(ctx, 1, "3-4");
+      ctx->ItemInput("**/##row_text_0");
+      ctx->Yield(2);
+      ctx->KeySetEx(ImGuiKey_Enter, true, 0.0f);
+      ctx->Yield();  // frame N: the blank is inserted, the focus request armed
+      ctx->KeySetEx(ImGuiKey_Enter, false, 0.0f);
+      ctx->KeyChars("9");  // frame N+1: the crossing frame — accepted into the crossing, undelivered
+      ctx->Yield();
+      ctx->KeySetEx(ImGuiKey_Escape, true, 0.0f);  // frame N+2: the activation frame — cancel + revoke in flight
+      ctx->Yield();
+      ctx->KeySetEx(ImGuiKey_Escape, false, 0.0f);
+      ctx->Yield(4);
+
+      auto rows = RowTexts();
+      IM_CHECK_EQ(rows.size(), static_cast<size_t>(2));  // the creation is gone, neighbours intact
+      IM_CHECK_STR_EQ(rows[0].c_str(), "1-2");           // "9" was cancelled input: dropped, not delivered
+      IM_CHECK_STR_EQ(rows[1].c_str(), "3-4");
+      IM_CHECK(!ctx->ItemExists("**/##row_text_2"));
+      IM_CHECK_EQ(ImGui::GetActiveID(), ctx->ItemInfo("**/##row_text_0").ID);  // refocus survived the dead row
+
+      ctx->KeyChars("7");  // no click: the keyboard must already be back on the source
+      ctx->Yield(3);
+      IM_CHECK_STR_EQ(RowTexts()[0].c_str(), "1-27");
       IM_CHECK_EQ(ImGui::GetActiveID(), ctx->ItemInfo("**/##row_text_0").ID);
 
       ctx->ItemClick(kCancel);
@@ -820,11 +878,13 @@ void RegisterFilterEditorTests(ImGuiTestEngine* engine) {
       ctx->KeySetEx(ImGuiKey_Escape, true, 0.0f);  // the handoff frame: cancel before any focus
       ctx->Yield();
       ctx->KeySetEx(ImGuiKey_Escape, false, 0.0f);
+      ctx->KeyChars("7");  // the refocus handoff frame itself
+      ctx->KeyChars("7");  // the refocus activation frame
       ctx->Yield(4);
 
       auto rows = RowTexts();
       IM_CHECK_EQ(rows.size(), static_cast<size_t>(1));  // the creation is gone
-      IM_CHECK_STR_EQ(rows[0].c_str(), "1-2");
+      IM_CHECK_STR_EQ(rows[0].c_str(), "1-277");         // both keystrokes landed in the refocused source
       IM_CHECK(!ctx->ItemExists("**/##row_text_1"));
       IM_CHECK_EQ(ImGui::GetActiveID(), ctx->ItemInfo("**/##row_text_0").ID);  // back on the source
 
@@ -833,14 +893,17 @@ void RegisterFilterEditorTests(ImGuiTestEngine* engine) {
     };
   }
 
-  // Keystrokes parked during a handoff must read exactly like the same keystrokes typed after the
-  // handoff settles. The recycled previous editor skips the activation select-all, so BOTH
-  // timings append — the case pins that agreement with two legs and one expected text.
+  // Keystrokes must read exactly the same whether they arrive during the refocus handoff or after
+  // it settles. BOTH legs let the new row actually take the activation first — the state the
+  // normal cancel path runs in, where the global InputTextState belongs to the new row when the
+  // source is re-armed — then cancel, then differ ONLY in when the same keystrokes arrive. No
+  // extra click or ItemInput anywhere: the settled leg is the one a select-all-on-fresh-activation
+  // used to eat ("99" over "1-2" instead of an append).
   {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "filter_editor",
                                     "parked_and_settled_keystrokes_read_identically_on_the_refocused_row");
     t->TestFunc = [](ImGuiTestContext* ctx) {
-      // Leg A: the keystrokes land inside the handoff frames.
+      // Leg A: the keystrokes land inside the refocus handoff frames.
       ResetTestState();
       ctx->Yield(2);
       OpenFilterModal(ctx);
@@ -850,16 +913,19 @@ void RegisterFilterEditorTests(ImGuiTestEngine* engine) {
       ctx->KeySetEx(ImGuiKey_Enter, true, 0.0f);
       ctx->Yield();
       ctx->KeySetEx(ImGuiKey_Enter, false, 0.0f);
-      ctx->KeySetEx(ImGuiKey_Escape, true, 0.0f);  // cancel the creation...
-      ctx->Yield();                                // ...the source row is the refocus target
+      ctx->Yield(2);
+      IM_CHECK_EQ(ImGui::GetActiveID(),
+                  ctx->ItemInfo("**/##row_text_1").ID);  // premise: the new row really took the editor
+      ctx->KeySetEx(ImGuiKey_Escape, true, 0.0f);        // cancel the activated creation...
+      ctx->Yield();                                      // ...the source row is the refocus target
       ctx->KeySetEx(ImGuiKey_Escape, false, 0.0f);
-      ctx->KeyChars("99");  // land in the handoff frames themselves
+      ctx->KeyChars("99");  // land in the refocus handoff frames themselves
       ctx->Yield(4);
       auto rows = RowTexts();
       IM_CHECK_EQ(rows.size(), static_cast<size_t>(1));
       IM_CHECK_STR_EQ(rows[0].c_str(), "1-299");
 
-      // Leg B: the same keystrokes typed after the handoff has fully settled.
+      // Leg B: the same keystrokes arrive only after the refocus has fully settled.
       ResetTestState();
       ctx->Yield(2);
       OpenFilterModal(ctx);
@@ -869,23 +935,36 @@ void RegisterFilterEditorTests(ImGuiTestEngine* engine) {
       ctx->KeySetEx(ImGuiKey_Enter, true, 0.0f);
       ctx->Yield();
       ctx->KeySetEx(ImGuiKey_Enter, false, 0.0f);
-      ctx->KeyPress(ImGuiKey_Escape);
+      ctx->Yield(2);
+      IM_CHECK_EQ(ImGui::GetActiveID(), ctx->ItemInfo("**/##row_text_1").ID);  // premise: same activation
+      ctx->KeySetEx(ImGuiKey_Escape, true, 0.0f);
+      ctx->Yield();
+      ctx->KeySetEx(ImGuiKey_Escape, false, 0.0f);
       ctx->Yield(4);
-      ctx->ItemInput("**/##row_text_0");  // re-focus the source row, as the parked flow left it
+      IM_CHECK_EQ(ImGui::GetActiveID(), ctx->ItemInfo("**/##row_text_0").ID);  // premise: refocus settled
       ctx->KeyChars("99");
       ctx->Yield(4);
       rows = RowTexts();
       IM_CHECK_EQ(rows.size(), static_cast<size_t>(1));
       IM_CHECK_STR_EQ(rows[0].c_str(), "1-299");  // identical to leg A
 
+      // And both timings undo to the same pre-crossing baseline: one Esc restores "1-2".
+      ctx->KeyPress(ImGuiKey_Escape);
+      ctx->Yield(4);
+      rows = RowTexts();
+      IM_CHECK_EQ(rows.size(), static_cast<size_t>(1));
+      IM_CHECK_STR_EQ(rows[0].c_str(), "1-2");
+
       ctx->ItemClick(kCancel);
       ctx->Yield(2);
     };
   }
 
-  // A parked focus request yields to a control the user chose meanwhile: clicking another control
-  // while the handoff is in flight must not have the row grab the focus on a later frame, and
-  // must not delete the row either — only the request ends.
+  // A parked focus request yields to a control the user chose meanwhile: clicking another real
+  // input box while the handoff is in flight must not have the row grab the focus on a later
+  // frame, must not delete the row, and must not drop the keystrokes the crossing had already
+  // accepted — they land in the row exactly once, while anything typed after the click belongs to
+  // the clicked control alone.
   {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "filter_editor", "a_focus_request_yields_to_a_control_the_user_chose");
     t->TestFunc = [](ImGuiTestContext* ctx) {
@@ -893,16 +972,25 @@ void RegisterFilterEditorTests(ImGuiTestEngine* engine) {
       ctx->Yield(2);
       OpenFilterModal(ctx);
       AuthorRow(ctx, 0, "1-2");
+      AuthorRow(ctx, 1, "3-4");
       ctx->ItemInput("**/##row_text_0");
       ctx->Yield(2);
       ctx->KeySetEx(ImGuiKey_Enter, true, 0.0f);
       ctx->Yield();
       ctx->KeySetEx(ImGuiKey_Enter, false, 0.0f);
-      ctx->ItemClick("**/Filter In##filter_action");  // the user chose another control mid-handoff
+      ctx->KeyChars("9");                 // accepted into the crossing before the click
+      ctx->ItemClick("**/##row_text_0");  // the user chose the row above, mid-handoff
       ctx->Yield(4);
+      ctx->KeyCharsReplace("7");  // typed after the click settled: the clicked box's edit
+      ctx->Yield(3);
 
-      IM_CHECK(ctx->ItemExists("**/##row_text_1"));                            // the creation itself survives
-      IM_CHECK_NE(ImGui::GetActiveID(), ctx->ItemInfo("**/##row_text_1").ID);  // ...without the focus
+      auto rows = RowTexts();
+      IM_CHECK_EQ(rows.size(), static_cast<size_t>(3));
+      IM_CHECK_STR_EQ(rows[0].c_str(), "7");  // the clicked control got the late keystrokes
+      IM_CHECK_STR_EQ(rows[1].c_str(), "9");  // the accepted keystroke landed in the crossing's row, exactly once
+      IM_CHECK_STR_EQ(rows[2].c_str(), "3-4");
+      IM_CHECK(ctx->ItemExists("**/##row_text_2"));                            // the creation itself survives
+      IM_CHECK_NE(ImGui::GetActiveID(), ctx->ItemInfo("**/##row_text_2").ID);  // ...without the focus
 
       ctx->ItemClick(kCancel);
       ctx->Yield(2);
@@ -932,6 +1020,110 @@ void RegisterFilterEditorTests(ImGuiTestEngine* engine) {
       IM_CHECK(!ctx->ItemExists("**/##row_text_1"));  // no refill
       IM_CHECK_STR_EQ(RowTexts()[0].c_str(), "");
       IM_CHECK_NE(ImGui::GetActiveID(), ctx->ItemInfo("**/##row_text_0").ID);
+
+      ctx->ItemClick(kCancel);
+      ctx->Yield(2);
+    };
+  }
+
+  // An Enter arriving while the creation handoff is still crossing must not be dropped by the
+  // activation frame's key-skip: it accepts the crossing's parked text into the target row and
+  // creates the next blank below it — the same outcome as typing after the handoff had settled —
+  // without the target ever taking the editor (that would swallow the next handoff whole).
+  {
+    ImGuiTest* t =
+        IM_REGISTER_TEST(engine, "filter_editor", "enter_during_the_handoff_accepts_the_parked_text_and_creates_below");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      ctx->Yield(2);
+      OpenFilterModal(ctx);
+      AuthorRow(ctx, 0, "1-2");
+      AuthorRow(ctx, 1, "3-4");
+      ctx->ItemInput("**/##row_text_0");
+      ctx->Yield(2);
+      ctx->KeySetEx(ImGuiKey_Enter, true, 0.0f);
+      ctx->Yield();  // frame N: blank uid2 inserted, request armed
+      ctx->KeySetEx(ImGuiKey_Enter, false, 0.0f);
+      ctx->KeyChars("9");  // frame N+1: the crossing frame
+      ctx->Yield();
+      ctx->KeySetEx(ImGuiKey_Enter, true, 0.0f);  // frame N+2: the activation frame — the key is intercepted
+      ctx->Yield();
+      ctx->KeySetEx(ImGuiKey_Enter, false, 0.0f);
+      ctx->Yield(4);
+
+      auto rows = RowTexts();
+      IM_CHECK_EQ(rows.size(), static_cast<size_t>(4));
+      IM_CHECK_STR_EQ(rows[0].c_str(), "1-2");
+      IM_CHECK_STR_EQ(rows[1].c_str(), "9");  // the parked text was accepted into the crossing's row
+      IM_CHECK_STR_EQ(rows[2].c_str(), "");   // the new blank sits right below it
+      IM_CHECK_STR_EQ(rows[3].c_str(), "3-4");
+      IM_CHECK_EQ(ImGui::GetActiveID(), ctx->ItemInfo("**/##row_text_3").ID);  // the NEW handoff, not the old target
+
+      ctx->KeyChars("5");  // and the new blank is the editor: typing lands there
+      ctx->Yield(3);
+      IM_CHECK_STR_EQ(RowTexts()[2].c_str(), "5");
+
+      ctx->ItemClick(kCancel);
+      ctx->Yield(2);
+    };
+  }
+
+  // Navigation during the handoff must behave like navigation after it: the same keystrokes
+  // accepted during the crossing then a Tab, versus typed after settling then a Tab, leave the
+  // row with the same text, move focus on without letting the handoff steal it back, and nothing
+  // re-flows into the row afterwards. Two legs, one expected outcome.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "filter_editor", "navigation_during_the_handoff_keeps_the_accepted_chars");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      // Leg A: "9" is accepted into the crossing, then the user Tabs mid-handoff.
+      ResetTestState();
+      ctx->Yield(2);
+      OpenFilterModal(ctx);
+      AuthorRow(ctx, 0, "1-2");
+      ctx->ItemInput("**/##row_text_0");
+      ctx->Yield(2);
+      ctx->KeySetEx(ImGuiKey_Enter, true, 0.0f);
+      ctx->Yield();  // frame N: blank uid1 inserted, request armed
+      ctx->KeySetEx(ImGuiKey_Enter, false, 0.0f);
+      ctx->KeyChars("9");  // frame N+1: the crossing frame
+      ctx->Yield();
+      ctx->KeySetEx(ImGuiKey_Tab, true, 0.0f);  // frame N+2: the user navigates mid-handoff
+      ctx->Yield();
+      ctx->KeySetEx(ImGuiKey_Tab, false, 0.0f);
+      ctx->Yield(4);
+      auto rows = RowTexts();
+      IM_CHECK_EQ(rows.size(), static_cast<size_t>(2));
+      IM_CHECK_STR_EQ(rows[1].c_str(), "9");  // the accepted keystroke stayed in the row
+      IM_CHECK_NE(ImGui::GetActiveID(), ctx->ItemInfo("**/##row_text_1").ID);  // no late steal: the Tab decided
+      ctx->KeyChars("5");  // typing after the navigation must not re-flow into the row
+      ctx->Yield(3);
+      IM_CHECK_STR_EQ(RowTexts()[1].c_str(), "9");
+
+      // Leg B: the same keystrokes typed after the handoff settled, then the same Tab.
+      ResetTestState();
+      ctx->Yield(2);
+      OpenFilterModal(ctx);
+      AuthorRow(ctx, 0, "1-2");
+      ctx->ItemInput("**/##row_text_0");
+      ctx->Yield(2);
+      ctx->KeySetEx(ImGuiKey_Enter, true, 0.0f);
+      ctx->Yield();
+      ctx->KeySetEx(ImGuiKey_Enter, false, 0.0f);
+      ctx->Yield(4);
+      IM_CHECK_EQ(ImGui::GetActiveID(), ctx->ItemInfo("**/##row_text_1").ID);  // premise: settled editor
+      ctx->KeyChars("9");
+      ctx->Yield(3);
+      ctx->KeySetEx(ImGuiKey_Tab, true, 0.0f);
+      ctx->Yield();
+      ctx->KeySetEx(ImGuiKey_Tab, false, 0.0f);
+      ctx->Yield(4);
+      rows = RowTexts();
+      IM_CHECK_EQ(rows.size(), static_cast<size_t>(2));
+      IM_CHECK_STR_EQ(rows[1].c_str(), "9");  // identical to leg A
+      IM_CHECK_NE(ImGui::GetActiveID(), ctx->ItemInfo("**/##row_text_1").ID);
+      ctx->KeyChars("5");
+      ctx->Yield(3);
+      IM_CHECK_STR_EQ(RowTexts()[1].c_str(), "9");
 
       ctx->ItemClick(kCancel);
       ctx->Yield(2);
