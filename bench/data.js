@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795400400716,
+  "lastUpdate": 1795400402459,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9620,50 +9620,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "1ef8e6d0040a4eaf101f1b281d41bcf7cfc036a4",
-          "message": "Merge pull request #510 from LoveDaisy/chore/restore-bisection-registration\n\nchore(test): restore the endpoint-bisection registry entry dropped in #507",
-          "timestamp": "2026-10-18T13:00:24+08:00",
-          "tree_id": "124086edda2c319809900322ef073b4ba1c6808c",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/1ef8e6d0040a4eaf101f1b281d41bcf7cfc036a4"
-        },
-        "date": 1792299791734,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 89.5,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 99.9,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 99.8,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 93.5,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "872baa366d78c2065a37645eb3bd9ac33ef78cdb",
           "message": "Merge pull request #511 from LoveDaisy/feat/raypath-survey-c01-delta\n\nfeat(raypath): survey C01 full-dimensional delta machine, radial probe and chromatic layer v1",
           "timestamp": "2026-10-18T16:00:38+08:00",
@@ -14003,6 +13959,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 94.6,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "0a1784dc996df84bf94c4ff774ba5f33d0560fac",
+          "message": "Merge pull request #631 from LoveDaisy/feat/map-request-symmetry-bits\n\nfeat(capi,map): carry true symmetry bits in map requests",
+          "timestamp": "2026-11-23T10:15:59+08:00",
+          "tree_id": "662a5fd31b8a2a2fde9798f38adc9ad4e5401e8f",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/0a1784dc996df84bf94c4ff774ba5f33d0560fac"
+        },
+        "date": 1795400402069,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 94.1,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 100.1,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 98.5,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 94.2,
             "unit": "%"
           }
         ]
