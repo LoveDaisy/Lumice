@@ -1215,6 +1215,78 @@ TEST(SinglePathFactors, RatioReferenceVerifiesTheTransportedCorridorBeforePublis
   EXPECT_GT(published, 0) << "the corridor check refuses poses, not the correspondence itself";
 }
 
+ConfigManager ZigzagRollScene() {
+  // Zigzag roll endpoints declare +inf (the density law's own reading at its support edge); the
+  // near-fixed GaussianLegacy latitude keeps every other read finite or −inf (off-support).
+  PrismCrystalParam prism;
+  prism.h_ = Fixed(1.2f);
+  for (auto& d : prism.d_) {
+    d = Fixed(1.0f);
+  }
+  ConfigManager scene = Scene(prism);
+  CrystalConfig& crystal = scene.crystals_.at(1);
+  crystal.axis_.azimuth_dist = { DistributionType::kUniform, 0.0f, 360.0f };
+  crystal.axis_.latitude_dist = { DistributionType::kGaussianLegacy, 12.345f, 0.0001f };
+  crystal.axis_.roll_dist = { DistributionType::kZigzag, 0.0f, 90.0f };
+  return scene;
+}
+
+TEST(SinglePathFactors, MixedInfinityRatioKeepsItsSignedAnswer) {
+  // Zigzag endpoints declare +inf; transported poses of the sibling land off-support (−inf) or
+  // finite. Every state pair the subtraction can meet reads its declared answer: opposite
+  // infinities keep their signed ratio, a finite member against a diverging reference reads the
+  // negative infinity, like infinities stay incomparable (NaN, never 0) — the old
+  // both-non-finite guard turned exactly the signed answers into NaN. Both seats of the same
+  // correspondence are witnessed (the swapped numerator/denominator direction).
+  auto request = Request({ 3 }, 20.0, 180.0);
+  request.sample_count = 10000;
+  request.ratio_reference_faces = { 6 };
+  PointResult forward;
+  ASSERT_TRUE(AnalyzePathPointValue(ZigzagRollScene(), request, false, &forward).Ok());
+  int forward_signed = 0;
+  for (const FiberComponent& component : forward.Data().Discovered().components) {
+    for (const PointDetail& p : component.points) {
+      if (!p.valid || p.log_rho != std::numeric_limits<double>::infinity() ||
+          p.ref_log_density != -std::numeric_limits<double>::infinity()) {
+        continue;  // the witnessed state pair: an on-endpoint member point, an off-support reference
+      }
+      EXPECT_EQ(p.log_ratio, std::numeric_limits<double>::infinity());
+      ++forward_signed;
+    }
+  }
+  EXPECT_GT(forward_signed, 0) << "+inf member against a −inf reference: the ratio is +inf, not NaN";
+  // The swapped correspondence (the reference's member in the seat): the signed answers now
+  // read the other way — a finite member against a diverging reference is −inf, and the like
+  // infinities (member on an endpoint, reference too; member off-support, reference too) stay
+  // incomparable NaN.
+  auto swapped = Request({ 6 }, 20.0, 180.0);
+  swapped.sample_count = 10000;
+  swapped.ratio_reference_faces = { 3 };
+  PointResult reverse;
+  ASSERT_TRUE(AnalyzePathPointValue(ZigzagRollScene(), swapped, false, &reverse).Ok());
+  int negative_signed = 0;
+  int like_inf_incomparable = 0;
+  for (const FiberComponent& component : reverse.Data().Discovered().components) {
+    for (const PointDetail& p : component.points) {
+      if (!p.valid) {
+        continue;
+      }
+      if (std::isfinite(p.log_rho) && p.ref_log_density == std::numeric_limits<double>::infinity()) {
+        EXPECT_EQ(p.log_ratio, -std::numeric_limits<double>::infinity());
+        ++negative_signed;
+      }
+      const bool member_inf = !std::isfinite(p.log_rho);
+      const bool ref_inf = !std::isfinite(p.ref_log_density) && !std::isnan(p.ref_log_density);
+      if (member_inf && ref_inf && std::signbit(p.log_rho) == std::signbit(p.ref_log_density)) {
+        EXPECT_TRUE(std::isnan(p.log_ratio)) << "like infinities subtract to incomparable, whatever the sign";
+        ++like_inf_incomparable;
+      }
+    }
+  }
+  EXPECT_GT(negative_signed, 0) << "finite member against a +inf reference: the ratio is −inf";
+  EXPECT_GT(like_inf_incomparable, 0) << "like infinities must read incomparable, not a signed answer";
+}
+
 // A fixed axis (every slot a Dirac): the linear rho answers 0 off the Dirac slice and the log
 // answers −inf — the same statement in log vocabulary. With no ordinary density reading
 // anywhere on the fiber, the interpretive pose is honestly absent: this search has not found

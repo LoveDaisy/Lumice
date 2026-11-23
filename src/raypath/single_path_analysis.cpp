@@ -734,11 +734,11 @@ void AttachRatioReference(PathContext& ctx, const CrystalElement& carrier, const
       }
       const double ref_log = ctx.PoseLogDensity(transported);
       point.ref_log_density = ref_log;
-      // Both sides off-support is incomparable (0/0), not zero; one side off-support against a
-      // finite reference keeps its signed infinity.
-      if (!std::isfinite(point.log_rho) && !std::isfinite(ref_log)) {
-        continue;
-      }
+      // The subtraction spells every state itself (IEEE, deliberately no guard): finite minus
+      // finite is the ratio; one off-support side against a finite reference keeps its signed
+      // infinity; opposite infinities keep their signed answer (+inf against −inf reads +inf,
+      // reversed −inf); like infinities — both off-support, or both at a declared endpoint —
+      // subtract to NaN, incomparable rather than zero; a NaN input stays NaN.
       point.log_ratio = point.log_rho - ref_log;
     }
   }

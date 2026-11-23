@@ -90,8 +90,9 @@ nlohmann::ordered_json Conventions() {
       "member, ref_log_density is the same measure's log density at the algebraically transported "
       "corresponding pose (world-ray identity re-verified per point) and log_ratio = log_rho - "
       "ref_log_density: a statement about this pose pair only, never a member-wide bound; null "
-      "means not offered or not verified here, and both sides off-support is incomparable (null), "
-      "not 0" },
+      "means not offered or not verified here, alike infinities are incomparable (null, never "
+      "0), opposite infinities keep their signed answer, a one-sided off-support keeps its "
+      "signed infinity" },
     { "interpretive_pose",
       "the recovered branch point with the greatest closed-form log density (first among ties): "
       "the initial interpretation's pose, deterministic in the recovered set — sample_count, "

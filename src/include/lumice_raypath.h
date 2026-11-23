@@ -1203,8 +1203,9 @@ typedef struct LUMICE_PathPointSample {
 // algebraically transported corresponding pose (the world-ray identity re-verified per point;
 // ±inf carries a one-sided off-support answer) and log_ratio = log_rho - ref_log_density — a
 // statement about THIS pose pair, never a member-wide bound. NaN (checked with isnan, not ==)
-// means the read is not offered or not verified here; both sides off-support is incomparable and
-// reads NaN, not 0.
+// means the read is not offered or not verified here; alike infinities are incomparable and read
+// NaN (both sides off-support, or both at a declared endpoint's divergence, never 0), opposite
+// infinities keep their signed answer, a one-sided off-support keeps its signed infinity.
 typedef struct LUMICE_PathPointDensity {
   size_t struct_size;
   double log_rho;

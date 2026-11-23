@@ -104,8 +104,9 @@ v4.63 把点面的闭式密度事实以 log 空间发布——纯追加、只读
 仅当点落在太阳竖直面内时固定——会移动天空点的载体以 `invalid_argument` 拒绝：同点比率
 不存在），对应关系逐点复核世界射线恒等与参考有限走廊两面：参考有限几何拒绝的姿态让该样本
 的参考字段保持 NaN，不给出貌似合理的数。`log_rho` 本身在深尾保持有限 log（线性 `rho` 在此下溢为
-read-as-zero 0）；−inf 表示离支撑或 Dirac 切片，绝非无光，也没有阈值规定多小算小。双方均
-离支撑读 NaN（不可比），单侧离支撑保留带号无穷。`LUMICE_PathPointGetInterpretivePose` 给出
+read-as-zero 0）；−inf 表示离支撑或 Dirac 切片，绝非无光，也没有阈值规定多小算小。同号无穷
+相减读 NaN（不可比——双方均离支撑，或双方都在已声明的发散端点），异号无穷保留带号答案，
+单侧离支撑保留带号无穷。`LUMICE_PathPointGetInterpretivePose` 给出
 恢复集的确定性闭式密度 argmax（平局取首；不宣称全局最大；不可用=本次搜索尚未找到，非不存在）。
 新结构 `LUMICE_PathPointDensity` 与 `LUMICE_PathPointInterpretive` 加入读取面；既有 reader
 结构零增长，既有符号与行为不变。局部类答案面仍是唯一新增查询形态：这些是单成员自身点结果

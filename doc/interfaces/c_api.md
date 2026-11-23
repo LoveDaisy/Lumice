@@ -128,8 +128,9 @@ AND the reference's finite corridor: a pose the reference's finite geometry refu
 sample's reference fields NaN rather than a plausible number.
 `log_rho` itself keeps a deep tail's finite log where the linear `rho` underflows to a
 read-as-zero 0; −inf means off-support or a Dirac slot's slice, never darkness, and no
-threshold decides how small is small. Both sides off-support reads NaN (incomparable), a
-one-sided off-support keeps its signed infinity. `LUMICE_PathPointGetInterpretivePose` names
+threshold decides how small is small. Like infinities read NaN (incomparable — both sides
+off-support, or both at a declared endpoint's divergence), opposite infinities keep their
+signed answer, a one-sided off-support keeps its signed infinity. `LUMICE_PathPointGetInterpretivePose` names
 the recovered set's deterministic closed-form density argmax (first among ties; claims no
 global maximum; unavailable = this search has not found one, not that none exists). New
 structs `LUMICE_PathPointDensity` and `LUMICE_PathPointInterpretive` join the readers; no
