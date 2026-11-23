@@ -349,12 +349,18 @@ def _check_published_request_extents_and_future_tail_keep_borrowed_result_alive(
 
         future = FuturePointRequest()
         future.base = request
-        C.memset(C.addressof(future) + C.sizeof(PointRequest), 0xA5, 32)
-        future.base.struct_size = C.sizeof(PointRequest) + 16
+        # The v4.63 append moved the library-known field window to [120, 136): the first 16 tail
+        # bytes are now fields the library READS at this extent, so they stay zero (NULL faces /
+        # zero count = no ratio reference — an old-header caller's zero-initialized tail is
+        # exactly that), and the poison starts where the library's known fields end. The tail
+        # bytes beyond must be neither read destructively nor written.
+        C.memset(C.addressof(future) + C.sizeof(PointRequest), 0x00, 16)
+        C.memset(C.addressof(future) + 136, 0xA5, 16)
+        future.base.struct_size = C.sizeof(PointRequest) + 32
         result = C.c_void_p()
         assert lib.LUMICE_PathWorkspaceQueryPoint(workspace, C.byref(future), C.byref(options),
                                                   C.byref(result), err, len(err)) == 0, err.value
-        assert C.string_at(C.addressof(future) + C.sizeof(PointRequest), 32) == bytes([0xA5] * 32)
+        assert C.string_at(C.addressof(future) + 136, 16) == bytes([0xA5] * 16)
     finally:
         lib.LUMICE_PathWorkspaceDestroy(workspace)
 
