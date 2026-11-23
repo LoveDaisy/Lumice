@@ -79,7 +79,7 @@ typedef struct LUMICE_SinglePathRequest {
   // request extents); 1 = literal requested sequence. Other values are invalid. The point's
   // fiber and members always remain literal, independent of this context selection.
   int context_symmetry_bits_plus_one;
-  // Appended v4.63. Optional density-ratio reference: another member's face sequence, the same
+  // Appended v4.64. Optional density-ratio reference: another member's face sequence, the same
   // single-layer encoding as `faces` (refused as invalid_argument when it is not a legal path or
   // no element whose sky action fixes the target point maps the requested member onto it — a
   // carrier that would move the sky point answers a different question; a proper element always
@@ -704,7 +704,7 @@ LUMICE_API LUMICE_PathReadStatus LUMICE_LocalClassGetInfo(const LUMICE_LocalClas
 LUMICE_API LUMICE_PathReadStatus LUMICE_LocalClassGetClass(const LUMICE_LocalClass* result, int index,
                                                            LUMICE_LocalClassDetail* out);
 
-// ---- The interpretive-point answer face (v4.64) ----------------------------------------------
+// ---- The interpretive-point answer face (v4.65) ----------------------------------------------
 // The engine-side chain the local-class answer feeds: "row scope + sky direction -> the
 // interpretive class -> the representative member's own payload", with resolution and every
 // member evaluation settled within ONE query deadline. A caller — GUI or CLI — reads this one
@@ -1194,7 +1194,7 @@ typedef struct LUMICE_PathPointSample {
   size_t interface_count;
 } LUMICE_PathPointSample;
 
-// Appended v4.63: one sample's closed-form density facts in log space (read through
+// Appended v4.64: one sample's closed-form density facts in log space (read through
 // LUMICE_PathPointGetSampleDensity). log_rho is the declared joint pose density's log (angle
 // Lebesgue): a deep tail keeps its finite log where the linear rho underflows to 0; -inf means
 // what rho's 0 means — off the support, or a Dirac slot's slice ("no ordinary density", never a
@@ -1213,7 +1213,7 @@ typedef struct LUMICE_PathPointDensity {
   double log_ratio;
 } LUMICE_PathPointDensity;
 
-// Appended v4.63: the initial interpretation's pose (LUMICE_PathPointGetInterpretivePose) — the
+// Appended v4.64: the initial interpretation's pose (LUMICE_PathPointGetInterpretivePose) — the
 // recovered branch point with the greatest closed-form log density, first among ties.
 // Deterministic in the recovered set (sample_count, seeds and discovery order cannot move it);
 // claims no global maximum. available 0 means no recovered valid point carries an ordinary
@@ -1227,7 +1227,7 @@ typedef struct LUMICE_PathPointInterpretive {
   double log_density;
 } LUMICE_PathPointInterpretive;
 
-// Appended v4.63: the density-ratio reference member this query named, frozen with the result
+// Appended v4.64: the density-ratio reference member this query named, frozen with the result
 // (LUMICE_PathPointGetRatioReference) — the ratio block's numbers are relative to THIS member's
 // transported poses, and a consumer holding only the result reads the denominator here. faces
 // is a read-only borrow (valid until Destroy); NULL / count 0 when the query named no reference
@@ -2828,16 +2828,16 @@ LUMICE_API LUMICE_PathReadStatus LUMICE_PathPointGetComponent(const LUMICE_Singl
                                                               LUMICE_PathPointComponent* out);
 LUMICE_API LUMICE_PathReadStatus LUMICE_PathPointGetSample(const LUMICE_SinglePathResult* result, size_t component,
                                                            size_t index, LUMICE_PathPointSample* out);
-// Appended v4.63. One sample's log-space density facts (the struct's comment names each field's
+// Appended v4.64. One sample's log-space density facts (the struct's comment names each field's
 // states). Same borrow/struct_size contract as every reader: a caller extent smaller than this
 // version's LUMICE_PathPointDensity is refused without writing.
 LUMICE_API LUMICE_PathReadStatus LUMICE_PathPointGetSampleDensity(const LUMICE_SinglePathResult* result,
                                                                   size_t component, size_t index,
                                                                   LUMICE_PathPointDensity* out);
-// Appended v4.63. The initial interpretation's pose (the struct's comment names the states).
+// Appended v4.64. The initial interpretation's pose (the struct's comment names the states).
 LUMICE_API LUMICE_PathReadStatus LUMICE_PathPointGetInterpretivePose(const LUMICE_SinglePathResult* result,
                                                                      LUMICE_PathPointInterpretive* out);
-// Appended v4.63. The density-ratio reference member this query named (the struct's comment
+// Appended v4.64. The density-ratio reference member this query named (the struct's comment
 // names the states).
 LUMICE_API LUMICE_PathReadStatus LUMICE_PathPointGetRatioReference(const LUMICE_SinglePathResult* result,
                                                                    LUMICE_PathRatioReference* out);

@@ -45,7 +45,7 @@ Lumice 的 C API 按能力拆成六个头文件，每个能力一个；按用到
 ```c
 // lumice_api_version.h——叶子头；在使用该宏的文件里显式包含
 //（lumice_base.h 刻意不包含它，原因见下）
-#define LUMICE_API_VERSION 464        // ABI 版本，编码为 major*100 + minor（v4.64）
+#define LUMICE_API_VERSION 465        // ABI 版本，编码为 major*100 + minor（v4.65）
 
 // lumice_base.h
 #define LUMICE_MAX_RENDER_RESULTS 16  // 渲染结果数组最大容量
@@ -96,7 +96,7 @@ Workspace 只在共享准入通过后注入自动 warm 候选；不兼容自动�
 显式 warm 不被自动槽覆盖，失配仍严格拒绝。逐事实数值资格、结果/warm 独立寿命保持不变，
 没有新增导出符号。
 
-v4.63 把点面的闭式密度事实以 log 空间发布——纯追加、只读构造。`LUMICE_SinglePathRequest`
+v4.64 把点面的闭式密度事实以 log 空间发布——纯追加、只读构造。`LUMICE_SinglePathRequest`
 尾部追加 `ratio_reference_faces`/`ratio_reference_face_count`（仅新完整 extent 读取；NULL 与
 旧 extent 行为逐字保持）：另一成员的单层面序列。存在时，`LUMICE_PathPointGetSampleDensity`
 逐样本报告同一声明测度在代数搬运对应姿态处的 log 密度及 `log_ratio`。搬运走引擎元素代数
@@ -112,7 +112,7 @@ read-as-zero 0）；−inf 表示离支撑或 Dirac 切片，绝非无光，也�
 结构零增长，既有符号与行为不变。局部类答案面仍是唯一新增查询形态：这些是单成员自身点结果
 的事实，不是变换原语。
 
-v4.64 加入解释点答案面——纯追加。`LUMICE_InterpretivePointRequest`、不透明的
+v4.65 加入解释点答案面——纯追加。`LUMICE_InterpretivePointRequest`、不透明的
 `LUMICE_InterpretivePoint`、`LUMICE_PathWorkspaceQueryInterpretivePoint`、
 `LUMICE_InterpretivePointDestroy` 与三个读者（`GetClasses` / `GetPoint` / `GetSelection`）。
 这是局部类答案所喂的引擎侧链：行 scope + 天空方向 → 该点的类 → 解释类 → 所选成员自己的点

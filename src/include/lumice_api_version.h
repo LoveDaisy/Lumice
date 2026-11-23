@@ -577,6 +577,15 @@
 // LUMICE_PathProbeRequest. Zero and older complete extents retain physical P|B|D context;
 // one requests literal context. Point fibers and representative-member probe quantities are
 // unchanged. No symbols added; existing request prefixes retain their layout and behavior.
+// ADDED (v4.65): the interpretive-point answer face, a pure append —
+// LUMICE_InterpretivePointRequest, LUMICE_InterpretivePoint (opaque),
+// LUMICE_PathWorkspaceQueryInterpretivePoint, LUMICE_InterpretivePointDestroy and the
+// LUMICE_InterpretivePointSelection struct with three readers (Classes / Point / Selection).
+// One engine-side chain: row scope + sky direction -> the interpretive class -> the selected
+// member's own point payload, resolution and member evaluation settled within one query
+// deadline; the class and point faces are the existing readers on borrowed handles. A fixed
+// row member skips the selection and keeps its own geometry and log facts. No existing symbol
+// or struct layout changed.
 // ADDED (v4.64): the point face's closed-form density facts in log space, a pure append —
 // ratio_reference_faces/ratio_reference_face_count appended to LUMICE_SinglePathRequest (read
 // only on the new complete extent; NULL and older extents keep the exact previous behavior),
@@ -587,15 +596,6 @@
 // (world-ray identity re-verified per point) and the per-pose log ratio; the interpretive pose
 // is the recovered set's deterministic closed-form density argmax. No existing reader struct
 // grew and no symbol or behavior changed for existing callers.
-// ADDED (v4.65): the interpretive-point answer face, a pure append —
-// LUMICE_InterpretivePointRequest, LUMICE_InterpretivePoint (opaque),
-// LUMICE_PathWorkspaceQueryInterpretivePoint, LUMICE_InterpretivePointDestroy and the
-// LUMICE_InterpretivePointSelection struct with three readers (Classes / Point / Selection).
-// One engine-side chain: row scope + sky direction -> the interpretive class -> the selected
-// member's own point payload, resolution and member evaluation settled within one query
-// deadline; the class and point faces are the existing readers on borrowed handles. A fixed
-// row member skips the selection and keeps its own geometry and log facts. No existing symbol
-// or struct layout changed.
 // ADDED (v4.63): symmetry_bits_plus_one appended to LUMICE_PathMapRequest, the survey request's
 // member encoding generalized to the map's two entries. Zero and the older complete extent keep
 // the all-members class the map always evaluated; 1..8 select the concrete P/B/D member set the

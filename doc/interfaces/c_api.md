@@ -46,7 +46,7 @@ Link against the `lumice` static library.
 ```c
 // lumice_api_version.h — a leaf header; include it explicitly where the macro is used
 // (lumice_base.h deliberately does not include it, see below)
-#define LUMICE_API_VERSION 464        // ABI version, encoded major*100 + minor (v4.64)
+#define LUMICE_API_VERSION 465        // ABI version, encoded major*100 + minor (v4.65)
 
 // lumice_base.h
 #define LUMICE_MAX_RENDER_RESULTS 16  // Maximum capacity of the render result array
@@ -113,7 +113,7 @@ incompatible candidates are misses, not query errors. Explicit warm input is nev
 by the automatic slot, and incompatible explicit input still fails admission. The per-fact
 numeric qualification and independent result/warm lifetimes are unchanged. No export was added.
 
-From v4.63, the point face publishes its closed-form density facts in log space — a pure
+From v4.64, the point face publishes its closed-form density facts in log space — a pure
 append, read-only by construction. `LUMICE_SinglePathRequest` appends
 `ratio_reference_faces`/`ratio_reference_face_count` (read only on the new complete extent;
 NULL and older extents keep the exact previous behavior): another member's single-layer face
@@ -138,7 +138,7 @@ existing reader struct grew and no existing symbol or behavior changed. The loca
 answer face stays the only new query form: these are facts about one member's own point
 result, not transform primitives.
 
-From v4.64, the interpretive-point answer face joins as a pure append —
+From v4.65, the interpretive-point answer face joins as a pure append —
 `LUMICE_InterpretivePointRequest`, the opaque `LUMICE_InterpretivePoint`,
 `LUMICE_PathWorkspaceQueryInterpretivePoint`, `LUMICE_InterpretivePointDestroy`, and three
 readers (`LUMICE_InterpretivePointGetClasses` / `GetPoint` / `GetSelection`). It is the

@@ -214,7 +214,7 @@ TEST(SinglePathCApi, TypedReadersUseResultOwnedStorageAndBoundedExtents) {
 
 // The Parry-style axis (zenith gauss 90±1, azimuth full turn, roll gauss 0±1) spelled through the
 // scene JSON's axis distributions: the closed-form density facts in log space, the ratio
-// reference and the interpretive pose, all read through C (v4.63's pure append). Named apart
+// reference and the interpretive pose, all read through C (v4.64's pure append). Named apart
 // from the local-class face's kParryScene below (this one rides the classic {3,5} fixture).
 constexpr const char* kParryDensityScene = R"({
   "crystal": [ { "id": 1, "type": "prism", "shape": { "height": 1.0 },
@@ -1550,7 +1550,7 @@ TEST(LocalClassCApi, IllegalCallerInputIsRefusedNotFatal) {
 }
 
 
-// ---- the interpretive-point answer face (v4.64) ----------------------------------------------
+// ---- the interpretive-point answer face (v4.65) ----------------------------------------------
 
 TEST(InterpretivePointCApi, ParryMinus52AnswersClassesSelectionAndTheMembersOwnPayload) {
   const ScenePtr scene = MakeScene(kParryScene);
@@ -1741,7 +1741,7 @@ TEST(InterpretivePointCApi, FixedMemberCarriesTheRatioReferenceReadableThroughTh
   ASSERT_NE(result, nullptr);
   const LUMICE_SinglePathResult* point = nullptr;
   ASSERT_EQ(LUMICE_InterpretivePointGetPoint(result, &point), LUMICE_PATH_READ_OK);
-  // The reference identity freezes with the result (the v4.63 reader) and the verified
+  // The reference identity freezes with the result (the v4.64 reader) and the verified
   // samples carry finite transported reads — AC4's ratio facts inside the one query.
   LUMICE_PathRatioReference ratio_ref{};
   ratio_ref.struct_size = sizeof(ratio_ref);
