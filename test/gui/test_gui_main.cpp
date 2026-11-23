@@ -869,6 +869,7 @@ int main(int argc, char** argv) {
   RegisterBackgroundOverlayTests(engine);
   RegisterBgColorPickerModeTests(engine);
   RegisterFileOpsTests(engine);
+  RegisterDiagnosticsTests(engine);
   RegisterColorWindowTests(engine);
   RegisterFilterEditorTests(engine);
   RegisterEditModalTests(engine);
@@ -1149,6 +1150,13 @@ int main(int argc, char** argv) {
     // failure mode it exists to prevent, so it has to be reachable from here.
     gui::RenderExportOverwriteConfirmPopup();
     gui::RenderScreenshotExportOptionsPopup();
+    // Mirrors src/gui/main.cpp's diagnostics popups for the same reason as the
+    // two above: an export prompt only the product renders cannot be driven.
+    gui::RenderDiagnosticsExportPopup();
+    gui::RenderDiagnosticsOverwriteConfirmPopup();
+    // The saved notice, same mirror: the full-chain case's last assertion is
+    // that the user who just chose a location sees the outcome and the path.
+    gui::RenderDiagnosticsSavedPopup();
     // Mirrors src/gui/main.cpp: a Render*Panel that only the production loop calls is
     // unreachable for every gui_test ("Unable to locate item"), a failure this repo has
     // already paid for twice.
