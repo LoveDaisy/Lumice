@@ -93,7 +93,7 @@ class PathText(C.Structure):
     _fields_ = [("data", C.c_char_p), ("length", C.c_size_t)]
 
 
-class MapRequest(C.Structure):
+class MapRequestV462(C.Structure):
     _fields_ = [
         ("struct_size", C.c_size_t), ("crystal_id", C.c_int),
         ("faces", C.POINTER(C.c_int)), ("face_count", C.c_int),
@@ -104,6 +104,12 @@ class MapRequest(C.Structure):
         ("wavelengths_nm", C.POINTER(C.c_double)), ("wavelength_count", C.c_int),
         ("sample_count", C.c_int), ("budget_ms", C.c_int), ("interrupted", C.c_void_p),
     ]
+
+
+# The v4.63 layout: the member-selection append (0 = the all-members default; otherwise
+# (P=1, B=2, D=4) + 1). The witness class above stays the published older-client form.
+class MapRequestV463(C.Structure):
+    _fields_ = MapRequestV462._fields_ + [("symmetry_bits_plus_one", C.c_int)]
 
 
 class MapInfo(C.Structure):
@@ -477,9 +483,9 @@ def _check_other_request_families_accept_published_extents_and_preserve_future_t
 def _check_map_family_published_extents_and_cross_destroy_reads():
     """The map family against the installed product library: standalone and workspace entries,
     the reader contracts, the future-tail acceptance, and reads that survive the workspace."""
-    assert C.sizeof(MapRequest) == 120
-    assert (MapRequest.wavelengths_nm.offset, MapRequest.sample_count.offset,
-            MapRequest.interrupted.offset) == (88, 100, 112)
+    assert C.sizeof(MapRequestV462) == 120
+    assert (MapRequestV462.wavelengths_nm.offset, MapRequestV462.sample_count.offset,
+            MapRequestV462.interrupted.offset) == (88, 100, 112)
     lib = _product_library()
     lib.LUMICE_SceneFromJsonFile.argtypes = [C.c_char_p, C.POINTER(C.c_void_p)]
     lib.LUMICE_SceneFromJsonFile.restype = C.c_int
@@ -503,7 +509,7 @@ def _check_map_family_published_extents_and_cross_destroy_reads():
     config = ROOT / "test" / "e2e" / "configs" / "raypath_feature_random_regular.json"
 
     def make_request():
-        request = MapRequest()
+        request = MapRequestV463()
         request.crystal_id = 1
         request.faces = faces
         request.face_count = 2
@@ -542,6 +548,39 @@ def _check_map_family_published_extents_and_cross_destroy_reads():
     ok_cells = sum(1 for p in range(pixels.pixel_count) if pixels.status[p] == 1)
     assert ok_cells > 0
     lib.LUMICE_PathMapDestroy(standalone)
+    # The older-client witness: the v4.62 complete extent rides both entries with the appended
+    # field poisoned and keeps the all-members default the map has always evaluated. The tail
+    # must never be read (a premature read would refuse these requests, not accept them).
+    def poisoned_legacy_request():
+        client = MapRequestV463()
+        base = make_request()
+        C.memmove(C.addressof(client), C.addressof(base), C.sizeof(MapRequestV462))
+        client.struct_size = C.sizeof(MapRequestV462)
+        client.symmetry_bits_plus_one = 999  # beyond the extent: unread
+        return client
+
+    legacy_standalone = C.c_void_p()
+    poisoned_standalone = poisoned_legacy_request()
+    assert lib.LUMICE_AnalyzePathMap(scene, C.byref(poisoned_standalone), C.byref(legacy_standalone), err, len(err)) == 0, \
+        err.value
+    info = MapInfo()
+    info.struct_size = C.sizeof(info)
+    assert lib.LUMICE_PathMapGetInfo(legacy_standalone, C.byref(info)) == 0
+    assert info.member_count == 12, info.member_count  # the full uniform-prism class
+    lib.LUMICE_PathMapDestroy(legacy_standalone)
+
+    # The new layout selects the member set: the literal encoding evaluates the 3-5 sequence alone.
+    literal_request = make_request()
+    literal_request.struct_size = C.sizeof(literal_request)
+    literal_request.symmetry_bits_plus_one = 1
+    literal_map = C.c_void_p()
+    assert lib.LUMICE_AnalyzePathMap(scene, C.byref(literal_request), C.byref(literal_map), err, len(err)) == 0, \
+        err.value
+    info = MapInfo()
+    info.struct_size = C.sizeof(info)
+    assert lib.LUMICE_PathMapGetInfo(literal_map, C.byref(info)) == 0
+    assert info.member_count == 1, info.member_count
+    lib.LUMICE_PathMapDestroy(literal_map)
 
     # The workspace entry, then reads that survive the workspace (and the scene).
     workspace = C.c_void_p()
@@ -553,17 +592,30 @@ def _check_map_family_published_extents_and_cross_destroy_reads():
     assert lib.LUMICE_PathWorkspaceQueryMap(workspace, C.byref(request), None, C.byref(owned), err, len(err)) == 0, \
         err.value
     class FutureMapRequest(C.Structure):
-        _fields_ = [("base", MapRequest), ("tail", C.c_ubyte * 32)]
+        _fields_ = [("base", MapRequestV463), ("tail", C.c_ubyte * 32)]
 
     future = FutureMapRequest()
     future.base = make_request()
-    C.memset(C.addressof(future) + C.sizeof(MapRequest), 0xA5, 32)
-    future.base.struct_size = C.sizeof(MapRequest) + 16
+    C.memset(C.addressof(future) + C.sizeof(MapRequestV463), 0xA5, 32)
+    future.base.struct_size = C.sizeof(MapRequestV463) + 16
     tail_result = C.c_void_p()
     assert lib.LUMICE_PathWorkspaceQueryMap(workspace, C.byref(future), None, C.byref(tail_result), err,
                                             len(err)) == 0, err.value
-    assert C.string_at(C.addressof(future) + C.sizeof(MapRequest), 32) == bytes([0xA5] * 32)
+    assert C.string_at(C.addressof(future) + C.sizeof(MapRequestV463), 32) == bytes([0xA5] * 32)
     lib.LUMICE_PathMapDestroy(tail_result)
+
+
+    legacy_workspace_request = poisoned_legacy_request()
+    legacy_owned = C.c_void_p()
+    assert lib.LUMICE_PathWorkspaceQueryMap(workspace, C.byref(legacy_workspace_request), None,
+                                            C.byref(legacy_owned), err, len(err)) == 0, err.value
+    info = MapInfo()
+    info.struct_size = C.sizeof(info)
+    assert lib.LUMICE_PathMapGetInfo(owned, C.byref(info)) == 0
+    assert info.member_count == 12, info.member_count
+    lib.LUMICE_PathMapDestroy(legacy_owned)
+
+
     lib.LUMICE_PathWorkspaceDestroy(workspace)
     info = MapInfo()
     info.struct_size = C.sizeof(info)

@@ -145,6 +145,12 @@ struct MapCaliberInput {
   LUMICE_PathMapPointMass mass{};
   const char* methods[kMapCaliberMaxMethods] = {};  // the mass arm's deduplicated method names
   bool completed = false;                           // the standing intent answered (gates the finite-zero line)
+  // The scope relation: 1 while the adopted map's member set (the request's true P/B/D bits)
+  // differs from the survey overlay's (the selected row's literal representative) — exactly the
+  // partial tick sets. Only a real difference draws the in-place scope note; the bits ride the
+  // input so the note names what THIS map evaluated, never the current tick state of a late frame.
+  uint8_t map_symmetry_bits = 7;
+  bool survey_scope_differs = false;
 };
 std::vector<std::string> MapCaliberDefaultLines(const MapCaliberInput& in);
 std::vector<std::string> MapCaliberPhysicsLines(const MapCaliberInput& in);

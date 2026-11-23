@@ -146,6 +146,13 @@ evaluation (one corridor evaluation, one chain evaluation, O(faces x corners) of
 workspace entry accepts the shared options shape and polls none of it; a non-null warm option is
 refused like the map's. No `ToJson` face; no existing symbol or struct layout changed.
 
+**v4.63** appends `symmetry_bits_plus_one` to `LUMICE_PathMapRequest`, the survey request's
+member encoding generalized to the map's two entries. Zero and the older complete extent keep
+the all-members class the map has always evaluated; 1..8 select the concrete P/B/D member set
+the band-sum evaluates member-by-member. An extent that does not carry the field is never read
+for it; values outside [0, 8] are refused. The reference map's caliber, lattice and readers are
+unchanged. No symbols added; existing request prefixes retain their layout and behavior.
+
 **v4.59** is a pure append, read-only by construction. Added the class reference map —
 `LUMICE_PathMapRequest`, the opaque `LUMICE_PathMap`, `LUMICE_AnalyzePathMap`,
 `LUMICE_PathWorkspaceQueryMap` and `LUMICE_PathMapDestroy`, plus

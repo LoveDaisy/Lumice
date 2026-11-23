@@ -179,6 +179,10 @@ constexpr size_t kProbeRequestSizeV462 =
     CompleteRequestPrefix(offsetof(LUMICE_PathProbeRequest, context_symmetry_bits_plus_one) + sizeof(int));
 constexpr size_t kFeatureReportRequestSizeV1 = offsetof(LUMICE_PathFeatureReportRequest, sample_count) + sizeof(int);
 constexpr size_t kSurveyRequestSizeV1 = offsetof(LUMICE_PathSurveyRequest, symmetry_bits_plus_one) + sizeof(int);
+// The map request as v4.62 published it, through its last v4.62 field: the v4.63 member-selection
+// append does not raise the smallest complete extent an old caller may present.
+constexpr size_t kPathMapRequestSizeV462 =
+    CompleteRequestPrefix(offsetof(LUMICE_PathMapRequest, interrupted) + sizeof(void*));
 
 void WriteError(char* err_buf, size_t err_size, const std::string& message) {
   if (err_buf == nullptr || err_size == 0) {
@@ -666,6 +670,16 @@ LUMICE_ErrorCode AnalyzeMap(const LUMICE_Scene* scene, const LUMICE_PathMapReque
                   err_buf, err_size);
   }
   req.interrupted = request.interrupted;
+  // The v4.63 member-selection append: read only when the caller's extent carries it; a zero or
+  // an older complete extent keeps the PathSelection default (all of P/B/D).
+  if (request.struct_size >= sizeof(LUMICE_PathMapRequest)) {
+    if (request.symmetry_bits_plus_one < 0 || request.symmetry_bits_plus_one > 8) {
+      return Refuse({ rp::ErrorCode::kInvalidArgument, "invalid physical symmetry bits" }, err_buf, err_size);
+    }
+    if (request.symmetry_bits_plus_one > 0) {
+      req.symmetry_bits = static_cast<uint8_t>(request.symmetry_bits_plus_one - 1);
+    }
+  }
 
   // The scene document LUMICE_CommitScene would hand the server, through the same parser.
   lumice::ConfigManager config;
@@ -949,11 +963,11 @@ LUMICE_ErrorCode LUMICE_AnalyzePathMap(const LUMICE_Scene* scene, const LUMICE_P
     WriteError(err_buf, err_size, "null_arg: scene, request and out must not be NULL");
     return LUMICE_ERR_NULL_ARG;
   }
-  if (request->struct_size < sizeof(LUMICE_PathMapRequest)) {
+  if (request->struct_size < kPathMapRequestSizeV462) {
     WriteError(err_buf, err_size,
                "invalid_argument: struct_size " + std::to_string(request->struct_size) +
-                   " is smaller than this version's LUMICE_PathMapRequest (" +
-                   std::to_string(sizeof(LUMICE_PathMapRequest)) + "); set it to sizeof(LUMICE_PathMapRequest)");
+                   " is smaller than the oldest published LUMICE_PathMapRequest (" +
+                   std::to_string(kPathMapRequestSizeV462) + "); set it to sizeof(LUMICE_PathMapRequest)");
     return LUMICE_ERR_INVALID_VALUE;
   }
   if ((request->faces == nullptr && request->face_count > 0) ||
@@ -1359,14 +1373,15 @@ LUMICE_ErrorCode LUMICE_PathWorkspaceQueryReport(LUMICE_PathWorkspace* workspace
 LUMICE_ErrorCode LUMICE_PathWorkspaceQueryMap(LUMICE_PathWorkspace* workspace, const LUMICE_PathMapRequest* request,
                                               const LUMICE_PathQueryOptions* options, LUMICE_PathMap** out,
                                               char* err_buf, size_t err_size) {
-  return RunWorkspaceQuery(
-      workspace, request, options, out, err_buf, err_size, { sizeof(LUMICE_PathMapRequest) }, false, [&] {
-        if (request->wavelengths_nm == nullptr && request->wavelength_count > 0) {
-          WriteError(err_buf, err_size, "null_arg: wavelengths_nm is NULL with non-zero count");
-          return LUMICE_ERR_NULL_ARG;
-        }
-        return AnalyzeMap(nullptr, *request, workspace->workspace.get(), options, out, err_buf, err_size);
-      });
+  return RunWorkspaceQuery(workspace, request, options, out, err_buf, err_size,
+                           { kPathMapRequestSizeV462, sizeof(LUMICE_PathMapRequest) }, false, [&] {
+                             if (request->wavelengths_nm == nullptr && request->wavelength_count > 0) {
+                               WriteError(err_buf, err_size, "null_arg: wavelengths_nm is NULL with non-zero count");
+                               return LUMICE_ERR_NULL_ARG;
+                             }
+                             return AnalyzeMap(nullptr, *request, workspace->workspace.get(), options, out, err_buf,
+                                               err_size);
+                           });
 }
 
 LUMICE_ErrorCode LUMICE_PathWorkspaceQueryRepresentativeRay(LUMICE_PathWorkspace* workspace,

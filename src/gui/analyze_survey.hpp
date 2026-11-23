@@ -159,8 +159,12 @@ inline constexpr int kPointQueryBudgetMs = 2000;
 struct MapIntentKey {
   SurveySelectionKey selection;
   double wavelength_nm = 0.0;  // 0 = the engine's reference resolution
+  // The map's own member selection: the true P/B/D bits the user currently has ticked (unlike
+  // the selection key's binary survey identity, every distinct combination is its own intent —
+  // a partial-to-partial change must retire the old map, not reuse it under the same labels).
+  uint8_t symmetry_bits = 7;
   bool operator==(const MapIntentKey& other) const {
-    return selection == other.selection && wavelength_nm == other.wavelength_nm;
+    return selection == other.selection && wavelength_nm == other.wavelength_nm && symmetry_bits == other.symmetry_bits;
   }
   bool operator!=(const MapIntentKey& other) const { return !(*this == other); }
 };

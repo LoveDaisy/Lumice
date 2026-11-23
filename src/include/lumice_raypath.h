@@ -423,6 +423,10 @@ typedef struct LUMICE_PathMapRequest {
   int budget_ms;
   const volatile int* interrupted;  // the caller's one-way stop flag (the engine only reads it,
                                     // never writes). NULL = no flag.
+  // ADDED (v4.63): the P/B/D member selection, the survey request's encoding (zero and older
+  // complete extents keep the all-members class; otherwise (P=1, B=2, D=4) + 1 selects the
+  // concrete member set). Values outside [0, 8] are refused (invalid_argument).
+  int symmetry_bits_plus_one;
 } LUMICE_PathMapRequest;
 
 typedef struct LUMICE_PathMap_ LUMICE_PathMap;

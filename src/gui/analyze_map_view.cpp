@@ -213,6 +213,14 @@ std::vector<std::string> MapCaliberDefaultLines(const MapCaliberInput& in) {
   if (info.kept_count == 0 && info.truncated == 0 && in.completed) {
     lines.emplace_back("No events in this view — a finite zero, not a refusal and not missing data.");
   }
+  if (in.survey_scope_differs) {
+    // The in-place scope note (the partial tick sets): the map's member set and the survey
+    // overlay's are different collections — the note rides the adopted map's own bits, so a
+    // late frame cannot relabel the old picture with the current ticks.
+    lines.emplace_back(
+        "Partial selection: the map sums the ticked P/B/D member set; the survey answer and its overlay markers stay "
+        "the row's literal representative.");
+  }
   if (in.have_mass) {
     std::string methods;
     for (size_t i = 0; i < kMapCaliberMaxMethods; ++i) {
@@ -336,6 +344,9 @@ LUMICE_PathMapRequest MakeMapRequestForKey(const MapIntentKey& key, std::vector<
   }
   request.sample_count = kMapQuerySampleCount;
   request.budget_ms = LUMICE_PATH_MAP_DEFAULT_BUDGET_MS;
+  // The map's true member selection rides explicitly (1..8): the GUI always states the set it
+  // wants, the 0 default stays the older callers' encoding (bitwise-equal for the full class).
+  request.symmetry_bits_plus_one = key.symmetry_bits + 1;
   return request;
 }
 
@@ -427,14 +438,17 @@ void PumpMapQuery(GuiState& state, SurveyExecutor& executor, double now_s, MapSo
   MapQuerySession& map = state.analysis.map;
   const auto identity = SelectedClassIdentityFor(state);
   const bool selected = identity.has_value() && state.analysis_result.payload != nullptr;
+  const uint8_t symmetry_bits = AnalysisSymmetryBits(state);
   SurveySelectionKey selection;
   if (selected) {
     selection = SurveySelectionKeyFor(*identity, state.analysis_result.payload->snapshot_generation);
   }
   // Invalidate before draining: no old capture/lambda may acquire the new labels, even for a
-  // frame. Camera fields are deliberately absent from this effect chain.
-  if (map.intent_valid &&
-      (!selected || map.key.selection != selection || map.key.wavelength_nm != state.analysis.map_wavelength_nm)) {
+  // frame. The map's true symmetry bits are part of the data identity — a partial-to-partial
+  // change retires the old map even though the binary survey identity (and often the row face
+  // sequence) did not move. Camera fields are deliberately absent from this effect chain.
+  if (map.intent_valid && (!selected || map.key.selection != selection || map.key.symmetry_bits != symmetry_bits ||
+                           map.key.wavelength_nm != state.analysis.map_wavelength_nm)) {
     executor.CancelInFlight(QueryFace::kMap);
     map = MapQuerySession{};
   }
@@ -468,6 +482,7 @@ void PumpMapQuery(GuiState& state, SurveyExecutor& executor, double now_s, MapSo
     map.intent_valid = true;
     map.key.selection = selection;
     map.key.wavelength_nm = state.analysis.map_wavelength_nm;
+    map.key.symmetry_bits = symmetry_bits;
     map.intent_id = executor.NextId(selection.generation);
     map.intent_start_s = now_s;
     IssueMapIntent(executor, map.intent_id, map.key);  // once, all sky
@@ -2865,6 +2880,8 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
       }
     }
     in.completed = true;  // the named finite source completed, independently of a newer intent
+    in.map_symmetry_bits = map.key.symmetry_bits;
+    in.survey_scope_differs = map.key.symmetry_bits > 0 && map.key.symmetry_bits < 7;
     ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
     for (const std::string& line : MapCaliberDefaultLines(in)) {
       ImGui::TextWrapped("%s", line.c_str());

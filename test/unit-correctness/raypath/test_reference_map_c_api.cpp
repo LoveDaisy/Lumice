@@ -41,6 +41,15 @@ constexpr const char* kPlateScene = R"({
   "render": []
 })";
 
+// The archived rhombic-plate scene (the 2026-11-21 symmetry evidence's config, inlined): the
+// C01 corpus's plate cousin whose literal-vs-class contrast at delta 117 / azimuth 253 is the
+// member-selection oracle.
+constexpr const char* kRhombicPlateScene = R"({"crystal":[{"id":1,"type":"prism","shape":{"height":1.0,
+"face_distance":[1.5,1,1,1.5,1,1]},"axis":{"zenith":{"type":"gauss","mean":0,"std":1},
+"azimuth":{"type":"uniform","mean":0,"std":360},"roll":{"type":"gauss","mean":0,"std":5}}}],"filter":[],
+"scene":{"light_source":{"type":"sun","altitude":9,"azimuth":180,"spectrum":"D65"},"ray_num":1000,
+"max_hits":7,"scattering":[{"prob":0,"entries":[{"crystal":1,"proportion":1}]}]},"render":[]})";
+
 struct SceneDeleter {
   void operator()(LUMICE_Scene* scene) const { LUMICE_SceneDestroy(scene); }
 };
@@ -73,6 +82,72 @@ LUMICE_PathMapRequest RingRequest() {
 }
 
 char g_err[512];
+
+// The v4.63 member-selection append: the request's extent gates the read. The legacy extent
+// (what v4.62 published, through `interrupted` plus its trailing padding) must stay accepted
+// with a poisoned appended field — an implementation that reads the field early would refuse
+// the request and fail the test.
+constexpr size_t kMapRequestSizeV462 = ((offsetof(LUMICE_PathMapRequest, interrupted) + sizeof(void*) + 7) / 8) * 8;
+static_assert(kMapRequestSizeV462 < sizeof(LUMICE_PathMapRequest),
+              "the appended field must grow sizeof beyond the legacy extent");
+static_assert(kMapRequestSizeV462 == 120, "the legacy extent is a published ABI number; pin it");
+
+// Analyzes the ring view with the given member encoding and returns the engine's member count;
+// -1 on refusal (g_err carries the reason). The default encoding (0) keeps the all-members
+// class the map has always evaluated.
+int RingRequestMemberCount(LUMICE_Scene* scene, int symmetry_bits_plus_one) {
+  LUMICE_PathMapRequest request = RingRequest();
+  request.symmetry_bits_plus_one = symmetry_bits_plus_one;
+  LUMICE_PathMap* raw_map = nullptr;
+  if (LUMICE_AnalyzePathMap(scene, &request, &raw_map, g_err, sizeof(g_err)) != LUMICE_OK) {
+    return -1;
+  }
+  MapPtr map(raw_map);
+  LUMICE_PathMapInfo info{};
+  info.struct_size = sizeof(info);
+  if (LUMICE_PathMapGetInfo(map.get(), &info) != LUMICE_PATH_READ_OK) {
+    return -1;
+  }
+  return static_cast<int>(info.member_count);
+}
+
+// Analyzes the ring view with the given encoding and serializes the pixels reader's raw
+// columns (count, values, counts, status) into `blob` for bitwise comparison; returns the
+// member count, -1 on refusal.
+int AnalyzeRingIntoBlob(LUMICE_Scene* scene, int symmetry_bits_plus_one, bool legacy_extent,
+                        std::vector<unsigned char>* blob) {
+  LUMICE_PathMapRequest request = RingRequest();
+  if (legacy_extent) {
+    request.struct_size = kMapRequestSizeV462;
+    request.symmetry_bits_plus_one = 999;  // beyond the extent: must never be read
+  } else {
+    request.symmetry_bits_plus_one = symmetry_bits_plus_one;
+  }
+  LUMICE_PathMap* raw_map = nullptr;
+  if (LUMICE_AnalyzePathMap(scene, &request, &raw_map, g_err, sizeof(g_err)) != LUMICE_OK) {
+    return -1;
+  }
+  MapPtr map(raw_map);
+  LUMICE_PathMapInfo info{};
+  info.struct_size = sizeof(info);
+  if (LUMICE_PathMapGetInfo(map.get(), &info) != LUMICE_PATH_READ_OK) {
+    return -1;
+  }
+  LUMICE_PathMapPixels pixels{};
+  pixels.struct_size = sizeof(pixels);
+  if (LUMICE_PathMapGetPixels(map.get(), &pixels) != LUMICE_PATH_READ_OK) {
+    return -1;
+  }
+  const auto append = [blob](const void* data, size_t bytes) {
+    const auto* begin = static_cast<const unsigned char*>(data);
+    blob->insert(blob->end(), begin, begin + bytes);
+  };
+  append(&pixels.pixel_count, sizeof(pixels.pixel_count));
+  append(pixels.values, pixels.pixel_count * sizeof(*pixels.values));
+  append(pixels.counts, pixels.pixel_count * sizeof(*pixels.counts));
+  append(pixels.status, pixels.pixel_count * sizeof(*pixels.status));
+  return static_cast<int>(info.member_count);
+}
 
 // The happy path: request -> readers, all contracts on one small ring view.
 TEST(MapCApi, RequestEvaluatesAndReadersCarryTheDocument) {
@@ -456,5 +531,197 @@ TEST(MapCApi, WorkspaceFaceAndLifetime) {
   LUMICE_PathMapDestroy(nullptr);  // NULL is a no-op
 }
 
+// The member selection rides the request into the engine's expansion: the literal encoding
+// evaluates one member, a partial set differs from the default class, and every accepted value
+// yields a finite map.
+TEST(MapCApi, MemberSelectionBitsCarryThroughTheRequest) {
+  ScenePtr scene;
+  {
+    LUMICE_Scene* raw = nullptr;
+    ASSERT_EQ(LUMICE_SceneFromJson(kRandomPrismScene, &raw), LUMICE_OK);
+    scene.reset(raw);
+  }
+  const int literal = RingRequestMemberCount(scene.get(), 1);
+  ASSERT_GT(literal, 0) << g_err;
+  EXPECT_EQ(literal, 1);  // the literal 3-5 sequence, no symmetry expansion
+
+  const int p_only = RingRequestMemberCount(scene.get(), 2);
+  ASSERT_GT(p_only, 0) << g_err;
+  EXPECT_NE(p_only, 12);  // a partial set is neither the literal nor the full class
+  EXPECT_LT(p_only, 12);
+}
+
+// AC1's bitwise law on the C face: a zero field, an explicit all-members encoding and the legacy
+// extent that predates the field produce byte-identical maps (same binary, same input).
+TEST(MapCApi, DefaultExplicitFullAndLegacyExtentAreBitwiseIdentical) {
+  ScenePtr scene;
+  {
+    LUMICE_Scene* raw = nullptr;
+    ASSERT_EQ(LUMICE_SceneFromJson(kRandomPrismScene, &raw), LUMICE_OK);
+    scene.reset(raw);
+  }
+  std::vector<unsigned char> zero_blob;
+  const int zero_members = AnalyzeRingIntoBlob(scene.get(), 0, false, &zero_blob);
+  ASSERT_GT(zero_members, 0) << g_err;
+  std::vector<unsigned char> explicit_blob;
+  const int explicit_members = AnalyzeRingIntoBlob(scene.get(), 8, false, &explicit_blob);
+  ASSERT_EQ(explicit_members, zero_members);
+  std::vector<unsigned char> legacy_blob;
+  const int legacy_members = AnalyzeRingIntoBlob(scene.get(), 0, true, &legacy_blob);
+  ASSERT_EQ(legacy_members, zero_members);
+  EXPECT_EQ(zero_blob, explicit_blob);
+  EXPECT_EQ(zero_blob, legacy_blob);
+}
+
+// The encoding's domain: values outside [0, 8] are refused with the named reason and no handle.
+TEST(MapCApi, InvalidSymmetryBitsAreRefused) {
+  ScenePtr scene;
+  {
+    LUMICE_Scene* raw = nullptr;
+    ASSERT_EQ(LUMICE_SceneFromJson(kRandomPrismScene, &raw), LUMICE_OK);
+    scene.reset(raw);
+  }
+  for (const int bad : { -1, 9 }) {
+    LUMICE_PathMapRequest request = RingRequest();
+    request.symmetry_bits_plus_one = bad;
+    LUMICE_PathMap* map = nullptr;
+    EXPECT_EQ(LUMICE_AnalyzePathMap(scene.get(), &request, &map, g_err, sizeof(g_err)), LUMICE_ERR_INVALID_VALUE)
+        << "encoding " << bad;
+    EXPECT_EQ(std::string(g_err).compare(0, 34, "invalid_argument: invalid physical"), 0) << g_err;
+    EXPECT_EQ(map, nullptr);
+  }
+}
+
+// The two entries' extent discipline: the legacy complete extent rides both with a poisoned
+// appended field and keeps the all-members default; the new extent reads the field; anything
+// below the legacy extent and not in the published set is refused.
+TEST(MapCApi, LegacyExtentAndPoisonTailKeepTheAllMembersDefault) {
+  ScenePtr scene;
+  {
+    LUMICE_Scene* raw = nullptr;
+    ASSERT_EQ(LUMICE_SceneFromJson(kRandomPrismScene, &raw), LUMICE_OK);
+    scene.reset(raw);
+  }
+  // The standalone entry: legacy extent, appended field poisoned.
+  {
+    std::vector<unsigned char> legacy_blob;
+    const int legacy_members = AnalyzeRingIntoBlob(scene.get(), 0, true, &legacy_blob);
+    ASSERT_EQ(legacy_members, 12) << g_err;  // the poison was never read: the full class ran
+  }
+  // The workspace entry: legacy accepted, new accepted, below-legacy refused.
+  LUMICE_PathWorkspace* workspace = nullptr;
+  ASSERT_EQ(LUMICE_PathWorkspaceCreate(scene.get(), &workspace, g_err, sizeof(g_err)), LUMICE_OK);
+  {
+    LUMICE_PathMapRequest legacy = RingRequest();
+    legacy.struct_size = kMapRequestSizeV462;
+    legacy.symmetry_bits_plus_one = 999;  // inside the request object but beyond the extent
+    LUMICE_PathMap* raw_map = nullptr;
+    ASSERT_EQ(LUMICE_PathWorkspaceQueryMap(workspace, &legacy, nullptr, &raw_map, g_err, sizeof(g_err)), LUMICE_OK)
+        << g_err;
+    MapPtr map(raw_map);
+    LUMICE_PathMapInfo info{};
+    info.struct_size = sizeof(info);
+    ASSERT_EQ(LUMICE_PathMapGetInfo(map.get(), &info), LUMICE_PATH_READ_OK);
+    EXPECT_EQ(info.member_count, 12);
+  }
+  {
+    LUMICE_PathMap* raw_map = nullptr;
+    LUMICE_PathMapRequest undersized = RingRequest();
+    undersized.struct_size = kMapRequestSizeV462 - 8;
+    EXPECT_EQ(LUMICE_PathWorkspaceQueryMap(workspace, &undersized, nullptr, &raw_map, g_err, sizeof(g_err)),
+              LUMICE_ERR_INVALID_VALUE);
+    EXPECT_EQ(raw_map, nullptr);
+  }
+  LUMICE_PathWorkspaceDestroy(workspace);
+}
+
 }  // namespace
+
+// AC3's oracle on the C face: the archived rhombic-plate contrast. The literal member (the
+// 1-3-5-2 sequence, bits 0) leaves the delta-117 / azimuth-253 cell empty while the full class
+// (bits 7) lights it at the archived per-sr magnitude; the literal's delta-107 arc stays lit as
+// the non-empty witness. Cells are located through the result's own centre columns, never a
+// re-derived grid arithmetic.
+TEST(MapCApi, RhombicPlateLiteralVersusFullClassOnTheArchivedCell) {
+  ScenePtr scene;
+  {
+    LUMICE_Scene* raw = nullptr;
+    ASSERT_EQ(LUMICE_SceneFromJson(kRhombicPlateScene, &raw), LUMICE_OK);
+    scene.reset(raw);
+  }
+  LUMICE_PathMapRequest request{};
+  request.struct_size = sizeof(LUMICE_PathMapRequest);
+  request.crystal_id = 1;
+  static const int faces[] = { 1, 3, 5, 2 };
+  request.faces = faces;
+  request.face_count = 4;
+  static const int layer_counts[] = { 4 };
+  request.layer_face_counts = layer_counts;
+  request.layer_count = 1;
+  request.full_sky = 1;
+  request.view_rows = 90;
+  request.view_cols = 180;
+  request.sample_count = 2000000;
+
+  auto analyze = [&](int bits_plus_one, LUMICE_PathMap** out) {
+    request.symmetry_bits_plus_one = bits_plus_one;
+    return LUMICE_AnalyzePathMap(scene.get(), &request, out, g_err, sizeof(g_err));
+  };
+  auto cell_value = [](const LUMICE_PathMapPixels& px, double delta, double az, bool* found) {
+    *found = false;
+    double value = 0.0;
+    for (size_t i = 0; i < px.pixel_count; ++i) {
+      if (std::fabs(px.delta_deg[i] - delta) < 0.6 && std::fabs(px.azimuth_deg[i] - az) < 0.6 &&
+          px.status[i] == LUMICE_PATH_MAP_PIXEL_OK) {
+        *found = true;
+        value = px.values[i];
+        break;
+      }
+    }
+    return value;
+  };
+
+  LUMICE_PathMap* raw_map = nullptr;
+  ASSERT_EQ(analyze(1, &raw_map), LUMICE_OK) << g_err;  // the literal member
+  MapPtr literal(raw_map);
+  {
+    LUMICE_PathMapInfo info{};
+    info.struct_size = sizeof(info);
+    ASSERT_EQ(LUMICE_PathMapGetInfo(literal.get(), &info), LUMICE_PATH_READ_OK);
+    ASSERT_EQ(info.state, LUMICE_PATH_STATE_FINITE);
+    EXPECT_EQ(info.member_count, 1);
+    EXPECT_EQ(info.members_evaluated, 1);
+    LUMICE_PathMapPixels px{};
+    px.struct_size = sizeof(px);
+    ASSERT_EQ(LUMICE_PathMapGetPixels(literal.get(), &px), LUMICE_PATH_READ_OK);
+    bool found = false;
+    const double arc_cell = cell_value(px, 117.0, 253.0, &found);
+    ASSERT_TRUE(found) << "the delta-117 / azimuth-253 cell must exist";
+    EXPECT_EQ(arc_cell, 0.0) << "the literal member does not light the class-only cell";
+    const double lit_cell = cell_value(px, 117.0, 107.0, &found);
+    ASSERT_TRUE(found) << "the delta-117 / azimuth-107 cell must exist";
+    EXPECT_GT(lit_cell, 0.0) << "the literal's lit arc is the non-empty witness";
+  }
+
+  raw_map = nullptr;
+  ASSERT_EQ(analyze(8, &raw_map), LUMICE_OK) << g_err;  // the explicit full class
+  MapPtr full(raw_map);
+  {
+    LUMICE_PathMapInfo info{};
+    info.struct_size = sizeof(info);
+    ASSERT_EQ(LUMICE_PathMapGetInfo(full.get(), &info), LUMICE_PATH_READ_OK);
+    ASSERT_EQ(info.state, LUMICE_PATH_STATE_FINITE);
+    EXPECT_EQ(info.member_count, 4);
+    EXPECT_EQ(info.members_evaluated, 4);
+    LUMICE_PathMapPixels px{};
+    px.struct_size = sizeof(px);
+    ASSERT_EQ(LUMICE_PathMapGetPixels(full.get(), &px), LUMICE_PATH_READ_OK);
+    bool found = false;
+    const double arc_cell = cell_value(px, 117.0, 253.0, &found);
+    ASSERT_TRUE(found) << "the delta-117 / azimuth-253 cell must exist";
+    EXPECT_GT(arc_cell, 0.0) << "the full class lights the cell the literal cannot";
+    EXPECT_NEAR(arc_cell, 0.0248088, 0.005) << "magnitude vs the archived n=2M run";
+  }
+}
+
 }  // namespace lumice::raypath::survey
