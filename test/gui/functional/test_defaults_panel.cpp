@@ -2114,12 +2114,10 @@ void RegisterDefaultsPanelTests(ImGuiTestEngine* engine) {
   }
 
   {
-    // The Settings row's Front tick follows the same stored/effective split as the main panel's,
-    // and since the defaults-panel unlock task the cell is LIVE under a full-sky lens: it shows
-    // the EFFECTIVE clip (unchecked — the whole-sky projection does not clip) while the click
-    // writes the stored choice, which is kept for the lens that uses it. The row is drawn by the
-    // registry's BoolField, not by the hand-written main-panel checkbox, so the two copies of the
-    // "show effective, write stored" glue are each pinned by their own case.
+    // The Settings row's Front tick follows the same stored/effective split as the main panel's:
+    // under a full-sky lens it reads unchecked and greyed while renderer.front keeps the choice.
+    // The row is drawn by the registry's BoolField, not by the hand-written main-panel checkbox, so
+    // the two copies of the "show effective, write stored" glue are each pinned by their own case.
     ImGuiTest* t =
         IM_REGISTER_TEST(engine, "defaults_panel", "the_front_cell_shows_the_effective_clip_and_keeps_the_choice");
     t->TestFunc = [](ImGuiTestContext* ctx) {
@@ -2139,9 +2137,7 @@ void RegisterDefaultsPanelTests(ImGuiTestEngine* engine) {
       gui::g_state.renderer.lens_type = gui::kLensTypeDualFisheyeEqualArea;
       panel.OpenOn(gui::DefaultsPanelSection::kSettings);
       FilterTo(ctx, "renderer.front");
-      // Live, not greyed (the unlock task retired the full-sky grey-out): the stored choice shows
-      // through the effective display as unchecked, and is untouched.
-      IM_CHECK(!IsDisabled(ctx->ItemInfo(ValueWidgetRef("renderer.front").c_str())));
+      IM_CHECK(IsDisabled(ctx->ItemInfo(ValueWidgetRef("renderer.front").c_str())));
       IM_CHECK(!ctx->ItemIsChecked(ValueWidgetRef("renderer.front").c_str()));
       IM_CHECK(gui::g_state.renderer.front);
       FilterTo(ctx, "");

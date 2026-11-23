@@ -221,7 +221,7 @@ void RegisterScreenshotExportOptionsTests(ImGuiTestEngine* engine) {
   }
 
   // The display mode is a free choice between the two pictures, written to the selection only —
-  // live under every tone since the unlock task made it a stored setting.
+  // and greyed under Print by the preview control's own rule.
   {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "screenshot_options", "the_display_mode_is_chosen_for_the_export_only");
     t->TestFunc = [](ImGuiTestContext* ctx) {
@@ -240,11 +240,7 @@ void RegisterScreenshotExportOptionsTests(ImGuiTestEngine* engine) {
 
       gui::g_state.renderer.tone = LUMICE_TONE_PRINT;
       IM_CHECK(OpenPopup(ctx));
-      // The unlock task made the display mode a stored setting: the radio stays live under Print
-      // (the preview control's grey-out retired). The remaining gate on a row is
-      // ScreenshotDisplayModeRenderable — what the picture can supply — which is a different
-      // question from the tone and was never this assertion's subject.
-      IM_CHECK(!IsDisabled(ctx->ItemInfo(br.c_str())));
+      IM_CHECK(IsDisabled(ctx->ItemInfo(br.c_str())));
       ctx->ItemClick((std::string(kPopup) + "/Cancel").c_str());
       ctx->Yield(2);
       IM_CHECK(!ImGui::IsPopupOpen(kPopup));

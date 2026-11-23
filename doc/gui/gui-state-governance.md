@@ -214,6 +214,8 @@ marker/pick/direct-point 占用），地图区写入并读取清除，帧瞬态�
 
   这张注册表也是主 UI 与面板收敛到"同一份权威"的落地方式：主 UI 里所有绑定到已注册字段的滑条调用点（`app_panels.cpp` 的 View / Display / Overlay 与 `panels.cpp` 的 Sun / Simulation，共 16 处）都改读同一个 `ConstraintFor()`（`field_editor_registry.hpp:137`），不再各自持有一份边界字面量——改一处，主 UI 与面板同时移动（`main-ui-constraint-registry` / 408.8 落地；其 AC3 的红态探针证明了这一点：故意改错某个约束的边界，主 UI 与表格单元格在同一次改动、同一帧一起偏移）。
 
+  **as-built 更新（2026-11-23）：applicability 闸回到双腿形态。** PR #592（v4.7.6）的 settings 面板放开被发现在面板之外越界：8 组主界面控件（Rays(M)@infinite、Roll@Globe、Front@full-sky/Globe、display mode@Print、Show 与背景变换@print·B-R·无图·Show 关、overlay/marker 色板@Print、Visibility@full-sky）被连带改成 note 形态。owner 当日裁决：「默认全放开」仅指 settings 面板内可调节的条目，「当前模式不适用的控件应禁用」——8 组在 registry 单点恢复 ≤v4.7.5 的条件禁用态（`enabled=false` + 历史 disabled_reason），settings 格经同一 constraint 同步回灰。恢复后 `enabled=false` 覆盖两条腿：写者保护（full-sky 下的视角角，帧循环会改写）与模式门控（上述 8 组，当前模式不消费）；note 形态仅保留在裁决明示的面板内适用项（地面/纸色两行、`globe_back_fade`、aspect 方向）——`inactive_note` 不是「inert 即可编辑」的普适承诺。历史背景：v4.7.5 的这些键本就是禁用闸，放开是 2026-11-15 总裁决在「数据完整性」框架下的默认结果，该框架未称量「模式指意」维度；本条记录即其勘误。
+
   **`sim.ray_allocation` 是仓库里第一个"只在 Settings 可编辑"的文档字段**（`hide-ray-allocation-checkbox`
   chore）：注册表里的 `FieldEditorEntry` 照常存在（`field_editor_registry.cpp:523`，`BoolField`），
   但主面板（`panels.cpp`）不再有任何控件绑定同一个字段——上面两段说的"存在性/编辑器双权威"第一次

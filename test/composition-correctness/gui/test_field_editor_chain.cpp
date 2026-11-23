@@ -158,35 +158,33 @@ TEST(FieldEditorChain, EveryShapeScalarSlotReachesADistinctFieldInBothDirections
 //
 // renderer.front greys its control exactly where EffectiveFrontForLens forces the clip off; the
 // stored choice is kept there as the memory for switching back. The two are written in two files
-// (the note cannot live below gui_state.hpp, where the effective value does), so a lens that one
-// side learns about and the other does not would either note a control whose clip still applies —
-// the bug this pins — or clip silently with no note. Every lens, not a sample. And the note has to
-// say the choice comes back, not merely that it does not apply.
+// (the gate cannot live below gui_state.hpp, where the effective value does), so a lens that one
+// side learns about and the other does not would either grey a control that still clips — the bug
+// this pins — or force off a clip the user can still tick. Every lens, not a sample. And the reason
+// shown on the greyed control has to say the choice comes back, not merely that it does not apply.
 
 TEST(FieldEditorChain, TheFrontClipIsGreyedExactlyWhereItsEffectiveValueIsForcedOff) {
-  // The unlock task decoupled the gate from the effective value: the control is live under every
-  // lens now, and where the clip is forced off the constraint carries the sentence as an
-  // inactive_note instead of the grey-out. What must still agree per lens is the NOTE's lens set
-  // with the effective display — a lens where the note fires while the clip actually applies (or
-  // silently applies with no note) is the old grey-out bug wearing new clothes.
   GuiState state;
-  int noted = 0;
+  int greyed = 0;
   for (int lens = 0; lens < kLensTypeCount; ++lens) {
     state.renderer.lens_type = lens;
     const FieldEditorConstraint c = ConstraintFor("renderer.front", state);
-    EXPECT_TRUE(c.enabled) << "lens " << lens << ": the stored choice must stay editable";
-    const bool forced_off = !EffectiveFrontForLens(lens, true);
-    EXPECT_EQ(c.inactive_note != nullptr, forced_off)
-        << "lens " << lens << ": the note's lens set and the clip's effective value disagree";
-    if (c.inactive_note == nullptr) {
+    EXPECT_EQ(c.enabled, EffectiveFrontForLens(lens, true))
+        << "lens " << lens << ": the control's gate and the clip's effective value disagree";
+    if (c.enabled) {
       continue;
     }
-    ++noted;
-    const std::string reason = c.inactive_note;
+    ++greyed;
+    if (c.disabled_reason == nullptr) {
+      ADD_FAILURE() << "lens " << lens << ": greyed with no reason";
+      continue;
+    }
+    const std::string reason = c.disabled_reason;
+    EXPECT_NE(reason.find("does not apply"), std::string::npos) << "lens " << lens << ": " << reason;
     EXPECT_NE(reason.find("comes back"), std::string::npos)
-        << "lens " << lens << ": the note does not say the previous choice is restored: " << reason;
+        << "lens " << lens << ": the reason does not say the previous choice is restored: " << reason;
   }
-  EXPECT_GT(noted, 0) << "no lens notes the front clip as inert";
+  EXPECT_GT(greyed, 0) << "no lens greys the front clip";
 }
 
 }  // namespace

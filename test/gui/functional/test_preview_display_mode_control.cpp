@@ -118,11 +118,9 @@ void RegisterPreviewDisplayModeControlTests(ImGuiTestEngine* engine) {
     };
   }
 
-  // AC2, rewritten by the unlock task. Under Print the segments used to grey; the display mode is
-  // now a stored setting — live under every tone, with the registry carrying the "not consumed
-  // right now" sentence as an inactive_note. A click under Print now WRITES the stored choice
-  // (print still renders one neutral ink; the choice applies again under Screen) — what the case
-  // now pins is the live control, the note, and the tone-crossing round trip.
+  // AC2. Under Print both segments are greyed, the registry names a reason (the text the tooltip
+  // prints), and a click writes nothing. Back under Screen they are live again — so the grey is the
+  // gate reading the live tone, not a control that is simply always disabled.
   {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "preview_display_mode", "print_greys_the_control_and_keeps_the_value");
     t->GuiFunc = UploadSynthTexture;
@@ -134,23 +132,23 @@ void RegisterPreviewDisplayModeControlTests(ImGuiTestEngine* engine) {
       gui::g_state.renderer.tone = LUMICE_TONE_PRINT;
       ctx->Yield(3);
 
-      IM_CHECK(!IsDisabled(ctx->ItemInfo(SegmentRef(0).c_str())));
-      IM_CHECK(!IsDisabled(ctx->ItemInfo(SegmentRef(1).c_str())));
+      IM_CHECK(IsDisabled(ctx->ItemInfo(SegmentRef(0).c_str())));
+      IM_CHECK(IsDisabled(ctx->ItemInfo(SegmentRef(1).c_str())));
       const gui::FieldEditorConstraint c = gui::ConstraintFor("renderer.display_mode", gui::g_state);
-      IM_CHECK(c.enabled);
-      IM_CHECK(c.inactive_note != nullptr && c.inactive_note[0] != '\0');
+      IM_CHECK(!c.enabled);
+      IM_CHECK(c.disabled_reason != nullptr && c.disabled_reason[0] != '\0');
 
-      // A press under Print writes the stored choice; the render stays the print operator's.
+      // Hover for real so this frame's disabled-tooltip path runs, then press: nothing is written.
       ctx->MouseMove(SegmentRef(LUMICE_DISPLAY_MODE_NORMAL).c_str(), ImGuiTestOpFlags_NoCheckHoveredId);
       ctx->MouseClick(ImGuiMouseButton_Left);
       ctx->Yield(2);
-      IM_CHECK_EQ(gui::g_state.renderer.display_mode, LUMICE_DISPLAY_MODE_NORMAL);
+      IM_CHECK_EQ(gui::g_state.renderer.display_mode, LUMICE_DISPLAY_MODE_CHANNEL_BR);
 
       gui::g_state.renderer.tone = LUMICE_TONE_SCREEN;
       ctx->Yield(3);
       IM_CHECK(!IsDisabled(ctx->ItemInfo(SegmentRef(0).c_str())));
       IM_CHECK(!IsDisabled(ctx->ItemInfo(SegmentRef(1).c_str())));
-      IM_CHECK_EQ(gui::g_state.renderer.display_mode, LUMICE_DISPLAY_MODE_NORMAL);
+      IM_CHECK_EQ(gui::g_state.renderer.display_mode, LUMICE_DISPLAY_MODE_CHANNEL_BR);
     };
   }
 
