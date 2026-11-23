@@ -1026,6 +1026,22 @@ TEST(DeclaredDensityLog, RetainedShiftTransportKeepsTheLogDensity) {
   EXPECT_LT(log_at_zero, -100.0) << "the probe sits ~23 sigma out: the deep-tail regime is in force";
 }
 
+TEST(DeclaredDensityLog, ZigzagLatitudeEndpointDivergesInsteadOfNaN) {
+  // The declared Zigzag latitude's support edge carries an infinite density by contract
+  // (SlotLogDensityValue answers +inf there, the linear form too). The log JOINT must carry
+  // that divergence through the flip mixture — subtracting the two branches' infinities would
+  // fabricate a NaN and hide a density the engine explicitly supports.
+  AxisDistribution axis;
+  axis.azimuth_dist = Uniform(0.0, 360.0);
+  axis.latitude_dist = Zigzag(0.0, 10.0);
+  axis.roll_dist = Gauss(0.0, 5.0);
+  const double phi = 10.0 * kDeg;  // the support edge: A + |B| = 10 degrees
+  const double linear = DeclaredPoseDensity(axis, 0.0, phi, 0.0);
+  ASSERT_TRUE(std::isinf(linear) && linear > 0.0) << linear;
+  const double log_form = DeclaredPoseLogDensity(axis, 0.0, phi, 0.0);
+  EXPECT_TRUE(std::isinf(log_form) && log_form > 0.0) << log_form;
+}
+
 
 }  // namespace
 }  // namespace lumice::raypath

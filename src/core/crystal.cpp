@@ -599,6 +599,19 @@ bool BActive(uint8_t symmetry, bool b_applicable, const GeometricSymmetry& geom)
 
 }  // namespace
 
+// ONE label action on a face sequence: the bit walk's σ/B candidate generation applies the
+// group element's own ApplyToFace, so the label machinery exists exactly once — the element
+// inventory is its authority (MirrorFaceIndex spells the same map parameterized by fn_period,
+// which production always passes as the hexagonal 6, the element action's own domain; the walk
+// keeps its legacy first-face P-canonicalization, the frozen naming contract, untouched).
+std::vector<IdType> ApplyLabelAction(const CrystalElement& element, const std::vector<IdType>& sequence) {
+  std::vector<IdType> image = sequence;
+  for (IdType& face : image) {
+    face = element.ApplyToFace(face);
+  }
+  return image;
+}
+
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 std::vector<IdType> ReduceRaypathByPeriod(const std::vector<IdType>& rp, uint8_t symmetry, int sigma_a,
                                           bool d_applicable, PRotationSet p_retained, bool b_applicable, int fn_period,
@@ -613,17 +626,10 @@ std::vector<IdType> ReduceRaypathByPeriod(const std::vector<IdType>& rp, uint8_t
   }
 
   if (DActive(symmetry, sigma_a, d_applicable, geom)) {
-    // σ-clean: reflect every prism face, face_id_new = MirrorFaceIndex(face_id - 3, sigma_a, fn_period) + 3
-    std::vector<IdType> rp_reflected = reduced_rp;
-    for (auto& x : rp_reflected) {
-      if (x < 3) {
-        continue;  // skip basal faces; pyramid faces use same pyr/pri decomposition
-      }
-      IdType pyr = x / 10;
-      int pri = static_cast<int>(x % 10) - 3;
-      pri = MirrorFaceIndex(pri, sigma_a, fn_period);
-      x = pyr * 10 + static_cast<IdType>(pri + 3);
-    }
+    // σ-clean: the candidate is the σ_{sigma_a} mirror's label image, applied by the element
+    // inventory's own action.
+    std::vector<IdType> rp_reflected =
+        ApplyLabelAction(CrystalElement{ CrystalElement::Family::kVerticalMirror, sigma_a }, reduced_rp);
     // When kSymP is also enabled, the D-image may no longer be P-canonical
     // (first pri shifted by sigma_a); re-canonicalize before lex comparison
     // so same orbit always reduces to the same representative.
@@ -636,24 +642,12 @@ std::vector<IdType> ReduceRaypathByPeriod(const std::vector<IdType>& rp, uint8_t
   }
 
   if (BActive(symmetry, b_applicable, geom)) {
-    // B reflection: basal 1↔2 and pyramid upper[13..18]↔lower[23..28], applied together.
-    // Generate the B-reflected candidate and keep the lexicographically smaller one.
-    std::vector<IdType> rp_b_reflected = reduced_rp;
-    bool changed = false;
-    for (auto& x : rp_b_reflected) {
-      if (x <= 2) {
-        x = 3 - x;
-        changed = true;
-      } else if (x >= 13 && x <= 18) {
-        x += 10;
-        changed = true;
-      } else if (x >= 23 && x <= 28) {
-        x -= 10;
-        changed = true;
-      }
-    }
-    if (changed && rp_b_reflected < reduced_rp) {
-      reduced_rp = rp_b_reflected;
+    // B's label image through the same element action (S_0 = B): basal 1↔2 and the pyramid
+    // rings swap, prism unchanged — then keep the lexicographically smaller one.
+    std::vector<IdType> rp_b_reflected =
+        ApplyLabelAction(CrystalElement{ CrystalElement::Family::kRotoMirror, 0 }, reduced_rp);
+    if (rp_b_reflected != reduced_rp && rp_b_reflected < reduced_rp) {
+      reduced_rp = std::move(rp_b_reflected);
     }
   }
 
@@ -712,51 +706,26 @@ std::vector<std::vector<IdType>> ExpandRaypathByPeriod(const std::vector<IdType>
   }
 
   if (DActive(symmetry, sigma_a, d_applicable, geom)) {
-    // σ-clean: for each existing variant, generate σ-reflected copy
+    // σ-clean: each existing variant gains the σ_{sigma_a} mirror's label image — the element
+    // inventory's own action, the machinery the reduction reads too.
     auto size = result.size();
     for (size_t i = 0; i < size; i++) {
-      auto curr_rp = result[i];
-      bool changed = false;
-      for (auto& x : curr_rp) {
-        if (x < 3) {
-          continue;  // skip basal faces; pyramid faces use same pyr/pri decomposition
-        }
-        IdType pyr = x / 10;
-        int pri = static_cast<int>(x % 10) - 3;
-        IdType pri_new = static_cast<IdType>(MirrorFaceIndex(pri, sigma_a, fn_period));
-        IdType x_new = pyr * 10 + pri_new + 3;
-        if (x_new != x) {
-          x = x_new;
-          changed = true;
-        }
-      }
-      if (changed) {
-        result.emplace_back(curr_rp);
+      const auto image =
+          ApplyLabelAction(CrystalElement{ CrystalElement::Family::kVerticalMirror, sigma_a }, result[i]);
+      if (image != result[i]) {
+        result.emplace_back(std::move(image));
       }
     }
   }
 
   if (BActive(symmetry, b_applicable, geom)) {
-    // B reflection: basal 1↔2, pyramid upper[13..18]↔lower[23..28], prism unchanged.
-    // Both swaps are part of the same transformation and applied together.
+    // B reflection: basal 1↔2, pyramid upper[13..18]↔lower[23..28], prism unchanged — the
+    // element action's own image, both swaps applied together.
     auto size = result.size();
     for (size_t i = 0; i < size; i++) {
-      auto curr_rp = result[i];
-      bool changed = false;
-      for (auto& x : curr_rp) {
-        if (x <= 2) {
-          x = 3 - x;
-          changed = true;
-        } else if (x >= 13 && x <= 18) {
-          x += 10;
-          changed = true;
-        } else if (x >= 23 && x <= 28) {
-          x -= 10;
-          changed = true;
-        }
-      }
-      if (changed) {
-        result.emplace_back(curr_rp);
+      const auto image = ApplyLabelAction(CrystalElement{ CrystalElement::Family::kRotoMirror, 0 }, result[i]);
+      if (image != result[i]) {
+        result.emplace_back(std::move(image));
       }
     }
   }
@@ -1559,15 +1528,30 @@ bool ElementFixesSkyDirection(const CrystalElement& element, const double direct
 
 namespace {
 
+// The EXACT layer's anchor-grid membership: the centre must BE the grid point. Any genuine
+// offset δ makes the reflection non-preserving (the mirrored pose's density differs by the
+// offset's full quadratic — a 5e-6° centre already moves the log density by ~10⁵ nats), so the
+// old anchor tolerance is the frozen D FILTER's approximation, never a preservation proof: the
+// exact layer checks bit-exact membership and refuses the tolerance band, diverging from the
+// per-bit answer by design (documented in raypath-elements.md).
+bool RollCentreExactlyOnAnchorGrid(float roll_center_deg) {
+  if (!std::isfinite(roll_center_deg)) {
+    return false;
+  }
+  const float grid = std::round(roll_center_deg / 30.0f) * 30.0f;
+  return roll_center_deg == grid;
+}
+
 // The roll reflection half at the canonical centre −ψ_a: full-turn uniform keeps every a; the
 // centre-symmetric families (Dirac, uniform band, Gaussian, legacy Gaussian, Laplacian) keep
 // exactly the reflection whose fixed point is their centre — c ≡ −30a (mod 180°), the statement
-// `ComputeSigmaA(centre) == a` spells, with the same anchor tolerance the D condition uses
-// (IsRollMeanAtMultipleOf30). kZigzag is REFUSED: its declared law |A·sin(t)+B| carries no
+// `ComputeSigmaA(centre) == a` spells — with the centre's grid membership checked EXACTLY (see
+// RollCentreExactlyOnAnchorGrid). kZigzag is REFUSED: its declared law |A·sin(t)+B| carries no
 // reflection-symmetry proof about any centre (centre 0 with B = 0 even has one-sided support),
 // and a missed merge is safe where a wrong one is not. The old per-bit D answer keeps its own
-// type-erased anchor check — the frozen filter approximation; this exact layer refuses what it
-// cannot prove, and the deliberate divergence is documented in raypath-elements.md.
+// type-erased tolerance-banded anchor check — the frozen filter approximation; this exact layer
+// refuses what it cannot prove, and the deliberate divergence is documented in
+// raypath-elements.md.
 bool RollLawReflectsAtMinusPsi(const AxisDistribution& axis, int a) {
   if (axis.roll_dist.type == DistributionType::kZigzag) {
     return false;  // the one family without a reflection proof: conservative refusal
@@ -1575,7 +1559,7 @@ bool RollLawReflectsAtMinusPsi(const AxisDistribution& axis, int a) {
   if (detail::IsFullTurnUniform(axis.roll_dist.type, axis.roll_dist.spread)) {
     return true;
   }
-  if (!detail::IsRollMeanAtMultipleOf30(axis)) {
+  if (!RollCentreExactlyOnAnchorGrid(axis.roll_dist.center)) {
     return false;
   }
   return detail::ComputeSigmaA(axis.roll_dist.center) == a;
@@ -1595,11 +1579,11 @@ bool RollLawSymmetricAboutMinusPsi(const AxisDistribution& axis, int a) {
     return true;  // the s = 0 decomposition: reflect about −30a directly
   }
   // The s = 180° decomposition: reflect about c = 90° − 30a, kept iff the centre names
-  // −30·((a + 3) mod 6) — the same ComputeSigmaA statement shifted by the half-turn.
+  // −30·((a + 3) mod 6) — the same exact-grid statement shifted by the half-turn.
   if (!detail::GluingRetainsHalfTurn(axis) || axis.roll_dist.type == DistributionType::kZigzag) {
     return false;
   }
-  if (!detail::IsRollMeanAtMultipleOf30(axis)) {
+  if (!RollCentreExactlyOnAnchorGrid(axis.roll_dist.center)) {
     return false;
   }
   return detail::ComputeSigmaA(axis.roll_dist.center) == (a + 3) % 6;

@@ -140,7 +140,7 @@ nlohmann::ordered_json MetaJson(const SinglePathMetadata& m) {
     crystal["upper_wedge_deg"] = Num(m.upper_wedge_deg);
     crystal["lower_wedge_deg"] = Num(m.lower_wedge_deg);
   }
-  return {
+  nlohmann::ordered_json meta_json = {
     { "crystal", crystal },
     { "faces", m.faces },
     { "sun",
@@ -166,6 +166,13 @@ nlohmann::ordered_json MetaJson(const SinglePathMetadata& m) {
     { "budget_ms", m.budget_ms },
     { "interrupted", m.interrupted },
   };
+  // The ratio reference's identity rides the document: the per-point ratio numbers are relative
+  // to THIS member's transported poses, and a saved document must still be able to say so.
+  // Absent when the query named no reference.
+  if (!m.ratio_reference_faces.empty()) {
+    meta_json["ratio_reference"] = { { "faces", m.ratio_reference_faces } };
+  }
+  return meta_json;
 }
 
 nlohmann::ordered_json TraceEndJson(const TraceEnd& e) {

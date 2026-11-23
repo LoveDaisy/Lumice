@@ -1082,6 +1082,9 @@ Error RunPointExecution(const ConfigManager& config, const SinglePathRequest& in
   meta.lower_wedge_deg = crystal.lower_wedge_deg;
   meta.shape_is_nominal = crystal.shape_is_nominal;
   meta.faces = request.path_layers.front();
+  // The ratio reference's identity freezes with the result: the ratio block's numbers are
+  // relative to THIS member, and a consumer holding only the result must be able to say so.
+  meta.ratio_reference_faces = request.ratio_reference_faces;
   static_cast<ScopeLocation&>(result.members) = survey::ResolveSelectionLocation(config, request);
   result.members.member_kind = MemberKind::kLiteral;
   result.members.members = { meta.faces };

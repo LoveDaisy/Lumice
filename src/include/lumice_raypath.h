@@ -1136,6 +1136,17 @@ typedef struct LUMICE_PathPointInterpretive {
   double log_density;
 } LUMICE_PathPointInterpretive;
 
+// Appended v4.63: the density-ratio reference member this query named, frozen with the result
+// (LUMICE_PathPointGetRatioReference) — the ratio block's numbers are relative to THIS member's
+// transported poses, and a consumer holding only the result reads the denominator here. faces
+// is a read-only borrow (valid until Destroy); NULL / count 0 when the query named no reference
+// (every sample's reference fields are then NaN by contract).
+typedef struct LUMICE_PathRatioReference {
+  size_t struct_size;
+  const int* faces;
+  size_t face_count;
+} LUMICE_PathRatioReference;
+
 typedef struct LUMICE_PathSunGrid {
   size_t struct_size;
   int lat_count;
@@ -2735,6 +2746,10 @@ LUMICE_API LUMICE_PathReadStatus LUMICE_PathPointGetSampleDensity(const LUMICE_S
 // Appended v4.63. The initial interpretation's pose (the struct's comment names the states).
 LUMICE_API LUMICE_PathReadStatus LUMICE_PathPointGetInterpretivePose(const LUMICE_SinglePathResult* result,
                                                                      LUMICE_PathPointInterpretive* out);
+// Appended v4.63. The density-ratio reference member this query named (the struct's comment
+// names the states).
+LUMICE_API LUMICE_PathReadStatus LUMICE_PathPointGetRatioReference(const LUMICE_SinglePathResult* result,
+                                                                   LUMICE_PathRatioReference* out);
 LUMICE_API LUMICE_PathReadStatus LUMICE_PathPointGetSunGrid(const LUMICE_SinglePathResult* result,
                                                             LUMICE_PathSunGrid* out);
 LUMICE_API LUMICE_PathReadStatus LUMICE_PathProbeGetInfo(const LUMICE_PathProbe* result, LUMICE_PathProbeInfo* out);

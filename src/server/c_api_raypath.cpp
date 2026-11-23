@@ -2496,6 +2496,17 @@ LUMICE_PathReadStatus LUMICE_PathPointGetInterpretivePose(const LUMICE_SinglePat
   return LUMICE_PATH_READ_OK;
 }
 
+LUMICE_PathReadStatus LUMICE_PathPointGetRatioReference(const LUMICE_SinglePathResult* result,
+                                                        LUMICE_PathRatioReference* out) {
+  if (const auto status = BeginRead(result, out); status != LUMICE_PATH_READ_OK) {
+    return status;
+  }
+  const auto& reference = result->result.Data().meta.ratio_reference_faces;
+  out->faces = reference.empty() ? nullptr : reference.data();
+  out->face_count = reference.size();
+  return LUMICE_PATH_READ_OK;
+}
+
 LUMICE_PathReadStatus LUMICE_PathPointGetSunGrid(const LUMICE_SinglePathResult* result, LUMICE_PathSunGrid* out) {
   if (const auto status = BeginRead(result, out); status != LUMICE_PATH_READ_OK) {
     return status;

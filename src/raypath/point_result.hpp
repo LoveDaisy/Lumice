@@ -39,6 +39,12 @@ struct SinglePathMetadata {
 
   std::vector<int> faces;
 
+  // The density-ratio reference member this query named (SinglePathRequest::ratio_reference_faces),
+  // frozen INTO the result: the ratio block's numbers are relative to THIS member's transported
+  // poses, and a consumer holding only the result must be able to say so. Empty = no reference
+  // was requested; every sample's ref fields are then NaN by contract.
+  std::vector<int> ratio_reference_faces;
+
   double sun_altitude_deg = 0.0;
   double sun_azimuth_deg = 0.0;
   double sun_diameter_deg = 0.0;   // recorded, not used: the sun is a point here

@@ -715,6 +715,13 @@ double DeclaredPoseLogDensity(const LatitudeDensity& lat, const AxisDistribution
   double log_branch_a = neg_inf, log_branch_b = neg_inf;
   lat.EvaluateLogBranches(phi_rad, &log_branch_a, &log_branch_b);
   const double log_denominator = LogSumExp(log_branch_a, log_branch_b);
+  // A branch whose log mass is +inf is the law's own declared endpoint divergence (the kZigzag
+  // support edge — the linear form answers +inf there too): the mixture IS that branch, and
+  // the joint answers +inf. Subtracting infinities here would fabricate a NaN and hide a
+  // density the engine explicitly supports.
+  if (log_denominator == std::numeric_limits<double>::infinity()) {
+    return std::numeric_limits<double>::infinity();
+  }
   if (log_denominator == neg_inf) {
     return neg_inf;  // the latitude law answers nothing here
   }

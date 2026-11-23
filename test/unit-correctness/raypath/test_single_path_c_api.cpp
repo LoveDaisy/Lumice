@@ -183,6 +183,13 @@ TEST(SinglePathCApi, TypedReadersUseResultOwnedStorageAndBoundedExtents) {
       EXPECT_GT(sample.segment_direction_count, 0u);
     }
   }
+  // No ratio reference was requested: the identity read answers the empty contract.
+  LUMICE_PathRatioReference reference{};
+  reference.struct_size = sizeof(reference);
+  ASSERT_EQ(LUMICE_PathPointGetRatioReference(outcome.result.get(), &reference), LUMICE_PATH_READ_OK);
+  EXPECT_EQ(reference.faces, nullptr);
+  EXPECT_EQ(reference.face_count, 0u);
+  EXPECT_FALSE(json.at("meta").contains("ratio_reference"));
   component.point_count = 123;
   EXPECT_EQ(LUMICE_PathPointGetComponent(outcome.result.get(), info.component_count, &component),
             LUMICE_PATH_READ_INVALID_INDEX);
@@ -256,8 +263,19 @@ TEST(SinglePathCApi, DensityFactsAndInterpretivePoseReadThroughC) {
   EXPECT_LT(density.ref_log_density, -50.0);  // the transported roll sits ~120° off the anchor
   EXPECT_GT(density.log_ratio, 50.0);
 
+  // The reference member's identity is frozen WITH the result: the ratio's denominator is
+  // readable without the original request, in C and in the saved JSON both.
+  LUMICE_PathRatioReference reference{};
+  reference.struct_size = sizeof(reference);
+  ASSERT_EQ(LUMICE_PathPointGetRatioReference(outcome.result.get(), &reference), LUMICE_PATH_READ_OK);
+  ASSERT_NE(reference.faces, nullptr);
+  ASSERT_EQ(reference.face_count, 2u);
+  EXPECT_EQ(reference.faces[0], 5);
+  EXPECT_EQ(reference.faces[1], 7);
+
   // The JSON document carries the same facts (additive keys; schema_version stays 1).
   const auto json = nlohmann::json::parse(Json(outcome.result.get()));
+  EXPECT_EQ(json.at("meta").at("ratio_reference").at("faces"), nlohmann::json({ 5, 7 }));
   EXPECT_EQ(json.at("schema_version"), 1);
   EXPECT_EQ(json.at("interpretive_pose").at("available"), true);
   EXPECT_EQ(json.at("interpretive_pose").at("component_index"), interpretive.component_index);

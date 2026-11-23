@@ -712,6 +712,23 @@ TEST(ElementRetention, RetainedSetIsClosedUnderComposition) {
   }
 }
 
+TEST(ElementRetention, OffGridRollCentreIsRefusedByTheExactLayer) {
+  // A centre merely WITHIN the old anchor tolerance is not ON the grid: the reflection whose
+  // fixed point is the true centre differs from the named one by the offset's full quadratic —
+  // a 5e-6° centre moves the mirrored log density by ~5·10⁵ nats (the review round's probe).
+  // The exact layer refuses the tolerance band outright; the frozen per-bit D answer keeps its
+  // own tolerance-banded approximation beside it, the documented layered divergence.
+  const AxisDistribution axis =
+      AxisAzUniformZenRoll(DistributionType::kGaussian, 90.0f, 1.0f, DistributionType::kGaussian, 5e-6f, 1e-8f);
+  const auto retained = DeriveRetainedElements(kFullHexagonalSymmetry, axis);
+  EXPECT_TRUE(FilterByFamily(retained, CrystalElement::Family::kHorizontalHalfTurn).empty());
+  EXPECT_TRUE(FilterByFamily(retained, CrystalElement::Family::kVerticalMirror).empty());
+  EXPECT_TRUE(Contains(retained, CrystalElement::Family::kIdentity, 0));
+  // The frozen per-bit D approximation still accepts the tolerance band — verbatim.
+  const auto d = detail::DeriveDSymmetryParams(axis);
+  EXPECT_TRUE(d.d_applicable);
+}
+
 TEST(ElementRetention, ZigzagRollIsConservativelyRefusedEverywhere) {
   // The declared Zigzag roll law |A·sin(t)+B| has no reflection-symmetry proof about any centre
   // (centre 0 with B = 0 even carries one-sided support: positive density at +5°, none at −5°).
