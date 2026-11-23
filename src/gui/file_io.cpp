@@ -4476,6 +4476,14 @@ bool WriteTextFile(const std::filesystem::path& path, const std::string& text) {
     return false;
   }
   out << text;
+  // Complete the write BEFORE reporting success: the tail of a small text
+  // often still sits in the stream buffer past `out << text`, and the errors
+  // that live at write-back time — disk full, quota, a size limit — surface
+  // only at flush/close, when `good()` on an open stream can no longer see
+  // them. A caller that trusted this return could report an export that the
+  // user received as a truncated file, so the close itself is part of the
+  // verdict.
+  out.close();
   return out.good();
 }
 

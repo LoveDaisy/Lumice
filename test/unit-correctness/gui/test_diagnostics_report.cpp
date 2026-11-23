@@ -29,12 +29,22 @@
 
 #include <gtest/gtest.h>
 
+#if !defined(_WIN32)
+#include <sys/resource.h>
+#include <unistd.h>
+
+#include <cerrno>
+#include <csignal>
+#include <cstring>
+#endif
+
 #include <cmath>
 #include <limits>
 #include <nlohmann/json.hpp>
 #include <string>
 
 #include "gui/diagnostics_report.hpp"
+#include "gui/file_io.hpp"
 
 namespace lumice::gui {
 namespace {
@@ -731,6 +741,42 @@ TEST(DiagnosticsFailureClassification, RejectionGlErrorAndFenceFactAreFailuresCo
   event.facts.fence_create_failed = std::nullopt;
   EXPECT_FALSE(IsUploadFailure(event));
 }
+
+#if !defined(_WIN32)
+// The saved notice must ride a COMPLETED write: the shared WriteTextFile
+// reports success only after the stream's write-back has actually landed. A
+// file-size limit fails the write at flush/close time — after the open and
+// the buffered insertion both "succeeded" — and that deferred failure is
+// exactly the shape a truncated, unparsable export arrives as. The positive
+// control after the restore proves the false came from the deferred failure,
+// not from a broken helper.
+TEST(DiagnosticsWriteContract, DeferredWriteFailureIsReportedNotSwallowed) {
+  namespace fs = std::filesystem;
+  const fs::path path = fs::temp_directory_path() / "lumice_diagnostics_deferred_write_fail.txt";
+  rlimit original{};
+  ASSERT_EQ(getrlimit(RLIMIT_FSIZE, &original), 0) << std::strerror(errno);
+
+  void (*previous_sigxfsz)(int) = signal(SIGXFSZ, SIG_IGN);
+  rlimit tiny{};
+  tiny.rlim_cur = 1;
+  tiny.rlim_max = original.rlim_max;
+  ASSERT_EQ(setrlimit(RLIMIT_FSIZE, &tiny), 0);
+
+  const bool reported = WriteTextFile(path, std::string(100, 'x'));
+
+  ASSERT_EQ(setrlimit(RLIMIT_FSIZE, &original), 0);
+  signal(SIGXFSZ, previous_sigxfsz);
+
+  std::error_code ec;
+  fs::remove(path, ec);
+
+  EXPECT_FALSE(reported) << "a write that failed at close time was reported as success";
+
+  // Positive control, same helper, limits restored: the normal path succeeds.
+  EXPECT_TRUE(WriteTextFile(path, std::string(100, 'x')));
+  fs::remove(path, ec);
+}
+#endif
 
 }  // namespace
 }  // namespace lumice::gui
