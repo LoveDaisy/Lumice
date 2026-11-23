@@ -626,6 +626,40 @@ void CompensatedPose(const CrystalElement& element, const double pose[9], double
 // azimuth of 1e-9 rad reads ≥ 1e-9·cos(altitude)), the same calibre the pose identities use.
 bool ElementFixesSkyDirection(const CrystalElement& element, const double direction[3], double sun_azimuth_rad);
 
+// ---- the per-element retention halves (the physical regime, per element) --------------------
+//
+// The per-bit gates (DeriveSymmetryGating's physical answer) are these two halves' PROJECTIONS:
+// the old P answer is exactly the per-element P set under the shape intersection, the old B
+// answer is S_0's, and the old D answer is σ_ComputeSigmaA's — the per-element set adds the
+// composites (H_a) and the mirrors the anchor does not name without changing any old bit. Each
+// element's measure condition decomposes along T_g's three angle slots onto the existing
+// per-bit family predicates (raypath-elements.md §5): azimuth uniform where T_g shifts or
+// reflects the azimuth (H_a, σ_a, S_k — P_k poses no azimuth condition), zenith symmetric
+// about 90° where T_g reflects it (H_a, S_k), and a roll shift or reflection condition that is
+// the roll half of P or of D's anchor respectively. The shape half reads the same
+// GeometricSymmetry the per-bit gates read.
+
+// The measure half: is the orientation ensemble's measure invariant under the element's pose
+// compensation T_g? Closed-form per family, no sampling.
+bool MeasureRetainsElement(const CrystalElement& element, const AxisDistribution& axis_dist);
+
+// The shape half: does the crystal's shape (as an ensemble) map onto itself under the element?
+bool ShapeAdmitsElement(const CrystalElement& element, const GeometricSymmetry& shape);
+
+// The physical regime's per-element answer: the elements admitted by BOTH halves, in
+// AllCrystalElements()' fixed order. This is the set a local class's orbit, naming and transport
+// consume; the per-bit SymmetryGating stays the old consumers' authority and its projections are
+// pinned equal to this set's per-family subsets.
+std::vector<CrystalElement> DeriveRetainedElements(const GeometricSymmetry& shape, const AxisDistribution& axis_dist);
+
+// The naming authority's element-set form: the lexicographically smallest sequence in the orbit
+// of `rp` under the given elements' label actions (the orbit IS the local class; the minimum is
+// its representative). The per-bit ReduceRaypathByPeriod keeps the old entries' behaviour
+// bit-for-bit; this overload exists because a local class's element set is not expressible as
+// P/B/D bits. `fn_period < 0` or an empty element set returns `rp` unchanged.
+std::vector<IdType> ReduceRaypathByElements(const std::vector<IdType>& rp, const std::vector<CrystalElement>& elements,
+                                            int fn_period);
+
 namespace detail {
 // Internal — not part of public API.
 

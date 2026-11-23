@@ -317,6 +317,9 @@ add_executable(unit_correctness_test
   # profile primitive.
   "${PROJ_TEST_DIR}/unit-correctness/raypath/test_measure_geometry_contract.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/raypath/test_declared_density.cpp"
+  # The local-class resolution: the three acceptance scenarios' partitions, transports and
+  # sky-action semantics as exact sets (pure algebra, no sampling).
+  "${PROJ_TEST_DIR}/unit-correctness/raypath/test_local_class.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/raypath/test_visibility_certificate.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/raypath/test_fiber_quadrature.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/raypath/test_contour_contract_docking.cpp"

@@ -14,6 +14,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cmath>
 #include <set>
 #include <vector>
@@ -473,6 +474,186 @@ TEST(CrystalElement, ImproperElementsFixExactlyTheSunVerticalPlane) {
     EXPECT_TRUE(ElementFixesSkyDirection(element, in_plane, sun_az2 * kDegToRadD));
     EXPECT_FALSE(ElementFixesSkyDirection(element, out_of_plane, sun_az2 * kDegToRadD));
   }
+}
+
+// ---- the per-element retention halves -------------------------------------------------------
+
+// Axis builders restated from the canonical scenarios' configs (the engine's degree slots:
+// Distribution{type, center, spread}; the latitude centre is 90 − zenith).
+AxisDistribution AxisAzUniformZenRoll(DistributionType lat_type, float lat_center, float lat_spread,
+                                      DistributionType roll_type, float roll_center, float roll_spread) {
+  AxisDistribution axis;
+  axis.azimuth_dist = Distribution{ DistributionType::kUniform, 0.0f, 360.0f };
+  axis.latitude_dist = Distribution{ lat_type, lat_center, lat_spread };
+  axis.roll_dist = Distribution{ roll_type, roll_center, roll_spread };
+  return axis;
+}
+
+AxisDistribution ParryAxis() {
+  // test/e2e/configs/raypath_symmetry_parry.json: zenith gauss 90±1, azimuth uniform, roll gauss 0±1.
+  return AxisAzUniformZenRoll(DistributionType::kGaussian, 0.0f, 1.0f, DistributionType::kGaussian, 0.0f, 1.0f);
+}
+
+AxisDistribution ColumnAxis() {
+  // The C16 column corpus config: zenith gauss 90±0.3, azimuth uniform, roll uniform 360.
+  return AxisAzUniformZenRoll(DistributionType::kGaussian, 0.0f, 0.3f, DistributionType::kUniform, 0.0f, 360.0f);
+}
+
+AxisDistribution PlateAxis() {
+  // The C12 rhombic plate config: zenith gauss 0±1 (latitude 90±1, pole-centred), azimuth
+  // uniform, roll gauss 0±5.
+  return AxisAzUniformZenRoll(DistributionType::kGaussian, 90.0f, 1.0f, DistributionType::kGaussian, 0.0f, 5.0f);
+}
+
+std::vector<CrystalElement> FilterByFamily(const std::vector<CrystalElement>& elements, CrystalElement::Family family) {
+  std::vector<CrystalElement> out;
+  for (const CrystalElement& e : elements) {
+    if (e.family == family) {
+      out.push_back(e);
+    }
+  }
+  return out;
+}
+
+bool Contains(const std::vector<CrystalElement>& elements, CrystalElement::Family family, int index) {
+  return std::find(elements.begin(), elements.end(), CrystalElement{ family, index }) != elements.end();
+}
+
+TEST(ElementRetention, ParryAxisRetainsIdentityHalfTurnAndTheAnchoredMirror) {
+  const auto retained = DeriveRetainedElements(kFullHexagonalSymmetry, ParryAxis());
+  EXPECT_EQ(retained.size(), 4u);
+  EXPECT_TRUE(Contains(retained, CrystalElement::Family::kIdentity, 0));
+  // The composite half-turn H_0: the whole point of the element level — no bit names it.
+  EXPECT_TRUE(Contains(retained, CrystalElement::Family::kHorizontalHalfTurn, 0));
+  EXPECT_TRUE(Contains(retained, CrystalElement::Family::kVerticalMirror, 0));
+  EXPECT_TRUE(Contains(retained, CrystalElement::Family::kRotoMirror, 0));  // S_0 = B
+  // The locked roll kills every c-axis rotation (k = 3 included: the latitude is equator-centred,
+  // so the pole fold never glues).
+  EXPECT_TRUE(FilterByFamily(retained, CrystalElement::Family::kCAxisRotation).empty());
+  EXPECT_TRUE(FilterByFamily(retained, CrystalElement::Family::kHorizontalHalfTurn).size() == 1u);
+}
+
+TEST(ElementRetention, ColumnAxisRetainsEverything) {
+  // Full-turn uniform roll: shift-invariant at every k and reflection-symmetric about every
+  // point; azimuth uniform and equator-centred zenith complete H's and σ's conditions.
+  const auto retained = DeriveRetainedElements(kFullHexagonalSymmetry, ColumnAxis());
+  EXPECT_EQ(retained.size(), 24u);
+  EXPECT_EQ(FilterByFamily(retained, CrystalElement::Family::kCAxisRotation).size(), 5u);
+  EXPECT_EQ(FilterByFamily(retained, CrystalElement::Family::kHorizontalHalfTurn).size(), 6u);
+  EXPECT_EQ(FilterByFamily(retained, CrystalElement::Family::kVerticalMirror).size(), 6u);
+  EXPECT_EQ(FilterByFamily(retained, CrystalElement::Family::kRotoMirror).size(), 6u);
+}
+
+TEST(ElementRetention, PlateAxisKeepsTheGluedHalfTurnAndTheAnchoredMirrorOnly) {
+  // Zenith pole-centred (latitude 90±1): the pole fold glues the 180° rotation (P_3, the
+  // GluingRetainsHalfTurn mechanism, not a roll-uniformity one); B fails (zenith not symmetric
+  // about 90); the roll anchor at 0 names σ_0; B's az conjunct is met everywhere here.
+  const auto retained = DeriveRetainedElements(kFullHexagonalSymmetry, PlateAxis());
+  EXPECT_EQ(retained.size(), 3u);
+  EXPECT_TRUE(Contains(retained, CrystalElement::Family::kIdentity, 0));
+  EXPECT_TRUE(Contains(retained, CrystalElement::Family::kCAxisRotation, 3));
+  EXPECT_TRUE(Contains(retained, CrystalElement::Family::kVerticalMirror, 0));
+  EXPECT_TRUE(FilterByFamily(retained, CrystalElement::Family::kHorizontalHalfTurn).empty());
+  EXPECT_TRUE(FilterByFamily(retained, CrystalElement::Family::kRotoMirror).empty());
+}
+
+TEST(ElementRetention, RollAnchorNamesTheMirrorIndex) {
+  // Roll gauss centred at 90°: n = 3, a = 3 — the anchor names σ_3 (and H_3), not σ_0.
+  const AxisDistribution axis =
+      AxisAzUniformZenRoll(DistributionType::kGaussian, 0.0f, 1.0f, DistributionType::kGaussian, 90.0f, 1.0f);
+  const auto retained = DeriveRetainedElements(kFullHexagonalSymmetry, axis);
+  EXPECT_TRUE(Contains(retained, CrystalElement::Family::kVerticalMirror, 3));
+  EXPECT_TRUE(Contains(retained, CrystalElement::Family::kHorizontalHalfTurn, 3));
+  EXPECT_FALSE(Contains(retained, CrystalElement::Family::kVerticalMirror, 0));
+  EXPECT_FALSE(Contains(retained, CrystalElement::Family::kHorizontalHalfTurn, 0));
+}
+
+TEST(ElementRetention, NegativeControlsBreakTheConditionsIndependently) {
+  // P reads only the roll; H, σ and S read the azimuth too. A full-turn roll with a
+  // non-uniform azimuth keeps every P_k and drops every az-posing family: the conjuncts break
+  // independently.
+  AxisDistribution gauss_az = ColumnAxis();
+  gauss_az.azimuth_dist = Distribution{ DistributionType::kGaussian, 0.0f, 30.0f };
+  const auto retained = DeriveRetainedElements(kFullHexagonalSymmetry, gauss_az);
+  EXPECT_EQ(retained.size(), 6u);  // identity + the five c-axis rotations
+  EXPECT_EQ(FilterByFamily(retained, CrystalElement::Family::kCAxisRotation).size(), 5u);
+  EXPECT_TRUE(FilterByFamily(retained, CrystalElement::Family::kHorizontalHalfTurn).empty());
+  EXPECT_TRUE(FilterByFamily(retained, CrystalElement::Family::kVerticalMirror).empty());
+  EXPECT_TRUE(FilterByFamily(retained, CrystalElement::Family::kRotoMirror).empty());
+  // Breaking the azimuth on the plate axis also dissolves the pole fold's gluing (it needs the
+  // uniform azimuth to weigh the leaves): only the identity survives.
+  AxisDistribution plate_gauss_az = PlateAxis();
+  plate_gauss_az.azimuth_dist = Distribution{ DistributionType::kGaussian, 0.0f, 30.0f };
+  const auto glued = DeriveRetainedElements(kFullHexagonalSymmetry, plate_gauss_az);
+  EXPECT_EQ(glued.size(), 1u);
+  EXPECT_TRUE(Contains(glued, CrystalElement::Family::kIdentity, 0));
+  // A roll anchor off the 30-degree lattice names no mirror at all.
+  const AxisDistribution odd_roll =
+      AxisAzUniformZenRoll(DistributionType::kGaussian, 0.0f, 1.0f, DistributionType::kGaussian, 15.0f, 1.0f);
+  const auto odd_retained = DeriveRetainedElements(kFullHexagonalSymmetry, odd_roll);
+  EXPECT_TRUE(FilterByFamily(odd_retained, CrystalElement::Family::kVerticalMirror).empty());
+  EXPECT_TRUE(FilterByFamily(odd_retained, CrystalElement::Family::kHorizontalHalfTurn).empty());
+  EXPECT_TRUE(Contains(odd_retained, CrystalElement::Family::kRotoMirror, 0));  // S_0 = B: roll plays no part
+  // A face-alternating shape (p_step 6, no mirrors, no B) admits only the identity.
+  const GeometricSymmetry asymmetric{ 6, 0, false };
+  const auto shape_gated = DeriveRetainedElements(asymmetric, ColumnAxis());
+  EXPECT_EQ(shape_gated.size(), 1u);
+  EXPECT_TRUE(Contains(shape_gated, CrystalElement::Family::kIdentity, 0));
+}
+
+TEST(ElementRetention, PerElementAnswerProjectsOntoThePerBitGatesExactly) {
+  // AC5's compatibility spine: on each scenario axis, the old per-bit physical gating is exactly
+  // the new per-element set's projection — P's retained rotations, B, and the anchor-named D.
+  const GeometricSymmetry shapes[] = { kFullHexagonalSymmetry, GeometricSymmetry{ 3, 0x09, true } };
+  const AxisDistribution axes[] = { ParryAxis(), ColumnAxis(), PlateAxis() };
+  for (const GeometricSymmetry& shape : shapes) {
+    for (const AxisDistribution& axis : axes) {
+      const auto retained = DeriveRetainedElements(shape, axis);
+      const SymmetryGating old_gating = DeriveSymmetryGating(SymmetrySemantics::kPhysical, shape, axis);
+      // P: the old retained-rotation set is exactly the new per-element P membership.
+      for (int k = 0; k < 6; ++k) {
+        EXPECT_EQ(old_gating.p_retained.Keeps(k),
+                  Contains(retained, CrystalElement::Family::kCAxisRotation, k) || k == 0)
+            << "k " << k;
+      }
+      // B: the old bit is S_0's membership.
+      EXPECT_EQ(old_gating.b_applicable, Contains(retained, CrystalElement::Family::kRotoMirror, 0));
+      // D: the old anchor-named mirror's activity is σ_a's membership (the C API derives
+      // sigma_a the same way; the shape half rides inside both).
+      const auto d = detail::DeriveDSymmetryParams(axis);
+      const bool old_d = DMirrorActive(d.d_applicable, d.sigma_a, shape);
+      EXPECT_EQ(old_d, Contains(retained, CrystalElement::Family::kVerticalMirror, d.sigma_a)) << "a " << d.sigma_a;
+    }
+  }
+}
+
+TEST(ElementNaming, ReduceRaypathByElementsNamesTheScenarioClasses) {
+  // The Parry −52° pair: {4-2, 8-1} under H_0 names 4-2; the identity-only set names the input.
+  const CrystalElement h0{ CrystalElement::Family::kHorizontalHalfTurn, 0 };
+  std::vector<CrystalElement> elements{ h0 };
+  EXPECT_EQ(ReduceRaypathByElements({ 4, 2 }, elements, kHexagonalFnPeriod), (std::vector<IdType>{ 4, 2 }));
+  EXPECT_EQ(ReduceRaypathByElements({ 8, 1 }, elements, kHexagonalFnPeriod), (std::vector<IdType>{ 4, 2 }));
+  EXPECT_EQ(ReduceRaypathByElements({ 4, 1 }, elements, kHexagonalFnPeriod), (std::vector<IdType>{ 4, 1 }));
+  // The column tangent-arc pair's twelve members under all twelve proper elements collapse to
+  // 3-5 — one orbit, one lexicographic representative.
+  std::vector<CrystalElement> proper;
+  for (const CrystalElement& e : AllCrystalElements()) {
+    if (e.IsProper()) {
+      proper.push_back(e);
+    }
+  }
+  ASSERT_EQ(proper.size(), 12u);
+  for (const int pri_a : { 0, 2 }) {
+    for (int shift = 0; shift < 6; ++shift) {
+      const std::vector<IdType> member = { static_cast<IdType>(3 + (pri_a + shift) % 6),
+                                           static_cast<IdType>(3 + (pri_a + 2 + shift) % 6) };
+      EXPECT_EQ(ReduceRaypathByElements(member, proper, kHexagonalFnPeriod), (std::vector<IdType>{ 3, 5 }))
+          << "member " << member[0] << "-" << member[1];
+    }
+  }
+  // Degenerate inputs pass through.
+  EXPECT_EQ(ReduceRaypathByElements({ 4, 2 }, {}, kHexagonalFnPeriod), (std::vector<IdType>{ 4, 2 }));
+  EXPECT_EQ(ReduceRaypathByElements({ 4, 2 }, elements, -1), (std::vector<IdType>{ 4, 2 }));
 }
 
 }  // namespace

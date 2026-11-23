@@ -188,6 +188,10 @@ class LatitudeDensity {
   // rho_phi(phi) w.r.t. dphi on [-pi/2, pi/2]; 0 outside; the kDiracUnfolded law returns 0
   // (use point()).
   double Evaluate(double phi_rad) const;
+  // The same law in log space (−inf where Evaluate answers 0, the Dirac kinds included). The
+  // folded sum recombines its two preimage branches — and the k shifts inside each — by
+  // log-sum-exp, so a tail proposal's branch that the linear sum underflows away still counts.
+  double EvaluateLog(double phi_rad) const;
   // P(flip | phi), the branch-B share of the folded law (0 for kFullSphere/kDiracUnfolded).
   double FlipProbability(double phi_rad) const;
   // The Dirac point of a kDiracUnfolded law (radians).
@@ -232,6 +236,28 @@ double DeclaredPoseDensity(const AxisDistribution& axis, double lambda_out_rad, 
 // (the caller that special-cases IsFullSphereUniform passes MakeFullSphereLatitude()).
 double DeclaredPoseDensity(const LatitudeDensity& lat, const AxisDistribution& axis, double lambda_out_rad,
                            double phi_rad, double roll_out_rad);
+
+// Table 3 in log space, both overload forms: log of the joint pose density at composed angles,
+// −inf wherever the linear form answers 0 (a Dirac slot's singular slice included). The two
+// flip branches recombine by log-sum-exp of their log products; the log latitude law enters
+// through LatitudeDensity::EvaluateLog.
+double DeclaredPoseLogDensity(const AxisDistribution& axis, double lambda_out_rad, double phi_rad, double roll_out_rad);
+double DeclaredPoseLogDensity(const LatitudeDensity& lat, const AxisDistribution& axis, double lambda_out_rad,
+                              double phi_rad, double roll_out_rad);
+
+// ---------------------------------------------------------------------------
+// Tables 1–3 in log space. Same laws, same preimage families, same k-windows as the linear
+// forms above — recomposed with log-sum-exp so the answer never round-trips through a double
+// rho (a Gaussian tail at 100σ underflows linear rho to +0 while its log stays a finite
+// ≈ −5000; a log-space darkness report must not read that underflow as a zero-support
+// statement). −inf means what 0 means above: off the support, or a Dirac slot's "no density"
+// (the singular mass stays with UMarginal's support kinds). These are the primitives a
+// closed-form density RATIO reports through; they change no linear answer.
+// ---------------------------------------------------------------------------
+
+// Table 1 in log space: log |density| of a non-Dirac slot at x, −inf off the support. A Dirac
+// slot answers −inf (a point mass has no density; ask SlotIsDirac for the point).
+double SlotLogDensityValue(const Distribution& slot, double x_rad);
 
 // ---------------------------------------------------------------------------
 // The u-marginal (Table 4). One instance answers both the certificate's pointwise mu questions

@@ -88,6 +88,53 @@ double FoldedProposalDensity(const Distribution& p, double phi_rad, bool branch_
   return sum;
 }
 
+// log(a + b) without round-tripping through the linear sum: −inf terms drop out, both −inf is
+// −inf, and the max term absorbs the smaller one's exponentiated share.
+double LogSumExp(double a, double b) {
+  if (a == -std::numeric_limits<double>::infinity()) {
+    return b;
+  }
+  if (b == -std::numeric_limits<double>::infinity()) {
+    return a;
+  }
+  return std::max(a, b) + std::log1p(std::exp(-std::fabs(a - b)));
+}
+
+// The folded proposal's preimage sum in log space: the same offset, the same k-window and the
+// same per-preimage law as FoldedProposalDensity, recombined by log-sum-exp so a tail
+// preimage the linear sum underflows away still counts.
+double FoldedProposalLogDensity(const Distribution& p, double phi_rad, bool branch_b) {
+  const double offset = branch_b ? math::kPiD - phi_rad : phi_rad;
+  if (p.type == DistributionType::kNoRandom || p.spread == 0.0f) {
+    return -std::numeric_limits<double>::infinity();
+  }
+  const double reach = 40.0 * std::fabs(static_cast<double>(p.spread)) * math::kDegreeToRadD + math::kTwoPi;
+  const int kmax = static_cast<int>(reach / math::kTwoPi) + 1;
+  double best = -std::numeric_limits<double>::infinity();
+  for (int k = -kmax; k <= kmax; k++) {
+    best = LogSumExp(best, SlotLogDensityValue(p, offset + math::kTwoPi * k));
+  }
+  return best;
+}
+
+// The wrapped sum in log space: the same k-window, recombined by log-sum-exp. *dirac keeps
+// WrappedSlotDensity's contract (a Dirac slot is singular, the caller answers −inf itself).
+double WrappedSlotLogDensity(const Distribution& slot, double x_rad, bool* dirac) {
+  double at = 0.0;
+  if (SlotIsDirac(slot, &at)) {
+    *dirac = true;
+    return -std::numeric_limits<double>::infinity();
+  }
+  *dirac = false;
+  const double reach = 40.0 * std::fabs(static_cast<double>(slot.spread)) * math::kDegreeToRadD + math::kTwoPi;
+  const int kmax = static_cast<int>(reach / math::kTwoPi) + 1;
+  double best = -std::numeric_limits<double>::infinity();
+  for (int k = -kmax; k <= kmax; k++) {
+    best = LogSumExp(best, SlotLogDensityValue(slot, x_rad + math::kTwoPi * k));
+  }
+  return best;
+}
+
 // Composite Gauss-Legendre integral of f over [a, b]: `panels` uniform panels of GL order `order`.
 // The analytic library's own GaussLegendre (pose_density.hpp, Newton on P_n) is the single node
 // source; this wrapper only composites it.
@@ -292,6 +339,68 @@ double SlotDegenerateValue(const Distribution& slot) {
   return static_cast<double>(slot.center);
 }
 
+double SlotLogDensityValue(const Distribution& slot, double x_rad) {
+  const double c = static_cast<double>(slot.center) * math::kDegreeToRadD;
+  const double s = static_cast<double>(slot.spread) * math::kDegreeToRadD;
+  const double neg_inf = -std::numeric_limits<double>::infinity();
+  switch (slot.type) {
+    case DistributionType::kNoRandom:
+      return neg_inf;  // a Dirac slot has no density, exactly as SlotDensityValue answers 0
+    case DistributionType::kUniform: {
+      const double half = s * 0.5;
+      return (x_rad >= c - half && x_rad < c + half) ? -std::log(s) : neg_inf;
+    }
+    case DistributionType::kGaussian:
+    case DistributionType::kGaussianLegacy: {
+      if (s <= 0.0) {
+        return neg_inf;
+      }
+      const double d = (x_rad - c) / s;
+      // Never through std::exp: the whole point of this form is the finite tail the linear
+      // evaluation underflows away.
+      return -0.5 * d * d - std::log(s * std::sqrt(math::kTwoPi));
+    }
+    case DistributionType::kLaplacian: {
+      if (s <= 0.0) {
+        return neg_inf;
+      }
+      return -std::fabs(x_rad - c) / s - std::log(2.0 * s);
+    }
+    case DistributionType::kZigzag: {
+      if (s <= 0.0) {
+        return neg_inf;
+      }
+      // The same preimage sum ZigzagDensityValue forms — up to four terms (two per ±y target,
+      // the two solutions sharing |cos t|) — recombined by log-sum-exp; at an exact support
+      // endpoint (|ratio| == 1) the linear form diverges and so does this.
+      const double amplitude = s;
+      if (amplitude <= 0.0 || x_rad <= 0.0) {
+        return neg_inf;
+      }
+      const double tilt = c;
+      if (std::fabs(x_rad) > amplitude + std::fabs(tilt)) {
+        return neg_inf;
+      }
+      double best = neg_inf;
+      for (int sign : { 1, -1 }) {
+        const double ratio = (sign * x_rad - tilt) / amplitude;
+        if (std::fabs(ratio) > 1.0) {
+          continue;
+        }
+        if (std::fabs(ratio) == 1.0) {
+          return std::numeric_limits<double>::infinity();  // the endpoint divergence
+        }
+        const double cos_t = std::cos(std::asin(ratio));
+        // Two solutions (asin(ratio) and pi − asin(ratio)) share |cos|: +log 2 on this sign's term.
+        best = LogSumExp(best, -std::log(math::kTwoPi * amplitude) - std::log(cos_t) + std::log(2.0));
+      }
+      return best;
+    }
+    default:
+      return neg_inf;
+  }
+}
+
 double ZigzagDensityValue(double amplitude_rad, double tilt_rad, double y_rad) {
   // y = |A sin t + B| with t = 2 pi U uniform on one period. Preimages of y > 0: the solutions of
   // A sin t + B = +y and = -y; each contributes 1/(2 pi A |cos t|). Returns 0 at y <= 0 (the fold
@@ -489,6 +598,36 @@ double LatitudeDensity::TotalMass() const {
                                  -math::kHalfPi, math::kHalfPi, 32, 16);
 }
 
+double LatitudeDensity::EvaluateLog(double phi_rad) const {
+  const double neg_inf = -std::numeric_limits<double>::infinity();
+  switch (kind_) {
+    case LatitudeLawKind::kFullSphere:
+      return (phi_rad > -math::kHalfPi && phi_rad < math::kHalfPi) ? std::log(std::cos(phi_rad) * 0.5) : neg_inf;
+    case LatitudeLawKind::kFoldedArea: {
+      if (phi_rad <= -math::kHalfPi || phi_rad >= math::kHalfPi) {
+        return neg_inf;
+      }
+      // log(pa + pb) + log(cos phi) − log(norm): the branches (and their k shifts) recombine by
+      // log-sum-exp inside the folded log form, never through the linear p.
+      const double pa = FoldedProposalLogDensity(proposal_, phi_rad, false);
+      const double pb = FoldedProposalLogDensity(proposal_, phi_rad, true);
+      return LogSumExp(pa, pb) + std::log(std::cos(phi_rad)) - std::log(norm_);
+    }
+    case LatitudeLawKind::kFoldedNoArea: {
+      if (phi_rad <= -math::kHalfPi || phi_rad >= math::kHalfPi) {
+        return neg_inf;
+      }
+      const double pa = FoldedProposalLogDensity(proposal_, phi_rad, false);
+      const double pb = FoldedProposalLogDensity(proposal_, phi_rad, true);
+      return LogSumExp(pa, pb);
+    }
+    case LatitudeLawKind::kDiracUnfolded:
+    case LatitudeLawKind::kDiracFolded:
+      return neg_inf;  // a point mass has no density; point() carries it
+  }
+  return neg_inf;
+}
+
 // ---------------------------------------------------------------------------
 // Table 3: the joint pose law.
 // ---------------------------------------------------------------------------
@@ -517,6 +656,39 @@ double DeclaredPoseDensity(const LatitudeDensity& lat, const AxisDistribution& a
   const double shifted_az = WrappedSlotDensity(axis.azimuth_dist, lambda_out_rad - math::kPiD, &az_dirac, &az_at);
   const double shifted_roll = WrappedSlotDensity(axis.roll_dist, roll_out_rad - math::kPiD, &roll_dirac, &roll_at);
   return rho_phi * ((1.0 - f) * az_d * roll_d + f * shifted_az * shifted_roll);
+}
+
+double DeclaredPoseLogDensity(const AxisDistribution& axis, double lambda_out_rad, double phi_rad,
+                              double roll_out_rad) {
+  const bool full_sphere = axis.IsFullSphereUniform();
+  const LatitudeDensity lat = full_sphere ? MakeFullSphereLatitude() : MakeLatitudeDensity(axis.latitude_dist);
+  return DeclaredPoseLogDensity(lat, axis, lambda_out_rad, phi_rad, roll_out_rad);
+}
+
+double DeclaredPoseLogDensity(const LatitudeDensity& lat, const AxisDistribution& axis, double lambda_out_rad,
+                              double phi_rad, double roll_out_rad) {
+  const double neg_inf = -std::numeric_limits<double>::infinity();
+  if (lat.kind() == LatitudeLawKind::kDiracUnfolded || lat.kind() == LatitudeLawKind::kDiracFolded) {
+    return neg_inf;  // singular in phi; the mass is carried by UMarginal's support kinds
+  }
+  bool az_dirac = false, roll_dirac = false;
+  const double log_phi = lat.EvaluateLog(phi_rad);
+  const double log_az = WrappedSlotLogDensity(axis.azimuth_dist, lambda_out_rad, &az_dirac);
+  const double log_roll = WrappedSlotLogDensity(axis.roll_dist, roll_out_rad, &roll_dirac);
+  if (az_dirac || roll_dirac || log_phi == neg_inf) {
+    return neg_inf;  // singular in that slot; same rule as the linear form
+  }
+  const double f = lat.FlipProbability(phi_rad);
+  const double log_az_shifted = WrappedSlotLogDensity(axis.azimuth_dist, lambda_out_rad - math::kPiD, &az_dirac);
+  const double log_roll_shifted = WrappedSlotLogDensity(axis.roll_dist, roll_out_rad - math::kPiD, &roll_dirac);
+  if (az_dirac || roll_dirac) {
+    return neg_inf;
+  }
+  // The two flip branches as log products, then log-sum-exp; log1p(−f) is the stable log(1−f)
+  // and answers −inf at f = 1 exactly like the linear form's zeroed branch.
+  const double log_branch_a = std::log1p(-f) + log_az + log_roll;
+  const double log_branch_b = (f > 0.0 ? std::log(f) : neg_inf) + log_az_shifted + log_roll_shifted;
+  return log_phi + LogSumExp(log_branch_a, log_branch_b);
 }
 
 // ---------------------------------------------------------------------------

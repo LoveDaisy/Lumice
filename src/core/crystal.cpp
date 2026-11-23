@@ -10,6 +10,7 @@
 #include <cstring>
 #include <memory>
 #include <numeric>
+#include <set>
 #include <utility>
 #include <vector>
 
@@ -1566,6 +1567,117 @@ bool ElementFixesSkyDirection(const CrystalElement& element, const double direct
   const double off_plane =
       direction[0] * plane_normal[0] + direction[1] * plane_normal[1] + direction[2] * plane_normal[2];
   return std::fabs(off_plane) <= 1e-12;
+}
+
+namespace {
+
+// The roll half of D's anchor, per element: the roll law must be symmetric about −ψ_a. A
+// full-turn uniform is symmetric about every point and keeps every a. The remaining
+// symmetric-about-their-own-centre families (Dirac, uniform band, Gaussian, legacy Gaussian,
+// Laplacian) keep exactly the reflection whose fixed point is their centre — c ≡ −30a
+// (mod 180°), the statement `ComputeSigmaA(centre) == a` spells, with the same anchor tolerance
+// the D condition uses (IsRollMeanAtMultipleOf30). kZigzag stays conservative (a missed merge
+// is safe, a wrong one is not), like every per-bit predicate that has not decided its tilt case.
+bool RollLawSymmetricAboutMinusPsi(const AxisDistribution& axis, int a) {
+  if (detail::IsFullTurnUniform(axis.roll_dist.type, axis.roll_dist.spread)) {
+    return true;
+  }
+  if (!detail::IsRollMeanAtMultipleOf30(axis)) {
+    return false;
+  }
+  return detail::ComputeSigmaA(axis.roll_dist.center) == a;
+}
+
+// The roll half of P, per element: invariance under the −60k° shift. Full-turn uniform is
+// shift-invariant at every k; the pole-fold gluing keeps exactly the 180° shift
+// (GluingRetainsHalfTurn); k = 0 shifts nothing.
+bool RollLawInvariantUnderShift(const AxisDistribution& axis, int k) {
+  if (k == 0) {
+    return true;
+  }
+  if (detail::IsFullTurnUniform(axis.roll_dist.type, axis.roll_dist.spread)) {
+    return true;
+  }
+  return k == 3 && detail::GluingRetainsHalfTurn(axis);
+}
+
+}  // namespace
+
+bool MeasureRetainsElement(const CrystalElement& element, const AxisDistribution& axis_dist) {
+  switch (element.family) {
+    case CrystalElement::Family::kIdentity:
+      return true;
+    case CrystalElement::Family::kCAxisRotation:
+      // T leaves the azimuth and zenith slots unchanged: the roll shift is the whole condition.
+      return RollLawInvariantUnderShift(axis_dist, element.index);
+    case CrystalElement::Family::kHorizontalHalfTurn:
+      // az shift by 180° + zenith reflection (both inside IsBApplicable's two conjuncts) plus
+      // the roll reflection about −ψ_a (D's anchor half, same index).
+      return detail::IsBApplicable(axis_dist) && RollLawSymmetricAboutMinusPsi(axis_dist, element.index);
+    case CrystalElement::Family::kVerticalMirror:
+      // az reflection about the sun's plane (a full-turn uniform is invariant) + the roll
+      // reflection; the zenith slot is untouched.
+      return detail::IsFullTurnUniform(axis_dist.azimuth_dist.type, axis_dist.azimuth_dist.spread) &&
+             RollLawSymmetricAboutMinusPsi(axis_dist, element.index);
+    case CrystalElement::Family::kRotoMirror:
+      // B's two conjuncts plus the roll shift (none at k = 0, the 180° half-turn at k = 3).
+      return detail::IsBApplicable(axis_dist) && RollLawInvariantUnderShift(axis_dist, element.index);
+  }
+  return false;
+}
+
+bool ShapeAdmitsElement(const CrystalElement& element, const GeometricSymmetry& shape) {
+  switch (element.family) {
+    case CrystalElement::Family::kIdentity:
+      return true;
+    case CrystalElement::Family::kCAxisRotation:
+      return element.index % shape.p_step == 0;
+    case CrystalElement::Family::kHorizontalHalfTurn:
+      // The composite acts as B and σ_a together: both shape halves must admit it.
+      return shape.b_applicable && shape.AllowsMirror(element.index);
+    case CrystalElement::Family::kVerticalMirror:
+      return shape.AllowsMirror(element.index);
+    case CrystalElement::Family::kRotoMirror:
+      return shape.b_applicable && element.index % shape.p_step == 0;
+  }
+  return false;
+}
+
+std::vector<CrystalElement> DeriveRetainedElements(const GeometricSymmetry& shape, const AxisDistribution& axis_dist) {
+  std::vector<CrystalElement> retained;
+  for (const CrystalElement& element : AllCrystalElements()) {
+    if (MeasureRetainsElement(element, axis_dist) && ShapeAdmitsElement(element, shape)) {
+      retained.push_back(element);
+    }
+  }
+  return retained;
+}
+
+std::vector<IdType> ReduceRaypathByElements(const std::vector<IdType>& rp, const std::vector<CrystalElement>& elements,
+                                            int fn_period) {
+  if (fn_period < 0 || elements.empty()) {
+    return rp;
+  }
+  // The orbit of one sequence under the element set IS its local class; the orbit's
+  // lexicographic minimum is its representative. Plain BFS closure terminates at the orbit
+  // (row-sized: at most a few dozen face sequences).
+  std::set<std::vector<IdType>> seen;
+  std::vector<std::vector<IdType>> queue{ rp };
+  seen.insert(rp);
+  while (!queue.empty()) {
+    const std::vector<IdType> current = std::move(queue.back());
+    queue.pop_back();
+    for (const CrystalElement& element : elements) {
+      std::vector<IdType> image = current;
+      for (IdType& face : image) {
+        face = element.ApplyToFace(face);
+      }
+      if (seen.insert(image).second) {
+        queue.push_back(std::move(image));
+      }
+    }
+  }
+  return *seen.begin();
 }
 
 
