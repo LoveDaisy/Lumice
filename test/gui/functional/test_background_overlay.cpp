@@ -476,8 +476,11 @@ void RegisterBackgroundOverlayTests(ImGuiTestEngine* engine) {
       IM_CHECK(RequestAndWaitPreviewExport(ctx, gui::g_preview_vp, path_ref));
 
       // Switch the photograph on under Screen and confirm it reaches the frame at all — without
-      // this arm the comparison below would pass on a broken uploader.
+      // this arm the comparison below would pass on a broken uploader. The enabled-state read
+      // before the click is the live half of the gate witness: under Screen with an image loaded
+      // the box is reachable, and the click landing at all (the next CHECK) is the editable half.
       gui::g_state.renderer.tone = LUMICE_TONE_SCREEN;
+      IM_CHECK(!IsDisabled(ctx->ItemInfo("**/Show##display_bg")));
       ctx->ItemClick("**/Show##display_bg");
       ctx->Yield(2);
       IM_CHECK_EQ(gui::g_preview_vp.params.bg.enabled, true);
@@ -507,6 +510,18 @@ void RegisterBackgroundOverlayTests(ImGuiTestEngine* engine) {
       const gui::FieldEditorConstraint c = gui::ConstraintFor("bg_show", gui::g_state);
       IM_CHECK_EQ(c.enabled, false);
       IM_CHECK(c.disabled_reason != nullptr);
+
+      // The gate has to reach the WIDGET, not only the constraint: this is the call site the
+      // Display panel wraps in BeginDisabled(!bg_show_c.enabled) inside its no-image scope. With
+      // the image loaded (no_bg false) the grey is the registry gate's own — the rule-level read
+      // above cannot see that wiring, and a press on the greyed box writing nothing is what
+      // distinguishes a restored gate from a constraint the panel stopped consuming. The stored
+      // choice must survive it for the switch back to Screen.
+      IM_CHECK(IsDisabled(ctx->ItemInfo("**/Show##display_bg")));
+      ctx->MouseMove("**/Show##display_bg", ImGuiTestOpFlags_NoCheckHoveredId);
+      ctx->MouseClick(ImGuiMouseButton_Left);
+      ctx->Yield(2);
+      IM_CHECK_EQ(gui::g_state.bg_show, true);
 
       std::remove(path_ref.c_str());
       std::remove(path_print.c_str());
