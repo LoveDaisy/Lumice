@@ -679,17 +679,30 @@ void RegisterFilterEditorTests(ImGuiTestEngine* engine) {
       // two keystrokes are queued for the handoff frame and the activation frame — the two frames
       // a loose "press Enter, wait, then type" sequence would have sailed over.
       ctx->KeySetEx(ImGuiKey_Enter, true, 0.0f);
-      ctx->Yield();
-      ctx->KeyChars("9");  // frame after the insert: the handoff frame itself
-      ctx->KeyChars("8");  // the activation frame
-      ctx->Yield(4);
+      ctx->Yield();  // the Enter is consumed here: the row is inserted, the focus request armed
+      ctx->KeySetEx(ImGuiKey_Enter, false, 0.0f);  // release: a held Enter auto-repeats and keeps inserting
+      ctx->KeyChars("9");                          // frame after the insert: the handoff frame itself
+      ctx->KeyChars("8");                          // the activation frame
+      ctx->Yield(2);
+      ctx->KeyChars("7");  // normal typing AFTER the handoff settled: must append, not replace
+      ctx->Yield(3);
 
       auto rows = RowTexts();
       IM_CHECK_EQ(rows.size(), static_cast<size_t>(3));
-      IM_CHECK_STR_EQ(rows[1].c_str(), "98");   // both keystrokes, in order, none eaten
+      IM_CHECK_STR_EQ(rows[1].c_str(), "987");  // all three keystrokes: none eaten, none replaced
       IM_CHECK_STR_EQ(rows[0].c_str(), "1-2");  // the source row did not absorb them
       IM_CHECK_STR_EQ(rows[2].c_str(), "3-4");
       IM_CHECK_EQ(ImGui::GetActiveID(), ctx->ItemInfo("**/##row_text_2").ID);
+
+      // And the undo baseline stays clean: the parked keystrokes were an edit of the new row, not
+      // its original content — a cancel restores empty and deletes the creation.
+      ctx->KeyPress(ImGuiKey_Escape);
+      ctx->Yield(4);
+      rows = RowTexts();
+      IM_CHECK_EQ(rows.size(), static_cast<size_t>(2));
+      IM_CHECK_STR_EQ(rows[0].c_str(), "1-2");
+      IM_CHECK_STR_EQ(rows[1].c_str(), "3-4");
+      IM_CHECK_EQ(ImGui::GetActiveID(), ctx->ItemInfo("**/##row_text_0").ID);  // back to the source
 
       ctx->ItemClick(kCancel);
       ctx->Yield(2);
@@ -751,6 +764,37 @@ void RegisterFilterEditorTests(ImGuiTestEngine* engine) {
       IM_CHECK_EQ(rows.size(), static_cast<size_t>(1));  // the left row spawned nothing
       IM_CHECK_STR_EQ(rows[0].c_str(), "1-2");
       IM_CHECK_NE(ImGui::GetActiveID(), ctx->ItemInfo("**/##row_text_0").ID);  // no focus steal either
+
+      ctx->ItemClick(kCancel);
+      ctx->Yield(2);
+    };
+  }
+
+  // The same adjacency for Esc against an empty row, where row COUNT cannot see the difference:
+  // tab away from the lone blank row and press Esc next frame — a misfire would delete that row
+  // and refill a blank under a FRESH uid, leaving one row again. The row's identity is the
+  // observable: uid 0 must survive untouched, nothing refilled, nothing refocused.
+  {
+    ImGuiTest* t =
+        IM_REGISTER_TEST(engine, "filter_editor", "esc_right_after_tabbing_away_does_not_delete_the_blank_row");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      ctx->Yield(2);
+      OpenFilterModal(ctx);  // the lone blank row, uid 0
+      ctx->ItemInput("**/##row_text_0");
+      ctx->Yield(2);
+      ctx->KeySetEx(ImGuiKey_Tab, true, 0.0f);
+      ctx->Yield();  // the tabbing request goes out
+      ctx->KeySetEx(ImGuiKey_Tab, false, 0.0f);
+      ctx->KeySetEx(ImGuiKey_Escape, true, 0.0f);  // adjacent frame, as a fast hand lands them
+      ctx->Yield();
+      ctx->KeySetEx(ImGuiKey_Escape, false, 0.0f);
+      ctx->Yield(4);
+
+      IM_CHECK(ctx->ItemExists("**/##row_text_0"));   // uid 0: the SAME row, not a refilled one
+      IM_CHECK(!ctx->ItemExists("**/##row_text_1"));  // no refill: nothing was deleted
+      IM_CHECK_STR_EQ(RowTexts()[0].c_str(), "");
+      IM_CHECK_NE(ImGui::GetActiveID(), ctx->ItemInfo("**/##row_text_0").ID);  // no focus steal
 
       ctx->ItemClick(kCancel);
       ctx->Yield(2);
