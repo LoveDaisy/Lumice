@@ -553,33 +553,6 @@ IdType Crystal::GetFn(IdType poly_idx) const {
 
 namespace {
 
-// Rotate prism/pyramid faces by the allowed step so the first non-basal face lands on the smallest
-// face its orbit can reach (the P-canonical form): with rotations by multiples of p_step, the first
-// 0-based pri index f can be sent exactly to f mod p_step. p_step == 1 is the full six-fold case
-// (first face -> 0, bit-identical to the rule before geometry was consulted); p_step >= fn_period
-// admits no rotation and returns the input. Basal faces (x < 3) pass through unchanged; the input is
-// returned verbatim when no non-basal face is present.
-std::vector<IdType> PCanonicalShiftByPeriod(const std::vector<IdType>& rp, int fn_period, int p_step) {
-  std::vector<IdType> result = rp;
-  if (p_step <= 0 || p_step >= fn_period) {
-    return result;
-  }
-  int shift = -1;
-  for (auto& x : result) {
-    if (x < 3) {
-      continue;
-    }
-    IdType pyr = x / 10;
-    int pri0 = static_cast<int>(x % 10) - 3;
-    if (shift < 0) {
-      shift = pri0 - pri0 % p_step;
-    }
-    pri0 = (pri0 - shift + fn_period) % fn_period;
-    x = pyr * 10 + static_cast<IdType>(pri0 + 3);
-  }
-  return result;
-}
-
 // Whether each symmetry element takes part, given request, ensemble and geometry: the one place the
 // three halves are intersected for Crystal's reduction and expansion. `p_retained` /
 // `b_applicable` / `d_applicable` are the orientation ensemble's halves (the P one already carries
@@ -599,11 +572,11 @@ bool BActive(uint8_t symmetry, bool b_applicable, const GeometricSymmetry& geom)
 
 }  // namespace
 
-// ONE label action on a face sequence: the bit walk's σ/B candidate generation applies the
-// group element's own ApplyToFace, so the label machinery exists exactly once — the element
-// inventory is its authority (MirrorFaceIndex spells the same map parameterized by fn_period,
-// which production always passes as the hexagonal 6, the element action's own domain; the walk
-// keeps its legacy first-face P-canonicalization, the frozen naming contract, untouched).
+// ONE label action on a face sequence: the orbit enumeration's and the expansion's candidate
+// generation apply the group element's own ApplyToFace, so the label machinery exists exactly
+// once — the element inventory is its authority (MirrorFaceIndex spells the same map
+// parameterized by fn_period, which production always passes as the hexagonal 6, the element
+// action's own domain).
 std::vector<IdType> ApplyLabelAction(const CrystalElement& element, const std::vector<IdType>& sequence) {
   std::vector<IdType> image = sequence;
   for (IdType& face : image) {
@@ -612,46 +585,39 @@ std::vector<IdType> ApplyLabelAction(const CrystalElement& element, const std::v
   return image;
 }
 
-// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+// The bit-spelled entry of the ONE naming authority: it builds the bit request's generator
+// inventory (the same P/D/B activity gates the expansion reads) and delegates to the element-set
+// form below — the lexicographic minimum of rp's orbit under the generators they generate. The
+// old greedy walk (first-face P-canonicalization, then mirror/B candidate steps) was this same
+// orbit minimum in closed four-coset form — its candidates are orbit members, and the first
+// differing face between the P-shifted seed and its mirror image sits at a position whose band
+// both σ_a and the P shift preserve, so S_0 (which fixes every prism index and flips each ring
+// uniformly) cannot reverse that comparison — a fact the three-encoding equivalence sweep in
+// test_filter_spec.cpp pins across the widened domain. detail::ReduceBuffer (filter_spec.cpp)
+// still spells that closed form for the per-ray matcher's buffer path; the sweep is the standing
+// guardrail that the encodings cannot drift. The inventory's domain is the hexagonal 6: every
+// caller passes a crystal's FnPeriod(), which is kHexagonalFnPeriod or the no-reduction -1.
 std::vector<IdType> ReduceRaypathByPeriod(const std::vector<IdType>& rp, uint8_t symmetry, int sigma_a,
                                           bool d_applicable, PRotationSet p_retained, bool b_applicable, int fn_period,
                                           const GeometricSymmetry& geom) {
   if (symmetry == sym::kSymNone || fn_period < 0) {
     return rp;
   }
-
-  std::vector<IdType> reduced_rp = rp;
+  std::vector<CrystalElement> elements;
   if (PActive(symmetry, p_retained)) {
-    reduced_rp = PCanonicalShiftByPeriod(reduced_rp, fn_period, p_retained.GeneratorStep());
+    for (int k = 1; k < kHexagonalFnPeriod; ++k) {
+      if (p_retained.Keeps(k)) {
+        elements.push_back(CrystalElement{ CrystalElement::Family::kCAxisRotation, k });
+      }
+    }
   }
-
   if (DActive(symmetry, sigma_a, d_applicable, geom)) {
-    // σ-clean: the candidate is the σ_{sigma_a} mirror's label image, applied by the element
-    // inventory's own action.
-    std::vector<IdType> rp_reflected =
-        ApplyLabelAction(CrystalElement{ CrystalElement::Family::kVerticalMirror, sigma_a }, reduced_rp);
-    // When kSymP is also enabled, the D-image may no longer be P-canonical
-    // (first pri shifted by sigma_a); re-canonicalize before lex comparison
-    // so same orbit always reduces to the same representative.
-    if (PActive(symmetry, p_retained)) {
-      rp_reflected = PCanonicalShiftByPeriod(rp_reflected, fn_period, p_retained.GeneratorStep());
-    }
-    if (rp_reflected < reduced_rp) {
-      reduced_rp = rp_reflected;
-    }
+    elements.push_back(CrystalElement{ CrystalElement::Family::kVerticalMirror, sigma_a });
   }
-
   if (BActive(symmetry, b_applicable, geom)) {
-    // B's label image through the same element action (S_0 = B): basal 1↔2 and the pyramid
-    // rings swap, prism unchanged — then keep the lexicographically smaller one.
-    std::vector<IdType> rp_b_reflected =
-        ApplyLabelAction(CrystalElement{ CrystalElement::Family::kRotoMirror, 0 }, reduced_rp);
-    if (rp_b_reflected != reduced_rp && rp_b_reflected < reduced_rp) {
-      reduced_rp = std::move(rp_b_reflected);
-    }
+    elements.push_back(CrystalElement{ CrystalElement::Family::kRotoMirror, 0 });
   }
-
-  return reduced_rp;
+  return ReduceRaypathByPeriod(rp, elements, fn_period);
 }
 
 std::vector<IdType> Crystal::ReduceRaypath(const std::vector<IdType>& rp, uint8_t symmetry) const {
@@ -1754,10 +1720,7 @@ std::vector<IdType> ReduceRaypathByPeriod(const std::vector<IdType>& rp, const s
     const std::vector<IdType> current = std::move(queue.back());
     queue.pop_back();
     for (const CrystalElement& element : elements) {
-      std::vector<IdType> image = current;
-      for (IdType& face : image) {
-        face = element.ApplyToFace(face);
-      }
+      const std::vector<IdType> image = ApplyLabelAction(element, current);
       if (row != nullptr && std::find(row->begin(), row->end(), image) == row->end()) {
         continue;  // leaves the row: not a member here (the scope's clamp, not a naming rule)
       }

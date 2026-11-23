@@ -635,6 +635,111 @@ TEST(FilterSpecReduceRecorder, LowSymmetryShapesAgreeWithCrystalReduceRaypath) {
   EXPECT_EQ(checked, 4 * 7 * 6 * 10);
 }
 
+// The three reduction encodings name one authority (the element-orbit minimum): the per-bit
+// Crystal::ReduceRaypath entry, the buffer-level detail::ReduceBuffer the per-ray matcher runs,
+// and the element-set ReduceRaypathByPeriod overload the local-class resolver consumes. The
+// greedy walk is the closed four-coset form of the orbit minimum on the generator regime
+// (P-stride shifts, one anchor mirror, S_0; the walk's candidates are orbit members, and the
+// first differing face between the P-normalized seed and its mirror image sits at a position
+// whose band both σ_a and the P shift preserve, so S_0 — which fixes prism indices and flips
+// every ring uniformly — cannot reverse that comparison; the walk's output therefore IS the
+// orbit minimum). This sweep is the standing equivalence guardrail across the widened domain
+// the convergence ruling asked for: five shapes, every bit set, four P-retention subsets, all
+// six anchors, both applicability halves, and sequences up to eight faces mixing basal, prism
+// and cone bands.
+TEST(FilterSpecReduceRecorder, ThreeEncodingsAgreeAsOneOrbitMinimumAuthority) {
+  const float rhombic[6]{ 1.5f, 1.0f, 1.0f, 1.5f, 1.0f, 1.0f };
+  const float one_mirror[6]{ 1.0f, 1.2f, 1.3f, 1.3f, 1.2f, 1.0f };
+  const float alternating[6]{ 1.0f, 1.2f, 1.0f, 1.2f, 1.0f, 1.2f };
+  const Crystal crystals[] = {
+    Crystal::CreatePrism(1.0f),
+    Crystal::CreatePrism(1.0f, rhombic),
+    Crystal::CreatePrism(1.0f, one_mirror),
+    Crystal::CreatePrism(1.0f, alternating),
+    Crystal::CreatePyramid(28.0f, 40.0f, 0.4f, 1.0f, 0.3f, alternating),
+  };
+  const PRotationSet p_sets[] = { PRotationSet::Full(), PRotationSet::FromStep(2), PRotationSet::FromStep(3),
+                                  PRotationSet::Identity() };
+  const std::vector<IdType> faces = { 1, 2, 3, 4, 5, 6, 7, 8, 13, 14, 15, 16, 17, 18, 23, 24, 25, 26, 27, 28 };
+  // Structured seeds first (basal entry/exit, cone faces, reverses), then the randomized sweep.
+  const std::vector<std::vector<IdType>> structured = {
+    { 3, 5 },         { 5, 3 },
+    { 1, 3, 4, 2 },   { 2, 8, 7, 1 },
+    { 13, 3 },        { 3, 23 },
+    { 13, 5, 15, 8 }, { 1, 3, 5, 2 },
+    { 3, 13, 24, 5 }, { 2, 1 },
+    { 1, 2 },         { 3 },
+    { 28 },           { 1, 13, 5, 23, 2 },
+    { 8, 4 },         { 23, 8, 4, 13, 3, 18 },
+  };
+  std::mt19937 rng(20261123u);
+  std::uniform_int_distribution<int> len_dist(1, 8);
+  std::uniform_int_distribution<size_t> face_dist(0, faces.size() - 1);
+  std::vector<std::vector<IdType>> sequences = structured;
+  for (int k = 0; k < 60; ++k) {
+    std::vector<IdType> rp(static_cast<size_t>(len_dist(rng)));
+    for (auto& x : rp) {
+      x = faces[face_dist(rng)];
+    }
+    sequences.push_back(std::move(rp));
+  }
+  long checked = 0;
+  for (const Crystal& crystal : crystals) {
+    const int fn = crystal.FnPeriod();
+    const GeometricSymmetry& geom = crystal.GeomSymmetry();
+    for (uint8_t sym = 0; sym <= 7; ++sym) {
+      for (const PRotationSet& p_retained : p_sets) {
+        for (int sigma_a = 0; sigma_a < 6; ++sigma_a) {
+          for (int d_applicable = 0; d_applicable < 2; ++d_applicable) {
+            for (int b_applicable = 0; b_applicable < 2; ++b_applicable) {
+              // The element inventory the two bit-driven entries must equal: the walk's own
+              // active generators (activity gates included), closed by the BFS itself.
+              std::vector<CrystalElement> elements;
+              if ((sym & FilterConfig::kSymP) != 0 && p_retained.NonTrivial()) {
+                for (int k = 1; k < kHexagonalFnPeriod; ++k) {
+                  if (p_retained.Keeps(k)) {
+                    elements.push_back(CrystalElement{ CrystalElement::Family::kCAxisRotation, k });
+                  }
+                }
+              }
+              if ((sym & FilterConfig::kSymD) != 0 && DMirrorActive(d_applicable != 0, sigma_a, geom)) {
+                elements.push_back(CrystalElement{ CrystalElement::Family::kVerticalMirror, sigma_a });
+              }
+              if ((sym & FilterConfig::kSymB) != 0 && b_applicable != 0 && geom.b_applicable) {
+                elements.push_back(CrystalElement{ CrystalElement::Family::kRotoMirror, 0 });
+              }
+              for (const std::vector<IdType>& rp : sequences) {
+                const std::vector<IdType> via_bits =
+                    crystal.ReduceRaypath(rp, sym, sigma_a, d_applicable != 0, p_retained, b_applicable != 0);
+                std::vector<IdType> buffer_bytes(rp.begin(), rp.end());
+                uint8_t bytes[kMaxHits];
+                const size_t size = buffer_bytes.size();
+                for (size_t i = 0; i < size; ++i) {
+                  bytes[i] = static_cast<uint8_t>(buffer_bytes[i]);
+                }
+                detail::ReduceBuffer(bytes, size, sym, sigma_a, d_applicable != 0, p_retained, b_applicable != 0, fn,
+                                     geom);
+                const std::vector<IdType> via_elements = ReduceRaypathByPeriod(rp, elements, fn);
+                std::vector<IdType> via_buffer(bytes, bytes + size);
+                EXPECT_EQ(via_bits, via_elements)
+                    << "per-bit entry vs element orbit: sym=" << static_cast<int>(sym) << " sigma_a=" << sigma_a
+                    << " p_step=" << p_retained.GeneratorStep() << " d=" << d_applicable << " b=" << b_applicable
+                    << " rp=" << FormatRaypath(rp);
+                EXPECT_EQ(via_buffer, via_elements)
+                    << "buffer entry vs element orbit: sym=" << static_cast<int>(sym) << " sigma_a=" << sigma_a
+                    << " p_step=" << p_retained.GeneratorStep() << " d=" << d_applicable << " b=" << b_applicable
+                    << " rp=" << FormatRaypath(rp);
+                ++checked;
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  EXPECT_GT(checked, 100000) << "the sweep degenerated";
+}
+
 // =============== DirectionSpec tests (port of DirectionFilter_* legacy tests) ===============
 
 std::unique_ptr<FilterSpec> MakeDirectionSpec(float lon_deg, float lat_deg, float radii_deg,

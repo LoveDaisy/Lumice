@@ -535,12 +535,14 @@ class Crystal {
 // are the orientation ensemble's P-rotation set and B condition (DeriveSymmetryGating's answer,
 // already intersected with the shape where the set came from there) — the ensemble's halves.
 // `geom` is the crystal's shape symmetry, the other half: P rotates only when the P bit is set
-// and `p_retained` keeps a non-identity rotation, and then by strides of p_retained's generating
-// step (the shape intersection happened in the derivation — this function does not read
-// geom.p_step); D is applied only when the D bit is set, d_applicable is true AND geom admits
-// mirror sigma_a; B only when the B bit is set, b_applicable AND geom.b_applicable. The reduced
-// element set is the request intersected with what the ensemble and the geometry allow — never
-// more.
+// and `p_retained` keeps a non-identity rotation; D is applied only when the D bit is set,
+// d_applicable is true AND geom admits mirror sigma_a; B only when the B bit is set, b_applicable
+// AND geom.b_applicable. The reduced element set is the request intersected with what the
+// ensemble and the geometry allow — never more. This entry BUILDS that generator inventory and
+// delegates to the element-set form below: one naming authority, the lexicographic minimum of
+// rp's orbit (the bit-spelled closed form's byte contract is pinned by the three-encoding
+// equivalence sweep in test_filter_spec.cpp; the buffer twin detail::ReduceBuffer and the device
+// filter copy spell the same closed form for their frozen hot paths).
 std::vector<IdType> ReduceRaypathByPeriod(const std::vector<IdType>& rp, uint8_t symmetry, int sigma_a,
                                           bool d_applicable, PRotationSet p_retained, bool b_applicable, int fn_period,
                                           const GeometricSymmetry& geom);
@@ -652,11 +654,10 @@ bool ShapeAdmitsElement(const CrystalElement& element, const GeometricSymmetry& 
 // pinned equal to this set's per-family subsets.
 std::vector<CrystalElement> DeriveRetainedElements(const GeometricSymmetry& shape, const AxisDistribution& axis_dist);
 
-// The naming authority's element-set form — the SAME ReduceRaypathByPeriod entry, so there is
-// one naming rule, not a second reduction beside it: the lexicographic minimum of `rp`'s orbit
-// under the given elements' label actions (the orbit IS the local class; the minimum is its
-// representative). The per-bit overload above keeps the old entries' walk bit-for-bit; this
-// form is what a local class consumes (an element set is not expressible as P/B/D bits).
+// The naming authority's element-set form — the ONE reduction the per-bit overload above
+// delegates to as well: the lexicographic minimum of `rp`'s orbit under the given elements'
+// label actions (the orbit IS the local class; the minimum is its representative). This form is
+// what a local class consumes (an element set is not expressible as P/B/D bits).
 // `fn_period < 0` or an empty element set returns `rp` unchanged.
 std::vector<IdType> ReduceRaypathByPeriod(const std::vector<IdType>& rp, const std::vector<CrystalElement>& elements,
                                           int fn_period);
