@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795406191174,
+  "lastUpdate": 1795406193769,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9620,50 +9620,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "872baa366d78c2065a37645eb3bd9ac33ef78cdb",
-          "message": "Merge pull request #511 from LoveDaisy/feat/raypath-survey-c01-delta\n\nfeat(raypath): survey C01 full-dimensional delta machine, radial probe and chromatic layer v1",
-          "timestamp": "2026-10-18T16:00:38+08:00",
-          "tree_id": "d06f27173c45451f8acbcd7f8ee8d892a299bbea",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/872baa366d78c2065a37645eb3bd9ac33ef78cdb"
-        },
-        "date": 1792310641906,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 83.9,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 99.6,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 100.5,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 93.5,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "be2288de2d204daa735f6abd653f3303a0dda03e",
           "message": "Merge pull request #512 from LoveDaisy/feat/raypath-survey-c15-tint\n\nfeat(raypath): survey C15 slice — weight_tint chromatic leg (smoke trilogy finale)",
           "timestamp": "2026-10-18T20:59:11+08:00",
@@ -14003,6 +13959,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 94.2,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "1efc673fc1346637961b1cbf3f127abe1539fe48",
+          "message": "Merge pull request #633 from LoveDaisy/chore/ci-release-push-trigger\n\nci: trigger the workflow on release/** pushes",
+          "timestamp": "2026-11-23T11:52:05+08:00",
+          "tree_id": "8ea5c55e318e2da81806571f958e790d6e2704c8",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/1efc673fc1346637961b1cbf3f127abe1539fe48"
+        },
+        "date": 1795406193217,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 91,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 99.8,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 98.9,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 93.3,
             "unit": "%"
           }
         ]
