@@ -375,6 +375,13 @@ static_assert(kAnalysisRayBudgetTrackPt >= 100.0f, "the track stays well above t
 // one place.
 constexpr float kAnalysisConeMarkerHitRadiusPt = 12.0f;
 
+// The roll drag's dead zone, in logical points around the actual render viewport's centre: inside
+// it the cursor's direction around the centre is not measured, so a press near the centre never
+// spins the view and crossing the centre can never read as a ~180 degree jump. A feel value like
+// the marker radius above — "big enough to rest a cursor on", chosen at 16 pt (one UI scale unit)
+// and read through UiPx(); there is deliberately no settings surface for it.
+constexpr float kRollDragDeadZonePt = 16.0f;
+
 // The display-mode segmented control in the preview's top-right corner (RenderPreviewPanel).
 // Geometry in logical points, read through UiPx(); the two alphas are opacities and are not.
 // Idle is low but never zero: the control is meant to be found without hunting for it, and it

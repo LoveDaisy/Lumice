@@ -26,6 +26,7 @@
 #include <stb_image.h>
 
 #include <cmath>
+#include <cstdint>
 #include <string>
 
 #include "gui/gui_state.hpp"
@@ -136,6 +137,67 @@ void ModWheel(ImGuiTestContext* ctx, float delta) {
   ctx->KeyDown(kBgMod);
   ctx->MouseWheelY(delta);
   ctx->KeyUp(kBgMod);
+  ctx->Yield(2);
+}
+
+// ---- the roll gesture (right drag) --------------------------------------------------------
+//
+// The expected roll is SCREEN GEOMETRY ONLY — the angle the cursor swept around the actual render
+// viewport's centre — recomputed here from ImGui window rectangles with atan2. There is no
+// production helper for the mapping to lean on (the branch is scene code, by design: a16 wants the
+// reference derived from the cursor's own geometry, not from whatever computes it), so these
+// helpers ARE the independent side: same window-local, y-down convention io.MousePos lives in.
+constexpr float kDeg2RadF = 3.14159265358979323846f / 180.0f;
+constexpr float kRad2DegF = 57.29577951308232f;
+// Tolerance, derived from the input quantization and nothing else: the engine delivers integer
+// window points, so each endpoint's angle around the centre is off by up to ~0.5 pt / r radians
+// (r >= 120 pt in these cases -> ~0.24 deg per endpoint, ~0.5 for a sweep). Every defect this
+// suite must catch is orders of magnitude above that — a sign flip is twice the sweep, a wrap
+// failure is 180, a fixed-gain mapping misses by tens — so 0.6 deg carries no false green.
+constexpr float kRollTolDeg = 0.6f;
+
+// Centre of the ACTUAL render viewport: the panel rectangle is the GL viewport (vp_w/vp_h come
+// from the panel's size, not the padded content region), so its centre is the panel window's
+// centre — not the InvisibleButton's, which sits inside one WindowPadding on every side.
+ImVec2 PreviewCentre(ImGuiTestContext* ctx) {
+  ImGuiWindow* w = ctx->GetWindowByRef("//##PreviewPanel");
+  IM_CHECK_SILENT_RETV(w != nullptr, ImVec2(0, 0));
+  return ImVec2(w->Pos.x + w->Size.x * 0.5f, w->Pos.y + w->Size.y * 0.5f);
+}
+
+ImVec2 PolarPt(ImVec2 centre, float radius_pt, float angle_deg) {
+  const float rad = angle_deg * kDeg2RadF;
+  return ImVec2(centre.x + radius_pt * std::cos(rad), centre.y + radius_pt * std::sin(rad));
+}
+
+float AngleAroundCentre(ImVec2 centre, ImVec2 p) {
+  return std::atan2(p.y - centre.y, p.x - centre.x) * kRad2DegF;
+}
+
+float SweepDeg(float from_deg, float to_deg) {
+  float d = to_deg - from_deg;
+  if (d > 180.0f) {
+    d -= 360.0f;
+  }
+  if (d < -180.0f) {
+    d += 360.0f;
+  }
+  return d;
+}
+
+// One right-button press at `from`, travel to `to`, release. The engine animates the move, so
+// every interpolated frame goes through the handler — which is why a gesture's total roll is the
+// SWEEP OF THE ENDPOINTS: each frame measures endpoint-to-endpoint and the sum telescopes, as long
+// as no frame's chord dips into the dead zone and hover never breaks. The cases below choose
+// chords that cannot.
+void RollDrag(ImGuiTestContext* ctx, ImVec2 from, ImVec2 to) {
+  ctx->MouseMoveToPos(from);
+  ctx->Yield(1);
+  ctx->MouseDown(ImGuiMouseButton_Right);
+  ctx->Yield(1);
+  ctx->MouseMoveToPos(to);
+  ctx->Yield(2);
+  ctx->MouseUp(ImGuiMouseButton_Right);
   ctx->Yield(2);
 }
 
@@ -618,6 +680,349 @@ void RegisterPreviewViewportTests(ImGuiTestEngine* engine) {
       IM_CHECK(gui::g_state.look_at.locked);
       IM_CHECK_LT(std::fabs(gui::g_state.renderer.azimuth), 1e-3f);
       IM_CHECK_LT(std::fabs(gui::g_state.renderer.elevation - 55.0f), 1e-3f);
+    };
+  }
+
+  // The roll gesture's main claim, and its direction: a right drag turns the picture WITH the
+  // cursor around the viewport's centre, by exactly the swept angle, and moves nothing else.
+  // Both sweep directions, because the claim is the pairing — a sign error is the failure this
+  // gesture is most likely to ship with, and everything else (smoothness, magnitude, wrap) can
+  // be right while the turn is backwards. The expected value is the endpoints' angular sweep
+  // recomputed from the window rectangle; the sign behind it was derived from BuildViewMatrix
+  // (the camera basis rotates by -roll; the projections hand view +y to screen up, so the
+  // y-down screen angle of the content moves by +delta-roll) — which is why the y-down atan2
+  // here, with NO sign flip, is the expected law.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "preview_viewport",
+                                    "a_right_drag_rolls_the_picture_with_the_cursor_by_the_swept_angle");
+    t->GuiFunc = UploadSynthTexture;
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      g_upload_done = false;
+      ctx->Yield(4);
+      IM_CHECK(gui::g_preview.HasTexture());
+      SeedPose(gui::kLensTypeFisheyeEquidist, 60.0f, 12.0f, -7.0f);
+      ctx->Yield(2);
+
+      const ImVec2 c = PreviewCentre(ctx);
+      const float a0 = AngleAroundCentre(c, PolarPt(c, 150.0f, 20.0f));
+      const float a1 = AngleAroundCentre(c, PolarPt(c, 150.0f, 65.0f));
+      const float sweep = SweepDeg(a0, a1);
+      IM_CHECK_GT(sweep, 40.0f);  // the premise: a real 45-degree clockwise sweep, not noise
+
+      RollDrag(ctx, PolarPt(c, 150.0f, 20.0f), PolarPt(c, 150.0f, 65.0f));
+      IM_CHECK_LT(std::fabs(gui::g_state.renderer.roll - sweep), kRollTolDeg);
+      IM_CHECK_EQ(gui::g_state.renderer.azimuth, 12.0f);
+      IM_CHECK_EQ(gui::g_state.renderer.elevation, -7.0f);
+      IM_CHECK_EQ(gui::g_state.renderer.fov, 60.0f);
+
+      // The mirrored arc: equal magnitude, opposite direction, landing back where it started.
+      const float rolled = gui::g_state.renderer.roll;
+      RollDrag(ctx, PolarPt(c, 150.0f, 65.0f), PolarPt(c, 150.0f, 20.0f));
+      IM_CHECK_LT(std::fabs(gui::g_state.renderer.roll - (rolled - sweep)), kRollTolDeg);
+      IM_CHECK_LT(std::fabs(gui::g_state.renderer.roll), kRollTolDeg);
+    };
+  }
+
+  // Roll is a circle the way azimuth is: the slider's [-180, 180] domain is a WRAP, not a wall —
+  // a drag past the seam comes out the other side instead of pinning, and keeps accumulating
+  // from the wrapped value. The overshoot is asserted before the drag, so the case cannot decay
+  // into "never reached the seam, therefore never wrapped".
+  {
+    ImGuiTest* t =
+        IM_REGISTER_TEST(engine, "preview_viewport", "the_roll_drag_wraps_round_instead_of_pinning_at_the_seam");
+    t->GuiFunc = UploadSynthTexture;
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      g_upload_done = false;
+      ctx->Yield(4);
+      IM_CHECK(gui::g_preview.HasTexture());
+      SeedPose(gui::kLensTypeFisheyeEquidist, 60.0f, 0.0f, 0.0f);
+      gui::g_state.renderer.roll = 170.0f;
+      ctx->Yield(2);
+
+      const ImVec2 c = PreviewCentre(ctx);
+      const float unwrapped = 170.0f + SweepDeg(AngleAroundCentre(c, PolarPt(c, 150.0f, 10.0f)),
+                                                AngleAroundCentre(c, PolarPt(c, 150.0f, 40.0f)));
+      IM_CHECK_GT(unwrapped, 180.0f);  // precondition: the sweep really does cross the seam
+      RollDrag(ctx, PolarPt(c, 150.0f, 10.0f), PolarPt(c, 150.0f, 40.0f));
+      IM_CHECK_LT(gui::g_state.renderer.roll, 0.0f);  // wrapped, not pinned at +180
+      IM_CHECK_LT(std::fabs(gui::g_state.renderer.roll - (unwrapped - 360.0f)), kRollTolDeg);
+    };
+  }
+
+  // The pointing mapping's three degeneracies, in one press: inside the dead zone nothing
+  // accumulates; the first valid sample OUT of it only sets the reference (no jump); and a chord
+  // that cuts across the centre in one step is dropped rather than read as a ~180-degree spin —
+  // after which a fresh short arc still works, on a rebuilt reference.
+  {
+    ImGuiTest* t =
+        IM_REGISTER_TEST(engine, "preview_viewport", "the_dead_zone_and_a_centre_crossing_hold_the_reference_quiet");
+    t->GuiFunc = UploadSynthTexture;
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      g_upload_done = false;
+      ctx->Yield(4);
+      IM_CHECK(gui::g_preview.HasTexture());
+      SeedPose(gui::kLensTypeFisheyeEquidist, 60.0f, 0.0f, 0.0f);
+      ctx->Yield(2);
+
+      const ImVec2 c = PreviewCentre(ctx);
+      // Press AT the centre and jiggle inside the dead zone: nothing to measure against yet.
+      ctx->MouseMoveToPos(c);
+      ctx->Yield(1);
+      ctx->MouseDown(ImGuiMouseButton_Right);
+      ctx->Yield(1);
+      ctx->MouseMoveToPos(PolarPt(c, 8.0f, 0.0f));  // inside the 16 pt dead zone
+      ctx->Yield(2);
+      ctx->MouseMoveToPos(PolarPt(c, 8.0f, 150.0f));  // still inside: a huge nominal angle change
+      ctx->Yield(2);
+      IM_CHECK_EQ(gui::g_state.renderer.roll, 0.0f);
+
+      // Out of the zone: the FIRST valid point establishes the reference and rolls nothing.
+      ctx->MouseMoveToPos(PolarPt(c, 120.0f, 30.0f));
+      ctx->Yield(2);
+      IM_CHECK_EQ(gui::g_state.renderer.roll, 0.0f);
+      // From the reference, a real arc accumulates.
+      ctx->MouseMoveToPos(PolarPt(c, 120.0f, 60.0f));
+      ctx->Yield(2);
+      const float after_arc = gui::g_state.renderer.roll;
+      IM_CHECK_LT(std::fabs(after_arc - 30.0f), kRollTolDeg);
+
+      // Across the centre: the chord must actually DIP INTO the dead zone for the step to be a
+      // crossing, so the jump lands on antipodes of the r=50 ring (45° -> 225°) — a diameter
+      // whose chord passes through the centre itself, robustly inside the zone even after the
+      // engine's integer snapping. (A 150-degree jump between r=120 points would be a legitimate
+      // fast swirl: its chord stays well outside the zone and measures as the sweep it is.)
+      // The crossing adds no roll and no ~180-degree jump; the engine may deliver the move as
+      // one frame's jump or animate it — the near-centre chords are dropped either way. The
+      // press ends here: what the crossing must NOT do is spend the picture.
+      ctx->MouseMoveToPos(PolarPt(c, 50.0f, 225.0f));
+      ctx->Yield(3);
+      IM_CHECK_LT(std::fabs(gui::g_state.renderer.roll - after_arc), kRollTolDeg);
+      ctx->MouseUp(ImGuiMouseButton_Right);
+      ctx->Yield(2);
+
+      // And the gesture still works after a crossing: a fresh press re-establishes its own
+      // reference and the next arc accumulates from it.
+      ctx->MouseMoveToPos(PolarPt(c, 120.0f, 210.0f));
+      ctx->Yield(1);
+      ctx->MouseDown(ImGuiMouseButton_Right);
+      ctx->Yield(1);
+      ctx->MouseMoveToPos(PolarPt(c, 120.0f, 240.0f));
+      ctx->Yield(2);
+      IM_CHECK_LT(std::fabs(gui::g_state.renderer.roll - (after_arc + 30.0f)), kRollTolDeg);
+      ctx->MouseUp(ImGuiMouseButton_Right);
+      ctx->Yield(2);
+    };
+  }
+
+  // Full-sky: the entry rejects the press rather than writing into a value the per-frame
+  // invariant would zero — the pose stays at the canonical zero AND the press never became a
+  // roll that got cleaned up afterwards. (Which of those two held is white-box: admission
+  // carries `!full_sky`, so the write site is unreachable, not merely erased.)
+  {
+    ImGuiTest* t =
+        IM_REGISTER_TEST(engine, "preview_viewport", "a_full_sky_lens_ignores_the_right_drag_it_still_accepts");
+    t->GuiFunc = UploadSynthTexture;
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      g_upload_done = false;
+      ctx->Yield(4);
+      IM_CHECK(gui::g_preview.HasTexture());
+      gui::g_state.renderer.lens_type = gui::kLensTypeDualFisheyeEqualArea;
+      ctx->Yield(3);
+      IM_CHECK(ctx->ItemExists(kInteract));  // the premise: there IS something to right-drag on
+
+      const ImVec2 c = PreviewCentre(ctx);
+      RollDrag(ctx, PolarPt(c, 150.0f, 20.0f), PolarPt(c, 150.0f, 65.0f));
+      IM_CHECK_EQ(gui::g_state.renderer.roll, 0.0f);
+      IM_CHECK_EQ(gui::g_state.renderer.azimuth, 0.0f);
+      IM_CHECK_EQ(gui::g_state.renderer.elevation, 0.0f);
+    };
+  }
+
+  // Globe: the drag writes the STORED value (the slider's own semantics under Globe — kept for a
+  // lens that uses roll) while the PUBLISHED view roll stays 0. The published half reads the
+  // frame's actual view projection — what the shader was drawn with — not a re-run of
+  // EffectiveRollForLens, which would agree with a write-side bug by construction.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "preview_viewport",
+                                    "a_globe_right_drag_keeps_the_stored_value_and_publishes_zero_roll");
+    t->GuiFunc = UploadSynthTexture;
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      g_upload_done = false;
+      ctx->Yield(4);
+      IM_CHECK(gui::g_preview.HasTexture());
+      SeedPose(gui::kLensTypeGlobe, 60.0f, 5.0f, 3.0f);
+      ctx->Yield(2);
+
+      const ImVec2 c = PreviewCentre(ctx);
+      RollDrag(ctx, PolarPt(c, 150.0f, 20.0f), PolarPt(c, 150.0f, 65.0f));
+      const float sweep =
+          SweepDeg(AngleAroundCentre(c, PolarPt(c, 150.0f, 20.0f)), AngleAroundCentre(c, PolarPt(c, 150.0f, 65.0f)));
+      IM_CHECK_LT(std::fabs(gui::g_state.renderer.roll - sweep), kRollTolDeg);  // stored, like the slider
+      IM_CHECK_EQ(gui::g_preview_vp.params.view_proj.roll, 0.0f);               // published view, flat
+      IM_CHECK_EQ(gui::g_state.renderer.azimuth, 5.0f);
+      IM_CHECK_EQ(gui::g_state.renderer.elevation, 3.0f);
+    };
+  }
+
+  // Alt + right drag is nothing at all, both reachable spellings of "nothing to move": no
+  // background at all, and a background loaded and shown. Alt states the photo's intent and the
+  // photo has no rotate — swallowing the press into a roll would be indistinguishable from the
+  // plain gesture and leave a pose the user did not ask for.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "preview_viewport", "alt_plus_right_drag_moves_nothing_on_camera_or_photo");
+    t->GuiFunc = UploadSynthTextureAndBackground;
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      // No background: the render texture alone, which is what puts the canvas on screen.
+      ResetTestState();
+      g_upload_done = false;
+      ctx->Yield(4);
+      IM_CHECK(gui::g_preview.HasTexture());
+      IM_CHECK(!gui::g_preview.HasBackground());
+      SeedPose(gui::kLensTypeFisheyeEquidist, 60.0f, 5.0f, 3.0f);
+      ctx->Yield(2);
+      const ImVec2 c = PreviewCentre(ctx);
+      ctx->KeyDown(kBgMod);
+      RollDrag(ctx, PolarPt(c, 150.0f, 20.0f), PolarPt(c, 150.0f, 65.0f));
+      ctx->KeyUp(kBgMod);
+      IM_CHECK_EQ(gui::g_state.renderer.roll, 0.0f);
+      IM_CHECK_EQ(gui::g_state.renderer.azimuth, 5.0f);
+      IM_CHECK_EQ(gui::g_state.renderer.elevation, 3.0f);
+      IM_CHECK_EQ(gui::g_state.bg_offset_x, 0.0f);
+      IM_CHECK_EQ(gui::g_state.bg_scale, 1.0f);
+
+      // Loaded and shown: same expectation, and the photo transform also sat still.
+      ResetTestState();
+      LoadBackground(ctx, /*shown=*/true);
+      SeedPose(gui::kLensTypeFisheyeEquidist, 60.0f, 5.0f, 3.0f);
+      ctx->Yield(2);
+      const ImVec2 c2 = PreviewCentre(ctx);
+      ctx->KeyDown(kBgMod);
+      RollDrag(ctx, PolarPt(c2, 150.0f, 20.0f), PolarPt(c2, 150.0f, 65.0f));
+      ctx->KeyUp(kBgMod);
+      IM_CHECK_EQ(gui::g_state.renderer.roll, 0.0f);
+      IM_CHECK_EQ(gui::g_state.renderer.azimuth, 5.0f);
+      IM_CHECK_EQ(gui::g_state.renderer.elevation, 3.0f);
+      IM_CHECK_EQ(gui::g_state.bg_offset_x, 0.0f);
+      IM_CHECK_EQ(gui::g_state.bg_offset_y, 0.0f);
+      IM_CHECK_EQ(gui::g_state.bg_scale, 1.0f);
+    };
+  }
+
+  // Press ownership. A roll press must START on the preview; one that started elsewhere never
+  // becomes a roll when the cursor wanders in. Alt arriving mid-press forfeits the gesture for
+  // the REST of the press — letting go of Alt does not revive it — and only a fresh press works.
+  // Leaving the face mid-press only pauses: the reference is rebuilt on re-entry, so the arc
+  // after returning measures from where the cursor came back, and releasing while off the face
+  // still ends the gesture cleanly.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "preview_viewport",
+                                    "a_roll_press_must_start_here_and_survives_alt_and_off_face_only_by_restart");
+    t->GuiFunc = UploadSynthTexture;
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      g_upload_done = false;
+      ctx->Yield(4);
+      IM_CHECK(gui::g_preview.HasTexture());
+      SeedPose(gui::kLensTypeFisheyeEquidist, 60.0f, 0.0f, 0.0f);
+      ctx->Yield(2);
+
+      ImGuiWindow* preview = ctx->GetWindowByRef("//##PreviewPanel");
+      IM_CHECK(preview != nullptr);  // fatal: without the panel every position below is fake
+      const ImVec2 c = PreviewCentre(ctx);
+      const ImVec2 off_face(preview->Rect().Max.x + 60.0f, preview->Pos.y + preview->Size.y * 0.5f);
+
+      // Started off the face, wandered in, swept a real arc: nothing.
+      ctx->MouseMoveToPos(off_face);
+      ctx->Yield(1);
+      ctx->MouseDown(ImGuiMouseButton_Right);
+      ctx->Yield(1);
+      ctx->MouseMoveToPos(PolarPt(c, 150.0f, 20.0f));
+      ctx->Yield(2);
+      ctx->MouseMoveToPos(PolarPt(c, 150.0f, 65.0f));
+      ctx->Yield(2);
+      ctx->MouseUp(ImGuiMouseButton_Right);
+      ctx->Yield(2);
+      IM_CHECK_EQ(gui::g_state.renderer.roll, 0.0f);
+
+      // Alt mid-press forfeits the rest of the press; releasing Alt does not revive it.
+      ctx->MouseMoveToPos(PolarPt(c, 150.0f, 20.0f));
+      ctx->Yield(1);
+      ctx->MouseDown(ImGuiMouseButton_Right);
+      ctx->Yield(1);
+      ctx->MouseMoveToPos(PolarPt(c, 150.0f, 35.0f));  // +15 before Alt arrives
+      ctx->Yield(2);
+      ctx->KeyDown(kBgMod);
+      ctx->Yield(1);
+      ctx->MouseMoveToPos(PolarPt(c, 150.0f, 65.0f));  // under Alt: nothing may accumulate
+      ctx->Yield(2);
+      ctx->KeyUp(kBgMod);
+      ctx->Yield(1);
+      const float after_alt = gui::g_state.renderer.roll;
+      IM_CHECK_LT(std::fabs(after_alt - 15.0f), kRollTolDeg);
+      ctx->MouseMoveToPos(PolarPt(c, 150.0f, 100.0f));  // Alt gone, SAME press: still forfeited
+      ctx->Yield(2);
+      IM_CHECK_EQ(gui::g_state.renderer.roll, after_alt);
+      ctx->MouseUp(ImGuiMouseButton_Right);
+      ctx->Yield(2);
+
+      // Leaving the face pauses; the re-entry reference makes the next arc measure from where
+      // the cursor came back. Released off the face, so the ending is also exercised out there.
+      RollDrag(ctx, PolarPt(c, 150.0f, 20.0f), PolarPt(c, 150.0f, 40.0f));  // +20
+      const float after_leg2 = gui::g_state.renderer.roll;
+      ctx->MouseMoveToPos(PolarPt(c, 150.0f, 40.0f));
+      ctx->Yield(1);
+      ctx->MouseDown(ImGuiMouseButton_Right);
+      ctx->Yield(1);
+      ctx->MouseMoveToPos(off_face);  // off the face: paused, reference dropped
+      ctx->Yield(2);
+      IM_CHECK_EQ(gui::g_state.renderer.roll, after_leg2);
+      ctx->MouseMoveToPos(PolarPt(c, 200.0f, 200.0f));  // re-enter: reference rebuilds, no jump
+      ctx->Yield(2);
+      IM_CHECK_EQ(gui::g_state.renderer.roll, after_leg2);
+      ctx->MouseMoveToPos(PolarPt(c, 200.0f, 230.0f));  // the rebuilt reference now measures
+      ctx->Yield(2);
+      IM_CHECK_LT(std::fabs(gui::g_state.renderer.roll - (after_leg2 + 30.0f)), kRollTolDeg);
+      ctx->MouseUp(ImGuiMouseButton_Right);
+      ctx->Yield(2);
+    };
+  }
+
+  // The T-view boundary: a roll is framing, not orientation. Look At Lock survives it (only
+  // azimuth/elevation editing and the left drag orbit unlock), and the document is left
+  // undirty and uncommitted — no MarkDirty, no epoch.
+  {
+    ImGuiTest* t =
+        IM_REGISTER_TEST(engine, "preview_viewport", "a_right_drag_rolls_without_touching_look_at_or_the_document");
+    t->GuiFunc = UploadSynthTexture;
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      g_upload_done = false;
+      ctx->Yield(4);
+      IM_CHECK(gui::g_preview.HasTexture());
+      SeedPose(gui::kLensTypeFisheyeEquidist, 60.0f, 0.0f, 0.0f);
+      gui::g_state.sun.altitude = 20.0f;
+      IM_CHECK(gui::SelectLookAtTarget(gui::g_state, gui::LookAtId::kSun));
+      IM_CHECK(gui::SetLookAtLocked(gui::g_state, true));
+      ctx->Yield(2);
+      IM_CHECK(gui::g_state.look_at.locked);
+      const float az = gui::g_state.renderer.azimuth;
+      const float el = gui::g_state.renderer.elevation;
+      const bool dirty = gui::g_state.dirty;
+      const uint64_t epoch = gui::g_state.committed_epoch;
+
+      const ImVec2 c = PreviewCentre(ctx);
+      RollDrag(ctx, PolarPt(c, 150.0f, 20.0f), PolarPt(c, 150.0f, 65.0f));
+      IM_CHECK_GT(std::fabs(gui::g_state.renderer.roll), 10.0f);  // the premise: the roll happened
+      IM_CHECK(gui::g_state.look_at.locked);                      // Lock untouched by roll
+      IM_CHECK_EQ(gui::g_state.renderer.azimuth, az);             // and the locked view did not move
+      IM_CHECK_EQ(gui::g_state.renderer.elevation, el);
+      IM_CHECK_EQ(gui::g_state.dirty, dirty);
+      IM_CHECK_EQ(gui::g_state.committed_epoch, epoch);
     };
   }
 }

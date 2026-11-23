@@ -319,6 +319,56 @@ void RegisterAngularDistPickerTests(ImGuiTestEngine* engine) {
     };
   }
 
+  // The cancel press owns the rest of itself. Arming owns the click; the right press that cancels
+  // must not become anything else while it is still held — the roll gesture reads the raw right
+  // button, so a cancel that only cleared `armed` would hand the same press's later frames to it.
+  // The latch dies with the button, and the next independent press rolls normally: the contrast
+  // sweep at the end is what proves the held press was held OFF, not that the preview cannot roll.
+  {
+    ImGuiTest* t =
+        IM_REGISTER_TEST(engine, "angular_dist_picker", "the_right_cancel_latches_its_own_press_and_frees_the_next");
+    t->GuiFunc = ProbeGuiFunc;
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      InstallPicture(ctx, gui::kLensTypeLinear, 90.0f);
+      const int w = gui::g_preview_vp.vp_w;
+      const int h = gui::g_preview_vp.vp_h;
+
+      ArmThroughTheButton(ctx, kSunFold);
+      IM_CHECK(gui::g_state.angular_dist_picker.armed);
+      IM_CHECK(HoverCanvasPixel(ctx, w * 2 / 5, h / 2).has_value());
+      ctx->MouseDown(ImGuiMouseButton_Right);  // the press that cancels
+      ctx->Yield(2);
+      IM_CHECK(!gui::g_state.angular_dist_picker.armed);
+      IM_CHECK(gui::g_state.angular_dist_picker.swallow_drag_until_release);  // the rest is latched
+      // The held press wanders a wide, multi-frame path over valid radii; none of it may roll.
+      ctx->MouseMoveToPos(CanvasPixelScreenPos(ctx, w * 4 / 5, h / 2));
+      ctx->Yield(2);
+      ctx->MouseMoveToPos(CanvasPixelScreenPos(ctx, w * 3 / 5, h / 4));
+      ctx->Yield(2);
+      IM_CHECK_EQ(gui::g_state.renderer.roll, 0.0f);
+      ctx->MouseUp(ImGuiMouseButton_Right);
+      ctx->Yield(2);
+      IM_CHECK(!gui::g_state.angular_dist_picker.swallow_drag_until_release);  // died with the button
+      IM_CHECK(gui::g_state.angular_dist_picker.armed == false);
+      IM_CHECK_EQ(gui::g_state.sun_circle_angles.size(), (size_t)1);  // a cancel adds nothing
+
+      // The next independent press: same preview, same radii, and now the roll happens — so the
+      // case cannot be satisfied by a preview that cannot roll at all.
+      ctx->MouseMoveToPos(CanvasPixelScreenPos(ctx, w / 5, h / 4));
+      ctx->Yield(1);
+      ctx->MouseDown(ImGuiMouseButton_Right);
+      ctx->Yield(1);
+      ctx->MouseMoveToPos(CanvasPixelScreenPos(ctx, w * 4 / 5, h / 4));
+      ctx->Yield(2);
+      ctx->MouseUp(ImGuiMouseButton_Right);
+      ctx->Yield(2);
+      IM_CHECK_NE(gui::g_state.renderer.roll, 0.0f);              // the fresh press rolled
+      IM_CHECK(std::fabs(gui::g_state.renderer.roll) <= 180.0f);  // wrapped into the slider domain
+      IM_CHECK_EQ(gui::g_state.renderer.azimuth, 20.0f);          // and only roll moved (InstallPicture's pose)
+      IM_CHECK_EQ(gui::g_state.renderer.elevation, 10.0f);
+    };
+  }
+
   // AC3: off sky there is no ring and a click is inert — no ring added, the mode stays armed so the
   // user can aim again. Two kinds of off-sky: outside the lens's image (a fisheye's corner) and the
   // side `visible` hides. And while armed the camera takes no drag and no wheel — the drag done off

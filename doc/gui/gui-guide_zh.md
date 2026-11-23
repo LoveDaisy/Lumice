@@ -174,7 +174,7 @@ GUI 需要 display server 和支持 OpenGL 3.2 Core Profile 的 GPU。
 
 - **Projection**：`Lens Type` 提供 11 种 lens 投影 —— Linear、Rectangular、Globe、Fisheye（Equidistant / Equal Area / Stereographic / Orthographic）以及 Dual Fisheye（Equidistant / Equal Area / Stereographic / Orthographic）。Combo 中按分组排序，使 Orthographic 变体紧邻其 fisheye / dual-fisheye 同族；`FOV` 由具体 lens 限定上限。`Visibility` 中 `Upper` / `Full` / `Lower` 选择天空的垂直范围，独立的 `Front` 复选框再裁掉相机背向半球；full-sky lens 同时禁用两者，Globe 则禁用 `Front`。Globe 下另显示 `Back fade`：让球体背面的光与网格像雾一样透过近侧（0–2；0 只显示近侧）。
 - **Camera**：`Elevation`、`Azimuth`、`Roll`。Dual-fisheye 这些 full-sky lens 会禁用三者并使用规范化的零姿态。
-  底行依次为 `Reset` → `Look At` → `Lock`。`Look At` 下拉框会立即把相机指向一个具名方向：Overlay 面板能画出的六个参考点（Zenith、Nadir、Sun、Subsun、Anthelion、Antisolar），以及一组相对太阳的 **Horizon** 地平线方位——`Toward sun`、`Sun +90°`、`Away from sun`、`Sun -90°`（仰角 0；标签里的数就是选中后 `Azimuth` 滑条会显示的数，因为太阳固定在方位角 0）。选择只写 `Elevation` 与 `Azimuth`，`Roll` 与 `FOV` 保持原取景。勾选 `Lock` 后，太阳高度等场景值变化时相机会持续跟随所选方向，无须先 Run。手动修改 `Elevation` / `Azimuth` 或在预览中拖动旋转会关闭 Lock 并保留本次手动视角；修改 `Roll`、`FOV` 或滚轮缩放不会解锁。手动接管后所选目标仍会保留，再次勾选 Lock 即可恢复跟随。初始 `Look At` 显示 `None`，表示尚未指定目标，此时 Lock 禁用，须先选择目标。选择 `None` 只清目标并关闭 Lock，不移动相机；`Reset` 同样回到 None，并按当前 lens 重置 FOV/Az/El/Roll。New、成功 Open 及有提交快照的 Revert 会清目标到 None；取消或失败的 Open、无快照的 Revert 保留原意图。切换到不同 lens 则只关闭 Lock、保留目标。Full-sky lens 下两个控件均禁用。
+  底行依次为 `Reset` → `Look At` → `Lock`。`Look At` 下拉框会立即把相机指向一个具名方向：Overlay 面板能画出的六个参考点（Zenith、Nadir、Sun、Subsun、Anthelion、Antisolar），以及一组相对太阳的 **Horizon** 地平线方位——`Toward sun`、`Sun +90°`、`Away from sun`、`Sun -90°`（仰角 0；标签里的数就是选中后 `Azimuth` 滑条会显示的数，因为太阳固定在方位角 0）。选择只写 `Elevation` 与 `Azimuth`，`Roll` 与 `FOV` 保持原取景。勾选 `Lock` 后，太阳高度等场景值变化时相机会持续跟随所选方向，无须先 Run。手动修改 `Elevation` / `Azimuth` 或在预览中**左键拖动**旋转（orbit）会关闭 Lock 并保留本次手动视角；修改 `Roll`（滑条或右键拖动）、`FOV` 或滚轮缩放不会解锁。手动接管后所选目标仍会保留，再次勾选 Lock 即可恢复跟随。初始 `Look At` 显示 `None`，表示尚未指定目标，此时 Lock 禁用，须先选择目标。选择 `None` 只清目标并关闭 Lock，不移动相机；`Reset` 同样回到 None，并按当前 lens 重置 FOV/Az/El/Roll。New、成功 Open 及有提交快照的 Revert 会清目标到 None；取消或失败的 Open、无快照的 Revert 保留原意图。切换到不同 lens 则只关闭 Lock、保留目标。Full-sky lens 下两个控件均禁用。
 
 不同 lens 的成像几何差异显著：
 
@@ -205,6 +205,8 @@ Render Preview 上的辅助线，以一张表格呈现——每条辅助线回�
 ## Render Preview（渲染预览）
 
 中央区域显示实时的、按 lens 投影的冰晕图像。空闲时显示禁用态的 `Render Preview` 占位文本；模拟一开始累积光线，纹理就会逐帧更新。Horizon / Grid / Angular Distance / Compass 等 overlay 标签会按当前 lens 同步投影叠加在纹理之上。
+
+预览同时是相机的指点操作面：**左键拖动** orbit（方位角 / 仰角）；**右键拖动** roll——画面随光标绕预览中心转动，转过的角度就是光标扫过的角度，中心附近的一小圈死区让停在那里的光标不会转动画面。roll 与 `Roll` 滑条一样在 ±180° 环绕。按住 `Alt` 时拖动与滚轮交给底图照片（平移 / 缩放）；`Alt` + 右键拖动没有动作——照片没有旋转操作。Full-sky lens 下两种拖动都不作用于相机（全天空投影没有可转的视角）；Globe 下右键拖动写入的是保留的 roll 值，画面仍保持 0，直到换用支持 roll 的 lens。
 
 ![Render Preview 渲染示例](../figs/gui_screenshot_example_04.jpg)
 
