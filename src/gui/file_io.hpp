@@ -327,16 +327,24 @@ bool ExportConfigJson(const std::filesystem::path& path, const std::string& json
 // (analysis_panel.hpp) — this only puts it on disk, the same two-step shape as ExportConfigJson.
 [[nodiscard]] bool ExportAnalysisResultsCsv(const std::filesystem::path& path, const std::string& csv);
 
-// Must exporting the config JSON to `path` be confirmed by the user first? True iff something is
-// already there to lose — the export is a full overwrite, and what it writes is the GUI's own
-// re-emission, which carries only what the GUI can express. Overwriting the very document that was
-// imported is the case the ruling is about, but the harm ("a file you did not write is now the
-// GUI's lossy view of it") is the same for any existing target, and answering the narrower
+// Write the diagnostics report JSON to `path`. Same on-disk contract as
+// ExportConfigJson: a full-file write of the caller-frozen text, refusing
+// nothing (the overwrite decision was made before this call).
+[[nodiscard]] bool ExportDiagnosticsJson(const std::filesystem::path& path, const std::string& json_str);
+
+// Must a text export to `path` be confirmed by the user first? True iff something is already
+// there to lose — the export is a full overwrite, and what it writes is the GUI's own
+// re-emission, which carries only what the GUI can express. Overwriting the very document that
+// was imported is the case the ruling is about, but the harm ("a file you did not write is now
+// the GUI's lossy view of it") is the same for any existing target, and answering the narrower
 // question would mean carrying a "where did this document come from" field for nothing else.
+// Both full-file text exports share it — the config JSON and the diagnostics report
+// — the ruling's scope is the overwrite, not the
+// payload.
 //
 // Pure, and separate from the dialog wrapper for the same reason BuildExportJsonOrWarn is: the
 // decision is testable, the file dialog is not.
-bool ConfigJsonExportNeedsOverwriteConfirm(const std::filesystem::path& path);
+bool TextExportNeedsOverwriteConfirm(const std::filesystem::path& path);
 
 // File dialog wrappers (return empty path on cancel)
 std::filesystem::path ShowOpenDialog();
@@ -346,6 +354,7 @@ std::filesystem::path ShowExportDualFisheyeEqualAreaDialog();
 std::filesystem::path ShowExportEquirectangularDialog();
 std::filesystem::path ShowExportJsonDialog();
 std::filesystem::path ShowExportCsvDialog();
+std::filesystem::path ShowExportDiagnosticsDialog();
 std::filesystem::path ShowOpenImageDialog();
 
 

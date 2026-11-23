@@ -67,6 +67,9 @@ From left to right, the Top Bar exposes:
     ratio that a saved config could reproduce on another machine; and a view with the **Front**
     hemisphere clip enabled is refused with a warning rather than exported, since the config format
     has no way to express that clip and the CLI would otherwise render the un-clipped view.
+  - `Export Diagnostics...` — write a JSON report of this machine, the current document and this
+    session's texture-upload attempts to a file you choose (see "Diagnostics Report" under File
+    Operations). Always available, even mid-run: the export is a read.
   - `Include Texture in .lmc` — toggle for the next save. Screenshot lines and labels are controlled by the one-shot options window described above; they do not modify the Overlay panel. The two server-side panorama exports do not carry the preview's text-label layer.
 - **Colors / Analysis / Summary**: three buttons that each open an independent, non-modal window
   beside the preview — the raypath colour classes, the Raypath Analysis tool, and the read-only
@@ -334,6 +337,44 @@ From left to right:
 | `]` | Toggle right panel collapse |
 
 Run, Stop, Continue, New, and Open are not bound to keys — use the Top Bar buttons. Export operations (Screenshot, Dual Fisheye Equal Area, Equirectangular, Config JSON) are reachable through the Save menu popup.
+
+### Diagnostics Report
+
+**Save → Export Diagnostics...** writes one self-contained JSON file describing the machine, the
+current document and every preview-texture upload this session attempted — the file to send when
+reporting a display problem, instead of collecting screenshots or copying logs. The report has
+three parts that answer different questions:
+
+- **The environment at export time** — OS, CPU model, total physical memory, the app version and
+  the engine's ISA level, and the OpenGL context's own identity (vendor, renderer, GL version,
+  `GL_MAX_TEXTURE_SIZE`). These GL strings describe the *display adapter* the export ran on; they
+  do not identify the device the simulation ran on. The simulation route is reported separately
+  (requested and actually-running backend, plus whether the GPU backend fell back to the CPU
+  mid-run).
+- **The current document** — an anonymous document number (never a file name), where its picture
+  came from (a live run vs. a reopened file), the committed run epoch, what is on screen, and the
+  current resolution / lens / FOV / ray settings.
+- **The upload history** — this session's first texture-upload failure (kept even if later
+  uploads succeeded), the most recent failure, and the most recent attempt of any outcome. Each
+  carries its own document number, so a failure from a document you have since closed is reported
+  as exactly that — history, not the current document's. Each records what was requested (source
+  size, PBO bytes), what stages the upload reached, whether a GL error was *checked and clean*,
+  *reported* (with the driver's code), or *not checked at all*, and what the texture measured out
+  as afterwards — measured, not copied from the request.
+
+Two rules about honesty and privacy:
+
+- A field the app could not obtain is reported as absent with the reason, never as zero, an empty
+  string or a guess. A report that shows a value is a value the app actually read.
+- The default report contains **no file paths, no file names and no image data**. The one
+  exception is the raw log, attached only when you tick **Include raw log** in the export popup —
+  the choice resets every time, and the log can contain paths and similar text from your session.
+  If you were asked to send a diagnostics file, sending the default report is safe; only attach
+  the log if you have read it or were asked to.
+
+The export itself changes nothing: no dirty flag, no run state, no texture. Overwriting an
+existing file asks first, and cancelling the save dialog writes nothing. Once the file has been
+written, a notice names its location.
 
 ### Project File Format (`.lmc`)
 

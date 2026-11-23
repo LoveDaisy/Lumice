@@ -4476,6 +4476,14 @@ bool WriteTextFile(const std::filesystem::path& path, const std::string& text) {
     return false;
   }
   out << text;
+  // Complete the write BEFORE reporting success: the tail of a small text
+  // often still sits in the stream buffer past `out << text`, and the errors
+  // that live at write-back time — disk full, quota, a size limit — surface
+  // only at flush/close, when `good()` on an open stream can no longer see
+  // them. A caller that trusted this return could report an export that the
+  // user received as a truncated file, so the close itself is part of the
+  // verdict.
+  out.close();
   return out.good();
 }
 
@@ -4487,7 +4495,11 @@ bool ExportAnalysisResultsCsv(const std::filesystem::path& path, const std::stri
   return WriteTextFile(path, csv);
 }
 
-bool ConfigJsonExportNeedsOverwriteConfirm(const std::filesystem::path& path) {
+bool ExportDiagnosticsJson(const std::filesystem::path& path, const std::string& json_str) {
+  return WriteTextFile(path, json_str);
+}
+
+bool TextExportNeedsOverwriteConfirm(const std::filesystem::path& path) {
   if (path.empty()) {
     return false;  // nothing to overwrite; ExportConfigJson refuses this path anyway
   }
@@ -4590,6 +4602,20 @@ std::filesystem::path ShowExportCsvDialog() {
   nfdchar_t* out_path = nullptr;
   nfdfilteritem_t filter_item[1] = { { "CSV", "csv" } };
   nfdresult_t result = NFD_SaveDialog(&out_path, filter_item, 1, nullptr, "raypath_analysis.csv");
+  std::filesystem::path path;
+  if (result == NFD_OKAY && out_path) {
+    path = PathFromU8(out_path);
+    NFD_FreePath(out_path);
+  }
+  NFD_Quit();
+  return path;
+}
+
+std::filesystem::path ShowExportDiagnosticsDialog() {
+  NFD_Init();
+  nfdchar_t* out_path = nullptr;
+  nfdfilteritem_t filter_item[1] = { { "JSON", "json" } };
+  nfdresult_t result = NFD_SaveDialog(&out_path, filter_item, 1, nullptr, "lumice_diagnostics.json");
   std::filesystem::path path;
   if (result == NFD_OKAY && out_path) {
     path = PathFromU8(out_path);
