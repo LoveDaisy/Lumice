@@ -10,6 +10,7 @@
 #include <iterator>
 #include <memory>
 #include <mutex>
+#include <numeric>
 #include <string>
 #include <utility>
 #include <vector>
@@ -1401,6 +1402,90 @@ LUMICE_ErrorCode LUMICE_PathWorkspaceQueryRepresentativeRay(LUMICE_PathWorkspace
       });
 }
 
+struct LUMICE_LocalClass_ {
+  std::vector<lumice::raypath::LocalClass> classes;
+  // Flattened member faces, built once at query time so the readers serve plain borrowed
+  // pointers: per-class member counts at class_face_offsets[i] (count class_face_offsets[i+1] −
+  // [i]), the per-member counts in member_face_counts, the faces concatenated in member_faces.
+  std::vector<int> class_face_offsets;
+  std::vector<int> member_face_counts;
+  std::vector<int> member_faces;
+};
+
+LUMICE_ErrorCode LUMICE_PathWorkspaceQueryLocalClasses(LUMICE_PathWorkspace* workspace,
+                                                       const LUMICE_LocalClassRequest* request,
+                                                       const LUMICE_PathQueryOptions* options, LUMICE_LocalClass** out,
+                                                       char* err_buf, size_t err_size) {
+  // Not RunWorkspaceQuery: that wrapper reads the path-array request fields this face does not
+  // carry. The guard sequence below is the same discipline (null/extent/options/try), minus the
+  // path arrays, plus this face's own representative-array check.
+  if (out != nullptr) {
+    *out = nullptr;
+  }
+  if (err_buf != nullptr && err_size > 0) {
+    err_buf[0] = '\0';
+  }
+  if (workspace == nullptr || request == nullptr || out == nullptr) {
+    WriteError(err_buf, err_size, "null_arg: workspace, request and out must not be NULL");
+    return LUMICE_ERR_NULL_ARG;
+  }
+  if (request->struct_size < sizeof(LUMICE_LocalClassRequest)) {
+    WriteError(err_buf, err_size, "invalid_argument: request struct_size is not a published complete extent");
+    return LUMICE_ERR_INVALID_VALUE;
+  }
+  if (request->representative_faces == nullptr && request->representative_face_count > 0) {
+    WriteError(err_buf, err_size, "null_arg: representative_faces is NULL with a non-zero count");
+    return LUMICE_ERR_NULL_ARG;
+  }
+  if (request->representative_face_count < 0) {
+    WriteError(err_buf, err_size, "invalid_argument: representative_face_count is negative");
+    return LUMICE_ERR_INVALID_VALUE;
+  }
+  if (const auto error = ValidateQueryOptions(options, false, err_buf, err_size); error != LUMICE_OK) {
+    return error;
+  }
+  try {
+    lumice::raypath::LocalClassQuery query;
+    query.crystal_id = static_cast<lumice::IdType>(request->crystal_id);
+    query.representative.assign(request->representative_faces,
+                                request->representative_faces + request->representative_face_count);
+    query.symmetry_bits = static_cast<uint8_t>(request->symmetry_bits);
+    query.target_altitude_deg = request->target_altitude_deg;
+    query.target_azimuth_deg = request->target_azimuth_deg;
+    std::vector<lumice::raypath::LocalClass> classes;
+    if (const lumice::raypath::Error error = workspace->workspace->QueryLocalClasses(query, &classes); !error.Ok()) {
+      WriteError(err_buf, err_size, std::string("invalid_argument: ") + error.message);
+      return LUMICE_ERR_INVALID_VALUE;
+    }
+    std::unique_ptr<LUMICE_LocalClass_> handle(new (std::nothrow) LUMICE_LocalClass_{ std::move(classes) });
+    if (handle == nullptr) {
+      WriteError(err_buf, err_size, "internal: allocation failed");
+      return LUMICE_ERR_UNKNOWN;
+    }
+    for (const auto& klass : handle->classes) {
+      handle->class_face_offsets.push_back(static_cast<int>(handle->member_face_counts.size()));
+      for (const auto& member : klass.member_sequences) {
+        handle->member_face_counts.push_back(static_cast<int>(member.size()));
+        handle->member_faces.insert(handle->member_faces.end(), member.begin(), member.end());
+      }
+    }
+    handle->class_face_offsets.push_back(static_cast<int>(handle->member_face_counts.size()));
+    *out = handle.release();
+    return LUMICE_OK;
+  } catch (const std::exception& e) {
+    LOG_ERROR("LUMICE_PathWorkspaceQueryLocalClasses: {}", e.what());
+    WriteError(err_buf, err_size, std::string("internal: ") + e.what());
+  } catch (...) {
+    LOG_ERROR("LUMICE_PathWorkspaceQueryLocalClasses: unknown exception");
+    WriteError(err_buf, err_size, "internal: unknown exception");
+  }
+  return LUMICE_ERR_UNKNOWN;
+}
+
+void LUMICE_LocalClassDestroy(LUMICE_LocalClass* result) {
+  delete result;  // NULL Destroy is a no-op, the workspace family's rule
+}
+
 namespace {
 
 template <typename T>
@@ -2690,6 +2775,43 @@ LUMICE_PathReadStatus LUMICE_PathMapGetPointMass(const LUMICE_PathMap* result, L
     out->method_count = result->method_pointers->size();
   }
   out->pixel = mass.pixel;
+  return LUMICE_PATH_READ_OK;
+}
+
+LUMICE_PathReadStatus LUMICE_LocalClassGetInfo(const LUMICE_LocalClass* result, LUMICE_LocalClassInfo* out) {
+  if (const auto status = BeginRead(result, out); status != LUMICE_PATH_READ_OK) {
+    return status;
+  }
+  out->class_count = static_cast<int>(result->classes.size());
+  return LUMICE_PATH_READ_OK;
+}
+
+LUMICE_PathReadStatus LUMICE_LocalClassGetClass(const LUMICE_LocalClass* result, int index,
+                                                LUMICE_LocalClassDetail* out) {
+  if (const auto status = BeginRead(result, out); status != LUMICE_PATH_READ_OK) {
+    return status;
+  }
+  if (index < 0 || static_cast<size_t>(index) >= result->classes.size()) {
+    return LUMICE_PATH_READ_INVALID_INDEX;
+  }
+  const lumice::raypath::LocalClass& klass = result->classes[static_cast<size_t>(index)];
+  out->representative_faces = klass.representative.data();
+  out->representative_face_count = static_cast<int>(klass.representative.size());
+  const size_t first = result->class_face_offsets[static_cast<size_t>(index)];
+  const size_t last = result->class_face_offsets[static_cast<size_t>(index) + 1];
+  out->member_count = static_cast<int>(klass.member_sequences.size());
+  out->member_face_counts = result->member_face_counts.data() + first;
+  out->member_faces = result->member_faces.data();
+  int total = 0;
+  for (size_t i = first; i < last; ++i) {
+    total += result->member_face_counts[i];
+  }
+  out->member_faces_total = total;
+  // The per-class member face slice starts at the same offset into the concatenated buffer:
+  // the caller walks member_face_counts from the class's first member.
+  out->member_faces =
+      result->member_faces.data() + std::accumulate(result->member_face_counts.begin(),
+                                                    result->member_face_counts.begin() + static_cast<long>(first), 0);
   return LUMICE_PATH_READ_OK;
 }
 

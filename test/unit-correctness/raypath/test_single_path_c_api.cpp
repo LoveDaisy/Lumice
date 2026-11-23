@@ -1320,4 +1320,99 @@ TEST(SinglePathCapi, UnknownCrystalIdWithAWarmTextIsRefusedNotAborted) {
   ASSERT_NE(o.error.find("no crystal entry with id 999"), std::string::npos) << o.error;
 }
 
+// ---- the local-class answer face ------------------------------------------------------------
+
+// The Parry row scene: the canonical axis (zenith gauss 90±1, azimuth uniform, roll gauss 0±1),
+// sun at azimuth 0 — the class partition the discussions pinned.
+constexpr const char* kParryScene = R"({
+  "crystal": [ { "id": 1, "type": "prism", "shape": { "height": 1.2 },
+    "axis": { "zenith": { "type": "gauss", "mean": 90, "std": 1 },
+              "azimuth": { "type": "uniform", "mean": 0, "std": 360 },
+              "roll": { "type": "gauss", "mean": 0, "std": 1 } } } ],
+  "filter": [],
+  "scene": {
+    "light_source": { "type": "sun", "altitude": 20.0, "azimuth": 0.0, "spectrum": "D65" },
+    "ray_num": 1000,
+    "max_hits": 7,
+    "scattering": [ { "prob": 0.0, "entries": [ { "crystal": 1, "proportion": 1 } ] } ]
+  },
+  "render": []
+})";
+
+TEST(LocalClassCApi, ParryRowAtMinus52HasTheTwoHalfTurnClasses) {
+  const ScenePtr scene = MakeScene(kParryScene);
+  LUMICE_PathWorkspace* workspace = nullptr;
+  ASSERT_EQ(LUMICE_PathWorkspaceCreate(scene.get(), &workspace, nullptr, 0), LUMICE_OK);
+  LUMICE_LocalClassRequest request{};
+  request.struct_size = sizeof(request);
+  request.crystal_id = 1;
+  static const int faces[2] = { 4, 1 };
+  request.representative_faces = faces;
+  request.representative_face_count = 2;
+  request.symmetry_bits = 7;  // P | B | D: the analysis row's full bit set
+  request.target_altitude_deg = 36.0;
+  request.target_azimuth_deg = -52.0;
+  LUMICE_LocalClass* result = nullptr;
+  ASSERT_EQ(LUMICE_PathWorkspaceQueryLocalClasses(workspace, &request, nullptr, &result, nullptr, 0), LUMICE_OK);
+  ASSERT_NE(result, nullptr);
+  LUMICE_LocalClassInfo info{};
+  info.struct_size = sizeof(info);
+  ASSERT_EQ(LUMICE_LocalClassGetInfo(result, &info), LUMICE_PATH_READ_OK);
+  ASSERT_EQ(info.class_count, 2);
+  LUMICE_LocalClassDetail detail{};
+  detail.struct_size = sizeof(detail);
+  ASSERT_EQ(LUMICE_LocalClassGetClass(result, 0, &detail), LUMICE_PATH_READ_OK);
+  EXPECT_EQ(detail.representative_face_count, 2);
+  EXPECT_EQ(detail.representative_faces[0], 4);
+  EXPECT_EQ(detail.representative_faces[1], 1);
+  ASSERT_EQ(detail.member_count, 2);
+  int total = 0;
+  for (int i = 0; i < detail.member_count; ++i) {
+    total += detail.member_face_counts[i];
+  }
+  EXPECT_EQ(total, detail.member_faces_total);
+  EXPECT_EQ(total, 4);  // 4-1 and its H_0 sibling 8-2
+  ASSERT_EQ(LUMICE_LocalClassGetClass(result, 1, &detail), LUMICE_PATH_READ_OK);
+  EXPECT_EQ(detail.representative_faces[0], 4);
+  EXPECT_EQ(detail.representative_faces[1], 2);  // the lit pair's representative 4-2
+  ASSERT_EQ(detail.member_count, 2);
+  EXPECT_EQ(detail.member_faces_total, 4);  // 4-2 and 8-1
+  EXPECT_EQ(LUMICE_LocalClassGetClass(result, 2, &detail), LUMICE_PATH_READ_INVALID_INDEX);
+  LUMICE_LocalClassDetail tiny{};
+  tiny.struct_size = sizeof(tiny) - 1;
+  EXPECT_EQ(LUMICE_LocalClassGetClass(result, 0, &tiny), LUMICE_PATH_READ_INVALID_SIZE);
+  LUMICE_LocalClassDestroy(result);
+  LUMICE_PathWorkspaceDestroy(workspace);
+}
+
+TEST(LocalClassCApi, NullArgumentsAndUnknownCrystalAreRejected) {
+  const ScenePtr scene = MakeScene(kParryScene);
+  LUMICE_PathWorkspace* workspace = nullptr;
+  ASSERT_EQ(LUMICE_PathWorkspaceCreate(scene.get(), &workspace, nullptr, 0), LUMICE_OK);
+  LUMICE_LocalClassRequest request{};
+  request.struct_size = sizeof(request);
+  request.crystal_id = 1;
+  static const int faces[2] = { 4, 1 };
+  request.representative_faces = faces;
+  request.representative_face_count = 2;
+  request.symmetry_bits = 7;
+  request.target_altitude_deg = 36.0;
+  request.target_azimuth_deg = -52.0;
+  LUMICE_LocalClass* result = nullptr;
+  char err[256];
+  EXPECT_EQ(LUMICE_PathWorkspaceQueryLocalClasses(nullptr, &request, nullptr, &result, err, sizeof(err)),
+            LUMICE_ERR_NULL_ARG);
+  EXPECT_EQ(LUMICE_PathWorkspaceQueryLocalClasses(workspace, nullptr, nullptr, &result, err, sizeof(err)),
+            LUMICE_ERR_NULL_ARG);
+  request.crystal_id = 99;
+  EXPECT_EQ(LUMICE_PathWorkspaceQueryLocalClasses(workspace, &request, nullptr, &result, err, sizeof(err)),
+            LUMICE_ERR_INVALID_VALUE);
+  request.crystal_id = 1;
+  request.struct_size = sizeof(request) - 1;
+  EXPECT_EQ(LUMICE_PathWorkspaceQueryLocalClasses(workspace, &request, nullptr, &result, err, sizeof(err)),
+            LUMICE_ERR_INVALID_VALUE);
+  EXPECT_EQ(result, nullptr);
+  LUMICE_PathWorkspaceDestroy(workspace);
+}
+
 }  // namespace

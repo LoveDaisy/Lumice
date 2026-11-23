@@ -33,6 +33,7 @@
 
 #include "analytic/stop.hpp"
 #include "config/config_manager.hpp"
+#include "raypath/local_class.hpp"
 #include "raypath/map_analysis.hpp"
 #include "raypath/path_feature_report.hpp"
 #include "raypath/prepared_geometry.hpp"
@@ -71,6 +72,12 @@ class AnalysisWorkspace {
   // warm, no budget, no cancel poll (the query declares no interruptible boundary — see
   // representative_ray.hpp). Shares the geometry slot.
   Error QueryRepresentativeRay(const RepresentativeRayRequest& request, RepresentativeRayResult* out);
+  // The local-class face: pure algebra over the snapshot's frozen crystal config — the row's
+  // classes at one sky direction. No discovery, no sampling, no warm, no budget and no cancel
+  // poll (closed form: nothing to interrupt; the C bridge accepts the options for shape
+  // uniformity and never consults them, the representative-ray rule). A face that wants a
+  // member's own numeric payload runs the point face on that member's faces.
+  Error QueryLocalClasses(const LocalClassQuery& query, std::vector<LocalClass>* out);
 
   // ---- the reuse reads (the workspace's own decision ledger, for the acceptance tests) ----
   long GeometryBuildCount() const { return geometry_builds_; }  // face-table builds performed

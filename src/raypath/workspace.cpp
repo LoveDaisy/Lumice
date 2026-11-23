@@ -2,6 +2,7 @@
 
 #include <chrono>
 
+#include "raypath/detail/local_class.hpp"
 #include "raypath/detail/survey/survey_assembly.hpp"
 #include "raypath/query_control.hpp"
 #include "raypath/survey_reuse.hpp"
@@ -195,6 +196,37 @@ Error AnalysisWorkspace::QueryMap(const MapRequest& request, MapResult* out, con
 Error AnalysisWorkspace::QueryRepresentativeRay(const RepresentativeRayRequest& request, RepresentativeRayResult* out) {
   const PreparedGeometry* geometry = GeometryFor(request);
   return AnalyzeRepresentativeRay(snapshot_, request, out, geometry);
+}
+
+Error AnalysisWorkspace::QueryLocalClasses(const LocalClassQuery& query, std::vector<LocalClass>* out) {
+  const auto configured = snapshot_.crystals_.find(query.crystal_id);
+  if (configured == snapshot_.crystals_.end()) {
+    return { ErrorCode::kInvalidArgument, "local classes: unknown crystal id" };
+  }
+  if (query.representative.empty()) {
+    return { ErrorCode::kInvalidPath, "local classes: empty representative" };
+  }
+  // The row scope through the same resolution the member lists elsewhere carry: the expansion
+  // runs under the physical gating derived from the snapshot's own crystal config, so the
+  // members here and the members every other face sees cannot drift.
+  PhysicalMemberRequest request;
+  request.scene_identity = "workspace local classes";
+  request.layer_index = 0;
+  request.crystal = configured->second;
+  request.representative = query.representative;
+  request.symmetry_bits = query.symmetry_bits;
+  request.semantics = SymmetrySemantics::kPhysical;
+  PhysicalMemberScope row;
+  if (Error error = ResolvePhysicalMemberScope(request, &row); !error.Ok()) {
+    return error;
+  }
+  LocalClassRequest resolved;
+  resolved.target_altitude_deg = query.target_altitude_deg;
+  resolved.target_azimuth_deg = query.target_azimuth_deg;
+  // The scene sun's azimuth is the snapshot's own fact (the same field the sun direction
+  // consumers read); the caller restating it would be a second copy waiting to drift.
+  resolved.sun_azimuth_deg = static_cast<double>(snapshot_.scene_.light_source_.param_.azimuth_);
+  return ResolveLocalClasses(row, resolved, out);
 }
 
 }  // namespace lumice::raypath

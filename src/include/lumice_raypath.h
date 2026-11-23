@@ -609,6 +609,62 @@ LUMICE_API LUMICE_ErrorCode LUMICE_PathWorkspaceQueryRepresentativeRay(LUMICE_Pa
                                                                        LUMICE_RepresentativeRay** out, char* err_buf,
                                                                        size_t err_size);
 
+// ---- The local-class answer face -------------------------------------------------------------
+// "Row scope + sky direction -> the row's local classes and their representatives": one entry,
+// answering FACTS about the row's physical classes at the clicked point — which members are
+// physically equivalent THERE, who represents each class (the orbit's lexicographic minimum).
+// Pure closed-form algebra over the scene snapshot: no sampling anywhere in the identity or
+// naming decision, no discovery, no warm, no budget, no cancel poll (the options are accepted
+// for shape uniformity and never consulted, the representative-ray rule). The scene sun's
+// azimuth is read from the workspace's own snapshot, not restated by the caller.
+//
+// This face deliberately exposes NO transformation primitive: which element carries a member to
+// its representative, the pose compensations, the sky actions — all stay engine-internal. A
+// caller that wants a member's own numeric payload runs the point face on that member's faces
+// (the class answer's representative IS such a member list entry).
+typedef struct LUMICE_LocalClassRequest {
+  size_t struct_size;
+  int crystal_id;                   // a crystal entry of the scene
+  const int* representative_faces;  // the analysis row's representative sequence
+  int representative_face_count;
+  unsigned symmetry_bits;      // the row's P/B/D bits; 0 = the literal sequence alone
+  double target_altitude_deg;  // the sky point; azimuth measured as the sun's
+  double target_azimuth_deg;
+} LUMICE_LocalClassRequest;
+
+typedef struct LUMICE_LocalClass_ LUMICE_LocalClass;
+// On LUMICE_OK *out is a new handle the caller owns (release with LUMICE_LocalClassDestroy).
+// The answer freezes on return and outlives scene and workspace. On failure *out is NULL and
+// err_buf says which: unknown crystal, empty representative, an invalid bit set, a scope the
+// row's own gating refuses. Return codes: LUMICE_ERR_NULL_ARG (NULL workspace/request/out, or
+// NULL representative_faces with a non-zero count), LUMICE_ERR_INVALID_VALUE (a bad
+// struct_size, a negative count), LUMICE_ERR_UNKNOWN (internal).
+LUMICE_API LUMICE_ErrorCode LUMICE_PathWorkspaceQueryLocalClasses(LUMICE_PathWorkspace* workspace,
+                                                                  const LUMICE_LocalClassRequest* request,
+                                                                  const LUMICE_PathQueryOptions* options,
+                                                                  LUMICE_LocalClass** out, char* err_buf,
+                                                                  size_t err_size);
+LUMICE_API void LUMICE_LocalClassDestroy(LUMICE_LocalClass* result);
+
+typedef struct LUMICE_LocalClassInfo {
+  size_t struct_size;
+  int class_count;  // the row's classes at this sky point, sorted by representative; 0 for an empty row
+} LUMICE_LocalClassInfo;
+
+typedef struct LUMICE_LocalClassDetail {
+  size_t struct_size;
+  // The class's representative: the orbit's lexicographic minimum (the name the analysis list's
+  // own reduction family spells). Borrowed pointers, valid until Destroy.
+  const int* representative_faces;
+  int representative_face_count;
+  // The class's members, as the row scope's own member list addresses them: per-member face
+  // counts into the concatenated buffer (row order, each member once).
+  int member_count;
+  const int* member_face_counts;
+  const int* member_faces;
+  int member_faces_total;
+} LUMICE_LocalClassDetail;
+
 // =============== Typed result readers ===============
 // Every returned pointer is borrowed from the immutable result and remains valid until Destroy.
 // Strings are UTF-8 and NUL-terminated; length excludes NUL. Read-only calls may overlap one
@@ -630,6 +686,12 @@ typedef enum LUMICE_PathReadStatus {
   LUMICE_PATH_READ_INVALID_KIND = 4,
   LUMICE_PATH_READ_NOT_AVAILABLE = 5
 } LUMICE_PathReadStatus;
+
+// The local-class answer's readers (the same borrowed-pointer/struct_size contract as every
+// reader below).
+LUMICE_API LUMICE_PathReadStatus LUMICE_LocalClassGetInfo(const LUMICE_LocalClass* result, LUMICE_LocalClassInfo* out);
+LUMICE_API LUMICE_PathReadStatus LUMICE_LocalClassGetClass(const LUMICE_LocalClass* result, int index,
+                                                           LUMICE_LocalClassDetail* out);
 
 #define LUMICE_PATH_STATE_UNKNOWN 0
 #define LUMICE_PATH_STATE_CERTIFIED 1

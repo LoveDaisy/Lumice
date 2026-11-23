@@ -1,10 +1,11 @@
-#include "raypath/detail/local_class.hpp"
+#include "raypath/local_class.hpp"
 
 #include <algorithm>
 #include <map>
 #include <set>
 
 #include "core/math.hpp"
+#include "raypath/detail/local_class.hpp"
 #include "util/sky_direction.hpp"
 
 namespace lumice::raypath {
@@ -87,6 +88,7 @@ Error ResolveLocalClasses(const PhysicalMemberScope& row, const LocalClassReques
         }
       }
       klass.to_representative.push_back(carrier);
+      klass.member_sequences.push_back(row.members[index]);
     }
     classes.push_back(std::move(klass));
   }
