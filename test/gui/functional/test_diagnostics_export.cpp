@@ -292,7 +292,7 @@ void RegisterDiagnosticsTests(ImGuiTestEngine* engine) {
       ctx->Yield(2);
       Diagnostics().ResetForTest();
 
-      const std::string path = GuiTestTempPath("diag_witness.json");
+      const std::string path = GuiTestTempPath("diag_witness.json").string();
       TempFileCleanup cleanup{ path };
 
       // One real upload through the production entry point.
@@ -383,8 +383,8 @@ void RegisterDiagnosticsTests(ImGuiTestEngine* engine) {
       GUI_LOG_WARNING("[TEST] diagnostics-log-sentinel-816 privacy probe");
       ctx->Yield(2);  // let the line land in the ring before the export reads it
 
-      const std::string plain_path = GuiTestTempPath("diag_plain.json");
-      const std::string logged_path = GuiTestTempPath("diag_logged.json");
+      const std::string plain_path = GuiTestTempPath("diag_plain.json").string();
+      const std::string logged_path = GuiTestTempPath("diag_logged.json").string();
       TempFileCleanup plain_cleanup{ plain_path };
       TempFileCleanup logged_cleanup{ logged_path };
 
@@ -440,7 +440,7 @@ void RegisterDiagnosticsTests(ImGuiTestEngine* engine) {
       g_diag_op.heal = true;  // same frame: drop the polluted size before any later case sees it
       RunDiagOp(ctx);
 
-      const std::string path = GuiTestTempPath("diag_gl_error.json");
+      const std::string path = GuiTestTempPath("diag_gl_error.json").string();
       TempFileCleanup cleanup{ path };
       g_diag_op.Reset();
       g_diag_op.export_now = true;
@@ -487,7 +487,7 @@ void RegisterDiagnosticsTests(ImGuiTestEngine* engine) {
       g_diag_op.heal = true;  // same frame: drop the polluted size before any later case sees it
       RunDiagOp(ctx);
 
-      const std::string path = GuiTestTempPath("diag_uint8_error.json");
+      const std::string path = GuiTestTempPath("diag_uint8_error.json").string();
       TempFileCleanup cleanup{ path };
       g_diag_op.Reset();
       g_diag_op.export_now = true;
@@ -532,7 +532,7 @@ void RegisterDiagnosticsTests(ImGuiTestEngine* engine) {
       g_diag_op.clear_hook = true;
       RunDiagOp(ctx);
 
-      const std::string path = GuiTestTempPath("diag_fence_fail.json");
+      const std::string path = GuiTestTempPath("diag_fence_fail.json").string();
       TempFileCleanup cleanup{ path };
       g_diag_op.Reset();
       g_diag_op.export_now = true;
@@ -572,7 +572,7 @@ void RegisterDiagnosticsTests(ImGuiTestEngine* engine) {
       g_diag_op.clear_hook = true;
       RunDiagOp(ctx);
 
-      const std::string path = GuiTestTempPath("diag_map_fail.json");
+      const std::string path = GuiTestTempPath("diag_map_fail.json").string();
       TempFileCleanup cleanup{ path };
       g_diag_op.Reset();
       g_diag_op.export_now = true;
@@ -606,7 +606,7 @@ void RegisterDiagnosticsTests(ImGuiTestEngine* engine) {
       ctx->Yield(2);
       Diagnostics().ResetForTest();
 
-      const std::string archive = GuiTestTempPath("diag_cycle_open.lmc");
+      const std::string archive = GuiTestTempPath("diag_cycle_open.lmc").string();
       TempFileCleanup archive_cleanup{ archive };
 
       // Seed the mirror and save a v6 archive: the open's walk consumes the
@@ -625,7 +625,7 @@ void RegisterDiagnosticsTests(ImGuiTestEngine* engine) {
       g_diag_op.clear_hook = true;
       RunDiagOp(ctx);
 
-      const std::string path = GuiTestTempPath("diag_cycle.json");
+      const std::string path = GuiTestTempPath("diag_cycle.json").string();
       TempFileCleanup cleanup{ path };
       g_diag_op.Reset();
       g_diag_op.export_now = true;
@@ -678,7 +678,7 @@ void RegisterDiagnosticsTests(ImGuiTestEngine* engine) {
       const unsigned long long serial_before =
           static_cast<unsigned long long>(gui::g_state.last_uploaded_texture_serial);
 
-      const std::string path = GuiTestTempPath("diag_no_touch.json");
+      const std::string path = GuiTestTempPath("diag_no_touch.json").string();
       TempFileCleanup cleanup{ path };
       g_diag_op.Reset();
       g_diag_op.export_now = true;
@@ -703,7 +703,7 @@ void RegisterDiagnosticsTests(ImGuiTestEngine* engine) {
       ResetTestState();
       ctx->Yield(2);
 
-      const std::string path = GuiTestTempPath("diag_overwrite.json");
+      const std::string path = GuiTestTempPath("diag_overwrite.json").string();
       TempFileCleanup cleanup{ path };
       const char* const kExisting = "{\"not\": \"written by the gui\"}\n";
       const char* const kExported = "{\"diagnostics\": true, \"schema_version\": 1}\n";
@@ -742,7 +742,7 @@ void RegisterDiagnosticsTests(ImGuiTestEngine* engine) {
       ctx->Yield(2);
       Diagnostics().ResetForTest();
 
-      const std::string path = GuiTestTempPath("diag_never.json");
+      const std::string path = GuiTestTempPath("diag_never.json").string();
       TempFileCleanup cleanup{ path };
 
       gui::RequestDiagnosticsExport(std::filesystem::path(""), "{\"x\": 1}");
@@ -766,7 +766,7 @@ void RegisterDiagnosticsTests(ImGuiTestEngine* engine) {
       ctx->Yield(2);
       Diagnostics().ResetForTest();
 
-      const std::string path = GuiTestTempPath("diag_full_chain.json");
+      const std::string path = GuiTestTempPath("diag_full_chain.json").string();
       TempFileCleanup cleanup{ path };
 
       // One real upload first, so the exported file carries a witnessed event.
