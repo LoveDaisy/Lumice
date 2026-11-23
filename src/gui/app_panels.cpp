@@ -540,6 +540,13 @@ void RenderTopBar(float window_width) {
       if (ImGui::MenuItem("Config JSON...")) {
         DoExportConfigJson();
       }
+      if (ImGui::MenuItem("Export Diagnostics...")) {
+        // The one diagnostic entry, always reachable (a fault scene is worth
+        // exporting even mid-failure, and the report is read-only). Opens the
+        // options popup (raw-log opt-in), not the dialog directly — the choice
+        // must be made explicitly per export, never persisted.
+        g_show_diagnostics_export_popup = true;
+      }
       ImGui::Separator();
       // Personal defaults are NOT in this menu. They used to be, on the reasoning that "what a new
       // document starts from" is a file-scope decision and so belongs with the other export
@@ -3239,6 +3246,92 @@ void RenderExportOverwriteConfirmPopup() {
       ImGui::CloseCurrentPopup();
     }
 
+    ImGui::EndPopup();
+  }
+}
+
+// Save > Export Diagnostics... The
+// checkbox is the report's one option (attach the raw log ring); it resets to
+// unchecked on every open because the log is the only part of the report that
+// can carry private text, and "opt-in per export" means no remembered yes.
+void RenderDiagnosticsExportPopup() {
+  if (g_show_diagnostics_export_popup) {
+    ImGui::OpenPopup("Export Diagnostics");
+    g_show_diagnostics_export_popup = false;
+    g_diagnostics_include_logs = false;
+  }
+
+  if (ImGui::BeginPopupModal("Export Diagnostics", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    ImGui::TextUnformatted(
+        "Write a JSON report of this machine, the current document and\n"
+        "this session's texture-upload attempts to a file you choose.");
+    ImGui::Separator();
+    ImGui::Checkbox("Include raw log", &g_diagnostics_include_logs);
+    ImGui::TextDisabled("The raw log can contain file paths and similar details from\nyour session.");
+    ImGui::TextDisabled("Without it, the report contains no paths, file names or\nimage data.");
+    ImGui::Separator();
+
+    if (ImGui::Button("Export...", ImVec2(UiPx(120.0f), 0.0f))) {
+      ImGui::CloseCurrentPopup();
+      DoExportDiagnosticsReport(g_diagnostics_include_logs);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel", ImVec2(UiPx(80.0f), 0.0f))) {
+      ImGui::CloseCurrentPopup();
+    }
+
+    ImGui::EndPopup();
+  }
+}
+
+// The diagnostics report's overwrite prompt. A report file is not the GUI's
+// re-emission of a document, so the config export's warning text (which tells
+// a .json-import user to keep the .lmc instead) does not fit; what is lost is
+// the previous report.
+void RenderDiagnosticsOverwriteConfirmPopup() {
+  if (g_show_diagnostics_overwrite_confirm_popup) {
+    ImGui::OpenPopup("Overwrite Diagnostics File");
+    g_show_diagnostics_overwrite_confirm_popup = false;
+  }
+
+  if (ImGui::BeginPopupModal("Overwrite Diagnostics File", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    ImGui::TextUnformatted("A file already exists at:");
+    ImGui::TextUnformatted(PathToU8(g_pending_diagnostics_path).c_str());
+    ImGui::Separator();
+    ImGui::TextUnformatted("The existing file will be replaced by this diagnostics\nreport and cannot be recovered.");
+    ImGui::Separator();
+
+    if (ImGui::Button("Overwrite", ImVec2(UiPx(120.0f), 0.0f))) {
+      ConfirmPendingDiagnosticsExport();
+      ImGui::CloseCurrentPopup();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel", ImVec2(UiPx(80.0f), 0.0f))) {
+      CancelPendingDiagnosticsExport();
+      ImGui::CloseCurrentPopup();
+    }
+
+    ImGui::EndPopup();
+  }
+}
+
+// The saved report's receipt: the user who just chose a location sees the
+// outcome and the path without opening the log panel (the log line alone is
+// filterable and sits in a panel that defaults closed). Success only — a
+// write failure has its own modal and a cancel raises nothing.
+void RenderDiagnosticsSavedPopup() {
+  if (g_show_diagnostics_result_popup) {
+    ImGui::OpenPopup("Diagnostics Report Saved");
+    g_show_diagnostics_result_popup = false;
+  }
+
+  if (ImGui::BeginPopupModal("Diagnostics Report Saved", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    ImGui::TextUnformatted("The diagnostics report was written to:");
+    ImGui::TextUnformatted(g_diagnostics_result_path.c_str());
+    ImGui::Separator();
+    if (ImGui::Button("OK", ImVec2(UiPx(80.0f), 0.0f))) {
+      ImGui::CloseCurrentPopup();
+    }
     ImGui::EndPopup();
   }
 }

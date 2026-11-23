@@ -1901,7 +1901,16 @@ UploadResult PreviewRenderer::UploadUint8Texture(const unsigned char* data, int 
   if (forced_mismatch || stored_w != static_cast<GLint>(width) || stored_h != static_cast<GLint>(height) ||
       stored_fmt != GL_RGB8) {
     glBindTexture(GL_TEXTURE_2D, 0);
-    return ConservativeRevoke(UploadResult::Stage::kStorageMismatch, forced_mismatch, width, height);
+    UploadResult revoke = ConservativeRevoke(UploadResult::Stage::kStorageMismatch, forced_mismatch, width, height);
+    // The witness DID run here — its disagreement is the revoke's cause, and
+    // the measured values (not the request) are what the report's "actual"
+    // block should carry. Filled after the revoke returns because the shared
+    // revoke helper takes none of them.
+    revoke.actual_queried = true;
+    revoke.actual_width = stored_w;
+    revoke.actual_height = stored_h;
+    revoke.actual_internal_format = static_cast<unsigned int>(stored_fmt);
+    return revoke;
   }
 
   // Success — now and only now commit. Display first (the frame IS on the GPU and verified), then
@@ -1924,6 +1933,13 @@ UploadResult PreviewRenderer::UploadUint8Texture(const unsigned char* data, int 
   cpu_tex_mode_ = mode;
   cpu_tex_width_ = width;
   cpu_tex_height_ = height;
+  // The witness ran clean to get here — its measurements are this attempt's
+  // "actual" block, riding the structured result to the caller's diagnostics
+  // bracket. Observer-only: the acceptance logic above never reads them.
+  r.actual_queried = true;
+  r.actual_width = stored_w;
+  r.actual_height = stored_h;
+  r.actual_internal_format = static_cast<unsigned int>(stored_fmt);
   r.ok = true;
   glBindTexture(GL_TEXTURE_2D, 0);
   return r;
@@ -2050,6 +2066,11 @@ UploadResult PreviewRenderer::UploadXyzStrips(const XyzUploadInput& input, bool 
   // any failure once it is true cannot claim the old frame retained, because the texture then
   // holds a mix of the old frame and this attempt's strips.
   bool touched = false;
+  // Whether this attempt committed while its last strip's fence creation
+  // failed (the staged path's one fence fact the structured result would
+  // otherwise lose): the frame is displayed, but the torn-down slot's next
+  // write runs unguarded. Carried to the result's observer fields below.
+  bool commit_fence_failed = false;
 
   glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
   glBindTexture(GL_TEXTURE_2D, texture_);
@@ -2318,6 +2339,7 @@ UploadResult PreviewRenderer::UploadXyzStrips(const XyzUploadInput& input, bool 
             "[GL] UploadXyzStrips: glFenceSync failed (gl_error=0x{:04X}) on the last strip, tearing down "
             "staging slot {}; frame committed",
             fence_err, slot);
+        commit_fence_failed = true;
       }
     } else {
       // ---- client-memory strip: no slots, no fences, no async DMA to guard ----
@@ -2398,7 +2420,16 @@ UploadResult PreviewRenderer::UploadXyzStrips(const XyzUploadInput& input, bool 
     }
     glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
     glBindTexture(GL_TEXTURE_2D, 0);
-    return ConservativeRevoke(UploadResult::Stage::kStorageMismatch, forced_mismatch, width, height);
+    UploadResult revoke = ConservativeRevoke(UploadResult::Stage::kStorageMismatch, forced_mismatch, width, height);
+    // The witness DID run here — its disagreement is the revoke's cause, and
+    // the measured values (not the request) are what the report's "actual"
+    // block should carry. Filled after the revoke returns because the shared
+    // revoke helper takes none of them.
+    revoke.actual_queried = true;
+    revoke.actual_width = stored_w;
+    revoke.actual_height = stored_h;
+    revoke.actual_internal_format = static_cast<unsigned int>(stored_fmt);
+    return revoke;
   }
 
   // Success — now and only now commit the display facts, re-arm the no-sample gate (the frame on
@@ -2414,6 +2445,20 @@ UploadResult PreviewRenderer::UploadXyzStrips(const XyzUploadInput& input, bool 
   tex_mode_ = TextureMode::kXyz;
   tex_xyz_scale_ = scale;
   glBindTexture(GL_TEXTURE_2D, 0);
+  // Observer fields riding the structured result (diagnostics_report's
+  // consumer; the acceptance logic above never reads them): the clean
+  // witness's measurements, the staging capacity this attempt allocated at
+  // (client-memory paths honestly carry none), the one scale the attempt
+  // quantized with, and the last-strip fence fact from the staged loop.
+  r.actual_queried = true;
+  r.actual_width = stored_w;
+  r.actual_height = stored_h;
+  r.actual_internal_format = static_cast<unsigned int>(stored_fmt);
+  if (use_staging) {
+    r.pbo_bytes = plan.slot_bytes;
+  }
+  r.xyz_half_scale = scale;
+  r.fence_create_failed = commit_fence_failed;
   r.ok = true;
   return r;
 }

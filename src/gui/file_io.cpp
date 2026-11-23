@@ -4487,7 +4487,11 @@ bool ExportAnalysisResultsCsv(const std::filesystem::path& path, const std::stri
   return WriteTextFile(path, csv);
 }
 
-bool ConfigJsonExportNeedsOverwriteConfirm(const std::filesystem::path& path) {
+bool ExportDiagnosticsJson(const std::filesystem::path& path, const std::string& json_str) {
+  return WriteTextFile(path, json_str);
+}
+
+bool TextExportNeedsOverwriteConfirm(const std::filesystem::path& path) {
   if (path.empty()) {
     return false;  // nothing to overwrite; ExportConfigJson refuses this path anyway
   }
@@ -4590,6 +4594,20 @@ std::filesystem::path ShowExportCsvDialog() {
   nfdchar_t* out_path = nullptr;
   nfdfilteritem_t filter_item[1] = { { "CSV", "csv" } };
   nfdresult_t result = NFD_SaveDialog(&out_path, filter_item, 1, nullptr, "raypath_analysis.csv");
+  std::filesystem::path path;
+  if (result == NFD_OKAY && out_path) {
+    path = PathFromU8(out_path);
+    NFD_FreePath(out_path);
+  }
+  NFD_Quit();
+  return path;
+}
+
+std::filesystem::path ShowExportDiagnosticsDialog() {
+  NFD_Init();
+  nfdchar_t* out_path = nullptr;
+  nfdfilteritem_t filter_item[1] = { { "JSON", "json" } };
+  nfdresult_t result = NFD_SaveDialog(&out_path, filter_item, 1, nullptr, "lumice_diagnostics.json");
   std::filesystem::path path;
   if (result == NFD_OKAY && out_path) {
     path = PathFromU8(out_path);
