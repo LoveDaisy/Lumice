@@ -17,9 +17,11 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <vector>
 
 #include "analytic/pose_density.hpp"
+#include "core/crystal.hpp"
 #include "core/lat_lut.hpp"
 #include "raypath/detail/measure/declared_density.hpp"
 
@@ -857,6 +859,270 @@ TEST(DeclaredDensity, ZigzagLatitudeFastPathNormalizesAndAgreesWithTheGeneralPat
     // (the fast path is the production answer here; the general path is the equivalence check).
     EXPECT_NEAR(general, fast, 5e-2 * fast) << "z = " << z;
   }
+}
+
+
+// ---- the log-space forms: same laws, honest tails -------------------------------------------
+
+TEST(DeclaredDensityLog, SlotsAgreeWithTheLinearFormsAtModerateArguments) {
+  const Distribution slots[] = {
+    Gauss(0.0, 1.0),   Gauss(-30.0, 5.0), Laplace(10.0, 3.0), Uniform(45.0, 360.0),
+    Legacy(15.0, 2.0), Zigzag(20.0, 8.0), Zigzag(0.0, 5.0),
+  };
+  const double probes[] = { -2.0, -0.5, 0.0, 0.001, 0.3, 1.2 };
+  for (const Distribution& slot : slots) {
+    for (double x : probes) {
+      const double linear = SlotDensityValue(slot, x);
+      const double log_form = SlotLogDensityValue(slot, x);
+      if (linear > 0.0) {
+        EXPECT_NEAR(log_form, std::log(linear), 1e-12 * std::fabs(log_form) + 1e-12)
+            << "type " << static_cast<int>(slot.type) << " x " << x;
+      }
+      // Where the linear form has already underflowed to 0, the log form owes no equality — a
+      // finite log there is the whole point of the layer. It must never be NaN here (and only
+      // the zigzag endpoint diverges to +inf, asserted separately below).
+      EXPECT_FALSE(std::isnan(log_form)) << "type " << static_cast<int>(slot.type) << " x " << x;
+    }
+  }
+  // The true outsides of compact supports: −inf exactly.
+  const Distribution zig = Zigzag(20.0, 8.0);
+  EXPECT_EQ(SlotDensityValue(zig, 2.0), 0.0);  // |y| beyond A + |B| = 28 deg
+  EXPECT_EQ(SlotLogDensityValue(zig, 2.0), -std::numeric_limits<double>::infinity());
+  const Distribution box = Uniform(45.0, 360.0);
+  EXPECT_EQ(SlotDensityValue(box, -2.5), 0.0);  // below [c - R/2, c + R/2) = [-135, 225) deg
+  EXPECT_EQ(SlotLogDensityValue(box, -2.5), -std::numeric_limits<double>::infinity());
+}
+
+TEST(DeclaredDensityLog, GaussianTailStaysFiniteWhereTheLinearFormUnderflows) {
+  // The shape of the whole log layer: 100 sigma out, linear rho underflows to +0 while the log
+  // keeps the analytic value -0.5*(100)^2 - log(sigma sqrt(2 pi)) — a darkness report must not
+  // read that underflow as zero support.
+  const Distribution roll = Gauss(0.0, 1.0);
+  const double far_rad = 100.0 * kDeg;
+  EXPECT_EQ(SlotDensityValue(roll, far_rad), 0.0);
+  const double log_value = SlotLogDensityValue(roll, far_rad);
+  EXPECT_TRUE(std::isfinite(log_value));
+  EXPECT_NEAR(log_value, -0.5 * 100.0 * 100.0 - std::log(kDeg * std::sqrt(2.0 * kPi)), 1e-9);
+}
+
+TEST(DeclaredDensityLog, DiracsAnswerMinusInfLikeTheLinearZero) {
+  double at = 0.0;
+  ASSERT_TRUE(SlotIsDirac(NoRandom(0.0), &at));
+  EXPECT_EQ(SlotLogDensityValue(NoRandom(0.0), at), -std::numeric_limits<double>::infinity());
+  const Distribution zero_spread{ DistributionType::kGaussian, 0.0f, 0.0f };
+  EXPECT_EQ(SlotLogDensityValue(zero_spread, 0.0), -std::numeric_limits<double>::infinity());
+}
+
+TEST(DeclaredDensityLog, FoldedLatitudeMatchesTheLinearLawOnModeratePhis) {
+  const auto law = MakeLatitudeDensity(Gauss(0.0, 40.0));  // latitude 90±40: a folding path
+  for (double phi_deg : { -70.0, -30.0, -5.0, 0.0, 12.0, 45.0, 80.0 }) {
+    const double linear = law.Evaluate(phi_deg * kDeg);
+    const double log_form = law.EvaluateLog(phi_deg * kDeg);
+    if (linear <= 0.0) {
+      ADD_FAILURE() << "linear density not positive at phi " << phi_deg;
+      continue;
+    }
+    EXPECT_NEAR(log_form, std::log(linear), 1e-12 * std::fabs(log_form) + 1e-12) << "phi " << phi_deg;
+  }
+  EXPECT_EQ(law.EvaluateLog(kHalfPi * 1.001), -std::numeric_limits<double>::infinity());
+  const auto dirac_law = MakeLatitudeDensity(NoRandom(30.0));
+  EXPECT_EQ(dirac_law.EvaluateLog(30.0 * kDeg), -std::numeric_limits<double>::infinity());
+}
+
+TEST(DeclaredDensityLog, JointPoseLogMatchesTheLinearJointOnBothScenarioAxes) {
+  // Parry: azimuth uniform, latitude 90±1 (zenith), roll 0±1 — the fold is negligible at these
+  // probes and the joint is the slot product; C12 plate: latitude 90±1 (zenith 0±1), roll 0±5.
+  // Each axis's phi probes sit inside its own latitude support (the linear side underflows to 0
+  // elsewhere, and 0 is the −inf contract, not a log/linear comparison point).
+  struct AxisProbes {
+    AxisDistribution axis;
+    std::vector<double> phis;
+  };
+  AxisDistribution parry;
+  parry.azimuth_dist = Uniform(0.0, 360.0);
+  parry.latitude_dist = Gauss(0.0, 1.0);
+  parry.roll_dist = Gauss(0.0, 1.0);
+  AxisDistribution plate;
+  plate.azimuth_dist = Uniform(0.0, 360.0);
+  plate.latitude_dist = Gauss(90.0, 1.0);
+  plate.roll_dist = Gauss(0.0, 5.0);
+  const AxisProbes axes[] = {
+    { parry, { -0.02, 0.0, 0.03 } },
+    { plate, { 1.56, 1.5705 } },
+  };
+  const double lambdas[] = { 0.3, -1.1, 2.5 };
+  // Roll probes inside each axis's own roll support band (the linear side underflows beyond
+  // ~40 sigma, and 0 is the −inf contract, not a log/linear comparison point).
+  const double parry_rolls[] = { -0.005, 0.0, 0.01 };
+  const double plate_rolls[] = { -0.08, 0.0, 0.09 };
+  for (const AxisProbes& entry : axes) {
+    const double* rolls = entry.axis.latitude_dist.center > 45.0f ? plate_rolls : parry_rolls;
+    for (double lambda : lambdas) {
+      for (double phi : entry.phis) {
+        for (size_t ri = 0; ri < 3; ++ri) {
+          const double roll = rolls[ri];
+          const double linear = DeclaredPoseDensity(entry.axis, lambda, phi, roll);
+          const double log_form = DeclaredPoseLogDensity(entry.axis, lambda, phi, roll);
+          if (linear <= 0.0) {
+            ADD_FAILURE() << "linear density not positive at lambda/phi/roll " << lambda << "/" << phi << "/" << roll;
+            continue;
+          }
+          EXPECT_NEAR(log_form, std::log(linear), 1e-12 * std::fabs(log_form) + 1e-12)
+              << "axis/lambda/phi/roll " << lambda << "/" << phi << "/" << roll;
+        }
+      }
+    }
+  }
+}
+
+TEST(DeclaredDensityLog, ParryRollHalfTurnRatioIsTheAnalyticExponential) {
+  // The −52° work example's closed form: the pose density under the roll +180° shift relative
+  // to the unshifted pose is exp(-0.5*(pi/sigma)^2) — about e^-16200 for sigma = 1 degree, the
+  // analytic statement behind "this member carries no light here" (the log form keeps it as a
+  // finite number where the linear ratio would be 0/positive-underflow).
+  AxisDistribution parry;
+  parry.azimuth_dist = Uniform(0.0, 360.0);
+  parry.latitude_dist = Gauss(0.0, 1.0);
+  parry.roll_dist = Gauss(0.0, 1.0);
+  const double sigma_rad = kDeg;   // 1 degree
+  const double roll = 0.3 * kDeg;  // off-centre so no special-casing can fake the answer
+  const double log_here = DeclaredPoseLogDensity(parry, 0.5, 0.0, roll);
+  const double log_shifted = DeclaredPoseLogDensity(parry, 0.5, 0.0, roll + kPi);
+  // The pose torus WRAPS the roll law: the shifted pose's density is dominated by the
+  // (pi − roll)-preimage, not the raw roll + pi. The uniform azimuth and the untouched zenith
+  // cancel; the wrapped roll Gaussian's log ratio is the full quadratic form
+  // -0.5*((pi − roll)^2 − roll^2)/sigma^2 (cross terms included, roll != 0).
+  const double expected = -0.5 * ((kPi - roll) * (kPi - roll) - roll * roll) / (sigma_rad * sigma_rad);
+  EXPECT_NEAR(log_shifted - log_here, expected, 1e-6);
+  // The linear ratio at the same pair reads as zero — the underflow the log form exists to avoid.
+  const double linear_ratio =
+      DeclaredPoseDensity(parry, 0.5, 0.0, roll + kPi) / DeclaredPoseDensity(parry, 0.5, 0.0, roll);
+  EXPECT_EQ(linear_ratio, 0.0);
+}
+
+TEST(DeclaredDensityLog, RetainedShiftTransportKeepsTheLogDensity) {
+  // The C12-plate axis (azimuth uniform, latitude 90±1, roll gauss 0±5): the pole fold glues
+  // P_3 (MeasureRetainsElement pins it), so the fold's equal-weight leaves must make the log
+  // density at phi = 0 EQUAL at roll and roll + pi — the composed angles are the fold's paired
+  // leaves, and the P_3 compensation pairs the roll slot by exactly that shift. The branch
+  // weights must come from the preimage families' LOG masses: forming them through the linear
+  // FlipProbability loses a leaf to underflow here and reads a ~647-nat gap that contradicts
+  // the element algebra's own retention answer.
+  AxisDistribution plate;
+  plate.azimuth_dist = Uniform(0.0, 360.0);
+  plate.latitude_dist = Gauss(90.0, 1.0);
+  plate.roll_dist = Gauss(0.0, 5.0);
+  const CrystalElement p3{ CrystalElement::Family::kCAxisRotation, 3 };
+  EXPECT_TRUE(MeasureRetainsElement(p3, plate)) << "the fixture must be one the algebra calls retained";
+  const double lambda = 0.7;
+  const double phi = 0.0;  // the fold boundary: both preimage families weigh in
+  const double log_at_zero = DeclaredPoseLogDensity(plate, lambda, phi, 0.0);
+  const double log_at_pi = DeclaredPoseLogDensity(plate, lambda, phi, kPi);
+  ASSERT_TRUE(std::isfinite(log_at_zero));
+  ASSERT_TRUE(std::isfinite(log_at_pi));
+  // Deep in the gauss tail both leaves underflow the LINEAR form — the log forms must agree to
+  // their own floating noise, which is the retention statement spelled numerically.
+  EXPECT_NEAR(log_at_zero, log_at_pi, 1e-6) << "P_3 is retained: the paired leaves cannot differ";
+  EXPECT_LT(log_at_zero, -100.0) << "the probe sits ~23 sigma out: the deep-tail regime is in force";
+}
+
+TEST(DeclaredDensityLog, ZigzagLatitudeEndpointDivergesInsteadOfNaN) {
+  // The declared Zigzag latitude's support edge carries an infinite density by contract
+  // (SlotLogDensityValue answers +inf there, the linear form too). The log JOINT must carry
+  // that divergence through the flip mixture — subtracting the two branches' infinities would
+  // fabricate a NaN and hide a density the engine explicitly supports.
+  AxisDistribution axis;
+  axis.azimuth_dist = Uniform(0.0, 360.0);
+  axis.latitude_dist = Zigzag(0.0, 10.0);
+  axis.roll_dist = Gauss(0.0, 5.0);
+  const double phi = 10.0 * kDeg;  // the support edge: A + |B| = 10 degrees
+  const double linear = DeclaredPoseDensity(axis, 0.0, phi, 0.0);
+  ASSERT_TRUE(std::isinf(linear) && linear > 0.0) << linear;
+  const double log_form = DeclaredPoseLogDensity(axis, 0.0, phi, 0.0);
+  EXPECT_TRUE(std::isinf(log_form) && log_form > 0.0) << log_form;
+}
+
+TEST(DeclaredDensityLog, BothBranchesDivergingAnswersInfinityNotNaN) {
+  // Both flip branches' wrapped roll reads can land on a Zigzag support edge (support
+  // [180, 360]: the direct read at 0 wraps onto 360, the shifted read at -180 onto 180 — both
+  // endpoints). The joint answers the declared divergence once, never fabs(inf - inf) = NaN.
+  AxisDistribution axis;
+  axis.azimuth_dist = Uniform(0.0, 360.0);
+  axis.latitude_dist = Gauss(0.0, 40.0);
+  axis.roll_dist = Zigzag(270.0, 90.0);
+  const double linear = DeclaredPoseDensity(axis, 0.0, 0.0, 0.0);
+  ASSERT_TRUE(std::isinf(linear) && linear > 0.0) << linear;
+  const double log_form = DeclaredPoseLogDensity(axis, 0.0, 0.0, 0.0);
+  EXPECT_TRUE(std::isinf(log_form) && log_form > 0.0) << log_form;
+}
+
+TEST(DeclaredDensityLog, ZeroLatitudeMassTimesSlotDivergenceAnswersTheSurvivingBranch) {
+  // A branch whose latitude factor has no mass at this phi contributes nothing even where its
+  // slot read is the declared endpoint divergence — a zero mass times a divergence is no mass,
+  // never -inf + inf = NaN. Here the roll's Zigzag support edge sits at the wrapped direct
+  // read; the latitude's other branch keeps a finite supported joint on the shifted roll.
+  AxisDistribution axis;
+  axis.azimuth_dist = Uniform(0.0, 360.0);
+  axis.latitude_dist = Uniform(0.0, 20.0);
+  axis.roll_dist = Zigzag(90.0, 90.0);  // support [0, 180]: roll 0 and its shift hit the edges
+  const double log_form = DeclaredPoseLogDensity(axis, 0.0, 0.0, 0.0);
+  EXPECT_FALSE(std::isnan(log_form)) << log_form;
+  EXPECT_FALSE(std::isinf(log_form) && log_form > 0.0) << log_form;
+  const double linear = DeclaredPoseDensity(axis, 0.0, 0.0, 0.0);
+  EXPECT_FALSE(std::isnan(linear)) << linear;
+}
+
+TEST(DeclaredDensityLog, LatitudeZeroSupportBothBranchesAnswersZeroNotNaN) {
+  // phi sits in an open neighbourhood outside this latitude's support: BOTH branch factors
+  // are -inf while the roll's endpoint divergence fires on the wrapped direct read. The true
+  // joint density is zero here — no endpoint-convention ambiguity, and no NaN in either form.
+  AxisDistribution axis;
+  axis.azimuth_dist = Uniform(0.0, 360.0);
+  axis.latitude_dist = Uniform(0.0, 10.0);
+  axis.roll_dist = Zigzag(270.0, 90.0);  // support [180, 360]: the direct read at 0 wraps to 360
+  const double phi = 30.0 * kDeg;
+  const double log_form = DeclaredPoseLogDensity(axis, 0.0, phi, 0.0);
+  EXPECT_TRUE(std::isinf(log_form) && log_form < 0.0) << log_form;
+  const double linear = DeclaredPoseDensity(axis, 0.0, phi, 0.0);
+  EXPECT_EQ(linear, 0.0) << linear;
+}
+
+TEST(DeclaredDensityLog, DivergentBranchWithoutSupportKeepsTheOtherBranchsFiniteJoint) {
+  // At the 30-degree fold image of this latitude's support edge the DIRECT branch diverges but
+  // its roll read is zero-supported; the SHIFTED branch's roll lands inside its support and its
+  // preimage mass is finite. The joint answers the surviving branch's finite contribution —
+  // the divergence sits on zero support and must not erase the other branch, nor leak through
+  // the marginal. Both forms agree (one law, two spaces).
+  AxisDistribution axis;
+  axis.azimuth_dist = Uniform(0.0, 360.0);
+  axis.latitude_dist = Zigzag(120.0, 90.0);
+  axis.roll_dist = Uniform(180.0, 10.0);
+  const double phi = 30.0 * kDeg;
+  const double log_form = DeclaredPoseLogDensity(axis, 0.0, phi, 0.0);
+  ASSERT_TRUE(std::isfinite(log_form)) << log_form;
+  const double neighbor = DeclaredPoseLogDensity(axis, 0.0, 30.000001 * kDeg, 0.0);
+  ASSERT_TRUE(std::isfinite(neighbor)) << neighbor;
+  EXPECT_NEAR(log_form, neighbor, 0.01) << "the surviving branch's joint is smooth across the edge";
+  const double linear = DeclaredPoseDensity(axis, 0.0, phi, 0.0);
+  EXPECT_NEAR(linear, std::exp(log_form), 1e-9 * linear) << "one joint law in two spaces";
+}
+
+TEST(DeclaredDensityLog, EndpointDivergenceOnZeroSupportAnswersNothingNotInfinity) {
+  // The support edge's +inf mass sits at a roll the roll law never reaches — BOTH flip
+  // branches read zero roll support at this roll_out (90 degrees, and its 180-degree-shifted
+  // preimage). Zero support kills a branch before the divergence can propagate: the joint
+  // answers "no mass in any neighborhood" (-inf), the linear form answers 0 — never a
+  // fabricated +inf and never inf * 0 = NaN.
+  AxisDistribution axis;
+  axis.azimuth_dist = Uniform(0.0, 360.0);
+  axis.latitude_dist = Zigzag(0.0, 30.0);
+  axis.roll_dist = Uniform(0.0, 10.0);
+  const double phi = 30.0 * kDeg;       // the divergent support edge
+  const double roll_out = 90.0 * kDeg;  // outside [0, 10] on both flip branches
+  const double linear = DeclaredPoseDensity(axis, 0.0, phi, roll_out);
+  EXPECT_EQ(linear, 0.0) << linear;
+  const double log_form = DeclaredPoseLogDensity(axis, 0.0, phi, roll_out);
+  EXPECT_TRUE(std::isinf(log_form) && log_form < 0.0) << log_form;
 }
 
 

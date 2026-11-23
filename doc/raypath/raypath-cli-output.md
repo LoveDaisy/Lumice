@@ -87,13 +87,14 @@ not know. `schema_version` is bumped only when a field changes meaning or is rem
 | `schema_version` | int | always | 1 |
 | `generator.lumice` | string | always | The Lumice version that wrote it |
 | `generator.analytic_api_version` | int | always | The analytic kernel's API version |
-| `conventions` | object of strings | always | This page's §4 in words, so a document explains itself: `frames`, `directions`, `target_azimuth`, `pose`, `angles`, `sun_in_crystal`, `units`, `null`, `factors`, `survey_context`, `sun_grid`, `completeness`, `reach` |
+| `conventions` | object of strings | always | This page's §4 in words, so a document explains itself: `frames`, `directions`, `target_azimuth`, `pose`, `angles`, `sun_in_crystal`, `units`, `null`, `factors`, `log_density`, `interpretive_pose`, `survey_context`, `sun_grid`, `completeness`, `reach` |
 | `meta` | object | always | Every conversion from the scene to the kernel, as applied (§3.2) |
 | `outcome` | `"discovered"` \| `"point_mass"` | always | Which of the two branches below is present |
 | `point_mass` | object | `outcome == "point_mass"` | §3.5 |
 | `components` | array | `outcome == "discovered"` | §3.3; may be empty |
 | `incomplete` | array | `outcome == "discovered"` | §3.4; may be empty |
 | `discovery` | object | `outcome == "discovered"` | §3.6 |
+| `interpretive_pose` | object | `outcome == "discovered"` | The initial interpretation's pose: the recovered branch point with the greatest closed-form log density (`{available, component_index, point_index, log_density}`; first among ties, deterministic in the recovered set — sample_count, seeds and discovery order cannot move it; claims no global maximum; `available: false` = no recovered valid point carries an ordinary density reading, "this search has not found one", not that none exists) |
 | `reach` | object | `outcome == "discovered"` | §3.8; written whether or not `components` is empty |
 | `measure_registration` | object | `outcome == "discovered"` | The declared measure's support kind and any registered read-as-zero gap (§3.11) |
 | `sun_grid` | object | `--grid` > 0 (either outcome) | §3.7 |
@@ -146,6 +147,11 @@ Each point:
 | `jacobian.value`, `jacobian.singular_values`, `jacobian.available` | The pose's normal Jacobian J_perp = σ1σ2 (the kernel's own read at the pose's own direction); `null` where it cannot be formed — NaN-honest, never a plausible 0 or 1 |
 | `k_carea` | 1/(J_perp + `factors.epsilon`); `null` when the Jacobian is unavailable |
 | `factor_product` | ρ · A/a² · T · K; `null` when any factor is unavailable or the pose is not valid |
+| `log_rho` | The same declared density in log space: a deep tail keeps its finite log here where the linear `rho` underflows to a read-as-zero 0; `null` (−inf) means what `rho`'s 0 means — off the support, or a Dirac slot's slice, "no ordinary density", never a darkness claim. No threshold decides how small is small |
+| `ref_log_density`, `log_ratio` | Present-when-asked ratio facts: the reference member's log density at the algebraically transported corresponding pose (the element whose sky action fixes the target point while mapping this member onto the reference — a proper element always fixes it, a mirror only while the point sits in the sun's vertical plane — applied through the pose compensation), with the world-ray identity AND the reference's finite corridor re-verified per point, and `log_ratio = log_rho − ref_log_density` — a statement about THIS pose pair, never a member-wide bound. `null` when no reference was requested, the transported pose failed its verification, or the two
+sides' infinities are alike (incomparable — both off-support, or both at a declared endpoint,
+never 0); opposite infinities keep their signed answer, a one-sided off-support keeps its signed
+infinity |
 
 The factors are the L2 query's per-pose decomposition: **multiplicative, in real units, never
 additive percentages** (the corpus discipline the point output inherits). The document-level

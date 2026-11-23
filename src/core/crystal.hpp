@@ -535,12 +535,14 @@ class Crystal {
 // are the orientation ensemble's P-rotation set and B condition (DeriveSymmetryGating's answer,
 // already intersected with the shape where the set came from there) — the ensemble's halves.
 // `geom` is the crystal's shape symmetry, the other half: P rotates only when the P bit is set
-// and `p_retained` keeps a non-identity rotation, and then by strides of p_retained's generating
-// step (the shape intersection happened in the derivation — this function does not read
-// geom.p_step); D is applied only when the D bit is set, d_applicable is true AND geom admits
-// mirror sigma_a; B only when the B bit is set, b_applicable AND geom.b_applicable. The reduced
-// element set is the request intersected with what the ensemble and the geometry allow — never
-// more.
+// and `p_retained` keeps a non-identity rotation; D is applied only when the D bit is set,
+// d_applicable is true AND geom admits mirror sigma_a; B only when the B bit is set, b_applicable
+// AND geom.b_applicable. The reduced element set is the request intersected with what the
+// ensemble and the geometry allow — never more. This entry BUILDS that generator inventory and
+// delegates to the element-set form below: one naming authority, the lexicographic minimum of
+// rp's orbit (the bit-spelled closed form's byte contract is pinned by the three-encoding
+// equivalence sweep in test_filter_spec.cpp; the buffer twin detail::ReduceBuffer and the device
+// filter copy spell the same closed form for their frozen hot paths).
 std::vector<IdType> ReduceRaypathByPeriod(const std::vector<IdType>& rp, uint8_t symmetry, int sigma_a,
                                           bool d_applicable, PRotationSet p_retained, bool b_applicable, int fn_period,
                                           const GeometricSymmetry& geom);
@@ -558,6 +560,127 @@ std::vector<std::vector<IdType>> ExpandRaypathByPeriod(const std::vector<IdType>
 // ExpandRaypathByPeriod with the label gating, so it holds no permutation formula of its own.
 // `sigma_a` / `d_applicable` are D's ensemble half (detail::DeriveDSymmetryParams).
 std::vector<IdType> LabelEquivalentFaces(IdType face, uint8_t symmetry, int sigma_a, bool d_applicable);
+
+// ---- the element algebra: one D6h group member, three views ---------------------------------
+//
+// The P/B/D bits and their per-bit gates (SymmetryGating above) name GENERATORS; a local class is
+// an orbit under whole GROUP ELEMENTS, and the composite B·σ_a half-turn is one element no bit
+// pattern names (its label action mixes D's prism reflection with B's basal/cone swap, and its
+// pose compensation reflects roll and zenith where neither generator's does both). So the
+// local-class algebra (doc/raypath/raypath-symmetry.md) is stated per element, and the element
+// carries its three views together:
+//   * the LABEL view — ApplyToFace, the face-number permutation the crystal-frame action
+//     induces (the transported face number, same bands as the bit generators' actions);
+//   * the MATRIX view — BodyMatrix, the crystal-frame orthogonal map itself (row-major, acting
+//     on body-frame column vectors; det = +1 or −1 as IsProper says);
+//   * the POSE/SKY views — for a PROPER element the compensation R·gᵀ keeps every world ray
+//     segment-for-segment (the sibling member carries the same light at the SAME sky direction),
+//     while an IMPROPER element needs the world mirror M whose plane contains the sun (the one
+//     reflection fixing the incident light), sends world rays to their mirror images, and
+//     therefore moves the sky point: σ_g = identity for proper, M for improper. CompensatedPose
+//     and ElementFixesSkyDirection are those two views' closed forms.
+// Every construction derives from one geometric fact — face 3's normal sits at crystal-frame
+// azimuth 0 (kHexFaceCos[0] = 1), prism face 3+i at i·60°, the basal faces at ±z — and from the
+// same phase tables the closed-form geometry uses, so the three views cannot drift apart: the
+// tests pin ApplyToFace against the matrix acting on the closed-form normals.
+struct CrystalElement {
+  enum class Family : uint8_t {
+    kIdentity,            // the trivial element
+    kCAxisRotation,       // P_k: right-rotation Rz(k·60°) about the c-axis (proper)
+    kHorizontalHalfTurn,  // H_a: 180° about the horizontal axis at azimuth a·30° = B·σ_a (proper)
+    kVerticalMirror,      // σ_a: vertical mirror plane at azimuth a·30° (improper)
+    kRotoMirror,          // S_k: σ_h·Rz(k·60°) (improper; k = 3 is the inversion)
+  };
+  Family family = Family::kIdentity;
+  int index = 0;  // k or a; always 0..5 (kIdentity ignores it)
+
+  bool IsProper() const;  // det = +1: the compensation stays in SO(3), the sky action is identity
+  bool IsIdentity() const { return family == Family::kIdentity; }
+  // The label view. `face` must be a legal face number (1, 2, 3..8, 13..18, 23..28 — the
+  // IsLegalFace universe); anything else is an unrecoverable invariant.
+  IdType ApplyToFace(IdType face) const;
+  // The matrix view: the element's crystal-frame orthogonal map, det = IsProper() ? +1 : −1.
+  void BodyMatrix(double out[9]) const;
+
+  bool operator==(const CrystalElement& o) const { return family == o.family && index == o.index; }
+  bool operator!=(const CrystalElement& o) const { return !(*this == o); }
+};
+
+// All 24 D6h elements, family-major in the fixed order identity, P_0..P_5, H_0..H_5, σ_0..σ_5,
+// S_0..S_5 (P_0 IS the identity, so the list has no duplicate and 24 entries).
+std::vector<CrystalElement> AllCrystalElements();
+
+// The pose view: the compensated orientation R' that lets member gP realize member P's world
+// rays — R·gᵀ for a proper element (same sky direction), M·R·gᵀ for an improper one, where M is
+// the world vertical mirror at azimuth `sun_azimuth_rad` (the only world reflection that fixes
+// the sun, hence the only one the mirrored scene may use). Row-major, like every pose on this
+// chain. This is a matrix-level contract by design: the closed-form angle maps (az+180°,
+// 180°−zen, −roll−60a for H_a and friends) hold in the canonical zenith interval and degenerate
+// at the poles, while the matrix form is exact everywhere; consumers that need angles extract
+// them from R' afterwards.
+void CompensatedPose(const CrystalElement& element, const double pose[9], double sun_azimuth_rad, double out[9]);
+
+// The sky view: whether the element's sky action σ_g fixes `direction` (a world unit vector —
+// the sky point a member would have to carry light at). Always true for a proper element;
+// otherwise `direction` must lie in the sun's vertical plane (azimuth ≡ sun azimuth or the
+// antipode, or either pole, which every vertical plane contains). The 1e-12 band is the
+// azimuth-wrap rounding allowance (sin(±π) and sin(±2π) round to ≤ 2.5e-16, a genuine off-plane
+// azimuth of 1e-9 rad reads ≥ 1e-9·cos(altitude)), the same calibre the pose identities use.
+bool ElementFixesSkyDirection(const CrystalElement& element, const double direction[3], double sun_azimuth_rad);
+
+// ---- the per-element retention halves (the physical regime, per element) --------------------
+//
+// The per-bit gates (DeriveSymmetryGating's physical answer) are these two halves' PROJECTIONS:
+// the old P answer is exactly the per-element P set under the shape intersection, the old B
+// answer is S_0's, and the old D answer is σ_ComputeSigmaA's — the per-element set adds the
+// composites (H_a) and the mirrors the anchor does not name without changing any old bit. Each
+// element's measure condition decomposes along T_g's three angle slots onto the existing
+// per-bit family predicates (raypath-elements.md §5): azimuth uniform where T_g shifts or
+// reflects the azimuth (H_a, σ_a, S_k — P_k poses no azimuth condition), zenith symmetric
+// about 90° where T_g reflects it (H_a, S_k), and a roll shift or reflection condition that is
+// the roll half of P or of D's anchor respectively. The shape half reads the same
+// GeometricSymmetry the per-bit gates read.
+
+// The measure half: is the orientation ensemble's measure invariant under the element's pose
+// compensation T_g? Closed-form per family, no sampling.
+bool MeasureRetainsElement(const CrystalElement& element, const AxisDistribution& axis_dist);
+
+// The shape half: does the crystal's shape (as an ensemble) map onto itself under the element?
+bool ShapeAdmitsElement(const CrystalElement& element, const GeometricSymmetry& shape);
+
+// The physical regime's per-element answer: the elements admitted by BOTH halves, in
+// AllCrystalElements()' fixed order. This is the set a local class's orbit, naming and transport
+// consume; the per-bit SymmetryGating stays the old consumers' authority and its projections are
+// pinned equal to this set's per-family subsets.
+std::vector<CrystalElement> DeriveRetainedElements(const GeometricSymmetry& shape, const AxisDistribution& axis_dist);
+
+// The naming authority's element-set form — the ONE reduction the per-bit overload above
+// delegates to as well: the lexicographic minimum of `rp`'s orbit under the given elements'
+// label actions (the orbit IS the local class; the minimum is its representative). This form is
+// what a local class consumes (an element set is not expressible as P/B/D bits).
+// `fn_period < 0` or an empty element set returns `rp` unchanged.
+std::vector<IdType> ReduceRaypathByPeriod(const std::vector<IdType>& rp, const std::vector<CrystalElement>& elements,
+                                          int fn_period);
+
+// The row-scoped form of the same authority: the orbit minimum CLAMPED to `row` — a partial-bit
+// row's member list is a strict subset of the orbit, and the class (the issue's definition:
+// "within the selected row's member range") lives inside that clamp. The local-class resolver
+// calls exactly this; it owns only the sky-fixing selection, no naming rule of its own.
+std::vector<IdType> ReduceRaypathByPeriod(const std::vector<IdType>& rp, const std::vector<CrystalElement>& elements,
+                                          int fn_period, const std::vector<std::vector<IdType>>& row);
+
+// The first element in AllCrystalElements()' fixed order whose label action maps `from` onto `to`
+// face-for-face (same size, same band structure) AND whose sky action fixes `direction` — the
+// same-sky-point carrier a correspondence such as the point face's density-ratio reference needs.
+// A proper element's σ_g is the identity and fixes every direction; an improper one's σ_g is the
+// sun's vertical mirror, which fixes `direction` exactly when the direction lies in that plane —
+// so a mirror legally carries the correspondence when the clicked point sits in the sun's
+// vertical plane, and is refused exactly when its sky action would move the point. False (out
+// untouched) when no such element exists: the two sequences are not one group image at this sky
+// point, and no transported pose corresponds them. Deterministic: the inventory's order is the
+// tie-break, the same rule the local-class resolver's transport facts use.
+bool FindLabelMappingElement(const std::vector<IdType>& from, const std::vector<IdType>& to, const double direction[3],
+                             double sun_azimuth_rad, CrystalElement* out);
 
 namespace detail {
 // Internal — not part of public API.
@@ -697,6 +820,13 @@ enum class SymmetrySemantics {
 // `p_retained` is the physical regime's retained-rotation set: the measure's own periodicities
 // (DeriveSymmetryGating intersects them with the shape's) — the label regime passes Full() and
 // the reductions consume its GeneratorStep() as the P modulus.
+//
+// The struct carries the three frozen per-bit fields only. The same authority's EXACT layer — the
+// per-element preservation answers, CLOSED UNDER COMPOSITION (the per-family predicates can miss a
+// composite whose canonical form names no single anchor, e.g. σ_0·P_3 = σ_3 on a pole-folded axis)
+// and sorted in AllCrystalElements()' fixed order — is not materialized on this struct: it is the
+// directly callable DeriveRetainedElements(shape, axis) (kPhysical domain) / AllCrystalElements()
+// (kLabel), evaluated by the consumers that actually read per-element answers.
 struct SymmetryGating {
   GeometricSymmetry geom;
   PRotationSet p_retained;
@@ -706,6 +836,12 @@ struct SymmetryGating {
 // The one authority translating a SymmetrySemantics into the gating a reduction reads. kLabel
 // ignores both `shape_geom` and `axis_dist` and answers the full D6h with P and B admitted;
 // kPhysical answers `shape_geom` with the ensemble's retained P rotations and its B condition.
+// One producer, two contracts: the per-bit fields keep the old consumers' exact frozen semantics
+// (their approximation clauses included), the element derivations (DeriveRetainedElements /
+// AllCrystalElements — the same inputs, evaluated by whoever reads per-element answers) answer
+// exactly and conservatively — where the two disagree (a kZigzag roll's anchor-position vs its
+// unproven reflection symmetry) the divergence is deliberate and documented in
+// doc/raypath/raypath-elements.md.
 SymmetryGating DeriveSymmetryGating(SymmetrySemantics semantics, const GeometricSymmetry& shape_geom,
                                     const AxisDistribution& axis_dist);
 

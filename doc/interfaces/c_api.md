@@ -46,7 +46,7 @@ Link against the `lumice` static library.
 ```c
 // lumice_api_version.h — a leaf header; include it explicitly where the macro is used
 // (lumice_base.h deliberately does not include it, see below)
-#define LUMICE_API_VERSION 461        // ABI version, encoded major*100 + minor (v4.61)
+#define LUMICE_API_VERSION 465        // ABI version, encoded major*100 + minor (v4.65)
 
 // lumice_base.h
 #define LUMICE_MAX_RENDER_RESULTS 16  // Maximum capacity of the render result array
@@ -112,6 +112,51 @@ A Workspace only injects an automatic warm candidate after shared admission succ
 incompatible candidates are misses, not query errors. Explicit warm input is never replaced
 by the automatic slot, and incompatible explicit input still fails admission. The per-fact
 numeric qualification and independent result/warm lifetimes are unchanged. No export was added.
+
+From v4.64, the point face publishes its closed-form density facts in log space — a pure
+append, read-only by construction. `LUMICE_SinglePathRequest` appends
+`ratio_reference_faces`/`ratio_reference_face_count` (read only on the new complete extent;
+NULL and older extents keep the exact previous behavior): another member's single-layer face
+sequence. When present, `LUMICE_PathPointGetSampleDensity` reports, per recovered sample, the
+same declared measure's log density at the algebraically transported corresponding pose and
+`log_ratio` against it. The transport is the engine's element algebra (the first element whose
+sky action fixes the target point while mapping the requested member onto the reference; a
+proper element always fixes it, a mirror only while the point sits in the sun's vertical plane —
+a carrier that would move the sky point is refused as `invalid_argument`: no same-sky-point
+ratio exists), and the correspondence is re-verified per point against the world-ray identity
+AND the reference's finite corridor: a pose the reference's finite geometry refuses leaves that
+sample's reference fields NaN rather than a plausible number.
+`log_rho` itself keeps a deep tail's finite log where the linear `rho` underflows to a
+read-as-zero 0; −inf means off-support or a Dirac slot's slice, never darkness, and no
+threshold decides how small is small. Like infinities read NaN (incomparable — both sides
+off-support, or both at a declared endpoint's divergence), opposite infinities keep their
+signed answer, a one-sided off-support keeps its signed infinity. `LUMICE_PathPointGetInterpretivePose` names
+the recovered set's deterministic closed-form density argmax (first among ties; claims no
+global maximum; unavailable = this search has not found one, not that none exists). New
+structs `LUMICE_PathPointDensity` and `LUMICE_PathPointInterpretive` join the readers; no
+existing reader struct grew and no existing symbol or behavior changed. The local-class
+answer face stays the only new query form: these are facts about one member's own point
+result, not transform primitives.
+
+From v4.65, the interpretive-point answer face joins as a pure append —
+`LUMICE_InterpretivePointRequest`, the opaque `LUMICE_InterpretivePoint`,
+`LUMICE_PathWorkspaceQueryInterpretivePoint`, `LUMICE_InterpretivePointDestroy`, and three
+readers (`LUMICE_InterpretivePointGetClasses` / `GetPoint` / `GetSelection`). It is the
+engine-side chain the local-class answer feeds: row scope + sky direction -> the row's classes
+at that point -> the interpretive class -> the selected member's own point payload, with
+resolution and every member evaluation settled within ONE query deadline (the options carry
+the point chain's own deadline/cancel/warm/include_context semantics). Selection is a
+discovery fact about who interprets the click, never about class identity: classes are
+evaluated in their fixed representative order and the first member whose interpretive pose
+carries positive linear weight (rho > 0 — a deep tail keeps its finite log but reads exactly
+zero in the linear form) wins; classes after the winner are not searched this run, and a
+search finding none reports selected_class = -1 with the FIRST class's representative's own
+payload attached ("this search has not found one", the completeness wording). A non-empty
+`fixed_member` (a row member, refused otherwise) skips the selection: that member is evaluated
+verbatim, its own geometry and log density facts intact, never auto-swapped. The class and
+point faces are the existing readers on borrowed handles, so no reader family is duplicated
+and no transformation primitive leaves the engine. No existing symbol or struct layout
+changed.
 
 Each result family has `GetInfo` plus named semantic-block and indexed getters. The caller sets an
 output record's `struct_size` to its compiled extent. A published complete extent or a larger

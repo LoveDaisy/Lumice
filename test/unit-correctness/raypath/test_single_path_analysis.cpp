@@ -28,6 +28,7 @@
 #include "core/simulator.hpp"
 #include "raypath/detail/measure/declared_density.hpp"
 #include "raypath/detail/survey/config_fingerprint.hpp"
+#include "raypath/prepared_geometry.hpp"
 #include "raypath/representative_ray.hpp"
 #include "raypath/scene_to_analytic.hpp"
 #include "raypath/single_path_analysis.hpp"
@@ -976,6 +977,415 @@ TEST(SinglePathFactors, RhoIsTheDeclaredDensityDeclared) {
   // The all-spread area axis is not a gap: both dirac predicates fall through, so the registration
   // stays silent (the green arm of the fixed-azimuth red test below).
   EXPECT_FALSE(r.Data().Discovered().measure_registration.registered_gap);
+}
+
+TEST(SinglePathFactors, LogDensityKeepsDeepTailsFiniteWhereLinearRhoUnderflows) {
+  // A roll Gaussian centred 60 degrees away from where the {3,5} branches actually sit: every
+  // branch point's linear rho underflows to a read-as-zero 0.0 while its log stays a finite
+  // deep negative — the pinned member's honest dark, spelled in log space. The interpretive
+  // pose names the recovered set's least-dark point (available — finiteness, not a threshold),
+  // and a self reference answers an exactly zero ratio everywhere it answers at all.
+  ConfigManager scene = Scene(Prism(1.0f));
+  CrystalConfig& crystal = scene.crystals_.at(1);
+  crystal.axis_.azimuth_dist = { DistributionType::kUniform, 0.0f, 360.0f };
+  crystal.axis_.latitude_dist = { DistributionType::kGaussian, 0.0f, 1.0f };  // zenith 90 ± 1
+  crystal.axis_.roll_dist = { DistributionType::kGaussian, 60.0f, 1.0f };
+  auto request = Request({ 3, 5 }, 20.0, 25.0);
+  request.ratio_reference_faces = { 3, 5 };  // self: identity carrier
+  PointResult r;
+  ASSERT_TRUE(AnalyzePathPointValue(scene, request, false, &r).Ok());
+  const DiscoveredPoint& discovered = r.Data().Discovered();
+  ASSERT_FALSE(discovered.components.empty());
+  // Every slot spreads with everywhere-positive support (Gaussians, full-turn uniform), so a
+  // linear rho of 0.0 here is UNDERFLOW, never an off-support zero — and the log must then be
+  // finite (≤ log of the smallest subnormal ≈ −744), while any positive rho agrees with its log.
+  int underflowed = 0;
+  for (const FiberComponent& component : discovered.components) {
+    for (const PointDetail& p : component.points) {
+      if (!p.valid) {
+        continue;
+      }
+      EXPECT_TRUE(std::isfinite(p.log_rho)) << "everywhere-positive support: no off-support −inf here";
+      if (p.rho > 0.0) {
+        EXPECT_NEAR(p.log_rho, std::log(p.rho), 1e-9 * std::fabs(p.log_rho) + 1e-9);
+      } else {
+        EXPECT_EQ(p.rho, 0.0);
+        EXPECT_LE(p.log_rho, -700.0) << "a read-as-zero rho is the underflowed tail, not darkness";
+        ++underflowed;
+      }
+      // Self reference: the transported pose is the pose, the reference density the member's
+      // own, the ratio exactly zero (finite minus itself).
+      EXPECT_EQ(p.ref_log_density, p.log_rho);
+      EXPECT_EQ(p.log_ratio, 0.0);
+    }
+  }
+  EXPECT_GT(underflowed, 0) << "the fixture's branches sit ~17..43 / ~-155 roll-degrees, far off the +60-degree anchor";
+  const InterpretivePose& interpretive = discovered.interpretive;
+  ASSERT_TRUE(interpretive.available);
+  ASSERT_GE(interpretive.component_index, 0);
+  ASSERT_GE(interpretive.point_index, 0);
+  EXPECT_LT(interpretive.component_index, static_cast<int>(discovered.components.size()));
+  EXPECT_LT(interpretive.point_index,
+            static_cast<int>(discovered.components[interpretive.component_index].points.size()));
+  EXPECT_EQ(interpretive.log_density,
+            discovered.components[interpretive.component_index].points[interpretive.point_index].log_rho);
+  EXPECT_TRUE(std::isfinite(interpretive.log_density));
+}
+
+TEST(SinglePathFactors, LogDensityAgreesWithTheLinearFormOnTheOverlap) {
+  // A roll Gaussian centred on the {3,5} fixture's own branch (its rolls measure ~17°..43° at
+  // this target — the 30° centre keeps that component inside the linear form's range while the
+  // latitude slot stays flat-uniform, so positive linear rhos exist) — there the log form must
+  // be the logarithm of the linear one (the two implementations agree on the overlap family;
+  // the deep-tail arm is the test above).
+  ConfigManager scene = Scene(Prism(1.0f));
+  CrystalConfig& crystal = scene.crystals_.at(1);
+  crystal.axis_.azimuth_dist = { DistributionType::kUniform, 0.0f, 360.0f };
+  crystal.axis_.latitude_dist = { DistributionType::kUniform, 90.0f, 180.0f };
+  crystal.axis_.roll_dist = { DistributionType::kGaussian, 30.0f, 1.0f };
+  PointResult r;
+  ASSERT_TRUE(AnalyzePathPointValue(scene, Request({ 3, 5 }, 20.0, 25.0), false, &r).Ok());
+  int checked = 0;
+  for (const FiberComponent& component : r.Data().Discovered().components) {
+    for (const PointDetail& p : component.points) {
+      if (!p.valid || p.rho <= 0.0) {
+        continue;
+      }
+      EXPECT_NEAR(p.log_rho, std::log(p.rho), 1e-9 * std::fabs(p.log_rho) + 1e-9);
+      ++checked;
+    }
+  }
+  EXPECT_GT(checked, 0);
+}
+
+TEST(SinglePathFactors, RatioReferenceCarriesTheTransportedPoseAndItsTail) {
+  // The Parry measure, {3,5} referenced against {5,7}: the first proper element mapping one onto
+  // the other is P_2, whose compensation shifts roll by −120° and touches no other slot. This
+  // fixture's branches sit tens of roll-degrees from the ±1° anchor (measured: ~17°..43° and
+  // ~−155°), so both the member's own reads and the transported reads are deep tails — and the
+  // two log forms keep every one of them finite, their per-pose difference huge and signed by
+  // where each pose actually sits. No fake zero, no 0/0; the linear rho underflowed them all.
+  ConfigManager scene = Scene(Prism(1.0f));
+  CrystalConfig& crystal = scene.crystals_.at(1);
+  crystal.axis_.azimuth_dist = { DistributionType::kUniform, 0.0f, 360.0f };
+  crystal.axis_.latitude_dist = { DistributionType::kGaussian, 0.0f, 1.0f };
+  crystal.axis_.roll_dist = { DistributionType::kGaussian, 0.0f, 1.0f };
+  auto request = Request({ 3, 5 }, 20.0, 25.0);
+  request.ratio_reference_faces = { 5, 7 };
+  PointResult r;
+  ASSERT_TRUE(AnalyzePathPointValue(scene, request, false, &r).Ok());
+  const DiscoveredPoint& discovered = r.Data().Discovered();
+  ASSERT_FALSE(discovered.components.empty());
+  int compared = 0;
+  int huge = 0;
+  for (const FiberComponent& component : discovered.components) {
+    for (const PointDetail& p : component.points) {
+      if (!p.valid) {
+        continue;  // an invalid member pose carries no world ray to correspond
+      }
+      EXPECT_TRUE(std::isfinite(p.log_rho)) << "the member's own tail stays readable";
+      // A non-finite reference read would make the derived ratio meaningless: skip the row's
+      // remaining derived checks (non-fatally — one bad row must not hide the others').
+      if (!std::isfinite(p.ref_log_density) || !std::isfinite(p.log_ratio)) {
+        ADD_FAILURE() << "the transported pose verified, its density must answer; ratio must be finite";
+        continue;
+      }
+      EXPECT_DOUBLE_EQ(p.log_ratio, p.log_rho - p.ref_log_density);
+      EXPECT_EQ(p.rho, 0.0) << "these tens-of-sigma tails underflow the linear form on this fixture";
+      if (std::fabs(p.log_ratio) > 50.0) {
+        ++huge;
+      }
+      ++compared;
+    }
+  }
+  EXPECT_GT(compared, 0);
+  EXPECT_GT(huge, 0) << "the −120° roll shift moves tens of sigmas: the ratio must say so";
+  // H_0's transport preserves this measure (azimuth uniform, latitude and roll symmetric about
+  // their centres): a reference the H_0 carrier reaches must read ratio zero — the
+  // measure-retention theorem, asserted operationally on the ratio face. {3,7} is H_0's image
+  // of {3,5}. The tolerance is the two evaluations' floating noise only (symmetric arguments
+  // need not sum in the same order); the theorem itself is exact.
+  request.ratio_reference_faces = { 3, 7 };
+  PointResult h0;
+  ASSERT_TRUE(AnalyzePathPointValue(scene, request, false, &h0).Ok());
+  int h0_compared = 0;
+  for (const FiberComponent& component : h0.Data().Discovered().components) {
+    for (const PointDetail& p : component.points) {
+      if (!p.valid || !std::isfinite(p.log_rho)) {
+        continue;
+      }
+      EXPECT_NEAR(p.ref_log_density, p.log_rho, 1e-9 * std::fabs(p.log_rho) + 1e-9);
+      EXPECT_NEAR(p.log_ratio, 0.0, 1e-9);
+      ++h0_compared;
+    }
+  }
+  EXPECT_GT(h0_compared, 0);
+}
+
+TEST(SinglePathFactors, RatioReferenceRefusalsNameTheirCause) {
+  ConfigManager scene = Scene(Prism(1.0f));
+  auto request = Request({ 3, 5 }, 20.0, 25.0);
+  request.ratio_reference_faces = { 4, 1 };  // pri,base against pri,pri: no element maps the bands
+  PointResult refused;
+  const Error unmappable = AnalyzePathPointValue(scene, request, false, &refused);
+  EXPECT_EQ(unmappable.code, ErrorCode::kInvalidArgument);
+  EXPECT_NE(unmappable.message.find("no element fixing the target sky point"), std::string::npos);
+
+  request.ratio_reference_faces = { 3 };  // a one-face sequence is not a path
+  PointResult illegal;
+  const Error illegal_path = AnalyzePathPointValue(scene, request, false, &illegal);
+  EXPECT_EQ(illegal_path.code, ErrorCode::kInvalidArgument);
+}
+
+TEST(SinglePathFactors, RatioReferenceVerifiesTheTransportedCorridorBeforePublishing) {
+  // The asymmetric crystal (d_[1]=0.3): a proper carrier still maps {3,5,7} onto {5,7,3}, but
+  // the shape symmetry that made the transported corridor congruent to the member's own is
+  // gone — a transported pose the reference's finite geometry refuses must keep its NaN
+  // (unverified), never publish the density read as a verified ratio.
+  PrismCrystalParam p;
+  p.h_ = Fixed(1.2f);
+  for (auto& d : p.d_) {
+    d = Fixed(1.0f);
+  }
+  p.d_[1] = Fixed(0.3f);
+  ConfigManager scene = Scene(p);
+  CrystalConfig& crystal = scene.crystals_.at(1);
+  crystal.axis_.azimuth_dist = { DistributionType::kUniform, 0.0f, 360.0f };
+  crystal.axis_.latitude_dist = { DistributionType::kGaussian, 0.0f, 1.0f };
+  crystal.axis_.roll_dist = { DistributionType::kGaussian, 0.0f, 1.0f };
+  auto request = Request({ 3, 5, 7 }, 25.0, 120.0);
+  request.sample_count = 10000;
+  request.ratio_reference_faces = { 5, 7, 3 };
+  PointResult r;
+  ASSERT_TRUE(AnalyzePathPointValue(scene, request, false, &r).Ok());
+  const SinglePathMetadata& meta = r.Data().meta;
+  const DiscoveredPoint& discovered = r.Data().Discovered();
+  ASSERT_FALSE(discovered.components.empty());
+  // The production carrier and corridor, re-derived independently: the carrier by the same
+  // deterministic sky-fixing rule, the corridor on the reference's face sequence — the two
+  // halves of the leg's published-read contract.
+  PreparedGeometry geometry;
+  ASSERT_TRUE(PrepareGeometry(scene.crystals_.at(1), &geometry).Ok());
+  const std::vector<IdType> member_faces(request.path_layers[0].begin(), request.path_layers[0].end());
+  const std::vector<IdType> reference_ids(request.ratio_reference_faces.begin(), request.ratio_reference_faces.end());
+  CrystalElement carrier;
+  ASSERT_TRUE(FindLabelMappingElement(member_faces, reference_ids, meta.target_direction, meta.sun_azimuth_deg * kDeg,
+                                      &carrier));
+  // The corridor consumes table slot indices, not Lumice face numbers — the same resolution the
+  // entry's own reference leg ran.
+  std::vector<int> ref_slots;
+  ASSERT_TRUE(ResolveSingleLayerPath({ request.ratio_reference_faces }, geometry.table, &ref_slots).Ok());
+  analytic::Corridor reference_corridor(geometry.table, geometry.polygons, ref_slots.data(),
+                                        static_cast<int>(ref_slots.size()));
+  int valid = 0;
+  int published = 0;
+  int corridor_refused = 0;
+  for (const FiberComponent& component : discovered.components) {
+    for (const PointDetail& point : component.points) {
+      if (!point.valid) {
+        continue;  // an invalid member pose carries no world ray to correspond
+      }
+      ++valid;
+      double transported[9];
+      CompensatedPose(carrier, point.pose, meta.sun_azimuth_deg * kDeg, transported);
+      // u = R^T s_hat with s_hat = -incident (SunInCrystal's convention, restated): the
+      // body-frame incident the corridor reads is -u.
+      double transported_incident[3];
+      for (int i = 0; i < 3; ++i) {
+        transported_incident[i] = transported[0 * 3 + i] * meta.incident_direction[0] +
+                                  transported[1 * 3 + i] * meta.incident_direction[1] +
+                                  transported[2 * 3 + i] * meta.incident_direction[2];
+      }
+      const bool corridor_ok = reference_corridor.Evaluate(transported_incident, meta.refractive_index).status ==
+                               analytic::EntryMeasureStatus::kOk;
+      if (!std::isnan(point.ref_log_density)) {
+        EXPECT_TRUE(corridor_ok) << "a published reference read requires a traversable corridor";
+        ++published;
+      }
+      if (!corridor_ok) {
+        EXPECT_TRUE(std::isnan(point.ref_log_density));
+        EXPECT_TRUE(std::isnan(point.log_ratio));
+        ++corridor_refused;
+      }
+    }
+  }
+  EXPECT_GT(valid, 0) << "the scene recovers points, so the contract has rows to rule on";
+  EXPECT_GT(corridor_refused, 0) << "this asymmetric fixture must contain the corridor gap the verification exists for";
+  // The gap refused, the traversable remainder still answers (the same scene's congruent poses).
+  EXPECT_GT(published, 0) << "the corridor check refuses poses, not the correspondence itself";
+}
+
+ConfigManager ZigzagRollScene() {
+  // Zigzag roll endpoints declare +inf (the density law's own reading at its support edge); the
+  // near-fixed GaussianLegacy latitude keeps every other read finite or −inf (off-support).
+  PrismCrystalParam prism;
+  prism.h_ = Fixed(1.2f);
+  for (auto& d : prism.d_) {
+    d = Fixed(1.0f);
+  }
+  ConfigManager scene = Scene(prism);
+  CrystalConfig& crystal = scene.crystals_.at(1);
+  crystal.axis_.azimuth_dist = { DistributionType::kUniform, 0.0f, 360.0f };
+  crystal.axis_.latitude_dist = { DistributionType::kGaussianLegacy, 12.345f, 0.0001f };
+  crystal.axis_.roll_dist = { DistributionType::kZigzag, 0.0f, 90.0f };
+  return scene;
+}
+
+TEST(SinglePathFactors, MixedInfinityRatioKeepsItsSignedAnswer) {
+  // Zigzag endpoints declare +inf; transported poses of the sibling land off-support (−inf) or
+  // finite. Every state pair the subtraction can meet reads its declared answer: opposite
+  // infinities keep their signed ratio, a finite member against a diverging reference reads the
+  // negative infinity, like infinities stay incomparable (NaN, never 0) — the old
+  // both-non-finite guard turned exactly the signed answers into NaN. Both seats of the same
+  // correspondence are witnessed (the swapped numerator/denominator direction).
+  auto request = Request({ 3 }, 20.0, 180.0);
+  request.sample_count = 10000;
+  request.ratio_reference_faces = { 6 };
+  PointResult forward;
+  ASSERT_TRUE(AnalyzePathPointValue(ZigzagRollScene(), request, false, &forward).Ok());
+  int forward_signed = 0;
+  for (const FiberComponent& component : forward.Data().Discovered().components) {
+    for (const PointDetail& p : component.points) {
+      if (!p.valid || p.log_rho != std::numeric_limits<double>::infinity() ||
+          p.ref_log_density != -std::numeric_limits<double>::infinity()) {
+        continue;  // the witnessed state pair: an on-endpoint member point, an off-support reference
+      }
+      EXPECT_EQ(p.log_ratio, std::numeric_limits<double>::infinity());
+      ++forward_signed;
+    }
+  }
+  EXPECT_GT(forward_signed, 0) << "+inf member against a −inf reference: the ratio is +inf, not NaN";
+  // The swapped correspondence (the reference's member in the seat): the signed answers now
+  // read the other way — a finite member against a diverging reference is −inf, and the like
+  // infinities (member on an endpoint, reference too; member off-support, reference too) stay
+  // incomparable NaN.
+  auto swapped = Request({ 6 }, 20.0, 180.0);
+  swapped.sample_count = 10000;
+  swapped.ratio_reference_faces = { 3 };
+  PointResult reverse;
+  ASSERT_TRUE(AnalyzePathPointValue(ZigzagRollScene(), swapped, false, &reverse).Ok());
+  int negative_signed = 0;
+  int like_inf_incomparable = 0;
+  for (const FiberComponent& component : reverse.Data().Discovered().components) {
+    for (const PointDetail& p : component.points) {
+      if (!p.valid) {
+        continue;
+      }
+      if (std::isfinite(p.log_rho) && p.ref_log_density == std::numeric_limits<double>::infinity()) {
+        EXPECT_EQ(p.log_ratio, -std::numeric_limits<double>::infinity());
+        ++negative_signed;
+      }
+      const bool member_inf = !std::isfinite(p.log_rho);
+      const bool ref_inf = !std::isfinite(p.ref_log_density) && !std::isnan(p.ref_log_density);
+      if (member_inf && ref_inf && std::signbit(p.log_rho) == std::signbit(p.ref_log_density)) {
+        EXPECT_TRUE(std::isnan(p.log_ratio)) << "like infinities subtract to incomparable, whatever the sign";
+        ++like_inf_incomparable;
+      }
+    }
+  }
+  EXPECT_GT(negative_signed, 0) << "finite member against a +inf reference: the ratio is −inf";
+  EXPECT_GT(like_inf_incomparable, 0) << "like infinities must read incomparable, not a signed answer";
+}
+
+// A fixed axis (every slot a Dirac): the linear rho answers 0 off the Dirac slice and the log
+// answers −inf — the same statement in log vocabulary. With no ordinary density reading
+// anywhere on the fiber, the interpretive pose is honestly absent: this search has not found
+// one, not that none exists.
+TEST(SinglePathFactors, ADiracSliceReadsMinusInfinityAndNamesNoInterpretivePose) {
+  PointResult r;
+  ASSERT_TRUE(AnalyzePathPointValue(Scene(Prism(1.0f)), Request({ 3, 5 }, 20.0, 25.0), false, &r).Ok());
+  ASSERT_FALSE(r.Data().Discovered().components.empty());
+  for (const FiberComponent& component : r.Data().Discovered().components) {
+    for (const PointDetail& p : component.points) {
+      EXPECT_EQ(p.log_rho, -std::numeric_limits<double>::infinity());
+    }
+  }
+  EXPECT_FALSE(r.Data().Discovered().interpretive.available);
+  EXPECT_EQ(r.Data().Discovered().interpretive.component_index, -1);
+  EXPECT_EQ(r.Data().Discovered().interpretive.point_index, -1);
+  EXPECT_TRUE(std::isnan(r.Data().Discovered().interpretive.log_density));
+}
+
+TEST(SinglePathFactors, ParryMinus52LightsTheCarryingMemberAndReadsTheDarkOneHonestly) {
+  // The acceptance scene itself (prism height 1.2, regular; zenith gauss 90±1, azimuth full
+  // turn, roll gauss 0±1; sun 20°/0°; target 36°/−52°; one-million seed events — the archived
+  // discussion evidence's exact shape). The carrying member 4-2 recovers its lit arc and its
+  // interpretive pose carries a positive rho on it; the dark member 4-1 keeps its own geometry
+  // (the H_1 image arc, real finite crystals) while every density read stays an honest finite
+  // deep tail — referenced against 4-2, the transported poses verify and the ratios answer,
+  // none of it a fake zero. AC1's and AC4's engine halves on one scene.
+  ConfigManager scene = Scene(Prism(1.2f));
+  CrystalConfig& crystal = scene.crystals_.at(1);
+  crystal.axis_.azimuth_dist = { DistributionType::kUniform, 0.0f, 360.0f };
+  crystal.axis_.latitude_dist = { DistributionType::kGaussian, 0.0f, 1.0f };
+  crystal.axis_.roll_dist = { DistributionType::kGaussian, 0.0f, 1.0f };
+  PointResult lit;
+  ASSERT_TRUE(AnalyzePathPointValue(scene, Request({ 4, 2 }, 36.0, -52.0), false, &lit).Ok());
+  const InterpretivePose& lit_pose = lit.Data().Discovered().interpretive;
+  ASSERT_TRUE(lit_pose.available);
+  const PointDetail& peak = lit.Data().Discovered().components[lit_pose.component_index].points[lit_pose.point_index];
+  EXPECT_TRUE(std::isfinite(peak.log_rho));
+  EXPECT_GT(peak.rho, 1.0) << "the interpretive pose must sit on the arc's positive-rho body";
+  EXPECT_NEAR(peak.log_rho, std::log(peak.rho), 1e-9 * std::fabs(peak.log_rho) + 1e-9);
+
+  auto dark_request = Request({ 4, 1 }, 36.0, -52.0);
+  dark_request.sample_count = 1000000;
+  dark_request.ratio_reference_faces = { 4, 2 };
+  PointResult dark;
+  ASSERT_TRUE(AnalyzePathPointValue(scene, dark_request, false, &dark).Ok());
+  ASSERT_FALSE(dark.Data().Discovered().components.empty()) << "the dark member keeps its own geometry";
+  int dark_valid = 0;
+  for (const FiberComponent& component : dark.Data().Discovered().components) {
+    for (const PointDetail& p : component.points) {
+      if (!p.valid) {
+        continue;
+      }
+      EXPECT_EQ(p.rho, 0.0) << "the ±1° roll anchor never reaches these arcs: the linear form underflows";
+      EXPECT_TRUE(std::isfinite(p.log_rho));
+      EXPECT_LT(p.log_rho, -100.0);
+      EXPECT_TRUE(std::isfinite(p.ref_log_density)) << "the transported pose verified against the lit member";
+      EXPECT_TRUE(std::isfinite(p.log_ratio));
+      ++dark_valid;
+    }
+  }
+  EXPECT_GT(dark_valid, 0);
+}
+
+TEST(SinglePathFactors, InterpretivePoseRequiresAReachableFiniteEntry) {
+  // A pose the normals read dense can still admit no ray: entry_measure is the finite
+  // crystal's own fact (the cross-section that enters and meets every later face). The
+  // selector's candidates need entry_measure > 0 — the winner must explain the clicked light
+  // with a ray that can actually travel, never the densest unreachable pose.
+  PrismCrystalParam prism;
+  prism.h_ = Fixed(1.2f);
+  for (int i = 0; i < 6; i++) {
+    prism.d_[i] = Fixed(1.0f);
+  }
+  ConfigManager scene = Scene(prism);
+  CrystalConfig& crystal = scene.crystals_.at(1);
+  crystal.axis_.azimuth_dist = { DistributionType::kUniform, 0.0f, 360.0f };
+  crystal.axis_.latitude_dist = { DistributionType::kUniform, 90.0f, 360.0f };  // full sphere
+  crystal.axis_.roll_dist = { DistributionType::kUniform, 0.0f, 360.0f };
+  SinglePathRequest q = Request({ 3, 5, 7 }, 25.0, 120.0);
+  q.sample_count = 5000;
+  PointResult r;
+  ASSERT_TRUE(AnalyzePathPointValue(scene, q, false, &r).Ok());
+  ASSERT_EQ(r.Data().OutcomeValue(), Outcome::kDiscovered);
+  const InterpretivePose& pose = r.Data().Discovered().interpretive;
+  if (pose.available) {
+    // Whenever the search finds an interpretation at all, it is one a ray can walk.
+    const PointDetail& winner = r.Data().Discovered().components[pose.component_index].points[pose.point_index];
+    EXPECT_GT(winner.entry_measure, 0.0) << "the interpretive pose must sit on reachable finite geometry";
+  }
+  int reachable = 0;
+  for (const FiberComponent& component : r.Data().Discovered().components) {
+    for (const PointDetail& p : component.points) {
+      if (p.valid && p.entry_measure > 0.0 && std::isfinite(p.log_rho)) {
+        ++reachable;
+      }
+    }
+  }
+  EXPECT_GT(reachable, 0) << "the scenario holds reachable candidates for the selector";
 }
 
 // The rank-0 orbit integral reproduces the measure layer's own kFiberParameter quadrature on the

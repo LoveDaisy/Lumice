@@ -378,6 +378,9 @@ set(LUMICE_LAYER_raypath_FILES
   raypath/detail/measure/visibility_certificate.hpp
   raypath/detail/measure/weight_profile.cpp
   raypath/detail/measure/weight_profile.hpp
+  raypath/local_class.hpp
+  raypath/detail/local_class.cpp
+  raypath/detail/local_class.hpp
   raypath/detail/physical_member_scope.cpp
   raypath/detail/physical_member_scope.hpp
   raypath/detail/structure/axis.cpp

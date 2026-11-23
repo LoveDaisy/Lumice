@@ -79,6 +79,17 @@ typedef struct LUMICE_SinglePathRequest {
   // request extents); 1 = literal requested sequence. Other values are invalid. The point's
   // fiber and members always remain literal, independent of this context selection.
   int context_symmetry_bits_plus_one;
+  // Appended v4.64. Optional density-ratio reference: another member's face sequence, the same
+  // single-layer encoding as `faces` (refused as invalid_argument when it is not a legal path or
+  // no element whose sky action fixes the target point maps the requested member onto it — a
+  // carrier that would move the sky point answers a different question; a proper element always
+  // fixes the point, a mirror only while the point sits in the sun's vertical plane). When
+  // present, every recovered sample's density block
+  // (LUMICE_PathPointGetSampleDensity) carries the reference's log density at the algebraically
+  // corresponding pose and the log ratio against it. NULL / count 0 (and older extents): no
+  // reference, the block's reference fields stay NaN.
+  const int* ratio_reference_faces;
+  int ratio_reference_face_count;
 } LUMICE_SinglePathRequest;
 
 typedef struct LUMICE_SinglePathResult_ LUMICE_SinglePathResult;
@@ -507,8 +518,8 @@ typedef struct LUMICE_PathQueryOptions {
   size_t struct_size;
   int deadline_ms;  // 0 = no deadline; positive = one absolute query deadline, at most 120000
   const LUMICE_PathCancelToken* cancel;
-  const LUMICE_PathWarmData* warm;  // only point and probe; NULL means workspace reuse or inline
-  int include_context;              // point only: 0 = skip context, 1 = include; other values invalid
+  const LUMICE_PathWarmData* warm;  // point, probe and interpretive point; NULL = workspace reuse or inline
+  int include_context;              // point and interpretive point: 0 = skip, 1 = include; other values invalid
 } LUMICE_PathQueryOptions;
 
 // A query request must use a published complete struct_size extent or a larger future tail.
@@ -609,6 +620,62 @@ LUMICE_API LUMICE_ErrorCode LUMICE_PathWorkspaceQueryRepresentativeRay(LUMICE_Pa
                                                                        LUMICE_RepresentativeRay** out, char* err_buf,
                                                                        size_t err_size);
 
+// ---- The local-class answer face -------------------------------------------------------------
+// "Row scope + sky direction -> the row's local classes and their representatives": one entry,
+// answering FACTS about the row's physical classes at the clicked point — which members are
+// physically equivalent THERE, who represents each class (the orbit's lexicographic minimum).
+// Pure closed-form algebra over the scene snapshot: no sampling anywhere in the identity or
+// naming decision, no discovery, no warm, no budget, no cancel poll (the options are accepted
+// for shape uniformity and never consulted, the representative-ray rule). The scene sun's
+// azimuth is read from the workspace's own snapshot, not restated by the caller.
+//
+// This face deliberately exposes NO transformation primitive: which element carries a member to
+// its representative, the pose compensations, the sky actions — all stay engine-internal. A
+// caller that wants a member's own numeric payload runs the point face on that member's faces
+// (the class answer's representative IS such a member list entry).
+typedef struct LUMICE_LocalClassRequest {
+  size_t struct_size;
+  int crystal_id;                   // a crystal entry of the scene
+  const int* representative_faces;  // the analysis row's representative sequence
+  int representative_face_count;
+  unsigned symmetry_bits;      // the row's P/B/D bits; 0 = the literal sequence alone
+  double target_altitude_deg;  // the sky point; azimuth measured as the sun's
+  double target_azimuth_deg;
+} LUMICE_LocalClassRequest;
+
+typedef struct LUMICE_LocalClass_ LUMICE_LocalClass;
+// On LUMICE_OK *out is a new handle the caller owns (release with LUMICE_LocalClassDestroy).
+// The answer freezes on return and outlives scene and workspace. On failure *out is NULL and
+// err_buf says which: unknown crystal, empty representative, an invalid bit set, a scope the
+// row's own gating refuses. Return codes: LUMICE_ERR_NULL_ARG (NULL workspace/request/out, or
+// NULL representative_faces with a non-zero count), LUMICE_ERR_INVALID_VALUE (a bad
+// struct_size, a negative count), LUMICE_ERR_UNKNOWN (internal).
+LUMICE_API LUMICE_ErrorCode LUMICE_PathWorkspaceQueryLocalClasses(LUMICE_PathWorkspace* workspace,
+                                                                  const LUMICE_LocalClassRequest* request,
+                                                                  const LUMICE_PathQueryOptions* options,
+                                                                  LUMICE_LocalClass** out, char* err_buf,
+                                                                  size_t err_size);
+LUMICE_API void LUMICE_LocalClassDestroy(LUMICE_LocalClass* result);
+
+typedef struct LUMICE_LocalClassInfo {
+  size_t struct_size;
+  int class_count;  // the row's classes at this sky point, sorted by representative; 0 for an empty row
+} LUMICE_LocalClassInfo;
+
+typedef struct LUMICE_LocalClassDetail {
+  size_t struct_size;
+  // The class's representative: the orbit's lexicographic minimum (the name the analysis list's
+  // own reduction family spells). Borrowed pointers, valid until Destroy.
+  const int* representative_faces;
+  int representative_face_count;
+  // The class's members, as the row scope's own member list addresses them: per-member face
+  // counts into the concatenated buffer (row order, each member once).
+  int member_count;
+  const int* member_face_counts;
+  const int* member_faces;
+  int member_faces_total;
+} LUMICE_LocalClassDetail;
+
 // =============== Typed result readers ===============
 // Every returned pointer is borrowed from the immutable result and remains valid until Destroy.
 // Strings are UTF-8 and NUL-terminated; length excludes NUL. Read-only calls may overlap one
@@ -630,6 +697,100 @@ typedef enum LUMICE_PathReadStatus {
   LUMICE_PATH_READ_INVALID_KIND = 4,
   LUMICE_PATH_READ_NOT_AVAILABLE = 5
 } LUMICE_PathReadStatus;
+
+// The local-class answer's readers (the same borrowed-pointer/struct_size contract as every
+// reader below).
+LUMICE_API LUMICE_PathReadStatus LUMICE_LocalClassGetInfo(const LUMICE_LocalClass* result, LUMICE_LocalClassInfo* out);
+LUMICE_API LUMICE_PathReadStatus LUMICE_LocalClassGetClass(const LUMICE_LocalClass* result, int index,
+                                                           LUMICE_LocalClassDetail* out);
+
+// ---- The interpretive-point answer face (v4.65) ----------------------------------------------
+// The engine-side chain the local-class answer feeds: "row scope + sky direction -> the
+// interpretive class -> the representative member's own payload", with resolution and every
+// member evaluation settled within ONE query deadline. A caller — GUI or CLI — reads this one
+// answer; no client re-assembles the class facts with separately-run member results. The
+// options carry the point chain's own semantics: deadline_ms (0 = no deadline, one absolute
+// window for the whole chain), cancel (polled across the member search; a cancelled or
+// deadline-stopped search leaves the class facts standing), warm (a member evaluation admits
+// it only through the existing admission authority — a candidate naming another member is an
+// automatic miss), include_context (the member payload's context, the point face's rule).
+//
+// Selection is a discovery fact about WHO interprets the click, never about class identity:
+// the classes are evaluated in their fixed representative order and the first member whose
+// interpretive pose reaches the carrying statement — the declared measure's log density at the
+// pose at or above -300 nat (the issue's sanctioned statement convention, spelled explicitly so
+// the machine's underflow never decides silently; it rules only the selection, never the class
+// facts and never a clamp on the reported values) — wins; classes after the winner are not
+// searched for interpretation this run, and a search that finds no such member reports
+// selected_class = -1 with the FIRST class's representative's own payload attached — "this
+// search has not found one", the completeness wording, the payload's member identity matching
+// the selection's. A non-empty fixed_member (a row member, refused otherwise) skips the
+// selection: that member is evaluated verbatim, its own geometry and log density facts intact,
+// never auto-swapped. ratio_reference_faces (optional) names the density-ratio reference
+// member INSIDE this one query — the selected member's samples carry the reference's log
+// density at the algebraically transported corresponding pose and the log ratio, the point
+// face's own verified path; a client never assembles it with a separate point run. A warm
+// candidate participates in the member it names (a candidate for a member outside this row is
+// refused; a candidate for a later class never blocks the chain at an earlier one).
+//
+// This face exposes no transformation primitive either: which element carries a member to its
+// representative stays engine-internal, the local-class face's rule.
+typedef struct LUMICE_InterpretivePointRequest {
+  size_t struct_size;
+  int crystal_id;                   // a crystal entry of the scene
+  const int* representative_faces;  // the analysis row's representative sequence
+  int representative_face_count;
+  unsigned symmetry_bits;      // the row's P/B/D bits; 0 = the literal sequence alone
+  double target_altitude_deg;  // the sky point; azimuth measured as the sun's
+  double target_azimuth_deg;
+  int sample_count;                  // 0 = the point chain's documented default (the point face's rule)
+  int sun_grid_lat_count;            // 0 skips the grid, the point face's rule
+  const int* ratio_reference_faces;  // optional: NULL or count 0 = no density-ratio reference
+  int ratio_reference_face_count;
+  const int* fixed_member_faces;  // optional: NULL or count 0 = automatic class selection
+  int fixed_member_face_count;
+} LUMICE_InterpretivePointRequest;
+
+typedef struct LUMICE_InterpretivePoint_ LUMICE_InterpretivePoint;
+// On LUMICE_OK *out is a new handle the caller owns (release with
+// LUMICE_InterpretivePointDestroy). The answer freezes on return and outlives scene and
+// workspace. On failure *out is NULL and err_buf names the reason. Return codes:
+// LUMICE_ERR_NULL_ARG (NULL workspace/request/out, or NULL faces arrays with non-zero counts),
+// LUMICE_ERR_INVALID_VALUE (a bad struct_size, a negative count, bits outside the P|B|D mask,
+// a target outside the coordinate contract, an unknown crystal, a face the crystal lacks, or a
+// fixed member outside the row — the named reason says which), LUMICE_ERR_UNKNOWN (internal).
+LUMICE_API LUMICE_ErrorCode LUMICE_PathWorkspaceQueryInterpretivePoint(LUMICE_PathWorkspace* workspace,
+                                                                       const LUMICE_InterpretivePointRequest* request,
+                                                                       const LUMICE_PathQueryOptions* options,
+                                                                       LUMICE_InterpretivePoint** out, char* err_buf,
+                                                                       size_t err_size);
+LUMICE_API void LUMICE_InterpretivePointDestroy(LUMICE_InterpretivePoint* result);
+
+typedef struct LUMICE_InterpretivePointSelection {
+  size_t struct_size;
+  int selected_class;   // index into the class face's classes; -1 = the search found none
+  int selected_member;  // index into that class's member list; -1 with selected_class
+  int member_fixed;     // 1 = the caller fixed the member, no automatic selection ran
+  // The member search's own outcome axis (LUMICE_PATH_OUTCOME_*), distinct from the point
+  // payload's: a cancelled or deadline-stopped search leaves the classes standing and the
+  // anchor payload in the point face, and says so here.
+  int search_outcome;
+  // The selected member's own face sequence (borrowed, valid until Destroy; the FIRST class's
+  // representative when selected_class is -1, the deterministic anchor payload's member — the
+  // same member the point payload belongs to, never a cross-member splice).
+  const int* member_faces;
+  int member_face_count;
+} LUMICE_InterpretivePointSelection;
+
+// The class face and the point face, borrowed from the answer: the existing readers accept
+// them unchanged (LUMICE_LocalClassGetInfo/GetClass, the LUMICE_SinglePathResult reader
+// family), so the answer adds no reader of its own beyond the selection facts.
+LUMICE_API LUMICE_PathReadStatus LUMICE_InterpretivePointGetClasses(const LUMICE_InterpretivePoint* result,
+                                                                    const LUMICE_LocalClass** out);
+LUMICE_API LUMICE_PathReadStatus LUMICE_InterpretivePointGetPoint(const LUMICE_InterpretivePoint* result,
+                                                                  const LUMICE_SinglePathResult** out);
+LUMICE_API LUMICE_PathReadStatus LUMICE_InterpretivePointGetSelection(const LUMICE_InterpretivePoint* result,
+                                                                      LUMICE_InterpretivePointSelection* out);
 
 #define LUMICE_PATH_STATE_UNKNOWN 0
 #define LUMICE_PATH_STATE_CERTIFIED 1
@@ -1032,6 +1193,50 @@ typedef struct LUMICE_PathPointSample {
   const double* interface_transmittances;
   size_t interface_count;
 } LUMICE_PathPointSample;
+
+// Appended v4.64: one sample's closed-form density facts in log space (read through
+// LUMICE_PathPointGetSampleDensity). log_rho is the declared joint pose density's log (angle
+// Lebesgue): a deep tail keeps its finite log where the linear rho underflows to 0; -inf means
+// what rho's 0 means — off the support, or a Dirac slot's slice ("no ordinary density", never a
+// darkness claim; no threshold decides how small is small). ref_log_density / log_ratio exist
+// only when the request named a ratio reference member: the same measure's log density at the
+// algebraically transported corresponding pose (the world-ray identity re-verified per point;
+// ±inf carries a one-sided off-support answer) and log_ratio = log_rho - ref_log_density — a
+// statement about THIS pose pair, never a member-wide bound. NaN (checked with isnan, not ==)
+// means the read is not offered or not verified here; alike infinities are incomparable and read
+// NaN (both sides off-support, or both at a declared endpoint's divergence, never 0), opposite
+// infinities keep their signed answer, a one-sided off-support keeps its signed infinity.
+typedef struct LUMICE_PathPointDensity {
+  size_t struct_size;
+  double log_rho;
+  double ref_log_density;
+  double log_ratio;
+} LUMICE_PathPointDensity;
+
+// Appended v4.64: the initial interpretation's pose (LUMICE_PathPointGetInterpretivePose) — the
+// recovered branch point with the greatest closed-form log density, first among ties.
+// Deterministic in the recovered set (sample_count, seeds and discovery order cannot move it);
+// claims no global maximum. available 0 means no recovered valid point carries an ordinary
+// density reading — this search has not found one, not that none exists; the indices are then -1
+// and log_density NaN.
+typedef struct LUMICE_PathPointInterpretive {
+  size_t struct_size;
+  int available;
+  int component_index;
+  int point_index;
+  double log_density;
+} LUMICE_PathPointInterpretive;
+
+// Appended v4.64: the density-ratio reference member this query named, frozen with the result
+// (LUMICE_PathPointGetRatioReference) — the ratio block's numbers are relative to THIS member's
+// transported poses, and a consumer holding only the result reads the denominator here. faces
+// is a read-only borrow (valid until Destroy); NULL / count 0 when the query named no reference
+// (every sample's reference fields are then NaN by contract).
+typedef struct LUMICE_PathRatioReference {
+  size_t struct_size;
+  const int* faces;
+  size_t face_count;
+} LUMICE_PathRatioReference;
 
 typedef struct LUMICE_PathSunGrid {
   size_t struct_size;
@@ -2623,6 +2828,19 @@ LUMICE_API LUMICE_PathReadStatus LUMICE_PathPointGetComponent(const LUMICE_Singl
                                                               LUMICE_PathPointComponent* out);
 LUMICE_API LUMICE_PathReadStatus LUMICE_PathPointGetSample(const LUMICE_SinglePathResult* result, size_t component,
                                                            size_t index, LUMICE_PathPointSample* out);
+// Appended v4.64. One sample's log-space density facts (the struct's comment names each field's
+// states). Same borrow/struct_size contract as every reader: a caller extent smaller than this
+// version's LUMICE_PathPointDensity is refused without writing.
+LUMICE_API LUMICE_PathReadStatus LUMICE_PathPointGetSampleDensity(const LUMICE_SinglePathResult* result,
+                                                                  size_t component, size_t index,
+                                                                  LUMICE_PathPointDensity* out);
+// Appended v4.64. The initial interpretation's pose (the struct's comment names the states).
+LUMICE_API LUMICE_PathReadStatus LUMICE_PathPointGetInterpretivePose(const LUMICE_SinglePathResult* result,
+                                                                     LUMICE_PathPointInterpretive* out);
+// Appended v4.64. The density-ratio reference member this query named (the struct's comment
+// names the states).
+LUMICE_API LUMICE_PathReadStatus LUMICE_PathPointGetRatioReference(const LUMICE_SinglePathResult* result,
+                                                                   LUMICE_PathRatioReference* out);
 LUMICE_API LUMICE_PathReadStatus LUMICE_PathPointGetSunGrid(const LUMICE_SinglePathResult* result,
                                                             LUMICE_PathSunGrid* out);
 LUMICE_API LUMICE_PathReadStatus LUMICE_PathProbeGetInfo(const LUMICE_PathProbe* result, LUMICE_PathProbeInfo* out);

@@ -60,6 +60,10 @@ add_executable(unit_correctness_test
   "${PROJ_TEST_DIR}/unit-correctness/core/test_color_symmetry_oracle.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/core/test_device_filter_check_host.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/core/test_reduce_raypath_audit.cpp"
+  # The element algebra's three views (core/crystal.hpp CrystalElement): label-vs-matrix on every
+  # legal face, group identities, the closed-form pose-compensation maps at matrix level (poles
+  # included), and the sky view against the sun's vertical plane.
+  "${PROJ_TEST_DIR}/unit-correctness/core/test_crystal_element.cpp"
   # P/B orientation-ensemble applicability (the counterparts of detail::IsDApplicable).
   "${PROJ_TEST_DIR}/unit-correctness/core/test_raypath_ensemble_applicability.cpp"
   # CouldFaceExist + the scene-parse warning for a filter naming a face its crystal never has.
@@ -257,6 +261,10 @@ add_executable(unit_correctness_test
   # engine's console sink for the whole process — it is exercised through ctypes in
   # test/e2e-correctness/test_analytic_log_sink.py.
   "${PROJ_TEST_DIR}/unit-correctness/analytic/test_path_evaluation.cpp"
+  # The element algebra's optical views: the deviation-grid orbit identity (D_{gP}(g·u) = D_P(u),
+  # bit for bit over the 24×48 Parry grid) and the H_0 / σ_0 world-ray compensation witnesses on
+  # the production TracePathChain / EvaluatePath pieces.
+  "${PROJ_TEST_DIR}/unit-correctness/analytic/test_element_optical_views.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/analytic/test_jet.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/analytic/test_jet2.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/analytic/test_so3.cpp"
@@ -309,6 +317,9 @@ add_executable(unit_correctness_test
   # profile primitive.
   "${PROJ_TEST_DIR}/unit-correctness/raypath/test_measure_geometry_contract.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/raypath/test_declared_density.cpp"
+  # The local-class resolution: the three acceptance scenarios' partitions, transports and
+  # sky-action semantics as exact sets (pure algebra, no sampling).
+  "${PROJ_TEST_DIR}/unit-correctness/raypath/test_local_class.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/raypath/test_visibility_certificate.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/raypath/test_fiber_quadrature.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/raypath/test_contour_contract_docking.cpp"

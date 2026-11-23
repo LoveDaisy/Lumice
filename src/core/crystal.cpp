@@ -10,6 +10,7 @@
 #include <cstring>
 #include <memory>
 #include <numeric>
+#include <set>
 #include <utility>
 #include <vector>
 
@@ -20,6 +21,7 @@
 #include "core/math.hpp"
 #include "core/optics.hpp"
 #include "core/shared/lat_path_selection.hpp"
+#include "util/fatal.hpp"
 #include "util/logger.hpp"
 
 namespace lumice {
@@ -597,7 +599,30 @@ bool BActive(uint8_t symmetry, bool b_applicable, const GeometricSymmetry& geom)
 
 }  // namespace
 
-// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+// ONE label action on a face sequence: the orbit enumeration's and the expansion's candidate
+// generation apply the group element's own ApplyToFace, so the label machinery exists exactly
+// once — the element inventory is its authority (MirrorFaceIndex spells the same map
+// parameterized by fn_period, which production always passes as the hexagonal 6, the element
+// action's own domain).
+std::vector<IdType> ApplyLabelAction(const CrystalElement& element, const std::vector<IdType>& sequence) {
+  std::vector<IdType> image = sequence;
+  for (IdType& face : image) {
+    face = element.ApplyToFace(face);
+  }
+  return image;
+}
+
+// The bit-spelled entry of the ONE naming authority: the lexicographic minimum of rp's orbit under
+// the bit request's active generators, evaluated in closed four-coset form (first-face
+// P-canonicalization, then mirror/B candidate steps). The walk's candidates are orbit members, and
+// the first differing face between the P-shifted seed and its mirror image sits at a position whose
+// band both σ_a and the P shift preserve, so S_0 (which fixes every prism index and flips each ring
+// uniformly) cannot reverse that comparison — the walk's output therefore IS the orbit minimum;
+// the element-set entry below carries the same answer for arbitrary inventories (and clamps it to
+// a row). The three-encoding equivalence sweep in test_filter_spec.cpp pins the per-bit, buffer
+// (detail::ReduceBuffer in filter_spec.cpp — the per-ray matcher's byte spelling of the same closed
+// form) and element-orbit entries together across the widened domain. The domain is the hexagonal
+// 6: every caller passes a crystal's FnPeriod(), which is kHexagonalFnPeriod or the no-reduction -1.
 std::vector<IdType> ReduceRaypathByPeriod(const std::vector<IdType>& rp, uint8_t symmetry, int sigma_a,
                                           bool d_applicable, PRotationSet p_retained, bool b_applicable, int fn_period,
                                           const GeometricSymmetry& geom) {
@@ -710,51 +735,26 @@ std::vector<std::vector<IdType>> ExpandRaypathByPeriod(const std::vector<IdType>
   }
 
   if (DActive(symmetry, sigma_a, d_applicable, geom)) {
-    // σ-clean: for each existing variant, generate σ-reflected copy
+    // σ-clean: each existing variant gains the σ_{sigma_a} mirror's label image — the element
+    // inventory's own action, the machinery the reduction reads too.
     auto size = result.size();
     for (size_t i = 0; i < size; i++) {
-      auto curr_rp = result[i];
-      bool changed = false;
-      for (auto& x : curr_rp) {
-        if (x < 3) {
-          continue;  // skip basal faces; pyramid faces use same pyr/pri decomposition
-        }
-        IdType pyr = x / 10;
-        int pri = static_cast<int>(x % 10) - 3;
-        IdType pri_new = static_cast<IdType>(MirrorFaceIndex(pri, sigma_a, fn_period));
-        IdType x_new = pyr * 10 + pri_new + 3;
-        if (x_new != x) {
-          x = x_new;
-          changed = true;
-        }
-      }
-      if (changed) {
-        result.emplace_back(curr_rp);
+      const auto image =
+          ApplyLabelAction(CrystalElement{ CrystalElement::Family::kVerticalMirror, sigma_a }, result[i]);
+      if (image != result[i]) {
+        result.emplace_back(std::move(image));
       }
     }
   }
 
   if (BActive(symmetry, b_applicable, geom)) {
-    // B reflection: basal 1↔2, pyramid upper[13..18]↔lower[23..28], prism unchanged.
-    // Both swaps are part of the same transformation and applied together.
+    // B reflection: basal 1↔2, pyramid upper[13..18]↔lower[23..28], prism unchanged — the
+    // element action's own image, both swaps applied together.
     auto size = result.size();
     for (size_t i = 0; i < size; i++) {
-      auto curr_rp = result[i];
-      bool changed = false;
-      for (auto& x : curr_rp) {
-        if (x <= 2) {
-          x = 3 - x;
-          changed = true;
-        } else if (x >= 13 && x <= 18) {
-          x += 10;
-          changed = true;
-        } else if (x >= 23 && x <= 28) {
-          x -= 10;
-          changed = true;
-        }
-      }
-      if (changed) {
-        result.emplace_back(curr_rp);
+      const auto image = ApplyLabelAction(CrystalElement{ CrystalElement::Family::kRotoMirror, 0 }, result[i]);
+      if (image != result[i]) {
+        result.emplace_back(std::move(image));
       }
     }
   }
@@ -1307,6 +1307,525 @@ PRotationSet RetainedOnShape(const PRotationSet& measure, int shape_p_step) {
 
 }  // namespace
 
+// ---- the element algebra: implementation ----------------------------------------------------
+//
+// Every formula here is derived once from face 3's normal sitting at crystal-frame azimuth 0
+// (the same phase tables the closed-form geometry uses), and the derivation — including the
+// improper-conjugation trap (a mirror conjugating a rotation flips the rotation's angle, so
+// F_y·Ry(θ)·F_y is Ry(θ), NOT Ry(−θ)) — is recorded in doc/raypath/raypath-elements.md.
+
+namespace {
+
+// cos/sin of a·30° for a = 0..5: the phase of the horizontal half-turn axes and the vertical
+// mirror planes (face normals sit on the 60° phase, hexagon vertices on the 30° one; the
+// element families need the half-step table the vertex table already carries, spelled flat).
+constexpr double kAxis30Cos[6] = { 1.0, kHexSqrt3Half, 0.5, 0.0, -0.5, -kHexSqrt3Half };
+constexpr double kAxis30Sin[6] = { 0.0, 0.5, kHexSqrt3Half, 1.0, kHexSqrt3Half, 0.5 };
+
+enum class FaceBand { kBasalUpper, kBasalLower, kPrism, kConeUpper, kConeLower };
+
+FaceBand BandOfFace(IdType face) {
+  if (face == 1) {
+    return FaceBand::kBasalUpper;
+  }
+  if (face == 2) {
+    return FaceBand::kBasalLower;
+  }
+  if (face >= 3 && face <= 8) {
+    return FaceBand::kPrism;
+  }
+  if (face >= 13 && face <= 18) {
+    return FaceBand::kConeUpper;
+  }
+  if (face >= 23 && face <= 28) {
+    return FaceBand::kConeLower;
+  }
+  FatalAbort("CrystalElement: face %d is not a legal face number", static_cast<int>(face));
+}
+
+// The prism index (0..5) of a face whose band carries one (prism sides, either cone ring).
+int PriOfFace(IdType face) {
+  const int pri = static_cast<int>(face % 10) - 3;
+  if (pri < 0 || pri >= kHexagonalFnPeriod) {
+    FatalAbort("CrystalElement: face %d has no prism index", static_cast<int>(face));
+  }
+  return pri;
+}
+
+IdType BandFace(FaceBand band, int pri) {
+  switch (band) {
+    case FaceBand::kPrism:
+      return static_cast<IdType>(pri + 3);
+    case FaceBand::kConeUpper:
+      return static_cast<IdType>(pri + 13);
+    case FaceBand::kConeLower:
+      return static_cast<IdType>(pri + 23);
+    default:
+      FatalAbort("CrystalElement: band %d carries no prism index", static_cast<int>(band));
+  }
+}
+
+int WrappedMod(int value, int period) {
+  return ((value % period) + period) % period;
+}
+
+// Rz(60°·k), rows; c/s are the exact 60°-phase table entries (kHexFaceCos/Sin[k]).
+void Rz60(int k, double out[9]) {
+  const double c = kHexFaceCos[k];
+  const double s = kHexFaceSin[k];
+  out[0] = c;
+  out[1] = -s;
+  out[2] = 0.0;
+  out[3] = s;
+  out[4] = c;
+  out[5] = 0.0;
+  out[6] = 0.0;
+  out[7] = 0.0;
+  out[8] = 1.0;
+}
+
+void MatMul3(const double a[9], const double b[9], double out[9]) {
+  double result[9];
+  for (int i = 0; i < 3; ++i) {
+    for (int j = 0; j < 3; ++j) {
+      result[i * 3 + j] = a[i * 3 + 0] * b[0 * 3 + j] + a[i * 3 + 1] * b[1 * 3 + j] + a[i * 3 + 2] * b[2 * 3 + j];
+    }
+  }
+  std::copy(result, result + 9, out);
+}
+
+void Transpose3(const double a[9], double out[9]) {
+  out[0] = a[0];
+  out[1] = a[3];
+  out[2] = a[6];
+  out[3] = a[1];
+  out[4] = a[4];
+  out[5] = a[7];
+  out[6] = a[2];
+  out[7] = a[5];
+  out[8] = a[8];
+}
+
+}  // namespace
+
+bool CrystalElement::IsProper() const {
+  return family == Family::kIdentity || family == Family::kCAxisRotation || family == Family::kHorizontalHalfTurn;
+}
+
+IdType CrystalElement::ApplyToFace(IdType face) const {
+  const FaceBand band = BandOfFace(face);
+  // The basal faces swap exactly for the elements carrying B (the horizontal mirror's label
+  // action); the c-axis rotation and the vertical mirror fix them (their matrices fix ±z).
+  if (band == FaceBand::kBasalUpper || band == FaceBand::kBasalLower) {
+    const bool swaps = family == Family::kHorizontalHalfTurn || family == Family::kRotoMirror;
+    return swaps ? (face == 1 ? IdType{ 2 } : IdType{ 1 }) : face;
+  }
+  const int pri = PriOfFace(face);
+  int new_pri = pri;
+  bool ring_swap = false;
+  switch (family) {
+    case Family::kIdentity:
+      break;
+    case Family::kCAxisRotation:
+      new_pri = WrappedMod(pri + index, kHexagonalFnPeriod);
+      break;
+    case Family::kHorizontalHalfTurn:
+      // B·σ_a: reflect the prism index in the a·30° plane, then swap the cone rings and the
+      // basal pair (the prism band has no ring to swap).
+      new_pri = WrappedMod(index - pri, kHexagonalFnPeriod);
+      ring_swap = true;
+      break;
+    case Family::kVerticalMirror:
+      new_pri = WrappedMod(index - pri, kHexagonalFnPeriod);
+      break;
+    case Family::kRotoMirror:
+      // σ_h·Rz(60k): shift the prism index, then swap the cone rings and the basal pair.
+      new_pri = WrappedMod(pri + index, kHexagonalFnPeriod);
+      ring_swap = true;
+      break;
+  }
+  FaceBand target = band;
+  if (ring_swap) {
+    if (band == FaceBand::kConeUpper) {
+      target = FaceBand::kConeLower;
+    } else if (band == FaceBand::kConeLower) {
+      target = FaceBand::kConeUpper;
+    }
+  }
+  return BandFace(target, new_pri);
+}
+
+void CrystalElement::BodyMatrix(double out[9]) const {
+  switch (family) {
+    case Family::kIdentity:
+      out[0] = 1.0;
+      out[1] = 0.0;
+      out[2] = 0.0;
+      out[3] = 0.0;
+      out[4] = 1.0;
+      out[5] = 0.0;
+      out[6] = 0.0;
+      out[7] = 0.0;
+      out[8] = 1.0;
+      return;
+    case Family::kCAxisRotation:
+      Rz60(index, out);
+      return;
+    case Family::kHorizontalHalfTurn: {
+      // The half-turn about the horizontal axis û at azimuth a·30° is 2·ûûᵀ − I (a proper
+      // involution). a = 0 spells diag(1, −1, −1), the x-axis half-turn the derivation uses.
+      const double ca = kAxis30Cos[index];
+      const double sa = kAxis30Sin[index];
+      out[0] = 2.0 * ca * ca - 1.0;
+      out[1] = 2.0 * ca * sa;
+      out[2] = 0.0;
+      out[3] = 2.0 * ca * sa;
+      out[4] = 2.0 * sa * sa - 1.0;
+      out[5] = 0.0;
+      out[6] = 0.0;
+      out[7] = 0.0;
+      out[8] = -1.0;
+      return;
+    }
+    case Family::kVerticalMirror:
+      // Rz(60°·a)·F_y: the vertical mirror plane at azimuth a·30°, fixing the basal pair.
+      Rz60(index, out);
+      out[1] = -out[1];
+      out[4] = -out[4];
+      out[7] = -out[7];
+      return;
+    case Family::kRotoMirror:
+      // σ_h·Rz(60°·k): the horizontal mirror after the c-axis rotation (σ_h commutes with Rz).
+      // k = 3 is the inversion −I.
+      Rz60(index, out);
+      out[6] = -out[6];
+      out[7] = -out[7];
+      out[8] = -out[8];
+      return;
+  }
+}
+
+std::vector<CrystalElement> AllCrystalElements() {
+  std::vector<CrystalElement> elements;
+  elements.reserve(24);
+  elements.push_back({ CrystalElement::Family::kIdentity, 0 });
+  for (int k = 0; k < kHexagonalFnPeriod; ++k) {
+    if (k != 0) {  // P_0 is the identity, already pushed
+      elements.push_back({ CrystalElement::Family::kCAxisRotation, k });
+    }
+    elements.push_back({ CrystalElement::Family::kHorizontalHalfTurn, k });
+    elements.push_back({ CrystalElement::Family::kVerticalMirror, k });
+    elements.push_back({ CrystalElement::Family::kRotoMirror, k });
+  }
+  return elements;
+}
+
+void CompensatedPose(const CrystalElement& element, const double pose[9], double sun_azimuth_rad, double out[9]) {
+  double g[9];
+  element.BodyMatrix(g);
+  double g_transposed[9];
+  Transpose3(g, g_transposed);
+  double compensated[9];
+  MatMul3(pose, g_transposed, compensated);
+  if (element.IsProper()) {
+    std::copy(compensated, compensated + 9, out);
+    return;
+  }
+  // M: the world vertical mirror at the sun's azimuth, Rz(2φ)·F_y spelled flat (symmetric, as
+  // every mirror is). Only a mirror whose plane contains the sun fixes the incident light, so
+  // only such an M turns member gP's mirrored world rays into a scene the same sun lights.
+  const double cos2 = std::cos(2.0 * sun_azimuth_rad);
+  const double sin2 = std::sin(2.0 * sun_azimuth_rad);
+  const double mirror[9] = { cos2, sin2, 0.0, sin2, -cos2, 0.0, 0.0, 0.0, 1.0 };
+  MatMul3(mirror, compensated, out);
+}
+
+bool ElementFixesSkyDirection(const CrystalElement& element, const double direction[3], double sun_azimuth_rad) {
+  if (element.IsProper()) {
+    return true;  // σ_g is the identity: every sky direction is fixed
+  }
+  // Improper: σ_g is the sun's vertical mirror; `direction` is fixed iff it lies in that plane.
+  // The plane's normal is the horizontal direction at azimuth φ + 90°, so the test reads
+  // cos(altitude)·sin(azimuth − φ): the poles (altitude ±90, cos = 0) are fixed in every
+  // vertical plane, and the 1e-12 band absorbs the wrapped azimuths' rounding (see the header
+  // comment).
+  const double plane_normal[3] = { -std::sin(sun_azimuth_rad), std::cos(sun_azimuth_rad), 0.0 };
+  const double off_plane =
+      direction[0] * plane_normal[0] + direction[1] * plane_normal[1] + direction[2] * plane_normal[2];
+  return std::fabs(off_plane) <= 1e-12;
+}
+
+namespace {
+
+// The EXACT layer's anchor-grid membership: the centre must BE the grid point. Any genuine
+// offset δ makes the reflection non-preserving (the mirrored pose's density differs by the
+// offset's full quadratic — a 5e-6° centre already moves the log density by ~10⁵ nats), so the
+// old anchor tolerance is the frozen D FILTER's approximation, never a preservation proof: the
+// exact layer checks bit-exact membership and refuses the tolerance band, diverging from the
+// per-bit answer by design (documented in raypath-elements.md).
+bool RollCentreExactlyOnAnchorGrid(float roll_center_deg) {
+  if (!std::isfinite(roll_center_deg)) {
+    return false;
+  }
+  const float grid = std::round(roll_center_deg / 30.0f) * 30.0f;
+  return roll_center_deg == grid;
+}
+
+// The EXACT layer's equator-grid membership, the zenith-reflection twin of the roll anchor
+// rule: a zenith reflection maps the normalized latitude centre c to −c, so the reflection is
+// preserving exactly when the centre IS 0 (bit-exact; ±0 compare equal). A genuine offset δ
+// moves the reflected band's density by the offset's full quadratic (a 7.6e-6° centre already
+// moves the pose log density by ~10⁶ nats), so the old IsBApplicable latitude conjunct —
+// FloatEqual to 0, the frozen per-bit B approximation — is never a preservation proof: the
+// exact layer refuses the tolerance band, the documented deliberate divergence.
+bool LatitudeCentreExactlyOnEquator(float latitude_center_deg) {
+  if (!std::isfinite(latitude_center_deg)) {
+    return false;
+  }
+  return latitude_center_deg == 0.0f;
+}
+
+// The zenith-reflection half (latitude λ → −λ) of the H_a and S_k families, the exact-layer
+// form of IsBApplicable's latitude conjunct: full-turn uniform keeps every reflection; the
+// centre-symmetric families keep exactly the equator reflection (bit-exact centre); kZigzag
+// has no reflection proof (the roll anchor rule's same conservative refusal).
+bool LatitudeLawReflectsAboutEquatorExactly(const AxisDistribution& axis) {
+  if (detail::IsFullTurnUniform(axis.latitude_dist.type, axis.latitude_dist.spread)) {
+    return true;
+  }
+  switch (axis.latitude_dist.type) {
+    case DistributionType::kNoRandom:
+    case DistributionType::kUniform:
+    case DistributionType::kGaussian:
+    case DistributionType::kGaussianLegacy:
+    case DistributionType::kLaplacian:
+      return LatitudeCentreExactlyOnEquator(axis.latitude_dist.center);
+    case DistributionType::kZigzag:
+      return false;
+  }
+  return false;
+}
+
+// The EXACT layer's pole-fold gluing: GluingRetainsHalfTurn with the pole centre bit-exact.
+// The fold glues the two pole leaves only for a family whose centre IS the pole — a
+// FloatEqual-band centre's mass sits off the pole, the reflection moves it onto an empty
+// mirror band, and nothing folds. The old per-bit P answer keeps the tolerance form (the
+// frozen approximation); this exact layer refuses what it cannot prove.
+bool GluingRetainsHalfTurnExactly(const AxisDistribution& axis) {
+  if (!detail::IsFullTurnUniform(axis.azimuth_dist.type, axis.azimuth_dist.spread)) {
+    return false;
+  }
+  switch (lat_path::SelectLatPath(axis).kind) {
+    case lat_path::LatPathKind::kLutInverseCdf:
+    case lat_path::LatPathKind::kGaussLegacy:
+      break;
+    default:
+      return false;
+  }
+  const auto centered_exactly_at_pole = [](float latitude_center_deg) {
+    return latitude_center_deg == 90.0f || latitude_center_deg == -90.0f;
+  };
+  switch (axis.latitude_dist.type) {
+    case DistributionType::kUniform:
+      return centered_exactly_at_pole(axis.latitude_dist.UniformCenter()) && axis.latitude_dist.spread != 0.0f;
+    case DistributionType::kGaussian:
+    case DistributionType::kGaussianLegacy:
+    case DistributionType::kLaplacian:
+      return centered_exactly_at_pole(axis.latitude_dist.center) && axis.latitude_dist.spread != 0.0f;
+    case DistributionType::kZigzag:
+    case DistributionType::kNoRandom:
+      return false;
+  }
+  return false;
+}
+
+// The roll reflection half at the canonical centre −ψ_a: full-turn uniform keeps every a; the
+// centre-symmetric families (Dirac, uniform band, Gaussian, legacy Gaussian, Laplacian) keep
+// exactly the reflection whose fixed point is their centre — c ≡ −30a (mod 180°), the statement
+// `ComputeSigmaA(centre) == a` spells — with the centre's grid membership checked EXACTLY (see
+// RollCentreExactlyOnAnchorGrid). kZigzag is REFUSED: its declared law |A·sin(t)+B| carries no
+// reflection-symmetry proof about any centre (centre 0 with B = 0 even has one-sided support),
+// and a missed merge is safe where a wrong one is not. The old per-bit D answer keeps its own
+// type-erased tolerance-banded anchor check — the frozen filter approximation; this exact layer
+// refuses what it cannot prove, and the deliberate divergence is documented in
+// raypath-elements.md.
+bool RollLawReflectsAtMinusPsi(const AxisDistribution& axis, int a) {
+  if (axis.roll_dist.type == DistributionType::kZigzag) {
+    return false;  // the one family without a reflection proof: conservative refusal
+  }
+  if (detail::IsFullTurnUniform(axis.roll_dist.type, axis.roll_dist.spread)) {
+    return true;
+  }
+  if (!RollCentreExactlyOnAnchorGrid(axis.roll_dist.center)) {
+    return false;
+  }
+  return detail::ComputeSigmaA(axis.roll_dist.center) == a;
+}
+
+// The measure half of an element's roll action x → −x − 60a. The action decomposes as
+// reflect-about-c after a shift by s for every (s, c) with 2c ≡ s − 60a (mod 360°), so the
+// measure keeps the element iff SOME decomposition keeps it on both halves: the shift half
+// through the P answer's own invariances (full-turn uniform, or the pole-fold gluing's exact
+// 180° — RollLawInvariantUnderShift is that statement), the reflection half through the centre
+// families above. The s = 180 branch is what closes the retained set under products: σ_0·P_3 =
+// σ_3 keeps a pole-folded axis (shift 180° by the fold, reflect about the anchor 0°) even
+// though its CANONICAL reflection centre −90° names nothing — testing only the canonical form
+// would drop a provably preserving composite.
+bool RollLawSymmetricAboutMinusPsi(const AxisDistribution& axis, int a) {
+  if (RollLawReflectsAtMinusPsi(axis, a)) {
+    return true;  // the s = 0 decomposition: reflect about −30a directly
+  }
+  // The s = 180° decomposition: reflect about c = 90° − 30a, kept iff the centre names
+  // −30·((a + 3) mod 6) — the same exact-grid statement shifted by the half-turn.
+  if (!GluingRetainsHalfTurnExactly(axis) || axis.roll_dist.type == DistributionType::kZigzag) {
+    return false;
+  }
+  if (!RollCentreExactlyOnAnchorGrid(axis.roll_dist.center)) {
+    return false;
+  }
+  return detail::ComputeSigmaA(axis.roll_dist.center) == (a + 3) % 6;
+}
+
+// The roll half of P, per element: invariance under the −60k° shift. Full-turn uniform is
+// shift-invariant at every k; the pole-fold gluing keeps exactly the 180° shift
+// (GluingRetainsHalfTurn); k = 0 shifts nothing.
+bool RollLawInvariantUnderShift(const AxisDistribution& axis, int k) {
+  if (k == 0) {
+    return true;
+  }
+  if (detail::IsFullTurnUniform(axis.roll_dist.type, axis.roll_dist.spread)) {
+    return true;
+  }
+  return k == 3 && GluingRetainsHalfTurnExactly(axis);
+}
+
+// Compose two elements through their body matrices and name the product back in the inventory
+// (the matrices are built from the same exact phase tables; the match runs at the 1e-12
+// kinematic band the ±√3/2 entries need). Only used inside this file's closure pass.
+CrystalElement ComposeElements(const CrystalElement& a, const CrystalElement& b) {
+  double ma[9];
+  a.BodyMatrix(ma);
+  double mb[9];
+  b.BodyMatrix(mb);
+  double product[9];
+  MatMul3(ma, mb, product);
+  for (const CrystalElement& candidate : AllCrystalElements()) {
+    double mc[9];
+    candidate.BodyMatrix(mc);
+    bool same = true;
+    for (int i = 0; i < 9 && same; ++i) {
+      same = std::fabs(product[i] - mc[i]) <= 1e-12;
+    }
+    if (same) {
+      return candidate;
+    }
+  }
+  FatalAbort("CrystalElement: the composition of two D6h members left the inventory");
+}
+
+}  // namespace
+
+bool MeasureRetainsElement(const CrystalElement& element, const AxisDistribution& axis_dist) {
+  switch (element.family) {
+    case CrystalElement::Family::kIdentity:
+      return true;
+    case CrystalElement::Family::kCAxisRotation:
+      // T leaves the azimuth and zenith slots unchanged: the roll shift is the whole condition.
+      return RollLawInvariantUnderShift(axis_dist, element.index);
+    case CrystalElement::Family::kHorizontalHalfTurn:
+      // az shift by 180° + zenith reflection + the roll reflection about −ψ_a (D's anchor
+      // half, same index). The zenith half is the EXACT equator-grid statement, not
+      // IsBApplicable's FloatEqual latitude conjunct — the frozen per-bit approximation is
+      // never a preservation proof (the latitude-centre twin of the roll anchor rule).
+      return detail::IsFullTurnUniform(axis_dist.azimuth_dist.type, axis_dist.azimuth_dist.spread) &&
+             LatitudeLawReflectsAboutEquatorExactly(axis_dist) &&
+             RollLawSymmetricAboutMinusPsi(axis_dist, element.index);
+    case CrystalElement::Family::kVerticalMirror:
+      // az reflection about the sun's plane (a full-turn uniform is invariant) + the roll
+      // reflection; the zenith slot is untouched.
+      return detail::IsFullTurnUniform(axis_dist.azimuth_dist.type, axis_dist.azimuth_dist.spread) &&
+             RollLawSymmetricAboutMinusPsi(axis_dist, element.index);
+    case CrystalElement::Family::kRotoMirror:
+      // The zenith-reflection half through the EXACT equator-grid statement (IsBApplicable's
+      // tolerance conjunct is the frozen per-bit answer, never a proof) plus the roll shift
+      // (none at k = 0, the 180° half-turn at k = 3 through the exact pole-fold gluing).
+      return detail::IsFullTurnUniform(axis_dist.azimuth_dist.type, axis_dist.azimuth_dist.spread) &&
+             LatitudeLawReflectsAboutEquatorExactly(axis_dist) && RollLawInvariantUnderShift(axis_dist, element.index);
+  }
+  return false;
+}
+
+bool ShapeAdmitsElement(const CrystalElement& element, const GeometricSymmetry& shape) {
+  switch (element.family) {
+    case CrystalElement::Family::kIdentity:
+      return true;
+    case CrystalElement::Family::kCAxisRotation:
+      return element.index % shape.p_step == 0;
+    case CrystalElement::Family::kHorizontalHalfTurn:
+      // The composite acts as B and σ_a together: both shape halves must admit it.
+      return shape.b_applicable && shape.AllowsMirror(element.index);
+    case CrystalElement::Family::kVerticalMirror:
+      return shape.AllowsMirror(element.index);
+    case CrystalElement::Family::kRotoMirror:
+      return shape.b_applicable && element.index % shape.p_step == 0;
+  }
+  return false;
+}
+
+std::vector<CrystalElement> DeriveRetainedElements(const GeometricSymmetry& shape, const AxisDistribution& axis_dist) {
+  // The per-family predicates first, then the composition closure: g1 and g2 both preserving
+  // means g1·g2 preserves (the measure statement is a group statement), and a composite's
+  // canonical form can name no anchor of its own — σ_0·P_3 = σ_3 keeps a pole-folded axis while
+  // its canonical reflection centre −90° names nothing. Enumerated to the fixed point over the
+  // 24-element inventory the result IS the preserved subgroup's label inventory (both closure
+  // factors are shape-admitted, so the product is), what the local-class orbits and their
+  // transport facts consume as complete.
+  std::vector<CrystalElement> retained;
+  for (const CrystalElement& element : AllCrystalElements()) {
+    if (MeasureRetainsElement(element, axis_dist) && ShapeAdmitsElement(element, shape)) {
+      retained.push_back(element);
+    }
+  }
+  bool grew = true;
+  while (grew) {
+    grew = false;
+    std::vector<CrystalElement> additions;
+    for (const CrystalElement& a : retained) {
+      for (const CrystalElement& b : retained) {
+        const CrystalElement product = ComposeElements(a, b);
+        if (std::find(retained.begin(), retained.end(), product) == retained.end() &&
+            std::find(additions.begin(), additions.end(), product) == additions.end()) {
+          additions.push_back(product);
+        }
+      }
+    }
+    if (!additions.empty()) {
+      grew = true;
+      retained.insert(retained.end(), additions.begin(), additions.end());
+    }
+  }
+  // AllCrystalElements()' inventory order (k-major, per-k P, H, σ, S; identity first): the
+  // order the consumers' deterministic tie-breaks read.
+  const auto rank = [](const CrystalElement& e) {
+    switch (e.family) {
+      case CrystalElement::Family::kIdentity:
+        return std::pair<int, int>{ 0, 0 };
+      case CrystalElement::Family::kCAxisRotation:
+        return std::pair<int, int>{ e.index, 0 };
+      case CrystalElement::Family::kHorizontalHalfTurn:
+        return std::pair<int, int>{ e.index, 1 };
+      case CrystalElement::Family::kVerticalMirror:
+        return std::pair<int, int>{ e.index, 2 };
+      case CrystalElement::Family::kRotoMirror:
+        return std::pair<int, int>{ e.index, 3 };
+    }
+    return std::pair<int, int>{ 6, 4 };
+  };
+  std::sort(retained.begin(), retained.end(),
+            [&rank](const CrystalElement& x, const CrystalElement& y) { return rank(x) < rank(y); });
+  return retained;
+}
+
 SymmetryGating DeriveSymmetryGating(SymmetrySemantics semantics, const GeometricSymmetry& shape_geom,
                                     const AxisDistribution& axis_dist) {
   if (semantics == SymmetrySemantics::kLabel) {
@@ -1315,7 +1834,78 @@ SymmetryGating DeriveSymmetryGating(SymmetrySemantics semantics, const Geometric
   const PRotationSet measure = JoinRetainedSubgroups(
       RollRetainedRotations(axis_dist.roll_dist),
       detail::GluingRetainsHalfTurn(axis_dist) ? PRotationSet::FromStep(3) : PRotationSet::Identity());
+  // One producer, two contracts: the per-bit fields below are the old consumers' frozen answer
+  // (their approximation clauses included — never re-derived from the element layer, which
+  // would change old outputs). The exact element layer is not materialized on the answer — it is
+  // the directly callable DeriveRetainedElements(shape_geom, axis_dist) / AllCrystalElements()
+  // (the same inputs), so per-call consumers pay for it only when they read it.
   return { shape_geom, RetainedOnShape(measure, shape_geom.p_step), detail::IsBApplicable(axis_dist) };
+}
+
+// The element-set forms of the one naming authority (declared beside the per-bit overload in
+// the header): the lexicographic minimum of `rp`'s orbit under `elements`' label actions,
+// optionally clamped to `row` — a partial-bit row's class lives inside the row's member list
+// (the issue's own definition), a complete orbit names the whole class. Plain BFS closure
+// terminates at the orbit (row-sized: at most a few dozen face sequences).
+std::vector<IdType> ReduceRaypathByPeriod(const std::vector<IdType>& rp, const std::vector<CrystalElement>& elements,
+                                          int fn_period, const std::vector<std::vector<IdType>>* row) {
+  if (fn_period < 0 || elements.empty()) {
+    return rp;
+  }
+  std::set<std::vector<IdType>> seen;
+  std::vector<std::vector<IdType>> queue{ rp };
+  seen.insert(rp);
+  while (!queue.empty()) {
+    const std::vector<IdType> current = std::move(queue.back());
+    queue.pop_back();
+    for (const CrystalElement& element : elements) {
+      const std::vector<IdType> image = ApplyLabelAction(element, current);
+      if (row != nullptr && std::find(row->begin(), row->end(), image) == row->end()) {
+        continue;  // leaves the row: not a member here (the scope's clamp, not a naming rule)
+      }
+      if (seen.insert(image).second) {
+        queue.push_back(std::move(image));
+      }
+    }
+  }
+  return *seen.begin();
+}
+
+std::vector<IdType> ReduceRaypathByPeriod(const std::vector<IdType>& rp, const std::vector<CrystalElement>& elements,
+                                          int fn_period) {
+  return ReduceRaypathByPeriod(rp, elements, fn_period, nullptr);
+}
+
+std::vector<IdType> ReduceRaypathByPeriod(const std::vector<IdType>& rp, const std::vector<CrystalElement>& elements,
+                                          int fn_period, const std::vector<std::vector<IdType>>& row) {
+  return ReduceRaypathByPeriod(rp, elements, fn_period, &row);
+}
+
+bool FindLabelMappingElement(const std::vector<IdType>& from, const std::vector<IdType>& to, const double direction[3],
+                             double sun_azimuth_rad, CrystalElement* out) {
+  if (from.size() != to.size() || out == nullptr) {
+    return false;
+  }
+  for (const CrystalElement& element : AllCrystalElements()) {
+    // The sky half is the same criterion the local-class resolver selects transport facts with
+    // (ElementFixesSkyDirection — one authority, no second sky-fixed test); a proper element
+    // passes unconditionally, an improper one only while it keeps this sky point.
+    if (!ElementFixesSkyDirection(element, direction, sun_azimuth_rad)) {
+      continue;  // its sky action would move the point: not a same-sky-point carrier here
+    }
+    bool maps = true;
+    for (size_t i = 0; i < from.size(); ++i) {
+      if (element.ApplyToFace(from[i]) != to[i]) {
+        maps = false;
+        break;
+      }
+    }
+    if (maps) {
+      *out = element;
+      return true;
+    }
+  }
+  return false;
 }
 
 

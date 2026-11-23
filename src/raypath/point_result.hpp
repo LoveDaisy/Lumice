@@ -2,6 +2,7 @@
 #define LUMICE_RAYPATH_POINT_RESULT_HPP_
 
 #include <cstdint>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -37,6 +38,12 @@ struct SinglePathMetadata {
   bool shape_is_nominal = false;
 
   std::vector<int> faces;
+
+  // The density-ratio reference member this query named (SinglePathRequest::ratio_reference_faces),
+  // frozen INTO the result: the ratio block's numbers are relative to THIS member's transported
+  // poses, and a consumer holding only the result must be able to say so. Empty = no reference
+  // was requested; every sample's ref fields are then NaN by contract.
+  std::vector<int> ratio_reference_faces;
 
   double sun_altitude_deg = 0.0;
   double sun_azimuth_deg = 0.0;
@@ -143,8 +150,14 @@ struct PointDetail {
   // The named-factor decomposition at this pose (the L2 query's per-pose diagnostics).
   // Multiplicative factors in their real units — never additive percentages (the corpus
   // discipline the point output inherits):
-  double rho = 0.0;               // the declared joint pose density, w.r.t. dlambda dphi droll (angle Lebesgue,
-                                  // radians) at the pose's composed angles
+  double rho = 0.0;  // the declared joint pose density, w.r.t. dlambda dphi droll (angle Lebesgue,
+                     // radians) at the pose's composed angles
+  // The same declared density in log space (declared_density.hpp's stable log forms), so a deep
+  // tail keeps its finite log where the linear rho underflows to a read-as-zero 0. −inf means
+  // what rho's 0 means: off the support, or a Dirac slot's slice (the singular mass is the
+  // u-marginal support kinds', never a darkness claim). No threshold hides behind either state —
+  // how small is small stays the reader's statement, with the reference it names.
+  double log_rho = -std::numeric_limits<double>::infinity();
   double entry_measure_a2 = 0.0;  // A/a^2: entry_measure over the crystal length unit squared (a = 1 in this
                                   // repo's configs — a declared identity, not a normalization)
   // The normal Jacobian at the pose's own direction (kernel NormalJacobian; NaN-honest: the
@@ -155,6 +168,17 @@ struct PointDetail {
   double k_carea = 0.0;         // 1 / (jacobian + kFactorsEpsilon); NaN when the Jacobian is unavailable
   double factor_product = 0.0;  // rho * entry_measure_a2 * total_transmission * k_carea; NaN when the
                                 // Jacobian is unavailable or the pose is not valid
+
+  // The density-ratio reference block, filled only when the request named a reference member
+  // (SinglePathRequest::ratio_reference_faces) and only at points whose transported pose verified.
+  // The reference's log density at the algebraically corresponding pose (the same measure, the
+  // element-carried image of this pose), and log_ratio = log_rho − ref_log_density — a per-pose,
+  // per-branch statement whose scope is exactly this point pair, never a member-wide bound. NaN
+  // means the read is not offered here: no reference requested, or the transported pose failed
+  // its world-ray verification. −inf carries the off-support state (one side answered 0); both
+  // sides −inf is incomparable and reads NaN, not 0.
+  double ref_log_density = std::numeric_limits<double>::quiet_NaN();
+  double log_ratio = std::numeric_limits<double>::quiet_NaN();
 };
 
 // ---- components -------------------------------------------------------------------------------
@@ -308,12 +332,30 @@ enum class Outcome {
   kDiscovered,  // components / incomplete / discovery are set (possibly zero components)
 };
 
+// The initial interpretation's pose, chosen by closed-form density over the recovered branches —
+// never the first valid sample, and never a candidate-count or MC-weight contest (the class
+// identity is decided before and outside discovery). The point is the deterministic argmax of the
+// recovered branch points' log density, first occurrence winning ties: the same recovered set
+// always names the same pose regardless of sample_count, seeds or found-first order. No threshold
+// hides behind `available` — a member whose every branch point reads a deep tail still names its
+// greatest point, and how small that is stays the log value's own statement, with the reference
+// the reader names. Available=false means no recovered valid point carries an ordinary density
+// reading (an empty recovered set, or every point off-support) — "this search has not found one",
+// not "none exists".
+struct InterpretivePose {
+  bool available = false;
+  int component_index = -1;
+  int point_index = -1;
+  double log_density = std::numeric_limits<double>::quiet_NaN();  // the winner's log_rho
+};
+
 struct DiscoveredPoint {
   std::vector<FiberComponent> components;
   std::vector<IncompleteComponent> incomplete;
   DiscoverySummary discovery;
   ReachSummary reach;  // kDiscovered only
   MeasureRegistration measure_registration;
+  InterpretivePose interpretive;
 };
 
 struct PointData;

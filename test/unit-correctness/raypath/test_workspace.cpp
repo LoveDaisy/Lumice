@@ -9,6 +9,7 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <limits>
 #include <memory>
 #include <thread>
 
@@ -689,6 +690,454 @@ TEST(Workspace, TheStopAuthorityWorksThroughTheWorkspace) {
   EXPECT_EQ(result.Data().meta.execution, ExecutionOutcome::kCancelled);
   const int stray = FirstUnattributedPollSite(token, kPollFacePoint);
   EXPECT_EQ(stray, -1) << "the workspace point run ticked site " << stray << ", outside its attribution";
+}
+
+// ---- the interpretive-point chain ------------------------------------------------------------
+// The engine-side answer form the adjudication pinned: row + click in, the interpretive class
+// and the selected member's own payload out, resolution and member evaluations under ONE
+// deadline. The Parry scene is the acceptance scene (prism 1.2 regular; zenith gauss 90±1,
+// azimuth full turn, roll gauss 0±1; sun 20°/0°); the click sides and the fixed-member and
+// stop paths are the chain's own contract.
+
+ConfigManager InterpretiveParryScene() {
+  // The acceptance scene itself (test_single_path_analysis's ParryMinus52Lights fixture):
+  // prism height 1.2 regular — the basal-involving members' geometry depends on the height, so
+  // the fixture must match the archived evidence's shape, not any regular prism.
+  PrismCrystalParam prism;
+  prism.h_ = { DistributionType::kNoRandom, 1.2f, 0 };
+  for (auto& distance : prism.d_) {
+    distance = { DistributionType::kNoRandom, 1.0f, 0 };
+  }
+  ConfigManager scene;
+  CrystalConfig crystal;
+  crystal.id_ = 1;
+  crystal.param_ = prism;
+  crystal.axis_.azimuth_dist = { DistributionType::kUniform, 0.0f, 360.0f };
+  crystal.axis_.latitude_dist = { DistributionType::kGaussian, 0.0f, 1.0f };
+  crystal.axis_.roll_dist = { DistributionType::kGaussian, 0.0f, 1.0f };
+  scene.crystals_.emplace(1, crystal);
+  scene.scene_.light_source_.param_ = SunParam{ 20.0f, 0.0f, 0.5f };
+  scene.scene_.light_source_.spectrum_ = IlluminantType::kD65;
+  ScatteringSetting entry{};
+  entry.crystal_ = crystal;
+  entry.crystal_proportion_ = 1;
+  scene.scene_.ms_.push_back({ 0, { entry } });
+  return scene;
+}
+
+InterpretivePointQuery InterpretiveQuery(double altitude, double azimuth) {
+  InterpretivePointQuery query;
+  query.crystal_id = 1;
+  query.representative = { 4, 1 };
+  query.symmetry_bits = 7;  // P | B | D: the analysis row's full bit set
+  query.target_altitude_deg = altitude;
+  query.target_azimuth_deg = azimuth;
+  query.sample_count = 100000;  // the arc recovers well under the kernel default; cost is the suite's
+  query.sun_grid_lat_count = 0;
+  return query;
+}
+
+TEST(InterpretivePointChain, ParryMinus52AutoSelectsTheCarryingClass) {
+  std::unique_ptr<AnalysisWorkspace> workspace;
+  ASSERT_TRUE(AnalysisWorkspace::Create(InterpretiveParryScene(), &workspace).Ok());
+  InterpretivePointAnswer answer;
+  ASSERT_TRUE(workspace->QueryInterpretivePoint(InterpretiveQuery(36.0, -52.0), false, &answer).Ok());
+  // The class facts stand regardless of the search: two half-turn classes in representative order.
+  ASSERT_EQ(answer.classes.size(), 2u);
+  EXPECT_EQ(answer.classes[0].representative, (std::vector<int>{ 4, 1 }));
+  EXPECT_EQ(answer.classes[1].representative, (std::vector<int>{ 4, 2 }));
+  // The search: 4-1's class carries no ordinary density reading here; 4-2's does.
+  ASSERT_EQ(answer.selected_class, 1);
+  ASSERT_GE(answer.selected_member, 0);
+  EXPECT_EQ(answer.classes[1].member_sequences[static_cast<size_t>(answer.selected_member)],
+            (std::vector<int>{ 4, 2 }));
+  EXPECT_FALSE(answer.member_fixed);
+  // The payload is the selected member's OWN evaluation, its interpretive pose on the lit arc.
+  ASSERT_EQ(answer.point.Data().OutcomeValue(), Outcome::kDiscovered);
+  const InterpretivePose& pose = answer.point.Data().Discovered().interpretive;
+  ASSERT_TRUE(pose.available);
+  const PointDetail& peak = answer.point.Data().Discovered().components[pose.component_index].points[pose.point_index];
+  EXPECT_GT(peak.rho, 0.0) << "the interpretive pose explains the clicked arc with positive weight";
+}
+
+TEST(InterpretivePointChain, ParryPlus52SelectsTheParentRepresentative) {
+  std::unique_ptr<AnalysisWorkspace> workspace;
+  ASSERT_TRUE(AnalysisWorkspace::Create(InterpretiveParryScene(), &workspace).Ok());
+  InterpretivePointAnswer answer;
+  ASSERT_TRUE(workspace->QueryInterpretivePoint(InterpretiveQuery(36.0, 52.0), false, &answer).Ok());
+  // The row representative's own class carries the +52 light: the first class evaluated wins,
+  // and the shown member stays the parent row's 4-1 (the list semantics' face).
+  ASSERT_EQ(answer.selected_class, 0);
+  EXPECT_EQ(answer.classes[0].member_sequences[static_cast<size_t>(answer.selected_member)],
+            (std::vector<int>{ 4, 1 }));
+  const InterpretivePose& pose = answer.point.Data().Discovered().interpretive;
+  ASSERT_TRUE(pose.available);
+}
+
+TEST(InterpretivePointChain, FixedMemberKeepsItsOwnGeometryAndLogFacts) {
+  std::unique_ptr<AnalysisWorkspace> workspace;
+  ASSERT_TRUE(AnalysisWorkspace::Create(InterpretiveParryScene(), &workspace).Ok());
+  InterpretivePointQuery query = InterpretiveQuery(36.0, -52.0);
+  query.fixed_member = { 4, 1 };  // the dark member, fixed: never auto-swapped
+  InterpretivePointAnswer answer;
+  ASSERT_TRUE(workspace->QueryInterpretivePoint(query, false, &answer).Ok());
+  EXPECT_TRUE(answer.member_fixed);
+  ASSERT_EQ(answer.selected_class, 0);
+  ASSERT_GE(answer.selected_member, 0);
+  EXPECT_EQ(answer.classes[0].member_sequences[static_cast<size_t>(answer.selected_member)],
+            (std::vector<int>{ 4, 1 }));
+  // The member's own geometry stands and its density reads stay honest deep tails — no fake
+  // zero, no swap to the lit sibling.
+  ASSERT_EQ(answer.point.Data().OutcomeValue(), Outcome::kDiscovered);
+  ASSERT_FALSE(answer.point.Data().Discovered().components.empty());
+  int valid = 0;
+  for (const FiberComponent& component : answer.point.Data().Discovered().components) {
+    for (const PointDetail& p : component.points) {
+      if (!p.valid) {
+        continue;
+      }
+      EXPECT_TRUE(std::isfinite(p.log_rho));
+      EXPECT_LT(p.log_rho, -100.0) << "the ±1° roll anchor never reaches this arc: an honest deep tail";
+      ++valid;
+    }
+  }
+  EXPECT_GT(valid, 0);
+}
+
+TEST(InterpretivePointChain, FixedMemberOutsideTheRowIsRefused) {
+  std::unique_ptr<AnalysisWorkspace> workspace;
+  ASSERT_TRUE(AnalysisWorkspace::Create(InterpretiveParryScene(), &workspace).Ok());
+  InterpretivePointQuery query = InterpretiveQuery(36.0, -52.0);
+  query.fixed_member = { 3, 5 };  // a legal face sequence that is not this row's member
+  InterpretivePointAnswer answer;
+  const Error error = workspace->QueryInterpretivePoint(query, false, &answer);
+  EXPECT_FALSE(error.Ok());
+  EXPECT_EQ(error.code, ErrorCode::kInvalidPath);
+}
+
+TEST(InterpretivePointChain, CancelStopsTheSearchAndLeavesTheClassesStanding) {
+  std::unique_ptr<AnalysisWorkspace> workspace;
+  ASSERT_TRUE(AnalysisWorkspace::Create(InterpretiveParryScene(), &workspace).Ok());
+  analytic::StopToken token;
+  token.RequestCancel();  // cancelled before the chain starts
+  InterpretivePointAnswer answer;
+  ASSERT_TRUE(workspace->QueryInterpretivePoint(InterpretiveQuery(36.0, -52.0), false, &answer, &token).Ok());
+  // The algebra is not the search's to invalidate: both classes stand; the honest outcome rides
+  // on the payload and nothing was selected.
+  ASSERT_EQ(answer.classes.size(), 2u);
+  EXPECT_EQ(answer.selected_class, -1);
+  EXPECT_EQ(answer.selected_member, -1);
+  EXPECT_EQ(answer.search_outcome, ExecutionOutcome::kCancelled);
+  EXPECT_EQ(answer.point.Data().meta.execution, ExecutionOutcome::kCancelled);
+}
+
+TEST(InterpretivePointChain, SharedDeadlineStopsTheSearchHonestly) {
+  std::unique_ptr<AnalysisWorkspace> workspace;
+  ASSERT_TRUE(AnalysisWorkspace::Create(InterpretiveParryScene(), &workspace).Ok());
+  InterpretivePointQuery query = InterpretiveQuery(36.0, -52.0);
+  query.budget_ms = 1;  // the first member's evaluation cannot finish inside it
+  InterpretivePointAnswer answer;
+  ASSERT_TRUE(workspace->QueryInterpretivePoint(query, false, &answer).Ok());
+  // One deadline for the whole chain: the first member's stop ends the search — a later member
+  // never gains budget — and the answer says so honestly.
+  ASSERT_EQ(answer.classes.size(), 2u);
+  EXPECT_EQ(answer.selected_class, -1);
+  EXPECT_EQ(answer.search_outcome, ExecutionOutcome::kDeadlineExceeded);
+  EXPECT_EQ(answer.point.Data().meta.execution, ExecutionOutcome::kDeadlineExceeded);
+}
+
+TEST(InterpretivePointChain, PresetExpiredWindowBindsMembersAndLeavesClassesStanding) {
+  std::unique_ptr<AnalysisWorkspace> workspace;
+  ASSERT_TRUE(AnalysisWorkspace::Create(InterpretiveParryScene(), &workspace).Ok());
+  InterpretivePointQuery query = InterpretiveQuery(36.0, -52.0);
+  // The query-control seam: a preset window already in the past binds the member evaluations
+  // verbatim (the chain honors a pre-resolved window, never re-resolving one) — the budget a
+  // fresh entry resolution would hand out is not available, and the classes stand.
+  QueryDeadline expired;
+  expired.at = std::chrono::steady_clock::now() - std::chrono::seconds(1);
+  expired.resolved_ms = 0;
+  query.query_deadline = expired;
+  InterpretivePointAnswer answer;
+  ASSERT_TRUE(workspace->QueryInterpretivePoint(query, false, &answer).Ok());
+  ASSERT_EQ(answer.classes.size(), 2u);
+  EXPECT_EQ(answer.selected_class, -1);
+  EXPECT_EQ(answer.search_outcome, ExecutionOutcome::kDeadlineExceeded);
+}
+
+TEST(InterpretivePointChain, WarmCandidateForALaterClassNeverBlocksTheChain) {
+  std::unique_ptr<AnalysisWorkspace> workspace;
+  ASSERT_TRUE(AnalysisWorkspace::Create(InterpretiveParryScene(), &workspace).Ok());
+  InterpretivePointQuery query = InterpretiveQuery(36.0, -52.0);
+  // A legal candidate naming the LIT class's member: the first class's evaluation runs without
+  // it (the candidate is not its input), the chain reaches the lit class, and the answer is
+  // the ordinary selection — warm is a hint for the member it names, never a gate.
+  // A minimal survey-family candidate: its identity gates (crystal, path) are exactly what
+  // the routing must satisfy — it reaches only the member it names.
+  query.warm_candidate = WarmCandidate{};
+  query.warm_candidate->facts.family = WarmDocumentFamily::kSurvey;
+  query.warm_candidate->crystal_id = 1;
+  query.warm_candidate->path_layers = { { 4, 2 } };
+  InterpretivePointAnswer answer;
+  ASSERT_TRUE(workspace->QueryInterpretivePoint(query, false, &answer).Ok());
+  EXPECT_EQ(answer.selected_class, 1);
+  EXPECT_TRUE(answer.point.Data().Discovered().interpretive.available);
+}
+
+TEST(InterpretivePointChain, WarmCandidateOutsideTheRowIsRefused) {
+  std::unique_ptr<AnalysisWorkspace> workspace;
+  ASSERT_TRUE(AnalysisWorkspace::Create(InterpretiveParryScene(), &workspace).Ok());
+  InterpretivePointQuery query = InterpretiveQuery(36.0, -52.0);
+  query.warm_candidate = WarmCandidate{};
+  query.warm_candidate->facts.family = WarmDocumentFamily::kSurvey;
+  query.warm_candidate->crystal_id = 1;
+  query.warm_candidate->path_layers = { { 3, 5 } };  // not a member of this row
+  InterpretivePointAnswer answer;
+  const Error error = workspace->QueryInterpretivePoint(query, false, &answer);
+  EXPECT_FALSE(error.Ok());
+  EXPECT_EQ(error.code, ErrorCode::kInvalidPath);
+}
+
+TEST(InterpretivePointChain, FixedMemberCarriesTheRatioReferenceInsideTheOneQuery) {
+  std::unique_ptr<AnalysisWorkspace> workspace;
+  ASSERT_TRUE(AnalysisWorkspace::Create(InterpretiveParryScene(), &workspace).Ok());
+  InterpretivePointQuery query = InterpretiveQuery(36.0, -52.0);
+  query.fixed_member = { 4, 1 };
+  query.ratio_reference_faces = { 4, 2 };  // the lit sibling: the reference rides THIS query
+  InterpretivePointAnswer answer;
+  ASSERT_TRUE(workspace->QueryInterpretivePoint(query, false, &answer).Ok());
+  ASSERT_TRUE(answer.member_fixed);
+  // The reference identity freezes with the result and the verified samples carry finite
+  // transported reads — AC4's density-ratio statement, engine-side, no second point run.
+  EXPECT_EQ(answer.point.Data().meta.ratio_reference_faces, (std::vector<int>{ 4, 2 }));
+  int verified = 0;
+  for (const FiberComponent& component : answer.point.Data().Discovered().components) {
+    for (const PointDetail& p : component.points) {
+      if (!p.valid) {
+        continue;
+      }
+      EXPECT_TRUE(std::isfinite(p.ref_log_density));
+      EXPECT_TRUE(std::isfinite(p.log_ratio));
+      ++verified;
+    }
+  }
+  EXPECT_GT(verified, 0);
+}
+
+TEST(InterpretivePointChain, NoWinnerKeepsTheAnchorPayloadAndItsIdentityTogether) {
+  std::unique_ptr<AnalysisWorkspace> workspace;
+  ASSERT_TRUE(AnalysisWorkspace::Create(InterpretiveParryScene(), &workspace).Ok());
+  InterpretivePointQuery query = InterpretiveQuery(-80.0, 25.0);  // no member carries here
+  query.sample_count = 20000;
+  InterpretivePointAnswer answer;
+  ASSERT_TRUE(workspace->QueryInterpretivePoint(query, false, &answer).Ok());
+  // The honest not-found: selected -1, and the payload is the FIRST class's own evaluation —
+  // its member identity is the one the selection spells, never a later candidate's.
+  EXPECT_EQ(answer.selected_class, -1);
+  EXPECT_EQ(answer.search_outcome, ExecutionOutcome::kCompleted);
+  EXPECT_EQ(answer.point.Data().meta.faces, answer.classes[0].representative);
+}
+
+TEST(InterpretivePointChain, ReusedAnswerObjectStartsEveryQueryFromFreshState) {
+  std::unique_ptr<AnalysisWorkspace> workspace;
+  ASSERT_TRUE(AnalysisWorkspace::Create(InterpretiveParryScene(), &workspace).Ok());
+  InterpretivePointAnswer answer;
+  // First query: a fixed lit member wins.
+  InterpretivePointQuery first = InterpretiveQuery(36.0, -52.0);
+  first.fixed_member = { 4, 2 };
+  ASSERT_TRUE(workspace->QueryInterpretivePoint(first, false, &answer).Ok());
+  ASSERT_TRUE(answer.member_fixed);
+  ASSERT_EQ(answer.selected_class, 1);
+  // Second query on the SAME object: automatic, cancelled before the search starts. The
+  // previous query's selection identity must not survive: selected -1, mode back to auto,
+  // the anchor payload's member the only identity the answer spells.
+  InterpretivePointQuery second = InterpretiveQuery(36.0, -52.0);
+  analytic::StopToken token;
+  token.RequestCancel();
+  ASSERT_TRUE(workspace->QueryInterpretivePoint(second, false, &answer, &token).Ok());
+  EXPECT_EQ(answer.selected_class, -1);
+  EXPECT_EQ(answer.selected_member, -1);
+  EXPECT_FALSE(answer.member_fixed);
+  EXPECT_EQ(answer.search_outcome, ExecutionOutcome::kCancelled);
+  EXPECT_EQ(answer.point.Data().meta.faces, answer.classes[0].representative);
+  // Third query on the same object: automatic with a real winner — the fresh selection lands.
+  InterpretivePointQuery third = InterpretiveQuery(36.0, -52.0);
+  ASSERT_TRUE(workspace->QueryInterpretivePoint(third, false, &answer).Ok());
+  EXPECT_EQ(answer.selected_class, 1);
+  EXPECT_FALSE(answer.member_fixed);
+  EXPECT_EQ(answer.point.Data().meta.faces, (std::vector<int>{ 4, 2 }));
+}
+
+ConfigManager ColumnMirrorPairScene() {
+  // A regular column whose B|D row holds the sun-plane mirror pair 1-3-4-2 / 1-3-8-2: sigma_0
+  // retains the measure (uniform azimuth, roll symmetric about 0, zenith band off the mirror's
+  // reach) and fixes exactly the sun-plane targets. Height 1.2: the members involve the basal
+  // faces, and the height is part of their geometry (the Parry fixture's lesson).
+  PrismCrystalParam prism;
+  prism.h_ = { DistributionType::kNoRandom, 1.2f, 0 };
+  for (auto& distance : prism.d_) {
+    distance = { DistributionType::kNoRandom, 1.0f, 0 };
+  }
+  ConfigManager scene;
+  CrystalConfig crystal;
+  crystal.id_ = 1;
+  crystal.param_ = prism;
+  crystal.axis_.azimuth_dist = { DistributionType::kUniform, 0.0f, 360.0f };
+  crystal.axis_.latitude_dist = { DistributionType::kGaussian, 0.0f, 1.0f };
+  crystal.axis_.roll_dist = { DistributionType::kGaussian, 0.0f, 5.0f };
+  scene.crystals_.emplace(1, crystal);
+  scene.scene_.light_source_.param_ = SunParam{ 20.0f, 180.0f, 0.5f };
+  scene.scene_.light_source_.spectrum_ = IlluminantType::kD65;
+  ScatteringSetting entry{};
+  entry.crystal_ = crystal;
+  entry.crystal_proportion_ = 1;
+  scene.scene_.ms_.push_back({ 0, { entry } });
+  return scene;
+}
+
+InterpretivePointQuery ColumnMirrorQuery(double altitude, double azimuth) {
+  InterpretivePointQuery query;
+  query.crystal_id = 1;
+  query.representative = { 1, 3, 4, 2 };
+  query.symmetry_bits = 6;  // B | D: the mirror pair's row (no P)
+  query.target_altitude_deg = altitude;
+  query.target_azimuth_deg = azimuth;
+  query.sample_count = 100000;
+  query.sun_grid_lat_count = 0;
+  return query;
+}
+
+TEST(InterpretivePointChain, InPlaneMirrorPairSharesTheClassAndItsRatioReference) {
+  std::unique_ptr<AnalysisWorkspace> workspace;
+  ASSERT_TRUE(AnalysisWorkspace::Create(ColumnMirrorPairScene(), &workspace).Ok());
+  // The sun-plane target: the class carries BOTH mirror siblings — the same correspondence the
+  // ratio reference must admit. The carrier admission used to demand a proper element and refuse
+  // exactly this query (the class transport and the ratio admission contradicting each other).
+  std::vector<LocalClass> classes;
+  LocalClassQuery class_query;
+  class_query.crystal_id = 1;
+  class_query.representative = { 1, 3, 4, 2 };
+  class_query.symmetry_bits = 6;
+  class_query.target_altitude_deg = 36.0;
+  class_query.target_azimuth_deg = 180.0;
+  ASSERT_TRUE(workspace->QueryLocalClasses(class_query, &classes).Ok());
+  const LocalClass* pair_class = nullptr;
+  for (const LocalClass& klass : classes) {
+    const bool has_member =
+        std::any_of(klass.member_sequences.begin(), klass.member_sequences.end(),
+                    [](const std::vector<int>& m) { return m == (std::vector<int>{ 1, 3, 4, 2 }); });
+    const bool has_sibling =
+        std::any_of(klass.member_sequences.begin(), klass.member_sequences.end(),
+                    [](const std::vector<int>& m) { return m == (std::vector<int>{ 1, 3, 8, 2 }); });
+    if (has_member && has_sibling) {
+      pair_class = &klass;
+    }
+  }
+  ASSERT_NE(pair_class, nullptr) << "the mirror siblings share one class at the sun-plane point";
+  // The fixed sibling with the representative as reference: answered, not refused.
+  InterpretivePointQuery query = ColumnMirrorQuery(36.0, 180.0);
+  query.fixed_member = { 1, 3, 8, 2 };
+  query.ratio_reference_faces = { 1, 3, 4, 2 };
+  InterpretivePointAnswer answer;
+  ASSERT_TRUE(workspace->QueryInterpretivePoint(query, false, &answer).Ok());
+  EXPECT_EQ(answer.point.Data().meta.ratio_reference_faces, (std::vector<int>{ 1, 3, 4, 2 }));
+  int published = 0;
+  for (const FiberComponent& component : answer.point.Data().Discovered().components) {
+    for (const PointDetail& p : component.points) {
+      if (!p.valid) {
+        continue;
+      }
+      if (!std::isnan(p.ref_log_density)) {
+        ++published;
+      }
+    }
+  }
+  EXPECT_GT(published, 0) << "the in-plane mirror correspondence is answered, not refused";
+}
+
+TEST(InterpretivePointChain, OffPlaneTheMirrorMovesTheSkyPointAndTheCarrierIsRefused) {
+  std::unique_ptr<AnalysisWorkspace> workspace;
+  ASSERT_TRUE(AnalysisWorkspace::Create(ColumnMirrorPairScene(), &workspace).Ok());
+  // Off the sun's vertical plane sigma_0's sky action moves the point: the class separates (the
+  // siblings no longer share one), and the ratio reference's carrier admission refuses — the
+  // same criterion both faces read, refusing only where the point would actually move.
+  std::vector<LocalClass> classes;
+  LocalClassQuery class_query;
+  class_query.crystal_id = 1;
+  class_query.representative = { 1, 3, 4, 2 };
+  class_query.symmetry_bits = 6;
+  class_query.target_altitude_deg = 36.0;
+  class_query.target_azimuth_deg = 120.0;
+  ASSERT_TRUE(workspace->QueryLocalClasses(class_query, &classes).Ok());
+  for (const LocalClass& klass : classes) {
+    const bool has_member =
+        std::any_of(klass.member_sequences.begin(), klass.member_sequences.end(),
+                    [](const std::vector<int>& m) { return m == (std::vector<int>{ 1, 3, 4, 2 }); });
+    const bool has_sibling =
+        std::any_of(klass.member_sequences.begin(), klass.member_sequences.end(),
+                    [](const std::vector<int>& m) { return m == (std::vector<int>{ 1, 3, 8, 2 }); });
+    EXPECT_FALSE(has_member && has_sibling)
+        << "off the sun's plane the mirror moves the point: the siblings cannot share a class";
+  }
+  InterpretivePointQuery query = ColumnMirrorQuery(36.0, 120.0);
+  query.fixed_member = { 1, 3, 8, 2 };
+  query.ratio_reference_faces = { 1, 3, 4, 2 };
+  InterpretivePointAnswer answer;
+  const Error error = workspace->QueryInterpretivePoint(query, false, &answer);
+  ASSERT_FALSE(error.Ok());
+  EXPECT_EQ(error.code, ErrorCode::kInvalidArgument);
+  EXPECT_NE(error.message.find("no element fixing the target sky point"), std::string::npos);
+}
+
+ConfigManager ZigzagEndpointScene() {
+  // The +inf selector witness: Zigzag roll declares its support endpoints' divergence (+inf is
+  // the density law's own reading there); the near-fixed latitude keeps every other branch a
+  // finite deep tail, so the argmax is unambiguous once +inf is allowed to win.
+  PrismCrystalParam prism;
+  prism.h_ = { DistributionType::kNoRandom, 1.2f, 0 };
+  for (auto& distance : prism.d_) {
+    distance = { DistributionType::kNoRandom, 1.0f, 0 };
+  }
+  ConfigManager scene;
+  CrystalConfig crystal;
+  crystal.id_ = 1;
+  crystal.param_ = prism;
+  crystal.axis_.azimuth_dist = { DistributionType::kUniform, 0.0f, 360.0f };
+  crystal.axis_.latitude_dist = { DistributionType::kGaussianLegacy, 12.345f, 0.0001f };
+  crystal.axis_.roll_dist = { DistributionType::kZigzag, 0.0f, 90.0f };
+  scene.crystals_.emplace(1, crystal);
+  scene.scene_.light_source_.param_ = SunParam{ 20.0f, 0.0f, 0.5f };
+  scene.scene_.light_source_.spectrum_ = IlluminantType::kD65;
+  ScatteringSetting entry{};
+  entry.crystal_ = crystal;
+  entry.crystal_proportion_ = 1;
+  scene.scene_.ms_.push_back({ 0, { entry } });
+  return scene;
+}
+
+TEST(InterpretivePointChain, SupportedInfinityWinsTheInterpretivePoseAndTheCarryingStatement) {
+  std::unique_ptr<AnalysisWorkspace> workspace;
+  ASSERT_TRUE(AnalysisWorkspace::Create(ZigzagEndpointScene(), &workspace).Ok());
+  InterpretivePointQuery query;
+  query.crystal_id = 1;
+  query.representative = { 3 };
+  query.symmetry_bits = 0;  // the literal single-member row
+  query.target_altitude_deg = 20.0;
+  query.target_azimuth_deg = 180.0;
+  query.sample_count = 10000;
+  query.sun_grid_lat_count = 0;
+  InterpretivePointAnswer answer;
+  ASSERT_TRUE(workspace->QueryInterpretivePoint(query, false, &answer).Ok());
+  // The supported +inf pose IS the argmax of the recovered set: the selector must name it (not
+  // a finite deep tail) and the carrying statement — the whole selection's evidence — follows.
+  EXPECT_EQ(answer.selected_class, 0);
+  EXPECT_EQ(answer.search_outcome, ExecutionOutcome::kCompleted);
+  const InterpretivePose& pose = answer.point.Data().Discovered().interpretive;
+  ASSERT_TRUE(pose.available);
+  EXPECT_EQ(pose.log_density, std::numeric_limits<double>::infinity());
+  const PointDetail& peak = answer.point.Data().Discovered().components[pose.component_index].points[pose.point_index];
+  EXPECT_EQ(peak.log_rho, std::numeric_limits<double>::infinity());
+  EXPECT_TRUE(peak.valid);
+  EXPECT_GT(peak.entry_measure, 0.0) << "the winner is a ray that travels, not just a dense normal";
 }
 
 }  // namespace

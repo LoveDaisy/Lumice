@@ -82,6 +82,23 @@ nlohmann::ordered_json Conventions() {
       "factor_product = rho * entry_measure_a2 * total_transmission * k_carea, null where any "
       "factor is unavailable. measure_registration declares the support kind and any registered "
       "read-as-zero gap of the declared measure — a rho of 0 there is 'unanswered', not 'dark'" },
+    { "log_density",
+      "log_rho is the declared joint pose density in log space, so a deep tail keeps its finite "
+      "log where the linear rho underflows to 0; -inf (written null) means what rho's 0 means: "
+      "off the support, or a Dirac slot's slice — 'no ordinary density', never a darkness claim, "
+      "and no threshold decides how small is small. When the request named a ratio reference "
+      "member, ref_log_density is the same measure's log density at the algebraically transported "
+      "corresponding pose (world-ray identity re-verified per point) and log_ratio = log_rho - "
+      "ref_log_density: a statement about this pose pair only, never a member-wide bound; null "
+      "means not offered or not verified here, alike infinities are incomparable (null, never "
+      "0), opposite infinities keep their signed answer, a one-sided off-support keeps its "
+      "signed infinity" },
+    { "interpretive_pose",
+      "the recovered branch point with the greatest closed-form log density (first among ties): "
+      "the initial interpretation's pose, deterministic in the recovered set — sample_count, "
+      "seeds and discovery order cannot move it, and it claims no global maximum. available "
+      "false means no recovered valid point carries an ordinary density reading — this search "
+      "has not found one, not that none exists" },
     { "sun_grid",
       "cell centres, row-major [i][j]: lat_i = -90 + (i + 0.5) * 180 / lat_count, lon_j = -180 + (j + 0.5) * 360 / "
       "lon_count, u = (cos lat cos lon, cos lat sin lon, sin lat) in the body frame; the longitude seam is periodic; "
@@ -124,7 +141,7 @@ nlohmann::ordered_json MetaJson(const SinglePathMetadata& m) {
     crystal["upper_wedge_deg"] = Num(m.upper_wedge_deg);
     crystal["lower_wedge_deg"] = Num(m.lower_wedge_deg);
   }
-  return {
+  nlohmann::ordered_json meta_json = {
     { "crystal", crystal },
     { "faces", m.faces },
     { "sun",
@@ -150,6 +167,13 @@ nlohmann::ordered_json MetaJson(const SinglePathMetadata& m) {
     { "budget_ms", m.budget_ms },
     { "interrupted", m.interrupted },
   };
+  // The ratio reference's identity rides the document: the per-point ratio numbers are relative
+  // to THIS member's transported poses, and a saved document must still be able to say so.
+  // Absent when the query named no reference.
+  if (!m.ratio_reference_faces.empty()) {
+    meta_json["ratio_reference"] = { { "faces", m.ratio_reference_faces } };
+  }
+  return meta_json;
 }
 
 nlohmann::ordered_json TraceEndJson(const TraceEnd& e) {
@@ -182,6 +206,9 @@ nlohmann::ordered_json PointJson(const PointDetail& p) {
         { "available", p.jacobian_available } } },
     { "k_carea", Num(p.k_carea) },
     { "factor_product", Num(p.factor_product) },
+    { "log_rho", Num(p.log_rho) },
+    { "ref_log_density", Num(p.ref_log_density) },
+    { "log_ratio", Num(p.log_ratio) },
   };
 }
 
@@ -415,6 +442,11 @@ static std::string EncodePoint(const PointData& result, const SurveyContextBlock
     doc[kKeyIncomplete] = std::move(incomplete);
     doc["discovery"] = DiscoveryJson(result.Discovered().discovery);
     doc["reach"] = ReachJson(result.Discovered().reach);
+    const InterpretivePose& pose = result.Discovered().interpretive;
+    doc["interpretive_pose"] = { { "available", pose.available },
+                                 { "component_index", pose.component_index },
+                                 { "point_index", pose.point_index },
+                                 { "log_density", Num(pose.log_density) } };
   }
   // Absent when the grid was not asked for (--grid 0).
   if (result.sun_grid.lat_count > 0) {
