@@ -12,10 +12,19 @@
 
 #include "core/crystal.hpp"
 #include "raypath/point_result.hpp"
+#include "raypath/query_control.hpp"         // QueryDeadline — the chain's one shared window
 #include "raypath/single_path_analysis.hpp"  // the member evaluations' own point-chain knobs' defaults
 #include "raypath/survey_reuse.hpp"
 
 namespace lumice::raypath {
+
+// The carrying statement's floor: the declared measure's log density at or above this line
+// states "this member carries light at this sky point" — the issue's sanctioned statement
+// convention (a physically meaningful tier ~e^-300, spelled explicitly so the machine's
+// underflow never decides silently). It rules ONLY such statements (the chain's selection and
+// a consumer's display wording): never the class membership (the exact retention's jurisdiction)
+// and never a clamp on the reported log facts, which stay verbatim with their reference/scope.
+inline constexpr double kCarriesLightLogDensityFloor = -300.0;
 
 struct LocalClass {
   std::vector<int> representative;     // the class's lexicographic minimum
@@ -55,12 +64,21 @@ struct InterpretivePointQuery {
   uint8_t symmetry_bits = 0;        // the row's P/B/D bits
   double target_altitude_deg = 0.0;
   double target_azimuth_deg = 0.0;
-  // 0 = the point chain's documented default; the one deadline the whole query settles under.
+  // 0 = the point chain's documented default; the one deadline the whole query settles under —
+  // resolved at chain ENTRY (before the class resolution), so the algebra's own time spends the
+  // same window the member evaluations spend. A preset window (the query-control seam) is
+  // honored verbatim: never re-resolved.
   int budget_ms = 0;
   const volatile int* interrupted = nullptr;
+  std::optional<QueryDeadline> query_deadline;
   // The member evaluations' own point-chain knobs (the point face's, verbatim per member).
   int sample_count = kDefaultSampleCount;
   int sun_grid_lat_count = kDefaultSunGridLatCount;
+  // Optional density-ratio reference member (the point face's field, through the same engine
+  // path): every selected member's samples carry the reference's log density at the
+  // algebraically transported corresponding pose and the log ratio against it. The reference
+  // rides INSIDE this one query — a client never assembles it with a separate point run.
+  std::vector<int> ratio_reference_faces;
   // Optional explicit warm candidate (the point face's contract): a member evaluation admits it
   // only through the existing single admission authority, so a candidate naming another member
   // is an automatic miss for every other member and a strict refusal where that contract says so.
@@ -79,15 +97,21 @@ struct InterpretivePointAnswer {
   // standing (the algebra is not the search's to invalidate).
   std::vector<LocalClass> classes;
   // Where the interpretation landed: the class index into `classes` and the member index into
-  // that class's member_indices. -1/-1 = no evaluated member's interpretive pose carried
-  // positive linear weight (rho > 0 — the acceptance wording's non-zero rho; a deep tail keeps
-  // its finite log but reads exactly 0 in the linear form) — "this search has not found one"
-  // (the completeness wording, not a noise wording); `point` then holds the FIRST class's
-  // representative's own evaluation, the deterministic anchor the consumer displays alongside
-  // the honest state.
+  // that class's member_indices. -1/-1 = no evaluated member's interpretive pose reached the
+  // carrying statement — the declared measure's own log density at the pose at or above
+  // kCarriesLightLogDensityFloor (−300 nat, the issue's sanctioned statement convention: how
+  // small "does not carry light here" is, never a class-membership input and never a clamp on
+  // the reported facts) — "this search has not found one" (the completeness wording, not a
+  // noise wording). `point` then holds the FIRST class's representative's own evaluation, the
+  // deterministic anchor whose member identity `selected_*` spell together — one member's
+  // facts, never a cross-member splice.
   int selected_class = -1;
   int selected_member = -1;
   bool member_fixed = false;  // the caller fixed the member; no automatic selection ran
+  // The member search's own outcome axis, distinct from the payload's: a cancelled or
+  // deadline-stopped SEARCH leaves the classes standing, the anchor payload in `point`, and
+  // the honest search state here (the payload's own execution field remains its evaluation's).
+  ExecutionOutcome search_outcome = ExecutionOutcome::kCompleted;
   // The selected member's own payload; with no selection, the first class's representative's.
   PointResult point;
 };

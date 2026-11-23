@@ -1508,6 +1508,74 @@ bool RollCentreExactlyOnAnchorGrid(float roll_center_deg) {
   return roll_center_deg == grid;
 }
 
+// The EXACT layer's equator-grid membership, the zenith-reflection twin of the roll anchor
+// rule: a zenith reflection maps the normalized latitude centre c to −c, so the reflection is
+// preserving exactly when the centre IS 0 (bit-exact; ±0 compare equal). A genuine offset δ
+// moves the reflected band's density by the offset's full quadratic (a 7.6e-6° centre already
+// moves the pose log density by ~10⁶ nats), so the old IsBApplicable latitude conjunct —
+// FloatEqual to 0, the frozen per-bit B approximation — is never a preservation proof: the
+// exact layer refuses the tolerance band, the documented deliberate divergence.
+bool LatitudeCentreExactlyOnEquator(float latitude_center_deg) {
+  if (!std::isfinite(latitude_center_deg)) {
+    return false;
+  }
+  return latitude_center_deg == 0.0f;
+}
+
+// The zenith-reflection half (latitude λ → −λ) of the H_a and S_k families, the exact-layer
+// form of IsBApplicable's latitude conjunct: full-turn uniform keeps every reflection; the
+// centre-symmetric families keep exactly the equator reflection (bit-exact centre); kZigzag
+// has no reflection proof (the roll anchor rule's same conservative refusal).
+bool LatitudeLawReflectsAboutEquatorExactly(const AxisDistribution& axis) {
+  if (detail::IsFullTurnUniform(axis.latitude_dist.type, axis.latitude_dist.spread)) {
+    return true;
+  }
+  switch (axis.latitude_dist.type) {
+    case DistributionType::kNoRandom:
+    case DistributionType::kUniform:
+    case DistributionType::kGaussian:
+    case DistributionType::kGaussianLegacy:
+    case DistributionType::kLaplacian:
+      return LatitudeCentreExactlyOnEquator(axis.latitude_dist.center);
+    case DistributionType::kZigzag:
+      return false;
+  }
+  return false;
+}
+
+// The EXACT layer's pole-fold gluing: GluingRetainsHalfTurn with the pole centre bit-exact.
+// The fold glues the two pole leaves only for a family whose centre IS the pole — a
+// FloatEqual-band centre's mass sits off the pole, the reflection moves it onto an empty
+// mirror band, and nothing folds. The old per-bit P answer keeps the tolerance form (the
+// frozen approximation); this exact layer refuses what it cannot prove.
+bool GluingRetainsHalfTurnExactly(const AxisDistribution& axis) {
+  if (!detail::IsFullTurnUniform(axis.azimuth_dist.type, axis.azimuth_dist.spread)) {
+    return false;
+  }
+  switch (lat_path::SelectLatPath(axis).kind) {
+    case lat_path::LatPathKind::kLutInverseCdf:
+    case lat_path::LatPathKind::kGaussLegacy:
+      break;
+    default:
+      return false;
+  }
+  const auto centered_exactly_at_pole = [](float latitude_center_deg) {
+    return latitude_center_deg == 90.0f || latitude_center_deg == -90.0f;
+  };
+  switch (axis.latitude_dist.type) {
+    case DistributionType::kUniform:
+      return centered_exactly_at_pole(axis.latitude_dist.UniformCenter()) && axis.latitude_dist.spread != 0.0f;
+    case DistributionType::kGaussian:
+    case DistributionType::kGaussianLegacy:
+    case DistributionType::kLaplacian:
+      return centered_exactly_at_pole(axis.latitude_dist.center) && axis.latitude_dist.spread != 0.0f;
+    case DistributionType::kZigzag:
+    case DistributionType::kNoRandom:
+      return false;
+  }
+  return false;
+}
+
 // The roll reflection half at the canonical centre −ψ_a: full-turn uniform keeps every a; the
 // centre-symmetric families (Dirac, uniform band, Gaussian, legacy Gaussian, Laplacian) keep
 // exactly the reflection whose fixed point is their centre — c ≡ −30a (mod 180°), the statement
@@ -1546,7 +1614,7 @@ bool RollLawSymmetricAboutMinusPsi(const AxisDistribution& axis, int a) {
   }
   // The s = 180° decomposition: reflect about c = 90° − 30a, kept iff the centre names
   // −30·((a + 3) mod 6) — the same exact-grid statement shifted by the half-turn.
-  if (!detail::GluingRetainsHalfTurn(axis) || axis.roll_dist.type == DistributionType::kZigzag) {
+  if (!GluingRetainsHalfTurnExactly(axis) || axis.roll_dist.type == DistributionType::kZigzag) {
     return false;
   }
   if (!RollCentreExactlyOnAnchorGrid(axis.roll_dist.center)) {
@@ -1565,7 +1633,7 @@ bool RollLawInvariantUnderShift(const AxisDistribution& axis, int k) {
   if (detail::IsFullTurnUniform(axis.roll_dist.type, axis.roll_dist.spread)) {
     return true;
   }
-  return k == 3 && detail::GluingRetainsHalfTurn(axis);
+  return k == 3 && GluingRetainsHalfTurnExactly(axis);
 }
 
 // Compose two elements through their body matrices and name the product back in the inventory
@@ -1602,17 +1670,24 @@ bool MeasureRetainsElement(const CrystalElement& element, const AxisDistribution
       // T leaves the azimuth and zenith slots unchanged: the roll shift is the whole condition.
       return RollLawInvariantUnderShift(axis_dist, element.index);
     case CrystalElement::Family::kHorizontalHalfTurn:
-      // az shift by 180° + zenith reflection (both inside IsBApplicable's two conjuncts) plus
-      // the roll reflection about −ψ_a (D's anchor half, same index).
-      return detail::IsBApplicable(axis_dist) && RollLawSymmetricAboutMinusPsi(axis_dist, element.index);
+      // az shift by 180° + zenith reflection + the roll reflection about −ψ_a (D's anchor
+      // half, same index). The zenith half is the EXACT equator-grid statement, not
+      // IsBApplicable's FloatEqual latitude conjunct — the frozen per-bit approximation is
+      // never a preservation proof (the latitude-centre twin of the roll anchor rule).
+      return detail::IsFullTurnUniform(axis_dist.azimuth_dist.type, axis_dist.azimuth_dist.spread) &&
+             LatitudeLawReflectsAboutEquatorExactly(axis_dist) &&
+             RollLawSymmetricAboutMinusPsi(axis_dist, element.index);
     case CrystalElement::Family::kVerticalMirror:
       // az reflection about the sun's plane (a full-turn uniform is invariant) + the roll
       // reflection; the zenith slot is untouched.
       return detail::IsFullTurnUniform(axis_dist.azimuth_dist.type, axis_dist.azimuth_dist.spread) &&
              RollLawSymmetricAboutMinusPsi(axis_dist, element.index);
     case CrystalElement::Family::kRotoMirror:
-      // B's two conjuncts plus the roll shift (none at k = 0, the 180° half-turn at k = 3).
-      return detail::IsBApplicable(axis_dist) && RollLawInvariantUnderShift(axis_dist, element.index);
+      // The zenith-reflection half through the EXACT equator-grid statement (IsBApplicable's
+      // tolerance conjunct is the frozen per-bit answer, never a proof) plus the roll shift
+      // (none at k = 0, the 180° half-turn at k = 3 through the exact pole-fold gluing).
+      return detail::IsFullTurnUniform(axis_dist.azimuth_dist.type, axis_dist.azimuth_dist.spread) &&
+             LatitudeLawReflectsAboutEquatorExactly(axis_dist) && RollLawInvariantUnderShift(axis_dist, element.index);
   }
   return false;
 }

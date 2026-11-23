@@ -715,13 +715,21 @@ LUMICE_API LUMICE_PathReadStatus LUMICE_LocalClassGetClass(const LUMICE_LocalCla
 //
 // Selection is a discovery fact about WHO interprets the click, never about class identity:
 // the classes are evaluated in their fixed representative order and the first member whose
-// interpretive pose carries positive linear weight (rho > 0 — a deep tail keeps its finite
-// log but reads exactly zero in the linear form) wins; classes after the winner are not
+// interpretive pose reaches the carrying statement — the declared measure's log density at the
+// pose at or above -300 nat (the issue's sanctioned statement convention, spelled explicitly so
+// the machine's underflow never decides silently; it rules only the selection, never the class
+// facts and never a clamp on the reported values) — wins; classes after the winner are not
 // searched for interpretation this run, and a search that finds no such member reports
 // selected_class = -1 with the FIRST class's representative's own payload attached — "this
-// search has not found one", the completeness wording. A non-empty fixed_member (which must be
-// a member of this row) skips the selection: that member is evaluated verbatim, its own
-// geometry and log density facts intact, never auto-swapped.
+// search has not found one", the completeness wording, the payload's member identity matching
+// the selection's. A non-empty fixed_member (a row member, refused otherwise) skips the
+// selection: that member is evaluated verbatim, its own geometry and log density facts intact,
+// never auto-swapped. ratio_reference_faces (optional) names the density-ratio reference
+// member INSIDE this one query — the selected member's samples carry the reference's log
+// density at the algebraically transported corresponding pose and the log ratio, the point
+// face's own verified path; a client never assembles it with a separate point run. A warm
+// candidate participates in the member it names (a candidate for a member outside this row is
+// refused; a candidate for a later class never blocks the chain at an earlier one).
 //
 // This face exposes no transformation primitive either: which element carries a member to its
 // representative stays engine-internal, the local-class face's rule.
@@ -733,8 +741,10 @@ typedef struct LUMICE_InterpretivePointRequest {
   unsigned symmetry_bits;      // the row's P/B/D bits; 0 = the literal sequence alone
   double target_altitude_deg;  // the sky point; azimuth measured as the sun's
   double target_azimuth_deg;
-  int sample_count;               // 0 = the point chain's documented default (the point face's rule)
-  int sun_grid_lat_count;         // 0 skips the grid, the point face's rule
+  int sample_count;                  // 0 = the point chain's documented default (the point face's rule)
+  int sun_grid_lat_count;            // 0 skips the grid, the point face's rule
+  const int* ratio_reference_faces;  // optional: NULL or count 0 = no density-ratio reference
+  int ratio_reference_face_count;
   const int* fixed_member_faces;  // optional: NULL or count 0 = automatic class selection
   int fixed_member_face_count;
 } LUMICE_InterpretivePointRequest;
@@ -759,8 +769,13 @@ typedef struct LUMICE_InterpretivePointSelection {
   int selected_class;   // index into the class face's classes; -1 = the search found none
   int selected_member;  // index into that class's member list; -1 with selected_class
   int member_fixed;     // 1 = the caller fixed the member, no automatic selection ran
+  // The member search's own outcome axis (LUMICE_PATH_OUTCOME_*), distinct from the point
+  // payload's: a cancelled or deadline-stopped search leaves the classes standing and the
+  // anchor payload in the point face, and says so here.
+  int search_outcome;
   // The selected member's own face sequence (borrowed, valid until Destroy; the FIRST class's
-  // representative when selected_class is -1, the deterministic anchor payload's member).
+  // representative when selected_class is -1, the deterministic anchor payload's member — the
+  // same member the point payload belongs to, never a cross-member splice).
   const int* member_faces;
   int member_face_count;
 } LUMICE_InterpretivePointSelection;

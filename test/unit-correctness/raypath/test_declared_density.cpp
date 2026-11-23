@@ -1042,6 +1042,24 @@ TEST(DeclaredDensityLog, ZigzagLatitudeEndpointDivergesInsteadOfNaN) {
   EXPECT_TRUE(std::isinf(log_form) && log_form > 0.0) << log_form;
 }
 
+TEST(DeclaredDensityLog, EndpointDivergenceOnZeroSupportAnswersNothingNotInfinity) {
+  // The support edge's +inf mass sits at a roll the roll law never reaches — BOTH flip
+  // branches read zero roll support at this roll_out (90 degrees, and its 180-degree-shifted
+  // preimage). Zero support kills a branch before the divergence can propagate: the joint
+  // answers "no mass in any neighborhood" (-inf), the linear form answers 0 — never a
+  // fabricated +inf and never inf * 0 = NaN.
+  AxisDistribution axis;
+  axis.azimuth_dist = Uniform(0.0, 360.0);
+  axis.latitude_dist = Zigzag(0.0, 30.0);
+  axis.roll_dist = Uniform(0.0, 10.0);
+  const double phi = 30.0 * kDeg;       // the divergent support edge
+  const double roll_out = 90.0 * kDeg;  // outside [0, 10] on both flip branches
+  const double linear = DeclaredPoseDensity(axis, 0.0, phi, roll_out);
+  EXPECT_EQ(linear, 0.0) << linear;
+  const double log_form = DeclaredPoseLogDensity(axis, 0.0, phi, roll_out);
+  EXPECT_TRUE(std::isinf(log_form) && log_form < 0.0) << log_form;
+}
+
 
 }  // namespace
 }  // namespace lumice::raypath

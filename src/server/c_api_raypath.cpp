@@ -1520,6 +1520,7 @@ struct LUMICE_InterpretivePoint_ {
   int selected_class = -1;
   int selected_member = -1;
   int member_fixed = 0;
+  int search_outcome = LUMICE_PATH_OUTCOME_COMPLETED;
   // The selected member's own sequence (or the anchor payload's member when nothing was
   // selected): an owned flattened copy so GetSelection serves plain borrowed pointers.
   std::vector<int> member_faces;
@@ -1547,11 +1548,13 @@ LUMICE_ErrorCode LUMICE_PathWorkspaceQueryInterpretivePoint(LUMICE_PathWorkspace
     return LUMICE_ERR_INVALID_VALUE;
   }
   if ((request->representative_faces == nullptr && request->representative_face_count > 0) ||
-      (request->fixed_member_faces == nullptr && request->fixed_member_face_count > 0)) {
+      (request->fixed_member_faces == nullptr && request->fixed_member_face_count > 0) ||
+      (request->ratio_reference_faces == nullptr && request->ratio_reference_face_count > 0)) {
     WriteError(err_buf, err_size, "null_arg: faces arrays must not be NULL with non-zero counts");
     return LUMICE_ERR_NULL_ARG;
   }
-  if (request->representative_face_count < 0 || request->fixed_member_face_count < 0) {
+  if (request->representative_face_count < 0 || request->fixed_member_face_count < 0 ||
+      request->ratio_reference_face_count < 0) {
     WriteError(err_buf, err_size, "invalid_argument: face counts must not be negative");
     return LUMICE_ERR_INVALID_VALUE;
   }
@@ -1580,6 +1583,10 @@ LUMICE_ErrorCode LUMICE_PathWorkspaceQueryInterpretivePoint(LUMICE_PathWorkspace
     query.budget_ms = options != nullptr ? options->deadline_ms : 0;
     query.sample_count = request->sample_count == 0 ? rp::kDefaultSampleCount : request->sample_count;
     query.sun_grid_lat_count = request->sun_grid_lat_count;
+    if (request->ratio_reference_face_count > 0) {
+      query.ratio_reference_faces.assign(request->ratio_reference_faces,
+                                         request->ratio_reference_faces + request->ratio_reference_face_count);
+    }
     if (options != nullptr && options->warm != nullptr) {
       query.warm_candidate = options->warm->candidate;
     }
@@ -1619,6 +1626,17 @@ LUMICE_ErrorCode LUMICE_PathWorkspaceQueryInterpretivePoint(LUMICE_PathWorkspace
     handle->selected_class = answer.selected_class;
     handle->selected_member = answer.selected_member;
     handle->member_fixed = answer.member_fixed ? 1 : 0;
+    switch (answer.search_outcome) {
+      case rp::ExecutionOutcome::kCancelled:
+        handle->search_outcome = LUMICE_PATH_OUTCOME_CANCELLED;
+        break;
+      case rp::ExecutionOutcome::kDeadlineExceeded:
+        handle->search_outcome = LUMICE_PATH_OUTCOME_DEADLINE_EXCEEDED;
+        break;
+      case rp::ExecutionOutcome::kCompleted:
+        handle->search_outcome = LUMICE_PATH_OUTCOME_COMPLETED;
+        break;
+    }
     // The selection's own sequence: the selected member when one was picked, the anchor
     // payload's member (the first class's representative) when the search found none.
     const rp::LocalClass* anchor = handle->selected_class >= 0 ?
@@ -3066,6 +3084,7 @@ LUMICE_PathReadStatus LUMICE_InterpretivePointGetSelection(const LUMICE_Interpre
   out->selected_class = result->selected_class;
   out->selected_member = result->selected_member;
   out->member_fixed = result->member_fixed;
+  out->search_outcome = result->search_outcome;
   out->member_faces = result->member_faces.data();
   out->member_face_count = static_cast<int>(result->member_faces.size());
   return LUMICE_PATH_READ_OK;

@@ -826,6 +826,7 @@ TEST(InterpretivePointChain, CancelStopsTheSearchAndLeavesTheClassesStanding) {
   ASSERT_EQ(answer.classes.size(), 2u);
   EXPECT_EQ(answer.selected_class, -1);
   EXPECT_EQ(answer.selected_member, -1);
+  EXPECT_EQ(answer.search_outcome, ExecutionOutcome::kCancelled);
   EXPECT_EQ(answer.point.Data().meta.execution, ExecutionOutcome::kCancelled);
 }
 
@@ -840,7 +841,99 @@ TEST(InterpretivePointChain, SharedDeadlineStopsTheSearchHonestly) {
   // never gains budget — and the answer says so honestly.
   ASSERT_EQ(answer.classes.size(), 2u);
   EXPECT_EQ(answer.selected_class, -1);
+  EXPECT_EQ(answer.search_outcome, ExecutionOutcome::kDeadlineExceeded);
   EXPECT_EQ(answer.point.Data().meta.execution, ExecutionOutcome::kDeadlineExceeded);
+}
+
+TEST(InterpretivePointChain, PresetExpiredWindowBindsMembersAndLeavesClassesStanding) {
+  std::unique_ptr<AnalysisWorkspace> workspace;
+  ASSERT_TRUE(AnalysisWorkspace::Create(InterpretiveParryScene(), &workspace).Ok());
+  InterpretivePointQuery query = InterpretiveQuery(36.0, -52.0);
+  // The query-control seam: a preset window already in the past binds the member evaluations
+  // verbatim (the chain honors a pre-resolved window, never re-resolving one) — the budget a
+  // fresh entry resolution would hand out is not available, and the classes stand.
+  QueryDeadline expired;
+  expired.at = std::chrono::steady_clock::now() - std::chrono::seconds(1);
+  expired.resolved_ms = 0;
+  query.query_deadline = expired;
+  InterpretivePointAnswer answer;
+  ASSERT_TRUE(workspace->QueryInterpretivePoint(query, false, &answer).Ok());
+  ASSERT_EQ(answer.classes.size(), 2u);
+  EXPECT_EQ(answer.selected_class, -1);
+  EXPECT_EQ(answer.search_outcome, ExecutionOutcome::kDeadlineExceeded);
+}
+
+TEST(InterpretivePointChain, WarmCandidateForALaterClassNeverBlocksTheChain) {
+  std::unique_ptr<AnalysisWorkspace> workspace;
+  ASSERT_TRUE(AnalysisWorkspace::Create(InterpretiveParryScene(), &workspace).Ok());
+  InterpretivePointQuery query = InterpretiveQuery(36.0, -52.0);
+  // A legal candidate naming the LIT class's member: the first class's evaluation runs without
+  // it (the candidate is not its input), the chain reaches the lit class, and the answer is
+  // the ordinary selection — warm is a hint for the member it names, never a gate.
+  // A minimal survey-family candidate: its identity gates (crystal, path) are exactly what
+  // the routing must satisfy — it reaches only the member it names.
+  query.warm_candidate = WarmCandidate{};
+  query.warm_candidate->facts.family = WarmDocumentFamily::kSurvey;
+  query.warm_candidate->crystal_id = 1;
+  query.warm_candidate->path_layers = { { 4, 2 } };
+  InterpretivePointAnswer answer;
+  ASSERT_TRUE(workspace->QueryInterpretivePoint(query, false, &answer).Ok());
+  EXPECT_EQ(answer.selected_class, 1);
+  EXPECT_TRUE(answer.point.Data().Discovered().interpretive.available);
+}
+
+TEST(InterpretivePointChain, WarmCandidateOutsideTheRowIsRefused) {
+  std::unique_ptr<AnalysisWorkspace> workspace;
+  ASSERT_TRUE(AnalysisWorkspace::Create(InterpretiveParryScene(), &workspace).Ok());
+  InterpretivePointQuery query = InterpretiveQuery(36.0, -52.0);
+  query.warm_candidate = WarmCandidate{};
+  query.warm_candidate->facts.family = WarmDocumentFamily::kSurvey;
+  query.warm_candidate->crystal_id = 1;
+  query.warm_candidate->path_layers = { { 3, 5 } };  // not a member of this row
+  InterpretivePointAnswer answer;
+  const Error error = workspace->QueryInterpretivePoint(query, false, &answer);
+  EXPECT_FALSE(error.Ok());
+  EXPECT_EQ(error.code, ErrorCode::kInvalidPath);
+}
+
+TEST(InterpretivePointChain, FixedMemberCarriesTheRatioReferenceInsideTheOneQuery) {
+  std::unique_ptr<AnalysisWorkspace> workspace;
+  ASSERT_TRUE(AnalysisWorkspace::Create(InterpretiveParryScene(), &workspace).Ok());
+  InterpretivePointQuery query = InterpretiveQuery(36.0, -52.0);
+  query.fixed_member = { 4, 1 };
+  query.ratio_reference_faces = { 4, 2 };  // the lit sibling: the reference rides THIS query
+  InterpretivePointAnswer answer;
+  ASSERT_TRUE(workspace->QueryInterpretivePoint(query, false, &answer).Ok());
+  ASSERT_TRUE(answer.member_fixed);
+  // The reference identity freezes with the result and the verified samples carry finite
+  // transported reads — AC4's density-ratio statement, engine-side, no second point run.
+  EXPECT_EQ(answer.point.Data().meta.ratio_reference_faces, (std::vector<int>{ 4, 2 }));
+  int verified = 0;
+  for (const FiberComponent& component : answer.point.Data().Discovered().components) {
+    for (const PointDetail& p : component.points) {
+      if (!p.valid) {
+        continue;
+      }
+      EXPECT_TRUE(std::isfinite(p.ref_log_density));
+      EXPECT_TRUE(std::isfinite(p.log_ratio));
+      ++verified;
+    }
+  }
+  EXPECT_GT(verified, 0);
+}
+
+TEST(InterpretivePointChain, NoWinnerKeepsTheAnchorPayloadAndItsIdentityTogether) {
+  std::unique_ptr<AnalysisWorkspace> workspace;
+  ASSERT_TRUE(AnalysisWorkspace::Create(InterpretiveParryScene(), &workspace).Ok());
+  InterpretivePointQuery query = InterpretiveQuery(-80.0, 25.0);  // no member carries here
+  query.sample_count = 20000;
+  InterpretivePointAnswer answer;
+  ASSERT_TRUE(workspace->QueryInterpretivePoint(query, false, &answer).Ok());
+  // The honest not-found: selected -1, and the payload is the FIRST class's own evaluation —
+  // its member identity is the one the selection spells, never a later candidate's.
+  EXPECT_EQ(answer.selected_class, -1);
+  EXPECT_EQ(answer.search_outcome, ExecutionOutcome::kCompleted);
+  EXPECT_EQ(answer.point.Data().meta.faces, answer.classes[0].representative);
 }
 
 }  // namespace

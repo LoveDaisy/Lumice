@@ -729,6 +729,32 @@ TEST(ElementRetention, OffGridRollCentreIsRefusedByTheExactLayer) {
   EXPECT_TRUE(d.d_applicable);
 }
 
+TEST(ElementRetention, OffEquatorLatitudeCentreIsRefusedByTheExactLayer) {
+  // A latitude centre merely WITHIN the old B tolerance is not ON the equator: the zenith
+  // reflection maps the centre c to −c, and the mirrored band's density differs by the
+  // offset's full quadratic — a 7.6e-6° centre moves the mirrored pose log density by ~10⁶
+  // nats (the review round's probe). The exact layer refuses the tolerance band outright; the
+  // frozen per-bit B answer keeps its FloatEqual approximation beside it, the documented
+  // layered divergence (the latitude twin of OffGridRollCentreIsRefusedByTheExactLayer).
+  const AxisDistribution axis = AxisAzUniformZenRoll(DistributionType::kGaussian, 7.62939453125e-6f, 1e-8f,
+                                                     DistributionType::kGaussian, 0.0f, 1.0f);
+  const auto retained = DeriveRetainedElements(kFullHexagonalSymmetry, axis);
+  EXPECT_TRUE(FilterByFamily(retained, CrystalElement::Family::kHorizontalHalfTurn).empty());
+  EXPECT_TRUE(FilterByFamily(retained, CrystalElement::Family::kRotoMirror).empty());
+  EXPECT_TRUE(Contains(retained, CrystalElement::Family::kIdentity, 0));
+  EXPECT_TRUE(Contains(retained, CrystalElement::Family::kVerticalMirror, 0));  // σ_0: the exact roll anchor holds
+  // The frozen per-bit B approximation still accepts the tolerance band — verbatim.
+  EXPECT_TRUE(detail::IsBApplicable(axis));
+  // The divergence the refusal is about, stated arithmetically on the declared law's own
+  // gaussian form: the zenith reflection moves latitude +c to −c, and the pose log density
+  // moves by (2c/σ)²/2 — for this band that is ~10⁶ nats (the review round's probe). The
+  // tabulated law's own reads at this σ sit outside its node range on the mirrored side, which
+  // is why the refusal must not wait for a readable pair of finite densities.
+  const double c_rad = 7.62939453125e-6 * kDegToRadD;
+  const double sigma_rad = 1e-8 * kDegToRadD;
+  EXPECT_GT(0.5 * std::pow(2.0 * c_rad / sigma_rad, 2.0), 1e5);
+}
+
 TEST(ElementRetention, ZigzagRollIsConservativelyRefusedEverywhere) {
   // The declared Zigzag roll law |A·sin(t)+B| has no reflection-symmetry proof about any centre
   // (centre 0 with B = 0 even carries one-sided support: positive density at +5°, none at −5°).
