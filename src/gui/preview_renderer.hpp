@@ -290,6 +290,15 @@ struct UploadResult {
   // down slot's next write runs unguarded. A completed result carrying this
   // fact is still an observed failure fact for the diagnostics retention.
   bool fence_create_failed = false;
+  // The GL error flag reading that fence-creation branch performed (0 = the
+  // flag stood clean): a failed fence creation may stand behind a driver
+  // error, and the code must not be lost behind the boolean above.
+  unsigned int fence_create_gl_error = 0;
+  // True when result.gl_error on the fence-wait stage is the sync STATUS
+  // (GL_TIMEOUT_EXPIRED / GL_WAIT_FAILED) rather than a GL error code: the
+  // branch reports whichever its read produced, and the report must not
+  // mislabel a sync status as a driver error.
+  bool fence_wait_code_is_sync_status = false;
 };
 
 // Human-readable name for one UploadResult::Stage — the log spelling shared by the renderer and

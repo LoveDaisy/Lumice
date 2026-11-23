@@ -76,6 +76,12 @@ nlohmann::json GlErrorCheckToJson(const UploadFacts& f) {
       j["state"] = "reported";
       j["code_hex"] = HexGlEnum(f.gl_error_code);
       break;
+    case GlErrorCheckState::kSyncStatus:
+      // A sync call's return status (timeout / wait-failed), recorded as
+      // received — never dressed up as a driver error.
+      j["state"] = "sync_status";
+      j["code_hex"] = HexGlEnum(f.gl_error_code);
+      break;
     case GlErrorCheckState::kNotChecked:
       j["state"] = "not_checked";
       break;

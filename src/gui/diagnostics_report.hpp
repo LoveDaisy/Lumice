@@ -79,15 +79,17 @@ enum class UploadOutcome {
 };
 
 // The GL error flag at the upload chain's own check for this attempt — or
-// the fact that the attempt made no checkable GL call (AC3's three states:
-// checked-and-clean / reported-error / unchecked-or-no-record). The chain's
-// paths read the flag at their own stage boundaries (per strip, post-define,
-// post-upload); the recorder adds no reads of its own — detailed error
-// checking belongs to the upload chain.
+// the fact that the attempt made no checkable GL call (the states: checked-
+// and-clean / reported-error / a sync STATUS rather than a GL error / not
+// checked at all). The chain's paths read the flag at their own stage
+// boundaries (per strip, post-define, post-upload); the recorder adds no
+// reads of its own — detailed error checking belongs to the upload chain.
 enum class GlErrorCheckState {
   kNone,        // checked; GL_NO_ERROR
-  kReported,    // checked; the code below carries what glPaidError said
-  kNotChecked,  // this path performs no check
+  kReported,    // checked; the code below carries the GL error it found
+  kSyncStatus,  // fence-wait: the code below is the sync STATUS (timeout /
+                // wait-failed) received as the call's return, NOT a GL error
+  kNotChecked,  // this attempt made no GL call that could raise, and read nothing
 };
 
 // The display-commit fact, attached by the CALLER after the upload call

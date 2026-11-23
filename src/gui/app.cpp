@@ -458,24 +458,7 @@ static PreviewRecoveryState g_recovery;
 struct XyzUploadCycle {
   int displayed_tier = -1;
   UploadResult first_failure;
-  // The candidate that determined the outcome: the accepting candidate's own
-  // structured result on success — its witness/PBO/scale observations ride on
-  // it. Untouched on failure, where first_failure rules (ok=false there is
-  // the discriminator, same as displayed_tier).
-  UploadResult deciding_result;
-  // Whether any candidate of this cycle revoked the display (the
-  // conservative-revoke ruling): the cycle's display consequence when it
-  // exhausts. A retained-type failure keeps the previous frame standing; a
-  // revoke leaves the display cleared — the reported FIRST failure's own
-  // shape is not the cycle's final display state, so this rides separately.
-  bool display_revoked = false;
 };
-// The cycle's deciding attempt: the accepting candidate on success, the
-// chain's own first failure otherwise — the one result the action's
-// diagnostics event and failure log both carry.
-static const UploadResult& CycleDecidingResult(const XyzUploadCycle& cycle) {
-  return cycle.displayed_tier >= 0 ? cycle.deciding_result : cycle.first_failure;
-}
 // The XYZ frame an upload cycle walks, in whichever of its two CPU representations the source
 // holds: linear float32 (a live poller payload, a v5 file) or binary16 + scale (a v6 file's own
 // bits). Exactly one pointer is non-null. The ladder is representation-blind from here down —
@@ -490,7 +473,8 @@ struct XyzSourceView {
   int height = 0;
 };
 static XyzUploadCycle RunXyzUploadCycle(const XyzSourceView& src, unsigned long long texture_serial,
-                                        bool probe_full_ladder);
+                                        bool probe_full_ladder,
+                                        const diagnostics::UploadEventContext* diag_ctx = nullptr);
 // The incident record's single writer (defined beside the upload machinery); the open's uint8
 // branches reach it through this declaration.
 static void RecordUploadIncident(const UploadResult& result, int tier_tried, unsigned long long texture_serial);
@@ -498,6 +482,11 @@ static void RecordUploadIncident(const UploadResult& result, int tier_tried, uns
 // OOM rebuild's upload sites reach them through these declarations. The closing
 // half is declared in app.hpp (gui_test witnesses share it) — only Begin is
 // file-local.
+static diagnostics::UploadEventContext FreezeUploadContext(diagnostics::UploadProvenance provenance, int source_width,
+                                                           int source_height, bool has_texture_serial,
+                                                           unsigned long long texture_serial,
+                                                           const TexturePayload* payload, bool has_bundle_epoch,
+                                                           unsigned long long bundle_epoch);
 static void BeginUploadDiagnostics(diagnostics::UploadProvenance provenance, int source_width, int source_height,
                                    bool has_texture_serial, unsigned long long texture_serial,
                                    const TexturePayload* payload, bool has_bundle_epoch,
@@ -849,7 +838,9 @@ static void RebuildPreviewAfterContextOom() {
   if (!rebuild_uploads) {
     return;  // nothing uploadable in the resolved source's shape; the no-image state stands
   }
-  BeginUploadDiagnostics(
+  // The action's frozen context: the walk brackets each candidate with it;
+  // the single-shot re-uploads bracket themselves around it.
+  const diagnostics::UploadEventContext diag_ctx = FreezeUploadContext(
       rebuild_is_file ? diagnostics::UploadProvenance::kReopen : diagnostics::UploadProvenance::kLive, src.width,
       src.height, /*has_texture_serial=*/!rebuild_is_file, src.serial, rebuild_is_file ? nullptr : src.payload.get(),
       /*has_bundle_epoch=*/false, 0);
@@ -865,15 +856,16 @@ static void RebuildPreviewAfterContextOom() {
         // The mirror's own representation (v6 half bits or float32) is what the walk consumes —
         // XyzSourceViewFrom carries whichever the open wrote.
         const XyzUploadCycle cycle =
-            RunXyzUploadCycle(XyzSourceViewFrom(src), /*texture_serial=*/0, /*probe_full_ladder=*/true);
+            RunXyzUploadCycle(XyzSourceViewFrom(src), /*texture_serial=*/0, /*probe_full_ladder=*/true, &diag_ctx);
         tier = cycle.displayed_tier;
         upload_result = cycle.first_failure;
         upload_result.ok = tier >= 0;
-        CompleteUploadDiagnostics(CycleDecidingResult(cycle), diagnostics::UploadPath::kXyz, tier >= 0,
-                                  cycle.display_revoked);
+        diagnostics::Diagnostics().AttachDisplayCommit(tier >= 0 ? diagnostics::DisplayCommit::kAdvanced :
+                                                                   diagnostics::DisplayCommit::kNotAdvanced);
         break;
       }
       case PreviewRenderer::TextureMode::kSrgbRadiance:
+        diagnostics::Diagnostics().BeginUpload(diag_ctx);
         upload_result = g_preview.UploadRadianceTexture(src.rgb_pixels, src.width, src.height);
         if (!upload_result.ok) {
           RecordUploadIncident(upload_result, /*tier_tried=*/0, /*texture_serial=*/0);
@@ -882,6 +874,7 @@ static void RebuildPreviewAfterContextOom() {
                                   !upload_result.ok && !upload_result.old_frame_retained);
         break;
       case PreviewRenderer::TextureMode::kSrgbComposited:
+        diagnostics::Diagnostics().BeginUpload(diag_ctx);
         upload_result = g_preview.UploadTexture(src.rgb_pixels, src.width, src.height);
         if (!upload_result.ok) {
           RecordUploadIncident(upload_result, /*tier_tried=*/0, /*texture_serial=*/0);
@@ -893,6 +886,7 @@ static void RebuildPreviewAfterContextOom() {
   } else if (use_composite && src.rgb_pixels != nullptr) {
     // An accepted composite keeps its own display semantics: one plain re-upload of the bake,
     // success or the same incident any other single-shot failure lands.
+    diagnostics::Diagnostics().BeginUpload(diag_ctx);
     upload_result = g_preview.UploadRadianceTexture(src.rgb_pixels, src.width, src.height);
     if (!upload_result.ok) {
       RecordUploadIncident(upload_result, /*tier_tried=*/0, src.serial);
@@ -906,12 +900,12 @@ static void RebuildPreviewAfterContextOom() {
     live_view.floats = src.xyz_pixels;
     live_view.width = src.width;
     live_view.height = src.height;
-    const XyzUploadCycle cycle = RunXyzUploadCycle(live_view, src.serial, /*probe_full_ladder=*/true);
+    const XyzUploadCycle cycle = RunXyzUploadCycle(live_view, src.serial, /*probe_full_ladder=*/true, &diag_ctx);
     tier = cycle.displayed_tier;
     upload_result = cycle.first_failure;
     upload_result.ok = tier >= 0;
-    CompleteUploadDiagnostics(CycleDecidingResult(cycle), diagnostics::UploadPath::kXyz, tier >= 0,
-                              cycle.display_revoked);
+    diagnostics::Diagnostics().AttachDisplayCommit(tier >= 0 ? diagnostics::DisplayCommit::kAdvanced :
+                                                               diagnostics::DisplayCommit::kNotAdvanced);
   } else {
     // Unreachable behind the rebuild_uploads gate above; kept for the
     // compiler's exhaustiveness.
@@ -1434,13 +1428,18 @@ diagnostics::FrozenViewSettings DiagnosticsFrozenSettingsFrom(const GuiState& st
 // acceptance decision of its own.
 // ---------------------------------------------------------------------------
 
-// Freezes the caller's half of one upload event immediately before the
-// action's first upload call. `payload` (may be null) names the live pixels'
-// production stamp; a reopen/file source passes none — there is no run.
-static void BeginUploadDiagnostics(diagnostics::UploadProvenance provenance, int source_width, int source_height,
-                                   bool has_texture_serial, unsigned long long texture_serial,
-                                   const TexturePayload* payload, bool has_bundle_epoch,
-                                   unsigned long long bundle_epoch) {
+// Freezes the caller's half of one upload event: who asked, with what
+// pixels, under which run identity, with which current settings and on which
+// server session. `payload` (may be null) names the live pixels' production
+// stamp; a reopen/file source passes none — there is no run. Cycle callers
+// hold the frozen context and hand it to the recovery walk, which brackets
+// each candidate with it; single-shot callers pass it straight to
+// BeginUploadDiagnostics.
+static diagnostics::UploadEventContext FreezeUploadContext(diagnostics::UploadProvenance provenance, int source_width,
+                                                           int source_height, bool has_texture_serial,
+                                                           unsigned long long texture_serial,
+                                                           const TexturePayload* payload, bool has_bundle_epoch,
+                                                           unsigned long long bundle_epoch) {
   diagnostics::UploadEventContext ctx;
   ctx.provenance = provenance;
   ctx.source_width = source_width;
@@ -1466,7 +1465,18 @@ static void BeginUploadDiagnostics(diagnostics::UploadProvenance provenance, int
   if (g_server != nullptr && LUMICE_GetActiveBackend(g_server, &active_backend) == LUMICE_OK) {
     ctx.active_backend_at_upload = DiagnosticsBackendName(active_backend);
   }
-  diagnostics::Diagnostics().BeginUpload(ctx);
+  return ctx;
+}
+
+// Opens the pending event slot with the frozen context (the single-shot
+// bracket's opening half; the closing half is CompleteUploadDiagnostics).
+static void BeginUploadDiagnostics(diagnostics::UploadProvenance provenance, int source_width, int source_height,
+                                   bool has_texture_serial, unsigned long long texture_serial,
+                                   const TexturePayload* payload, bool has_bundle_epoch,
+                                   unsigned long long bundle_epoch) {
+  diagnostics::Diagnostics().BeginUpload(FreezeUploadContext(provenance, source_width, source_height,
+                                                             has_texture_serial, texture_serial, payload,
+                                                             has_bundle_epoch, bundle_epoch));
 }
 
 // Closes the event the matching Begin opened: translates the action's
@@ -1486,35 +1496,56 @@ void CompleteUploadDiagnostics(const UploadResult& result, diagnostics::UploadPa
   facts.path = path;
   facts.requested_width = result.request_width;
   facts.requested_height = result.request_height;
+  // Stages that make no GL call (a refusal before touching the chain, a host
+  // allocation failure) can neither raise a driver error nor revoke a
+  // display: their outcomes are the rejection / retained forms, never the
+  // revoked one, whatever the raw result flags say.
+  const bool no_gl_call =
+      result.stage == UploadResult::Stage::kInvalidInput || result.stage == UploadResult::Stage::kCpuAllocation;
   if (result.ok) {
     facts.outcome = diagnostics::UploadOutcome::kCompleted;
   } else if (result.stage == UploadResult::Stage::kInvalidInput) {
     facts.outcome = diagnostics::UploadOutcome::kRejectedInvalidInput;
-  } else if (display_revoked) {
+  } else if (display_revoked && !no_gl_call) {
     facts.outcome = diagnostics::UploadOutcome::kFailedDisplayRevoked;
   } else {
     facts.outcome = diagnostics::UploadOutcome::kFailedFrameRetained;
   }
-  if (result.ok) {
+  // The GL flag states, derived only from facts the chain itself produced —
+  // the translation adds no read of its own.
+  if (result.ok && result.fence_create_failed && result.fence_create_gl_error != 0) {
+    // A completed frame whose fence creation failed WITH a driver error: the
+    // fence branch read that code, and the completed outcome must not paint
+    // over it as checked-clean. The fence fact rides beside regardless.
+    facts.gl_error_state = diagnostics::GlErrorCheckState::kReported;
+    facts.gl_error_code = result.fence_create_gl_error;
+    facts.error_stage = UploadStageName(UploadResult::Stage::kFenceCreate);
+  } else if (result.ok) {
     // The chain's own boundary reads (per strip, post-define, post-upload)
-    // stood clean — its success contract. A completed frame whose fence
-    // creation failed still carries fence_create_failed below, and the
-    // retention consumes that fact even on a completed outcome.
+    // stood clean — its success contract. A fence fact without a code still
+    // rides in fence_create_failed, and the retention consumes it.
     facts.gl_error_state = diagnostics::GlErrorCheckState::kNone;
-  } else if (result.stage == UploadResult::Stage::kInvalidInput) {
-    facts.gl_error_state = diagnostics::GlErrorCheckState::kNotChecked;  // no GL call made
+  } else if (no_gl_call) {
+    // Nothing was read because nothing could raise: honestly not-checked.
+    // The invalid-input rejection names no stage (it refused before the
+    // chain); a CPU allocation failure names its own.
+    facts.gl_error_state = diagnostics::GlErrorCheckState::kNotChecked;
+    if (result.stage == UploadResult::Stage::kCpuAllocation) {
+      facts.error_stage = UploadStageName(result.stage);
+    }
   } else if (result.gl_error != 0) {
     // The chain's failing branch drained the flag itself; report the code as
     // received. On the fence-wait stage it may be the sync STATUS rather
-    // than a GL error — the stage name says which.
-    facts.gl_error_state = diagnostics::GlErrorCheckState::kReported;
+    // than a GL error — the chain says which, and the report keeps them
+    // apart instead of mislabeling a timeout as a driver error.
+    facts.gl_error_state = result.fence_wait_code_is_sync_status ? diagnostics::GlErrorCheckState::kSyncStatus :
+                                                                   diagnostics::GlErrorCheckState::kReported;
     facts.gl_error_code = static_cast<unsigned int>(result.gl_error);
     facts.error_stage = UploadStageName(result.stage);
   } else {
-    // A stage failed without leaving an error flag (a null map pointer, a
-    // CPU allocation): the flag was checked at that boundary and stood
-    // clean — the failure is real and non-GL, and its stage is report
-    // content.
+    // A stage failed without leaving an error flag (a null map pointer): the
+    // flag was checked at that boundary and stood clean — the failure is
+    // real and non-GL, and its stage is report content.
     facts.gl_error_state = diagnostics::GlErrorCheckState::kNone;
     facts.error_stage = UploadStageName(result.stage);
   }
@@ -1854,7 +1885,7 @@ void ResetFrontendState(GuiState& state, FrontendResetReason reason, LmcTexture*
       g_preview.ClearTexture();
       ClearBackgroundImage(state);
       break;
-    case FrontendResetReason::kOpenBaked:
+    case FrontendResetReason::kOpenBaked: {
       // Which upload entry point is decided by the file, not by this owner: a v>=5 .lmc carries
       // the unexposed linear XYZ energy a live run uploads, a v4 one carries radiance-only bytes
       // the shader still owes the vignetting and the sky, a pre-v4 one has the sky already summed
@@ -1870,8 +1901,11 @@ void ResetFrontendState(GuiState& state, FrontendResetReason reason, LmcTexture*
       // The diagnostics context freezes BEFORE the upload: this event is a reopen — the pixels
       // came from the file, and there is no run epoch or texture serial to attribute. The
       // settings frozen here are the ones THIS document reopened with.
-      BeginUploadDiagnostics(diagnostics::UploadProvenance::kReopen, baked->width, baked->height,
-                             /*has_texture_serial=*/false, 0, /*payload=*/nullptr, /*has_bundle_epoch=*/false, 0);
+      // The reopen action's frozen context: the XYZ walk brackets each
+      // candidate with it; the uint8 branches bracket themselves around it.
+      const diagnostics::UploadEventContext diag_ctx = FreezeUploadContext(
+          diagnostics::UploadProvenance::kReopen, baked->width, baked->height, /*has_texture_serial=*/false, 0,
+          /*payload=*/nullptr, /*has_bundle_epoch=*/false, 0);
       switch (baked->mode) {
         case PreviewRenderer::TextureMode::kXyz: {
           // The open runs the SAME upload cycle a live upload and a Retry run: ONE authorized
@@ -1886,12 +1920,15 @@ void ResetFrontendState(GuiState& state, FrontendResetReason reason, LmcTexture*
           file_view.half_scale = baked->xyz_half_scale;
           file_view.width = baked->width;
           file_view.height = baked->height;
-          const XyzUploadCycle cycle = RunXyzUploadCycle(file_view, /*texture_serial=*/0, /*probe_full_ladder=*/true);
-          // The reopen walk's event closes on the walk's deciding attempt:
-          // the accepting candidate on success, the chain's first failure
-          // otherwise — with the display fact the open committed.
-          CompleteUploadDiagnostics(CycleDecidingResult(cycle), diagnostics::UploadPath::kXyz,
-                                    cycle.displayed_tier >= 0, cycle.display_revoked);
+          // The walk brackets each candidate itself: a degraded open keeps
+          // the losing candidate's failure in the retention while the
+          // accepting candidate becomes last_upload. The action's display
+          // fact attaches to the last closed event — the deciding candidate.
+          const XyzUploadCycle cycle =
+              RunXyzUploadCycle(file_view, /*texture_serial=*/0, /*probe_full_ladder=*/true, &diag_ctx);
+          diagnostics::Diagnostics().AttachDisplayCommit(cycle.displayed_tier >= 0 ?
+                                                             diagnostics::DisplayCommit::kAdvanced :
+                                                             diagnostics::DisplayCommit::kNotAdvanced);
           // The mirror + the source fact: the file's own bytes and their metadata, whether or
           // not the GPU accepted the display upload. For the half representation the buffer is
           // TAKEN, not copied — the open's inflated bits become the CPU mirror, so the open
@@ -1949,6 +1986,7 @@ void ResetFrontendState(GuiState& state, FrontendResetReason reason, LmcTexture*
           break;
         }
         case PreviewRenderer::TextureMode::kSrgbRadiance: {
+          diagnostics::Diagnostics().BeginUpload(diag_ctx);
           const UploadResult upload_result =
               g_preview.UploadRadianceTexture(baked->srgb.data(), baked->width, baked->height);
           g_file_source.valid = true;
@@ -1974,6 +2012,7 @@ void ResetFrontendState(GuiState& state, FrontendResetReason reason, LmcTexture*
           break;
         }
         case PreviewRenderer::TextureMode::kSrgbComposited: {
+          diagnostics::Diagnostics().BeginUpload(diag_ctx);
           const UploadResult upload_result = g_preview.UploadTexture(baked->srgb.data(), baked->width, baked->height);
           g_file_source.valid = true;
           g_file_source.width = baked->width;
@@ -2001,6 +2040,7 @@ void ResetFrontendState(GuiState& state, FrontendResetReason reason, LmcTexture*
       }
       ClearBackgroundImage(state);
       break;
+    }
     case FrontendResetReason::kRevert:
       // Revert preserves current preview — it is a config restore, not a document switch.
       break;
@@ -3139,7 +3179,7 @@ static UploadResult UploadXyzAtTier(const XyzSourceView& src, int tier) {
 // XyzUploadCycle it fills is declared beside the other source-adjudication state above, where
 // the open path first calls this.
 static XyzUploadCycle RunXyzUploadCycle(const XyzSourceView& src, unsigned long long texture_serial,
-                                        bool probe_full_ladder) {
+                                        bool probe_full_ladder, const diagnostics::UploadEventContext* diag_ctx) {
   XyzUploadCycle out;
   bool first_failure_recorded = false;
   for (int tier = probe_full_ladder ? 0 : g_recovery.xyz_tier;; ++tier) {
@@ -3151,20 +3191,21 @@ static XyzUploadCycle RunXyzUploadCycle(const XyzSourceView& src, unsigned long 
     if (tier == 1) {
       g_preview.ReleaseStagingSlots();
     }
+    // Each candidate is its own diagnostics event under the action's frozen
+    // context: a degraded cycle keeps BOTH facts — the losing candidate's
+    // stage/error/request latches into the failure slots, the accepting
+    // candidate's witness and staging observations become last_upload. One
+    // summary event could only carry one of the two.
+    if (diag_ctx != nullptr) {
+      diagnostics::Diagnostics().BeginUpload(*diag_ctx);
+    }
     const UploadResult r = UploadXyzAtTier(src, tier);
+    if (diag_ctx != nullptr) {
+      CompleteUploadDiagnostics(r, diagnostics::UploadPath::kXyz, r.ok, !r.ok && !r.old_frame_retained);
+    }
     if (r.ok) {
       out.displayed_tier = tier;
-      out.deciding_result = r;
       break;
-    }
-    // The display consequence of a revoke is the cycle's final display state
-    // even when it is not the reported first failure. Synthesized non-GL
-    // results (a ladder-edge refusal, a host allocation failure) never
-    // touched the display — excluded, their default retained=false means "no
-    // GL attempt happened", not "the display was cleared".
-    if (!r.old_frame_retained && r.stage != UploadResult::Stage::kCpuAllocation &&
-        r.stage != UploadResult::Stage::kInvalidInput) {
-      out.display_revoked = true;
     }
     if (!first_failure_recorded) {
       RecordUploadIncident(r, tier, texture_serial);
@@ -3585,12 +3626,15 @@ void SyncFromPoller() {
     // the report explicitly does not claim. The server session's display adapter is frozen too:
     // a reconstruction or backend change later must not retro-fit the export-time route onto
     // this event.
-    BeginUploadDiagnostics(diagnostics::UploadProvenance::kLive, payload->width, payload->height,
-                           /*has_texture_serial=*/true, snap->texture_serial, payload.get(),
-                           /*has_bundle_epoch=*/true, static_cast<unsigned long long>(snap->epoch));
+    // The live fire's frozen context: the composite branch brackets itself
+    // around it; the XYZ walk brackets each candidate with it.
+    const diagnostics::UploadEventContext diag_ctx =
+        FreezeUploadContext(diagnostics::UploadProvenance::kLive, payload->width, payload->height,
+                            /*has_texture_serial=*/true, snap->texture_serial, payload.get(),
+                            /*has_bundle_epoch=*/true, static_cast<unsigned long long>(snap->epoch));
     UploadResult upload_result;
     if (effective_composite) {
-      bool composite_display_revoked = false;
+      diagnostics::Diagnostics().BeginUpload(diag_ctx);
       upload_result = g_preview.UploadRadianceTexture(payload->rgb_buffer, payload->width, payload->height);
       if (!upload_result.ok) {
         RecordUploadIncident(upload_result, /*tier_tried=*/0, snap->texture_serial);
@@ -3598,11 +3642,10 @@ void SyncFromPoller() {
         // failure IS the exhausted cycle: the retained source + the exhausted flag open the
         // notice and the Retry exit (whose composite branch re-uploads this same payload).
         g_recovery.exhausted = true;
-        composite_display_revoked = !upload_result.old_frame_retained;
       }
       // The live fire's event closes on the single attempt's own result.
       CompleteUploadDiagnostics(upload_result, diagnostics::UploadPath::kSrgbRadiance, upload_result.ok,
-                                composite_display_revoked);
+                                !upload_result.ok && !upload_result.old_frame_retained);
     } else {
       // One authorized XYZ cycle (see RunXyzUploadCycle): at the established tier only when one
       // is set — one attempt per frame, never re-probing bigger candidates at the poll rate —
@@ -3613,13 +3656,14 @@ void SyncFromPoller() {
       live_view.floats = payload->xyz_buffer;
       live_view.width = payload->width;
       live_view.height = payload->height;
+      // The walk brackets each candidate itself: a degraded fire keeps the
+      // losing candidate's failure in the retention while the accepting
+      // candidate becomes last_upload. The action's display fact attaches to
+      // the last closed event — the deciding candidate.
       const XyzUploadCycle cycle =
-          RunXyzUploadCycle(live_view, snap->texture_serial, /*probe_full_ladder=*/g_recovery.xyz_tier <= 0);
+          RunXyzUploadCycle(live_view, snap->texture_serial, /*probe_full_ladder=*/g_recovery.xyz_tier <= 0, &diag_ctx);
       if (cycle.displayed_tier >= 0) {
-        // The accepting candidate's own structured result — its witness and
-        // staging observations ride on it, which the bare ok=true could not
-        // carry.
-        upload_result = cycle.deciding_result;
+        upload_result.ok = true;
         if (g_recovery.xyz_tier <= 0 && cycle.displayed_tier > 0) {
           g_recovery.xyz_tier = cycle.displayed_tier;
           GUI_LOG_INFO("[GUI] SyncFromPoller: recovery ladder established tier {} ({}x{})", cycle.displayed_tier,
@@ -3633,11 +3677,8 @@ void SyncFromPoller() {
         upload_result = cycle.first_failure;
         upload_result.ok = false;
       }
-      // The live cycle's event closes on the walk's deciding attempt, with
-      // the cycle's own display consequence (any candidate's revoke, not the
-      // first failure's shape).
-      CompleteUploadDiagnostics(CycleDecidingResult(cycle), diagnostics::UploadPath::kXyz, cycle.displayed_tier >= 0,
-                                cycle.display_revoked);
+      diagnostics::Diagnostics().AttachDisplayCommit(
+          cycle.displayed_tier >= 0 ? diagnostics::DisplayCommit::kAdvanced : diagnostics::DisplayCommit::kNotAdvanced);
     }
     if (!upload_result.ok) {
       // The upload failed: nothing about the DISPLAY may advance. The payload retention, the
@@ -3814,9 +3855,13 @@ void RetryPreviewUpload() {
                                  ShouldUseCompositeUpload(target->is_composite, EffectiveShowCompositePreview());
   UploadResult upload_result;
   int tier = -1;
-  // The event's path and display consequence, set by whichever branch ran.
-  diagnostics::UploadPath diag_path = diagnostics::UploadPath::kXyz;
-  bool diag_revoked = false;
+  // The retry's frozen context: the XYZ walks bracket each candidate with
+  // it; the single-shot re-uploads bracket themselves around it.
+  const diagnostics::UploadEventContext diag_ctx = FreezeUploadContext(
+      target_is_file ? diagnostics::UploadProvenance::kReopen : diagnostics::UploadProvenance::kLive,
+      target_is_file ? g_file_source.width : target->width, target_is_file ? g_file_source.height : target->height,
+      /*has_texture_serial=*/!target_is_file, target_serial, target_is_file ? nullptr : target.get(),
+      /*has_bundle_epoch=*/false, 0);
   if (target_is_file) {
     switch (g_file_source.mode) {
       case PreviewRenderer::TextureMode::kXyz: {
@@ -3824,29 +3869,32 @@ void RetryPreviewUpload() {
         // the resolver reads it off the same mirror the open wrote.
         const ResolvedPreviewSource mirror = ResolvePreviewSource();
         const XyzUploadCycle cycle =
-            RunXyzUploadCycle(XyzSourceViewFrom(mirror), /*texture_serial=*/0, /*probe_full_ladder=*/true);
+            RunXyzUploadCycle(XyzSourceViewFrom(mirror), /*texture_serial=*/0, /*probe_full_ladder=*/true, &diag_ctx);
         tier = cycle.displayed_tier;
-        upload_result = CycleDecidingResult(cycle);
+        upload_result = cycle.first_failure;
         upload_result.ok = tier >= 0;
-        diag_revoked = cycle.display_revoked;
+        diagnostics::Diagnostics().AttachDisplayCommit(tier >= 0 ? diagnostics::DisplayCommit::kAdvanced :
+                                                                   diagnostics::DisplayCommit::kNotAdvanced);
         break;
       }
       case PreviewRenderer::TextureMode::kSrgbRadiance:
-        diag_path = diagnostics::UploadPath::kSrgbRadiance;
+        diagnostics::Diagnostics().BeginUpload(diag_ctx);
         upload_result =
             g_preview.UploadRadianceTexture(g_preview.GetTextureData(), g_file_source.width, g_file_source.height);
         if (!upload_result.ok) {
           RecordUploadIncident(upload_result, /*tier_tried=*/0, /*texture_serial=*/0);
-          diag_revoked = !upload_result.old_frame_retained;
         }
+        CompleteUploadDiagnostics(upload_result, diagnostics::UploadPath::kSrgbRadiance, upload_result.ok,
+                                  !upload_result.ok && !upload_result.old_frame_retained);
         break;
       case PreviewRenderer::TextureMode::kSrgbComposited:
-        diag_path = diagnostics::UploadPath::kSrgbComposited;
+        diagnostics::Diagnostics().BeginUpload(diag_ctx);
         upload_result = g_preview.UploadTexture(g_preview.GetTextureData(), g_file_source.width, g_file_source.height);
         if (!upload_result.ok) {
           RecordUploadIncident(upload_result, /*tier_tried=*/0, /*texture_serial=*/0);
-          diag_revoked = !upload_result.old_frame_retained;
         }
+        CompleteUploadDiagnostics(upload_result, diagnostics::UploadPath::kSrgbComposited, upload_result.ok,
+                                  !upload_result.ok && !upload_result.old_frame_retained);
         break;
     }
   } else {
@@ -3855,27 +3903,28 @@ void RetryPreviewUpload() {
       // A composite keeps its own display semantics: the composite bake is uint8 and the
       // ladder's linear-radiance low-pass does not apply to it — one plain re-upload, success or
       // the same latch as any other failure.
-      diag_path = diagnostics::UploadPath::kSrgbRadiance;
+      diagnostics::Diagnostics().BeginUpload(diag_ctx);
       upload_result = g_preview.UploadRadianceTexture(payload.rgb_buffer, payload.width, payload.height);
       if (!upload_result.ok) {
         RecordUploadIncident(upload_result, /*tier_tried=*/0, target_serial);
-        diag_revoked = !upload_result.old_frame_retained;
       }
+      CompleteUploadDiagnostics(upload_result, diagnostics::UploadPath::kSrgbRadiance, upload_result.ok,
+                                !upload_result.ok && !upload_result.old_frame_retained);
     } else if (payload.xyz_buffer != nullptr) {
-      // The cycle records its own first failure — the retry block below must NOT record again,
-      // or it would overwrite the concrete stage/GL error/request size with a placeholder (the
-      // r4 defect that turned a real texture OOM into a fabricated invalid-input report). The
-      // cycle's real result is what the failure log carries, same as SyncFromPoller's. A live
-      // payload's XYZ is always float32.
+      // The walk brackets each candidate itself — a degraded retry keeps the
+      // losing candidate's failure in the retention while the accepting
+      // candidate becomes last_upload. A live payload's XYZ is always
+      // float32.
       XyzSourceView live_view;
       live_view.floats = payload.xyz_buffer;
       live_view.width = payload.width;
       live_view.height = payload.height;
-      const XyzUploadCycle cycle = RunXyzUploadCycle(live_view, target_serial, /*probe_full_ladder=*/true);
+      const XyzUploadCycle cycle = RunXyzUploadCycle(live_view, target_serial, /*probe_full_ladder=*/true, &diag_ctx);
       tier = cycle.displayed_tier;
-      upload_result = CycleDecidingResult(cycle);
+      upload_result = cycle.first_failure;
       upload_result.ok = tier >= 0;
-      diag_revoked = cycle.display_revoked;
+      diagnostics::Diagnostics().AttachDisplayCommit(tier >= 0 ? diagnostics::DisplayCommit::kAdvanced :
+                                                                 diagnostics::DisplayCommit::kNotAdvanced);
     } else {
       // A source with no usable pixels (the acceptance-leg retained copy can carry none in
       // shapes the ladder cannot walk): treat as an exhausted retry, recorded for what it is.
@@ -3884,11 +3933,11 @@ void RetryPreviewUpload() {
       upload_result.request_width = payload.width;
       upload_result.request_height = payload.height;
       RecordUploadIncident(upload_result, /*tier_tried=*/0, target_serial);
+      diagnostics::Diagnostics().BeginUpload(diag_ctx);
+      CompleteUploadDiagnostics(upload_result, diagnostics::UploadPath::kXyz, upload_result.ok,
+                                !upload_result.ok && !upload_result.old_frame_retained);
     }
   }
-  // The retry's event closes on the deciding attempt before the failure
-  // block below re-latches: a failed retry advances nothing.
-  CompleteUploadDiagnostics(upload_result, diag_path, upload_result.ok, diag_revoked);
   if (!upload_result.ok) {
     // The cycle ran out again: re-latch against the CURRENT generation, exactly as SyncFromPoller
     // does — without this, the next ordinary poll would silently self-authorize yet another
