@@ -1310,6 +1310,90 @@ void RegisterFilterEditorTests(ImGuiTestEngine* engine) {
     };
   }
 
+  // The same crossing-tab contract in the EXPANDED layout. The Tab guard's only call used to live
+  // in the Compact pane child, so under Expanded a Tab during the handoff was overridden by the
+  // row's own auto-focus: the row stayed the editor and typing after the navigation flowed back
+  // into it. Two legs — the Tab on the first crossing frame and on the activation frame — assert
+  // what the Compact witness asserts: the accepted keystroke stays in the row, the navigation
+  // continues from the blank (the destination probe: a later Enter deletes the BLANK, the source
+  // survives), and typing afterwards does not reflow into the row.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "filter_editor", "the_crossing_tab_holds_in_the_expanded_layout");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      // Leg A: Tab on the first crossing frame.
+      ResetTestState();
+      gui::g_state.modal_layout_compact = false;  // Expanded: all sections at once, no tab bar
+      ctx->Yield(2);
+      OpenCardEditor(ctx, 0, kCrystalTabRef);  // opens the modal; the Filter rows are live in both layouts
+      ctx->Yield(4);
+      IM_CHECK_EQ(gui::g_state.modal_layout_compact, false);  // premise: the Expanded layout is up
+      IM_CHECK(ctx->ItemExists("**/##row_text_0"));           // premise: the row list renders in it
+      AuthorRow(ctx, 0, "1-2");
+      ctx->ItemInput("**/##row_text_0");
+      ctx->Yield(2);
+      ctx->KeySetEx(ImGuiKey_Enter, true, 0.0f);
+      ctx->Yield();  // frame N: blank uid1 inserted, request armed
+      ctx->KeySetEx(ImGuiKey_Enter, false, 0.0f);
+      ctx->KeySetEx(ImGuiKey_Tab, true, 0.0f);  // queued with the keystroke below
+      ctx->KeyChars("9");  // frame N+1: the crossing frame — "9" accepted, the Tab must end the crossing
+      ctx->KeySetEx(ImGuiKey_Tab, false, 0.0f);
+      ctx->Yield(4);
+      auto rows = RowTexts();
+      IM_CHECK_EQ(rows.size(), static_cast<size_t>(2));
+      IM_CHECK_STR_EQ(rows[1].c_str(), "9");  // the accepted keystroke stayed in the row
+      IM_CHECK_NE(ImGui::GetActiveID(), ctx->ItemInfo("**/##row_text_1").ID);  // no late steal: the Tab decided
+      ctx->KeyChars("5");  // typing after the navigation must not re-flow into the row
+      ctx->Yield(3);
+      IM_CHECK_STR_EQ(RowTexts()[1].c_str(), "9");
+
+      // The destination probe: Enter acts on the row the Tab actually landed on — the blank's own
+      // delete button — so the BLANK is deleted and the source survives.
+      ctx->KeyPress(ImGuiKey_Enter);
+      ctx->Yield(4);
+      IM_CHECK(!ctx->ItemExists("**/##row_text_1"));  // the blank took the Tab and the Enter
+      IM_CHECK_STR_EQ(RowTexts()[0].c_str(), "1-2");  // the source row was NOT the one removed
+
+      // Leg B: the Tab lands on the ACTIVATION frame — the crossing has just submitted its request
+      // and the navigation state points at the target. The user's Tab must not turn into a
+      // re-activation of that target: no focus steal, the accepted text stays, later typing does
+      // not reflow.
+      ResetTestState();
+      gui::g_state.modal_layout_compact = false;
+      ctx->Yield(2);
+      OpenCardEditor(ctx, 0, kCrystalTabRef);
+      ctx->Yield(4);
+      IM_CHECK_EQ(gui::g_state.modal_layout_compact, false);
+      IM_CHECK(ctx->ItemExists("**/##row_text_0"));
+      AuthorRow(ctx, 0, "1-2");
+      ctx->ItemInput("**/##row_text_0");
+      ctx->Yield(2);
+      ctx->KeySetEx(ImGuiKey_Enter, true, 0.0f);
+      ctx->Yield();  // frame N: blank uid1 inserted, request armed
+      ctx->KeySetEx(ImGuiKey_Enter, false, 0.0f);
+      ctx->KeyChars("9");                       // frame N+1: the crossing frame
+      ctx->KeySetEx(ImGuiKey_Tab, true, 0.0f);  // frame N+2: the activation frame
+      ctx->Yield();
+      ctx->KeySetEx(ImGuiKey_Tab, false, 0.0f);
+      ctx->Yield(4);
+      rows = RowTexts();
+      IM_CHECK_EQ(rows.size(), static_cast<size_t>(2));
+      IM_CHECK_STR_EQ(rows[1].c_str(), "9");  // the accepted keystroke stayed in the row
+      IM_CHECK_NE(ImGui::GetActiveID(), ctx->ItemInfo("**/##row_text_1").ID);  // not re-activated by the old request
+      ctx->KeyChars("5");
+      ctx->Yield(3);
+      IM_CHECK_STR_EQ(RowTexts()[1].c_str(), "9");  // nothing reflows into the row
+
+      // Same destination probe: the activation-frame Tab continues from the blank row too.
+      ctx->KeyPress(ImGuiKey_Enter);
+      ctx->Yield(4);
+      IM_CHECK(!ctx->ItemExists("**/##row_text_1"));
+      IM_CHECK_STR_EQ(RowTexts()[0].c_str(), "1-2");
+
+      ctx->ItemClick(kCancel);
+      ctx->Yield(2);
+    };
+  }
+
   // Shift+Tab on the refocus handoff's activation frame must reach BACKWARD through the full
   // candidate set — the same destination the stable state's Shift+Tab reaches. The request
   // adjustments a crossing makes may not discard the candidates already scored ahead of the list,
@@ -1445,12 +1529,6 @@ void RegisterFilterEditorTests(ImGuiTestEngine* engine) {
       ctx->KeySetEx(ImGuiKey_Tab | ImGuiMod_Shift, false, 0.0f);
       ctx->Yield(4);
 
-      {
-        ImGuiTestItemList list;
-        ctx->GatherItems(&list, "Edit Entry");
-        printf("DBG navA=%08x listsize-via-log-follows\n", ImGui::GetCurrentContext()->NavId);  // TEMP-DBG
-        ctx->LogItemList(&list);
-      }
       IM_CHECK_EQ(ImGui::GetCurrentContext()->NavId, ctx->ItemInfo("**/###filter_tab").ID);  // backward from the target
       IM_CHECK_EQ(ImGui::GetActiveID(), (ImGuiID)0);  // no editor grabbed anywhere
 
