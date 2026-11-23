@@ -29,6 +29,7 @@
 #include <cstdint>
 #include <string>
 
+#include "gui/file_io.hpp"
 #include "gui/gui_state.hpp"
 #include "gui/preview_renderer.hpp"
 #include "gui/view_look_at.hpp"
@@ -105,6 +106,29 @@ void UploadSynthTextureAndBackground(ImGuiTestContext*) {
       stbi_image_free(raw);
     }
     g_bg_test.bg_upload_done = true;
+  }
+}
+
+// The context-invalidation case's document-reset leg. The kOpenBaked spelling swaps the preview
+// texture INSIDE ResetFrontendState — a GL upload — so it runs here, on the main/GL thread, on a
+// frame the TestFunc's held right press is still down. The swap is the whole point: the picture
+// never leaves the screen, so nothing except the reset event itself can end the gesture.
+struct RollResetRequest {
+  bool requested = false;
+  bool done = false;
+};
+RollResetRequest g_roll_reset;
+
+void UploadSynthTextureAndMaybeReset(ImGuiTestContext* ctx) {
+  UploadSynthTexture(ctx);
+  if (g_roll_reset.requested && !g_roll_reset.done) {
+    gui::LmcTexture tex;
+    tex.width = 4;
+    tex.height = 4;
+    tex.mode = gui::PreviewRenderer::TextureMode::kSrgbComposited;
+    tex.srgb.assign(4 * 4 * 3, 40);
+    gui::ResetFrontendState(gui::g_state, gui::FrontendResetReason::kOpenBaked, &tex);
+    g_roll_reset.done = true;
   }
 }
 
@@ -1018,6 +1042,119 @@ void RegisterPreviewViewportTests(ImGuiTestEngine* engine) {
       IM_CHECK_EQ(gui::g_state.renderer.elevation, el);
       IM_CHECK_EQ(gui::g_state.dirty, dirty);
       IM_CHECK_EQ(gui::g_state.committed_epoch, epoch);
+    };
+  }
+
+  // Context invalidation, both halves. A running roll press belongs to the document and lens it
+  // was admitted under. A document reset (ResetFrontendState — the frontend reset owner every
+  // New / Open / Revert routes through) ends the press even though the picture never left: an
+  // OpenBaked swaps the texture within one call and a Revert keeps it, so "a picture-less frame"
+  // can never be the boundary — the reset event is. A lens switch mid-press ends it too, with no
+  // reset involved. Both leave the preview roll-capable again for the NEXT press, which is what
+  // keeps the "nothing happened" legs honest.
+  {
+    ImGuiTest* t =
+        IM_REGISTER_TEST(engine, "preview_viewport", "a_document_reset_or_lens_switch_ends_a_running_roll_press");
+    t->GuiFunc = UploadSynthTextureAndMaybeReset;
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      g_upload_done = false;
+      g_roll_reset = RollResetRequest{};
+      ctx->Yield(4);
+      IM_CHECK(gui::g_preview.HasTexture());
+
+      // Leg 1 — document reset under a held press, with the picture NEVER leaving: the reset is
+      // the kOpenBaked spelling (the owner clears and re-uploads inside one call), driven from
+      // GuiFunc because the swap uploads a GL texture there, exactly as the every-frame fixture
+      // upload does. The press is seeded under LINEAR — the post-reset default lens — so the
+      // lens-identity check cannot be what ends it; only the reset hook can.
+      SeedPose(gui::kLensTypeLinear, 90.0f, 0.0f, 0.0f);
+      ctx->Yield(2);
+      const ImVec2 c = PreviewCentre(ctx);
+      ctx->MouseMoveToPos(PolarPt(c, 150.0f, 20.0f));
+      ctx->Yield(1);
+      ctx->MouseDown(ImGuiMouseButton_Right);
+      ctx->Yield(1);
+      ctx->MouseMoveToPos(PolarPt(c, 150.0f, 65.0f));
+      ctx->Yield(2);
+      IM_CHECK_GT(std::fabs(gui::g_state.renderer.roll), 10.0f);  // the press was rolling
+      g_roll_reset.requested = true;
+      ctx->Yield(6);
+      IM_CHECK(g_roll_reset.done);  // the reset ran while the button was still down
+      // Re-pin the pose the reset just replaced (same lens: LINEAR), so the held press has a
+      // live, admissible context to misbehave against if the cancellation missed.
+      SeedPose(gui::kLensTypeLinear, 90.0f, 0.0f, 0.0f);
+      ctx->Yield(2);
+      IM_CHECK(gui::g_preview.HasTexture());  // the premise: still a picture to roll over
+      ctx->MouseMoveToPos(PolarPt(c, 150.0f, 20.0f));
+      ctx->Yield(1);
+      ctx->MouseMoveToPos(PolarPt(c, 150.0f, 65.0f));  // same arc, SAME press
+      ctx->Yield(2);
+      IM_CHECK_EQ(gui::g_state.renderer.roll, 0.0f);  // the old press rolled the new context not at all
+      ctx->MouseUp(ImGuiMouseButton_Right);
+      ctx->Yield(2);
+      RollDrag(ctx, PolarPt(c, 150.0f, 20.0f), PolarPt(c, 150.0f, 65.0f));
+      IM_CHECK_GT(std::fabs(gui::g_state.renderer.roll), 10.0f);  // a fresh press rolls again
+
+      // Leg 2 — lens switch mid-press, no reset in sight: the sweep accumulated before the
+      // switch stands, the switch ends the press, and the arc after it writes nothing.
+      ResetTestState();
+      g_upload_done = false;
+      ctx->Yield(4);
+      IM_CHECK(gui::g_preview.HasTexture());
+      SeedPose(gui::kLensTypeFisheyeEquidist, 60.0f, 0.0f, 0.0f);
+      ctx->Yield(2);
+      const ImVec2 c2 = PreviewCentre(ctx);
+      ctx->MouseMoveToPos(PolarPt(c2, 150.0f, 20.0f));
+      ctx->Yield(1);
+      ctx->MouseDown(ImGuiMouseButton_Right);
+      ctx->Yield(1);
+      ctx->MouseMoveToPos(PolarPt(c2, 150.0f, 65.0f));
+      ctx->Yield(2);
+      const float before_switch = gui::g_state.renderer.roll;
+      IM_CHECK_GT(std::fabs(before_switch), 10.0f);
+      gui::g_state.renderer.lens_type = gui::kLensTypeLinear;  // fisheye -> linear, mid-press
+      ctx->Yield(2);
+      ctx->MouseMoveToPos(PolarPt(c2, 150.0f, 20.0f));
+      ctx->Yield(1);
+      ctx->MouseMoveToPos(PolarPt(c2, 150.0f, 65.0f));  // same arc, SAME press
+      ctx->Yield(2);
+      IM_CHECK_EQ(gui::g_state.renderer.roll, before_switch);  // the spent press wrote nothing
+      ctx->MouseUp(ImGuiMouseButton_Right);
+      ctx->Yield(2);
+    };
+  }
+
+  // The press position itself is the first reference: press and let the cursor ALREADY be moving
+  // by the time the handler next samples — no in-place reference frame. The whole sweep from the
+  // press point must accumulate; a gesture that starts measuring from wherever the cursor has
+  // travelled to loses the first segment, which on a fast flick is the whole gesture.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "preview_viewport",
+                                    "the_press_position_is_the_reference_even_when_the_cursor_is_already_moving");
+    t->GuiFunc = UploadSynthTexture;
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      g_upload_done = false;
+      ctx->Yield(4);
+      IM_CHECK(gui::g_preview.HasTexture());
+      SeedPose(gui::kLensTypeFisheyeEquidist, 60.0f, 0.0f, 0.0f);
+      ctx->Yield(2);
+
+      const ImVec2 c = PreviewCentre(ctx);
+      const float a0 = AngleAroundCentre(c, PolarPt(c, 150.0f, 20.0f));
+      const float a1 = AngleAroundCentre(c, PolarPt(c, 150.0f, 65.0f));
+      const float sweep = SweepDeg(a0, a1);
+      ctx->MouseMoveToPos(PolarPt(c, 150.0f, 20.0f));
+      ctx->Yield(1);
+      ctx->MouseDown(ImGuiMouseButton_Right);
+      ctx->MouseMoveToPos(PolarPt(c, 150.0f, 65.0f));  // deliberately NO in-place frame after the press
+      ctx->Yield(2);
+      ctx->MouseUp(ImGuiMouseButton_Right);
+      ctx->Yield(2);
+      IM_CHECK_LT(std::fabs(gui::g_state.renderer.roll - sweep), kRollTolDeg);
+      IM_CHECK_EQ(gui::g_state.renderer.azimuth, 0.0f);
+      IM_CHECK_EQ(gui::g_state.renderer.elevation, 0.0f);
     };
   }
 }

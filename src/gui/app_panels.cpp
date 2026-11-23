@@ -2328,22 +2328,32 @@ bool RenderDisplayModeControl() {
 // mode above it in spirit: nothing here is a document field, and a gesture that is not running
 // leaves nothing behind. The state is SCREEN-space by construction — the reference is a cursor
 // direction around the viewport's centre, and the centre is panel geometry — so no document
-// quantity enters it, and the gesture reads identically over any picture.
+// quantity enters it, and the gesture reads identically over any picture. What the state does
+// carry is the CONTEXT the press was admitted under: the lens it started on. The document side
+// needs no snapshot here because document changes all route through ResetFrontendState (the
+// frontend reset owner), which calls ResetPreviewRollDrag — a press that survives a New / Open /
+// Revert, or a lens switch, never resumes: the reset cancelled it, and only a fresh press
+// re-admits.
 struct RollDragGesture {
   // The press is alive: admitted on the press frame and not yet ended by release, Alt, a full-sky
-  // lens, or an arbitration lock. Once ended, the SAME press can never resume — only a new press
-  // re-admits.
+  // lens, an arbitration lock, a lens switch, or a document reset. Once ended, the SAME press can
+  // never resume — only a new press re-admits.
   bool active = false;
   // Whether `ref_*` holds a valid direction to measure against. False on admission (the first
-  // valid sample only sets the reference), and again whenever the cursor sits in the dead zone or
-  // off the interaction face — re-establishing costs one sample and is what keeps those steps
-  // from contributing roll.
+  // valid sample only sets the reference — the admission frame itself samples, so the press
+  // position is the reference whenever it sits outside the dead zone), and again whenever the
+  // cursor sits in the dead zone or off the interaction face — re-establishing costs one sample
+  // and is what keeps those steps from contributing roll.
   bool has_reference = false;
   // The last valid sample, window-local logical points, and its screen angle around the centre
   // (atan2, y down like everything else that talks to io.MousePos).
   float ref_x = 0.0f;
   float ref_y = 0.0f;
   float ref_angle = 0.0f;
+  // The lens the press was admitted under: a lens switch ends the gesture (the view the cursor
+  // was rolling is not the view it would now be rolling — and the dead zone's centre is not the
+  // only thing that moved).
+  int lens_type = 0;
 };
 
 RollDragGesture g_roll_drag;
@@ -2372,6 +2382,17 @@ float SegmentDistanceFromCentre(float ax, float ay, float bx, float by) {
 }
 
 }  // namespace
+
+// The document-reset owner's hook (declared in app.hpp, called from ResetFrontendState, app.cpp —
+// every New / Open / Revert route): a running roll press belongs to the context it started in, and
+// that context just ended. Deliberately not folded into the picture-gone check in
+// RenderPreviewPanel: an OpenBaked clears and re-uploads within one call and a Revert keeps the
+// picture, so "the panel saw a picture-less frame" never fires for either — the reset EVENT is the
+// only reliable boundary. External linkage on purpose (app.cpp calls it); the state it clears is
+// this file's static above, which stays private.
+void ResetPreviewRollDrag() {
+  g_roll_drag = RollDragGesture{};
+}
 
 void RenderPreviewPanel(GLFWwindow* window, float window_width, float window_height) {
   // Eyedropper mode: two ways out that must be taken before anything else this frame reads the
@@ -2945,14 +2966,25 @@ void RenderPreviewPanel(GLFWwindow* window, float window_width, float window_hei
       // (!bg_modifier — Alt states the photo's intent, and the photo has no rotate; !full_sky —
       // the entry rejects rather than writing into the per-frame zeroing; !gestures_locked) end
       // an in-flight drag outright, instead of pausing it, so an unlocked lock cannot inherit a
-      // press that began under it. Leaving the interaction face, by contrast, only PAUSES: the
-      // reference is dropped and the first sample back re-establishes it, so no off-screen
-      // travel is ever back-computed. Like every gesture above, none of this touches Look At —
-      // roll is a T-view framing value (gui-state-governance): no UnlockLookAt, no dirty, no
-      // epoch, no re-sim.
+      // press that began under it — and so does a lens switch (the snapshot below) or a document
+      // reset (ResetFrontendState's hook). Leaving the interaction face, by contrast, only
+      // PAUSES: the reference is dropped and the first sample back re-establishes it, so no
+      // off-screen travel is ever back-computed. Like every gesture above, none of this touches
+      // Look At — roll is a T-view framing value (gui-state-governance): no UnlockLookAt, no
+      // dirty, no epoch, no re-sim.
       const bool roll_admissible = !gestures_locked && !bg_modifier && !full_sky;
+      if (!g_roll_drag.active && roll_admissible && is_hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+        // The press frame. Ownership decided here, once, from this frame's locks and modifiers;
+        // the lens is recorded so a later switch ends the press. Admission FALLS THROUGH to the
+        // sampling block below in the same frame: the press position itself is the first
+        // reference candidate, so the sweep is measured from where the press actually was —
+        // never from wherever the cursor has already travelled to by the next frame.
+        g_roll_drag.active = true;
+        g_roll_drag.has_reference = false;
+        g_roll_drag.lens_type = rc.lens_type;
+      }
       if (g_roll_drag.active) {
-        if (!roll_admissible) {
+        if (!roll_admissible || rc.lens_type != g_roll_drag.lens_type) {
           g_roll_drag = RollDragGesture{};  // cancelled for the rest of this press
         } else if (!is_hovered) {
           g_roll_drag.has_reference = false;  // paused off the face; re-entry re-establishes
@@ -2999,11 +3031,6 @@ void RenderPreviewPanel(GLFWwindow* window, float window_width, float window_hei
             g_roll_drag.ref_angle = angle;
           }
         }
-      } else if (roll_admissible && is_hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
-        // The press frame. Ownership decided here, once, from this frame's locks and modifiers;
-        // the first valid sample only sets the reference.
-        g_roll_drag.active = true;
-        g_roll_drag.has_reference = false;
       }
 
       // The eyedropper's own branch, gated on the flag the four above are gated on the negation of:
@@ -3109,6 +3136,13 @@ void RenderPreviewPanel(GLFWwindow* window, float window_width, float window_hei
                            picker.family == AngularDistFamily::kSun ? "sun" : "lens-center",
                            added ? "" : " — already in the list, not added again");
               picker.armed = false;
+              // Every latch producer declares its owner: this spelling is the LEFT press's latch,
+              // and the button-keyed cleanup at the top of the panel reads this field to decide
+              // which release ends it. (The cancel spelling above writes Right.) Without the
+              // write-back here, a cancel earlier in the session would leave the field pointing
+              // at the right button, and this left latch would be cleared by the right button's
+              // release — handing the rest of THIS left press to the orbit branch.
+              picker.swallow_button = ImGuiMouseButton_Left;
               picker.swallow_drag_until_release = true;
             }
           }

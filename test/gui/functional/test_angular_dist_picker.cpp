@@ -369,6 +369,58 @@ void RegisterAngularDistPickerTests(ImGuiTestEngine* engine) {
     };
   }
 
+  // The left-confirm spelling owns its latch too. The latch now records WHICH button set it, so
+  // a right-click cancel earlier in the session must not leak its button into a later left
+  // confirm: arm -> right-cancel -> release -> re-arm -> left-confirm-and-hold must stay locked
+  // until the LEFT button comes up (with the field left pointing at the right button, the next
+  // frame's cleanup would free the latch while the left press is still down, and the rest of
+  // that drag would orbit). And the latch still dies with the left button: a fresh left drag
+  // afterwards orbits as always.
+  {
+    ImGuiTest* t =
+        IM_REGISTER_TEST(engine, "angular_dist_picker", "a_left_confirm_after_a_right_cancel_keeps_its_own_latch");
+    t->GuiFunc = ProbeGuiFunc;
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      InstallPicture(ctx, gui::kLensTypeLinear, 90.0f);
+      const int w = gui::g_preview_vp.vp_w;
+      const int h = gui::g_preview_vp.vp_h;
+
+      ArmThroughTheButton(ctx, kSunFold);
+      IM_CHECK(gui::g_state.angular_dist_picker.armed);
+      ctx->MouseMoveToPos(CanvasPixelScreenPos(ctx, w * 2 / 5, h / 2));
+      ctx->Yield(1);
+      ctx->MouseClick(ImGuiMouseButton_Right);  // cancel #1: its latch records the right button
+      ctx->Yield(2);
+      IM_CHECK(!gui::g_state.angular_dist_picker.armed);
+      ctx->Yield(2);  // the right button's release has long since cleared that latch
+
+      // Re-arm and confirm with the LEFT button, then keep dragging — the post-confirm latch
+      // must hold this left press off the camera until the left button itself comes up.
+      ArmThroughTheButton(ctx, kSunFold);
+      IM_CHECK(gui::g_state.angular_dist_picker.armed);
+      IM_CHECK(HoverCanvasPixel(ctx, w * 2 / 5, h / 2).has_value());  // over sky: the click confirms
+      const float az = gui::g_state.renderer.azimuth;
+      const float el = gui::g_state.renderer.elevation;
+      ctx->MouseDown(0);
+      ctx->Yield(2);
+      IM_CHECK(!gui::g_state.angular_dist_picker.armed);  // confirmed and disarmed
+      ctx->MouseMoveToPos(CanvasPixelScreenPos(ctx, w * 4 / 5, h / 2));
+      ctx->Yield(2);
+      ctx->MouseMoveToPos(CanvasPixelScreenPos(ctx, w * 3 / 5, h * 3 / 4));
+      ctx->Yield(2);
+      IM_CHECK_EQ(gui::g_state.renderer.azimuth, az);  // the held left press orbit nothing
+      IM_CHECK_EQ(gui::g_state.renderer.elevation, el);
+      ctx->MouseUp(0);
+      ctx->Yield(2);
+      IM_CHECK(!gui::g_state.angular_dist_picker.swallow_drag_until_release);  // died with the left button
+
+      // A fresh left drag orbits again: the latch freed, not stuck.
+      ctx->ItemDragWithDelta("**/##preview_interact", ImVec2(60.0f, 0.0f));
+      ctx->Yield(2);
+      IM_CHECK_NE(gui::g_state.renderer.azimuth, az);
+    };
+  }
+
   // AC3: off sky there is no ring and a click is inert — no ring added, the mode stays armed so the
   // user can aim again. Two kinds of off-sky: outside the lens's image (a fisheye's corner) and the
   // side `visible` hides. And while armed the camera takes no drag and no wheel — the drag done off

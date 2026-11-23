@@ -1821,6 +1821,12 @@ void ResetFrontendState(GuiState& state, FrontendResetReason reason, LmcTexture*
       break;  // same document continues; no serial bump, no origin change
   }
 
+  // A running right-drag roll belongs to the document it was admitted under — New / Open / Revert
+  // all end it here, before the replacement context is assembled (an OpenBaked swaps the texture
+  // within this very call and a Revert keeps the old one, so the preview panel can never see a
+  // picture-less frame to react to; the reset event itself is the boundary).
+  ResetPreviewRollDrag();
+
   // Every reason invalidates the thumbnail cache: New / Open replace the entire layer/entry
   // structure; Revert restores it from snapshot — same reason to refresh thumbnails either way.
   g_thumbnail_cache.OnLayerStructureChanged();
