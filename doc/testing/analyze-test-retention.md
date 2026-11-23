@@ -52,10 +52,13 @@ Absorption proof (no coverage reduction, no double-counted gain): the anchor
 (`FullDimensionalDispersionAnchorsToTheClosedForm`) runs the identical request — same scene
 config, same faces `{3, 5}`, same default budget — as the two absorbed cases. The absorbed
 blocks assert against that one survey object; every assertion moved verbatim (the absorbed
-case's premise is the anchor's own `point_sun_premise = true`). Savings are claimed once: the
-two deleted rows' seconds leave the phase; the anchor's own row grows by microseconds of
-typed-reader work. Failure granularity: the absorbed blocks sit under the anchor's name with
-delimiting comments naming the two origins.
+case's premise is the anchor's own `point_sun_premise = true`); the two cases' preconditions
+that did NOT move — model validity and inner-edge qualification — are already asserted by the
+anchor on the same object at `test_analyze_overview_chain.cpp:190` and `:269` (and stronger
+there: name, `edge_object_index ≥ 0`, certificate and the closed-form values at 1e-9).
+Savings are claimed once: the two deleted rows' seconds leave the phase; the anchor's own row
+grows by microseconds of typed-reader work. Failure granularity: the absorbed blocks sit
+under the anchor's name with delimiting comments naming the two origins.
 
 ### The remaining 17 cases (≈2.0s ATT2 combined)
 
@@ -65,19 +68,19 @@ delimiting comments naming the two origins.
 | `AnalyzeOverviewChain.IdentityDocumentRowSwitchesUnderItsOwnKindGate` | The identity arm's real positioned row (certified source image at the sun) hides under exactly its own kind gate and the parent graphics gate — the real-row half of the switching matrix whose synthetic matrix lives at the unit tier | Per-kind gate semantics on a REAL document row (the unit tier's rows are synthetic) | 0.25 / 0.32 | kept — the unit tier cannot produce a real identity-arm row |
 | `AnalyzeOverviewModel.OverlayFactsAreEmptyOnTheIdentityArm` | The builder fabricates nothing on the identity arm: no reach intervals, no edge arcs, no TIR turns (`reach_full_range` stays false — empty ≠ full range) | Empty-set equality on all three fact lists of a real rank-0 document | 0.24 / 0.32 | kept — complements (does not duplicate) `IdentityArmReadsBackSourceImageAndTint`, which guards the model arm, not the facts |
 | `AnalyzeMapView.PointMarkerVisibleMapsEachKindToItsOwnGate` | The exhaustive kind→gate mapping: three image kinds switch independently, non-image kinds follow the parent alone, the parent gate removes all | Truth table over 4 kinds × 3 gate levels on the one predicate the draw loop, hit collection and legend share | ≈0.00 | kept — the shared predicate's only exhaustive enumeration |
-| `AnalyzeMapView.ArcStrokeHitTestsSubmittedSegmentsOnly` | Point-to-segment distance corners (clamp, endpoints, degenerate) and the stroke hit predicate: gaps between submitted segments are not pickable, empty strokes never hit, tolerance is the caller's | Geometric predicates with hand-derived oracles | ≈0.00 | kept |
+| `AnalyzeMapView.ArcStrokeHitTestsSubmittedSegmentsOnly` | Point-to-segment distance corners (clamp, endpoints, degenerate) and the stroke hit predicate: gaps between submitted segments are not pickable, empty strokes never hit, tolerance is the caller's | Geometric predicates with hand-derived oracles | ≈0.00 | kept — the hit-test geometry is new in this PR, no prior carrier |
 | `AnalyzePointView.InterfaceRolesFollowTheContactPosition` | Per-factor readout roles derive from the contact position: entry/internal/exit naming, reflectance vs transmittance wording, repeated-face contacts keep their own sequence, missing/mismatched face sequence degrades to contact indices without fabricating face numbers | Readout wording against a fixed numeric chain (C03's 3-5-6-5 shape) | ≈0.00 | kept — the role/naming contract of the point view's factor lines |
-| `AnalyzePointView.LossReadingPicksTheLargestAbsoluteDrop` | The loss readout picks the largest absolute per-interface transmittance drop (not the largest ratio, not the first) | Selection rule against a crafted drop profile | ≈0.00 | kept |
-| `AnalyzePointView.LossReadoutLinesCarryDenominatorAndScope` | Loss lines state their denominator and scope instead of a bare percentage | Denominator/scope strings on the loss lines | ≈0.00 | kept |
-| `ReferenceArcDraw.SharedStrokeSubmitsOnceAndTheLegendCarriesBothOwners` | The shared stroke (AC2): a coincident edge at a reach bound submits ONE walk with both gates on (gate algebra: reach-only = both-on count, edge-only = half), legend owners and the two labels | Ink-count algebra across the 3 gate combinations + legend/label contracts | ≈0.00 | kept |
-| `ReferenceArcDraw.NonCoincidentEdgeNeverMergesEvenAtTheSameDelta` | Merge authority is the card's own coincidence declaration, never screen distance or angle equality: at the SAME delta a non-coincident edge adds its own stroke | Additive ink identity (both = reach-only + edge-only) + no shared legend | ≈0.00 | kept |
-| `ReferenceArcDraw.CoincidenceIdentityHoldsAcrossTheDisplayGates` | The edge identity is built from producers' declarations BEFORE gates and survives every gate combination (including non-bit-equal positions, off by one tolerance step) — hiding an owner changes visibility, never identity | Identity persistence across the 3 gate states with a deliberately non-bit-equal position | ≈0.00 | kept |
-| `ReferenceArcDraw.LightSideTickPointsOutwardAcrossTheFisheyeDiskSplit` | The light-side tick is built in sky space: across the dual-fisheye disk split (sun on the equator), the tip equals the projection of the outward sky point per a test-local oracle — a screen-space direction would point inward | Tick direction against an independent test-local basis + projection | ≈0.00 | kept — the reviewer's disk-split regression |
-| `ReferenceArcDraw.LabelsSplitKeepsInkAndGraphicsRemovesBoth` | The labels/graphics split: labels-off keeps ink and drops readouts; graphics-off drops both | The 2-bit visibility contract | ≈0.00 | kept |
-| `ReferenceArcDraw.UnconcludedEdgeDrawsDashedAndFullRangeDrawsText` | Honesty forms: an unconcluded edge draws the weakened dashed walk (fewer segments than concluded); a full-range reach draws text, no circle pair, and says so in legend and label | Dash-phase segment-count relation + full-range text form | ≈0.00 | kept |
-| `ReferenceArcDraw.TirTurnDrawsItsPairWithOneLabelAndObeyItsGate` | One visible TIR feature draws its two-delta pair in neutral ink with ONE paired readout; its gate removes ink, readout and legend; the pair never merges into a bound stroke | Pair cardinality + gate + no-merge identity | ≈0.00 | kept |
-| `ReferenceArcDraw.EmptyFactsSubmitNothingWithEveryGateOn` | The fabrication detector: every gate on and no facts → no ink, no readout, no legend bit | Zero-submission over the empty fact set | ≈0.00 | kept |
-| `ReferenceArcDraw.SharedStrokeLabelObeysEachOwnerLabelsSwitch` | The shared stroke's label obeys each owner's labels switch (4 combinations), with the geometry constant throughout | Label-fallback matrix + labels-independent geometry | ≈0.00 | kept |
+| `AnalyzePointView.LossReadingPicksTheLargestAbsoluteDrop` | The loss readout picks the largest absolute per-interface transmittance drop (not the largest ratio, not the first) | Selection rule against a crafted drop profile | ≈0.00 | kept — the loss-selection rule is new in this PR, no prior carrier |
+| `AnalyzePointView.LossReadoutLinesCarryDenominatorAndScope` | Loss lines state their denominator and scope instead of a bare percentage | Denominator/scope strings on the loss lines | ≈0.00 | kept — the loss readout format is new in this PR, no prior carrier |
+| `ReferenceArcDraw.SharedStrokeSubmitsOnceAndTheLegendCarriesBothOwners` | The shared stroke (AC2): a coincident edge at a reach bound submits ONE walk with both gates on (gate algebra: reach-only = both-on count, edge-only = half), legend owners and the two labels | Ink-count algebra across the 3 gate combinations + legend/label contracts | ≈0.00 | kept — the AC2 owner algebra is new in this PR, no prior carrier |
+| `ReferenceArcDraw.NonCoincidentEdgeNeverMergesEvenAtTheSameDelta` | Merge authority is the card's own coincidence declaration, never screen distance or angle equality: at the SAME delta a non-coincident edge adds its own stroke | Additive ink identity (both = reach-only + edge-only) + no shared legend | ≈0.00 | kept — the merge-authority rule is new in this PR, no prior carrier |
+| `ReferenceArcDraw.CoincidenceIdentityHoldsAcrossTheDisplayGates` | The edge identity is built from producers' declarations BEFORE gates and survives every gate combination (including non-bit-equal positions, off by one tolerance step) — hiding an owner changes visibility, never identity | Identity persistence across the 3 gate states with a deliberately non-bit-equal position | ≈0.00 | kept — the pre-gate identity rule is new in this PR, no prior carrier |
+| `ReferenceArcDraw.LightSideTickPointsOutwardAcrossTheFisheyeDiskSplit` | The light-side tick is built in sky space: across the dual-fisheye disk split (sun on the equator), the tip equals the projection of the outward sky point per a test-local oracle — a screen-space direction would point inward | Tick direction against an independent test-local basis + projection | ≈0.00 | kept — the tick geometry is new in this PR and the disk-split regression has no other sensor |
+| `ReferenceArcDraw.LabelsSplitKeepsInkAndGraphicsRemovesBoth` | The labels/graphics split: labels-off keeps ink and drops readouts; graphics-off drops both | The 2-bit visibility contract | ≈0.00 | kept — the 2-bit visibility contract is new in this PR, no prior carrier |
+| `ReferenceArcDraw.UnconcludedEdgeDrawsDashedAndFullRangeDrawsText` | Honesty forms: an unconcluded edge draws the weakened dashed walk (fewer segments than concluded); a full-range reach draws text, no circle pair, and says so in legend and label | Dash-phase segment-count relation + full-range text form | ≈0.00 | kept — the honesty forms are new in this PR, no prior carrier |
+| `ReferenceArcDraw.TirTurnDrawsItsPairWithOneLabelAndObeyItsGate` | One visible TIR feature draws its two-delta pair in neutral ink with ONE paired readout; its gate removes ink, readout and legend; the pair never merges into a bound stroke | Pair cardinality + gate + no-merge identity | ≈0.00 | kept — the pair cardinality and gate rules are new in this PR, no prior carrier |
+| `ReferenceArcDraw.EmptyFactsSubmitNothingWithEveryGateOn` | The fabrication detector: every gate on and no facts → no ink, no readout, no legend bit | Zero-submission over the empty fact set | ≈0.00 | kept — the fabrication detector is new in this PR, no prior carrier |
+| `ReferenceArcDraw.SharedStrokeLabelObeysEachOwnerLabelsSwitch` | The shared stroke's label obeys each owner's labels switch (4 combinations), with the geometry constant throughout | Label-fallback matrix + labels-independent geometry | ≈0.00 | kept — the label-fallback matrix is new in this PR, no prior carrier |
 
 The nine `ReferenceArcDraw` cases and the composition read-back legs are deliberately
 complementary, not redundant: the fixture injects `SurveyOverlayFacts` directly (the draw
@@ -88,12 +91,14 @@ combined cost is ≈0.5s, four orders below the budget question.
 ## Projection after the disposition (both scenarios)
 
 Deleted rows: `OverlayFactsReadBackSupportEdgeAndTurns` and
-`FullDimensionalDocumentCarriesNoPositionedCards`, −24.87s (ATT2) / −34.48s (ATT1).
+`FullDimensionalDocumentCarriesNoPositionedCards` — 17.229 + 17.255 = −34.484s (ATT1),
+12.422 + 12.447 = −24.869s (ATT2), unrounded artifact row values. Every quotient below
+recomputes from the displayed operands.
 
 | Scenario | Phase − deletions | ÷ factor | vs 360 budget |
 |---|---|---|---|
-| ATT1 | 532.73 − 34.48 = 498.25 | 352.28 | green, margin 7.7s |
-| ATT2 | 419.57 − 24.87 = 394.70 | 346.80 | green, margin 13.2s |
+| ATT1 | 532.729 − 34.484 = 498.245 | 352.23 | green, margin 7.8s |
+| ATT2 | 419.570 − 24.869 = 394.701 | 346.72 | green, margin 13.3s |
 
 Both comparable historical scenarios project under budget, so the zero-sum deletion of
 incumbent tests (AC3's conditional branch) is NOT triggered — and by the task's ruling is
