@@ -1202,6 +1202,15 @@ void RegisterFilterEditorTests(ImGuiTestEngine* engine) {
       ctx->Yield(3);
       IM_CHECK_STR_EQ(RowTexts()[1].c_str(), "9");
 
+      // The navigation DESTINATION is part of the proposition: the Tab must continue from the
+      // blank row (the transaction's target), not from wherever NavId happened to be on that
+      // frame — on the first crossing frame that is still the source. Enter on the focused
+      // delete button makes the destination observable: the BLANK is deleted, the source survives.
+      ctx->KeyPress(ImGuiKey_Enter);
+      ctx->Yield(4);
+      IM_CHECK(!ctx->ItemExists("**/##row_text_1"));  // the blank took the Tab and the Enter
+      IM_CHECK_STR_EQ(RowTexts()[0].c_str(), "1-2");  // the source row was NOT the one removed
+
       // Leg B: the same keystrokes typed after the handoff settled, then the same Tab.
       ResetTestState();
       ctx->Yield(2);
@@ -1228,6 +1237,12 @@ void RegisterFilterEditorTests(ImGuiTestEngine* engine) {
       ctx->Yield(3);
       IM_CHECK_STR_EQ(RowTexts()[1].c_str(), "9");
 
+      // Same destination probe as leg A: settled Tab continues from the blank row.
+      ctx->KeyPress(ImGuiKey_Enter);
+      ctx->Yield(4);
+      IM_CHECK(!ctx->ItemExists("**/##row_text_1"));
+      IM_CHECK_STR_EQ(RowTexts()[0].c_str(), "1-2");
+
       // Leg C: the Tab lands on the ACTIVATION frame itself — the crossing has just submitted its
       // request and the navigation state points at the target. The user's Tab must not turn into
       // a re-activation of that target: no focus steal, the accepted text stays, later typing
@@ -1253,6 +1268,119 @@ void RegisterFilterEditorTests(ImGuiTestEngine* engine) {
       ctx->KeyChars("5");
       ctx->Yield(3);
       IM_CHECK_STR_EQ(RowTexts()[1].c_str(), "9");  // nothing reflows into the row
+
+      // Same destination probe: the activation-frame Tab continues from the blank row too.
+      ctx->KeyPress(ImGuiKey_Enter);
+      ctx->Yield(4);
+      IM_CHECK(!ctx->ItemExists("**/##row_text_1"));
+      IM_CHECK_STR_EQ(RowTexts()[0].c_str(), "1-2");
+
+      ctx->ItemClick(kCancel);
+      ctx->Yield(2);
+    };
+  }
+
+  // Shift+Tab on the refocus handoff's activation frame must reach BACKWARD through the full
+  // candidate set — the same destination the stable state's Shift+Tab reaches. The request
+  // adjustments a crossing makes may not discard the candidates already scored ahead of the list,
+  // or the backward navigation wraps around to a control AFTER the rows instead. Two legs, one
+  // expected destination: the activation-frame leg and the settled leg must agree on it (the
+  // nearest focusable ahead of the row list), and neither may leave an editor active.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "filter_editor",
+                                    "shift_tab_on_the_refocus_activation_reaches_backward_to_the_tab_header");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      // Leg A: Shift+Tab lands on the refocus handoff's activation frame.
+      ResetTestState();
+      ctx->Yield(2);
+      OpenFilterModal(ctx);
+      AuthorRow(ctx, 0, "1-2");
+      ctx->ItemInput("**/##row_text_0");
+      ctx->Yield(2);
+      ctx->KeySetEx(ImGuiKey_Enter, true, 0.0f);
+      ctx->Yield();  // frame N: the blank is inserted
+      ctx->KeySetEx(ImGuiKey_Enter, false, 0.0f);
+      ctx->Yield(2);
+      IM_CHECK_EQ(ImGui::GetActiveID(), ctx->ItemInfo("**/##row_text_1").ID);  // premise: the blank took the editor
+      ctx->KeySetEx(ImGuiKey_Escape, true, 0.0f);  // frame M: cancel the blank — the refocus arms
+      ctx->Yield();
+      ctx->KeySetEx(ImGuiKey_Escape, false, 0.0f);
+      ctx->Yield();                                              // frame M+1: the refocus crossing
+      ctx->KeySetEx(ImGuiKey_Tab | ImGuiMod_Shift, true, 0.0f);  // frame M+2: the activation frame
+      ctx->Yield();
+      ctx->KeySetEx(ImGuiKey_Tab | ImGuiMod_Shift, false, 0.0f);
+      ctx->Yield(4);
+      const ImGuiID nav_after_activation = ImGui::GetCurrentContext()->NavId;
+      IM_CHECK_NE(nav_after_activation, (ImGuiID)0);  // backward navigation happened
+      IM_CHECK_EQ(ImGui::GetActiveID(), (ImGuiID)0);  // no editor grabbed anywhere
+      IM_CHECK_STR_EQ(RowTexts()[0].c_str(), "1-2");  // the modal is untouched by the detour
+
+      // Leg B: the same Shift+Tab from the settled editor.
+      ResetTestState();
+      ctx->Yield(2);
+      OpenFilterModal(ctx);
+      AuthorRow(ctx, 0, "1-2");
+      ctx->ItemInput("**/##row_text_0");
+      ctx->Yield(2);
+      ctx->KeySetEx(ImGuiKey_Enter, true, 0.0f);
+      ctx->Yield();
+      ctx->KeySetEx(ImGuiKey_Enter, false, 0.0f);
+      ctx->Yield(2);
+      IM_CHECK_EQ(ImGui::GetActiveID(), ctx->ItemInfo("**/##row_text_1").ID);
+      ctx->KeySetEx(ImGuiKey_Escape, true, 0.0f);
+      ctx->Yield();
+      ctx->KeySetEx(ImGuiKey_Escape, false, 0.0f);
+      ctx->Yield(4);                                                           // the refocus has fully settled
+      IM_CHECK_EQ(ImGui::GetActiveID(), ctx->ItemInfo("**/##row_text_0").ID);  // premise: settled editor
+      ctx->KeySetEx(ImGuiKey_Tab | ImGuiMod_Shift, true, 0.0f);
+      ctx->Yield();
+      ctx->KeySetEx(ImGuiKey_Tab | ImGuiMod_Shift, false, 0.0f);
+      ctx->Yield(4);
+      const ImGuiID nav_after_settled = ImGui::GetCurrentContext()->NavId;
+
+      // The activation-frame backward navigation landed exactly where the settled one does.
+      IM_CHECK_EQ(nav_after_activation, nav_after_settled);
+      IM_CHECK_NE(nav_after_settled, ctx->ItemInfo("**/##row_text_0").ID);  // it left the row list
+      IM_CHECK_EQ(ImGui::GetActiveID(), (ImGuiID)0);
+
+      ctx->ItemClick(kCancel);
+      ctx->Yield(2);
+    };
+  }
+
+  // The row-end policy must never reach past its own transaction: clicking the source row right
+  // after the handoff's settle puts the cursor where the user clicked (the row's start), and the
+  // deferred caret fixup the settle armed for the blank must die with the blank's ownership —
+  // otherwise it fires inside the source's next call and shoves the caret to the end. Plain
+  // KeyChars afterwards (no refocus, no replace helper) makes the insertion point the observable.
+  {
+    ImGuiTest* t =
+        IM_REGISTER_TEST(engine, "filter_editor", "a_click_on_the_source_row_keeps_the_caret_where_it_was_put");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      ctx->Yield(2);
+      OpenFilterModal(ctx);
+      AuthorRow(ctx, 0, "1-2");
+      ctx->ItemInput("**/##row_text_0");
+      ctx->Yield(2);
+      ctx->MouseMoveToPos(ImVec2(ctx->ItemInfo("**/##row_text_0").RectFull.Min.x + 6.0f,
+                                 ctx->ItemInfo("**/##row_text_0").RectFull.GetCenter().y));
+      ctx->Yield(2);  // hover the row's start: the click will put the caret at position 0
+      ctx->KeySetEx(ImGuiKey_Enter, true, 0.0f);
+      ctx->Yield();  // frame N: the blank is inserted, the focus request armed
+      ctx->KeySetEx(ImGuiKey_Enter, false, 0.0f);
+      ctx->KeyChars("9");  // frame N+1: the crossing frame
+      ctx->Yield(1);       // frame N+2: the activation frame (settle: the caret fixup is armed)
+      ctx->MouseDown(0);   // frame N+3: the click on the source row — the user re-picks the editor
+      ctx->MouseUp(0);     // frame N+4: release
+      ctx->Yield(2);
+      ctx->KeyChars("7");  // plain typing: lands at the clicked caret, not at a policy-forced end
+      ctx->Yield(3);
+
+      auto rows = RowTexts();
+      IM_CHECK_EQ(rows.size(), static_cast<size_t>(2));
+      IM_CHECK_STR_EQ(rows[0].c_str(), "71-2");  // inserted at the clicked caret (position 0)
+      IM_CHECK_STR_EQ(rows[1].c_str(), "9");     // the blank kept its accepted keystroke
 
       ctx->ItemClick(kCancel);
       ctx->Yield(2);
