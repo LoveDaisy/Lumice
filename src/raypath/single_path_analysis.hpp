@@ -75,11 +75,13 @@ struct SinglePathRequest : PathSelection {
   double target_azimuth_deg = 0.0;
   // Optional density-ratio reference: another member's single-layer face sequence. When set,
   // every recovered point's ratio block carries the reference's log density at the algebraically
-  // corresponding pose (the proper element that maps this member onto the reference, applied
-  // through CompensatedPose, then re-verified against the world-ray identity) and the log ratio
+  // corresponding pose (the element that maps this member onto the reference while its sky
+  // action fixes the target point — a proper element always fixes it, a mirror only while the
+  // point sits in the sun's vertical plane — applied through CompensatedPose, then re-verified
+  // against the world-ray identity AND the reference's finite corridor) and the log ratio
   // against it. Refused at entry when the reference is not a legal single-layer path or no
-  // proper element maps this member onto it — a mirror moves the sky point, so no same-point
-  // correspondence exists and the ratio question has no answer.
+  // element fixing the target sky point maps this member onto it — a carrier whose sky action
+  // moves the point answers a different question, and the ratio question has no answer.
   std::vector<int> ratio_reference_faces;
   // Unset: the config's wavelength if it names exactly one, else kDefaultWavelengthNm.
   std::optional<double> wavelength_nm;

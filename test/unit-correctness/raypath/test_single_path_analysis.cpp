@@ -28,6 +28,7 @@
 #include "core/simulator.hpp"
 #include "raypath/detail/measure/declared_density.hpp"
 #include "raypath/detail/survey/config_fingerprint.hpp"
+#include "raypath/prepared_geometry.hpp"
 #include "raypath/representative_ray.hpp"
 #include "raypath/scene_to_analytic.hpp"
 #include "raypath/single_path_analysis.hpp"
@@ -1128,12 +1129,90 @@ TEST(SinglePathFactors, RatioReferenceRefusalsNameTheirCause) {
   PointResult refused;
   const Error unmappable = AnalyzePathPointValue(scene, request, false, &refused);
   EXPECT_EQ(unmappable.code, ErrorCode::kInvalidArgument);
-  EXPECT_NE(unmappable.message.find("no proper element"), std::string::npos);
+  EXPECT_NE(unmappable.message.find("no element fixing the target sky point"), std::string::npos);
 
   request.ratio_reference_faces = { 3 };  // a one-face sequence is not a path
   PointResult illegal;
   const Error illegal_path = AnalyzePathPointValue(scene, request, false, &illegal);
   EXPECT_EQ(illegal_path.code, ErrorCode::kInvalidArgument);
+}
+
+TEST(SinglePathFactors, RatioReferenceVerifiesTheTransportedCorridorBeforePublishing) {
+  // The asymmetric crystal (d_[1]=0.3): a proper carrier still maps {3,5,7} onto {5,7,3}, but
+  // the shape symmetry that made the transported corridor congruent to the member's own is
+  // gone — a transported pose the reference's finite geometry refuses must keep its NaN
+  // (unverified), never publish the density read as a verified ratio.
+  PrismCrystalParam p;
+  p.h_ = Fixed(1.2f);
+  for (auto& d : p.d_) {
+    d = Fixed(1.0f);
+  }
+  p.d_[1] = Fixed(0.3f);
+  ConfigManager scene = Scene(p);
+  CrystalConfig& crystal = scene.crystals_.at(1);
+  crystal.axis_.azimuth_dist = { DistributionType::kUniform, 0.0f, 360.0f };
+  crystal.axis_.latitude_dist = { DistributionType::kGaussian, 0.0f, 1.0f };
+  crystal.axis_.roll_dist = { DistributionType::kGaussian, 0.0f, 1.0f };
+  auto request = Request({ 3, 5, 7 }, 25.0, 120.0);
+  request.sample_count = 10000;
+  request.ratio_reference_faces = { 5, 7, 3 };
+  PointResult r;
+  ASSERT_TRUE(AnalyzePathPointValue(scene, request, false, &r).Ok());
+  const SinglePathMetadata& meta = r.Data().meta;
+  const DiscoveredPoint& discovered = r.Data().Discovered();
+  ASSERT_FALSE(discovered.components.empty());
+  // The production carrier and corridor, re-derived independently: the carrier by the same
+  // deterministic sky-fixing rule, the corridor on the reference's face sequence — the two
+  // halves of the leg's published-read contract.
+  PreparedGeometry geometry;
+  ASSERT_TRUE(PrepareGeometry(scene.crystals_.at(1), &geometry).Ok());
+  const std::vector<IdType> member_faces(request.path_layers[0].begin(), request.path_layers[0].end());
+  const std::vector<IdType> reference_ids(request.ratio_reference_faces.begin(), request.ratio_reference_faces.end());
+  CrystalElement carrier;
+  ASSERT_TRUE(FindLabelMappingElement(member_faces, reference_ids, meta.target_direction, meta.sun_azimuth_deg * kDeg,
+                                      &carrier));
+  // The corridor consumes table slot indices, not Lumice face numbers — the same resolution the
+  // entry's own reference leg ran.
+  std::vector<int> ref_slots;
+  ASSERT_TRUE(ResolveSingleLayerPath({ request.ratio_reference_faces }, geometry.table, &ref_slots).Ok());
+  analytic::Corridor reference_corridor(geometry.table, geometry.polygons, ref_slots.data(),
+                                        static_cast<int>(ref_slots.size()));
+  int valid = 0;
+  int published = 0;
+  int corridor_refused = 0;
+  for (const FiberComponent& component : discovered.components) {
+    for (const PointDetail& point : component.points) {
+      if (!point.valid) {
+        continue;  // an invalid member pose carries no world ray to correspond
+      }
+      ++valid;
+      double transported[9];
+      CompensatedPose(carrier, point.pose, meta.sun_azimuth_deg * kDeg, transported);
+      // u = R^T s_hat with s_hat = -incident (SunInCrystal's convention, restated): the
+      // body-frame incident the corridor reads is -u.
+      double transported_incident[3];
+      for (int i = 0; i < 3; ++i) {
+        transported_incident[i] = transported[0 * 3 + i] * meta.incident_direction[0] +
+                                  transported[1 * 3 + i] * meta.incident_direction[1] +
+                                  transported[2 * 3 + i] * meta.incident_direction[2];
+      }
+      const bool corridor_ok = reference_corridor.Evaluate(transported_incident, meta.refractive_index).status ==
+                               analytic::EntryMeasureStatus::kOk;
+      if (!std::isnan(point.ref_log_density)) {
+        EXPECT_TRUE(corridor_ok) << "a published reference read requires a traversable corridor";
+        ++published;
+      }
+      if (!corridor_ok) {
+        EXPECT_TRUE(std::isnan(point.ref_log_density));
+        EXPECT_TRUE(std::isnan(point.log_ratio));
+        ++corridor_refused;
+      }
+    }
+  }
+  EXPECT_GT(valid, 0) << "the scene recovers points, so the contract has rows to rule on";
+  EXPECT_GT(corridor_refused, 0) << "this asymmetric fixture must contain the corridor gap the verification exists for";
+  // The gap refused, the traversable remainder still answers (the same scene's congruent poses).
+  EXPECT_GT(published, 0) << "the corridor check refuses poses, not the correspondence itself";
 }
 
 // A fixed axis (every slot a Dirac): the linear rho answers 0 off the Dirac slice and the log

@@ -100,9 +100,10 @@ v4.63 把点面的闭式密度事实以 log 空间发布——纯追加、只读
 尾部追加 `ratio_reference_faces`/`ratio_reference_face_count`（仅新完整 extent 读取；NULL 与
 旧 extent 行为逐字保持）：另一成员的单层面序列。存在时，`LUMICE_PathPointGetSampleDensity`
 逐样本报告同一声明测度在代数搬运对应姿态处的 log 密度及 `log_ratio`。搬运走引擎元素代数
-（第一个把请求成员映到参考的 proper 元素；镜面移动天空点，仅不正常可连时以 `invalid_argument`
-拒绝——同点比率不存在），世界射线恒等逐点复核：参考有限几何拒绝的姿态让该样本的参考字段
-保持 NaN，不给出貌似合理的数。`log_rho` 本身在深尾保持有限 log（线性 `rho` 在此下溢为
+（第一个在把请求成员映到参考的同时其天空作用固定目标点的元素；proper 元素必然固定，镜面
+仅当点落在太阳竖直面内时固定——会移动天空点的载体以 `invalid_argument` 拒绝：同点比率
+不存在），对应关系逐点复核世界射线恒等与参考有限走廊两面：参考有限几何拒绝的姿态让该样本
+的参考字段保持 NaN，不给出貌似合理的数。`log_rho` 本身在深尾保持有限 log（线性 `rho` 在此下溢为
 read-as-zero 0）；−inf 表示离支撑或 Dirac 切片，绝非无光，也没有阈值规定多小算小。双方均
 离支撑读 NaN（不可比），单侧离支撑保留带号无穷。`LUMICE_PathPointGetInterpretivePose` 给出
 恢复集的确定性闭式密度 argmax（平局取首；不宣称全局最大；不可用=本次搜索尚未找到，非不存在）。

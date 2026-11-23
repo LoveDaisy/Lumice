@@ -9,6 +9,7 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <limits>
 #include <memory>
 #include <thread>
 
@@ -964,6 +965,179 @@ TEST(InterpretivePointChain, ReusedAnswerObjectStartsEveryQueryFromFreshState) {
   EXPECT_EQ(answer.selected_class, 1);
   EXPECT_FALSE(answer.member_fixed);
   EXPECT_EQ(answer.point.Data().meta.faces, (std::vector<int>{ 4, 2 }));
+}
+
+ConfigManager ColumnMirrorPairScene() {
+  // A regular column whose B|D row holds the sun-plane mirror pair 1-3-4-2 / 1-3-8-2: sigma_0
+  // retains the measure (uniform azimuth, roll symmetric about 0, zenith band off the mirror's
+  // reach) and fixes exactly the sun-plane targets. Height 1.2: the members involve the basal
+  // faces, and the height is part of their geometry (the Parry fixture's lesson).
+  PrismCrystalParam prism;
+  prism.h_ = { DistributionType::kNoRandom, 1.2f, 0 };
+  for (auto& distance : prism.d_) {
+    distance = { DistributionType::kNoRandom, 1.0f, 0 };
+  }
+  ConfigManager scene;
+  CrystalConfig crystal;
+  crystal.id_ = 1;
+  crystal.param_ = prism;
+  crystal.axis_.azimuth_dist = { DistributionType::kUniform, 0.0f, 360.0f };
+  crystal.axis_.latitude_dist = { DistributionType::kGaussian, 0.0f, 1.0f };
+  crystal.axis_.roll_dist = { DistributionType::kGaussian, 0.0f, 5.0f };
+  scene.crystals_.emplace(1, crystal);
+  scene.scene_.light_source_.param_ = SunParam{ 20.0f, 180.0f, 0.5f };
+  scene.scene_.light_source_.spectrum_ = IlluminantType::kD65;
+  ScatteringSetting entry{};
+  entry.crystal_ = crystal;
+  entry.crystal_proportion_ = 1;
+  scene.scene_.ms_.push_back({ 0, { entry } });
+  return scene;
+}
+
+InterpretivePointQuery ColumnMirrorQuery(double altitude, double azimuth) {
+  InterpretivePointQuery query;
+  query.crystal_id = 1;
+  query.representative = { 1, 3, 4, 2 };
+  query.symmetry_bits = 6;  // B | D: the mirror pair's row (no P)
+  query.target_altitude_deg = altitude;
+  query.target_azimuth_deg = azimuth;
+  query.sample_count = 100000;
+  query.sun_grid_lat_count = 0;
+  return query;
+}
+
+TEST(InterpretivePointChain, InPlaneMirrorPairSharesTheClassAndItsRatioReference) {
+  std::unique_ptr<AnalysisWorkspace> workspace;
+  ASSERT_TRUE(AnalysisWorkspace::Create(ColumnMirrorPairScene(), &workspace).Ok());
+  // The sun-plane target: the class carries BOTH mirror siblings — the same correspondence the
+  // ratio reference must admit. The carrier admission used to demand a proper element and refuse
+  // exactly this query (the class transport and the ratio admission contradicting each other).
+  std::vector<LocalClass> classes;
+  LocalClassQuery class_query;
+  class_query.crystal_id = 1;
+  class_query.representative = { 1, 3, 4, 2 };
+  class_query.symmetry_bits = 6;
+  class_query.target_altitude_deg = 36.0;
+  class_query.target_azimuth_deg = 180.0;
+  ASSERT_TRUE(workspace->QueryLocalClasses(class_query, &classes).Ok());
+  const LocalClass* pair_class = nullptr;
+  for (const LocalClass& klass : classes) {
+    const bool has_member =
+        std::any_of(klass.member_sequences.begin(), klass.member_sequences.end(),
+                    [](const std::vector<int>& m) { return m == (std::vector<int>{ 1, 3, 4, 2 }); });
+    const bool has_sibling =
+        std::any_of(klass.member_sequences.begin(), klass.member_sequences.end(),
+                    [](const std::vector<int>& m) { return m == (std::vector<int>{ 1, 3, 8, 2 }); });
+    if (has_member && has_sibling) {
+      pair_class = &klass;
+    }
+  }
+  ASSERT_NE(pair_class, nullptr) << "the mirror siblings share one class at the sun-plane point";
+  // The fixed sibling with the representative as reference: answered, not refused.
+  InterpretivePointQuery query = ColumnMirrorQuery(36.0, 180.0);
+  query.fixed_member = { 1, 3, 8, 2 };
+  query.ratio_reference_faces = { 1, 3, 4, 2 };
+  InterpretivePointAnswer answer;
+  ASSERT_TRUE(workspace->QueryInterpretivePoint(query, false, &answer).Ok());
+  EXPECT_EQ(answer.point.Data().meta.ratio_reference_faces, (std::vector<int>{ 1, 3, 4, 2 }));
+  int published = 0;
+  for (const FiberComponent& component : answer.point.Data().Discovered().components) {
+    for (const PointDetail& p : component.points) {
+      if (!p.valid) {
+        continue;
+      }
+      if (!std::isnan(p.ref_log_density)) {
+        ++published;
+      }
+    }
+  }
+  EXPECT_GT(published, 0) << "the in-plane mirror correspondence is answered, not refused";
+}
+
+TEST(InterpretivePointChain, OffPlaneTheMirrorMovesTheSkyPointAndTheCarrierIsRefused) {
+  std::unique_ptr<AnalysisWorkspace> workspace;
+  ASSERT_TRUE(AnalysisWorkspace::Create(ColumnMirrorPairScene(), &workspace).Ok());
+  // Off the sun's vertical plane sigma_0's sky action moves the point: the class separates (the
+  // siblings no longer share one), and the ratio reference's carrier admission refuses — the
+  // same criterion both faces read, refusing only where the point would actually move.
+  std::vector<LocalClass> classes;
+  LocalClassQuery class_query;
+  class_query.crystal_id = 1;
+  class_query.representative = { 1, 3, 4, 2 };
+  class_query.symmetry_bits = 6;
+  class_query.target_altitude_deg = 36.0;
+  class_query.target_azimuth_deg = 120.0;
+  ASSERT_TRUE(workspace->QueryLocalClasses(class_query, &classes).Ok());
+  for (const LocalClass& klass : classes) {
+    const bool has_member =
+        std::any_of(klass.member_sequences.begin(), klass.member_sequences.end(),
+                    [](const std::vector<int>& m) { return m == (std::vector<int>{ 1, 3, 4, 2 }); });
+    const bool has_sibling =
+        std::any_of(klass.member_sequences.begin(), klass.member_sequences.end(),
+                    [](const std::vector<int>& m) { return m == (std::vector<int>{ 1, 3, 8, 2 }); });
+    EXPECT_FALSE(has_member && has_sibling)
+        << "off the sun's plane the mirror moves the point: the siblings cannot share a class";
+  }
+  InterpretivePointQuery query = ColumnMirrorQuery(36.0, 120.0);
+  query.fixed_member = { 1, 3, 8, 2 };
+  query.ratio_reference_faces = { 1, 3, 4, 2 };
+  InterpretivePointAnswer answer;
+  const Error error = workspace->QueryInterpretivePoint(query, false, &answer);
+  ASSERT_FALSE(error.Ok());
+  EXPECT_EQ(error.code, ErrorCode::kInvalidArgument);
+  EXPECT_NE(error.message.find("no element fixing the target sky point"), std::string::npos);
+}
+
+ConfigManager ZigzagEndpointScene() {
+  // The +inf selector witness: Zigzag roll declares its support endpoints' divergence (+inf is
+  // the density law's own reading there); the near-fixed latitude keeps every other branch a
+  // finite deep tail, so the argmax is unambiguous once +inf is allowed to win.
+  PrismCrystalParam prism;
+  prism.h_ = { DistributionType::kNoRandom, 1.2f, 0 };
+  for (auto& distance : prism.d_) {
+    distance = { DistributionType::kNoRandom, 1.0f, 0 };
+  }
+  ConfigManager scene;
+  CrystalConfig crystal;
+  crystal.id_ = 1;
+  crystal.param_ = prism;
+  crystal.axis_.azimuth_dist = { DistributionType::kUniform, 0.0f, 360.0f };
+  crystal.axis_.latitude_dist = { DistributionType::kGaussianLegacy, 12.345f, 0.0001f };
+  crystal.axis_.roll_dist = { DistributionType::kZigzag, 0.0f, 90.0f };
+  scene.crystals_.emplace(1, crystal);
+  scene.scene_.light_source_.param_ = SunParam{ 20.0f, 0.0f, 0.5f };
+  scene.scene_.light_source_.spectrum_ = IlluminantType::kD65;
+  ScatteringSetting entry{};
+  entry.crystal_ = crystal;
+  entry.crystal_proportion_ = 1;
+  scene.scene_.ms_.push_back({ 0, { entry } });
+  return scene;
+}
+
+TEST(InterpretivePointChain, SupportedInfinityWinsTheInterpretivePoseAndTheCarryingStatement) {
+  std::unique_ptr<AnalysisWorkspace> workspace;
+  ASSERT_TRUE(AnalysisWorkspace::Create(ZigzagEndpointScene(), &workspace).Ok());
+  InterpretivePointQuery query;
+  query.crystal_id = 1;
+  query.representative = { 3 };
+  query.symmetry_bits = 0;  // the literal single-member row
+  query.target_altitude_deg = 20.0;
+  query.target_azimuth_deg = 180.0;
+  query.sample_count = 10000;
+  query.sun_grid_lat_count = 0;
+  InterpretivePointAnswer answer;
+  ASSERT_TRUE(workspace->QueryInterpretivePoint(query, false, &answer).Ok());
+  // The supported +inf pose IS the argmax of the recovered set: the selector must name it (not
+  // a finite deep tail) and the carrying statement — the whole selection's evidence — follows.
+  EXPECT_EQ(answer.selected_class, 0);
+  EXPECT_EQ(answer.search_outcome, ExecutionOutcome::kCompleted);
+  const InterpretivePose& pose = answer.point.Data().Discovered().interpretive;
+  ASSERT_TRUE(pose.available);
+  EXPECT_EQ(pose.log_density, std::numeric_limits<double>::infinity());
+  const PointDetail& peak = answer.point.Data().Discovered().components[pose.component_index].points[pose.point_index];
+  EXPECT_EQ(peak.log_rho, std::numeric_limits<double>::infinity());
+  EXPECT_TRUE(peak.valid);
+  EXPECT_GT(peak.entry_measure, 0.0) << "the winner is a ray that travels, not just a dense normal";
 }
 
 }  // namespace

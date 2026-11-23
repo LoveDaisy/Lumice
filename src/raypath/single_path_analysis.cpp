@@ -640,24 +640,27 @@ IncompleteComponent ToIncomplete(const analytic::IncompleteCandidate& c) {
 // The initial interpretation's pose: the recovered set's deterministic closed-form density argmax
 // (first occurrence wins ties). A pure read of the finished components — no discovery fact, no
 // sampling quantity and no discovery-order dependence can move it, and no threshold filters what
-// it may name: how small the winner's density is stays the log value's own statement.
+// it may name: how small the winner's density is stays the log value's own statement, and a
+// reading the density law declares +inf (a supported endpoint's divergence) is the greatest
+// reading there is and wins like any other value.
 InterpretivePose SelectInterpretivePose(const std::vector<FiberComponent>& components) {
   InterpretivePose out;
   double best = -std::numeric_limits<double>::infinity();
   for (size_t c = 0; c < components.size(); ++c) {
     for (size_t k = 0; k < components[c].points.size(); ++k) {
       const PointDetail& point = components[c].points[k];
-      // A pose a ray can actually travel AND carrying an ordinary density reading: valid is
-      // EvaluatePath's optical check on the face normals, the finite crystal lives in
-      // entry_measure — a pose with zero entry area admits no ray and cannot explain the
-      // clicked light however dense its normals read. isfinite rejects both the off-support
-      // −inf and any NaN, so the winner always explains a branch that exists, is reachable,
-      // and answers.
-      if (!point.valid || !(point.entry_measure > 0.0) || !std::isfinite(point.log_rho)) {
+      // A pose a ray can actually travel AND whose density read answers: valid is EvaluatePath's
+      // optical check on the face normals, the finite crystal lives in entry_measure — a pose
+      // with zero entry area admits no ray and cannot explain the clicked light however dense
+      // its normals read. The three density readings separate: NaN is no reading at all; −inf
+      // (off-support) never passes the strictly-greater test below, so it can neither win nor
+      // mask a later candidate; a supported +inf takes the argmax the declared semantics give
+      // it. The winner always explains a branch that exists, is reachable, and answers.
+      if (!point.valid || !(point.entry_measure > 0.0) || std::isnan(point.log_rho)) {
         continue;
       }
       if (!(point.log_rho > best)) {
-        continue;  // strictly greater: the first among equals wins
+        continue;  // strictly greater: the first among equals wins (+inf ties keep the first)
       }
       best = point.log_rho;
       out.available = true;
@@ -669,18 +672,26 @@ InterpretivePose SelectInterpretivePose(const std::vector<FiberComponent>& compo
   return out;
 }
 
-// The density-ratio reference leg. `carrier` is the proper element mapping the requested member
-// onto the reference (entry-refused otherwise), so CompensatedPose(carrier, pose) is the pose at
-// which the reference crystal realizes the SAME world ray — the equivariance the element algebra
-// is made of. That identity is re-verified per point (validity plus the outgoing directions'
-// agreement) instead of trusted: a wrong carrier or a pose the reference's finite geometry
-// refuses turns into this point's honest NaN, never into a plausible wrong ratio. The density
-// read is the same declared measure at the transported pose's composed angles.
+// The density-ratio reference leg. `carrier` is the element that fixes the target sky point while
+// mapping the requested member onto the reference (entry-refused otherwise), so
+// CompensatedPose(carrier, pose) is the pose at which the reference crystal realizes the SAME
+// world ray — the equivariance the element algebra is made of. That identity is re-verified per
+// point (validity, the outgoing directions' agreement, AND the reference's finite corridor)
+// instead of trusted: EvaluatePath reads the face normals' optics, the finite crystal lives in
+// the corridor — a transported pose no internal line can traverse admits no actual ray, and a
+// ratio published for it would claim a verified correspondence that does not exist. A wrong
+// carrier, a pose the reference's finite geometry refuses, all turn into this point's honest
+// NaN, never into a plausible wrong ratio. The density read is the same declared measure at the
+// transported pose's composed angles.
 constexpr double kTransportVerifyToleranceRad = 1e-9;
 
 void AttachRatioReference(PathContext& ctx, const CrystalElement& carrier, const std::vector<int>& ref_slots,
-                          double sun_azimuth_rad, const analytic::DiscoveryStop& stop, DiscoveredPoint* discovered) {
+                          const analytic::FacePolygonTable& polygons, double sun_azimuth_rad,
+                          const analytic::DiscoveryStop& stop, DiscoveredPoint* discovered) {
   const double nan = std::numeric_limits<double>::quiet_NaN();
+  // The reference's own finite-face machinery — the same Corridor the member's entry areas come
+  // from, built on the reference's face sequence (the polygons are this query's crystal's).
+  analytic::Corridor reference_corridor(ctx.Table(), polygons, ref_slots.data(), static_cast<int>(ref_slots.size()));
   // EvaluatePath's outputs write through these buffers (the invalid path zeroes them
   // unconditionally), so the leg carries its own storage the way PathContext::Detail does.
   std::vector<double> segments(3 * (ref_slots.size() + 1));
@@ -709,6 +720,17 @@ void AttachRatioReference(PathContext& ctx, const CrystalElement& carrier, const
       const double cosine = analytic::so3::Dot3(outputs.outgoing_direction, point.outgoing_direction);
       if (std::atan2(sine, cosine) > kTransportVerifyToleranceRad) {
         continue;  // the transported pose does not carry the same world ray: refuse, don't report
+      }
+      // The finite-face half of the same verification: the corridor the member's own
+      // entry_measure reads, evaluated at the transported pose on the reference's face sequence.
+      // Optics passing and the world ray agreeing do not move a ray through a crystal whose
+      // finite shape refuses the path — an asymmetric crystal's transported corridor can be
+      // empty while every normal check passes.
+      double transported_sun[3];
+      SunInCrystal(transported, ctx.Incident(), transported_sun);
+      const double transported_incident[3] = { -transported_sun[0], -transported_sun[1], -transported_sun[2] };
+      if (reference_corridor.Evaluate(transported_incident, ctx.Index()).status != analytic::EntryMeasureStatus::kOk) {
+        continue;  // no line of the internal direction crosses the reference's finite faces
       }
       const double ref_log = ctx.PoseLogDensity(transported);
       point.ref_log_density = ref_log;
@@ -1088,31 +1110,12 @@ Error RunPointExecution(const ConfigManager& config, const SinglePathRequest& in
   meta.faces = request.path_layers.front();
   // The ratio reference's identity freezes with the result: the ratio block's numbers are
   // relative to THIS member, and a consumer holding only the result must be able to say so.
+  // The density-ratio reference's identity freezes with the result: the ratio block's numbers are
+  // relative to THIS member, and a consumer holding only the result must be able to say so.
   meta.ratio_reference_faces = request.ratio_reference_faces;
   static_cast<ScopeLocation&>(result.members) = survey::ResolveSelectionLocation(config, request);
   result.members.member_kind = MemberKind::kLiteral;
   result.members.members = { meta.faces };
-  // The density-ratio reference: resolved once at entry — a legal single-layer path and a proper
-  // element mapping this member onto it. A mirror moves the sky point, so an improper-only
-  // correspondence answers a different question and is refused rather than silently answered.
-  std::vector<int> ref_slots;
-  CrystalElement ratio_carrier;
-  const bool has_ratio_reference = !request.ratio_reference_faces.empty();
-  if (has_ratio_reference) {
-    if (Error e = ResolveSingleLayerPath({ request.ratio_reference_faces }, table, &ref_slots); !e.Ok()) {
-      return { ErrorCode::kInvalidArgument, "ratio reference: " + e.message };
-    }
-    // The element algebra is IdType-typed; the request's face sequences are int-typed — the
-    // conversion is exact (both spell the Lumice face numbers).
-    const std::vector<IdType> member_faces(meta.faces.begin(), meta.faces.end());
-    const std::vector<IdType> reference_faces(request.ratio_reference_faces.begin(),
-                                              request.ratio_reference_faces.end());
-    if (!FindLabelMappingElement(member_faces, reference_faces, /*proper_only=*/true, &ratio_carrier)) {
-      return { ErrorCode::kInvalidArgument,
-               "ratio reference: no proper element maps the requested member onto the reference "
-               "face sequence (no same-sky-point correspondence exists)" };
-    }
-  }
   QuantityContext quantity_context;
   quantity_context.members = result.members;
   quantity_context.crystal = crystal_it->second;
@@ -1138,6 +1141,31 @@ Error RunPointExecution(const ConfigManager& config, const SinglePathRequest& in
   AltAzToDir(request.target_altitude_deg, request.target_azimuth_deg, meta.target_direction);
   const double delta = analytic::TargetDeviation(meta.incident_direction, meta.target_direction);
   meta.target_deviation_deg = delta * math::kRadToDegreeD;
+  // The density-ratio reference: resolved once at entry — a legal single-layer path and an
+  // element mapping this member onto it while FIXING the target sky point. Resolved after the
+  // target direction exists: the carrier's admission is the element algebra's own sky criterion
+  // (FindLabelMappingElement), the same test the local-class resolver's transport facts pass —
+  // a carrier whose sky action would move the clicked point answers a different question and is
+  // refused rather than silently answered.
+  std::vector<int> ref_slots;
+  CrystalElement ratio_carrier;
+  const bool has_ratio_reference = !request.ratio_reference_faces.empty();
+  if (has_ratio_reference) {
+    if (Error e = ResolveSingleLayerPath({ request.ratio_reference_faces }, table, &ref_slots); !e.Ok()) {
+      return { ErrorCode::kInvalidArgument, "ratio reference: " + e.message };
+    }
+    // The element algebra is IdType-typed; the request's face sequences are int-typed — the
+    // conversion is exact (both spell the Lumice face numbers).
+    const std::vector<IdType> member_faces(meta.faces.begin(), meta.faces.end());
+    const std::vector<IdType> reference_faces(request.ratio_reference_faces.begin(),
+                                              request.ratio_reference_faces.end());
+    if (!FindLabelMappingElement(member_faces, reference_faces, meta.target_direction,
+                                 meta.sun_azimuth_deg * math::kDegreeToRadD, &ratio_carrier)) {
+      return { ErrorCode::kInvalidArgument,
+               "ratio reference: no element fixing the target sky point maps the requested member "
+               "onto the reference face sequence (no same-sky-point correspondence exists)" };
+    }
+  }
   meta.wavelength_nm = wavelength.wavelength_nm;
   meta.wavelength_source = wavelength.source;
   meta.refractive_index = wavelength.refractive_index;
@@ -1288,7 +1316,7 @@ Error RunPointExecution(const ConfigManager& config, const SinglePathRequest& in
   // The ratio reference rides the finished points (the same stop authority: a stop mid-leg leaves
   // the unvisited points' block NaN — a partial document, marked so like every other leg).
   if (has_ratio_reference) {
-    AttachRatioReference(ctx, ratio_carrier, ref_slots, meta.sun_azimuth_deg * math::kDegreeToRadD, stop,
+    AttachRatioReference(ctx, ratio_carrier, ref_slots, polygons, meta.sun_azimuth_deg * math::kDegreeToRadD, stop,
                          &result.Discovered());
     if (stopped()) {
       meta.interrupted = true;

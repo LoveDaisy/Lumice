@@ -670,14 +670,17 @@ std::vector<IdType> ReduceRaypathByPeriod(const std::vector<IdType>& rp, const s
                                           int fn_period, const std::vector<std::vector<IdType>>& row);
 
 // The first element in AllCrystalElements()' fixed order whose label action maps `from` onto `to`
-// face-for-face (same size, same band structure), restricted to proper elements when
-// `proper_only` — an improper carrier moves the sky point (σ_g = the sun's vertical mirror), so a
-// same-sky-point correspondence such as the point face's density-ratio reference needs a proper
-// one. False (out untouched) when no such element exists: the two sequences are not one group
-// image, and no transported pose corresponds them. Deterministic: the inventory's order is the
+// face-for-face (same size, same band structure) AND whose sky action fixes `direction` — the
+// same-sky-point carrier a correspondence such as the point face's density-ratio reference needs.
+// A proper element's σ_g is the identity and fixes every direction; an improper one's σ_g is the
+// sun's vertical mirror, which fixes `direction` exactly when the direction lies in that plane —
+// so a mirror legally carries the correspondence when the clicked point sits in the sun's
+// vertical plane, and is refused exactly when its sky action would move the point. False (out
+// untouched) when no such element exists: the two sequences are not one group image at this sky
+// point, and no transported pose corresponds them. Deterministic: the inventory's order is the
 // tie-break, the same rule the local-class resolver's transport facts use.
-bool FindLabelMappingElement(const std::vector<IdType>& from, const std::vector<IdType>& to, bool proper_only,
-                             CrystalElement* out);
+bool FindLabelMappingElement(const std::vector<IdType>& from, const std::vector<IdType>& to, const double direction[3],
+                             double sun_azimuth_rad, CrystalElement* out);
 
 namespace detail {
 // Internal — not part of public API.

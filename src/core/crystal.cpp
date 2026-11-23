@@ -1817,14 +1817,17 @@ std::vector<IdType> ReduceRaypathByPeriod(const std::vector<IdType>& rp, const s
   return ReduceRaypathByPeriod(rp, elements, fn_period, &row);
 }
 
-bool FindLabelMappingElement(const std::vector<IdType>& from, const std::vector<IdType>& to, bool proper_only,
-                             CrystalElement* out) {
+bool FindLabelMappingElement(const std::vector<IdType>& from, const std::vector<IdType>& to, const double direction[3],
+                             double sun_azimuth_rad, CrystalElement* out) {
   if (from.size() != to.size() || out == nullptr) {
     return false;
   }
   for (const CrystalElement& element : AllCrystalElements()) {
-    if (proper_only && !element.IsProper()) {
-      continue;
+    // The sky half is the same criterion the local-class resolver selects transport facts with
+    // (ElementFixesSkyDirection — one authority, no second sky-fixed test); a proper element
+    // passes unconditionally, an improper one only while it keeps this sky point.
+    if (!ElementFixesSkyDirection(element, direction, sun_azimuth_rad)) {
+      continue;  // its sky action would move the point: not a same-sky-point carrier here
     }
     bool maps = true;
     for (size_t i = 0; i < from.size(); ++i) {

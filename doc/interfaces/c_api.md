@@ -119,11 +119,13 @@ append, read-only by construction. `LUMICE_SinglePathRequest` appends
 NULL and older extents keep the exact previous behavior): another member's single-layer face
 sequence. When present, `LUMICE_PathPointGetSampleDensity` reports, per recovered sample, the
 same declared measure's log density at the algebraically transported corresponding pose and
-`log_ratio` against it. The transport is the engine's element algebra (the first proper
-element mapping the requested member onto the reference; a mirror moves the sky point, so an
-improper-only correspondence is refused as `invalid_argument` — no same-sky-point ratio
-exists), and the world-ray identity is re-verified per point: a pose the reference's finite
-geometry refuses leaves that sample's reference fields NaN rather than a plausible number.
+`log_ratio` against it. The transport is the engine's element algebra (the first element whose
+sky action fixes the target point while mapping the requested member onto the reference; a
+proper element always fixes it, a mirror only while the point sits in the sun's vertical plane —
+a carrier that would move the sky point is refused as `invalid_argument`: no same-sky-point
+ratio exists), and the correspondence is re-verified per point against the world-ray identity
+AND the reference's finite corridor: a pose the reference's finite geometry refuses leaves that
+sample's reference fields NaN rather than a plausible number.
 `log_rho` itself keeps a deep tail's finite log where the linear `rho` underflows to a
 read-as-zero 0; −inf means off-support or a Dirac slot's slice, never darkness, and no
 threshold decides how small is small. Both sides off-support reads NaN (incomparable), a

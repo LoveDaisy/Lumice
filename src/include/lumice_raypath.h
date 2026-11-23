@@ -81,8 +81,10 @@ typedef struct LUMICE_SinglePathRequest {
   int context_symmetry_bits_plus_one;
   // Appended v4.63. Optional density-ratio reference: another member's face sequence, the same
   // single-layer encoding as `faces` (refused as invalid_argument when it is not a legal path or
-  // no proper element maps the requested member onto it — a mirror moves the sky point, so no
-  // same-sky-point correspondence exists). When present, every recovered sample's density block
+  // no element whose sky action fixes the target point maps the requested member onto it — a
+  // carrier that would move the sky point answers a different question; a proper element always
+  // fixes the point, a mirror only while the point sits in the sun's vertical plane). When
+  // present, every recovered sample's density block
   // (LUMICE_PathPointGetSampleDensity) carries the reference's log density at the algebraically
   // corresponding pose and the log ratio against it. NULL / count 0 (and older extents): no
   // reference, the block's reference fields stay NaN.
