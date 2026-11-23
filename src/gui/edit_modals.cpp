@@ -283,12 +283,28 @@ static uint64_t g_next_summand_row_uid = 0;
 // so a parked request can never land on a row it was not created for.
 static uint64_t g_summand_pending_focus_uid = kNoSummandRowUid;
 
-// The row keyboard flow's event attribution (code-review round 1): which row is the active editor
-// and what its buffer said last frame. A row command (Esc cancel) may only fire on the first frame
-// the row stops being active AFTER having been the active editor — read from this record, never
-// from the global deactivated window, which also covers rows navigation already left.
-static uint64_t g_summand_row_edited_uid = kNoSummandRowUid;
-static char g_summand_row_live_text[kSummandRowBufSize] = { 0 };
+
+// Keystrokes that arrive while a parked focus request is still crossing boxes have no settled
+// editor to land in: no box is active to consume them, or the target just activated and its
+// activation frame skips char processing while still clearing the queue. They are parked here
+// (tagged to their row) and delivered AFTER that row's box is the active editor — an append to
+// the live edit with the cursor moved to the end — never written into the buffer before
+// activation: a pre-activation write would be snapshotted as the row's undo baseline (an Esc on
+// a new blank row would then restore the parked text instead of empty) and re-selected away by
+// the activation's select-all (code-review round 2).
+static uint64_t g_summand_focus_stash_uid = kNoSummandRowUid;
+static ImVector<ImWchar> g_summand_focus_stash_chars;
+
+// One reset for everything the row keyboard flow parks between frames — the focus request, the
+// keystrokes parked for it, and the parked Esc judgment. Every session boundary calls this
+// (open, close, document reset, Remove Filter's uid rewind, leaving the Filter tab) so no parked
+// state can outlive the session it was parked in; the RenderSummandRowList sweep additionally
+// clears targets that vanished mid-session (an external pull deleting them).
+void ClearSummandKeyboardSession() {
+  g_summand_pending_focus_uid = kNoSummandRowUid;
+  g_summand_focus_stash_uid = kNoSummandRowUid;
+  g_summand_focus_stash_chars.clear();
+}
 
 // Shared filter fields (name / action / sym_*). `param` is never mutated on
 // g_filter_top — it stays at the default-constructed SoP so operator== reduces
@@ -1186,7 +1202,7 @@ void OpenEditModal(const EditRequest& req, GuiState& state) {
   g_filter_top.sym_d = src.sym_d;
   // A new editor session (including a card-to-card switch in Immediate mode): any parked keyboard
   // focus request belonged to the previous target.
-  g_summand_pending_focus_uid = kNoSummandRowUid;
+  ClearSummandKeyboardSession();
   SetRowsFromSop(src.param);
   g_filter_remove_intent = false;
   // Entry-private scalars (weight / participation) — the entry bar's buffers. Copied from the
@@ -1932,70 +1948,71 @@ static void RenderSummandRowList() {
     }
     char text_id[64];
     snprintf(text_id, sizeof(text_id), "##row_text_%llu", static_cast<unsigned long long>(row.uid));
+    const ImGuiID input_id = ImGui::GetID(text_id);
     ImGui::PushItemWidth(row_item_width);  // leave room for the trailing "x" delete button
+    const ImGuiID active_id = ImGui::GetActiveID();
     // Serve the parked focus request on its own row only, and only count it served when the box
     // actually went active — a focus ImGui stole leaves the request armed for the next frame.
     const bool wants_focus = (g_summand_pending_focus_uid == row.uid);
+    // Deliver parked handoff keystrokes once this box IS the active editor (the handoff settled,
+    // so the focus request is no longer armed for it): an append to the live edit, cursor moved to
+    // the end — not a pre-activation buffer write, which would be snapshotted as the row's undo
+    // baseline and re-selected away by the activation's select-all.
+    if (!g_summand_focus_stash_chars.empty() && g_summand_focus_stash_uid == row.uid && !wants_focus &&
+        active_id == input_id) {
+      AppendCharsToRowBuffer(row.text, g_summand_focus_stash_chars);
+      g_summand_focus_stash_chars.clear();
+      g_summand_focus_stash_uid = kNoSummandRowUid;
+      if (ImGuiInputTextState* state = ImGui::GetInputTextState(input_id)) {
+        state->ReloadUserBufAndMoveToEnd();
+      }
+    }
     if (wants_focus) {
       // Keystrokes that arrive while the focus is crossing boxes would be dropped: no box is
       // active to consume them (or the target just activated and its activation frame skips char
-      // processing while still clearing the queue). Park them into this row's buffer BEFORE
-      // activation snapshots it, so the first keystroke after Enter/Esc is never lost. The reload
-      // keeps the cursor at the end — the parked text reads as append, not as a selection to
-      // replace (code-review round 1, Major 1).
-      const ImGuiID input_id = ImGui::GetID(text_id);
+      // processing while still clearing the queue). Park them here — tagged to this row — for
+      // delivery once the box is the active editor (block above), so the first keystroke after
+      // Enter/Esc is never lost and never becomes part of the row's undo baseline.
       ImGuiIO& io = ImGui::GetIO();
-      const ImGuiID active_id = ImGui::GetActiveID();
       if (io.InputQueueCharacters.size() > 0 && (active_id == 0 || active_id == input_id)) {
-        AppendCharsToRowBuffer(row.text, io.InputQueueCharacters);
-        io.InputQueueCharacters.resize(0);
-        if (active_id == input_id) {
-          if (ImGuiInputTextState* state = ImGui::GetInputTextState(input_id)) {
-            state->ReloadUserBufAndMoveToEnd();
-          }
+        g_summand_focus_stash_uid = row.uid;
+        for (const ImWchar c : io.InputQueueCharacters) {
+          g_summand_focus_stash_chars.push_back(c);
         }
+        io.InputQueueCharacters.resize(0);
       }
       ImGui::SetKeyboardFocusHere(0);
     }
     // EnterReturnsTrue makes the return value the Enter event itself: true only on the frame this
     // box, while active, processed the key. A row navigation already left can never claim it
     // (code-review round 1, Major 2).
+    const ImGuiID active_before_input = active_id;  // this frame's owner of the box, entering the call
     const bool enter_accepted =
         ImGui::InputText(text_id, row.text, sizeof(row.text), ImGuiInputTextFlags_EnterReturnsTrue);
     if (wants_focus && ImGui::IsItemActive()) {
-      g_summand_pending_focus_uid = kNoSummandRowUid;
+      g_summand_pending_focus_uid = kNoSummandRowUid;  // served: parked keystrokes deliver next frame
     }
     ImGui::PopItemWidth();
 
     // The row keyboard flow. Enter accepts this row and inserts a blank one right below it, its
     // own identity, with the focus request parked on it. Cap-full Enter is a no-op — the same
-    // predicate the Add button reads. Esc is judged on the frame the row stops being the active
-    // editor: the plain ImGui revert has then already rewritten row.text inside the InputText call
-    // above, so the emptiness read there is the post-cancel one, and an empty result deletes the
-    // row. Both events belong to the box that WAS being edited — Enter via the return value, Esc
-    // via this row's own active→inactive transition, fired once — never to whatever the global
-    // deactivated window happens to cover. A non-empty post-cancel text keeps the row untouched
-    // (the revert is the whole undo). The owner's gesture vocabulary is one word one meaning:
-    // Enter creates, Esc undoes a creation, navigation neither creates nor deletes.
+    // predicate the Add button reads. Esc is attributed by the call boundary: the box was the
+    // active editor ENTERING its own InputText call and the active id is gone right after — a
+    // cancel only the box's own processing can have performed, the revert included. A deactivation
+    // ImGui applied from outside (navigation above all) happens before the call, so the box is no
+    // longer the owner entering it and cannot claim any key, whichever order the two landed in
+    // (code-review rounds 1-2). The revert has then already rewritten row.text inside the call, so
+    // an empty post-cancel text deletes the row and a non-empty one keeps it (the revert is the
+    // whole undo). The owner's gesture vocabulary is one word one meaning: Enter creates, Esc
+    // undoes a creation, navigation neither creates nor deletes.
     if (enter_accepted) {
       if (!AtSummandRowCap(g_summand_rows.size())) {
         enter_insert_idx = i + 1;
         enter_insert_source = row.uid;
       }
-    }
-    if (ImGui::IsItemActive()) {
-      // The active editor's live state, for its own later transition (the Esc discriminator).
-      g_summand_row_edited_uid = row.uid;
-      snprintf(g_summand_row_live_text, sizeof(g_summand_row_live_text), "%s", row.text);
-    } else if (row.uid == g_summand_row_edited_uid) {
-      // First frame this row is no longer active after having been the active editor. Esc down
-      // here is a cancel THIS box performed — its revert wrote row.text back above.
-      if (ImGui::IsKeyPressed(ImGuiKey_Escape) && TrimRaypathSegment(row.text).empty()) {
-        // Whitespace-only counts as empty — the same blank definition the commit path strips by.
-        esc_delete_idx = i;
-      }
-      g_summand_row_edited_uid = kNoSummandRowUid;
-      g_summand_row_live_text[0] = '\0';
+    } else if (active_before_input == input_id && ImGui::GetActiveID() == 0 && ImGui::IsKeyPressed(ImGuiKey_Escape) &&
+               TrimRaypathSegment(row.text).empty()) {
+      esc_delete_idx = i;
     }
     if (!is_empty) {
       ImGui::PopStyleColor();
@@ -2097,15 +2114,19 @@ static void RenderSummandRowList() {
     g_summand_pending_focus_uid = blank.uid;
   }
 
-  // A request whose target is not in this frame's list is dead — an external pull deleted it
-  // (uids are never recycled within a session, and every recycling boundary clears the request
-  // explicitly), and parking it would hijack whichever future row reuses the id.
-  if (g_summand_pending_focus_uid != kNoSummandRowUid) {
-    const bool target_alive =
-        std::any_of(g_summand_rows.begin(), g_summand_rows.end(),
-                    [uid = g_summand_pending_focus_uid](const SummandRowBuf& r) { return r.uid == uid; });
-    if (!target_alive) {
-      g_summand_pending_focus_uid = kNoSummandRowUid;
+  // Parked state whose target is not in this frame's list is dead — an external pull deleted the
+  // row (uids are never recycled within a session, and every recycling boundary clears the parked
+  // state explicitly), and parking it would hijack whichever future row reuses the id.
+  {
+    const auto uid_alive = [](uint64_t uid) { return [uid](const SummandRowBuf& r) { return r.uid == uid; }; };
+    if (g_summand_pending_focus_uid != kNoSummandRowUid &&
+        std::none_of(g_summand_rows.begin(), g_summand_rows.end(), uid_alive(g_summand_pending_focus_uid))) {
+      ClearSummandKeyboardSession();
+    }
+    if (g_summand_focus_stash_uid != kNoSummandRowUid &&
+        std::none_of(g_summand_rows.begin(), g_summand_rows.end(), uid_alive(g_summand_focus_stash_uid))) {
+      g_summand_focus_stash_uid = kNoSummandRowUid;
+      g_summand_focus_stash_chars.clear();
     }
   }
 
@@ -2229,7 +2250,7 @@ static void RenderRemoveFilterButton() {
     g_summand_rows.clear();
     // The rewind below is the one in-session uid recycling: a parked keyboard focus request would
     // land on whichever fresh row reuses the id, so the session state goes with the rows.
-    g_summand_pending_focus_uid = kNoSummandRowUid;
+    ClearSummandKeyboardSession();
     g_next_summand_row_uid = 0;
     AppendBlankSummandRow();
     g_filter_remove_intent = true;
@@ -2438,7 +2459,7 @@ void CloseEditModalOnDocumentReset() {
   g_summand_rows.clear();
   g_summand_rows_snapshot.clear();
   // The rows went with the document; the keyboard session state is not a survivor.
-  g_summand_pending_focus_uid = kNoSummandRowUid;
+  ClearSummandKeyboardSession();
   g_filter_present_baseline = false;
   g_filter_remove_intent = false;
   g_entry_buf = {};  // {} is the field default (100.0 / enabled) via the struct's member initializers
@@ -2775,14 +2796,14 @@ void HandlePopupClosed(GuiState& state) {
     g_active_modal = ActiveModal::kNone;
     // Terminal close: the keyboard session ends with it (the mode-switch branch above keeps the
     // session — same entry, same rows — and must not drop its parked request).
-    g_summand_pending_focus_uid = kNoSummandRowUid;
+    ClearSummandKeyboardSession();
     return;
   }
   std::memcpy(g_crystal_rotation, g_saved_rotation, sizeof(g_crystal_rotation));
   g_crystal_zoom = g_saved_zoom;
   g_crystal_mesh_hash = -1;
   g_active_modal = ActiveModal::kNone;
-  g_summand_pending_focus_uid = kNoSummandRowUid;
+  ClearSummandKeyboardSession();
 }
 
 // Renders the TabBar and the three tab bodies. Drawn only by the Compact layout (the Expanded
@@ -2852,7 +2873,7 @@ void RenderModalTabBar(GuiState& state, const char* crystal_label, const char* a
     // for good (the rows and their source semantics survive; the request does not). The Expanded
     // layout has no tab bar and renders all three sections, so it has no switch to guard.
     if (tab_before_render != g_active_tab && g_active_tab != ActiveTab::kFilter) {
-      g_summand_pending_focus_uid = kNoSummandRowUid;
+      ClearSummandKeyboardSession();
     }
   }
 }
