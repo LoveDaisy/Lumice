@@ -1998,19 +1998,22 @@ void AppendCharsToRowBuffer(char* row_text, const ImVector<ImWchar>& chars) {
   row_text[used] = '\0';
 }
 
-// The Tab half of the crossing's keyboard ownership, run before the modal's tab bar renders its
-// items (called from the modal body, ahead of RenderModalTabBar / the Expanded sections).
-// Navigation is the user's gesture and outranks the auto-focus: the crossing ends, the keystrokes
-// already accepted into it land in the target row, and the user's Tab proceeds — re-issued in the
-// anchored form, for two reasons. First, nav's own request (created at this frame's start, in its
-// init mode when no editor is active) scores the transaction's own target as its result and would
-// re-activate the very row being tabbed away from. Second, the scoring anchor is the item matching
-// g.NavId, which during the crossing may still be the pre-handoff row — a Tab on the first
-// crossing frame would then navigate from the SOURCE while the same Tab at the activation
-// boundary or after settling navigates from the TARGET. Anchoring on the transaction's logical
-// target makes the destination identical at every stage; running here (before the tab bar
-// submits) keeps the full candidate set scoreable, so backward tabbing can still reach the tab
-// headers ahead of the list instead of wrapping past them.
+// The Tab half of the crossing's keyboard ownership. Two call sites, one authoritative body: the
+// Compact pane child ahead of its tab bar (RenderEditModals) and the Expanded filter child ahead
+// of its row list (RenderModalTwoColumn) — each inside the window whose items the re-issued
+// request must score, before that window's first candidate submits. Navigation is the user's
+// gesture and outranks the auto-focus: the crossing ends, the keystrokes already accepted into it
+// land in the target row, and the user's Tab proceeds — re-issued in the anchored form, for two
+// reasons. First, nav's own request (created at this frame's start, in its init mode when no
+// editor is active) scores the transaction's own target as its result and would re-activate the
+// very row being tabbed away from. Second, the scoring anchor is the item matching g.NavId, which
+// during the crossing may still be the pre-handoff row — a Tab on the first crossing frame would
+// then navigate from the SOURCE while the same Tab at the activation boundary or after settling
+// navigates from the TARGET. Anchoring on the transaction's logical target makes the destination
+// identical at every stage. In Compact, running ahead of the tab bar also keeps the full
+// candidate set scoreable, so backward tabbing can still reach the tab headers ahead of the list
+// instead of wrapping past them; Expanded has no tab bar, and its filter child's top is the same
+// "nav window of the rows, ahead of every candidate" point.
 static void RenderSummandTabGuard() {
   if (!g_summand_handoff.active || ImGui::GetActiveID() != 0 || !ImGui::IsKeyPressed(ImGuiKey_Tab)) {
     return;
@@ -2085,7 +2088,8 @@ static void RenderSummandRowList() {
   // into. Revoke it here, before any row renders (an earlier row's InputText would otherwise
   // consume it first). The transaction's own transfer — the activation aimed at its target — is
   // kept: that one is the handoff doing its job. (Tab is handled even earlier — see
-  // RenderSummandTabGuard, which runs before the modal's tab bar submits its items.)
+  // RenderSummandTabGuard, which runs in the rows' nav window ahead of its candidates: in the
+  // pane child before the tab bar in Compact, at the top of the filter child in Expanded.)
   if (g_summand_handoff.active && ImGui::GetActiveID() == 0) {
     ImGuiContext* g = ImGui::GetCurrentContext();
     if (g->NavActivateId != 0 && g->NavActivateId != g_summand_handoff.target_id) {
@@ -3265,6 +3269,12 @@ static void RenderModalTwoColumn(GuiState& state, bool crystal_dirty, bool axis_
   RenderModalSectionHeader("Filter", filter_dirty, show_dirty);
   const float filter_h = std::max(0.0f, column_h - above_filter_h - style.ItemSpacing.y - header_h);
   ImGui::BeginChild("##modal_expanded_filter", ImVec2(-FLT_MIN, filter_h), ImGuiChildFlags_None);
+  // The crossing's Tab ownership, Expanded's half of the pair: inside the rows' own nav window
+  // (this child), before its first candidate (the row list's first row) has submitted. There is
+  // no tab bar in this layout, so this point is the Expanded form of the same invariant the
+  // Compact call site up in ##modal_bottom_pane satisfies — one authoritative handler, one call
+  // per frame, each inside the window whose items the re-issued request is meant to score.
+  RenderSummandTabGuard();
   ImGui::PushID(entry_layer);
   ImGui::PushID(entry_index);
   RenderFilterModal();
@@ -3642,9 +3652,11 @@ void RenderEditModals(GuiState& state, GLFWwindow* window) {
         "##modal_bottom_pane",
         ImVec2(-FLT_MIN, EditModalFlexPaneHeight(kModalContentHeight, kEditModalFlexPaneMinRows * kToolRow, max_h)),
         ImGuiChildFlags_None, ImGuiWindowFlags_None);
-    // The crossing's Tab ownership is settled here: inside the pane child, before its first item
-    // (the tab bar's included) has submitted — see RenderSummandTabGuard's comment for why the
-    // re-issued request has to precede every candidate it is meant to score.
+    // The crossing's Tab ownership is settled here, Compact's half of the pair: inside the pane
+    // child, before its first item (the tab bar's included) has submitted — see
+    // RenderSummandTabGuard's comment for why the re-issued request has to precede every
+    // candidate it is meant to score. (The Expanded counterpart runs at the top of that layout's
+    // filter child — RenderModalTwoColumn.)
     RenderSummandTabGuard();
     RenderModalTabBar(state, crystal_label, axis_label, filter_label, crystal_flags, axis_flags, filter_flags);
     ImGui::EndChild();
