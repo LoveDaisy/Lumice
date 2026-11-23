@@ -125,13 +125,16 @@ void DriveUpload(DiagnosticsCollector& c, const UploadEventContext& ctx, const U
 
 // A stage failed without leaving an error flag (the null-map shape): the
 // flag was checked at that boundary and stood clean, the failure is real and
-// non-GL, and the stage name is the report's fact.
+// non-GL, the stage name is the report's fact — and the staging request the
+// attempt had already frozen rides along (the plan existed before the GL
+// work; a failure must still say what it asked the driver for).
 UploadFacts FailedMapFacts() {
   UploadFacts facts;
   facts.path = UploadPath::kXyz;
   facts.outcome = UploadOutcome::kFailedDisplayRevoked;
   facts.requested_width = 8192;
   facts.requested_height = 4096;
+  facts.pbo_bytes = static_cast<size_t>(8192) * 4096 * 3 * 2;
   facts.gl_error_state = GlErrorCheckState::kNone;
   facts.error_stage = "pbo-map";
   return facts;
@@ -377,6 +380,51 @@ TEST(DiagnosticsEventTaxonomy, FenceFailureRidesCompletedOutcomeAndStaysRetained
   EXPECT_EQ(parsed["upload_history"]["first_failure"]["outcome"], "completed");
 }
 
+TEST(DiagnosticsEventTaxonomy, SyncStatusIsRecordedAsReceivedNeverAsAGlError) {
+  // The fence-wait branch reports whichever its read produced; a timeout is
+  // the sync STATUS, not a driver error, and the report must keep the two
+  // apart instead of mislabeling it.
+  UploadFacts facts = MakeCompletedFacts();
+  facts.outcome = UploadOutcome::kFailedFrameRetained;
+  facts.gl_error_state = GlErrorCheckState::kSyncStatus;
+  facts.gl_error_code = 0x1905;  // GL_TIMEOUT_EXPIRED, the sync call's return
+  facts.error_stage = "fence-wait";
+  facts.pbo_bytes = 768U;
+
+  DiagnosticsCollector c;
+  DriveUpload(c, MakeContext(), facts);
+  DiagnosticsExportInput input = MakeInput();
+  input.history = c.history();
+  const json parsed = json::parse(BuildDiagnosticsJson(input, nullptr));
+  const json& ev = parsed["upload_history"]["first_failure"];
+  EXPECT_EQ(ev["gl_error"]["state"], "sync_status");
+  EXPECT_EQ(ev["gl_error"]["code_hex"], "0x1905");
+  EXPECT_EQ(ev["error_stage"], "fence-wait");
+}
+
+TEST(DiagnosticsEventTaxonomy, CompletedFenceFailureCarriesItsOwnErrorCodeAndStage) {
+  // A completed frame whose fence creation stood behind a driver error: the
+  // completed outcome must not paint the code over as checked-clean — the
+  // fence branch read it, and it rides with the fence-create stage name.
+  UploadFacts facts = MakeCompletedFacts();
+  facts.fence_create_failed = true;
+  facts.gl_error_state = GlErrorCheckState::kReported;
+  facts.gl_error_code = 0x502;  // GL_INVALID_OPERATION, read by the fence branch
+  facts.error_stage = "fence-create";
+
+  DiagnosticsCollector c;
+  DriveUpload(c, MakeContext(), facts);
+  DiagnosticsExportInput input = MakeInput();
+  input.history = c.history();
+  const json parsed = json::parse(BuildDiagnosticsJson(input, nullptr));
+  const json& ev = parsed["upload_history"]["first_failure"];
+  EXPECT_EQ(ev["outcome"], "completed");
+  EXPECT_EQ(ev["gl_error"]["state"], "reported");
+  EXPECT_EQ(ev["gl_error"]["code_hex"], "0x0502");
+  EXPECT_EQ(ev["error_stage"], "fence-create");
+  EXPECT_EQ(ev["fence_create_failed"], true);
+}
+
 TEST(DiagnosticsReportSchema, NonUtf8BytesDegradeInsteadOfThrowing) {
   DiagnosticsExportInput input = MakeInput();
   std::vector<LogLine> lines;
@@ -413,7 +461,9 @@ TEST(DiagnosticsEventTaxonomy, StageFailureWithoutGlErrorCarriesTheStageAndCount
   EXPECT_EQ(ev["error_stage"], "pbo-map");
   ASSERT_TRUE(ev["actual_texture"].is_object());
   EXPECT_EQ(ev["actual_texture"]["state"], "not_queried");
-  EXPECT_EQ(ev["requested"]["pbo_bytes"], nullptr);  // never reached the PBO stage
+  // The attempt froze its staging request before any GL work: even a failure
+  // reports what it asked the driver for (the plan predated the failing map).
+  EXPECT_EQ(ev["requested"]["pbo_bytes"].get<unsigned long long>(), 8192ULL * 4096 * 3 * 2);
 }
 
 TEST(DiagnosticsEventTaxonomy, ReopenEventCarriesNoRunIdentityAndRadiancePath) {

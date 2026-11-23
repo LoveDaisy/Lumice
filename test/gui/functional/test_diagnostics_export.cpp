@@ -102,19 +102,31 @@ struct DiagOp {
   bool done = false;
 
   // Operations, applied in this order within one frame.
-  bool witness_upload = false;       // freeze context + one small XYZ upload + attach
-  bool witness_gl_error = false;     // freeze context + one oversized XYZ upload (a real GL error)
-  bool witness_uint8_error = false;  // same real failure through the uint8 path
-  bool heal = false;                 // ClearTexture, so a polluted size cannot leak to later cases
-  bool export_now = false;           // BuildDiagnosticsReportJson + RequestDiagnosticsExport
+  bool witness_upload = false;        // freeze context + one small XYZ upload + attach
+  bool witness_gl_error = false;      // freeze context + one oversized XYZ upload (a real GL error)
+  bool witness_uint8_error = false;   // same real failure through the uint8 path
+  bool witness_fence_fail = false;    // staged XYZ upload under the armed hook: a completed
+                                      // frame whose fence creation failed (with a driver code)
+  bool witness_map_fail = false;      // staged XYZ upload under the armed hook: a pbo-map failure
+  bool seed_mirror_and_save = false;  // CPU mirror + SaveLmcFile(save_texture) for the cycle witness
+  bool cycle_open = false;            // DoOpen under the armed hook: the PRODUCTION recovery walk
+  bool heal = false;                  // ClearTexture, so a polluted size cannot leak to later cases
+  bool export_now = false;            // BuildDiagnosticsReportJson + RequestDiagnosticsExport
+  bool clear_hook = false;            // uninstall the fault hook (same frame that armed it)
 
   // Inputs.
   int upload_w = 16;
   int upload_h = 8;
   bool include_logs = false;
   std::string export_path;
+  std::string save_path;
+  std::string open_path;
+  int hook_stage = 0;  // gui::UploadResult::Stage value the armed hook fails
+  int hook_error = 0;  // the code the hook injects
 
   void Reset() { *this = DiagOp{}; }
+
+  bool install_requested() const { return hook_stage != 0; }
 };
 
 DiagOp g_diag_op;
@@ -155,8 +167,45 @@ void DiagnosticsGuiFunc(ImGuiTestContext*) {
     const gui::UploadResult r = gui::g_preview.UploadRadianceTexture(pixels.data(), width, height);
     gui::CompleteUploadDiagnostics(r, UploadPath::kSrgbRadiance, r.ok, !r.ok && !r.old_frame_retained);
   }
+  if (g_diag_op.install_requested()) {
+    const auto stage = static_cast<gui::UploadResult::Stage>(g_diag_op.hook_stage);
+    const int err = g_diag_op.hook_error;
+    gui::g_preview.SetUploadFaultHookForTest(
+        [stage, err](gui::UploadResult::Stage s) -> int { return s == stage ? err : 0; });
+  }
+  if (g_diag_op.witness_fence_fail) {
+    Diagnostics().BeginUpload(MakeWitnessContext(g_diag_op.upload_w, g_diag_op.upload_h));
+    static std::vector<float> fence_pixels(16 * 8 * 3, 0.25f);
+    const gui::UploadResult r =
+        gui::g_preview.UploadXyzTexture(fence_pixels.data(), g_diag_op.upload_w, g_diag_op.upload_h);
+    gui::CompleteUploadDiagnostics(r, UploadPath::kXyz, r.ok, !r.ok && !r.old_frame_retained);
+  }
+  if (g_diag_op.witness_map_fail) {
+    Diagnostics().BeginUpload(MakeWitnessContext(g_diag_op.upload_w, g_diag_op.upload_h));
+    static std::vector<float> map_pixels(16 * 8 * 3, 0.25f);
+    const gui::UploadResult r =
+        gui::g_preview.UploadXyzTexture(map_pixels.data(), g_diag_op.upload_w, g_diag_op.upload_h);
+    gui::CompleteUploadDiagnostics(r, UploadPath::kXyz, r.ok, !r.ok && !r.old_frame_retained);
+  }
+  if (g_diag_op.seed_mirror_and_save) {
+    // The XYZ display upload never touches the CPU mirror (the save source
+    // refreshes from the payload in production); the cycle witness's archive
+    // needs the mirror seeded explicitly so the v6 section encodes real bits.
+    static std::vector<float> seed(16 * 8 * 3, 0.5f);
+    gui::g_preview.UpdateCpuXyzTextureData(seed.data(), 16, 8, gui::XyzTextureMeta{});
+    gui::SaveLmcFile(std::filesystem::path(g_diag_op.save_path), gui::g_state, gui::g_preview,
+                     /*save_texture=*/true);
+  }
+  if (g_diag_op.cycle_open) {
+    // The PRODUCTION recovery entry: the open's authorized walk brackets
+    // each candidate with the frozen context itself.
+    gui::DoOpen(std::filesystem::path(g_diag_op.open_path));
+  }
   if (g_diag_op.heal) {
     gui::g_preview.ClearTexture();
+  }
+  if (g_diag_op.clear_hook) {
+    gui::g_preview.SetUploadFaultHookForTest(nullptr);
   }
   if (g_diag_op.export_now) {
     const std::string report = gui::BuildDiagnosticsReportJson(g_diag_op.include_logs);
@@ -459,6 +508,152 @@ void RegisterDiagnosticsTests(ImGuiTestEngine* engine) {
       IM_CHECK_STR_EQ(report["upload_history"]["last_failure"]["error_stage"].get<std::string>().c_str(),
                       "texture-define");
       IM_CHECK_STR_EQ(report["upload_history"]["last_upload"]["path"].get<std::string>().c_str(), "srgb_radiance");
+    };
+  }
+
+  // A completed frame whose staged fence creation failed WITH a driver
+  // error: the completion must not paint the code over as checked-clean —
+  // the fence branch read it, and it reaches the report under the
+  // fence-create stage name with the fence fact riding beside. The retention
+  // keeps the event as a failure even though the outcome is completed.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "diagnostics", "fence_create_failure_keeps_its_code");
+    t->GuiFunc = DiagnosticsGuiFunc;
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      ctx->Yield(2);
+      Diagnostics().ResetForTest();
+
+      g_diag_op.Reset();
+      g_diag_op.witness_fence_fail = true;
+      g_diag_op.hook_stage = static_cast<int>(gui::UploadResult::Stage::kFenceCreate);
+      g_diag_op.hook_error = 0x0502;  // GL_INVALID_OPERATION: non-OOM, so the last-strip commit proceeds
+      g_diag_op.heal = true;
+      g_diag_op.clear_hook = true;
+      RunDiagOp(ctx);
+
+      const std::string path = GuiTestTempPath("diag_fence_fail.json");
+      TempFileCleanup cleanup{ path };
+      g_diag_op.Reset();
+      g_diag_op.export_now = true;
+      g_diag_op.export_path = path;
+      RunDiagOp(ctx);
+      IM_CHECK(FileExists(path));
+
+      const json report = json::parse(ReadFile(path));
+      const json& ev = report["upload_history"]["first_failure"];
+      IM_CHECK(ev.is_object());
+      IM_CHECK_STR_EQ(ev["outcome"].get<std::string>().c_str(), "completed");  // the frame itself displayed
+      IM_CHECK(ev["fence_create_failed"].get<bool>());
+      IM_CHECK_STR_EQ(ev["gl_error"]["state"].get<std::string>().c_str(), "reported");
+      IM_CHECK_STR_EQ(ev["gl_error"]["code_hex"].get<std::string>().c_str(), "0x0502");
+      IM_CHECK_STR_EQ(ev["error_stage"].get<std::string>().c_str(), "fence-create");
+      IM_CHECK_STR_EQ(ev["display_commit"].get<std::string>().c_str(), "advanced");
+    };
+  }
+
+  // A pbo-map failure under the armed hook: the attempt had already frozen
+  // its staging request, so the FAILING report still says what it asked the
+  // driver for — the fact a maintainer needs, not a null dressed as "never
+  // reached the stage".
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "diagnostics", "staging_failure_carries_the_request");
+    t->GuiFunc = DiagnosticsGuiFunc;
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      ctx->Yield(2);
+      Diagnostics().ResetForTest();
+
+      g_diag_op.Reset();
+      g_diag_op.witness_map_fail = true;
+      g_diag_op.hook_stage = static_cast<int>(gui::UploadResult::Stage::kPboMap);
+      g_diag_op.hook_error = 0x0502;  // non-OOM: strip 0, previous frame retained
+      g_diag_op.heal = true;
+      g_diag_op.clear_hook = true;
+      RunDiagOp(ctx);
+
+      const std::string path = GuiTestTempPath("diag_map_fail.json");
+      TempFileCleanup cleanup{ path };
+      g_diag_op.Reset();
+      g_diag_op.export_now = true;
+      g_diag_op.export_path = path;
+      RunDiagOp(ctx);
+      IM_CHECK(FileExists(path));
+
+      const json report = json::parse(ReadFile(path));
+      const json& ev = report["upload_history"]["first_failure"];
+      IM_CHECK(ev.is_object());
+      IM_CHECK_STR_EQ(ev["outcome"].get<std::string>().c_str(), "failed_frame_retained");
+      IM_CHECK_STR_EQ(ev["error_stage"].get<std::string>().c_str(), "pbo-map");
+      IM_CHECK_STR_EQ(ev["gl_error"]["state"].get<std::string>().c_str(), "reported");
+      IM_CHECK_STR_EQ(ev["gl_error"]["code_hex"].get<std::string>().c_str(), "0x0502");
+      IM_CHECK_EQ(ev["requested"]["pbo_bytes"].get<unsigned long long>(), 16ULL * 8 * 3 * 2);
+      IM_CHECK(ev["actual_texture"]["state"] == "not_queried");
+    };
+  }
+
+  // The PRODUCTION recovery walk, through the real open: the staged
+  // candidate fails (armed pbo-allocate fault), the client-memory candidate
+  // accepts the same frame. The report must keep BOTH facts — the losing
+  // candidate's stage/error/request latched as the session's first failure,
+  // the accepting candidate as last_upload with the caller's advanced fact —
+  // neither erasing the other.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "diagnostics", "degraded_open_keeps_the_first_failure");
+    t->GuiFunc = DiagnosticsGuiFunc;
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      ctx->Yield(2);
+      Diagnostics().ResetForTest();
+
+      const std::string archive = GuiTestTempPath("diag_cycle_open.lmc");
+      TempFileCleanup archive_cleanup{ archive };
+
+      // Seed the mirror and save a v6 archive: the open's walk consumes the
+      // file's own half bits.
+      g_diag_op.Reset();
+      g_diag_op.seed_mirror_and_save = true;
+      g_diag_op.save_path = archive;
+      RunDiagOp(ctx);
+      IM_CHECK(FileExists(archive));
+
+      g_diag_op.Reset();
+      g_diag_op.cycle_open = true;
+      g_diag_op.open_path = archive;
+      g_diag_op.hook_stage = static_cast<int>(gui::UploadResult::Stage::kPboAllocate);
+      g_diag_op.hook_error = 0x0505;  // GL_OUT_OF_MEMORY: the staged candidate revokes
+      g_diag_op.clear_hook = true;
+      RunDiagOp(ctx);
+
+      const std::string path = GuiTestTempPath("diag_cycle.json");
+      TempFileCleanup cleanup{ path };
+      g_diag_op.Reset();
+      g_diag_op.export_now = true;
+      g_diag_op.export_path = path;
+      RunDiagOp(ctx);
+      IM_CHECK(FileExists(path));
+
+      const json report = json::parse(ReadFile(path));
+      const json& first = report["upload_history"]["first_failure"];
+      IM_CHECK(first.is_object());
+      IM_CHECK_STR_EQ(first["provenance"].get<std::string>().c_str(), "reopen");
+      IM_CHECK_STR_EQ(first["outcome"].get<std::string>().c_str(), "failed_display_revoked");
+      IM_CHECK_STR_EQ(first["error_stage"].get<std::string>().c_str(), "pbo-allocate");
+      IM_CHECK_STR_EQ(first["gl_error"]["state"].get<std::string>().c_str(), "reported");
+      IM_CHECK_STR_EQ(first["gl_error"]["code_hex"].get<std::string>().c_str(), "0x0505");
+      // The losing candidate's staging request survived the failure.
+      IM_CHECK_EQ(first["requested"]["pbo_bytes"].get<unsigned long long>(), 16ULL * 8 * 3 * 2);
+      IM_CHECK(first["document_is_current"] == true);
+
+      const json& last = report["upload_history"]["last_upload"];
+      IM_CHECK_STR_EQ(last["outcome"].get<std::string>().c_str(), "completed");
+      IM_CHECK_STR_EQ(last["display_commit"].get<std::string>().c_str(), "advanced");
+      IM_CHECK(last["document_is_current"] == true);
+      // The accepting candidate rode the client-memory tier: no staging.
+      IM_CHECK(last["requested"]["pbo_bytes"].is_null());
+      IM_CHECK_STR_EQ(report["upload_history"]["last_failure"]["error_stage"].get<std::string>().c_str(),
+                      "pbo-allocate");  // the accepting success did not erase the walk's failure
+      IM_CHECK(report["current_document"]["current_document_has_upload_attempt"] == true);
     };
   }
 

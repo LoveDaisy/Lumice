@@ -2039,6 +2039,22 @@ UploadResult PreviewRenderer::UploadXyzStrips(const XyzUploadInput& input, bool 
   const int height = input.height;
   const size_t component_count = static_cast<size_t>(width) * height * 3;
   const XyzStripPlan plan = ComputeXyzStripPlan(width, height, s_strip_rows_override_for_test_);
+  // The staging request is known the moment the plan exists — a fact of what
+  // this attempt ASKS the driver for, set before any GL work so every exit
+  // (each failure included) reports it. Client-memory attempts leave it 0:
+  // they genuinely use no staging storage.
+  if (use_staging) {
+    r.pbo_bytes = plan.slot_bytes;
+  }
+  // Every conservative revoke inside this attempt must carry the same
+  // already-known facts: ConservativeRevoke builds a fresh result, so the
+  // shared exits below go through this wrapper instead (same call shape as
+  // the helper it forwards to).
+  auto revoke = [&](UploadResult::Stage stage, int gl_error, int req_w, int req_h) {
+    UploadResult out = ConservativeRevoke(stage, gl_error, req_w, req_h);
+    out.pbo_bytes = r.pbo_bytes;
+    return out;
+  };
   // The scale ruling, ONCE per attempt: a float source is scanned whole here and every strip is
   // quantized through the one codec at that one scale; a half source's scale is the file's own
   // and nothing re-quantizes its bits. A per-strip scale would let two strips of one frame
@@ -2077,8 +2093,11 @@ UploadResult PreviewRenderer::UploadXyzStrips(const XyzUploadInput& input, bool 
   // Whether this attempt committed while its last strip's fence creation
   // failed (the staged path's one fence fact the structured result would
   // otherwise lose): the frame is displayed, but the torn-down slot's next
-  // write runs unguarded. Carried to the result's observer fields below.
+  // write runs unguarded. The branch's own GL error flag reading rides
+  // beside it — a failed creation may stand behind a driver error, and the
+  // code must survive into the report.
   bool commit_fence_failed = false;
+  unsigned int commit_fence_gl_error = 0;
 
   glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
   glBindTexture(GL_TEXTURE_2D, texture_);
@@ -2127,9 +2146,11 @@ UploadResult PreviewRenderer::UploadXyzStrips(const XyzUploadInput& input, bool 
             ReleaseStagingSlots();
             glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
             glBindTexture(GL_TEXTURE_2D, 0);
-            return ConservativeRevoke(
+            UploadResult out = revoke(
                 UploadResult::Stage::kFenceWait,
                 wait_err != GL_NO_ERROR ? static_cast<int>(wait_err) : static_cast<int>(wait_result), width, height);
+            out.fence_wait_code_is_sync_status = wait_err == GL_NO_ERROR;
+            return out;
           }
           // Strip 0: this attempt has written nothing, and the waited fence guarded the
           // PREVIOUS attempt's last writes — that frame was accepted whole and stands.
@@ -2138,6 +2159,7 @@ UploadResult PreviewRenderer::UploadXyzStrips(const XyzUploadInput& input, bool 
           glBindTexture(GL_TEXTURE_2D, 0);
           r.stage = UploadResult::Stage::kFenceWait;
           r.gl_error = wait_err != GL_NO_ERROR ? static_cast<int>(wait_err) : static_cast<int>(wait_result);
+          r.fence_wait_code_is_sync_status = wait_err == GL_NO_ERROR;
           r.old_frame_retained = true;
           return r;
         }
@@ -2175,7 +2197,7 @@ UploadResult PreviewRenderer::UploadXyzStrips(const XyzUploadInput& input, bool 
             ReleaseStagingSlots();
             glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
             glBindTexture(GL_TEXTURE_2D, 0);
-            return ConservativeRevoke(UploadResult::Stage::kPboAllocate, static_cast<int>(alloc_err), width, height);
+            return revoke(UploadResult::Stage::kPboAllocate, static_cast<int>(alloc_err), width, height);
           }
           GUI_LOG_ERROR(
               "[GL] UploadXyzStrips: staging allocation failed (gl_error=0x{:04X}, {} bytes), skipping "
@@ -2207,7 +2229,7 @@ UploadResult PreviewRenderer::UploadXyzStrips(const XyzUploadInput& input, bool 
           ReleaseStagingSlots();
           glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
           glBindTexture(GL_TEXTURE_2D, 0);
-          return ConservativeRevoke(UploadResult::Stage::kPboMap, static_cast<int>(map_err), width, height);
+          return revoke(UploadResult::Stage::kPboMap, static_cast<int>(map_err), width, height);
         }
         GUI_LOG_ERROR("[GL] UploadXyzStrips: glMapBufferRange failed (gl_error=0x{:04X}), skipping frame", map_err);
         glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
@@ -2244,7 +2266,7 @@ UploadResult PreviewRenderer::UploadXyzStrips(const XyzUploadInput& input, bool 
           ReleaseStagingSlots();
           glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
           glBindTexture(GL_TEXTURE_2D, 0);
-          return ConservativeRevoke(UploadResult::Stage::kPboUnmap, static_cast<int>(unmap_err), width, height);
+          return revoke(UploadResult::Stage::kPboUnmap, static_cast<int>(unmap_err), width, height);
         }
         glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
         glBindTexture(GL_TEXTURE_2D, 0);
@@ -2272,7 +2294,7 @@ UploadResult PreviewRenderer::UploadXyzStrips(const XyzUploadInput& input, bool 
             ReleaseStagingSlots();
             glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
             glBindTexture(GL_TEXTURE_2D, 0);
-            return ConservativeRevoke(UploadResult::Stage::kTexImage, static_cast<int>(define_err), width, height);
+            return revoke(UploadResult::Stage::kTexImage, static_cast<int>(define_err), width, height);
           }
           // Ordinary error at strip 0: the command was ignored and the storage is exactly as it
           // was — the previous frame and its metadata stand.
@@ -2303,7 +2325,7 @@ UploadResult PreviewRenderer::UploadXyzStrips(const XyzUploadInput& input, bool 
           ReleaseStagingSlots();
           glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
           glBindTexture(GL_TEXTURE_2D, 0);
-          return ConservativeRevoke(UploadResult::Stage::kTexUpdate, static_cast<int>(sub_err), width, height);
+          return revoke(UploadResult::Stage::kTexUpdate, static_cast<int>(sub_err), width, height);
         }
         // Strip 0's subimage was ignored and no define ran: the storage is exactly as it was.
         glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
@@ -2339,7 +2361,7 @@ UploadResult PreviewRenderer::UploadXyzStrips(const XyzUploadInput& input, bool 
           // rulings revoke.
           ReleaseStagingSlots();
           glBindTexture(GL_TEXTURE_2D, 0);
-          return ConservativeRevoke(UploadResult::Stage::kFenceCreate, static_cast<int>(fence_err), width, height);
+          return revoke(UploadResult::Stage::kFenceCreate, static_cast<int>(fence_err), width, height);
         }
         // Ordinary failure on the LAST strip: the complete frame is issued; the 814 contract
         // stands — the slot is torn down, the commit below is real.
@@ -2348,6 +2370,7 @@ UploadResult PreviewRenderer::UploadXyzStrips(const XyzUploadInput& input, bool 
             "staging slot {}; frame committed",
             fence_err, slot);
         commit_fence_failed = true;
+        commit_fence_gl_error = static_cast<unsigned int>(fence_err);
       }
     } else {
       // ---- client-memory strip: no slots, no fences, no async DMA to guard ----
@@ -2370,7 +2393,7 @@ UploadResult PreviewRenderer::UploadXyzStrips(const XyzUploadInput& input, bool 
         if (define_err != GL_NO_ERROR) {
           if (define_err == GL_OUT_OF_MEMORY) {
             glBindTexture(GL_TEXTURE_2D, 0);
-            return ConservativeRevoke(UploadResult::Stage::kTexImage, static_cast<int>(define_err), width, height);
+            return revoke(UploadResult::Stage::kTexImage, static_cast<int>(define_err), width, height);
           }
           glBindTexture(GL_TEXTURE_2D, 0);
           GUI_LOG_ERROR(
@@ -2392,7 +2415,7 @@ UploadResult PreviewRenderer::UploadXyzStrips(const XyzUploadInput& input, bool 
       if (sub_err != GL_NO_ERROR) {
         if (sub_err == GL_OUT_OF_MEMORY || touched) {
           glBindTexture(GL_TEXTURE_2D, 0);
-          return ConservativeRevoke(UploadResult::Stage::kTexUpdate, static_cast<int>(sub_err), width, height);
+          return revoke(UploadResult::Stage::kTexUpdate, static_cast<int>(sub_err), width, height);
         }
         glBindTexture(GL_TEXTURE_2D, 0);
         GUI_LOG_ERROR(
@@ -2428,16 +2451,17 @@ UploadResult PreviewRenderer::UploadXyzStrips(const XyzUploadInput& input, bool 
     }
     glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
     glBindTexture(GL_TEXTURE_2D, 0);
-    UploadResult revoke = ConservativeRevoke(UploadResult::Stage::kStorageMismatch, forced_mismatch, width, height);
+    UploadResult mismatch_revoke = revoke(UploadResult::Stage::kStorageMismatch, forced_mismatch, width, height);
     // The witness DID run here — its disagreement is the revoke's cause, and
     // the measured values (not the request) are what the report's "actual"
     // block should carry. Filled after the revoke returns because the shared
-    // revoke helper takes none of them.
-    revoke.actual_queried = true;
-    revoke.actual_width = stored_w;
-    revoke.actual_height = stored_h;
-    revoke.actual_internal_format = static_cast<unsigned int>(stored_fmt);
-    return revoke;
+    // revoke helper takes none of them; the staging request itself rides the
+    // wrapper.
+    mismatch_revoke.actual_queried = true;
+    mismatch_revoke.actual_width = stored_w;
+    mismatch_revoke.actual_height = stored_h;
+    mismatch_revoke.actual_internal_format = static_cast<unsigned int>(stored_fmt);
+    return mismatch_revoke;
   }
 
   // Success — now and only now commit the display facts, re-arm the no-sample gate (the frame on
@@ -2467,6 +2491,7 @@ UploadResult PreviewRenderer::UploadXyzStrips(const XyzUploadInput& input, bool 
   }
   r.xyz_half_scale = scale;
   r.fence_create_failed = commit_fence_failed;
+  r.fence_create_gl_error = commit_fence_gl_error;
   r.ok = true;
   return r;
 }
