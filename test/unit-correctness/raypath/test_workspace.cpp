@@ -936,5 +936,35 @@ TEST(InterpretivePointChain, NoWinnerKeepsTheAnchorPayloadAndItsIdentityTogether
   EXPECT_EQ(answer.point.Data().meta.faces, answer.classes[0].representative);
 }
 
+TEST(InterpretivePointChain, ReusedAnswerObjectStartsEveryQueryFromFreshState) {
+  std::unique_ptr<AnalysisWorkspace> workspace;
+  ASSERT_TRUE(AnalysisWorkspace::Create(InterpretiveParryScene(), &workspace).Ok());
+  InterpretivePointAnswer answer;
+  // First query: a fixed lit member wins.
+  InterpretivePointQuery first = InterpretiveQuery(36.0, -52.0);
+  first.fixed_member = { 4, 2 };
+  ASSERT_TRUE(workspace->QueryInterpretivePoint(first, false, &answer).Ok());
+  ASSERT_TRUE(answer.member_fixed);
+  ASSERT_EQ(answer.selected_class, 1);
+  // Second query on the SAME object: automatic, cancelled before the search starts. The
+  // previous query's selection identity must not survive: selected -1, mode back to auto,
+  // the anchor payload's member the only identity the answer spells.
+  InterpretivePointQuery second = InterpretiveQuery(36.0, -52.0);
+  analytic::StopToken token;
+  token.RequestCancel();
+  ASSERT_TRUE(workspace->QueryInterpretivePoint(second, false, &answer, &token).Ok());
+  EXPECT_EQ(answer.selected_class, -1);
+  EXPECT_EQ(answer.selected_member, -1);
+  EXPECT_FALSE(answer.member_fixed);
+  EXPECT_EQ(answer.search_outcome, ExecutionOutcome::kCancelled);
+  EXPECT_EQ(answer.point.Data().meta.faces, answer.classes[0].representative);
+  // Third query on the same object: automatic with a real winner — the fresh selection lands.
+  InterpretivePointQuery third = InterpretiveQuery(36.0, -52.0);
+  ASSERT_TRUE(workspace->QueryInterpretivePoint(third, false, &answer).Ok());
+  EXPECT_EQ(answer.selected_class, 1);
+  EXPECT_FALSE(answer.member_fixed);
+  EXPECT_EQ(answer.point.Data().meta.faces, (std::vector<int>{ 4, 2 }));
+}
+
 }  // namespace
 }  // namespace lumice::raypath

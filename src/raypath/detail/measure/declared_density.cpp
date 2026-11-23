@@ -89,8 +89,13 @@ double FoldedProposalDensity(const Distribution& p, double phi_rad, bool branch_
 }
 
 // log(a + b) without round-tripping through the linear sum: −inf terms drop out, both −inf is
-// −inf, and the max term absorbs the smaller one's exponentiated share.
+// −inf, the max term absorbs the smaller one's exponentiated share — and a +inf term (the
+// declared laws' own endpoint divergence) wins outright: one is +inf, two are still that +inf,
+// never fabs(inf − inf) = NaN.
 double LogSumExp(double a, double b) {
+  if (a == std::numeric_limits<double>::infinity() || b == std::numeric_limits<double>::infinity()) {
+    return std::numeric_limits<double>::infinity();
+  }
   if (a == -std::numeric_limits<double>::infinity()) {
     return b;
   }
@@ -610,6 +615,33 @@ void LatitudeDensity::EvaluateLogBranches(double phi_rad, double* log_branch_a, 
   *log_branch_b = neg_inf;
 }
 
+double LatitudeDensity::EvaluateLogBranchJoint(double phi_rad, bool branch_b) const {
+  const double neg_inf = -std::numeric_limits<double>::infinity();
+  switch (kind_) {
+    case LatitudeLawKind::kFullSphere:
+      // The full-sphere law never flips: all the mass is branch A.
+      return branch_b ?
+                 neg_inf :
+                 ((phi_rad > -math::kHalfPi && phi_rad < math::kHalfPi) ? std::log(std::cos(phi_rad) * 0.5) : neg_inf);
+    case LatitudeLawKind::kFoldedArea:
+      if (phi_rad <= -math::kHalfPi || phi_rad >= math::kHalfPi) {
+        return neg_inf;
+      }
+      // The branch's own preimage mass plus the law's shared cos/norm scale — the same pieces
+      // EvaluateLog recombines through the marginal, held apart branch by branch.
+      return FoldedProposalLogDensity(proposal_, phi_rad, branch_b) + std::log(std::cos(phi_rad)) - std::log(norm_);
+    case LatitudeLawKind::kFoldedNoArea:
+      if (phi_rad <= -math::kHalfPi || phi_rad >= math::kHalfPi) {
+        return neg_inf;
+      }
+      return FoldedProposalLogDensity(proposal_, phi_rad, branch_b);
+    case LatitudeLawKind::kDiracUnfolded:
+    case LatitudeLawKind::kDiracFolded:
+      return neg_inf;
+  }
+  return neg_inf;
+}
+
 double LatitudeDensity::TotalMass() const {
   // The same fold-aware panel split the Z normalization uses: the plain rule underreads a
   // kZigzag proposal's arcsine spikes badly (the Z measurement: ~24%) and a kinked law's
@@ -673,32 +705,17 @@ double DeclaredPoseDensity(const AxisDistribution& axis, double lambda_out_rad, 
 
 double DeclaredPoseDensity(const LatitudeDensity& lat, const AxisDistribution& axis, double lambda_out_rad,
                            double phi_rad, double roll_out_rad) {
-  if (lat.kind() == LatitudeLawKind::kDiracUnfolded || lat.kind() == LatitudeLawKind::kDiracFolded) {
-    return 0.0;  // singular in phi; the mass is carried by UMarginal's support kinds
+  // The linear form is the log form's own exponential — ONE joint law in two spaces, never two
+  // hand-rolled mixtures that can disagree at fold-image spikes and slot edges (a spike whose
+  // branch's slots carry no support is a finite joint from the other branch, not inf * 0).
+  const double log_joint = DeclaredPoseLogDensity(lat, axis, lambda_out_rad, phi_rad, roll_out_rad);
+  if (log_joint == std::numeric_limits<double>::infinity()) {
+    return std::numeric_limits<double>::infinity();
   }
-  double az_at = 0.0, roll_at = 0.0;
-  bool az_dirac = false, roll_dirac = false;
-  const double az_d = WrappedSlotDensity(axis.azimuth_dist, lambda_out_rad, &az_dirac, &az_at);
-  const double roll_d = WrappedSlotDensity(axis.roll_dist, roll_out_rad, &roll_dirac, &roll_at);
-  if (az_dirac || roll_dirac) {
-    return 0.0;  // singular in that slot; same rule as phi
+  if (log_joint == -std::numeric_limits<double>::infinity()) {
+    return 0.0;
   }
-  const double f = lat.FlipProbability(phi_rad);
-  const double rho_phi = lat.Evaluate(phi_rad);
-  const double shifted_az = WrappedSlotDensity(axis.azimuth_dist, lambda_out_rad - math::kPiD, &az_dirac, &az_at);
-  const double shifted_roll = WrappedSlotDensity(axis.roll_dist, roll_out_rad - math::kPiD, &roll_dirac, &roll_at);
-  // Support-aware branches first: a slot whose ordinary density is zero at this point zeroes
-  // its WHOLE branch — a neighborhood inside a zero-support slot strip carries no mass, and
-  // that kills the branch before the latitude law's endpoint divergence can multiply it (an
-  // endpoint mass times a zero-support slot is no mass at all — never inf * 0 = NaN, and never
-  // a fabricated +inf: the divergence only propagates where the other slots carry it).
-  const double branch_a = (az_d > 0.0 && roll_d > 0.0) ? (1.0 - f) * az_d * roll_d : 0.0;
-  const double branch_b = (shifted_az > 0.0 && shifted_roll > 0.0) ? f * shifted_az * shifted_roll : 0.0;
-  const double mixture = branch_a + branch_b;
-  if (mixture <= 0.0) {
-    return 0.0;  // no branch carries support here: zero joint, divergence or not
-  }
-  return rho_phi * mixture;
+  return std::exp(log_joint);
 }
 
 double DeclaredPoseLogDensity(const AxisDistribution& axis, double lambda_out_rad, double phi_rad,
@@ -720,49 +737,24 @@ double DeclaredPoseLogDensity(const LatitudeDensity& lat, const AxisDistribution
   if (az_dirac || roll_dirac) {
     return neg_inf;  // singular in that slot; same rule as the linear form
   }
-  // The flip mixture weights each branch by its OWN preimage family's log mass relative to the
-  // two families' log-sum-exp — never through the linear FlipProbability, whose pa/pb underflow
-  // to 0 (or round their ratio onto 1) exactly in the deep tails this log form exists to spell.
-  double log_branch_a = neg_inf, log_branch_b = neg_inf;
-  lat.EvaluateLogBranches(phi_rad, &log_branch_a, &log_branch_b);
-  const double log_denominator = LogSumExp(log_branch_a, log_branch_b);
-  // Both branches' slot reads happen BEFORE any divergence propagates: a slot with no ordinary
-  // density zeroes its whole branch — a neighborhood inside a zero-support slot strip carries
-  // no mass, and that kills the branch before the latitude law's endpoint divergence can
-  // propagate through it. The divergence answers +inf only where the OTHER slots carry it
-  // ("the mixture IS that branch" holds branch-by-branch, support included); sitting on zero
-  // support it answers the branch's zero, never a fabricated +inf and never inf − inf.
   const double log_az_shifted = WrappedSlotLogDensity(axis.azimuth_dist, lambda_out_rad - math::kPiD, &az_dirac);
   const double log_roll_shifted = WrappedSlotLogDensity(axis.roll_dist, roll_out_rad - math::kPiD, &roll_dirac);
   if (az_dirac || roll_dirac) {
     return neg_inf;
   }
-  if (log_branch_a == std::numeric_limits<double>::infinity() ||
-      log_branch_b == std::numeric_limits<double>::infinity()) {
-    const bool a_supported = log_az != neg_inf && log_roll != neg_inf;
-    const bool b_supported = log_az_shifted != neg_inf && log_roll_shifted != neg_inf;
-    const bool a_diverges = log_branch_a == std::numeric_limits<double>::infinity() && a_supported;
-    const bool b_diverges = log_branch_b == std::numeric_limits<double>::infinity() && b_supported;
-    if (a_diverges || b_diverges) {
-      return std::numeric_limits<double>::infinity();  // the supported endpoint divergence
-    }
-    return neg_inf;  // the divergence sits on zero support: no mass in any neighborhood
-  }
-  if (log_denominator == neg_inf) {
-    return neg_inf;  // the latitude law answers nothing here
-  }
+  // The joint combines each flip branch's OWN latitude factor with its OWN slots' reads —
+  // never through the marginal (EvaluateLog), whose fold-image divergence belongs to its
+  // carrying branch alone: at a support-edge phi the marginal reads +inf, and a spike whose
+  // branch's slots carry no support must answer the OTHER branch's finite joint, not leak the
+  // divergence. Zero slot support zeroes a branch before anything propagates; a supported
+  // branch keeps its finite contribution however the other branch ends; LogSumExp's +inf rule
+  // lets a supported endpoint divergence win outright (one branch or both, still +inf).
   const bool a_supported = log_az != neg_inf && log_roll != neg_inf;
   const bool b_supported = log_az_shifted != neg_inf && log_roll_shifted != neg_inf;
-  if (!a_supported && !b_supported) {
-    return neg_inf;  // no branch carries support here: zero joint, divergence or not
-  }
-  // log(phi) re-enters through the same branch masses (plus the law's own scaling) — spelled as
-  // EvaluateLog so the mixture and the marginal cannot drift apart. An unsupported branch's
-  // weight is its own zero (−inf), not a NaN from mixing it into the sum.
-  const double log_phi = lat.EvaluateLog(phi_rad);
-  const double branch_a = a_supported ? (log_branch_a - log_denominator) + log_az + log_roll : neg_inf;
-  const double branch_b = b_supported ? (log_branch_b - log_denominator) + log_az_shifted + log_roll_shifted : neg_inf;
-  return log_phi + LogSumExp(branch_a, branch_b);
+  const double joint_a = a_supported ? lat.EvaluateLogBranchJoint(phi_rad, false) + log_az + log_roll : neg_inf;
+  const double joint_b =
+      b_supported ? lat.EvaluateLogBranchJoint(phi_rad, true) + log_az_shifted + log_roll_shifted : neg_inf;
+  return LogSumExp(joint_a, joint_b);
 }
 
 // ---------------------------------------------------------------------------

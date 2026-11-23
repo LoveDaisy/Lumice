@@ -1042,6 +1042,40 @@ TEST(DeclaredDensityLog, ZigzagLatitudeEndpointDivergesInsteadOfNaN) {
   EXPECT_TRUE(std::isinf(log_form) && log_form > 0.0) << log_form;
 }
 
+TEST(DeclaredDensityLog, BothBranchesDivergingAnswersInfinityNotNaN) {
+  // Both flip branches' wrapped roll reads can land on a Zigzag support edge (support
+  // [180, 360]: the direct read at 0 wraps onto 360, the shifted read at -180 onto 180 — both
+  // endpoints). The joint answers the declared divergence once, never fabs(inf - inf) = NaN.
+  AxisDistribution axis;
+  axis.azimuth_dist = Uniform(0.0, 360.0);
+  axis.latitude_dist = Gauss(0.0, 40.0);
+  axis.roll_dist = Zigzag(270.0, 90.0);
+  const double linear = DeclaredPoseDensity(axis, 0.0, 0.0, 0.0);
+  ASSERT_TRUE(std::isinf(linear) && linear > 0.0) << linear;
+  const double log_form = DeclaredPoseLogDensity(axis, 0.0, 0.0, 0.0);
+  EXPECT_TRUE(std::isinf(log_form) && log_form > 0.0) << log_form;
+}
+
+TEST(DeclaredDensityLog, DivergentBranchWithoutSupportKeepsTheOtherBranchsFiniteJoint) {
+  // At the 30-degree fold image of this latitude's support edge the DIRECT branch diverges but
+  // its roll read is zero-supported; the SHIFTED branch's roll lands inside its support and its
+  // preimage mass is finite. The joint answers the surviving branch's finite contribution —
+  // the divergence sits on zero support and must not erase the other branch, nor leak through
+  // the marginal. Both forms agree (one law, two spaces).
+  AxisDistribution axis;
+  axis.azimuth_dist = Uniform(0.0, 360.0);
+  axis.latitude_dist = Zigzag(120.0, 90.0);
+  axis.roll_dist = Uniform(180.0, 10.0);
+  const double phi = 30.0 * kDeg;
+  const double log_form = DeclaredPoseLogDensity(axis, 0.0, phi, 0.0);
+  ASSERT_TRUE(std::isfinite(log_form)) << log_form;
+  const double neighbor = DeclaredPoseLogDensity(axis, 0.0, 30.000001 * kDeg, 0.0);
+  ASSERT_TRUE(std::isfinite(neighbor)) << neighbor;
+  EXPECT_NEAR(log_form, neighbor, 0.01) << "the surviving branch's joint is smooth across the edge";
+  const double linear = DeclaredPoseDensity(axis, 0.0, phi, 0.0);
+  EXPECT_NEAR(linear, std::exp(log_form), 1e-9 * linear) << "one joint law in two spaces";
+}
+
 TEST(DeclaredDensityLog, EndpointDivergenceOnZeroSupportAnswersNothingNotInfinity) {
   // The support edge's +inf mass sits at a roll the roll law never reaches — BOTH flip
   // branches read zero roll support at this roll_out (90 degrees, and its 180-degree-shifted

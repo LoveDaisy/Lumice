@@ -303,6 +303,10 @@ bool IsCarryingCandidate(const PointResult& point) {
 
 Error AnalysisWorkspace::QueryInterpretivePoint(const InterpretivePointQuery& query, bool include_context,
                                                 InterpretivePointAnswer* out, const analytic::StopToken* cancel) {
+  // Every query builds its own answer state: a reused output object must not inherit the
+  // previous query's selection identity, mode flag or search outcome (the selection fields are
+  // this answer's derived state, not the caller's to pre-seed).
+  *out = InterpretivePointAnswer{};
   // The ONE window resolves at chain entry — before the class resolution — so the algebra's
   // own time spends the same deadline the member evaluations spend (a preset window is honored
   // verbatim; the resolution stays query_control's).
@@ -376,7 +380,6 @@ Error AnalysisWorkspace::QueryInterpretivePoint(const InterpretivePointQuery& qu
   // the SELECTION, never the class facts and never the reported values). Classes after the
   // winner are not searched this run; a cancelled or deadline-stopped evaluation stops the
   // iteration with the classes standing, the anchor payload, and the honest search outcome.
-  out->search_outcome = ExecutionOutcome::kCompleted;
   PointResult anchor;
   bool anchor_valid = false;
   for (size_t c = 0; c < out->classes.size(); ++c) {

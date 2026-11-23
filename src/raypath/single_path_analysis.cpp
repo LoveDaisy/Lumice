@@ -647,9 +647,13 @@ InterpretivePose SelectInterpretivePose(const std::vector<FiberComponent>& compo
   for (size_t c = 0; c < components.size(); ++c) {
     for (size_t k = 0; k < components[c].points.size(); ++k) {
       const PointDetail& point = components[c].points[k];
-      // A valid pose carrying an ordinary density reading: isfinite rejects both the off-support
-      // −inf and any NaN, so the winner always explains a branch that exists and answers.
-      if (!point.valid || !std::isfinite(point.log_rho)) {
+      // A pose a ray can actually travel AND carrying an ordinary density reading: valid is
+      // EvaluatePath's optical check on the face normals, the finite crystal lives in
+      // entry_measure — a pose with zero entry area admits no ray and cannot explain the
+      // clicked light however dense its normals read. isfinite rejects both the off-support
+      // −inf and any NaN, so the winner always explains a branch that exists, is reachable,
+      // and answers.
+      if (!point.valid || !(point.entry_measure > 0.0) || !std::isfinite(point.log_rho)) {
         continue;
       }
       if (!(point.log_rho > best)) {

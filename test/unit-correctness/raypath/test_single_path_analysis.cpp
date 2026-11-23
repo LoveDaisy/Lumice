@@ -1200,6 +1200,43 @@ TEST(SinglePathFactors, ParryMinus52LightsTheCarryingMemberAndReadsTheDarkOneHon
   EXPECT_GT(dark_valid, 0);
 }
 
+TEST(SinglePathFactors, InterpretivePoseRequiresAReachableFiniteEntry) {
+  // A pose the normals read dense can still admit no ray: entry_measure is the finite
+  // crystal's own fact (the cross-section that enters and meets every later face). The
+  // selector's candidates need entry_measure > 0 — the winner must explain the clicked light
+  // with a ray that can actually travel, never the densest unreachable pose.
+  PrismCrystalParam prism;
+  prism.h_ = Fixed(1.2f);
+  for (int i = 0; i < 6; i++) {
+    prism.d_[i] = Fixed(1.0f);
+  }
+  ConfigManager scene = Scene(prism);
+  CrystalConfig& crystal = scene.crystals_.at(1);
+  crystal.axis_.azimuth_dist = { DistributionType::kUniform, 0.0f, 360.0f };
+  crystal.axis_.latitude_dist = { DistributionType::kUniform, 90.0f, 360.0f };  // full sphere
+  crystal.axis_.roll_dist = { DistributionType::kUniform, 0.0f, 360.0f };
+  SinglePathRequest q = Request({ 3, 5, 7 }, 25.0, 120.0);
+  q.sample_count = 5000;
+  PointResult r;
+  ASSERT_TRUE(AnalyzePathPointValue(scene, q, false, &r).Ok());
+  ASSERT_EQ(r.Data().OutcomeValue(), Outcome::kDiscovered);
+  const InterpretivePose& pose = r.Data().Discovered().interpretive;
+  if (pose.available) {
+    // Whenever the search finds an interpretation at all, it is one a ray can walk.
+    const PointDetail& winner = r.Data().Discovered().components[pose.component_index].points[pose.point_index];
+    EXPECT_GT(winner.entry_measure, 0.0) << "the interpretive pose must sit on reachable finite geometry";
+  }
+  int reachable = 0;
+  for (const FiberComponent& component : r.Data().Discovered().components) {
+    for (const PointDetail& p : component.points) {
+      if (p.valid && p.entry_measure > 0.0 && std::isfinite(p.log_rho)) {
+        ++reachable;
+      }
+    }
+  }
+  EXPECT_GT(reachable, 0) << "the scenario holds reachable candidates for the selector";
+}
+
 // The rank-0 orbit integral reproduces the measure layer's own kFiberParameter quadrature on the
 // LI #51 fixture construction (the rhombic plate, sun at 9/180, the wavelength-pool ends
 // 1.307/1.317 — the literals test_fiber_quadrature.cpp freezes), summed here independently over

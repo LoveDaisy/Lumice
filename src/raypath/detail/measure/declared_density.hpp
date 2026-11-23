@@ -200,6 +200,13 @@ class LatitudeDensity {
   // honest. kFullSphere answers log_pb = −inf (it never flips); the Dirac kinds answer both
   // −inf.
   void EvaluateLogBranches(double phi_rad, double* log_branch_a, double* log_branch_b) const;
+  // The joint's per-branch latitude factor: the branch's OWN preimage mass plus the law's
+  // shared normalization — the pieces the marginal EvaluateLog recombines, kept branchwise so
+  // a joint can combine branch masses directly. A fold-image divergence belongs to its
+  // carrying branch alone and must not leak through the marginal when that branch's slots
+  // carry no support (the marginal at a spike reads +inf; this reads the branch's own +inf or
+  // the other branch's finite mass).
+  double EvaluateLogBranchJoint(double phi_rad, bool branch_b) const;
   // P(flip | phi), the branch-B share of the folded law (0 for kFullSphere/kDiracUnfolded).
   double FlipProbability(double phi_rad) const;
   // The Dirac point of a kDiracUnfolded law (radians).
