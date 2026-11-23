@@ -13,6 +13,7 @@
 #include "gui/annotation_anchors.hpp"
 #include "gui/crystal_preview.hpp"
 #include "gui/crystal_renderer.hpp"
+#include "gui/diagnostics_report.hpp"
 #include "gui/file_io.hpp"
 #include "gui/gui_constants.hpp"
 #include "gui/gui_state.hpp"
@@ -436,7 +437,7 @@ bool ExportEquirectangularPng(const std::filesystem::path& path);
 void DoExportConfigJson();
 
 // The half of DoExportConfigJson that is not the file dialog: write `json_str` to `path`, OR — when
-// something is already at `path` (ConfigJsonExportNeedsOverwriteConfirm) — hold both in the pending
+// something is already at `path` (TextExportNeedsOverwriteConfirm) — hold both in the pending
 // slots above and raise the confirmation prompt instead. Exporting is the one way the GUI can write
 // over a document it did not author, and what it writes is only what the GUI can express, so that
 // write is an explicit act rather than a side effect of picking a filename.
@@ -449,6 +450,67 @@ void RequestConfigJsonExport(const std::filesystem::path& path, const std::strin
 // clear the pending slots, and both are no-ops when nothing is pending.
 void ConfirmPendingConfigJsonExport();
 void CancelPendingConfigJsonExport();
+
+// ---------------- The diagnostics report's export flow ----------------
+//
+// The "Export Diagnostics..." flow (Save menu). Same dialog → frozen content →
+// overwrite-confirm shape as the config JSON export above; the additions are
+// the per-export raw-log opt-in (its checkbox state lives in the popup, never
+// persisted) and the diagnostics report assembly itself
+// (BuildDiagnosticsReportJson — diagnostics_report.* holds the recorder and
+// the JSON).
+
+// The options popup (Save > Export Diagnostics...): raw-log checkbox +
+// privacy note. Opened by the menu item; rendered beside the other export
+// popups in app_panels.cpp. Not persisted — every export asks again.
+extern bool g_show_diagnostics_export_popup;
+extern bool g_diagnostics_include_logs;
+
+// Diagnostics overwrite prompt state — same contract as the config JSON twins
+// above: JSON frozen before the prompt, held until the answer, written
+// verbatim whatever the user does to the document in between.
+extern bool g_show_diagnostics_overwrite_confirm_popup;
+extern std::filesystem::path g_pending_diagnostics_path;
+extern std::string g_pending_diagnostics_json;
+// The saved-report notice (success only — a write failure has its own modal,
+// cancel raises nothing) and the one-shot save-dialog seam beside it: when
+// the seam holds a path, the next export uses it as the dialog's answer
+// instead of opening the native dialog, which would block a test harness.
+// Production never sets the seam; every export consumes it once.
+extern bool g_show_diagnostics_result_popup;
+extern std::string g_diagnostics_result_path;
+extern std::filesystem::path g_diagnostics_dialog_seam_path;
+
+// Assembles the full report JSON from the live app state, the recorder's
+// history and the export-time environment. `include_logs` decides whether the
+// raw log ring is snapshotted in (the opt-in is explicit and per-export).
+// Pure reads — no dirty/epoch/texture side effects.
+std::string BuildDiagnosticsReportJson(bool include_logs);
+
+// The export entry the popup's "Export..." button reaches: dialog, freeze,
+// request. `include_logs` travels from the popup's checkbox.
+void DoExportDiagnosticsReport(bool include_logs);
+
+// The half of DoExportDiagnosticsReport that is not the file dialog: write the
+// frozen report to `path`, or — when the target already exists — hold both and
+// raise the confirm prompt instead. Test seam for the whole write chain
+// (NFD cannot be driven from a test). Empty path does nothing.
+void RequestDiagnosticsExport(std::filesystem::path path, std::string json_str);
+
+// The caller's half of one upload event's diagnostics bracket (the closing
+// call; the matching Begin is diagnostics::Diagnostics().BeginUpload). Every
+// production upload action site closes its event through this — the action's
+// structured UploadResult is the fact source, and the display facts are what
+// the caller committed under the 814 policy. Exported for the witnesses that
+// drive a real upload OUTSIDE the production sites (gui_test): a test
+// bracketing an upload by hand must close it through the same translation
+// production uses, never a private copy of it.
+void CompleteUploadDiagnostics(const UploadResult& result, diagnostics::UploadPath path, bool display_advanced,
+                               bool display_revoked);
+
+// Resolve a pending diagnostics export; same contract as the config JSON twins.
+void ConfirmPendingDiagnosticsExport();
+void CancelPendingDiagnosticsExport();
 void DoOpen();
 void DoOpen(const std::filesystem::path& path);
 void DoNew();
@@ -922,6 +984,16 @@ extern const char* const kExportOverwriteWarningText;
 void RenderExportOverwriteConfirmPopup();
 // Opens iff g_show_screenshot_export_options_popup is true; every frame, like the one above.
 void RenderScreenshotExportOptionsPopup();
+// Diagnostics export, same every-frame contract as the two above:
+// g_show_diagnostics_export_popup opens the options popup (raw-log checkbox +
+// privacy note; the "Export..." button runs DoExportDiagnosticsReport with the
+// checkbox's value), g_show_diagnostics_overwrite_confirm_popup opens the
+// overwrite prompt resolving through ConfirmPendingDiagnosticsExport /
+// CancelPendingDiagnosticsExport, and g_show_diagnostics_result_popup opens
+// the saved notice naming the written path.
+void RenderDiagnosticsExportPopup();
+void RenderDiagnosticsOverwriteConfirmPopup();
+void RenderDiagnosticsSavedPopup();
 // Generic GUI warning modal (see app_panels.cpp). SetGuiWarning queues a message (idempotent
 // while the same message is in-flight, so a persistent condition re-detected every debounced
 // commit does not re-spam the modal). ClearGuiWarning re-arms it (called on a successful

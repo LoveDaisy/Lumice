@@ -265,6 +265,31 @@ struct UploadResult {
   int request_width = 0;
   int request_height = 0;
   bool old_frame_retained = false;
+  // ---------------------------------------------------------------------------
+  // Observer-only measurements, filled by the path where the value is already
+  // in hand and consumed by the diagnostics report (app.cpp's upload bracket).
+  // The acceptance logic must not branch on any of them; untouched = not
+  // observed, and the report says so instead of guessing.
+  // ---------------------------------------------------------------------------
+  // The level-0 storage witness the success paths measure before committing
+  // (and the storage-mismatch revoke carries back): what the driver actually
+  // allocated. actual_internal_format is the raw GL constant (GL_RGB8 /
+  // GL_RGB16F).
+  bool actual_queried = false;
+  int actual_width = 0;
+  int actual_height = 0;
+  unsigned int actual_internal_format = 0;
+  // The staging slot capacity this attempt allocated at (the staged XYZ path
+  // only; 0 = no staging storage was touched — client-memory paths, uint8).
+  size_t pbo_bytes = 0;
+  // The float16 scale this attempt quantized with (0 = no quantization ran:
+  // a half source rides its own bits unquantized).
+  float xyz_half_scale = 0.0f;
+  // The staged path committed the frame while its last strip's fence creation
+  // failed (glFenceSync returned null): the frame is displayed, but the torn
+  // down slot's next write runs unguarded. A completed result carrying this
+  // fact is still an observed failure fact for the diagnostics retention.
+  bool fence_create_failed = false;
 };
 
 // Human-readable name for one UploadResult::Stage — the log spelling shared by the renderer and
