@@ -35,14 +35,16 @@ Consequences the implementation takes as axioms:
   be components of the existing per-bit predicates, but neither "B applicable" nor "D applicable"
   alone implies the composite is retained (and conversely).
 - The **naming authority is one reduction**: the element-set `ReduceRaypathByPeriod` (the orbit's
-  lexicographic minimum). The bit-spelled entry builds its generator inventory and delegates to
-  it; the old greedy walk was this same minimum in closed four-coset form (its candidates are
+  lexicographic minimum; arbitrary inventories, optionally clamped to a row). The bit-spelled
+  entry evaluates the same minimum in closed four-coset form — the greedy walk (its candidates are
   orbit members, and `S_0` — which fixes every prism index and flips each cone ring uniformly —
   cannot reverse the seed-vs-mirror comparison the walk branches on, because the first differing
-  face sits at a band both σ_a and the P shift preserve). `detail::ReduceBuffer` and the device
-  filter copy still spell that closed form for their frozen hot paths; the three-encoding
+  face sits at a band both σ_a and the P shift preserve); `detail::ReduceBuffer` and the device
+  filter copy spell that same closed form on their frozen hot paths. The three-encoding
   equivalence sweep in `test_filter_spec.cpp` is the standing guardrail that the encodings cannot
-  drift.
+  drift. `SymmetryGating` itself carries only the frozen per-bit fields — the exact element layer
+  stays the directly callable `DeriveRetainedElements` / `AllCrystalElements` (the same inputs),
+  so a consumer pays for the inventory only when it actually reads per-element answers.
 
 ## 2. Conventions (all read off the engine, not assumed)
 
