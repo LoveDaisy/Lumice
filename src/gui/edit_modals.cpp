@@ -1875,11 +1875,14 @@ static int FirstFaceTheCrystalLacks(const char* row_text, const LUMICE_CrystalPa
   return 0;
 }
 
-// Park the input queue's characters into a row buffer, UTF-8 encoded, clamped at the row's
-// capacity. Called on the focus-handoff frame: the chars would otherwise be dropped (no active
-// box to consume them) or eaten (the box that just activated skips char processing while still
-// clearing the queue). One ImWchar per codepoint — the queue carries UTF-16 units and surrogate
-// pairs are not recombined here; row texts are the small AND grammar, ASCII in practice.
+// Append the input queue's characters to a row buffer, UTF-8 encoded, clamped at the row's
+// capacity. Called on delivery of the focus-handoff park: the chars would otherwise be dropped
+// (no active box to consume them) or eaten (the box that just activated skips char processing
+// while still clearing the queue). Appending — not replacing — is what makes the delivered text
+// identical to the same keystrokes typed right after the handoff settles: an activation that
+// recycles a previous editor's state skips the select-all, so later typing appends too. One
+// ImWchar per codepoint — the queue carries UTF-16 units and surrogate pairs are not recombined
+// here; row texts are the small AND grammar, ASCII in practice.
 void AppendCharsToRowBuffer(char* row_text, const ImVector<ImWchar>& chars) {
   size_t used = std::strlen(row_text);
   for (const ImWchar c : chars) {
@@ -1940,9 +1943,10 @@ static void RenderSummandRowList() {
     // actually went active — a focus ImGui stole leaves the request armed for the next frame.
     const bool wants_focus = (g_summand_pending_focus_uid == row.uid);
     // Deliver parked handoff keystrokes once this box IS the active editor (the handoff settled,
-    // so the focus request is no longer armed for it): an append to the live edit, cursor moved to
-    // the end — not a pre-activation buffer write, which would be snapshotted as the row's undo
-    // baseline and re-selected away by the activation's select-all.
+    // so the focus request is no longer armed for it), appended at the cursor moved to the end:
+    // an activation that recycles the previous editor's state skips the select-all, so the same
+    // keystrokes typed right after the handoff would append too — delivery and typing agree. The
+    // activation snapshot stays untouched — a cancel still restores the pre-handoff text.
     if (!g_summand_focus_stash_chars.empty() && g_summand_focus_stash_uid == row.uid && !wants_focus &&
         active_id == input_id) {
       AppendCharsToRowBuffer(row.text, g_summand_focus_stash_chars);
@@ -1952,21 +1956,36 @@ static void RenderSummandRowList() {
         state->ReloadUserBufAndMoveToEnd();
       }
     }
-    if (wants_focus) {
-      // Keystrokes that arrive while the focus is crossing boxes would be dropped: no box is
-      // active to consume them (or the target just activated and its activation frame skips char
-      // processing while still clearing the queue). Park them here — tagged to this row — for
-      // delivery once the box is the active editor (block above), so the first keystroke after
-      // Enter/Esc is never lost and never becomes part of the row's undo baseline.
+    // A request the user has already superseded — another control holds the active id — ends
+    // here: their choice wins, the focus is not grabbed on a later frame, and the parked
+    // keystrokes (if any) die with the request (code-review round 3).
+    if (wants_focus && active_id != 0 && active_id != input_id) {
+      ClearSummandKeyboardSession();
+    } else if (wants_focus) {
+      // Esc while the handoff is still crossing boxes reaches no editor at all: the target box is
+      // not active yet and has never registered the shortcut. Routed to the row it undoes, it
+      // cancels the creation right here (code-review round 3).
       ImGuiIO& io = ImGui::GetIO();
-      if (io.InputQueueCharacters.size() > 0 && (active_id == 0 || active_id == input_id)) {
-        g_summand_focus_stash_uid = row.uid;
-        for (const ImWchar c : io.InputQueueCharacters) {
-          g_summand_focus_stash_chars.push_back(c);
+      if (active_id == 0 && ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+        esc_delete_idx = i;
+        ClearSummandKeyboardSession();
+      } else {
+        // Keystrokes that arrive while the focus is crossing boxes would be dropped: no box is
+        // active to consume them (or the target just activated and its activation frame skips
+        // char processing while still clearing the queue). Park them here — tagged to this row —
+        // for delivery once the box is the active editor (block above), so the first keystroke
+        // after Enter/Esc is never lost and never becomes part of the row's undo baseline.
+        if (io.InputQueueCharacters.size() > 0 && (active_id == 0 || active_id == input_id)) {
+          g_summand_focus_stash_uid = row.uid;
+          for (const ImWchar c : io.InputQueueCharacters) {
+            g_summand_focus_stash_chars.push_back(c);
+          }
+          io.InputQueueCharacters.resize(0);
         }
-        io.InputQueueCharacters.resize(0);
+        if (active_id == 0) {
+          ImGui::SetKeyboardFocusHere(0);  // only while nothing else holds the focus
+        }
       }
-      ImGui::SetKeyboardFocusHere(0);
     }
     // EnterReturnsTrue makes the return value the Enter event itself: true only on the frame this
     // box, while active, processed the key. A row navigation already left can never claim it
@@ -1996,7 +2015,7 @@ static void RenderSummandRowList() {
         enter_insert_source = row.uid;
       }
     } else if (active_before_input == input_id && ImGui::GetActiveID() == 0 && ImGui::IsKeyPressed(ImGuiKey_Escape) &&
-               TrimRaypathSegment(row.text).empty()) {
+               !ImGui::IsMouseClicked(ImGuiMouseButton_Left) && TrimRaypathSegment(row.text).empty()) {
       esc_delete_idx = i;
     }
     if (!is_empty) {
