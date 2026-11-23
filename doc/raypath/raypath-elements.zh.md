@@ -73,7 +73,7 @@ D6h 有 24 个元素；引擎以五族命名（`CrystalElement::Family`），记
 
 | 条件 | 由谁提出 | 既有判据 |
 |---|---|---|
-| 方位角全周均匀 | az 平移（P_k、H_a、S_k）或 az 反射（σ_a、S_k、H_a） | `IsFullTurnUniform(azimuth)` |
+| 方位角全周均匀 | az 平移（`H_a`）或 az 反射（`σ_a`、`S_k`）——**`P_k` 不提出方位角条件**（其 `T` 不动方位角槽） | `IsFullTurnUniform(azimuth)` |
 | 天顶关于 90° 对称 | `zen → 180° − zen`（H_a、S_k） | `IsBApplicable` 的天顶合取支 |
 | roll 平移 −60k | `roll → roll − 60k°`（P_k、S_k） | roll 满周均匀（`IsPApplicable`）；极点折叠胶合保持 k=3 半圈（`GluingRetainsHalfTurn`） |
 | roll 关于 −a·30° 反射 | `roll → −roll − 60a°`（H_a、σ_a） | roll 锚点命名 `σ_a`：`ComputeSigmaA(roll mean) = a` 恰是这条陈述 |

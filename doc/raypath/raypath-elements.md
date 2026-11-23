@@ -119,7 +119,7 @@ confirmed):
 
 | Condition | Posed by | Existing predicate |
 |---|---|---|
-| azimuth uniform over a full turn | az shift (P_k, H_a, S_k) or az reflection (σ_a, S_k, H_a) | `IsFullTurnUniform(azimuth)` |
+| azimuth uniform over a full turn | az shift (`H_a`) or az reflection (`σ_a`, `S_k`) — **`P_k` poses no azimuth condition** (`T` leaves the azimuth slot unchanged) | `IsFullTurnUniform(azimuth)` |
 | zenith symmetric about 90° | `zen → 180° − zen` (H_a, S_k) | the zenith conjunct of `IsBApplicable` |
 | roll shift by −60k | `roll → roll − 60k°` (P_k, S_k) | roll full-turn uniform (`IsPApplicable`); the pole-fold gluing keeps the k=3 half-turn (`GluingRetainsHalfTurn`) |
 | roll reflection about −a·30° | `roll → −roll − 60a°` (H_a, σ_a) | the roll anchor names `σ_a`: `ComputeSigmaA(roll mean) = a` is exactly this statement |
