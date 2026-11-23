@@ -742,18 +742,21 @@ double DeclaredPoseLogDensity(const LatitudeDensity& lat, const AxisDistribution
   if (az_dirac || roll_dirac) {
     return neg_inf;
   }
-  // The joint combines each flip branch's OWN latitude factor with its OWN slots' reads —
+  // The joint combines each flip branch's OWN factors — latitude factor first, then slots —
+  // and ANY factor with no mass zeroes the whole branch before the others combine: a zero
+  // latitude mass at this phi kills the branch even where a slot's read is the declared
+  // endpoint divergence (a zero mass times a divergence is no mass, never -inf + inf = NaN),
   // never through the marginal (EvaluateLog), whose fold-image divergence belongs to its
-  // carrying branch alone: at a support-edge phi the marginal reads +inf, and a spike whose
-  // branch's slots carry no support must answer the OTHER branch's finite joint, not leak the
-  // divergence. Zero slot support zeroes a branch before anything propagates; a supported
-  // branch keeps its finite contribution however the other branch ends; LogSumExp's +inf rule
-  // lets a supported endpoint divergence win outright (one branch or both, still +inf).
-  const bool a_supported = log_az != neg_inf && log_roll != neg_inf;
-  const bool b_supported = log_az_shifted != neg_inf && log_roll_shifted != neg_inf;
-  const double joint_a = a_supported ? lat.EvaluateLogBranchJoint(phi_rad, false) + log_az + log_roll : neg_inf;
-  const double joint_b =
-      b_supported ? lat.EvaluateLogBranchJoint(phi_rad, true) + log_az_shifted + log_roll_shifted : neg_inf;
+  // carrying branch alone. A branch whose every factor carries mass keeps its finite
+  // contribution however the other branch ends; a supported endpoint divergence wins outright
+  // through LogSumExp's +inf rule (one branch or both, still +inf).
+  const double factor_a = lat.EvaluateLogBranchJoint(phi_rad, false);
+  const double factor_b = lat.EvaluateLogBranchJoint(phi_rad, true);
+  const double joint_a =
+      (factor_a != neg_inf && log_az != neg_inf && log_roll != neg_inf) ? factor_a + log_az + log_roll : neg_inf;
+  const double joint_b = (factor_b != neg_inf && log_az_shifted != neg_inf && log_roll_shifted != neg_inf) ?
+                             factor_b + log_az_shifted + log_roll_shifted :
+                             neg_inf;
   return LogSumExp(joint_a, joint_b);
 }
 

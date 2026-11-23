@@ -1056,6 +1056,37 @@ TEST(DeclaredDensityLog, BothBranchesDivergingAnswersInfinityNotNaN) {
   EXPECT_TRUE(std::isinf(log_form) && log_form > 0.0) << log_form;
 }
 
+TEST(DeclaredDensityLog, ZeroLatitudeMassTimesSlotDivergenceAnswersTheSurvivingBranch) {
+  // A branch whose latitude factor has no mass at this phi contributes nothing even where its
+  // slot read is the declared endpoint divergence — a zero mass times a divergence is no mass,
+  // never -inf + inf = NaN. Here the roll's Zigzag support edge sits at the wrapped direct
+  // read; the latitude's other branch keeps a finite supported joint on the shifted roll.
+  AxisDistribution axis;
+  axis.azimuth_dist = Uniform(0.0, 360.0);
+  axis.latitude_dist = Uniform(0.0, 20.0);
+  axis.roll_dist = Zigzag(90.0, 90.0);  // support [0, 180]: roll 0 and its shift hit the edges
+  const double log_form = DeclaredPoseLogDensity(axis, 0.0, 0.0, 0.0);
+  EXPECT_FALSE(std::isnan(log_form)) << log_form;
+  EXPECT_FALSE(std::isinf(log_form) && log_form > 0.0) << log_form;
+  const double linear = DeclaredPoseDensity(axis, 0.0, 0.0, 0.0);
+  EXPECT_FALSE(std::isnan(linear)) << linear;
+}
+
+TEST(DeclaredDensityLog, LatitudeZeroSupportBothBranchesAnswersZeroNotNaN) {
+  // phi sits in an open neighbourhood outside this latitude's support: BOTH branch factors
+  // are -inf while the roll's endpoint divergence fires on the wrapped direct read. The true
+  // joint density is zero here — no endpoint-convention ambiguity, and no NaN in either form.
+  AxisDistribution axis;
+  axis.azimuth_dist = Uniform(0.0, 360.0);
+  axis.latitude_dist = Uniform(0.0, 10.0);
+  axis.roll_dist = Zigzag(270.0, 90.0);  // support [180, 360]: the direct read at 0 wraps to 360
+  const double phi = 30.0 * kDeg;
+  const double log_form = DeclaredPoseLogDensity(axis, 0.0, phi, 0.0);
+  EXPECT_TRUE(std::isinf(log_form) && log_form < 0.0) << log_form;
+  const double linear = DeclaredPoseDensity(axis, 0.0, phi, 0.0);
+  EXPECT_EQ(linear, 0.0) << linear;
+}
+
 TEST(DeclaredDensityLog, DivergentBranchWithoutSupportKeepsTheOtherBranchsFiniteJoint) {
   // At the 30-degree fold image of this latitude's support edge the DIRECT branch diverges but
   // its roll read is zero-supported; the SHIFTED branch's roll lands inside its support and its

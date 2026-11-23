@@ -247,6 +247,17 @@ LUMICE_ErrorCode LUMICE_ExpandRaypathClass(const LUMICE_CrystalParam* crystal, c
       semantics == LUMICE_SYMMETRY_SEMANTICS_LABEL ? ns::SymmetrySemantics::kLabel : ns::SymmetrySemantics::kPhysical,
       shape, config.axis_);
   const auto d = ns::detail::DeriveDSymmetryParams(config.axis_);
+  // Hostile caller input is refused before the algebra: the element inventory's label action
+  // answers an illegal face number with an unrecoverable invariant, so the faces are checked
+  // against the crystal kind's own legal set here — the same boundary discipline the
+  // local-class and interpretive-point faces apply at their entries.
+  const ns::CrystalKind kind = std::holds_alternative<ns::PrismCrystalParam>(config.param_) ? ns::CrystalKind::kPrism :
+                                                                                              ns::CrystalKind::kPyramid;
+  for (int i = 0; i < face_count; ++i) {
+    if (!ns::IsLegalFace(kind, faces[i])) {
+      return LUMICE_ERR_INVALID_VALUE;
+    }
+  }
   std::vector<ns::IdType> rp;
   rp.reserve(static_cast<size_t>(face_count));
   for (int i = 0; i < face_count; ++i) {

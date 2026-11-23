@@ -2059,6 +2059,22 @@ TEST(ExpandRaypathClassApi, LabelAndPhysicalClassesDifferWhereTheCrystalLacksThe
   EXPECT_EQ(LUMICE_ExpandRaypathClass(nullptr, rp, 2, 1, 0, out, &n), LUMICE_ERR_NULL_ARG);
   EXPECT_EQ(LUMICE_ExpandRaypathClass(&c, rp, 0, 1, 0, out, &n), LUMICE_ERR_INVALID_VALUE);
   EXPECT_EQ(LUMICE_ExpandRaypathClass(&c, rp, 2, 1, 7, out, &n), LUMICE_ERR_INVALID_VALUE);
+  // Hostile face numbers are refused, not a process abort: the element inventory's label
+  // action is an unrecoverable-invariant boundary, so the entry validates before the algebra —
+  // each element-bearing symmetry path, with the calling process alive after every refusal.
+  const int illegal[2]{ 9, 1 };
+  EXPECT_EQ(
+      LUMICE_ExpandRaypathClass(&c, illegal, 2, LUMICE_RAYPATH_SYMMETRY_B, LUMICE_SYMMETRY_SEMANTICS_LABEL, out, &n),
+      LUMICE_ERR_INVALID_VALUE);
+  EXPECT_EQ(
+      LUMICE_ExpandRaypathClass(&c, illegal, 2, LUMICE_RAYPATH_SYMMETRY_D, LUMICE_SYMMETRY_SEMANTICS_LABEL, out, &n),
+      LUMICE_ERR_INVALID_VALUE);
+  EXPECT_EQ(
+      LUMICE_ExpandRaypathClass(&c, illegal, 2, LUMICE_RAYPATH_SYMMETRY_P, LUMICE_SYMMETRY_SEMANTICS_PHYSICAL, out, &n),
+      LUMICE_ERR_INVALID_VALUE);
+  EXPECT_EQ(LUMICE_ExpandRaypathClass(&c, illegal, 2, 0, LUMICE_SYMMETRY_SEMANTICS_LABEL, out, &n),
+            LUMICE_ERR_INVALID_VALUE)
+      << "the face universe is the input contract: the boundary refuses illegal faces regardless of the bits";
 }
 
 // The corpus's Lowitz alignment on a regular prism (zenith Gaussian 0°±40°, locked roll): the
