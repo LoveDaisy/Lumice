@@ -310,6 +310,14 @@ constexpr float kCoSharedBorderAlpha = 0.55f;
 // distinguish from each other. Consumed by RenderEntryCard.
 constexpr float kCardHoverBorderAlpha = 0.30f;
 
+// Duration of the one-shot border flash a freshly duplicated card plays when the edit modal was
+// CLOSED at the moment of the duplicate (owner ruling 2026-11-22: no auto-opened modal, the flash
+// is the focus gesture). One fade, active-accent strength decaying to the plain border — not a
+// blink — and the value is the plan's declared design default (§2), replaceable without touching
+// the mechanism. Measured on ImGui's frame clock (GetTime), so a --fixed-dt gui_test replays it
+// deterministically. Consumed by panels.cpp (arm / tick / RenderEntryCard draw).
+constexpr float kDuplicateFlashSeconds = 1.0f;
+
 // Outline drawn over the entry card's "Link to" rail slot when that card shares its
 // (crystal, filter) pair with another. An outline rather than a different glyph: what the button
 // DOES is constant, and sharing is a separate fact drawn on top of it.

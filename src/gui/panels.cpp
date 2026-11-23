@@ -242,6 +242,91 @@ int DuplicateEntryBelow(GuiState& state, int layer_idx, int entry_idx) {
   return below;
 }
 
+int DuplicateEntryWithFocusFollow(GuiState& state, int layer_idx, int entry_idx) {
+  // The three states are read BEFORE anything moves: the duplicate shifts indices, and the modal's
+  // binding is a position (its compensation happens inside MoveEntryWithinLayer, below).
+  const bool modal_open = IsEditModalOpen();
+  const EditModalTarget target = GetEditModalTarget();
+  const bool modal_on_source = modal_open && target.layer_idx == layer_idx && target.entry_idx == entry_idx;
+
+  if (modal_on_source) {
+    // Reject before ANY mutation — commit, pool append and rebind are all later in this function.
+    // The reject keeps the session exactly as it is (the modal's own row feedback explains why the
+    // OK-style gate fired); a rebind here would reinstall the buffers from the clone and silently
+    // drop the draft the commit refuses to write, which is precisely the loss this gate exists to
+    // prevent (plan §2).
+    if (!ModalEditCommittable()) {
+      return -1;
+    }
+    // "Duplicate what you see": the pending edit becomes pool content BEFORE the clone snapshots
+    // the pool — here the order IS the semantics. Diff-gated inside, so an editor with nothing in
+    // flight commits nothing.
+    CommitModalEditBuffers(state);
+  }
+
+  const int below = DuplicateEntryBelow(state, layer_idx, entry_idx);
+  if (below < 0) {
+    return below;
+  }
+
+  if (modal_on_source) {
+    // Rebind LAST, after the final insert position exists (the move inside DuplicateEntryBelow
+    // shifted the binding back onto the source via NotifyEntryMoved; this re-aims it). Reuse of
+    // OpenEditModal is the point — it reinstalls every buffer and the baseline from the clone's
+    // fresh pool slots, resets the preview session and keeps the section the user was on
+    // (g_pending_tab_select), which is exactly the "keep editing, now on the copy" hand-off. Not
+    // promising the source's transient cursor selection or preview pose is plan §2's documented
+    // trade.
+    const EditRequest req{ GetActiveTabAsEditTarget(), layer_idx, below };
+    OpenEditModal(req, state);
+  } else if (!modal_open) {
+    // State 2: no editor session to continue, so the focus gesture is the flash. The frame-clock
+    // anchor is why the arm lives in this wrapper rather than in DuplicateEntryBelow — that one
+    // stays a pure state transform the unit tests drive without an ImGui context. One struct only:
+    // a second duplicate replaces it; the flash never becomes a history or a queue (plan §2).
+    state.duplicate_flash = GuiState::DuplicateFlash{ layer_idx, below, ImGui::GetTime() };
+  }
+  // State 3 (the modal is on another card): nothing here. NotifyEntryMoved kept its binding on its
+  // entry through the insert's shift — same objects, same in-flight buffers, active border with
+  // them — and no flash is armed, because the edit being open belongs to a different card.
+  return below;
+}
+
+float DuplicateFlashStrength(const GuiState& state, int layer_idx, int entry_idx) {
+  if (!state.duplicate_flash.has_value()) {
+    return 0.0f;
+  }
+  const GuiState::DuplicateFlash& flash = *state.duplicate_flash;
+  if (flash.layer_idx != layer_idx || flash.entry_idx != entry_idx) {
+    return 0.0f;  // the entry reference, not the pool crystal: cards sharing the clone's crystal
+                  // must not flash with it (plan §3).
+  }
+  const float age = static_cast<float>(ImGui::GetTime() - flash.start_time);
+  return std::clamp(1.0f - age / kDuplicateFlashSeconds, 0.0f, 1.0f);
+}
+
+void TickDuplicateFlash(GuiState& state) {
+  if (!state.duplicate_flash.has_value()) {
+    return;
+  }
+  const bool expired =
+      static_cast<float>(ImGui::GetTime() - state.duplicate_flash->start_time) >= kDuplicateFlashSeconds;
+  bool target_alive = false;
+  if (!expired) {
+    // Paranoia on the same terms the modal's own bounds guard uses: the Notify* compensation keeps
+    // the target denoting its entry through delete / move / layer-delete, so an out-of-range
+    // target here would mean a compensation path was missed — drop the flash rather than let a
+    // stale slot light whatever lands on those indices.
+    const int ly = state.duplicate_flash->layer_idx;
+    const int en = state.duplicate_flash->entry_idx;
+    target_alive = ly >= 0 && ly < static_cast<int>(state.layers.size()) && en >= 0 &&
+                   en < static_cast<int>(state.layers[ly].entries.size());
+  }
+  if (expired || !target_alive) {
+    state.duplicate_flash.reset();
+  }
+}
+
 namespace {
 
 // Append " <In|Out>[ <sym>]" suffix shared by every filter type's summary.
@@ -1491,6 +1576,27 @@ EntryCardAction RenderEntryCard(GuiState& state, int layer_idx, int entry_idx) {
     ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, UiPx(kActiveCardBorder));
   }
 
+  // ---- Duplicate flash: the one-shot focus gesture ----
+  // A duplicate made while the edit modal was CLOSED arms this card (panels.cpp,
+  // DuplicateEntryWithFocusFollow); the border fades once from the active form down to the plain
+  // one over kDuplicateFlashSeconds, so the clone answers "where did my focus gesture go" without
+  // a modal popping open (owner ruling 2026-11-22). It yields to `active` and `co_shared` — those
+  // name the open edit relationship, which outranks a gesture that finished; and it outranks
+  // hover, which only says the pointer happens to be here.
+  const float flash_strength = (!active && !co_shared) ? DuplicateFlashStrength(state, layer_idx, entry_idx) : 0.0f;
+  if (flash_strength > 0.0f) {
+    // Color and width move together: at strength 1 the border is the active card's form (the
+    // NavHighlight accent at the active width), at 0 it is exactly this card's resting look. The
+    // plain width comes from the live style rather than a constant, so the fade ends on whatever
+    // the theme actually draws — no pop at either end, and the lerp stays inside the two colors
+    // the card already knows.
+    const ImVec4 plain = ImGui::GetStyleColorVec4(ImGuiCol_Border);
+    const ImVec4 accent = ImGui::GetStyleColorVec4(ImGuiCol_NavHighlight);
+    const float plain_w = ImGui::GetStyle().ChildBorderSize;
+    ImGui::PushStyleColor(ImGuiCol_Border, ImLerp(plain, accent, flash_strength));
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, UiPx(plain_w + (kActiveCardBorder - plain_w) * flash_strength));
+  }
+
   // ---- Whole-card hover feedback ----
   // The card opens its edit modal when clicked anywhere, and that was previously invisible: the
   // three Edit buttons were the only thing on the card saying "this is editable", and they are
@@ -1508,7 +1614,7 @@ EntryCardAction RenderEntryCard(GuiState& state, int layer_idx, int entry_idx) {
   ImGuiStorage* card_storage = ImGui::GetStateStorage();
   ImGuiID hover_persist_id = ImGui::GetID("##card_hover_persist");
   bool hover_prev = card_storage->GetBool(hover_persist_id, false);
-  const bool hover_border = hover_prev && !active && !co_shared;
+  const bool hover_border = hover_prev && !active && !co_shared && flash_strength <= 0.0f;
   if (hover_border) {
     ImGui::PushStyleColor(ImGuiCol_Border, AccentColor(kCardHoverBorderAlpha));
   }
@@ -1978,6 +2084,10 @@ EntryCardAction RenderEntryCard(GuiState& state, int layer_idx, int entry_idx) {
   if (hover_border) {
     ImGui::PopStyleColor();
   }
+  if (flash_strength > 0.0f) {
+    ImGui::PopStyleVar();
+    ImGui::PopStyleColor();
+  }
   if (active) {
     ImGui::PopStyleVar();
     ImGui::PopStyleColor();
@@ -2124,7 +2234,9 @@ void RenderLayer(GuiState& state, int layer_idx) {
         g_thumbnail_cache.OnLayerStructureChanged();
       }
     } else if (pending_duplicate_entry >= 0) {
-      DuplicateEntryBelow(state, layer_idx, pending_duplicate_entry);
+      // The product duplicate entry: every duplicate runs the three-state focus transaction
+      // (commit / rebind / flash) through this one call.
+      DuplicateEntryWithFocusFollow(state, layer_idx, pending_duplicate_entry);
     } else if (pending_move_from >= 0) {
       MoveEntryWithinLayer(state, layer_idx, pending_move_from, pending_move_to);
     }
@@ -2152,6 +2264,10 @@ void RenderLayer(GuiState& state, int layer_idx) {
 // ========== Scattering Section (layer management) ==========
 
 void RenderScatteringSection(GuiState& state) {
+  // Expire an elapsed duplicate flash before any card reads it this frame, so the state answers
+  // "gone" on the first frame after its deadline instead of lingering until a draw happens to
+  // check.
+  TickDuplicateFlash(state);
   for (int i = 0; i < static_cast<int>(state.layers.size()); i++) {
     RenderLayer(state, i);
     ImGui::Spacing();

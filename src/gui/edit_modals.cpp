@@ -2620,6 +2620,17 @@ void NotifyEntryDeleted(GuiState& state, int layer_idx, int deleted_entry_idx) {
       state.pick_link_source->entry_idx = compensated;
     }
   }
+  // And the duplicate flash names an entry by position too (GuiState::DuplicateFlash). Same rule
+  // as the pick source: the deleted target ends the flash, a target after the erase follows its
+  // entry down — a flash that stayed behind would light the card that moved into the slot.
+  if (state.duplicate_flash.has_value() && state.duplicate_flash->layer_idx == layer_idx) {
+    const int compensated = CompensatePositionalIndexForDeletion(state.duplicate_flash->entry_idx, deleted_entry_idx);
+    if (compensated < 0) {
+      state.duplicate_flash.reset();
+    } else {
+      state.duplicate_flash->entry_idx = compensated;
+    }
+  }
 }
 
 void NotifyEntryMoved(GuiState& state, int layer_idx, int from_idx, int to_idx) {
@@ -2632,6 +2643,12 @@ void NotifyEntryMoved(GuiState& state, int layer_idx, int from_idx, int to_idx) 
   if (state.pick_link_source.has_value() && state.pick_link_source->layer_idx == layer_idx) {
     state.pick_link_source->entry_idx =
         CompensatePositionalIndexForMove(state.pick_link_source->entry_idx, from_idx, to_idx);
+  }
+  // The duplicate flash rides the same rule (see NotifyEntryDeleted): it denotes the entry, not
+  // the slot, so a reorder keeps the fade on the card it armed on.
+  if (state.duplicate_flash.has_value() && state.duplicate_flash->layer_idx == layer_idx) {
+    state.duplicate_flash->entry_idx =
+        CompensatePositionalIndexForMove(state.duplicate_flash->entry_idx, from_idx, to_idx);
   }
 }
 
@@ -2655,6 +2672,15 @@ void NotifyLayerDeleted(GuiState& state, int deleted_layer_idx) {
       state.pick_link_source->layer_idx = compensated;
     }
   }
+  // The duplicate flash follows a surviving layer the same way; its own layer going away ends it.
+  if (state.duplicate_flash.has_value()) {
+    const int compensated = CompensatePositionalIndexForDeletion(state.duplicate_flash->layer_idx, deleted_layer_idx);
+    if (compensated < 0) {
+      state.duplicate_flash.reset();
+    } else {
+      state.duplicate_flash->layer_idx = compensated;
+    }
+  }
   for (ColorClassConfig& cls : state.raypath_color) {
     for (ColorClassRefConfig& ref : cls.match) {
       ref.layer_idx = CompensatePositionalIndexForDeletion(ref.layer_idx, deleted_layer_idx);
@@ -2665,6 +2691,34 @@ void NotifyLayerDeleted(GuiState& state, int deleted_layer_idx) {
 namespace {
 // Defined further down, in the same anonymous namespace as the modal edit buffers it applies.
 void CommitAllBuffersImmediate(GuiState& state);
+
+// The one question the Staged OK button's disabled state and Duplicate's reject path both ask:
+// does the Filter tab hold a draft the commit refuses to write? A blank row validates kValid (the
+// "empty ≡ no filter" rule lives in the committer, not here); a half-typed or malformed row
+// blocks. `g_filter_remove_intent` short-circuits it: an explicit removal always commits.
+//
+// Single predicate, two consumers, so the OK button and the reject path can never disagree — that
+// is the same "must never disagree" pairing SummandRowBlocksCommit was extracted for, one level
+// up. Returns the 0-based index of the first blocking row with its verdict (the OK gate spells the
+// tooltip from it), or index -1 when every row commits. CurrentValidationKind is the forward
+// declaration near the top of the file; its definition sits with the filter commit body below.
+struct BlockingSummandRow {
+  int index = -1;
+  GuiValidationResult verdict;
+};
+BlockingSummandRow FirstBlockingSummandRow() {
+  if (g_filter_remove_intent) {
+    return {};
+  }
+  const auto kind = CurrentValidationKind();
+  for (size_t i = 0; i < g_summand_rows.size(); ++i) {
+    const auto v = ValidateSummandText(g_summand_rows[i].text, kind);
+    if (SummandRowBlocksCommit(v.state)) {
+      return { static_cast<int>(i), v };
+    }
+  }
+  return {};
+}
 }  // namespace
 
 void StartLinkPickMode(GuiState& state, int layer_idx, int entry_idx) {
@@ -2682,6 +2736,22 @@ void StartLinkPickMode(GuiState& state, int layer_idx, int entry_idx) {
     g_active_modal = ActiveModal::kNone;
   }
   state.pick_link_source = GuiState::EntryRef{ layer_idx, entry_idx };
+}
+
+bool ModalEditCommittable() {
+  // No modal open: nothing in flight, nothing a rebind could lose. With one open, the answer is
+  // the OK button's own gate — see FirstBlockingSummandRow.
+  return g_active_modal != ActiveModal::kOpen || FirstBlockingSummandRow().index < 0;
+}
+
+void CommitModalEditBuffers(GuiState& state) {
+  if (g_active_modal != ActiveModal::kOpen) {
+    return;
+  }
+  // The shared commit body (diff-gated: an untouched editor commits nothing). Deliberately NOT
+  // StartLinkPickMode's shape — that one also closes the modal and arms pick mode; Duplicate
+  // commits and keeps the editor, because its next step rebinds it to the clone.
+  CommitAllBuffersImmediate(state);
 }
 
 EditTarget GetActiveTabAsEditTarget() {
@@ -3696,18 +3766,13 @@ void RenderEditModals(GuiState& state, GLFWwindow* window) {
     // storage outlives the IsItemHovered check below.
     std::string ok_tooltip_storage;
     const char* ok_tooltip = nullptr;
-    if (!g_filter_remove_intent) {
-      const auto kind = CurrentValidationKind();
-      for (size_t i = 0; i < g_summand_rows.size(); ++i) {
-        const auto v = ValidateSummandText(g_summand_rows[i].text, kind);
-        if (!SummandRowBlocksCommit(v.state)) {
-          continue;
-        }
-        ok_disabled = true;
-        ok_tooltip_storage = SummandRowOkTooltip(i, v);
-        ok_tooltip = ok_tooltip_storage.c_str();
-        break;
-      }
+    // The gate reads the shared predicate (FirstBlockingSummandRow) rather than its own copy of
+    // the walk, so the button and Duplicate's reject path answer from one source.
+    const auto blocked = FirstBlockingSummandRow();
+    if (blocked.index >= 0) {
+      ok_disabled = true;
+      ok_tooltip_storage = SummandRowOkTooltip(static_cast<size_t>(blocked.index), blocked.verdict);
+      ok_tooltip = ok_tooltip_storage.c_str();
     }
 
     ImGui::BeginDisabled(ok_disabled);

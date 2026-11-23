@@ -1900,6 +1900,10 @@ void ResetFrontendState(GuiState& state, FrontendResetReason reason, LmcTexture*
   if (state.workspace.map_press_owner != PressOwner::kNone) {
     state.workspace.map_press_owner = PressOwner::kCancelled;
   }
+  // And the duplicate flash, for the same reason: it names an entry of the document these reasons
+  // replace or restore (Revert included — ApplyTo above restores fields, it does not touch session
+  // state), so a fade armed by the previous document must not light a card of the new one.
+  state.duplicate_flash.reset();
 
   // Previous document's recovery leftovers are cleared BEFORE this function decides what the new
   // document shows: the kOpenBaked branch below legitimately ESTABLISHES recovery state (its own

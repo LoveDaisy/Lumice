@@ -22,6 +22,7 @@
 #include <vector>
 
 #include "gui/edit_modals.hpp"
+#include "gui/entry_delete.hpp"  // DeleteLayerEntry — the erase side of the Notify* contract
 #include "gui/gui_state.hpp"
 #include "gui/panels.hpp"
 
@@ -317,6 +318,84 @@ TEST_F(EditModalMoveBinding, DuplicateKeepsBindingsOnTheirEntries) {
   ASSERT_TRUE(s2.pick_link_source.has_value());
   EXPECT_EQ(s2.pick_link_source->entry_idx, 1);
   EXPECT_EQ(ArmedCrystalId(s2), armed);
+}
+
+// ---------------------------------------------------------------------------
+// DuplicateEntryWithFocusFollow: the three-state focus transaction (owner ruling, 2026-11-22).
+// The state-2 flash arm needs ImGui's frame clock and lives with the pixel witnesses in
+// test_entry_management.cpp; what a no-frame test owns is the transaction's positional machinery:
+// the state-1 rebind, the state-3 leave-alone, and the flash riding the same Notify* compensation
+// the modal binding and the pick source ride.
+// ---------------------------------------------------------------------------
+
+TEST_F(EditModalMoveBinding, DuplicateWithFocusFollowRebindsTheEditorToTheClone) {
+  gui::GuiState s = MakeDoc(1, 3);
+  Open(s, 0, 1);
+
+  const int copy_idx = gui::DuplicateEntryWithFocusFollow(s, 0, 1);
+
+  // The clone sits directly below its original, on a fresh slot carrying its content...
+  ASSERT_EQ(copy_idx, 2);
+  const auto& copy = s.layers[0].entries[copy_idx];
+  EXPECT_NE(copy.crystal_id, s.layers[0].entries[1].crystal_id);
+  EXPECT_EQ(s.crystals[copy.crystal_id].height, s.crystals[s.layers[0].entries[1].crystal_id].height);
+  // ...and the editor followed it: still open, bound to the copy, no flash armed (the active
+  // border IS the focus signal in this state).
+  EXPECT_TRUE(gui::IsEditModalOpen());
+  EXPECT_EQ(gui::GetEditModalTarget().entry_idx, copy_idx);
+  EXPECT_EQ(BoundCrystalId(s), copy.crystal_id);
+  EXPECT_FALSE(s.duplicate_flash.has_value());
+}
+
+TEST_F(EditModalMoveBinding, DuplicateWithFocusFollowOnAnotherCardKeepsTheEditorAndArmsNoFlash) {
+  gui::GuiState s = MakeDoc(1, 4);
+  Open(s, 0, 3);
+  const int edited = BoundCrystalId(s);
+
+  const int copy_idx = gui::DuplicateEntryWithFocusFollow(s, 0, 0);
+
+  ASSERT_EQ(copy_idx, 1);
+  EXPECT_TRUE(gui::IsEditModalOpen());
+  EXPECT_EQ(BoundCrystalId(s), edited);  // compensated onto its entry, not rebound
+  EXPECT_FALSE(s.duplicate_flash.has_value());
+}
+
+TEST_F(EditModalMoveBinding, DuplicateFlashFollowsItsEntryThroughMovesAndDeletes) {
+  // Armed by hand: the arm itself needs a frame clock; what is under test here is purely the
+  // positional bookkeeping the Notify* rules owe the flash.
+  gui::GuiState s = MakeDoc(1, 5);  // [a b c d e], flash on c (index 2)
+  s.duplicate_flash = gui::GuiState::DuplicateFlash{ 0, 2, 0.0 };
+
+  // A move of an earlier card drags the flash's entry with it.
+  gui::MoveEntryWithinLayer(s, 0, 0, 4);  // -> [b c d e a]: c is now at 1
+  ASSERT_TRUE(s.duplicate_flash.has_value());
+  EXPECT_EQ(s.duplicate_flash->entry_idx, 1);
+
+  // A move OF the flashed card follows it to its landing spot.
+  gui::MoveEntryWithinLayer(s, 0, 1, 3);  // -> [b d e c a]: c is now at 3
+  ASSERT_TRUE(s.duplicate_flash.has_value());
+  EXPECT_EQ(s.duplicate_flash->entry_idx, 3);
+
+  // A delete before it shifts it down; a delete after it leaves it alone.
+  ASSERT_TRUE(gui::DeleteLayerEntry(s, 0, 0));  // -> [d e c a]: c at 2
+  ASSERT_TRUE(s.duplicate_flash.has_value());
+  EXPECT_EQ(s.duplicate_flash->entry_idx, 2);
+  ASSERT_TRUE(gui::DeleteLayerEntry(s, 0, 3));  // a was below c: -> [d e c], c stays at 2
+  ASSERT_TRUE(s.duplicate_flash.has_value());
+  EXPECT_EQ(s.duplicate_flash->entry_idx, 2);
+
+  // Deleting the flashed entry itself drops the flash.
+  ASSERT_TRUE(gui::DeleteLayerEntry(s, 0, 2));
+  EXPECT_FALSE(s.duplicate_flash.has_value());
+
+  // Its layer going away ends it too; a sibling layer's deletion compensates instead.
+  gui::GuiState two = MakeDoc(2, 2);
+  two.duplicate_flash = gui::GuiState::DuplicateFlash{ 1, 0, 0.0 };
+  gui::NotifyLayerDeleted(two, 0);
+  ASSERT_TRUE(two.duplicate_flash.has_value());
+  EXPECT_EQ(two.duplicate_flash->layer_idx, 0);
+  gui::NotifyLayerDeleted(two, 0);
+  EXPECT_FALSE(two.duplicate_flash.has_value());
 }
 
 }  // namespace
