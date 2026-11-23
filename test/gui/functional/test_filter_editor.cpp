@@ -838,37 +838,33 @@ void RegisterFilterEditorTests(ImGuiTestEngine* engine) {
     };
   }
 
-  // A click on a row that renders AFTER the handoff target, landing on the crossing frame itself:
-  // the user's choice must survive the request the crossing just submitted — the next frame's
-  // activation must not clear the clicked control and steal the focus back. Whatever renders
-  // later in the frame is still the user's pick.
+  // A click that lands AFTER the crossing's submission, within the same frame, must keep its
+  // effect: the request the crossing just submitted is still unapplied, and the next frame's
+  // activation would otherwise ClearActiveID the clicked control and swallow the press. The
+  // clicked control here is the refilled row's own "x" button — its rect is stable across the
+  // refill (the fresh uid lands on the identical geometry), and it renders after the row's text
+  // box, which is exactly the submit-then-click order the ownership check exists for.
   {
     ImGuiTest* t =
-        IM_REGISTER_TEST(engine, "filter_editor", "a_click_on_a_later_row_during_the_crossing_keeps_the_user_s_choice");
+        IM_REGISTER_TEST(engine, "filter_editor", "a_same_frame_click_after_the_submission_keeps_the_user_s_choice");
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
       ctx->Yield(2);
-      OpenFilterModal(ctx);
-      AuthorRow(ctx, 0, "1-2");
-      AuthorRow(ctx, 1, "3-4");
+      OpenFilterModal(ctx);  // the initial blank row, uid 0
       ctx->ItemInput("**/##row_text_0");
       ctx->Yield(2);
-      ctx->MouseMoveToPos(ctx->ItemInfo("**/##row_text_1").RectFull.GetCenter());  // hover the later row
-      ctx->Yield(2);
-      ctx->KeySetEx(ImGuiKey_Enter, true, 0.0f);
-      ctx->Yield();  // frame N: the blank is inserted, the focus request armed
-      ctx->KeySetEx(ImGuiKey_Enter, false, 0.0f);
-      ctx->MouseDown(0);  // frame N+1: the crossing frame — the click lands after the submission
-      ctx->MouseUp(0);    // frame N+2: release
+      ctx->MouseMoveToPos(ctx->ItemInfo("**/" ICON_FA_XMARK "##row_delete_0").RectFull.GetCenter());
+      ctx->Yield(2);  // hover the row's "x": the refill will reuse this exact rect for the new uid
+      ctx->KeySetEx(ImGuiKey_Escape, true, 0.0f);
+      ctx->Yield();  // frame M: the blank is cancelled, the refill lands on the same rect, refocus arms
+      ctx->KeySetEx(ImGuiKey_Escape, false, 0.0f);
+      ctx->MouseDown(0);  // frame M+1: the crossing frame — the click lands after the submission
+      ctx->MouseUp(0);    // frame M+2: release fires the button
       ctx->Yield(4);
 
-      IM_CHECK_EQ(ImGui::GetActiveID(), ctx->ItemInfo("**/##row_text_1").ID);  // the clicked row kept the focus
-      IM_CHECK_STR_EQ(RowTexts()[1].c_str(), "");                              // the crossing stayed empty
-      IM_CHECK_NE(ImGui::GetActiveID(), ctx->ItemInfo("**/##row_text_2").ID);  // no late steal
-
-      ctx->KeyCharsReplace("7");  // the clicked row is the editor: typing lands there
-      ctx->Yield(3);
-      IM_CHECK_STR_EQ(RowTexts()[2].c_str(), "7");
+      IM_CHECK(!ctx->ItemExists("**/##row_text_1"));  // the click was honored: the refilled row is gone
+      IM_CHECK(ctx->ItemExists("**/##row_text_2"));   // the ≥1-row invariant refilled one blank
+      IM_CHECK_EQ(ImGui::GetActiveID(), (ImGuiID)0);  // and nothing stole the keyboard
 
       ctx->ItemClick(kCancel);
       ctx->Yield(2);
@@ -1087,8 +1083,11 @@ void RegisterFilterEditorTests(ImGuiTestEngine* engine) {
       ctx->Yield();  // frame N: the blank is inserted, the focus request armed
       ctx->KeySetEx(ImGuiKey_Enter, false, 0.0f);
       ctx->KeyChars("9");  // frame N+1: the crossing frame
-      ctx->MouseDown(0);   // frame N+2: the activation frame — the click is on the later row
-      ctx->MouseUp(0);     // frame N+3: release
+      // Click the row below the insertion while the handoff is still in flight (or freshly
+      // settled — ItemClick's own hover-then-click spans a few frames, and the outcome must be
+      // the same either way): the crossing's row keeps its accepted keystroke exactly once and
+      // never ends up with the user's post-click typing; the clicked row takes the editor.
+      ctx->ItemClick("**/##row_text_1");
       ctx->Yield(4);
       ctx->KeyCharsReplace("7");
       ctx->Yield(3);

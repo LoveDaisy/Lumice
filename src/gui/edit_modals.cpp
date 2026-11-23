@@ -290,12 +290,29 @@ static uint64_t g_next_summand_row_uid = 0;
 struct SummandHandoff {
   bool active = false;
   uint64_t target_uid = kNoSummandRowUid;
-  ImGuiID target_id = 0;  // resolved at arm time; stable while the same tab renders the list
+  ImGuiID target_id = 0;   // resolved at arm time; stable while the same tab renders the list
+  int settled_frame = -1;  // the frame the target's box reported active; -1 until then. The
+                           // transaction stays armed one frame PAST this (see the settle note
+                           // in RenderSummandRowList): the activation frame skips key
+                           // processing, so the editor's own Escape shortcut route only
+                           // exists from the frame after — the transaction owns the keyboard
+                           // until that route is live, and one further frame is the last one
+                           // an Esc can arrive on without it.
 };
 static SummandHandoff g_summand_handoff;
 static ImVector<ImWchar> g_summand_handoff_chars;
 
 void AppendCharsToRowBuffer(char* row_text, const ImVector<ImWchar>& chars);  // defined beside the row renderer
+
+// Find a row buffer by uid, or null when the uid is not in this frame's list.
+static SummandRowBuf* FindSummandRow(uint64_t uid) {
+  for (SummandRowBuf& r : g_summand_rows) {
+    if (r.uid == uid) {
+      return &r;
+    }
+  }
+  return nullptr;
+}
 
 // Resolve the InputText widget id of a row uid exactly the way the row loop does (same window,
 // same PushID(uid) + "##row_text_<uid>" chain), so the stored target_id compares equal to the
@@ -1957,6 +1974,11 @@ static void RenderSummandRowList() {
   size_t enter_insert_idx = static_cast<size_t>(-1);
   uint64_t enter_insert_source = kNoSummandRowUid;
   size_t esc_delete_idx = static_cast<size_t>(-1);
+  // Whether THIS frame's row loop submitted the handoff's focus request. A control the user
+  // clicked can take the active id later in the same frame than that submission (its widget
+  // renders after the target row) — the post-loop ownership check then cancels the request while
+  // it is still unapplied, before the next frame's ApplyResult would clear the user's control.
+  bool handoff_submitted_this_frame = false;
 
   // While a handoff is crossing and no editor is active, the keyboard belongs to the transaction
   // (plan §3.1): nav's own Space/Enter manual activation — polled unowned at frame start, since
@@ -1965,11 +1987,42 @@ static void RenderSummandRowList() {
   // into. Revoke it here, before any row renders (an earlier row's InputText would otherwise
   // consume it first). The transaction's own transfer — the activation aimed at its target — is
   // kept: that one is the handoff doing its job.
+  //
+  // The same ownership covers Tab: navigation is the user's gesture and outranks the auto-focus.
+  // Handled up here rather than at the target row's pre-call because nav may already have created
+  // this frame's tabbing request — anchored on NavId, which our own focus request has moved, and
+  // in its init form (NavTabbingDir 0: no active id, no nav cursor) it scores the transaction's
+  // own target as its result, re-activating the very row the user is tabbing AWAY from. Cancel
+  // that request and re-issue the form a settled editor's Tab produces (same anchors, forward or
+  // backward by shift), so navigation continues from where the user's text actually lives. This
+  // must happen before any row submits an item: earlier items are already scored and cannot be
+  // re-scored, and forward tabbing from the target only ever wants later ones.
   if (g_summand_handoff.active && ImGui::GetActiveID() == 0) {
     ImGuiContext* g = ImGui::GetCurrentContext();
     if (g->NavActivateId != 0 && g->NavActivateId != g_summand_handoff.target_id) {
       g->NavActivateId = g->NavActivateDownId = g->NavActivatePressedId = 0;
       g->NavActivateFlags = ImGuiActivateFlags_None;
+    }
+    if (ImGui::IsKeyPressed(ImGuiKey_Tab)) {
+      if (SummandRowBuf* target = FindSummandRow(g_summand_handoff.target_uid)) {
+        // The keystrokes already accepted into the crossing land in the row (their content must
+        // read as if typed right before navigating away); this frame's own characters are part of
+        // the same round and land with them. Then the crossing ends and the user's Tab proceeds.
+        ImGuiIO& io = ImGui::GetIO();
+        DeliverSummandHandoffChars(target->text);
+        AppendCharsToRowBuffer(target->text, io.InputQueueCharacters);
+        io.InputQueueCharacters.resize(0);
+      }
+      EndSummandHandoff();
+      ImGui::NavMoveRequestCancel();
+      g->NavTabbingDir = ImGui::GetIO().KeyShift ? -1 : +1;
+      ImGuiWindow* window = g->CurrentWindow;
+      const ImGuiScrollFlags scroll_flags = window->Appearing ?
+                                                (ImGuiScrollFlags_KeepVisibleEdgeX | ImGuiScrollFlags_AlwaysCenterY) :
+                                                (ImGuiScrollFlags_KeepVisibleEdgeX | ImGuiScrollFlags_KeepVisibleEdgeY);
+      ImGui::NavMoveRequestSubmit(ImGuiDir_None, g->NavTabbingDir < 0 ? ImGuiDir_Up : ImGuiDir_Down,
+                                  ImGuiNavMoveFlags_IsTabbing | ImGuiNavMoveFlags_Activate, scroll_flags);
+      g->NavTabbingCounter = -1;
     }
   }
 
@@ -2004,7 +2057,12 @@ static void RenderSummandRowList() {
     // Everything here runs BEFORE this row's InputText call — the only point that can act on the
     // crossing frames, because the call itself will not process keys on them.
     const bool handoff_row = g_summand_handoff.active && g_summand_handoff.target_id == input_id;
-    if (handoff_row && active_id != 0 && active_id != input_id) {
+    // Supersession is not only "another control is already active entering this call": a mouse
+    // click anywhere is the user's selection intent too, and the control they clicked may render
+    // AFTER this row — its activation happens later in the frame, while this row's own
+    // programmatic activation (which sets ActiveIdAllowOverlap false) would block it. Either way
+    // the user's choice wins over the auto-focus (plan §3.2).
+    if (handoff_row && ((active_id != 0 && active_id != input_id) || ImGui::IsMouseClicked(ImGuiMouseButton_Left))) {
       // The user chose another control while the crossing was in flight: their choice wins. The
       // in-flight activation dies here — before this row's own InputText call could consume it
       // and steal the focus back — the crossing ends, and the keystrokes already accepted into
@@ -2042,16 +2100,6 @@ static void RenderSummandRowList() {
           enter_insert_idx = i + 1;
           enter_insert_source = row.uid;
         }
-      } else if (ImGui::IsKeyPressed(ImGuiKey_Tab)) {
-        // Tab mid-crossing is the user navigating (one gesture, one meaning: navigation neither
-        // creates nor deletes, and the user's navigation outranks the auto-focus). The crossing
-        // ends — the in-flight activation dies, the accepted keystrokes land in the row — and the
-        // tabbing request this frame's NavUpdate already started is left alone: submitting ours
-        // here would overwrite the same nav slot and eat the user's Tab.
-        DeliverSummandHandoffChars(row.text);
-        AppendCharsToRowBuffer(row.text, io.InputQueueCharacters);
-        io.InputQueueCharacters.resize(0);
-        EndSummandHandoff();
       } else {
         // Still crossing. Keystrokes would be dropped — no editor is active to consume them, and
         // the char queue is cleared at frame end regardless — so park them for the settle frame.
@@ -2068,6 +2116,7 @@ static void RenderSummandRowList() {
         ImGuiContext* g = ImGui::GetCurrentContext();
         if (g->NavActivateId != input_id) {
           ImGui::SetKeyboardFocusHere(0);
+          handoff_submitted_this_frame = true;
         }
       }
     }
@@ -2077,7 +2126,8 @@ static void RenderSummandRowList() {
     const ImGuiID active_before_input = active_id;  // this frame's owner of the box, entering the call
     const bool enter_accepted =
         ImGui::InputText(text_id, row.text, sizeof(row.text), ImGuiInputTextFlags_EnterReturnsTrue);
-    if (g_summand_handoff.active && g_summand_handoff.target_id == input_id && ImGui::IsItemActive()) {
+    if (g_summand_handoff.active && g_summand_handoff.settled_frame < 0 && g_summand_handoff.target_id == input_id &&
+        ImGui::IsItemActive()) {
       // The handoff settled: the box IS the active editor. Deliver the parked keystrokes into
       // this same editable transaction and normalize the caret to the row end with no selection —
       // the unified row-end/no-selection policy every auto handoff runs (plan §3.3), whether the
@@ -2091,7 +2141,16 @@ static void RenderSummandRowList() {
       if (ImGuiInputTextState* state = ImGui::GetInputTextState(input_id)) {
         state->ReloadUserBufAndMoveToEnd();
       }
-      EndSummandHandoff();
+      // The transaction does NOT end here. This frame skipped key handling (just-activated), so
+      // the box has not registered its Escape shortcut route yet — an Esc on the very next frame
+      // would otherwise be consumed by the navigation cancel first (ClearActiveID without a
+      // revert, cancel lost). Claim the route for this box now; the routing table applies it at
+      // the next frame's NewFrame, exactly the one-frame gap the call's own per-frame
+      // registration misses, and the box's own Shortcut() keeps it alive from there (stock
+      // behavior). One frame later the transaction ends (post-loop guard below): past that, the
+      // settled editor owns every key through its own routes.
+      ImGui::SetShortcutRouting(ImGuiKey_Escape, ImGuiInputFlags_Repeat, input_id);
+      g_summand_handoff.settled_frame = ImGui::GetFrameCount();
     }
     ImGui::PopItemWidth();
 
@@ -2162,6 +2221,33 @@ static void RenderSummandRowList() {
     }
 
     ImGui::PopID();
+  }
+
+  // Ownership holds for the WHOLE frame, not just the target row's pre-call moment: a control the
+  // user clicked can take the active id later in this frame than the focus request the crossing
+  // submitted (its widget renders after the target row). Our request is still unapplied at this
+  // point — the next frame's ApplyResult would ClearActiveID(the user's control) and arm our
+  // target over their choice. Cancel the request we own, hand the accepted keystrokes to the
+  // row, and end; the user's freshly active control is untouched. (The request in flight is
+  // provably ours: the top-of-function Tab handling ends the transaction before any submission
+  // when the user navigates, so a surviving submission cannot collide with a user request.)
+  if (handoff_submitted_this_frame && g_summand_handoff.active) {
+    const ImGuiID active_now = ImGui::GetActiveID();
+    if (active_now != 0 && active_now != g_summand_handoff.target_id) {
+      ImGui::NavMoveRequestCancel();
+      if (SummandRowBuf* target = FindSummandRow(g_summand_handoff.target_uid)) {
+        DeliverSummandHandoffChars(target->text);
+      }
+      EndSummandHandoff();
+    }
+  }
+
+  // The guard frame has passed: the editor's own Escape route is live from here on (registered
+  // per frame by its active key handling), so the settled box owns every key through stock
+  // ImGui and the transaction has nothing left to own.
+  if (g_summand_handoff.active && g_summand_handoff.settled_frame >= 0 &&
+      ImGui::GetFrameCount() != g_summand_handoff.settled_frame) {
+    EndSummandHandoff();
   }
 
   // Esc-delete first: its focus fallback reads positions in the pre-erase list. The Enter source
