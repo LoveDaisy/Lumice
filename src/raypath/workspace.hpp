@@ -78,6 +78,15 @@ class AnalysisWorkspace {
   // uniformity and never consults them, the representative-ray rule). A face that wants a
   // member's own numeric payload runs the point face on that member's faces.
   Error QueryLocalClasses(const LocalClassQuery& query, std::vector<LocalClass>* out);
+  // The interpretive-point chain (the engine-side answer form): resolve the row's classes at
+  // the click, then evaluate class representatives under ONE deadline shared by resolution and
+  // every member evaluation, selecting the first class — the resolver's fixed representative
+  // order — whose representative member's recovered branches carry an ordinary density reading.
+  // A fixed row member skips the selection and is evaluated verbatim, its own geometry and log
+  // facts intact. The class facts are algebra; only the selection is a discovery fact, and a
+  // cancelled or deadline-stopped search leaves the classes standing.
+  Error QueryInterpretivePoint(const InterpretivePointQuery& query, bool include_context, InterpretivePointAnswer* out,
+                               const analytic::StopToken* cancel = nullptr);
 
   // ---- the reuse reads (the workspace's own decision ledger, for the acceptance tests) ----
   long GeometryBuildCount() const { return geometry_builds_; }  // face-table builds performed

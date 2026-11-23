@@ -72,10 +72,15 @@ Error AnalysisWorkspace::QueryPoint(const SinglePathRequest& request, bool inclu
                                     const analytic::StopToken* cancel) {
   SinglePathRequest effective = request;
   effective.cancel = cancel;
-  BudgetRequest deadline_request;
-  deadline_request.budget_ms = request.budget_ms;
-  deadline_request.interrupted = request.interrupted;
-  effective.query_deadline = ResolveQueryDeadline(deadline_request);
+  // A caller that resolved the query's deadline itself (the interpretive chain's shared window)
+  // pins it here; the resolution stays this header's owner either way — this is only "don't
+  // re-resolve an already-resolved window", never a second policy.
+  if (!effective.query_deadline) {
+    BudgetRequest deadline_request;
+    deadline_request.budget_ms = request.budget_ms;
+    deadline_request.interrupted = request.interrupted;
+    effective.query_deadline = ResolveQueryDeadline(deadline_request);
+  }
   if (!effective.warm_candidate) {
     WarmCandidate cached;
     if (WarmFor(request, &cached)) {
@@ -247,6 +252,129 @@ Error AnalysisWorkspace::QueryLocalClasses(const LocalClassQuery& query, std::ve
   // consumers read); the caller restating it would be a second copy waiting to drift.
   resolved.sun_azimuth_deg = static_cast<double>(snapshot_.scene_.light_source_.param_.azimuth_);
   return ResolveLocalClasses(row, resolved, out);
+}
+
+namespace {
+
+// One member's point evaluation on the existing point-intent chain: the deadline is preset
+// (the chain resolved it once at entry — QueryPoint never re-resolves an already-resolved
+// window), the cancel token rides through, the workspace's automatic warm admission and the
+// geometry slot are QueryPoint's own reads, and the caller's explicit candidate is admitted
+// per member by the existing single authority (a candidate naming another member is an
+// automatic miss here).
+Error EvaluateMember(AnalysisWorkspace& workspace, const InterpretivePointQuery& query,
+                     const std::vector<int>& member_faces, const QueryDeadline& deadline,
+                     const analytic::StopToken* cancel, bool include_context, PointResult* out) {
+  SinglePathRequest req;
+  req.crystal_id = query.crystal_id;
+  req.path_layers.emplace_back(member_faces.begin(), member_faces.end());
+  req.target_altitude_deg = query.target_altitude_deg;
+  req.target_azimuth_deg = query.target_azimuth_deg;
+  req.budget_ms = query.budget_ms;
+  req.interrupted = query.interrupted;
+  req.sample_count = query.sample_count;
+  req.sun_grid_lat_count = query.sun_grid_lat_count;
+  req.query_deadline = deadline;
+  req.warm_candidate = query.warm_candidate;
+  return workspace.QueryPoint(req, include_context, out, cancel);
+}
+
+}  // namespace
+
+Error AnalysisWorkspace::QueryInterpretivePoint(const InterpretivePointQuery& query, bool include_context,
+                                                InterpretivePointAnswer* out, const analytic::StopToken* cancel) {
+  // The class facts first — the same face, the same validation and the same resolver: the
+  // algebra is not the member search's to invalidate.
+  LocalClassQuery class_query;
+  class_query.crystal_id = query.crystal_id;
+  class_query.representative = query.representative;
+  class_query.symmetry_bits = query.symmetry_bits;
+  class_query.target_altitude_deg = query.target_altitude_deg;
+  class_query.target_azimuth_deg = query.target_azimuth_deg;
+  if (Error error = QueryLocalClasses(class_query, &out->classes); !error.Ok()) {
+    return error;
+  }
+  // One absolute deadline for the whole chain (the unified policy: resolution is the chain
+  // entry's job, and a later member never gains budget).
+  BudgetRequest deadline_request;
+  deadline_request.budget_ms = query.budget_ms;
+  deadline_request.interrupted = query.interrupted;
+  const QueryDeadline deadline = ResolveQueryDeadline(deadline_request);
+
+  if (!query.fixed_member.empty()) {
+    // The fixed-member contract: the member must be one of this row's (the classes partition
+    // it, so exactly one class holds it), evaluated verbatim — never auto-swapped.
+    for (size_t c = 0; c < out->classes.size(); ++c) {
+      for (size_t m = 0; m < out->classes[c].member_sequences.size(); ++m) {
+        if (out->classes[c].member_sequences[m] != query.fixed_member) {
+          continue;
+        }
+        PointResult point;
+        if (Error error = EvaluateMember(*this, query, query.fixed_member, deadline, cancel, include_context, &point);
+            !error.Ok()) {
+          return error;
+        }
+        out->selected_class = static_cast<int>(c);
+        out->selected_member = static_cast<int>(m);
+        out->member_fixed = true;
+        out->point = std::move(point);
+        return {};
+      }
+    }
+    return { ErrorCode::kInvalidPath, "interpretive point: the fixed member is not a member of this row" };
+  }
+
+  // Automatic selection: class representatives in the resolver's fixed order; the first whose
+  // interpretive pose — the point face's own closed-form density argmax over the recovered
+  // branches — carries POSITIVE LINEAR WEIGHT (rho > 0, the acceptance wording's non-zero rho)
+  // wins. The distinction the log form cannot make: a deep-tail member keeps a finite huge-
+  // negative log_density (the honest not-a-fake-zero form), but its linear weight reads exactly
+  // 0.0, and "explains the clicked light" means the weight survived into the linear range.
+  // Classes after the winner are not searched for interpretation this run; a cancelled or
+  // deadline-stopped evaluation stops the iteration with the classes standing and the honest
+  // outcome on the payload.
+  for (size_t c = 0; c < out->classes.size(); ++c) {
+    const std::vector<int>& representative = out->classes[c].representative;
+    if (c == 0) {
+      // The first class evaluates straight into the answer: with no selection anywhere, its
+      // own evaluation stays the deterministic anchor the consumer displays.
+      if (Error error = EvaluateMember(*this, query, representative, deadline, cancel, include_context, &out->point);
+          !error.Ok()) {
+        return error;
+      }
+    } else {
+      PointResult candidate;
+      if (Error error = EvaluateMember(*this, query, representative, deadline, cancel, include_context, &candidate);
+          !error.Ok()) {
+        return error;
+      }
+      out->point = std::move(candidate);
+    }
+    if (cancel != nullptr && cancel->CancelRequested()) {
+      return {};  // cancelled: the classes stand, the honest outcome rides on the payload
+    }
+    if (out->point.Data().meta.execution != ExecutionOutcome::kCompleted) {
+      return {};  // deadline exceeded (or a stop the payload reports): stop searching
+    }
+    const PointData& data = out->point.Data();
+    if (data.OutcomeValue() != Outcome::kDiscovered || !data.Discovered().interpretive.available) {
+      continue;
+    }
+    const InterpretivePose& pose = data.Discovered().interpretive;
+    const double pose_rho = data.Discovered().components[pose.component_index].points[pose.point_index].rho;
+    if (pose_rho > 0.0) {
+      out->selected_class = static_cast<int>(c);
+      // The representative carries itself: its member index inside the class.
+      for (size_t m = 0; m < out->classes[c].member_indices.size(); ++m) {
+        if (out->classes[c].member_sequences[m] == representative) {
+          out->selected_member = static_cast<int>(m);
+          break;
+        }
+      }
+      return {};
+    }
+  }
+  return {};  // no member's recovered branches carry an ordinary density reading: honest -1
 }
 
 }  // namespace lumice::raypath

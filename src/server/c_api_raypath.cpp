@@ -1514,6 +1514,143 @@ void LUMICE_LocalClassDestroy(LUMICE_LocalClass* result) {
   delete result;  // NULL Destroy is a no-op, the workspace family's rule
 }
 
+struct LUMICE_InterpretivePoint_ {
+  std::unique_ptr<LUMICE_LocalClass_> classes;      // the class face, borrowed by GetClasses
+  std::unique_ptr<LUMICE_SinglePathResult_> point;  // the member payload, borrowed by GetPoint
+  int selected_class = -1;
+  int selected_member = -1;
+  int member_fixed = 0;
+  // The selected member's own sequence (or the anchor payload's member when nothing was
+  // selected): an owned flattened copy so GetSelection serves plain borrowed pointers.
+  std::vector<int> member_faces;
+};
+
+LUMICE_ErrorCode LUMICE_PathWorkspaceQueryInterpretivePoint(LUMICE_PathWorkspace* workspace,
+                                                            const LUMICE_InterpretivePointRequest* request,
+                                                            const LUMICE_PathQueryOptions* options,
+                                                            LUMICE_InterpretivePoint** out, char* err_buf,
+                                                            size_t err_size) {
+  // The local-class face's guard sequence (null/extent/arrays/bits width/coordinates), with the
+  // point face's options semantics (deadline, cancel, warm, include_context all live).
+  if (out != nullptr) {
+    *out = nullptr;
+  }
+  if (err_buf != nullptr && err_size > 0) {
+    err_buf[0] = '\0';
+  }
+  if (workspace == nullptr || request == nullptr || out == nullptr) {
+    WriteError(err_buf, err_size, "null_arg: workspace, request and out must not be NULL");
+    return LUMICE_ERR_NULL_ARG;
+  }
+  if (request->struct_size < sizeof(LUMICE_InterpretivePointRequest)) {
+    WriteError(err_buf, err_size, "invalid_argument: request struct_size is not a published complete extent");
+    return LUMICE_ERR_INVALID_VALUE;
+  }
+  if ((request->representative_faces == nullptr && request->representative_face_count > 0) ||
+      (request->fixed_member_faces == nullptr && request->fixed_member_face_count > 0)) {
+    WriteError(err_buf, err_size, "null_arg: faces arrays must not be NULL with non-zero counts");
+    return LUMICE_ERR_NULL_ARG;
+  }
+  if (request->representative_face_count < 0 || request->fixed_member_face_count < 0) {
+    WriteError(err_buf, err_size, "invalid_argument: face counts must not be negative");
+    return LUMICE_ERR_INVALID_VALUE;
+  }
+  if (request->symmetry_bits > 7) {
+    WriteError(err_buf, err_size, "invalid_argument: symmetry_bits is outside the P|B|D mask (0..7)");
+    return LUMICE_ERR_INVALID_VALUE;
+  }
+  if (!std::isfinite(request->target_altitude_deg) || !std::isfinite(request->target_azimuth_deg) ||
+      request->target_altitude_deg < -90.0 || request->target_altitude_deg > 90.0) {
+    WriteError(err_buf, err_size,
+               "invalid_argument: target altitude must be finite and in [-90, 90], the azimuth finite");
+    return LUMICE_ERR_INVALID_VALUE;
+  }
+  if (const auto error = ValidateQueryOptions(options, true, err_buf, err_size); error != LUMICE_OK) {
+    return error;
+  }
+  try {
+    namespace rp = lumice::raypath;
+    rp::InterpretivePointQuery query;
+    query.crystal_id = static_cast<lumice::IdType>(request->crystal_id);
+    query.representative.assign(request->representative_faces,
+                                request->representative_faces + request->representative_face_count);
+    query.symmetry_bits = static_cast<uint8_t>(request->symmetry_bits);
+    query.target_altitude_deg = request->target_altitude_deg;
+    query.target_azimuth_deg = request->target_azimuth_deg;
+    query.budget_ms = options != nullptr ? options->deadline_ms : 0;
+    query.sample_count = request->sample_count == 0 ? rp::kDefaultSampleCount : request->sample_count;
+    query.sun_grid_lat_count = request->sun_grid_lat_count;
+    if (options != nullptr && options->warm != nullptr) {
+      query.warm_candidate = options->warm->candidate;
+    }
+    if (request->fixed_member_face_count > 0) {
+      query.fixed_member.assign(request->fixed_member_faces,
+                                request->fixed_member_faces + request->fixed_member_face_count);
+    }
+    rp::InterpretivePointAnswer answer;
+    const lumice::analytic::StopToken* cancel =
+        options != nullptr && options->cancel != nullptr ? &options->cancel->token : nullptr;
+    const bool include_context = options == nullptr || options->include_context != 0;
+    if (const rp::Error error = workspace->workspace->QueryInterpretivePoint(query, include_context, &answer, cancel);
+        !error.Ok()) {
+      return Refuse(error, err_buf, err_size);
+    }
+    auto handle = std::unique_ptr<LUMICE_InterpretivePoint_>(new (std::nothrow) LUMICE_InterpretivePoint_());
+    if (handle == nullptr) {
+      WriteError(err_buf, err_size, "internal: allocation failed");
+      return LUMICE_ERR_UNKNOWN;
+    }
+    handle->classes = std::unique_ptr<LUMICE_LocalClass_>(new (std::nothrow) LUMICE_LocalClass_());
+    handle->point = std::unique_ptr<LUMICE_SinglePathResult_>(new (std::nothrow) LUMICE_SinglePathResult_());
+    if (handle->classes == nullptr || handle->point == nullptr) {
+      WriteError(err_buf, err_size, "internal: allocation failed");
+      return LUMICE_ERR_UNKNOWN;
+    }
+    handle->classes->classes = std::move(answer.classes);
+    for (const auto& klass : handle->classes->classes) {
+      handle->classes->class_face_offsets.push_back(static_cast<int>(handle->classes->member_face_counts.size()));
+      for (const auto& member : klass.member_sequences) {
+        handle->classes->member_face_counts.push_back(static_cast<int>(member.size()));
+        handle->classes->member_faces.insert(handle->classes->member_faces.end(), member.begin(), member.end());
+      }
+    }
+    handle->classes->class_face_offsets.push_back(static_cast<int>(handle->classes->member_face_counts.size()));
+    handle->point->result = std::move(answer.point);
+    handle->selected_class = answer.selected_class;
+    handle->selected_member = answer.selected_member;
+    handle->member_fixed = answer.member_fixed ? 1 : 0;
+    // The selection's own sequence: the selected member when one was picked, the anchor
+    // payload's member (the first class's representative) when the search found none.
+    const rp::LocalClass* anchor = handle->selected_class >= 0 ?
+                                       &handle->classes->classes[static_cast<size_t>(handle->selected_class)] :
+                                       (handle->classes->classes.empty() ? nullptr : &handle->classes->classes[0]);
+    if (anchor != nullptr) {
+      const std::vector<int>* sequence = nullptr;
+      if (handle->selected_class >= 0 && handle->selected_member >= 0) {
+        sequence = &anchor->member_sequences[static_cast<size_t>(handle->selected_member)];
+      } else if (handle->selected_class < 0) {
+        sequence = &anchor->representative;
+      }
+      if (sequence != nullptr) {
+        handle->member_faces = *sequence;
+      }
+    }
+    *out = handle.release();
+    return LUMICE_OK;
+  } catch (const std::exception& e) {
+    LOG_ERROR("LUMICE_PathWorkspaceQueryInterpretivePoint: {}", e.what());
+    WriteError(err_buf, err_size, std::string("internal: ") + e.what());
+  } catch (...) {
+    LOG_ERROR("LUMICE_PathWorkspaceQueryInterpretivePoint: unknown exception");
+    WriteError(err_buf, err_size, "internal: unknown exception");
+  }
+  return LUMICE_ERR_UNKNOWN;
+}
+
+void LUMICE_InterpretivePointDestroy(LUMICE_InterpretivePoint* result) {
+  delete result;  // NULL Destroy is a no-op, the workspace family's rule
+}
+
 namespace {
 
 template <typename T>
@@ -2888,6 +3025,49 @@ LUMICE_PathReadStatus LUMICE_LocalClassGetClass(const LUMICE_LocalClass* result,
   out->member_faces =
       result->member_faces.data() + std::accumulate(result->member_face_counts.begin(),
                                                     result->member_face_counts.begin() + static_cast<long>(first), 0);
+  return LUMICE_PATH_READ_OK;
+}
+
+// ---- the interpretive-point answer's readers -------------------------------------
+// The class and point faces are the existing handles' own readers; only the selection facts
+// need a reader of their own.
+LUMICE_PathReadStatus LUMICE_InterpretivePointGetClasses(const LUMICE_InterpretivePoint* result,
+                                                         const LUMICE_LocalClass** out) {
+  if (out == nullptr) {
+    return LUMICE_PATH_READ_NULL_ARG;
+  }
+  *out = nullptr;
+  if (result == nullptr) {
+    return LUMICE_PATH_READ_NULL_ARG;
+  }
+  *out = result->classes.get();
+  return LUMICE_PATH_READ_OK;
+}
+
+LUMICE_PathReadStatus LUMICE_InterpretivePointGetPoint(const LUMICE_InterpretivePoint* result,
+                                                       const LUMICE_SinglePathResult** out) {
+  if (out == nullptr) {
+    return LUMICE_PATH_READ_NULL_ARG;
+  }
+  *out = nullptr;
+  if (result == nullptr) {
+    return LUMICE_PATH_READ_NULL_ARG;
+  }
+  *out = result->point.get();
+  return LUMICE_PATH_READ_OK;
+}
+
+LUMICE_PathReadStatus LUMICE_InterpretivePointGetSelection(const LUMICE_InterpretivePoint* result,
+                                                           LUMICE_InterpretivePointSelection* out) {
+  const auto status = BeginRead(result, out);
+  if (status != LUMICE_PATH_READ_OK) {
+    return status;
+  }
+  out->selected_class = result->selected_class;
+  out->selected_member = result->selected_member;
+  out->member_fixed = result->member_fixed;
+  out->member_faces = result->member_faces.data();
+  out->member_face_count = static_cast<int>(result->member_faces.size());
   return LUMICE_PATH_READ_OK;
 }
 

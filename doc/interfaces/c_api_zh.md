@@ -45,7 +45,7 @@ Lumice 的 C API 按能力拆成六个头文件，每个能力一个；按用到
 ```c
 // lumice_api_version.h——叶子头；在使用该宏的文件里显式包含
 //（lumice_base.h 刻意不包含它，原因见下）
-#define LUMICE_API_VERSION 463        // ABI 版本，编码为 major*100 + minor（v4.63）
+#define LUMICE_API_VERSION 464        // ABI 版本，编码为 major*100 + minor（v4.64）
 
 // lumice_base.h
 #define LUMICE_MAX_RENDER_RESULTS 16  // 渲染结果数组最大容量
@@ -109,6 +109,18 @@ read-as-zero 0）；−inf 表示离支撑或 Dirac 切片，绝非无光，也�
 新结构 `LUMICE_PathPointDensity` 与 `LUMICE_PathPointInterpretive` 加入读取面；既有 reader
 结构零增长，既有符号与行为不变。局部类答案面仍是唯一新增查询形态：这些是单成员自身点结果
 的事实，不是变换原语。
+
+v4.64 加入解释点答案面——纯追加。`LUMICE_InterpretivePointRequest`、不透明的
+`LUMICE_InterpretivePoint`、`LUMICE_PathWorkspaceQueryInterpretivePoint`、
+`LUMICE_InterpretivePointDestroy` 与三个读者（`GetClasses` / `GetPoint` / `GetSelection`）。
+这是局部类答案所喂的引擎侧链：行 scope + 天空方向 → 该点的类 → 解释类 → 所选成员自己的点
+载荷，resolution 与每个成员求值在同一个 query deadline 内结算（options 携带点链自己的
+deadline/cancel/warm/include_context 语义）。选择是「谁解释此次点击」的发现事实，与类身份
+无关：类按固定代表序求值，第一个解释姿态带正线性权重（rho > 0——深尾保持有限 log 但线性
+形式精确读零）的成员胜出；胜者之后的类本轮不再搜索，未找到时 selected_class = -1 并附首个
+类代表自己的载荷（「本次搜索尚未找到」，完备性措辞）。非空 `fixed_member`（必须是行成员，
+否则拒绝）跳过选择：该成员按原样求值，保留自己的几何与 log 密度事实，绝不自动换成员。类面
+与点面都是既有读者作用于借用句柄，不复制读者族，变换原语不出引擎。既有符号与结构布局不变。
 
 四种结果各有 `GetInfo` 与按语义块命名的 indexed getter。调用方把输出记录的 `struct_size`
 设为编译时的完整 extent：已发布的完整 extent 或更大的未来尾部可接受；未发布的中间尺寸与

@@ -46,7 +46,7 @@ Link against the `lumice` static library.
 ```c
 // lumice_api_version.h — a leaf header; include it explicitly where the macro is used
 // (lumice_base.h deliberately does not include it, see below)
-#define LUMICE_API_VERSION 463        // ABI version, encoded major*100 + minor (v4.63)
+#define LUMICE_API_VERSION 464        // ABI version, encoded major*100 + minor (v4.64)
 
 // lumice_base.h
 #define LUMICE_MAX_RENDER_RESULTS 16  // Maximum capacity of the render result array
@@ -134,6 +134,26 @@ structs `LUMICE_PathPointDensity` and `LUMICE_PathPointInterpretive` join the re
 existing reader struct grew and no existing symbol or behavior changed. The local-class
 answer face stays the only new query form: these are facts about one member's own point
 result, not transform primitives.
+
+From v4.64, the interpretive-point answer face joins as a pure append —
+`LUMICE_InterpretivePointRequest`, the opaque `LUMICE_InterpretivePoint`,
+`LUMICE_PathWorkspaceQueryInterpretivePoint`, `LUMICE_InterpretivePointDestroy`, and three
+readers (`LUMICE_InterpretivePointGetClasses` / `GetPoint` / `GetSelection`). It is the
+engine-side chain the local-class answer feeds: row scope + sky direction -> the row's classes
+at that point -> the interpretive class -> the selected member's own point payload, with
+resolution and every member evaluation settled within ONE query deadline (the options carry
+the point chain's own deadline/cancel/warm/include_context semantics). Selection is a
+discovery fact about who interprets the click, never about class identity: classes are
+evaluated in their fixed representative order and the first member whose interpretive pose
+carries positive linear weight (rho > 0 — a deep tail keeps its finite log but reads exactly
+zero in the linear form) wins; classes after the winner are not searched this run, and a
+search finding none reports selected_class = -1 with the FIRST class's representative's own
+payload attached ("this search has not found one", the completeness wording). A non-empty
+`fixed_member` (a row member, refused otherwise) skips the selection: that member is evaluated
+verbatim, its own geometry and log density facts intact, never auto-swapped. The class and
+point faces are the existing readers on borrowed handles, so no reader family is duplicated
+and no transformation primitive leaves the engine. No existing symbol or struct layout
+changed.
 
 Each result family has `GetInfo` plus named semantic-block and indexed getters. The caller sets an
 output record's `struct_size` to its compiled extent. A published complete extent or a larger

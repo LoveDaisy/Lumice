@@ -691,5 +691,157 @@ TEST(Workspace, TheStopAuthorityWorksThroughTheWorkspace) {
   EXPECT_EQ(stray, -1) << "the workspace point run ticked site " << stray << ", outside its attribution";
 }
 
+// ---- the interpretive-point chain ------------------------------------------------------------
+// The engine-side answer form the adjudication pinned: row + click in, the interpretive class
+// and the selected member's own payload out, resolution and member evaluations under ONE
+// deadline. The Parry scene is the acceptance scene (prism 1.2 regular; zenith gauss 90±1,
+// azimuth full turn, roll gauss 0±1; sun 20°/0°); the click sides and the fixed-member and
+// stop paths are the chain's own contract.
+
+ConfigManager InterpretiveParryScene() {
+  // The acceptance scene itself (test_single_path_analysis's ParryMinus52Lights fixture):
+  // prism height 1.2 regular — the basal-involving members' geometry depends on the height, so
+  // the fixture must match the archived evidence's shape, not any regular prism.
+  PrismCrystalParam prism;
+  prism.h_ = { DistributionType::kNoRandom, 1.2f, 0 };
+  for (auto& distance : prism.d_) {
+    distance = { DistributionType::kNoRandom, 1.0f, 0 };
+  }
+  ConfigManager scene;
+  CrystalConfig crystal;
+  crystal.id_ = 1;
+  crystal.param_ = prism;
+  crystal.axis_.azimuth_dist = { DistributionType::kUniform, 0.0f, 360.0f };
+  crystal.axis_.latitude_dist = { DistributionType::kGaussian, 0.0f, 1.0f };
+  crystal.axis_.roll_dist = { DistributionType::kGaussian, 0.0f, 1.0f };
+  scene.crystals_.emplace(1, crystal);
+  scene.scene_.light_source_.param_ = SunParam{ 20.0f, 0.0f, 0.5f };
+  scene.scene_.light_source_.spectrum_ = IlluminantType::kD65;
+  ScatteringSetting entry{};
+  entry.crystal_ = crystal;
+  entry.crystal_proportion_ = 1;
+  scene.scene_.ms_.push_back({ 0, { entry } });
+  return scene;
+}
+
+InterpretivePointQuery InterpretiveQuery(double altitude, double azimuth) {
+  InterpretivePointQuery query;
+  query.crystal_id = 1;
+  query.representative = { 4, 1 };
+  query.symmetry_bits = 7;  // P | B | D: the analysis row's full bit set
+  query.target_altitude_deg = altitude;
+  query.target_azimuth_deg = azimuth;
+  query.sample_count = 100000;  // the arc recovers well under the kernel default; cost is the suite's
+  query.sun_grid_lat_count = 0;
+  return query;
+}
+
+TEST(InterpretivePointChain, ParryMinus52AutoSelectsTheCarryingClass) {
+  std::unique_ptr<AnalysisWorkspace> workspace;
+  ASSERT_TRUE(AnalysisWorkspace::Create(InterpretiveParryScene(), &workspace).Ok());
+  InterpretivePointAnswer answer;
+  ASSERT_TRUE(workspace->QueryInterpretivePoint(InterpretiveQuery(36.0, -52.0), false, &answer).Ok());
+  // The class facts stand regardless of the search: two half-turn classes in representative order.
+  ASSERT_EQ(answer.classes.size(), 2u);
+  EXPECT_EQ(answer.classes[0].representative, (std::vector<int>{ 4, 1 }));
+  EXPECT_EQ(answer.classes[1].representative, (std::vector<int>{ 4, 2 }));
+  // The search: 4-1's class carries no ordinary density reading here; 4-2's does.
+  ASSERT_EQ(answer.selected_class, 1);
+  ASSERT_GE(answer.selected_member, 0);
+  EXPECT_EQ(answer.classes[1].member_sequences[static_cast<size_t>(answer.selected_member)],
+            (std::vector<int>{ 4, 2 }));
+  EXPECT_FALSE(answer.member_fixed);
+  // The payload is the selected member's OWN evaluation, its interpretive pose on the lit arc.
+  ASSERT_EQ(answer.point.Data().OutcomeValue(), Outcome::kDiscovered);
+  const InterpretivePose& pose = answer.point.Data().Discovered().interpretive;
+  ASSERT_TRUE(pose.available);
+  const PointDetail& peak = answer.point.Data().Discovered().components[pose.component_index].points[pose.point_index];
+  EXPECT_GT(peak.rho, 0.0) << "the interpretive pose explains the clicked arc with positive weight";
+}
+
+TEST(InterpretivePointChain, ParryPlus52SelectsTheParentRepresentative) {
+  std::unique_ptr<AnalysisWorkspace> workspace;
+  ASSERT_TRUE(AnalysisWorkspace::Create(InterpretiveParryScene(), &workspace).Ok());
+  InterpretivePointAnswer answer;
+  ASSERT_TRUE(workspace->QueryInterpretivePoint(InterpretiveQuery(36.0, 52.0), false, &answer).Ok());
+  // The row representative's own class carries the +52 light: the first class evaluated wins,
+  // and the shown member stays the parent row's 4-1 (the list semantics' face).
+  ASSERT_EQ(answer.selected_class, 0);
+  EXPECT_EQ(answer.classes[0].member_sequences[static_cast<size_t>(answer.selected_member)],
+            (std::vector<int>{ 4, 1 }));
+  const InterpretivePose& pose = answer.point.Data().Discovered().interpretive;
+  ASSERT_TRUE(pose.available);
+}
+
+TEST(InterpretivePointChain, FixedMemberKeepsItsOwnGeometryAndLogFacts) {
+  std::unique_ptr<AnalysisWorkspace> workspace;
+  ASSERT_TRUE(AnalysisWorkspace::Create(InterpretiveParryScene(), &workspace).Ok());
+  InterpretivePointQuery query = InterpretiveQuery(36.0, -52.0);
+  query.fixed_member = { 4, 1 };  // the dark member, fixed: never auto-swapped
+  InterpretivePointAnswer answer;
+  ASSERT_TRUE(workspace->QueryInterpretivePoint(query, false, &answer).Ok());
+  EXPECT_TRUE(answer.member_fixed);
+  ASSERT_EQ(answer.selected_class, 0);
+  ASSERT_GE(answer.selected_member, 0);
+  EXPECT_EQ(answer.classes[0].member_sequences[static_cast<size_t>(answer.selected_member)],
+            (std::vector<int>{ 4, 1 }));
+  // The member's own geometry stands and its density reads stay honest deep tails — no fake
+  // zero, no swap to the lit sibling.
+  ASSERT_EQ(answer.point.Data().OutcomeValue(), Outcome::kDiscovered);
+  ASSERT_FALSE(answer.point.Data().Discovered().components.empty());
+  int valid = 0;
+  for (const FiberComponent& component : answer.point.Data().Discovered().components) {
+    for (const PointDetail& p : component.points) {
+      if (!p.valid) {
+        continue;
+      }
+      EXPECT_TRUE(std::isfinite(p.log_rho));
+      EXPECT_LT(p.log_rho, -100.0) << "the ±1° roll anchor never reaches this arc: an honest deep tail";
+      ++valid;
+    }
+  }
+  EXPECT_GT(valid, 0);
+}
+
+TEST(InterpretivePointChain, FixedMemberOutsideTheRowIsRefused) {
+  std::unique_ptr<AnalysisWorkspace> workspace;
+  ASSERT_TRUE(AnalysisWorkspace::Create(InterpretiveParryScene(), &workspace).Ok());
+  InterpretivePointQuery query = InterpretiveQuery(36.0, -52.0);
+  query.fixed_member = { 3, 5 };  // a legal face sequence that is not this row's member
+  InterpretivePointAnswer answer;
+  const Error error = workspace->QueryInterpretivePoint(query, false, &answer);
+  EXPECT_FALSE(error.Ok());
+  EXPECT_EQ(error.code, ErrorCode::kInvalidPath);
+}
+
+TEST(InterpretivePointChain, CancelStopsTheSearchAndLeavesTheClassesStanding) {
+  std::unique_ptr<AnalysisWorkspace> workspace;
+  ASSERT_TRUE(AnalysisWorkspace::Create(InterpretiveParryScene(), &workspace).Ok());
+  analytic::StopToken token;
+  token.RequestCancel();  // cancelled before the chain starts
+  InterpretivePointAnswer answer;
+  ASSERT_TRUE(workspace->QueryInterpretivePoint(InterpretiveQuery(36.0, -52.0), false, &answer, &token).Ok());
+  // The algebra is not the search's to invalidate: both classes stand; the honest outcome rides
+  // on the payload and nothing was selected.
+  ASSERT_EQ(answer.classes.size(), 2u);
+  EXPECT_EQ(answer.selected_class, -1);
+  EXPECT_EQ(answer.selected_member, -1);
+  EXPECT_EQ(answer.point.Data().meta.execution, ExecutionOutcome::kCancelled);
+}
+
+TEST(InterpretivePointChain, SharedDeadlineStopsTheSearchHonestly) {
+  std::unique_ptr<AnalysisWorkspace> workspace;
+  ASSERT_TRUE(AnalysisWorkspace::Create(InterpretiveParryScene(), &workspace).Ok());
+  InterpretivePointQuery query = InterpretiveQuery(36.0, -52.0);
+  query.budget_ms = 1;  // the first member's evaluation cannot finish inside it
+  InterpretivePointAnswer answer;
+  ASSERT_TRUE(workspace->QueryInterpretivePoint(query, false, &answer).Ok());
+  // One deadline for the whole chain: the first member's stop ends the search — a later member
+  // never gains budget — and the answer says so honestly.
+  ASSERT_EQ(answer.classes.size(), 2u);
+  EXPECT_EQ(answer.selected_class, -1);
+  EXPECT_EQ(answer.point.Data().meta.execution, ExecutionOutcome::kDeadlineExceeded);
+}
+
 }  // namespace
 }  // namespace lumice::raypath

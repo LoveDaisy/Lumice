@@ -516,8 +516,8 @@ typedef struct LUMICE_PathQueryOptions {
   size_t struct_size;
   int deadline_ms;  // 0 = no deadline; positive = one absolute query deadline, at most 120000
   const LUMICE_PathCancelToken* cancel;
-  const LUMICE_PathWarmData* warm;  // only point and probe; NULL means workspace reuse or inline
-  int include_context;              // point only: 0 = skip context, 1 = include; other values invalid
+  const LUMICE_PathWarmData* warm;  // point, probe and interpretive point; NULL = workspace reuse or inline
+  int include_context;              // point and interpretive point: 0 = skip, 1 = include; other values invalid
 } LUMICE_PathQueryOptions;
 
 // A query request must use a published complete struct_size extent or a larger future tail.
@@ -701,6 +701,79 @@ typedef enum LUMICE_PathReadStatus {
 LUMICE_API LUMICE_PathReadStatus LUMICE_LocalClassGetInfo(const LUMICE_LocalClass* result, LUMICE_LocalClassInfo* out);
 LUMICE_API LUMICE_PathReadStatus LUMICE_LocalClassGetClass(const LUMICE_LocalClass* result, int index,
                                                            LUMICE_LocalClassDetail* out);
+
+// ---- The interpretive-point answer face (v4.64) ----------------------------------------------
+// The engine-side chain the local-class answer feeds: "row scope + sky direction -> the
+// interpretive class -> the representative member's own payload", with resolution and every
+// member evaluation settled within ONE query deadline. A caller — GUI or CLI — reads this one
+// answer; no client re-assembles the class facts with separately-run member results. The
+// options carry the point chain's own semantics: deadline_ms (0 = no deadline, one absolute
+// window for the whole chain), cancel (polled across the member search; a cancelled or
+// deadline-stopped search leaves the class facts standing), warm (a member evaluation admits
+// it only through the existing admission authority — a candidate naming another member is an
+// automatic miss), include_context (the member payload's context, the point face's rule).
+//
+// Selection is a discovery fact about WHO interprets the click, never about class identity:
+// the classes are evaluated in their fixed representative order and the first member whose
+// interpretive pose carries positive linear weight (rho > 0 — a deep tail keeps its finite
+// log but reads exactly zero in the linear form) wins; classes after the winner are not
+// searched for interpretation this run, and a search that finds no such member reports
+// selected_class = -1 with the FIRST class's representative's own payload attached — "this
+// search has not found one", the completeness wording. A non-empty fixed_member (which must be
+// a member of this row) skips the selection: that member is evaluated verbatim, its own
+// geometry and log density facts intact, never auto-swapped.
+//
+// This face exposes no transformation primitive either: which element carries a member to its
+// representative stays engine-internal, the local-class face's rule.
+typedef struct LUMICE_InterpretivePointRequest {
+  size_t struct_size;
+  int crystal_id;                   // a crystal entry of the scene
+  const int* representative_faces;  // the analysis row's representative sequence
+  int representative_face_count;
+  unsigned symmetry_bits;      // the row's P/B/D bits; 0 = the literal sequence alone
+  double target_altitude_deg;  // the sky point; azimuth measured as the sun's
+  double target_azimuth_deg;
+  int sample_count;               // 0 = the point chain's documented default (the point face's rule)
+  int sun_grid_lat_count;         // 0 skips the grid, the point face's rule
+  const int* fixed_member_faces;  // optional: NULL or count 0 = automatic class selection
+  int fixed_member_face_count;
+} LUMICE_InterpretivePointRequest;
+
+typedef struct LUMICE_InterpretivePoint_ LUMICE_InterpretivePoint;
+// On LUMICE_OK *out is a new handle the caller owns (release with
+// LUMICE_InterpretivePointDestroy). The answer freezes on return and outlives scene and
+// workspace. On failure *out is NULL and err_buf names the reason. Return codes:
+// LUMICE_ERR_NULL_ARG (NULL workspace/request/out, or NULL faces arrays with non-zero counts),
+// LUMICE_ERR_INVALID_VALUE (a bad struct_size, a negative count, bits outside the P|B|D mask,
+// a target outside the coordinate contract, an unknown crystal, a face the crystal lacks, or a
+// fixed member outside the row — the named reason says which), LUMICE_ERR_UNKNOWN (internal).
+LUMICE_API LUMICE_ErrorCode LUMICE_PathWorkspaceQueryInterpretivePoint(LUMICE_PathWorkspace* workspace,
+                                                                       const LUMICE_InterpretivePointRequest* request,
+                                                                       const LUMICE_PathQueryOptions* options,
+                                                                       LUMICE_InterpretivePoint** out, char* err_buf,
+                                                                       size_t err_size);
+LUMICE_API void LUMICE_InterpretivePointDestroy(LUMICE_InterpretivePoint* result);
+
+typedef struct LUMICE_InterpretivePointSelection {
+  size_t struct_size;
+  int selected_class;   // index into the class face's classes; -1 = the search found none
+  int selected_member;  // index into that class's member list; -1 with selected_class
+  int member_fixed;     // 1 = the caller fixed the member, no automatic selection ran
+  // The selected member's own face sequence (borrowed, valid until Destroy; the FIRST class's
+  // representative when selected_class is -1, the deterministic anchor payload's member).
+  const int* member_faces;
+  int member_face_count;
+} LUMICE_InterpretivePointSelection;
+
+// The class face and the point face, borrowed from the answer: the existing readers accept
+// them unchanged (LUMICE_LocalClassGetInfo/GetClass, the LUMICE_SinglePathResult reader
+// family), so the answer adds no reader of its own beyond the selection facts.
+LUMICE_API LUMICE_PathReadStatus LUMICE_InterpretivePointGetClasses(const LUMICE_InterpretivePoint* result,
+                                                                    const LUMICE_LocalClass** out);
+LUMICE_API LUMICE_PathReadStatus LUMICE_InterpretivePointGetPoint(const LUMICE_InterpretivePoint* result,
+                                                                  const LUMICE_SinglePathResult** out);
+LUMICE_API LUMICE_PathReadStatus LUMICE_InterpretivePointGetSelection(const LUMICE_InterpretivePoint* result,
+                                                                      LUMICE_InterpretivePointSelection* out);
 
 #define LUMICE_PATH_STATE_UNKNOWN 0
 #define LUMICE_PATH_STATE_CERTIFIED 1

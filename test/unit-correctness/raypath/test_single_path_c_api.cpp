@@ -1549,4 +1549,155 @@ TEST(LocalClassCApi, IllegalCallerInputIsRefusedNotFatal) {
   LUMICE_PathWorkspaceDestroy(workspace);
 }
 
+
+// ---- the interpretive-point answer face (v4.64) ----------------------------------------------
+
+TEST(InterpretivePointCApi, ParryMinus52AnswersClassesSelectionAndTheMembersOwnPayload) {
+  const ScenePtr scene = MakeScene(kParryScene);
+  LUMICE_PathWorkspace* workspace = nullptr;
+  ASSERT_EQ(LUMICE_PathWorkspaceCreate(scene.get(), &workspace, nullptr, 0), LUMICE_OK);
+  LUMICE_InterpretivePointRequest request{};
+  request.struct_size = sizeof(request);
+  request.crystal_id = 1;
+  static const int faces[2] = { 4, 1 };
+  request.representative_faces = faces;
+  request.representative_face_count = 2;
+  request.symmetry_bits = 7;
+  request.target_altitude_deg = 36.0;
+  request.target_azimuth_deg = -52.0;
+  request.sample_count = 100000;
+  request.sun_grid_lat_count = 0;
+  LUMICE_PathQueryOptions options{};
+  options.struct_size = sizeof(options);
+  options.include_context = 0;  // these tests read the pose facts, not the survey context leg
+  LUMICE_InterpretivePoint* result = nullptr;
+  ASSERT_EQ(LUMICE_PathWorkspaceQueryInterpretivePoint(workspace, &request, &options, &result, nullptr, 0), LUMICE_OK);
+  ASSERT_NE(result, nullptr);
+
+  // The selection: the lit pair's class wins; the shown member is 4-2, not auto-fixed.
+  LUMICE_InterpretivePointSelection selection{};
+  selection.struct_size = sizeof(selection);
+  ASSERT_EQ(LUMICE_InterpretivePointGetSelection(result, &selection), LUMICE_PATH_READ_OK);
+  EXPECT_EQ(selection.selected_class, 1);
+  EXPECT_GE(selection.selected_member, 0);  // the faces below name the member, not the index
+  ASSERT_EQ(selection.member_face_count, 2);
+  EXPECT_EQ(selection.member_faces[0], 4);
+  EXPECT_EQ(selection.member_faces[1], 2);
+  EXPECT_EQ(selection.member_fixed, 0);
+
+  // The class facts ride the existing readers on the borrowed handle.
+  const LUMICE_LocalClass* classes = nullptr;
+  ASSERT_EQ(LUMICE_InterpretivePointGetClasses(result, &classes), LUMICE_PATH_READ_OK);
+  ASSERT_NE(classes, nullptr);
+  LUMICE_LocalClassInfo info{};
+  info.struct_size = sizeof(info);
+  ASSERT_EQ(LUMICE_LocalClassGetInfo(classes, &info), LUMICE_PATH_READ_OK);
+  EXPECT_EQ(info.class_count, 2);
+
+  // The payload rides the point face's own readers: the interpretive pose exists with a finite
+  // log density (the linear weight positivity is the typed chain test's assertion).
+  const LUMICE_SinglePathResult* point = nullptr;
+  ASSERT_EQ(LUMICE_InterpretivePointGetPoint(result, &point), LUMICE_PATH_READ_OK);
+  ASSERT_NE(point, nullptr);
+  LUMICE_PathPointInterpretive interpretive{};
+  interpretive.struct_size = sizeof(interpretive);
+  ASSERT_EQ(LUMICE_PathPointGetInterpretivePose(point, &interpretive), LUMICE_PATH_READ_OK);
+  ASSERT_EQ(interpretive.available, 1);
+  EXPECT_TRUE(std::isfinite(interpretive.log_density));
+
+  LUMICE_InterpretivePointSelection tiny{};
+  tiny.struct_size = sizeof(tiny) - 1;
+  EXPECT_EQ(LUMICE_InterpretivePointGetSelection(result, &tiny), LUMICE_PATH_READ_INVALID_SIZE);
+  LUMICE_InterpretivePointDestroy(result);
+  LUMICE_PathWorkspaceDestroy(workspace);
+}
+
+TEST(InterpretivePointCApi, FixedMemberIsEvaluatedVerbatimAndForeignMembersAreRefused) {
+  const ScenePtr scene = MakeScene(kParryScene);
+  LUMICE_PathWorkspace* workspace = nullptr;
+  ASSERT_EQ(LUMICE_PathWorkspaceCreate(scene.get(), &workspace, nullptr, 0), LUMICE_OK);
+  LUMICE_InterpretivePointRequest request{};
+  request.struct_size = sizeof(request);
+  request.crystal_id = 1;
+  static const int faces[2] = { 4, 1 };
+  request.representative_faces = faces;
+  request.representative_face_count = 2;
+  request.symmetry_bits = 7;
+  request.target_altitude_deg = 36.0;
+  request.target_azimuth_deg = -52.0;
+  request.sample_count = 100000;
+  request.sun_grid_lat_count = 0;
+  static const int dark[2] = { 4, 1 };
+  request.fixed_member_faces = dark;
+  request.fixed_member_face_count = 2;
+  LUMICE_PathQueryOptions options{};
+  options.struct_size = sizeof(options);
+  options.include_context = 0;
+  LUMICE_InterpretivePoint* result = nullptr;
+  ASSERT_EQ(LUMICE_PathWorkspaceQueryInterpretivePoint(workspace, &request, &options, &result, nullptr, 0), LUMICE_OK);
+  ASSERT_NE(result, nullptr);
+  LUMICE_InterpretivePointSelection selection{};
+  selection.struct_size = sizeof(selection);
+  ASSERT_EQ(LUMICE_InterpretivePointGetSelection(result, &selection), LUMICE_PATH_READ_OK);
+  EXPECT_EQ(selection.member_fixed, 1);
+  EXPECT_EQ(selection.selected_class, 0);
+  ASSERT_EQ(selection.member_face_count, 2);
+  EXPECT_EQ(selection.member_faces[0], 4);
+  EXPECT_EQ(selection.member_faces[1], 1);  // the fixed member itself, never swapped
+  LUMICE_InterpretivePointDestroy(result);
+
+  // A member outside the row is a refusal, not a silent substitution.
+  static const int foreign[2] = { 3, 5 };
+  request.fixed_member_faces = foreign;
+  result = nullptr;
+  char err[256];
+  EXPECT_EQ(LUMICE_PathWorkspaceQueryInterpretivePoint(workspace, &request, nullptr, &result, err, sizeof(err)),
+            LUMICE_ERR_INVALID_VALUE);
+  EXPECT_NE(std::string(err).find("not a member of this row"), std::string::npos) << err;
+  EXPECT_EQ(result, nullptr);
+  LUMICE_PathWorkspaceDestroy(workspace);
+}
+
+TEST(InterpretivePointCApi, HostileInputIsRefusedBeforeTheAlgebra) {
+  const ScenePtr scene = MakeScene(kParryScene);
+  LUMICE_PathWorkspace* workspace = nullptr;
+  ASSERT_EQ(LUMICE_PathWorkspaceCreate(scene.get(), &workspace, nullptr, 0), LUMICE_OK);
+  LUMICE_InterpretivePointRequest request{};
+  request.struct_size = sizeof(request);
+  request.crystal_id = 1;
+  request.representative_face_count = 2;
+  request.target_altitude_deg = 36.0;
+  request.target_azimuth_deg = -52.0;
+  LUMICE_InterpretivePoint* result = nullptr;
+  char err[256];
+
+  static const int faces[2] = { 4, 1 };
+  request.representative_faces = faces;
+  request.symmetry_bits = 7;
+  EXPECT_EQ(LUMICE_PathWorkspaceQueryInterpretivePoint(nullptr, &request, nullptr, &result, err, sizeof(err)),
+            LUMICE_ERR_NULL_ARG);
+  EXPECT_EQ(LUMICE_PathWorkspaceQueryInterpretivePoint(workspace, nullptr, nullptr, &result, err, sizeof(err)),
+            LUMICE_ERR_NULL_ARG);
+  request.struct_size = sizeof(request) - 1;
+  EXPECT_EQ(LUMICE_PathWorkspaceQueryInterpretivePoint(workspace, &request, nullptr, &result, err, sizeof(err)),
+            LUMICE_ERR_INVALID_VALUE);
+  request.struct_size = sizeof(request);
+  request.symmetry_bits = 256;  // full-width check before the narrowing cast
+  EXPECT_EQ(LUMICE_PathWorkspaceQueryInterpretivePoint(workspace, &request, nullptr, &result, err, sizeof(err)),
+            LUMICE_ERR_INVALID_VALUE);
+  request.symmetry_bits = 7;
+  static const int illegal[2] = { 9, 1 };
+  request.representative_faces = illegal;
+  EXPECT_EQ(LUMICE_PathWorkspaceQueryInterpretivePoint(workspace, &request, nullptr, &result, err, sizeof(err)),
+            LUMICE_ERR_INVALID_VALUE);
+  EXPECT_NE(std::string(err).find("legal face"), std::string::npos) << err;
+  request.representative_faces = faces;
+  request.target_azimuth_deg = std::nan("");
+  EXPECT_EQ(LUMICE_PathWorkspaceQueryInterpretivePoint(workspace, &request, nullptr, &result, err, sizeof(err)),
+            LUMICE_ERR_INVALID_VALUE);
+  EXPECT_NE(std::string(err).find("finite"), std::string::npos) << err;
+  EXPECT_EQ(result, nullptr);
+  LUMICE_PathWorkspaceDestroy(workspace);
+}
+
 }  // namespace
