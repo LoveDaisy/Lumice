@@ -1,0 +1,904 @@
+"""Regression net for `scripts/ctest_headroom_tracker.py` and its workflow wiring.
+
+The tracker is observation, not judgment, and its failure modes are quiet in
+exactly the wrong direction: a misparsed clamp reading fakes extra headroom
+(a clamp inflates C by up to ~9% when read from the clamped factor), a
+mispaired pair of low samples fires a signal nobody asked for, a gap that
+reads as health launders a broken leg into a clean series, and a publish
+that overwrites gh-pages outside `headroom/` clobbers benchmark history.
+So every rule below is pinned next to its counter-case, mostly offline:
+parsing and the streak engine run on the real captured log lines, and the
+end-to-end harvest runs against a fake `gh` binary and a throwaway git
+remote — no network, no real GitHub write.
+"""
+from __future__ import annotations
+
+import base64
+import json
+import os
+import re
+import subprocess
+import sys
+import urllib.parse
+from pathlib import Path
+
+import pytest
+import yaml
+
+SCRIPTS = Path(__file__).resolve().parents[3] / "scripts"
+sys.path.insert(0, str(SCRIPTS))
+
+import ctest_headroom_tracker as tracker  # noqa: E402
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+WORKFLOW_PATH = REPO_ROOT / ".github" / "workflows" / "ci.yml"
+
+# --- fixtures: the three captured real log lines (old v4 formats, both lines) ----
+#
+# Sources (public job logs, read 2026-11-24):
+#   main green   run 45099209377 / job 137445890915 (macOS ARM64)
+#   release clamp run 45146282519 / job 137596258809 (Windows MSVC x86_64) — the
+#     warning is printed AFTER the notice; raw factor 0.726 clamped to 0.800
+#   release red  run 45309154293 / job 138160253218 (Windows MSVC x86_64)
+
+MAIN_GREEN_MACOS = (
+    "2026-11-23T02:30:37.2006990Z ##[notice]phase budget 'ctest' for job 'macOS ARM64': "
+    "537.7s / 569.8s (machine factor 1.018 from 7 rulers)"
+)
+RELEASE_CLAMP_NOTICE = (
+    "2026-11-23T09:37:31.7304670Z ##[notice]phase budget 'ctest' for job 'Windows MSVC x86_64': "
+    "346.8s / 384.0s (machine factor 0.800 from 7 rulers)"
+)
+RELEASE_CLAMP_WARNING = (
+    "2026-11-23T09:37:31.7308196Z ##[warning]phase budget 'ctest' for job 'Windows MSVC x86_64': "
+    "calibration band exceeded (raw factor 0.726, clamped to 0.800); recalibrate the ruler "
+    "per the §7.7 anti-ratchet rule"
+)
+RELEASE_RED = (
+    "2026-11-24T02:23:57.1617308Z ##[error]phase budget 'ctest' for job 'Windows MSVC x86_64' "
+    "took 565.3s (ctest), over its machine-normalized limit 480s x factor 1.174 = 563.3s"
+)
+
+MACOS_JOB = "macOS ARM64"
+WINDOWS_JOB = "Windows MSVC x86_64"
+
+
+def registry_payload(budgets: list[dict]) -> str:
+    return json.dumps({"version": 4, "entries": [], "phase_budgets": budgets})
+
+
+def machine_budget(job: str, max_seconds: int, rulers=3) -> dict:
+    return {
+        "job": job,
+        "phase": "ctest",
+        "max_seconds": max_seconds,
+        "machine_factor": {
+            "ruler_seconds": {f"Case.{i}": float(2 * (i + 1)) for i in range(rulers)},
+            "clamp_band": [0.8, 2.0],
+        },
+        "reason": "r",
+    }
+
+
+def contents_payload(text: str, blob_sha: str) -> str:
+    return json.dumps(
+        {
+            "encoding": "base64",
+            "content": base64.b64encode(text.encode("utf-8")).decode("ascii"),
+            "sha": blob_sha,
+        }
+    )
+
+
+# --- parsing -------------------------------------------------------------------
+
+
+def test_real_green_line_parses_with_timestamp_and_level_stripped():
+    parsed = tracker.parse_checker_lines(MAIN_GREEN_MACOS)
+    assert len(parsed) == 1
+    entry = parsed[0]
+    assert entry["kind"] == "green"
+    assert entry["job"] == MACOS_JOB and entry["phase"] == "ctest"
+    assert entry["seconds"] == "537.7" and entry["factor"] == "1.018" and entry["rulers"] == "7"
+
+
+def test_double_colon_spelling_is_tolerated_like_the_runner_rendered_one():
+    alt = "::notice::phase budget 'ctest' for job 'x': 10.0s / 11.0s (machine factor 1.000 from 7 rulers)"
+    parsed = tracker.parse_checker_lines(alt)
+    assert [entry["kind"] for entry in parsed] == ["green"]
+
+
+def test_unrelated_lines_never_parse_as_readings():
+    noise = "\n".join(
+        [
+            "##[notice]Deprecation notice: something else",
+            "##[error]Process completed with exit code 1.",
+            "2026-11-23T00:00:00.0Z ##[notice]phase budget 'build' for job 'x': 10.0s / 20s",
+            "phase budget 'ctest' for job 'y': 10.0s / 11.0s (machine factor 1.0 from 7 rulers)",  # no level prefix
+        ]
+    )
+    assert tracker.parse_checker_lines(noise) == []
+
+
+def test_clamp_warning_after_green_notice_overrides_with_the_raw_factor():
+    log = "\n".join([RELEASE_CLAMP_NOTICE, RELEASE_CLAMP_WARNING, "##[notice]unrelated"])
+    reading = tracker.extract_reading(tracker.parse_checker_lines(log), WINDOWS_JOB, "ctest")
+    assert reading["seconds"] == 346.8
+    assert reading["gate_factor"] == 0.8
+    assert reading["raw_factor"] == 0.726  # the clamp must not fake the machine-relative reading
+    assert reading["log_lines"] == [RELEASE_CLAMP_NOTICE.split("Z ", 1)[1], RELEASE_CLAMP_WARNING.split("Z ", 1)[1]]
+
+
+def test_red_line_yields_its_own_reading():
+    reading = tracker.extract_reading(tracker.parse_checker_lines(RELEASE_RED), WINDOWS_JOB, "ctest")
+    assert reading["seconds"] == 565.3
+    assert reading["raw_factor"] == 1.174  # no warning: gate factor == raw, at log precision
+    assert reading["rulers"] == 0  # the red format carries no ruler count
+
+
+def test_ambiguous_logs_refuse_rather_than_pick_one():
+    two_greens = "\n".join([MAIN_GREEN_MACOS, MAIN_GREEN_MACOS.replace("537.7", "538.8")])
+    with pytest.raises(tracker.ReadingError, match="ambiguous-multiple-readings"):
+        tracker.extract_reading(tracker.parse_checker_lines(two_greens), MACOS_JOB, "ctest")
+    with pytest.raises(tracker.ReadingError, match="no-machine-factor-reading"):
+        tracker.extract_reading(tracker.parse_checker_lines("##[notice]nothing here"), MACOS_JOB, "ctest")
+
+
+# --- headroom arithmetic ---------------------------------------------------------
+
+
+def test_literal_worked_example_uses_raw_factor_and_budget_denominator():
+    # T=350, raw factor 0.5, B=480 -> C=700, headroom -45.83%; the clamped 0.8
+    # would fake C=437.5 / +8.85%.
+    implied, headroom = tracker.implied_and_headroom(350.0, 0.5, 480.0)
+    assert implied == pytest.approx(700.0)
+    assert headroom == pytest.approx(-45.8333, abs=1e-3)
+    lo, hi = tracker.rounding_interval_pct(350.0, 0.5, 480.0)
+    assert lo < -45.83 < hi
+    assert tracker.classify_headroom((lo, hi), 6.0) == "low"
+
+
+def test_clearance_denominator_is_one_minus_c_over_b_not_b_over_c():
+    # The same pair reads ~8.66% in the B/C-1 denomination — the two must not be
+    # confused (the 480/560 raise used the other one and overstated by ~1 point).
+    implied, headroom = tracker.implied_and_headroom(511.5, 1.0, 560.0)
+    other = 100.0 * (560.0 / implied - 1.0)
+    assert headroom == pytest.approx(-8.66, abs=0.05) or headroom == pytest.approx(8.66, abs=0.05)
+    assert abs(other - headroom) > 0.5  # genuinely different numbers
+
+
+def test_threshold_classification_boundaries():
+    assert tracker.classify_headroom((6.0, 6.0), 6.0) == "healthy"  # equal is not low
+    assert tracker.classify_headroom((5.9, 6.1), 6.0) == "uncertain"  # rounding straddles
+    assert tracker.classify_headroom((5.99, 5.999), 6.0) == "low"
+    assert tracker.classify_headroom((-0.4, -0.3), 6.0) == "low"  # negative headroom is low
+
+
+def test_real_boundary_sample_classifies_low():
+    # The main macOS reading this task exists to watch: C=528.2 vs B=560.
+    lo, hi = tracker.rounding_interval_pct(537.7, 1.018, 560.0)
+    assert tracker.classify_headroom((lo, hi), 6.0) == "low"
+
+
+# --- registry snapshot ------------------------------------------------------------
+
+
+def test_snapshot_extracts_machine_budgets_and_ignores_others():
+    text = registry_payload([machine_budget(MACOS_JOB, 560), {"job": "e2e-test", "phase": "e2e", "max_seconds": 600, "reason": "r"}])
+    budgets = tracker.parse_registry_snapshot(text)
+    assert set(budgets) == {(MACOS_JOB, "ctest")}
+    assert budgets[(MACOS_JOB, "ctest")]["budget_seconds"] == 560
+    assert budgets[(MACOS_JOB, "ctest")]["rulers"] == 3
+
+
+def test_segment_changes_when_the_budget_or_rulers_change_not_when_prose_does():
+    base = tracker.parse_registry_snapshot(registry_payload([machine_budget(MACOS_JOB, 560)]))
+    same_prose = registry_payload([{**machine_budget(MACOS_JOB, 560), "reason": "different prose"}])
+    assert tracker.parse_registry_snapshot(same_prose)[(MACOS_JOB, "ctest")]["segment"] == base[(MACOS_JOB, "ctest")]["segment"]
+    moved_budget = tracker.parse_registry_snapshot(registry_payload([machine_budget(MACOS_JOB, 520)]))
+    assert moved_budget[(MACOS_JOB, "ctest")]["segment"] != base[(MACOS_JOB, "ctest")]["segment"]
+    moved_ruler = machine_budget(MACOS_JOB, 560)
+    moved_ruler["machine_factor"]["ruler_seconds"]["Case.0"] = 2.5
+    assert tracker.parse_registry_snapshot(registry_payload([moved_ruler]))[(MACOS_JOB, "ctest")]["segment"] != base[(MACOS_JOB, "ctest")]["segment"]
+
+
+def test_non_v4_snapshot_is_rejected_not_guessed():
+    with pytest.raises(tracker.HarvestError, match="unsupported-registry-version"):
+        tracker.parse_registry_snapshot('{"version": 3, "entries": [], "phase_budgets": []}')
+
+
+# --- streak engine ------------------------------------------------------------------
+
+CFG = tracker.config_identity(6.0, 2)
+OTHER_CFG = tracker.config_identity(4.0, 2)
+
+
+def make_sample(run_id, seconds, raw, budget, *, line="main", job=MACOS_JOB, created, segment="seg-a", config=CFG):
+    run = {
+        "id": run_id,
+        "run_number": run_id,
+        "head_branch": "main" if line == "main" else "release/4.7.7",
+        "html_url": f"https://example.test/run/{run_id}",
+        "head_sha": f"sha-{run_id}",
+        "created_at": created,
+    }
+    return tracker.sample_record(
+        run=run, line=line, job=job, phase="ctest",
+        budget_entry={"segment": segment, "budget_seconds": budget, "rulers": 7},
+        reading={"seconds": seconds, "gate_factor": raw, "raw_factor": raw, "rulers": 7, "log_lines": ["x"]},
+        registry_blob_sha="blob", registry_sha256="reg", config_id=config,
+    )
+
+
+def make_gap(run_id, *, line="main", job=MACOS_JOB, created, config=CFG, reason="reading: no-machine-factor-reading"):
+    run = {
+        "id": run_id, "run_number": run_id,
+        "head_branch": "main" if line == "main" else "release/4.7.7",
+        "html_url": f"https://example.test/run/{run_id}",
+        "head_sha": f"sha-{run_id}", "created_at": created,
+    }
+    return tracker.gap_record(run=run, line=line, job=job, phase="ctest", reason=reason, config_id=config)
+
+
+def walk(records, threshold=6.0, streak=2):
+    return tracker.walk_series(tracker.group_series(records)[("main", MACOS_JOB, "ctest")], threshold, streak)
+
+
+def test_two_consecutive_lows_fire_exactly_one_deterministic_event():
+    records = [
+        make_sample(1, 560.0, 1.0, 560.0, created="2026-11-20T00:00:00Z"),  # h=0.00 low
+        make_sample(2, 580.0, 1.0, 560.0, created="2026-11-21T00:00:00Z"),  # h=-3.57 low
+    ]
+    first = walk(records)
+    assert first["streak"] == 2 and len(first["fired"]) == 1
+    event = first["fired"][0]
+    assert event["first_run"]["id"] == 1 and event["latest_run"]["id"] == 2
+    again = walk(records)
+    assert again["fired"][0]["event_id"] == event["event_id"]  # recompute is idempotent
+
+
+def test_single_low_records_but_does_not_fire():
+    result = walk([make_sample(1, 560.0, 1.0, 560.0, created="2026-11-20T00:00:00Z")])
+    assert result["streak"] == 1 and result["fired"] == [] and result["active"] is None
+
+
+def test_low_healthy_low_never_fires():
+    records = [
+        make_sample(1, 560.0, 1.0, 560.0, created="2026-11-20T00:00:00Z"),
+        make_sample(2, 480.0, 1.0, 560.0, created="2026-11-21T00:00:00Z"),  # h=14.29 healthy
+        make_sample(3, 560.0, 1.0, 560.0, created="2026-11-22T00:00:00Z"),
+    ]
+    result = walk(records)
+    assert result["fired"] == [] and result["streak"] == 1
+
+
+def test_low_gap_low_does_not_pair_across_the_gap():
+    records = [
+        make_sample(1, 560.0, 1.0, 560.0, created="2026-11-20T00:00:00Z"),
+        make_gap(2, created="2026-11-21T00:00:00Z"),
+        make_sample(3, 560.0, 1.0, 560.0, created="2026-11-22T00:00:00Z"),
+    ]
+    result = walk(records)
+    assert result["fired"] == [] and result["streak"] == 1
+
+
+def test_uncertain_breaks_continuity_instead_of_guessing():
+    # T=564, f=1.0, B=600 reads exactly 6.00% before rounding; the displayed
+    # operands' interval straddles the threshold: neither a low nor a health
+    # witness.
+    uncertain = make_sample(2, 564.0, 1.0, 600.0, created="2026-11-21T00:00:00Z")
+    assert tracker.annotate_status(uncertain, 6.0) == "uncertain"
+    records = [
+        make_sample(1, 560.0, 1.0, 560.0, created="2026-11-20T00:00:00Z"),
+        uncertain,
+        make_sample(3, 560.0, 1.0, 560.0, created="2026-11-22T00:00:00Z"),
+    ]
+    result = walk(records)
+    assert result["fired"] == [] and result["streak"] == 1
+
+
+def test_recovery_clears_the_signal_and_a_new_pair_fires_a_new_event():
+    records = [
+        make_sample(1, 560.0, 1.0, 560.0, created="2026-11-20T00:00:00Z"),
+        make_sample(2, 580.0, 1.0, 560.0, created="2026-11-21T00:00:00Z"),  # fires
+        make_sample(3, 480.0, 1.0, 560.0, created="2026-11-22T00:00:00Z"),  # recovery
+        make_sample(4, 570.0, 1.0, 560.0, created="2026-11-23T00:00:00Z"),  # low again
+        make_sample(5, 585.0, 1.0, 560.0, created="2026-11-24T00:00:00Z"),  # fires anew
+    ]
+    result = walk(records)
+    assert len(result["fired"]) == 2
+    assert result["fired"][0]["event_id"] != result["fired"][1]["event_id"]
+    assert result["active"]["event_id"] == result["fired"][1]["event_id"]
+
+
+def test_active_signal_survives_a_gap_but_not_a_recovery():
+    with_gap = [
+        make_sample(1, 560.0, 1.0, 560.0, created="2026-11-20T00:00:00Z"),
+        make_sample(2, 580.0, 1.0, 560.0, created="2026-11-21T00:00:00Z"),
+        make_gap(3, created="2026-11-22T00:00:00Z"),
+    ]
+    result = walk(with_gap)
+    assert result["active"] is not None  # a gap is not a recovery
+    with_recovery = with_gap + [make_sample(4, 400.0, 1.0, 560.0, created="2026-11-23T00:00:00Z")]
+    assert walk(with_recovery)["active"] is None
+
+
+def test_calibration_segment_change_breaks_the_streak():
+    records = [
+        make_sample(1, 560.0, 1.0, 560.0, created="2026-11-20T00:00:00Z", segment="seg-old"),
+        make_sample(2, 580.0, 1.0, 520.0, created="2026-11-21T00:00:00Z", segment="seg-new"),
+    ]
+    result = walk(records)
+    assert result["fired"] == [] and result["streak"] == 1  # a re-anchor never pairs with the old anchor
+
+
+def test_threshold_config_change_breaks_streaks_and_clears_the_active_signal():
+    # Entries 1-2 form a legitimate streak inside the old config's era (a real
+    # ledger would already carry that event; recomputation re-derives the same
+    # identity). The change boundary sits between 2 and 3: entry 3 starts a
+    # fresh streak and the active signal does not silently carry over.
+    records = [
+        make_sample(1, 560.0, 1.0, 560.0, created="2026-11-20T00:00:00Z", config=CFG),
+        make_sample(2, 580.0, 1.0, 560.0, created="2026-11-21T00:00:00Z", config=CFG),
+        make_sample(3, 585.0, 1.0, 560.0, created="2026-11-22T00:00:00Z", config=OTHER_CFG),
+    ]
+    result = walk(records)
+    assert len(result["fired"]) == 1 and result["fired"][0]["config_id"] == CFG
+    assert result["active"] is None and result["streak"] == 1
+    # A streak fully inside the new era fires under the new identity.
+    more = records + [make_sample(4, 590.0, 1.0, 560.0, created="2026-11-23T00:00:00Z", config=OTHER_CFG)]
+    after = walk(more)
+    assert len(after["fired"]) == 2 and after["fired"][1]["config_id"] == OTHER_CFG
+
+
+def test_lines_and_platforms_do_not_share_a_series():
+    records = [
+        make_sample(1, 560.0, 1.0, 560.0, created="2026-11-20T00:00:00Z"),
+        make_sample(2, 580.0, 1.0, 560.0, created="2026-11-21T00:00:00Z", line="release", job=WINDOWS_JOB),
+    ]
+    grouped = tracker.group_series(records)
+    assert set(grouped) == {("main", MACOS_JOB, "ctest"), ("release", WINDOWS_JOB, "ctest")}
+    assert all(walk_series_result["fired"] == [] for walk_series_result in [
+        tracker.walk_series(entries, 6.0, 2) for entries in grouped.values()
+    ])
+
+
+def test_rerun_sample_never_enters_the_ledger_as_a_second_attempt():
+    # Attempt discipline lives in the record key: attempt is pinned to 1, so a
+    # rerun's rows cannot be appended under a second key.
+    rec = make_sample(1, 560.0, 1.0, 560.0, created="2026-11-20T00:00:00Z")
+    assert rec["key"] == "1:1:macOS ARM64:ctest" and rec["attempt"] == 1
+
+
+# --- fake gh plumbing for the end-to-end harvest -------------------------------------
+
+FAKE_GH = r'''#!/usr/bin/env python3
+import os, re, sys, urllib.parse
+root = os.environ["HEADROOM_FAKE_GH_DIR"]
+args = sys.argv[1:]
+assert args[:1] == ["api"], args
+path = args[1]
+base, _, query = path.partition("?")
+params = urllib.parse.parse_qs(query)
+keep = []
+for key in sorted(params):
+    if key in ("created", "per_page", "event"):
+        continue
+    keep.append(key + "=" + params[key][0])
+name = base.replace("/", "_")
+if keep:
+    name += "@" + "&".join(keep)
+name = re.sub(r"[^A-Za-z0-9_.@=-]", "_", name)
+log = os.environ.get("HEADROOM_FAKE_GH_LOG")
+if log:
+    with open(log, "a") as fh:
+        fh.write(path + "\n")
+target = os.path.join(root, name + ".txt")
+if not os.path.exists(target):
+    sys.stderr.write("gh: Not Found (HTTP 404)\n")
+    sys.exit(1)
+sys.stdout.write(open(target).read())
+'''
+
+
+def norm_path(path: str) -> str:
+    base, _, query = path.partition("?")
+    params = urllib.parse.parse_qs(query)
+    keep = []
+    for key in sorted(params):
+        if key in ("created", "per_page", "event"):
+            continue
+        keep.append(f"{key}={params[key][0]}")
+    name = base.replace("/", "_")
+    if keep:
+        name += "@" + "&".join(keep)
+    return re.sub(r"[^A-Za-z0-9_.@=-]", "_", name)
+
+
+def make_run(run_id, number, branch, created, sha, conclusion="success", attempt=1):
+    return {
+        "id": run_id,
+        "run_number": number,
+        "run_attempt": attempt,
+        "head_branch": branch,
+        "head_sha": sha,
+        "created_at": created,
+        "status": "completed" if conclusion else "in_progress",
+        "conclusion": conclusion,
+        "html_url": f"https://github.com/LoveDaisy/Lumice/actions/runs/{run_id}",
+    }
+
+
+def serve(root: Path, path: str, content: str) -> None:
+    (root / (norm_path(path) + ".txt")).write_text(content)
+
+
+def setup_fake_gh(tmp_path: Path, runs: list[dict], jobs_and_logs: dict, registries: dict) -> tuple[Path, dict]:
+    """Install the fake gh binary and the canned responses.
+
+    jobs_and_logs: {run_id: {"jobs": {job_name: (job_id, conclusion)}, "logs": {job_id: text}}}
+    registries: {sha: registry_text}
+    """
+    root = tmp_path / "fakegh"
+    root.mkdir()
+    bin_path = tmp_path / "fake-gh-bin"
+    bin_path.write_text(FAKE_GH)
+    bin_path.chmod(0o755)
+    env = {
+        "HEADROOM_FAKE_GH_DIR": str(root),
+        "HEADROOM_FAKE_GH_LOG": str(tmp_path / "requests.log"),
+    }
+    serve(root, "repos/O/R/actions/workflows/ci.yml/runs?event=push&per_page=100&page=1",
+          json.dumps({"total_count": len(runs), "workflow_runs": runs}))
+    for run_id, spec in jobs_and_logs.items():
+        jobs_payload = {
+            "total_count": len(spec["jobs"]),
+            "jobs": [
+                {"id": job_id, "name": name, "status": "completed", "conclusion": conclusion, "html_url": ""}
+                for name, (job_id, conclusion) in spec["jobs"].items()
+            ],
+        }
+        serve(root, f"repos/O/R/actions/runs/{run_id}/attempts/1/jobs", json.dumps(jobs_payload))
+        for job_id, text in spec["logs"].items():
+            serve(root, f"repos/O/R/actions/jobs/{job_id}/logs", text)
+    for sha, text in registries.items():
+        serve(root, f"repos/O/R/contents/test/duration_registry.json?ref={sha}",
+              contents_payload(text, f"blob-{sha[:8]}"))
+    return bin_path, env
+
+
+def run_harvest(tmp_path: Path, bin_path: Path, env: dict, *, extra_args=(), publish_remote=None, publish=False):
+    state_dir = tmp_path / "state"
+    repo_root = tmp_path / "repo-root"
+    repo_root.mkdir(exist_ok=True)
+    subprocess.run(["git", "init", "-q", str(repo_root)], check=True)
+    args = [
+        sys.executable, str(SCRIPTS / "ctest_headroom_tracker.py"), "harvest",
+        "--repo", "O/R",
+        "--state-dir", str(state_dir),
+        "--repo-root", str(repo_root),
+        "--gh-bin", str(bin_path),
+        "--window-days", "30",
+        "--emit-annotation",
+        *extra_args,
+    ]
+    if publish:
+        args += ["--publish", "--publish-remote", publish_remote]
+    process = subprocess.run(
+        args, env={**os.environ, **env}, capture_output=True, text=True, timeout=120,
+    )
+    return process, state_dir
+
+
+MAIN_REGISTRY = registry_payload([machine_budget(MACOS_JOB, 560), machine_budget(WINDOWS_JOB, 480)])
+RELEASE_REGISTRY = registry_payload([machine_budget(WINDOWS_JOB, 480)])
+
+
+def basic_scenario(tmp_path: Path):
+    """Two main runs (macOS low twice) + one release red (Windows, low once)."""
+    runs = [
+        make_run(103, 2154, "release/4.7.7", "2026-11-22T00:00:00Z", "sha-rel1", conclusion="failure"),
+        make_run(102, 2156, "main", "2026-11-21T00:00:00Z", "sha-main2"),
+        make_run(101, 2155, "main", "2026-11-20T00:00:00Z", "sha-main1"),
+    ]
+    jobs_and_logs = {
+        101: {"jobs": {MACOS_JOB: (9001, "success"), WINDOWS_JOB: (9002, "success")},
+              "logs": {9001: MAIN_GREEN_MACOS, 9002: "log without checker lines"}},
+        102: {"jobs": {MACOS_JOB: (9011, "success"), WINDOWS_JOB: (9012, "success")},
+              "logs": {9011: MAIN_GREEN_MACOS.replace("537.7", "580.0").replace("1.018", "1.000"),
+                       9012: "log without checker lines"}},
+        103: {"jobs": {WINDOWS_JOB: (9021, "failure")}, "logs": {9021: RELEASE_RED}},
+    }
+    registries = {"sha-main1": MAIN_REGISTRY, "sha-main2": MAIN_REGISTRY, "sha-rel1": RELEASE_REGISTRY}
+    return setup_fake_gh(tmp_path, runs, jobs_and_logs, registries)
+
+
+def test_end_to_end_harvest_fires_once_annotates_and_persists(tmp_path):
+    bin_path, env = basic_scenario(tmp_path)
+    process, state_dir = run_harvest(tmp_path, bin_path, env)
+    assert process.returncode == 0, process.stdout + process.stderr
+
+    samples = [json.loads(line) for line in (state_dir / "samples.jsonl").read_text().splitlines() if line]
+    by_key = {s["key"]: s for s in samples}
+    assert set(by_key) == {
+        "101:1:macOS ARM64:ctest", "102:1:macOS ARM64:ctest", "103:1:Windows MSVC x86_64:ctest",
+        "101:1:Windows MSVC x86_64:ctest",  # honest gap: its log has no Windows reading
+        "102:1:Windows MSVC x86_64:ctest",
+    }
+    assert by_key["101:1:macOS ARM64:ctest"]["type"] == "sample"
+    assert by_key["101:1:macOS ARM64:ctest"]["headroom_pct"] == pytest.approx(5.68, abs=0.01)
+    assert by_key["102:1:Windows MSVC x86_64:ctest"]["type"] == "gap"
+    assert "no-machine-factor-reading" in by_key["102:1:Windows MSVC x86_64:ctest"]["reason"]
+    release = by_key["103:1:Windows MSVC x86_64:ctest"]
+    assert release["type"] == "sample" and release["raw_factor"] == 1.174
+    assert release["implied_c"] == pytest.approx(481.5, abs=0.1)
+
+    events = [json.loads(line) for line in (state_dir / "events.jsonl").read_text().splitlines() if line]
+    assert len(events) == 1
+    assert events[0]["line"] == "main" and events[0]["job"] == MACOS_JOB
+    assert events[0]["first_run"]["id"] == 101 and events[0]["latest_run"]["id"] == 102
+
+    notices = [line for line in process.stdout.splitlines() if line.startswith("::notice::")]
+    assert len(notices) == 1 and "[ctest-headroom] main/macOS ARM64/ctest" in notices[0]
+    assert "::warning::" not in process.stdout
+    assert "[2154]" in process.stdout  # the release run number is traceable in the summary
+    assert "NOT PERSISTED" not in process.stdout
+
+    cursor = json.loads((state_dir / "state.json").read_text())["cursor"]
+    assert cursor["run_id"] == 103 and cursor["created_at"] == "2026-11-22T00:00:00Z"
+
+
+def test_second_harvest_is_idempotent_and_keeps_the_active_signal(tmp_path):
+    bin_path, env = basic_scenario(tmp_path)
+    first, state_dir = run_harvest(tmp_path, bin_path, env)
+    assert first.returncode == 0
+    events_before = (state_dir / "events.jsonl").read_text()
+
+    second, state_dir = run_harvest(tmp_path, bin_path, env)
+    assert second.returncode == 0
+    assert "0 run(s) processed" in second.stdout  # overlap only, no re-fetch
+    events_after = (state_dir / "events.jsonl").read_text()
+    assert events_after == events_before  # no duplicate event
+    notices = [line for line in second.stdout.splitlines() if line.startswith("::notice::")]
+    assert len(notices) == 1  # the active signal persists across harvests
+
+
+def test_backlog_continues_across_harvests_without_losing_the_streak(tmp_path):
+    bin_path, env = basic_scenario(tmp_path)
+    first, state_dir = run_harvest(tmp_path, bin_path, env, extra_args=("--max-runs", "1"))
+    assert first.returncode == 0
+    assert "run budget (1) reached" in first.stdout
+    assert "Backlog" in first.stdout
+    samples = (state_dir / "samples.jsonl").read_text().splitlines()
+    assert len(samples) == 2  # run 101 only (macOS sample + Windows gap)
+    events = (state_dir / "events.jsonl").read_text().strip()
+    assert events == ""  # one low sample never fires
+
+    second, state_dir = run_harvest(tmp_path, bin_path, env)
+    assert second.returncode == 0
+    events = [json.loads(line) for line in (state_dir / "events.jsonl").read_text().splitlines() if line]
+    assert len(events) == 1 and events[0]["first_run"]["id"] == 101  # recompute spans the backlog boundary
+
+
+def test_gap_between_lows_blocks_the_trigger_end_to_end(tmp_path):
+    runs = [
+        make_run(201, 1, "main", "2026-11-20T00:00:00Z", "sha-a"),
+        make_run(202, 2, "main", "2026-11-21T00:00:00Z", "sha-b"),
+        make_run(203, 3, "main", "2026-11-22T00:00:00Z", "sha-c"),
+    ]
+    low_log = MAIN_GREEN_MACOS.replace("537.7", "600.0").replace("1.018", "1.000")  # h=-7.14 low
+    jobs_and_logs = {
+        201: {"jobs": {MACOS_JOB: (3001, "success")}, "logs": {3001: low_log}},
+        202: {"jobs": {MACOS_JOB: (3002, "success")}, "logs": {3002: "##[notice]nothing useful"}},
+        203: {"jobs": {MACOS_JOB: (3003, "success")}, "logs": {3003: low_log}},
+    }
+    registries = {"sha-a": MAIN_REGISTRY, "sha-b": MAIN_REGISTRY, "sha-c": MAIN_REGISTRY}
+    bin_path, env = setup_fake_gh(tmp_path, runs, jobs_and_logs, registries)
+    process, state_dir = run_harvest(tmp_path, bin_path, env)
+    assert process.returncode == 0
+    events = (state_dir / "events.jsonl").read_text().strip()
+    assert events == ""  # low / gap / low never pairs
+    assert "::notice::" not in process.stdout
+
+
+def test_attempt_one_red_survives_a_green_rerun_and_attempt_two_is_never_fetched(tmp_path):
+    runs = [make_run(301, 1, "main", "2026-11-20T00:00:00Z", "sha-a", conclusion="failure", attempt=2)]
+    red_log = RELEASE_RED.replace(WINDOWS_JOB, MACOS_JOB)  # the attempt-1 leg went red
+    green_log = MAIN_GREEN_MACOS
+    bin_path, env = setup_fake_gh(
+        tmp_path, runs,
+        {301: {"jobs": {MACOS_JOB: (4001, "failure")}, "logs": {4001: red_log}}},
+        {"sha-a": MAIN_REGISTRY},
+    )
+    # Serve a greener attempt 2; the tracker must never ask for it.
+    serve(tmp_path / "fakegh", "repos/O/R/actions/runs/301/attempts/2/jobs",
+          json.dumps({"total_count": 1, "jobs": [{"id": 4002, "name": MACOS_JOB, "status": "completed",
+                                                  "conclusion": "success", "html_url": ""}]}))
+    serve(tmp_path / "fakegh", "repos/O/R/actions/jobs/4002/logs", green_log)
+    process, state_dir = run_harvest(tmp_path, bin_path, env)
+    assert process.returncode == 0
+    samples = {json.loads(line)["key"]: json.loads(line)
+               for line in (state_dir / "samples.jsonl").read_text().splitlines() if line}
+    red_sample = samples["301:1:macOS ARM64:ctest"]
+    assert red_sample["type"] == "sample"
+    assert red_sample["phase_seconds"] == 565.3  # attempt 1's red evidence, not the rerun's green
+    assert samples["301:1:Windows MSVC x86_64:ctest"]["reason"] == "job-absent"
+    requested = (tmp_path / "requests.log").read_text()
+    assert "attempts/2" not in requested
+
+
+def test_cancelled_run_is_a_named_gap_with_no_log_fetch(tmp_path):
+    runs = [make_run(401, 1, "main", "2026-11-20T00:00:00Z", "sha-a", conclusion="cancelled")]
+    bin_path, env = setup_fake_gh(
+        tmp_path, runs, {401: {"jobs": {MACOS_JOB: (5001, "cancelled")}, "logs": {}}},
+        {"sha-a": MAIN_REGISTRY},
+    )
+    process, state_dir = run_harvest(tmp_path, bin_path, env)
+    assert process.returncode == 0
+    samples = [json.loads(line) for line in (state_dir / "samples.jsonl").read_text().splitlines() if line]
+    assert samples[0]["type"] == "gap" and samples[0]["reason"] == "run-cancelled"
+    assert "actions/jobs" not in (tmp_path / "requests.log").read_text()
+
+
+def test_expired_log_and_missing_registry_snapshot_are_honest_gaps(tmp_path):
+    runs = [
+        make_run(501, 1, "main", "2026-11-20T00:00:00Z", "sha-gone"),
+        make_run(502, 2, "main", "2026-11-21T00:00:00Z", "sha-alive"),
+    ]
+    bin_path, env = setup_fake_gh(
+        tmp_path, runs,
+        {
+            501: {"jobs": {MACOS_JOB: (6001, "success")}, "logs": {}},  # registry snapshot 404s
+            502: {"jobs": {MACOS_JOB: (6002, "success")}, "logs": {}},  # job log 404s (expired)
+        },
+        {"sha-alive": MAIN_REGISTRY},  # sha-gone has no snapshot either
+    )
+    process, state_dir = run_harvest(tmp_path, bin_path, env)
+    assert process.returncode == 0
+    samples = {json.loads(line)["key"]: json.loads(line)
+               for line in (state_dir / "samples.jsonl").read_text().splitlines() if line}
+    assert samples["501:1::"]["type"] == "gap"
+    assert "registry-unreadable" in samples["501:1::"]["reason"]
+    assert samples["502:1:macOS ARM64:ctest"]["type"] == "gap"
+    assert "log-unreadable" in samples["502:1:macOS ARM64:ctest"]["reason"]
+    assert "expired" in samples["502:1:macOS ARM64:ctest"]["reason"]
+    # Neither gap may read as health: no sample, no streak, no signal.
+    assert (state_dir / "events.jsonl").read_text().strip() == ""
+
+
+def test_out_of_population_branches_are_counted_not_harvested(tmp_path):
+    runs = [
+        make_run(601, 1, "feat/some-branch", "2026-11-20T00:00:00Z", "sha-x"),
+        make_run(602, 2, "main", "2026-11-21T00:00:00Z", "sha-a"),
+    ]
+    bin_path, env = setup_fake_gh(
+        tmp_path, runs,
+        {602: {"jobs": {MACOS_JOB: (7001, "success")}, "logs": {7001: MAIN_GREEN_MACOS}}},
+        {"sha-a": MAIN_REGISTRY},
+    )
+    process, state_dir = run_harvest(tmp_path, bin_path, env)
+    assert process.returncode == 0
+    assert "1 out-of-population run(s) ignored" in process.stdout
+    keys = (state_dir / "samples.jsonl").read_text()
+    assert "601" not in keys and "602:1:macOS ARM64:ctest" in keys
+
+
+def test_current_run_is_harvested_before_it_completes(tmp_path):
+    runs = [make_run(701, 1, "main", "2026-11-20T00:00:00Z", "sha-a", conclusion=None)]
+    bin_path, env = setup_fake_gh(
+        tmp_path, runs,
+        {701: {"jobs": {MACOS_JOB: (8001, "success")}, "logs": {8001: MAIN_GREEN_MACOS}}},
+        {"sha-a": MAIN_REGISTRY},
+    )
+    process, state_dir = run_harvest(tmp_path, bin_path, env, extra_args=("--current-run", "701"))
+    assert process.returncode == 0
+    samples = {json.loads(line)["key"]: json.loads(line)
+               for line in (state_dir / "samples.jsonl").read_text().splitlines() if line}
+    assert samples["701:1:macOS ARM64:ctest"]["type"] == "sample"
+    assert samples["701:1:macOS ARM64:ctest"]["run_id"] == 701
+    # The Windows leg of the registry has no job in this synthetic run: an honest gap.
+    assert samples["701:1:Windows MSVC x86_64:ctest"]["reason"] == "job-absent"
+
+
+def test_new_release_branch_gets_its_own_line_and_budget(tmp_path):
+    runs = [
+        make_run(801, 1, "release/4.7.7", "2026-11-20T00:00:00Z", "sha-old"),
+        make_run(802, 2, "release/4.7.8", "2026-11-21T00:00:00Z", "sha-new"),
+    ]
+    clamp_log = "\n".join([RELEASE_CLAMP_NOTICE, RELEASE_CLAMP_WARNING])
+    red_log = RELEASE_RED
+    bin_path, env = setup_fake_gh(
+        tmp_path, runs,
+        {
+            801: {"jobs": {WINDOWS_JOB: (9101, "success")}, "logs": {9101: clamp_log}},
+            802: {"jobs": {WINDOWS_JOB: (9102, "failure")}, "logs": {9102: red_log}},
+        },
+        {"sha-old": RELEASE_REGISTRY, "sha-new": RELEASE_REGISTRY},
+    )
+    process, state_dir = run_harvest(tmp_path, bin_path, env)
+    assert process.returncode == 0
+    samples = {json.loads(line)["run_id"]: json.loads(line)
+               for line in (state_dir / "samples.jsonl").read_text().splitlines() if line}
+    clamp = samples[801]
+    assert clamp["line"] == "release" and clamp["branch"] == "release/4.7.7"
+    assert clamp["raw_factor"] == 0.726  # warning-after-notice association worked
+    assert clamp["implied_c"] == pytest.approx(477.7, abs=0.1)  # NOT the clamped 433.5
+    assert samples[802]["line"] == "release" and samples[802]["branch"] == "release/4.7.8"
+    # Different budget eras stay distinct series records; the release line never
+    # inherits a main-line budget.
+    assert clamp["budget_seconds"] == 480 and samples[802]["budget_seconds"] == 480
+
+
+# --- publish chain --------------------------------------------------------------------
+
+
+def make_bare_remote(tmp_path: Path) -> tuple[Path, Path]:
+    """A throwaway remote with a gh-pages branch carrying bench/ + headroom/."""
+    bare = tmp_path / "pub.git"
+    subprocess.run(["git", "init", "-q", "--bare", str(bare)], check=True)
+    # A global core.hooksPath (if the machine sets one) would redirect hook
+    # lookup away from this repo's hooks/ for receive-pack too — pin it back.
+    subprocess.run(["git", "-C", str(bare), "config", "core.hooksPath", str(bare / "hooks")], check=True)
+    work = tmp_path / "seed"
+    subprocess.run(["git", "init", "-q", str(work)], check=True)
+    subprocess.run(["git", "-C", str(work), "config", "user.email", "seed@test"], check=True)
+    subprocess.run(["git", "-C", str(work), "config", "user.name", "seed"], check=True)
+    (work / "bench").mkdir()
+    (work / "headroom").mkdir()
+    (work / "bench" / "chart.json").write_text("chart-v1")
+    (work / "headroom" / "samples.jsonl").write_text("")
+    (work / "headroom" / "events.jsonl").write_text("")
+    (work / "headroom" / "state.json").write_text('{"schema": 1, "config": null, "cursor": null}')
+    (work / "headroom" / "summary.md").write_text("old")
+    subprocess.run(["git", "-C", str(work), "add", "-A"], check=True)
+    subprocess.run(["git", "-C", str(work), "commit", "-q", "-m", "seed"], check=True)
+    subprocess.run(["git", "-C", str(work), "branch", "-M", "main"], check=True)
+    subprocess.run(["git", "-C", str(work), "push", "-q", str(bare), "main:gh-pages"], check=True)
+    return bare, work
+
+
+def read_remote_file(bare: Path, ref_path: str) -> str:
+    result = subprocess.run(["git", "-C", str(bare), "show", ref_path], capture_output=True, text=True, check=True)
+    return result.stdout
+
+
+def remote_tree_blob(bare: Path, ref_path: str) -> str:
+    result = subprocess.run(["git", "-C", str(bare), "rev-parse", ref_path], capture_output=True, text=True, check=True)
+    return result.stdout.strip()
+
+
+def install_concurrent_update_hook(bare: Path) -> None:
+    """First push: land a foreign headroom record on the remote, then reject the
+    push as non-fast-forward — exactly what a concurrent harvest produces.
+    Second push: accept."""
+    hook = bare / "hooks" / "pre-receive"
+    hook.write_text(
+        "#!/bin/bash\n"
+        'set -e\n'
+        'count_file="$PWD/.pushcount"\n'
+        'n=$(($(cat "$count_file" 2>/dev/null || echo 0) + 1))\n'
+        'echo "$n" > "$count_file"\n'
+        'if [ "$n" != "1" ]; then exit 0; fi\n'
+        '# Leave the quarantine: the concurrent commit must survive the rejection.\n'
+        'unset GIT_QUARANTINE_PATH GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES\n'
+        'old=$(git rev-parse refs/heads/gh-pages)\n'
+        'tmp=$(mktemp -p "$PWD")\n'
+        'git cat-file blob "refs/heads/gh-pages:headroom/samples.jsonl" > "$tmp"\n'
+        'printf \'{"type":"sample","key":"999:1:macOS ARM64:ctest","line":"main","branch":"main",'
+        '"job":"macOS ARM64","phase":"ctest","run_id":999,"run_number":998,"run_url":"",'
+        '"attempt":1,"head_sha":"x","run_created_at":"2026-11-23T00:00:00Z","registry_blob_sha":"b",'
+        '"registry_sha256":"r","segment":"seg-a","budget_seconds":560,"rulers":7,"phase_seconds":500.0,'
+        '"gate_factor":1.0,"raw_factor":1.0,"implied_c":500.0,"headroom_pct":10.71,'
+        '"headroom_interval_pct":[10.7,10.8],"approximate":true,"log_lines":["x"],'
+        '"harvested_at":"2026-11-24T00:00:00Z","config_id":"CFG"}\\n\' >> "$tmp"\n'
+        'newblob=$(git hash-object -w "$tmp")\n'
+        'rm -f "$tmp"\n'
+        'evt=$(git rev-parse "refs/heads/gh-pages:headroom/events.jsonl")\n'
+        'stt=$(git rev-parse "refs/heads/gh-pages:headroom/state.json")\n'
+        'smr=$(git rev-parse "refs/heads/gh-pages:headroom/summary.md")\n'
+        'newht=$(printf \'100644 blob %s\\tsamples.jsonl\\n100644 blob %s\\tevents.jsonl\\n'
+        '100644 blob %s\\tstate.json\\n100644 blob %s\\tsummary.md\\n\' '
+        '"$newblob" "$evt" "$stt" "$smr" | git mktree)\n'
+        'bt=$(git rev-parse "refs/heads/gh-pages:bench")\n'
+        'newrt=$(printf \'040000 tree %s\\tbench\\n040000 tree %s\\theadroom\\n\' "$bt" "$newht" | git mktree)\n'
+        'commit=$(git commit-tree "$newrt" -p "$old" -m "concurrent harvest")\n'
+        'git update-ref refs/heads/gh-pages "$commit"\n'
+        'echo "non-fast-forward" >&2\n'
+        'exit 1\n'
+    )
+    hook.chmod(0o755)
+
+
+def test_publish_replaces_only_headroom_and_merges_a_concurrent_update(tmp_path):
+    bare, _ = make_bare_remote(tmp_path)
+    install_concurrent_update_hook(bare)
+    bin_path, env = basic_scenario(tmp_path)
+    process, state_dir = run_harvest(tmp_path, bin_path, env, publish=True, publish_remote=str(bare))
+    assert process.returncode == 0, process.stdout + process.stderr
+    assert "published to gh-pages:headroom/" in process.stdout
+
+    published_samples = read_remote_file(bare, "refs/heads/gh-pages:headroom/samples.jsonl")
+    keys = {json.loads(line)["key"] for line in published_samples.splitlines() if line}
+    assert "101:1:macOS ARM64:ctest" in keys  # ours survived
+    assert "999:1:macOS ARM64:ctest" in keys  # the concurrent side's record survived too
+    assert read_remote_file(bare, "refs/heads/gh-pages:bench/chart.json") == "chart-v1"  # untouched
+    events = read_remote_file(bare, "refs/heads/gh-pages:headroom/events.jsonl")
+    assert "main/macOS ARM64" in events or "macOS ARM64" in events
+
+
+def test_publish_failure_names_itself_not_persisted_and_exits_three(tmp_path):
+    bin_path, env = basic_scenario(tmp_path)
+    missing_remote = tmp_path / "does-not-exist.git"
+    process, state_dir = run_harvest(tmp_path, bin_path, env, publish=True, publish_remote=str(missing_remote))
+    assert process.returncode == 3
+    assert "NOT PERSISTED" in process.stdout
+    assert "::warning::[ctest-headroom] publish failed" in process.stdout
+    # The local state is still complete for the next harvest to publish.
+    assert (state_dir / "samples.jsonl").exists()
+
+
+# --- the workflow wiring contract ------------------------------------------------------
+
+
+def load_workflow():
+    return yaml.load(WORKFLOW_PATH.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+
+
+def named_step(job, needle: str):
+    for step in job["steps"]:
+        name = step.get("name") or ""
+        run = step.get("run") or ""
+        if needle in name or needle in run:
+            return step
+    return None
+
+
+def test_benchmark_summary_guard_and_topology_are_untouched():
+    workflow = load_workflow()
+    summary = workflow["jobs"]["benchmark-summary"]
+    assert summary["if"] == "always() && github.event_name == 'push' && github.ref == 'refs/heads/main'"
+    assert summary["needs"] == ["bench-ipo", "build"]  # build added: the current run's matrix must be done
+    on = workflow["on"]  # yaml's BaseLoader keeps the top-level `on:` key a plain string
+    assert on["push"]["branches"] == ["main", "release/**"]
+    assert "pull_request" in on
+
+
+def test_headroom_step_is_observation_only_and_non_blocking():
+    workflow = load_workflow()
+    summary = workflow["jobs"]["benchmark-summary"]
+    step = named_step(summary, "ctest_headroom_tracker.py")
+    assert step is not None
+    assert str(step.get("continue-on-error", "")).lower() == "true"
+    run = step["run"]
+    assert "--emit-annotation" in run
+    assert "--publish" in run
+    assert "--current-run" in run
+    assert "--job-summary" in run
+    assert "github.repository" in run and "github.run_id" in run
+    # Token permissions stay at the job level, already declared for gh-pages + Actions read.
+    assert set(summary["permissions"]) == {"contents", "actions"}
+    upload = next(
+        (s for s in summary["steps"] if (s.get("name") or "") == "Upload headroom evidence"), None
+    )
+    assert upload is not None and upload.get("if") == "always()"
+    # The observation step runs before the benchmark artifact download.
+    step_names = [s.get("name") or s.get("uses", "") for s in summary["steps"]]
+    assert step_names.index(next(n for n in step_names if "headroom" in n.lower())) < step_names.index(
+        next(n for n in step_names if "Download benchmark" in n)
+    )
+
+
+def test_annotation_emission_is_a_real_workflow_command_not_a_log_prefix():
+    # The review-01 defect shape: a local machine printing "::notice::" reaches no
+    # annotation consumer. The tracker must print inside the hosted-runner step —
+    # pinned by the step's presence above — and its annotation carries the series
+    # identity and points at persistent evidence.
+    text = tracker.annotation_line(
+        {
+            "line": "main", "job": MACOS_JOB, "phase": "ctest",
+            "headroom_latest_pct": 3.21, "threshold_pct": 6.0, "streak_at_fire": 3,
+            "segment": "seg-x", "first_run": {"number": 7, "url": "u"},
+        }
+    )
+    assert text.startswith("::notice::")
+    assert "main/macOS ARM64/ctest" in text and "3.21%" in text and "seg-x" in text
