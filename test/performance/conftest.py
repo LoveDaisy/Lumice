@@ -2,7 +2,8 @@
 
 ``--dual-gate-profile`` picks which dual-renderer gate the Metal file asserts:
 ``precise`` (the default — reference machines and the local scheduled gate) or
-``ci`` (the loose disaster floor the GitHub-hosted runner can hold). The numbers
+``ci`` (the loose disaster floor the GitHub-hosted runner runs as a reported,
+non-blocking signal — see the shared module's docstring). The numbers
 and the reasoning behind both live in ``test/e2e/_multi_renderer_throughput.py``.
 An option rather than an environment variable, so the profile a run used is
 visible on its command line.

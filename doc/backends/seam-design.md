@@ -172,6 +172,18 @@ CPU 批的原因是 cache/setup 摊薄("32 光线/晶体"是 CPU 决策)；GPU �
   CUDA ds-corr 0.9995 / 1.0000 / 1.0000、energy 1.002 / 1.005 / 1.006，双账本比值 CUDA 在 0.03% 内、
   Metal 低 0.3–0.5%（单 renderer 会话已如此，非 N 面路径引入）。
 
+- **「结构正确」与「实际高效」是两个命题；hosted 比值闸只承载第二个，且自 PR #633 起 report-only。**
+  上面实测的 0.950/0.908 来自参照机；同一棵树（只改 CI/文档）在 hosted runner 上读出过
+  0.695/0.706（PR #633，main@1efc673fc，同日参照机 0.945/0.965），hosted 的双/单比值自那以后
+  只是 reported signal（warning 注释照报），不再阻塞 PR。资格变化的边界显式声明为损失，不是附注：
+  (a) 结构测试替代不了一般 perf 测量——本节的 parity 电池只回答结构命题；一般性（非结构性）性能
+  退化失去其 PR 阻塞发现通道，发现后移到该 signal 与参照机次日定时闸；(b) 比值对「双/单同时变慢」
+  与绝对吞吐均不敏感，它不是全性能完备守卫；(c) 本节对调用结构的描述（exit tail 一个循环、无第二
+  dispatch）是白盒事实，没有对应的自动断言——现有 parity 无法区分「一次 trace N 投影」与「N 次重
+  trace 结果恰好正确」，dispatch 计数守卫是已知缺口；(d) 定时 precise 闸只跟 `origin/main` tip，
+  不自动覆盖 release 候选。完整现役口径：`doc/testing/performance-testing.md`（"Precise throughput
+  gate (local schedule)"）。
+
 ### 4.3 诚实的反点：纯吞吐 image 出口反而可能赢
 
 大 batch 下 image 出口回读是固定 O(W×H)、摊到每光线趋近 0、投影在 GPU；buffer 出口导出 O(出射光线)、每光线常数成本不随 batch 摊薄。所以"视角固定熬收敛"的稳态里 image 出口更省。**→ GUI 选 buffer 出口的理由是灵活性/可迭代性，不是速度。**
