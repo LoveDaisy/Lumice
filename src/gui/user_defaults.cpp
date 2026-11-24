@@ -1120,6 +1120,60 @@ float LoadUiScaleMultiplierAtStartup(std::optional<std::filesystem::path> overri
   return ReadUiScaleMultiplierFromDoc(ReadOverlayJsonIfPresent(*dir)).value_or(kFactoryUiScaleMultiplier);
 }
 
+// The Edit Entry editing-mode preference (namespace 3's fifth member). The holder and the startup
+// load live beside the storage trio rather than with a consumer: user_defaults is the one place
+// that already owns the file channel, and splitting "what was saved" from "what the next editor
+// adopts" across TUs would give the mode two authorities to disagree (see the hpp block for why
+// this is not a GuiState field).
+namespace {
+constexpr const char* kEditEntryStagedModeKey = "edit_entry_staged_mode";
+// Factory = Immediate (AC1's default). Every path that wants a different value goes through
+// SetEditEntryStagedModePreference — the Save publication and the test harness reset — so the
+// factory value is restorable by assignment and nothing needs a second "unset" state.
+bool g_edit_entry_staged_mode_preference = false;
+}  // namespace
+
+std::optional<bool> ReadEditEntryStagedModeFromDoc(const nlohmann::json& doc) {
+  if (!doc.is_object()) {
+    return std::nullopt;
+  }
+  const auto app = doc.find(kAppRootKey);
+  if (app == doc.end() || !app->is_object()) {
+    return std::nullopt;
+  }
+  const auto value = app->find(kEditEntryStagedModeKey);
+  if (value == app->end() || !value->is_boolean()) {
+    return std::nullopt;
+  }
+  return value->get<bool>();
+}
+
+void WriteEditEntryStagedModeToDoc(nlohmann::json& doc, bool value) {
+  AppObjectForWrite(doc)[kEditEntryStagedModeKey] = value;
+}
+
+bool LoadEditEntryStagedModeAtStartup(std::optional<std::filesystem::path> override_dir) {
+  const std::optional<std::filesystem::path> dir = override_dir ? std::move(override_dir) : GetActiveUserConfigDir();
+  if (!dir) {
+    g_edit_entry_staged_mode_preference = false;
+    return false;
+  }
+  // A tolerant read that already counts no downgrade (the namespace-wide rule), so this loader —
+  // unlike the ui-scale one — adds no logging of its own: an unusable value resolves to factory,
+  // which is also what an absent key resolves to, and neither is something to warn about.
+  const bool staged = ReadEditEntryStagedModeFromDoc(ReadOverlayJsonIfPresent(*dir)).value_or(false);
+  g_edit_entry_staged_mode_preference = staged;
+  return staged;
+}
+
+bool GetEditEntryStagedModePreference() {
+  return g_edit_entry_staged_mode_preference;
+}
+
+void SetEditEntryStagedModePreference(bool staged) {
+  g_edit_entry_staged_mode_preference = staged;
+}
+
 void ApplyAppPreferencesOverride(GuiState& state, const nlohmann::json& doc) {
   if (const std::optional<bool> use_gpu = ReadUseGpuBackendFromDoc(doc); use_gpu.has_value()) {
     state.use_gpu_backend = *use_gpu;

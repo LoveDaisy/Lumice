@@ -147,6 +147,13 @@ extern PanoramaViewport g_panorama_vp;
 extern SurveyExecutor g_survey_executor;
 extern BgColorPickState g_bg_pick;
 
+// Cancels the preview's in-flight roll press, if one is running. Called by ResetFrontendState
+// (every New / Open / Revert routes through it): a right-drag roll belongs to the document and
+// lens it was admitted under, and a document change ends it for the rest of that press — the
+// button coming back up, or a fresh press, starts clean. Lives beside the gesture in
+// app_panels.cpp because the gesture's state does.
+void ResetPreviewRollDrag();
+
 // "There is a background photo on screen to act on" — a photo is loaded AND it is being shown AND
 // the mode is one that composites it (Screen; Print keeps the photograph out of the frame,
 // doc/rendering/print-mode-subtractive-ink.md §7 instance 1). The single owner of that judgement, asked by

@@ -52,7 +52,7 @@
 #include "gui/semantic_colors.hpp"  // WarningTextColor — the drift warning ink's colour probe
 #include "gui/sim_state_rules.hpp"
 #include "gui/theme.hpp"
-#include "gui/user_defaults.hpp"  // kFactoryUiScaleMultiplier — the scale tiers restore through it
+#include "gui/user_defaults.hpp"  // SetEditEntryStagedModePreference — the Staged premise publishes through the holder
 #include "gui/view_look_at.hpp"   // WorldDirToAzEl — the camera-aim inverse the Look At presets run
 #include "imgui_internal.h"
 #include "include/lumice_base.h"
@@ -1550,7 +1550,6 @@ bool ExcludeWhileTheImmediateEditorIsOpen(ImGuiTestContext* ctx, bool start_with
   IM_CHECK_RETV(gui::g_state.filters.size() == (start_with_out_filter ? 1u : 0u), false);
 
   const ScopedPopups popup_guard(ctx);
-  gui::g_state.modal_immediate_mode = true;
   const gui::EditRequest req{ gui::EditTarget::kFilter, 0, 0 };
   gui::OpenEditModal(req, gui::g_state);
   ctx->Yield(4);
@@ -1619,7 +1618,6 @@ bool ExcludeWhileTheImmediateEditorIsOpen(ImGuiTestContext* ctx, bool start_with
   ctx->SetRef("//Edit Entry");
   ctx->ItemClick("Close##edit_modal");
   ctx->Yield(2);
-  gui::g_state.modal_immediate_mode = false;
   return true;
 }
 
@@ -1804,7 +1802,6 @@ bool IncludeAgainWhileTheImmediateEditorIsOpen(ImGuiTestContext* ctx) {
   ctx->SetRef("");
 
   const ScopedPopups popup_guard(ctx);
-  gui::g_state.modal_immediate_mode = true;
   const gui::EditRequest req{ gui::EditTarget::kFilter, 0, 0 };
   gui::OpenEditModal(req, gui::g_state);
   ctx->Yield(4);
@@ -1857,7 +1854,6 @@ bool IncludeAgainWhileTheImmediateEditorIsOpen(ImGuiTestContext* ctx) {
   ctx->SetRef("//Edit Entry");
   ctx->ItemClick("Close##edit_modal");
   ctx->Yield(2);
-  gui::g_state.modal_immediate_mode = false;
   return true;
 }
 
@@ -17663,7 +17659,7 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       // Opened through OpenEditModal rather than by a card click, the way
       // marker_sits_under_a_modal_not_over_it does: the click's own path is not what this case
       // is about, the modal's presence is.
-      gui::g_state.modal_immediate_mode = false;  // staged: a real modal, on the popup stack
+      gui::SetEditEntryStagedModePreference(true);  // staged: a real modal, on the popup stack
       const gui::EditRequest req{ gui::EditTarget::kCrystal, 0, 0 };
       gui::OpenEditModal(req, gui::g_state);
       ctx->Yield(4);
@@ -18468,6 +18464,81 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
     };
   }
 
+  // The Angular Distance pick keeps the right press off the roll gesture. (Adapted driver — the
+  // ported source case drove the Analyze cone verdict: marker hover and the analysis panel's
+  // Point pick, both of which main has since moved onto the Analyze workspace's panorama, where
+  // no roll gesture exists to arbitrate. The lock face the Render preview actually carries is
+  // the Overlay's Angular Distance pick — `gestures_locked` through the same arm of the
+  // predicate — and its right-click cancel latches the press to the right button, the spelling
+  // the shared ApplyAngularDistPickGesture carries. The arc is driven twice: under the armed
+  // pick (cancelled and latched, nothing rolls) and fresh (the same points roll), which is what
+  // keeps the "nothing happened" leg from passing on a preview that cannot roll at all.)
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "the_angular_pick_keeps_the_right_press_off_the_roll");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ScopedServerGuard guard;
+      IM_CHECK(BringUpHaloScene(ctx, /*infinite=*/false));
+      gui::g_state.renderer.roll = 0.0f;
+      const float az_before = gui::g_state.renderer.azimuth;
+      const float el_before = gui::g_state.renderer.elevation;
+      ctx->Yield(2);
+
+      // The preview's centre and a polar walker, in window points — the same screen-space
+      // reference the roll cases in test_preview_viewport.cpp measure with.
+      ImGuiWindow* preview = ctx->GetWindowByRef("//##PreviewPanel");
+      IM_CHECK(preview != nullptr);
+      const ImVec2 centre(preview->Pos.x + preview->Size.x * 0.5f, preview->Pos.y + preview->Size.y * 0.5f);
+      auto polar = [centre](float r, float deg) {
+        constexpr float kDeg2Rad = 3.14159265358979323846f / 180.0f;
+        const float rad = deg * kDeg2Rad;
+        return ImVec2(centre.x + r * std::cos(rad), centre.y + r * std::sin(rad));
+      };
+
+      // Leg 1 — the Overlay's Angular Distance pick armed through its own fold and Pick button
+      // (the same arming path the Render suite drives): the right press is the pick's cancel,
+      // and the cancel latches the press to the right button, so the frames of travel before
+      // the release roll nothing.
+      // The fold lives in the Overlay table's Sun row. DoNew resets the document but not the
+      // ImGui window storage, so a prior case's scroll position or a collapsed Overlay header
+      // would leave the fold clipped out and unaddressable; restore both before the clicks.
+      ctx->SetRef("//##RightPanel");
+      ctx->ItemOpen("**/Overlay");
+      ctx->ScrollToItemY("**/Overlay");
+      ctx->Yield(2);
+      ctx->SetRef("");
+      gui::g_state.angular_dist_section_open = true;
+      ctx->Yield(3);
+      ctx->ItemClick("**/###sun_circles_fold");
+      ctx->Yield(3);
+      ctx->ItemClick("**/" ICON_FA_CROSSHAIRS "##pick_circle");
+      ctx->Yield(2);
+      IM_CHECK(gui::g_state.angular_dist_picker.armed);
+      ctx->MouseMoveToPos(polar(160.0f, 20.0f));
+      ctx->Yield(2);
+      ctx->MouseDown(ImGuiMouseButton_Right);
+      ctx->Yield(2);
+      IM_CHECK(!gui::g_state.angular_dist_picker.armed);  // the right press cancelled the pick
+      ctx->MouseMoveToPos(polar(160.0f, 65.0f));
+      ctx->Yield(2);
+      ctx->MouseUp(ImGuiMouseButton_Right);
+      ctx->Yield(2);
+      IM_CHECK_EQ(gui::g_state.renderer.roll, 0.0f);
+
+      // Leg 2 — same preview, same points, no lock: the fresh press rolls.
+      ctx->MouseMoveToPos(polar(160.0f, 20.0f));
+      ctx->Yield(1);
+      ctx->MouseDown(ImGuiMouseButton_Right);
+      ctx->Yield(1);
+      ctx->MouseMoveToPos(polar(160.0f, 65.0f));
+      ctx->Yield(2);
+      ctx->MouseUp(ImGuiMouseButton_Right);
+      ctx->Yield(2);
+      IM_CHECK_NE(gui::g_state.renderer.roll, 0.0f);
+      IM_CHECK_EQ(gui::g_state.renderer.azimuth, az_before);
+      IM_CHECK_EQ(gui::g_state.renderer.elevation, el_before);
+    };
+  }
+
   // The cone-centre drift warning's fixed visibility (779.1): after a completed Point analysis,
   // moving the centre must light the warning in the main view's info area WITHOUT scrolling and
   // WITHOUT collapsing anything. The shape that failed the owner's real check drew the warning
@@ -18872,7 +18943,7 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
 
       // Opened through OpenEditModal rather than by a card click, the way test_entry_management
       // does: the click's own path is not what this case is about, the window's presence is.
-      gui::g_state.modal_immediate_mode = false;  // staged: a real modal, on the popup stack
+      gui::SetEditEntryStagedModePreference(true);  // staged: a real modal, on the popup stack
       const gui::EditRequest req{ gui::EditTarget::kCrystal, 0, 0 };
       gui::OpenEditModal(req, gui::g_state);
       ctx->Yield(4);

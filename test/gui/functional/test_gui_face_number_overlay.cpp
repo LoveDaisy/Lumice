@@ -56,7 +56,9 @@ void RegisterFaceNumberOverlayTests(ImGuiTestEngine* engine) {
       }
       IM_CHECK(any_labelable);
 
-      ctx->ItemClick("**/" ICON_FA_XMARK " Cancel##edit_modal");
+      // The factory preference is Immediate: Close is this window's exit (the proposition — the
+      // modal's mesh populates with labelable faces — is mode-independent).
+      ctx->ItemClick("**/Close##edit_modal");
       ctx->Yield(2);
     };
   }

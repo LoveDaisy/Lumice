@@ -38,6 +38,15 @@
 #include "gui/user_defaults.hpp"
 #include "gui/window_sizing.hpp"
 #include "imgui.h"
+// imgui_internal.h for the row keyboard flow's needs beyond the public API: ImTextCharToUtf8
+// (parking the input queue's chars into a row buffer); ImGui::GetInputTextState /
+// ImGuiInputTextState::ReloadUserBufAndMoveToEnd (appending to a box that is already the active
+// editor — the same remedy input_text_reload.hpp wraps for pull reloads, with the cursor kept at
+// the end so the next keystroke appends instead of replacing); and the ImGuiContext nav fields
+// (NavActivateId/DownId/PressedId/Flags) that carry an in-flight programmatic activation — the
+// handoff transaction reads its own target's id there and revokes it there when it ends, so a
+// cancelled or superseded crossing cannot steal the focus on a later frame.
+#include "imgui_internal.h"
 #include "include/lumice_base.h"
 #include "include/lumice_editor.h"
 #include "include/lumice_engine.h"
@@ -250,14 +259,134 @@ constexpr size_t kSummandRowBufSize = 256;
 // gui/edit_modal_rules.hpp next to the predicates that read it. Lifting the cap properly needs a
 // virtualized / big-list row renderer, which this editor does not have.
 
+// Sentinel for "no row" in the Filter tab's keyboard session state. Uids come from a running
+// counter that starts at 0 (g_next_summand_row_uid), so it never collides with a real row.
+constexpr uint64_t kNoSummandRowUid = static_cast<uint64_t>(-1);
+
 struct SummandRowBuf {
   uint64_t uid;
+  // The row this one was created from by Enter (the row the cursor was on) — kNoSummandRowUid for
+  // rows from anywhere else: the committed filter, the Add button, the ≥1-row refills, an external
+  // pull. Esc on a cancelled-empty row hands focus back to this survivor first; it is session
+  // state, never serialized (BuildSopFromRows reads `text` only).
+  uint64_t source_uid = kNoSummandRowUid;
   char text[kSummandRowBufSize];
 };
 
 static std::vector<SummandRowBuf> g_summand_rows;
 static SumOfProducts g_summand_rows_snapshot;
 static uint64_t g_next_summand_row_uid = 0;
+
+// The row keyboard flow's ONE open handoff transaction (plan §3.1): the crossing between "some
+// row should now hold the keyboard" and "that row's box is the settled editor consuming input".
+// It carries what a crossing needs and nothing else — which row the keyboard is being handed to
+// (its uid and its resolved widget id, the latter being the scope key for revoking whatever
+// activation the flow submitted to ImGui), and the keystrokes typed while the focus was still
+// crossing (parked here because no editor can consume them yet; delivered exactly once, or
+// dropped as cancelled input when the transaction is cancelled). Armed when Enter inserts a
+// blank row and when an Esc-deleted row's survivor takes the keyboard back; the two origins are
+// told apart by the target row's own `source_uid` (the Enter source) — never by the transaction's
+// existence, which is why nothing here reads as a delete authorization: any deletion is authorized
+// by the post-cancel text judgment of the very row it would remove.
+struct SummandHandoff {
+  bool active = false;
+  uint64_t target_uid = kNoSummandRowUid;
+  ImGuiID target_id = 0;   // resolved at arm time; stable while the same tab renders the list
+  int settled_frame = -1;  // the frame the target's box reported active; -1 until then. The
+                           // transaction stays armed one frame PAST this (see the settle note
+                           // in RenderSummandRowList): the activation frame skips key
+                           // processing, so the editor's own Escape shortcut route only
+                           // exists from the frame after — the transaction owns the keyboard
+                           // until that route is live, and one further frame is the last one
+                           // an Esc can arrive on without it.
+};
+static SummandHandoff g_summand_handoff;
+static ImVector<ImWchar> g_summand_handoff_chars;
+
+void AppendCharsToRowBuffer(char* row_text, const ImVector<ImWchar>& chars);  // defined beside the row renderer
+
+// Find a row buffer by uid, or null when the uid is not in this frame's list.
+static SummandRowBuf* FindSummandRow(uint64_t uid) {
+  for (SummandRowBuf& r : g_summand_rows) {
+    if (r.uid == uid) {
+      return &r;
+    }
+  }
+  return nullptr;
+}
+
+// Resolve the InputText widget id of a row uid exactly the way the row loop does (same window,
+// same PushID(uid) + "##row_text_<uid>" chain), so the stored target_id compares equal to the
+// in-loop `input_id`. Only meaningful while the Filter tab is the one rendering.
+static ImGuiID ResolveSummandRowInputId(uint64_t uid) {
+  char text_id[64];
+  snprintf(text_id, sizeof(text_id), "##row_text_%llu", static_cast<unsigned long long>(uid));
+  ImGui::PushID(static_cast<int>(uid));
+  const ImGuiID id = ImGui::GetID(text_id);
+  ImGui::PopID();
+  return id;
+}
+
+// End the open transaction, if any, and revoke what it submitted to ImGui: the activation armed
+// for its own target is cleared by the stored target_id, so a cancelled or session-dead crossing
+// can never steal the focus on a later frame. The scope is exactly this transaction's id — a
+// user's freshly chosen control, or any other pending request, is untouched (plan §3.2).
+// (Imgui internals: NavActivateId/DownId/PressedId are the in-flight activation state the frame's
+// widgets consume — see the imgui_internal.h include note at the top of this file.)
+static void EndSummandHandoff() {
+  if (ImGuiContext* g = ImGui::GetCurrentContext()) {
+    if (g_summand_handoff.active && g->NavActivateId == g_summand_handoff.target_id) {
+      g->NavActivateId = g->NavActivateDownId = g->NavActivatePressedId = 0;
+      g->NavActivateFlags = ImGuiActivateFlags_None;
+    }
+    // The settle frame arms a deferred buffer reload on the (single, global) InputTextState for
+    // the target's next call. Two effects ride on it, and they die differently when the
+    // transaction ends first (plan §3.3: the row-end policy is for auto handoffs only, never for
+    // ordinary mouse focus). The TEXT SYNC — the delivered keystrokes live in the row buffer and
+    // reach the editor's internal copy through that reload — must complete while the target
+    // still owns the shared state: withdrawn, the state's stale internal copy would overwrite
+    // the delivered characters on its next call. Its row-end CARET policy must not: a plain
+    // click has since decided the caret, so the conversion keeps the current selection instead
+    // of forcing the end. When the state has already moved to another box, none of the pending
+    // reload may fire there — withdraw it entirely (a pull reload landing inside this one-frame
+    // window would be dropped with it; the pull re-arms on its next diff, an edge accepted for
+    // keeping the ownership clean).
+    if (g_summand_handoff.settled_frame >= 0) {
+      if (ImGuiInputTextState* state = ImGui::GetInputTextState(g_summand_handoff.target_id)) {
+        if (state->WantReloadUserBuf) {
+          state->ReloadUserBufAndKeepSelection();
+        }
+      } else {
+        g->InputTextState.WantReloadUserBuf = false;
+      }
+    }
+  }
+  g_summand_handoff = {};
+  g_summand_handoff_chars.clear();
+}
+
+// Arm a new transaction, replacing any open one. One crossing at a time: the intercepted
+// crossing-Enter and the post-delete refocus both end the previous transaction first.
+static void ArmSummandHandoff(uint64_t target_uid) {
+  EndSummandHandoff();
+  g_summand_handoff.active = true;
+  g_summand_handoff.target_uid = target_uid;
+  g_summand_handoff.target_id = ResolveSummandRowInputId(target_uid);
+}
+
+// Deliver the transaction's parked keystrokes into a row buffer, exactly once, and clear them.
+static void DeliverSummandHandoffChars(char* row_text) {
+  AppendCharsToRowBuffer(row_text, g_summand_handoff_chars);
+  g_summand_handoff_chars.clear();
+}
+
+// One reset for everything the row keyboard flow parks between frames. Every session boundary
+// calls this (open, close, document reset, Remove Filter's uid rewind, leaving the Filter tab) so
+// no parked state can outlive the session it was parked in; the RenderSummandRowList sweep
+// additionally clears targets that vanished mid-session (an external pull deleting them).
+void ClearSummandKeyboardSession() {
+  EndSummandHandoff();
+}
 
 // Shared filter fields (name / action / sym_*). `param` is never mutated on
 // g_filter_top — it stays at the default-constructed SoP so operator== reduces
@@ -348,11 +477,6 @@ static unsigned long long g_modal_preview_epoch = 0;
 // Flag: the OpenPopup call must happen exactly once per modal open,
 // on the frame following the EditRequest.
 static bool g_pending_open = false;
-
-// Flag: Immediate↔Staged switch is a close+reopen cycle that must bypass
-// the Staged Cancel trackball-restore path in HandlePopupClosed; set by the
-// checkbox handler in RenderEditModals, consumed on the next-frame close.
-static bool g_pending_mode_switch = false;
 
 // ============================================================
 // Wedge angle presets for edit modal
@@ -878,9 +1002,8 @@ bool CrystalTabFieldsEqual(const CrystalConfig& a, const CrystalConfig& b) {
 }
 
 // Re-base every buffer's baseline on the pool as it is NOW (see the baseline note at the
-// declarations). Used by OpenEditModal (the first baseline), the Immediate→Staged mode switch and
-// Unlink (a new pool slot underneath the same buffers). Does NOT touch the trackball save — that
-// keeps its open-time value.
+// declarations). Used by OpenEditModal (the first baseline) and Unlink (a new pool slot underneath
+// the same buffers). Does NOT touch the trackball save — that keeps its open-time value.
 //
 // The baseline is taken from the POOL, never copied from the buffers, because the two differ
 // exactly when the difference matters: a row the commit gate refused (kIncomplete) is in the
@@ -1103,6 +1226,19 @@ void OpenEditModal(const EditRequest& req, GuiState& state) {
     return;
   }
 
+  // Adopt the saved editing-mode preference exactly at a real close→open boundary. The mode is a
+  // property of the SESSION, not of the open call: a card click that re-binds an already-open
+  // editor (Immediate mode routes cross-card requests through here; app_panels.cpp) must not
+  // re-read the preference, and neither may the preference a Save publishes reach an editor that
+  // is already open — Settings promises "editors opened afterwards". Pick completion reopens
+  // through this same path after StartLinkPickMode genuinely closed the modal: a real boundary,
+  // and it adopts like one. Document replacement is covered by construction: every reset reason
+  // closes the modal (CloseEditModalOnDocumentReset), so the next open re-adopts whatever the
+  // holder holds — and the holder is outside GuiState, so no reset can rewrite it.
+  if (g_active_modal != ActiveModal::kOpen) {
+    state.modal_immediate_mode = !GetEditEntryStagedModePreference();
+  }
+
   auto& entry = state.layers[ly].entries[en];
   g_modal_layer_idx = ly;
   g_modal_entry_idx = en;
@@ -1153,6 +1289,9 @@ void OpenEditModal(const EditRequest& req, GuiState& state) {
   g_filter_top.sym_p = src.sym_p;
   g_filter_top.sym_b = src.sym_b;
   g_filter_top.sym_d = src.sym_d;
+  // A new editor session (including a card-to-card switch in Immediate mode): any parked keyboard
+  // focus request belonged to the previous target.
+  ClearSummandKeyboardSession();
   SetRowsFromSop(src.param);
   g_filter_remove_intent = false;
   // Entry-private scalars (weight / participation) — the entry bar's buffers. Copied from the
@@ -1832,12 +1971,118 @@ static ImVec4 ValidationFrameBgColor(LUMICE_RaypathValidationState state) {
 static int FirstFaceTheCrystalLacks(const char* row_text, const LUMICE_CrystalParam& crystal, int symmetry) {
   for (const auto& factor : ParseSummandText(row_text)) {
     for (int face : FactorFaceNumbers(factor)) {
-      if (LUMICE_CouldFilterMatchFace(&crystal, face, symmetry) == 0) {
+      // A number outside the hexagonal grammar's face domain (basal 1-2, prism 3-8, cone
+      // 13-18/23-28 — the same domain core's band lookup assumes) names a face NO crystal can
+      // have. The engine's CouldFilterMatchFace reads the number through the D6h element
+      // algebra, whose band lookup is an internal invariant — it aborts rather than answer — so
+      // the caller owes it a legal face, and the answer here is the face itself, without the
+      // call. (The raypath-arithmetic engine this note used to ask predates that algebra and
+      // multiplied any number through; the aborting band lookup is why the guard is needed.)
+      const bool legal = face == 1 || face == 2 || (face >= 3 && face <= 8) || (face >= 13 && face <= 18) ||
+                         (face >= 23 && face <= 28);
+      if (!legal || LUMICE_CouldFilterMatchFace(&crystal, face, symmetry) == 0) {
+        // face <= 0 can only reach !legal through a malformed EE token bailing to 0
+        // downstream (ParseFaceNumberOrZero; a negative is impossible there — '-' is a
+        // non-digit). "No crystal has face 0" is true, but 0 is also this function's
+        // none-found sentinel, so returning it suppresses the caller's warning row below.
+        // That suppression is the accepted worst case: text with a bail-to-0 token is what
+        // the commit path's own validator rejects, so the note path loses a hint line, not
+        // a commit — and misreporting the number (to keep the note visible) would be worse.
         return face;
       }
     }
   }
   return 0;
+}
+
+// Append the input queue's characters to a row buffer, UTF-8 encoded, clamped at the row's
+// capacity. Called on delivery of the focus-handoff park: the chars would otherwise be dropped
+// (no active box to consume them) or eaten (the box that just activated skips char processing
+// while still clearing the queue). Appending — not replacing — is what makes the delivered text
+// identical to the same keystrokes typed right after the handoff settles: an activation that
+// recycles a previous editor's state skips the select-all, so later typing appends too. One
+// ImWchar per codepoint — the queue carries UTF-16 units and surrogate pairs are not recombined
+// here; row texts are the small AND grammar, ASCII in practice.
+void AppendCharsToRowBuffer(char* row_text, const ImVector<ImWchar>& chars) {
+  size_t used = std::strlen(row_text);
+  for (const ImWchar c : chars) {
+    if (c == 0) {
+      continue;
+    }
+    char utf8[5];
+    const char* encoded = ImTextCharToUtf8(utf8, static_cast<unsigned int>(c));
+    const size_t len = std::strlen(encoded);
+    if (used + len + 1 > kSummandRowBufSize) {
+      break;
+    }
+    std::memcpy(row_text + used, encoded, len);
+    used += len;
+  }
+  row_text[used] = '\0';
+}
+
+// The Tab half of the crossing's keyboard ownership. Two call sites, one authoritative body: the
+// Compact pane child ahead of its tab bar (RenderEditModals) and the Expanded filter child ahead
+// of its row list (RenderModalTwoColumn) — each inside the window whose items the re-issued
+// request must score, before that window's first candidate submits. Navigation is the user's
+// gesture and outranks the auto-focus: the crossing ends, the keystrokes already accepted into it
+// land in the target row, and the user's Tab proceeds — re-issued in the anchored form, for two
+// reasons. First, nav's own request (created at this frame's start, in its init mode when no
+// editor is active) scores the transaction's own target as its result and would re-activate the
+// very row being tabbed away from. Second, the scoring anchor is the item matching g.NavId, which
+// during the crossing may still be the pre-handoff row — a Tab on the first crossing frame would
+// then navigate from the SOURCE while the same Tab at the activation boundary or after settling
+// navigates from the TARGET. Anchoring on the transaction's logical target makes the destination
+// identical at every stage. In Compact, running ahead of the tab bar also keeps the full
+// candidate set scoreable, so backward tabbing can still reach the tab headers ahead of the list
+// instead of wrapping past them; Expanded has no tab bar, and its filter child's top is the same
+// "nav window of the rows, ahead of every candidate" point.
+static void RenderSummandTabGuard() {
+  if (!g_summand_handoff.active || ImGui::GetActiveID() != 0 || !ImGui::IsKeyPressed(ImGuiKey_Tab)) {
+    return;
+  }
+  if (SummandRowBuf* target = FindSummandRow(g_summand_handoff.target_uid)) {
+    // The keystrokes already accepted into the crossing land in the row (their content must read
+    // as if typed right before navigating away); this frame's own characters are part of the same
+    // round and land with them. Then the crossing ends and the user's Tab proceeds.
+    ImGuiIO& io = ImGui::GetIO();
+    DeliverSummandHandoffChars(target->text);
+    AppendCharsToRowBuffer(target->text, io.InputQueueCharacters);
+    io.InputQueueCharacters.resize(0);
+  }
+  const ImGuiID anchor_id = g_summand_handoff.target_id;  // read before End: it zeroes the transaction
+  EndSummandHandoff();
+  // Kill nav's own tabbing request ONLY when it is anchored on the wrong row. On the crossing's
+  // first frame the global NavId is still the pre-handoff row (and in the request's init form it
+  // even scores the transaction's own target, re-activating the row being tabbed away from) —
+  // there the request is cancelled and re-issued from the target. At the activation boundary the
+  // frame's ApplyResult has already pointed NavId at the target before the widgets ran, so nav's
+  // own request was created from the correct anchor and has scored the full candidate set —
+  // cancelling it here would discard exactly the candidates ahead of the list that backward
+  // tabbing needs. THIS call site is what makes the re-issue complete: it runs before the pane
+  // child has submitted any item, so the re-issued request scores the whole candidate set — the
+  // tab headers included, which is what backward tabbing from the first row lands on — while
+  // g.NavWindow (this child) keeps the rows and their delete buttons scoreable too.
+  ImGuiContext* g = ImGui::GetCurrentContext();
+  // Two independent reasons to replace nav's own request, by handoff stage. On the CROSSING
+  // frames the request is anchored on the global NavId, which is by construction not the
+  // transaction's target yet — the pre-handoff row, or (after an Esc-deleted row) the row just
+  // removed — and a backward scan from such an anchor collects no candidate before it and wraps
+  // past the whole list. On the ACTIVATION boundary the frame's ApplyResult has already anchored
+  // NavId on the target and the full candidate set has scored, so a directional request is left
+  // untouched (cancelling it would discard the candidates behind the list that backward tabbing
+  // needs); the init-form request (Dir 0: no nav cursor, no active editor) however resolves to
+  // the target itself and would re-activate the very row being tabbed away from — it is
+  // re-issued from the target so that Tab actually leaves the row.
+  if (g_summand_handoff.settled_frame < 0 || g->NavTabbingDir == 0) {
+    ImGui::SetFocusID(anchor_id, g->CurrentWindow);
+    ImGui::NavMoveRequestCancel();
+    g->NavTabbingDir = ImGui::GetIO().KeyShift ? -1 : +1;
+    ImGui::NavMoveRequestSubmit(ImGuiDir_None, g->NavTabbingDir < 0 ? ImGuiDir_Up : ImGuiDir_Down,
+                                ImGuiNavMoveFlags_IsTabbing | ImGuiNavMoveFlags_Activate,
+                                ImGuiScrollFlags_KeepVisibleEdgeX | ImGuiScrollFlags_KeepVisibleEdgeY);
+    g->NavTabbingCounter = -1;
+  }
 }
 
 static void RenderSummandRowList() {
@@ -1848,6 +2093,33 @@ static void RenderSummandRowList() {
                               (g_filter_top.sym_b ? LUMICE_RAYPATH_SYMMETRY_B : 0) |
                               (g_filter_top.sym_d ? LUMICE_RAYPATH_SYMMETRY_D : 0);
   size_t delete_idx = static_cast<size_t>(-1);
+  // The keyboard flow's per-frame events, applied after the loop like delete_idx: inserting or
+  // erasing mid-iteration would invalidate `row` and shift the ids under the remaining rows.
+  size_t enter_insert_idx = static_cast<size_t>(-1);
+  uint64_t enter_insert_source = kNoSummandRowUid;
+  size_t esc_delete_idx = static_cast<size_t>(-1);
+  // Whether THIS frame's row loop submitted the handoff's focus request. A control the user
+  // clicked can take the active id later in the same frame than that submission (its widget
+  // renders after the target row) — the post-loop ownership check then cancels the request while
+  // it is still unapplied, before the next frame's ApplyResult would clear the user's control.
+  bool handoff_submitted_this_frame = false;
+
+  // While a handoff is crossing and no editor is active, the keyboard belongs to the transaction
+  // (plan §3.1): nav's own Space/Enter manual activation — polled unowned at frame start, since
+  // no editor is active to have routed those keys — would arm an activation for whatever g.NavId
+  // points at and hand the user's in-flight keystroke to a box the transaction was never crossing
+  // into. Revoke it here, before any row renders (an earlier row's InputText would otherwise
+  // consume it first). The transaction's own transfer — the activation aimed at its target — is
+  // kept: that one is the handoff doing its job. (Tab is handled even earlier — see
+  // RenderSummandTabGuard, which runs in the rows' nav window ahead of its candidates: in the
+  // pane child before the tab bar in Compact, at the top of the filter child in Expanded.)
+  if (g_summand_handoff.active && ImGui::GetActiveID() == 0) {
+    ImGuiContext* g = ImGui::GetCurrentContext();
+    if (g->NavActivateId != 0 && g->NavActivateId != g_summand_handoff.target_id) {
+      g->NavActivateId = g->NavActivateDownId = g->NavActivatePressedId = 0;
+      g->NavActivateFlags = ImGuiActivateFlags_None;
+    }
+  }
 
   // Reserve exactly the width the trailing "x" SmallButton needs (glyph + horizontal
   // FramePadding on each side) plus one ItemSpacing for SameLine(). Formula mirrors
@@ -1870,9 +2142,135 @@ static void RenderSummandRowList() {
     }
     char text_id[64];
     snprintf(text_id, sizeof(text_id), "##row_text_%llu", static_cast<unsigned long long>(row.uid));
+    const ImGuiID input_id = ImGui::GetID(text_id);
     ImGui::PushItemWidth(row_item_width);  // leave room for the trailing "x" delete button
-    ImGui::InputText(text_id, row.text, sizeof(row.text));
+    const ImGuiID active_id = ImGui::GetActiveID();
+    // The crossing's keyboard ownership (plan §3.1): while this row's handoff is still crossing
+    // boxes, the keystrokes and commands the user types belong to IT — no other box may consume
+    // them, and none of them may fall into the gap (the toolkit's activation frame skips key and
+    // char processing while clearing the queue, so anything reaching that frame unserved is lost).
+    // Everything here runs BEFORE this row's InputText call — the only point that can act on the
+    // crossing frames, because the call itself will not process keys on them.
+    const bool handoff_row = g_summand_handoff.active && g_summand_handoff.target_id == input_id;
+    // Supersession is not only "another control is already active entering this call": a mouse
+    // click anywhere is the user's selection intent too, and the control they clicked may render
+    // AFTER this row — its activation happens later in the frame, while this row's own
+    // programmatic activation (which sets ActiveIdAllowOverlap false) would block it. Either way
+    // the user's choice wins over the auto-focus (plan §3.2).
+    if (handoff_row && ((active_id != 0 && active_id != input_id) || ImGui::IsMouseClicked(ImGuiMouseButton_Left))) {
+      // The user chose another control while the crossing was in flight: their choice wins. The
+      // in-flight activation dies here — before this row's own InputText call could consume it
+      // and steal the focus back — the crossing ends, and the keystrokes already accepted into
+      // it are delivered into the row's buffer exactly once (the same text as if they had been
+      // typed right before navigating away). Nothing is deleted, nothing is grabbed back, and
+      // this frame's own keystrokes belong to the control the user picked.
+      DeliverSummandHandoffChars(row.text);
+      EndSummandHandoff();
+    } else if (handoff_row && active_id == 0) {
+      ImGuiIO& io = ImGui::GetIO();
+      if (ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+        // Esc mid-crossing belongs to the transaction it undoes. The crossing dies here — the
+        // in-flight activation included, so a row that was never the editor cannot become one on
+        // the very frame it is deleted — and the parked keystrokes die with it as cancelled
+        // input. The row command below is then the SAME post-cancel emptiness judgment a settled
+        // Esc runs: identity never authorizes a delete, so a non-empty refocus target keeps its
+        // text and its uid. Same-frame characters are cancelled input too: dropping them (and
+        // letting the frame-end queue clear take them) is the settled behavior's own rule.
+        EndSummandHandoff();
+        if (TrimRaypathSegment(row.text).empty()) {
+          esc_delete_idx = i;
+        }
+      } else if (ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter)) {
+        // Enter mid-crossing accepts the row's edit as it stands — parked and same-frame
+        // keystrokes included — and creates the next blank below it: the outcome typing after
+        // the handoff settled would have had. The key is consumed here because the activation
+        // frame would never process it (just-activated editors skip key handling entirely), and
+        // the in-flight activation is revoked so the row stays inactive and cannot swallow the
+        // new handoff's crossing into a supersession.
+        DeliverSummandHandoffChars(row.text);
+        AppendCharsToRowBuffer(row.text, io.InputQueueCharacters);
+        io.InputQueueCharacters.resize(0);
+        EndSummandHandoff();
+        if (!AtSummandRowCap(g_summand_rows.size())) {
+          enter_insert_idx = i + 1;
+          enter_insert_source = row.uid;
+        }
+      } else {
+        // Still crossing. Keystrokes would be dropped — no editor is active to consume them, and
+        // the char queue is cleared at frame end regardless — so park them for the settle frame.
+        // The focus request goes out exactly once per crossing: on the frame the activation is
+        // already in flight (this very call consumes it) re-arming would make the next frame's
+        // ApplyResult ClearActiveID whatever the user focused meanwhile and re-activate this row
+        // over their choice.
+        if (io.InputQueueCharacters.size() > 0) {
+          for (const ImWchar c : io.InputQueueCharacters) {
+            g_summand_handoff_chars.push_back(c);
+          }
+          io.InputQueueCharacters.resize(0);
+        }
+        ImGuiContext* g = ImGui::GetCurrentContext();
+        if (g->NavActivateId != input_id) {
+          ImGui::SetKeyboardFocusHere(0);
+          handoff_submitted_this_frame = true;
+        }
+      }
+    }
+    // EnterReturnsTrue makes the return value the Enter event itself: true only on the frame this
+    // box, while active, processed the key. A row navigation already left can never claim it
+    // (code-review round 1, Major 2).
+    const ImGuiID active_before_input = active_id;  // this frame's owner of the box, entering the call
+    const bool enter_accepted =
+        ImGui::InputText(text_id, row.text, sizeof(row.text), ImGuiInputTextFlags_EnterReturnsTrue);
+    if (g_summand_handoff.active && g_summand_handoff.settled_frame < 0 && g_summand_handoff.target_id == input_id &&
+        ImGui::IsItemActive()) {
+      // The handoff settled: the box IS the active editor. Deliver the parked keystrokes into
+      // this same editable transaction and normalize the caret to the row end with no selection —
+      // the unified row-end/no-selection policy every auto handoff runs (plan §3.3), whether the
+      // activation recycled a previous editor's state (cursor restored wherever it was) or
+      // started fresh (select-all, which would turn the next keystroke into a replace).
+      // ReloadUserBufAndMoveToEnd is consumed by the next call's init block: cursor to the end,
+      // selection cleared, the undo stack reconciled with the appended text — and TextToRevertTo
+      // (snapshotted at activation, before any of this) untouched, so a later Esc still restores
+      // the pre-handoff text and the emptiness judgment reads the row's own baseline.
+      DeliverSummandHandoffChars(row.text);
+      if (ImGuiInputTextState* state = ImGui::GetInputTextState(input_id)) {
+        state->ReloadUserBufAndMoveToEnd();
+      }
+      // The transaction does NOT end here. This frame skipped key handling (just-activated), so
+      // the box has not registered its Escape shortcut route yet — an Esc on the very next frame
+      // would otherwise be consumed by the navigation cancel first (ClearActiveID without a
+      // revert, cancel lost). Claim the route for this box now; the routing table applies it at
+      // the next frame's NewFrame, exactly the one-frame gap the call's own per-frame
+      // registration misses, and the box's own Shortcut() keeps it alive from there (stock
+      // behavior). One frame later the transaction ends (post-loop guard below): past that, the
+      // settled editor owns every key through its own routes.
+      ImGui::SetShortcutRouting(ImGuiKey_Escape, ImGuiInputFlags_Repeat, input_id);
+      g_summand_handoff.settled_frame = ImGui::GetFrameCount();
+    }
     ImGui::PopItemWidth();
+
+    // The row keyboard flow's settled half. Enter accepts this row and inserts a blank one right
+    // below it, its own identity, with a handoff parked on the blank. Cap-full Enter is a no-op —
+    // the same predicate the Add button reads. Esc is attributed by the call boundary: the box
+    // was the active editor ENTERING its own InputText call and the active id is gone right after
+    // — a cancel only the box's own processing can have performed, the revert included. A
+    // deactivation ImGui applied from outside (navigation above all) happens before the call, so
+    // the box is no longer the owner entering it and cannot claim any key, whichever order the
+    // two landed in (code-review rounds 1-2). The crossing half above owns every command typed
+    // while the focus was still in flight; from this frame on, the box's own InputText owns the
+    // keyboard again. The revert has already rewritten row.text inside the call, so an empty
+    // post-cancel text deletes the row and a non-empty one keeps it (the revert is the whole
+    // undo). The owner's gesture vocabulary is one word one meaning: Enter creates, Esc undoes a
+    // creation, navigation neither creates nor deletes.
+    if (enter_accepted) {
+      if (!AtSummandRowCap(g_summand_rows.size())) {
+        enter_insert_idx = i + 1;
+        enter_insert_source = row.uid;
+      }
+    } else if (active_before_input == input_id && ImGui::GetActiveID() == 0 && ImGui::IsKeyPressed(ImGuiKey_Escape) &&
+               !ImGui::IsMouseClicked(ImGuiMouseButton_Left) && TrimRaypathSegment(row.text).empty()) {
+      esc_delete_idx = i;
+    }
     if (!is_empty) {
       ImGui::PopStyleColor();
     }
@@ -1920,12 +2318,100 @@ static void RenderSummandRowList() {
     ImGui::PopID();
   }
 
+  // Ownership holds for the WHOLE frame, not just the target row's pre-call moment: a control the
+  // user clicked can take the active id later in this frame than the focus request the crossing
+  // submitted (its widget renders after the target row). Our request is still unapplied at this
+  // point — the next frame's ApplyResult would ClearActiveID(the user's control) and arm our
+  // target over their choice. Cancel the request we own, hand the accepted keystrokes to the
+  // row, and end; the user's freshly active control is untouched. (The request in flight is
+  // provably ours: the top-of-function Tab handling ends the transaction before any submission
+  // when the user navigates, so a surviving submission cannot collide with a user request.)
+  if (handoff_submitted_this_frame && g_summand_handoff.active) {
+    const ImGuiID active_now = ImGui::GetActiveID();
+    if (active_now != 0 && active_now != g_summand_handoff.target_id) {
+      ImGui::NavMoveRequestCancel();
+      if (SummandRowBuf* target = FindSummandRow(g_summand_handoff.target_uid)) {
+        DeliverSummandHandoffChars(target->text);
+      }
+      EndSummandHandoff();
+    }
+  }
+
+  // The guard frame has passed: the editor's own Escape route is live from here on (registered
+  // per frame by its active key handling), so the settled box owns every key through stock
+  // ImGui and the transaction has nothing left to own.
+  if (g_summand_handoff.active && g_summand_handoff.settled_frame >= 0 &&
+      ImGui::GetFrameCount() != g_summand_handoff.settled_frame) {
+    EndSummandHandoff();
+  }
+
+  // Esc-delete first: its focus fallback reads positions in the pre-erase list. The Enter source
+  // wins when it survived the session (identity, not position), then the nearest surviving
+  // previous row, then the next one; a list emptied by the delete refills one blank and the
+  // refill takes the focus (the ≥1-row invariant keeps, through the one shared constructor).
+  if (esc_delete_idx != static_cast<size_t>(-1)) {
+    const uint64_t dying_source = g_summand_rows[esc_delete_idx].source_uid;
+    uint64_t refocus_uid = kNoSummandRowUid;
+    if (dying_source != kNoSummandRowUid) {
+      for (const SummandRowBuf& candidate : g_summand_rows) {
+        if (candidate.uid == dying_source) {
+          refocus_uid = dying_source;
+          break;
+        }
+      }
+    }
+    if (refocus_uid == kNoSummandRowUid) {
+      if (esc_delete_idx > 0) {
+        refocus_uid = g_summand_rows[esc_delete_idx - 1].uid;
+      } else if (esc_delete_idx + 1 < g_summand_rows.size()) {
+        refocus_uid = g_summand_rows[esc_delete_idx + 1].uid;
+      }
+    }
+    g_summand_rows.erase(g_summand_rows.begin() + static_cast<std::ptrdiff_t>(esc_delete_idx));
+    if (g_summand_rows.empty()) {
+      AppendBlankSummandRow();
+      refocus_uid = g_summand_rows.back().uid;
+    }
+    // The surviving row takes the keyboard back: a refocus handoff, same crossing machinery as a
+    // creation. The dying row's own `source_uid` is what made the survivor "the Enter source" —
+    // the transaction needs no identity of its own beyond the target.
+    if (refocus_uid != kNoSummandRowUid) {
+      ArmSummandHandoff(refocus_uid);
+    }
+    // A mouse delete of another row in the same frame is pathological (the click itself ends the
+    // edit without an Esc key), but compensating the index keeps that frame defined anyway.
+    if (delete_idx != static_cast<size_t>(-1)) {
+      delete_idx = (delete_idx > esc_delete_idx) ? delete_idx - 1 : static_cast<size_t>(-1);
+    }
+  }
+
   if (delete_idx != static_cast<size_t>(-1)) {
     g_summand_rows.erase(g_summand_rows.begin() + static_cast<std::ptrdiff_t>(delete_idx));
     if (g_summand_rows.empty()) {
       // The ≥1 row invariant SetRowsFromSop / the pull-merge path already keep — refilled through
       // the one shared constructor, not a third hand-rolled copy.
       AppendBlankSummandRow();
+    }
+  }
+
+  if (enter_insert_idx != static_cast<size_t>(-1)) {
+    SummandRowBuf blank{};
+    blank.uid = g_next_summand_row_uid++;
+    blank.source_uid = enter_insert_source;
+    blank.text[0] = '\0';
+    g_summand_rows.insert(g_summand_rows.begin() + static_cast<std::ptrdiff_t>(enter_insert_idx), blank);
+    ArmSummandHandoff(blank.uid);
+  }
+
+  // A handoff whose target is not in this frame's list is dead — an external pull deleted the
+  // row (uids are never recycled within a session, and every recycling boundary clears the
+  // transaction explicitly), and letting it survive would hand the keyboard to whichever future
+  // row reuses the id.
+  {
+    const auto uid_alive = [](uint64_t uid) { return [uid](const SummandRowBuf& r) { return r.uid == uid; }; };
+    if (g_summand_handoff.active &&
+        std::none_of(g_summand_rows.begin(), g_summand_rows.end(), uid_alive(g_summand_handoff.target_uid))) {
+      ClearSummandKeyboardSession();
     }
   }
 
@@ -2047,6 +2533,9 @@ static void RenderSharedFilterControls(const SymmetryAvailability& avail) {
 static void RenderRemoveFilterButton() {
   if (ImGui::Button("Remove Filter##filter", ImVec2(UiPx(120.0f), 0.0f))) {
     g_summand_rows.clear();
+    // The rewind below is the one in-session uid recycling: a parked keyboard focus request would
+    // land on whichever fresh row reuses the id, so the session state goes with the rows.
+    ClearSummandKeyboardSession();
     g_next_summand_row_uid = 0;
     AppendBlankSummandRow();
     g_filter_remove_intent = true;
@@ -2154,6 +2643,17 @@ void NotifyEntryDeleted(GuiState& state, int layer_idx, int deleted_entry_idx) {
       state.pick_link_source->entry_idx = compensated;
     }
   }
+  // And the duplicate flash names an entry by position too (GuiState::DuplicateFlash). Same rule
+  // as the pick source: the deleted target ends the flash, a target after the erase follows its
+  // entry down — a flash that stayed behind would light the card that moved into the slot.
+  if (state.duplicate_flash.has_value() && state.duplicate_flash->layer_idx == layer_idx) {
+    const int compensated = CompensatePositionalIndexForDeletion(state.duplicate_flash->entry_idx, deleted_entry_idx);
+    if (compensated < 0) {
+      state.duplicate_flash.reset();
+    } else {
+      state.duplicate_flash->entry_idx = compensated;
+    }
+  }
 }
 
 void NotifyEntryMoved(GuiState& state, int layer_idx, int from_idx, int to_idx) {
@@ -2166,6 +2666,12 @@ void NotifyEntryMoved(GuiState& state, int layer_idx, int from_idx, int to_idx) 
   if (state.pick_link_source.has_value() && state.pick_link_source->layer_idx == layer_idx) {
     state.pick_link_source->entry_idx =
         CompensatePositionalIndexForMove(state.pick_link_source->entry_idx, from_idx, to_idx);
+  }
+  // The duplicate flash rides the same rule (see NotifyEntryDeleted): it denotes the entry, not
+  // the slot, so a reorder keeps the fade on the card it armed on.
+  if (state.duplicate_flash.has_value() && state.duplicate_flash->layer_idx == layer_idx) {
+    state.duplicate_flash->entry_idx =
+        CompensatePositionalIndexForMove(state.duplicate_flash->entry_idx, from_idx, to_idx);
   }
 }
 
@@ -2189,6 +2695,15 @@ void NotifyLayerDeleted(GuiState& state, int deleted_layer_idx) {
       state.pick_link_source->layer_idx = compensated;
     }
   }
+  // The duplicate flash follows a surviving layer the same way; its own layer going away ends it.
+  if (state.duplicate_flash.has_value()) {
+    const int compensated = CompensatePositionalIndexForDeletion(state.duplicate_flash->layer_idx, deleted_layer_idx);
+    if (compensated < 0) {
+      state.duplicate_flash.reset();
+    } else {
+      state.duplicate_flash->layer_idx = compensated;
+    }
+  }
   for (ColorClassConfig& cls : state.raypath_color) {
     for (ColorClassRefConfig& ref : cls.match) {
       ref.layer_idx = CompensatePositionalIndexForDeletion(ref.layer_idx, deleted_layer_idx);
@@ -2199,6 +2714,34 @@ void NotifyLayerDeleted(GuiState& state, int deleted_layer_idx) {
 namespace {
 // Defined further down, in the same anonymous namespace as the modal edit buffers it applies.
 void CommitAllBuffersImmediate(GuiState& state);
+
+// The one question the Staged OK button's disabled state and Duplicate's reject path both ask:
+// does the Filter tab hold a draft the commit refuses to write? A blank row validates kValid (the
+// "empty ≡ no filter" rule lives in the committer, not here); a half-typed or malformed row
+// blocks. `g_filter_remove_intent` short-circuits it: an explicit removal always commits.
+//
+// Single predicate, two consumers, so the OK button and the reject path can never disagree — that
+// is the same "must never disagree" pairing SummandRowBlocksCommit was extracted for, one level
+// up. Returns the 0-based index of the first blocking row with its verdict (the OK gate spells the
+// tooltip from it), or index -1 when every row commits. CurrentValidationKind is the forward
+// declaration near the top of the file; its definition sits with the filter commit body below.
+struct BlockingSummandRow {
+  int index = -1;
+  GuiValidationResult verdict;
+};
+BlockingSummandRow FirstBlockingSummandRow() {
+  if (g_filter_remove_intent) {
+    return {};
+  }
+  const auto kind = CurrentValidationKind();
+  for (size_t i = 0; i < g_summand_rows.size(); ++i) {
+    const auto v = ValidateSummandText(g_summand_rows[i].text, kind);
+    if (SummandRowBlocksCommit(v.state)) {
+      return { static_cast<int>(i), v };
+    }
+  }
+  return {};
+}
 }  // namespace
 
 void StartLinkPickMode(GuiState& state, int layer_idx, int entry_idx) {
@@ -2216,6 +2759,22 @@ void StartLinkPickMode(GuiState& state, int layer_idx, int entry_idx) {
     g_active_modal = ActiveModal::kNone;
   }
   state.pick_link_source = GuiState::EntryRef{ layer_idx, entry_idx };
+}
+
+bool ModalEditCommittable() {
+  // No modal open: nothing in flight, nothing a rebind could lose. With one open, the answer is
+  // the OK button's own gate — see FirstBlockingSummandRow.
+  return g_active_modal != ActiveModal::kOpen || FirstBlockingSummandRow().index < 0;
+}
+
+void CommitModalEditBuffers(GuiState& state) {
+  if (g_active_modal != ActiveModal::kOpen) {
+    return;
+  }
+  // The shared commit body (diff-gated: an untouched editor commits nothing). Deliberately NOT
+  // StartLinkPickMode's shape — that one also closes the modal and arms pick mode; Duplicate
+  // commits and keeps the editor, because its next step rebinds it to the clone.
+  CommitAllBuffersImmediate(state);
 }
 
 EditTarget GetActiveTabAsEditTarget() {
@@ -2254,14 +2813,15 @@ void CloseEditModalOnDocumentReset() {
   g_filter_top_snapshot = {};
   g_summand_rows.clear();
   g_summand_rows_snapshot.clear();
+  // The rows went with the document; the keyboard session state is not a survivor.
+  ClearSummandKeyboardSession();
   g_filter_present_baseline = false;
   g_filter_remove_intent = false;
   g_entry_buf = {};  // {} is the field default (100.0 / enabled) via the struct's member initializers
   g_entry_buf_snapshot = {};
   g_pull_adopted = {};
-  // A deferred open or a mode switch in flight was for the modal that just closed.
+  // A deferred open was for the modal that just closed.
   g_pending_open = false;
-  g_pending_mode_switch = false;
   g_pending_tab_select = false;
   g_modal_mesh_hash = 0;
   g_modal_preview_epoch++;  // New preview session: reset the animation ticker (epoch-keyed)
@@ -2271,10 +2831,10 @@ void ResetModalState() {
   ResetSpectrumModalStateGlobals();  // clear the spectrum-editor statics too (Major: test isolation)
   CloseEditModalOnDocumentReset();
   g_active_tab = ActiveTab::kCrystal;
-  // modal_immediate_mode is GuiState-owned; the test harness's DoNew-based
-  // reset overwrites g_state, but we also clear it here for belt-and-braces
-  // (test lambdas that fail mid-flight may skip their own cleanup tails).
-  g_state.modal_immediate_mode = false;
+  // No mode reset here, and none is needed: modal_immediate_mode is re-adopted from the saved
+  // preference at every open boundary (OpenEditModal), so a stale session value cannot leak into
+  // the next case's editor. The preference holder itself is the harness's to reset
+  // (ResetUserDefaultsChannels), not this production teardown's.
   g_next_summand_row_uid = 0;
   std::memset(g_saved_rotation, 0, sizeof(g_saved_rotation));
   g_saved_zoom = 1.0f;
@@ -2562,38 +3122,27 @@ void CommitAllBuffersImmediate(GuiState& state) {
 }
 
 // Centralized cleanup for every path that causes BeginPopup* to return false
-// on the frame after a close was requested. Three branches:
-//   1. mode-switch close+reopen: consume g_pending_mode_switch, arm
-//      g_pending_open, keep g_active_modal = kOpen, do NOT restore trackball
-//      (we want to resurface the modal on the next frame with all state
-//      intact).
-//   2. Immediate normal close (bottom Close / Esc / click-outside): changes
+// on the frame after a close was requested. Two branches:
+//   1. Immediate normal close (bottom Close / Esc / click-outside): changes
 //      are already committed every frame, so just clear g_active_modal.
 //      Trackball edits are user-intentional in Immediate mode — don't revert.
-//   3. Staged close (Cancel button / title-bar × / Esc): revert trackball to
+//   2. Staged close (Cancel button / title-bar × / Esc): revert trackball to
 //      the Open-time snapshot and clear g_active_modal. This branch also
 //      covers the deleted-entry race (the in-body guard calls
 //      CloseCurrentPopup when indices go out of range); the trackball restore
 //      is idempotent and harmless when the entry is already gone.
 void HandlePopupClosed(GuiState& state) {
-  if (g_pending_mode_switch) {
-    g_pending_mode_switch = false;
-    g_pending_open = true;
-    // Replay the OpenEditModal tab-select mechanic so the newly reopened
-    // popup forces BeginTabItem(g_active_tab) onto SetSelected on its first
-    // rendered frame. Without this, ImGui's TabBar silently defaults to the
-    // first tab after the ID stack is regenerated post-close+reopen.
-    g_pending_tab_select = true;
-    return;
-  }
   if (state.modal_immediate_mode) {
     g_active_modal = ActiveModal::kNone;
+    // Terminal close: the keyboard session ends with it.
+    ClearSummandKeyboardSession();
     return;
   }
   std::memcpy(g_crystal_rotation, g_saved_rotation, sizeof(g_crystal_rotation));
   g_crystal_zoom = g_saved_zoom;
   g_crystal_mesh_hash = -1;
   g_active_modal = ActiveModal::kNone;
+  ClearSummandKeyboardSession();
 }
 
 // Renders the TabBar and the three tab bodies. Drawn only by the Compact layout (the Expanded
@@ -2601,9 +3150,9 @@ void HandlePopupClosed(GuiState& state) {
 // is handled by the caller's BeginChild sizing.
 void RenderModalTabBar(GuiState& state, const char* crystal_label, const char* axis_label, const char* filter_label,
                        ImGuiTabItemFlags crystal_flags, ImGuiTabItemFlags axis_flags, ImGuiTabItemFlags filter_flags) {
-  // Note: the layout selector lives on the bottom button row alongside the
-  // Immediate checkbox for visual consistency (both are view-preference
-  // toggles; gui-polish-v15 round 2 UX feedback). See RenderEditModals below.
+  // Note: the layout selector lives on the bottom button row (a view preference
+  // beside the mode badge in Staged; gui-polish-v15 round 2 UX feedback). See
+  // RenderEditModals below.
   //
   // task-fix-modal-edit-state-leak — per-entry ID scope for all tab *content*.
   // The "Edit Entry" window is a single persistent ImGui window reused for every
@@ -2627,6 +3176,7 @@ void RenderModalTabBar(GuiState& state, const char* crystal_label, const char* a
   const int entry_index = g_modal_entry_idx;
   // The tab bodies below read g_pull_adopted; it is only meaningful if this frame's pull wrote it.
   assert(g_pull_generation == ImGui::GetFrameCount() && "PullBuffersFromPool must run before the tab bar each frame");
+  const ActiveTab tab_before_render = g_active_tab;
   if (ImGui::BeginTabBar("##edit_modal_tabs")) {
     if (ImGui::BeginTabItem(crystal_label, nullptr, crystal_flags)) {
       g_active_tab = ActiveTab::kCrystal;
@@ -2658,6 +3208,12 @@ void RenderModalTabBar(GuiState& state, const char* crystal_label, const char* a
     ImGui::EndTabBar();
     // Consumed pending selection after BeginTabItem reads the flag.
     g_pending_tab_select = false;
+    // A parked keyboard focus request belongs to the tab that armed it: leaving Filter parks it
+    // for good (the rows and their source semantics survive; the request does not). The Expanded
+    // layout has no tab bar and renders all three sections, so it has no switch to guard.
+    if (tab_before_render != g_active_tab && g_active_tab != ActiveTab::kFilter) {
+      ClearSummandKeyboardSession();
+    }
   }
 }
 
@@ -2790,6 +3346,12 @@ static void RenderModalTwoColumn(GuiState& state, bool crystal_dirty, bool axis_
   RenderModalSectionHeader("Filter", filter_dirty, show_dirty);
   const float filter_h = std::max(0.0f, column_h - above_filter_h - style.ItemSpacing.y - header_h);
   ImGui::BeginChild("##modal_expanded_filter", ImVec2(-FLT_MIN, filter_h), ImGuiChildFlags_None);
+  // The crossing's Tab ownership, Expanded's half of the pair: inside the rows' own nav window
+  // (this child), before its first candidate (the row list's first row) has submitted. There is
+  // no tab bar in this layout, so this point is the Expanded form of the same invariant the
+  // Compact call site up in ##modal_bottom_pane satisfies — one authoritative handler, one call
+  // per frame, each inside the window whose items the re-issued request is meant to score.
+  RenderSummandTabGuard();
   ImGui::PushID(entry_layer);
   ImGui::PushID(entry_index);
   RenderFilterModal();
@@ -2878,7 +3440,7 @@ void RenderEditModals(GuiState& state, GLFWwindow* window) {
   // explicit close via the bottom Close button or the title-bar ×).
   //
   // title_x_open initialization is load-bearing for Immediate: Begin uses it as
-  // p_open, so code-driven close paths (Close button, title-bar ×, mode switch)
+  // p_open, so code-driven close paths (Close button, title-bar ×)
   // set g_active_modal = kNone → next frame title_x_open = false → Begin returns
   // false → cleanup via HandlePopupClosed's !window_open branch. If this were
   // kept as `true` unconditionally, code-driven close in Immediate would fail
@@ -2894,9 +3456,8 @@ void RenderEditModals(GuiState& state, GLFWwindow* window) {
   //              BeginPopupModal's visibility is determined by the popup stack.
   bool title_x_open = (g_active_modal == ActiveModal::kOpen);
   bool window_open = false;
-  // Pin the dispatch mode for this frame. The Immediate-mode checkbox
-  // (rendered later in body) may flip state.modal_immediate_mode mid-frame,
-  // but End/EndPopup must pair with the container we actually opened here.
+  // Pin the dispatch mode for this frame: End/EndPopup must pair with the container we actually
+  // opened here, whatever the field reads later in the frame.
   const bool dispatched_immediate = state.modal_immediate_mode;
   // H0 outer guard: the Immediate path uses ImGui::Begin, which — unlike
   // BeginPopupModal — keeps a registered ImGuiWindow in g.Windows and
@@ -2905,15 +3466,12 @@ void RenderEditModals(GuiState& state, GLFWwindow* window) {
   // ImGui pattern for closing a window is to skip the entire Begin/End block
   // at the call site. Guard only the Immediate branch; Staged
   // BeginPopupModal on an empty popup stack already returns false without
-  // leaving a stray title bar. The !g_pending_mode_switch clause preserves
-  // the Staged→Immediate mode-switch consume path further down (the body
-  // branch that arms g_pending_tab_select needs Begin to run). Once this
-  // guard is in effect, the inner race-case exit
-  // (dispatched_immediate && g_active_modal != kOpen → End+return) is
-  // unreachable; it is retained as an idempotent safety net for deleted-
-  // entry paths and will become reachable again only if this guard is ever
-  // relaxed.
-  if (dispatched_immediate && !title_x_open && !g_pending_mode_switch) {
+  // leaving a stray title bar. Once this guard is in effect, the inner
+  // race-case exit (dispatched_immediate && g_active_modal != kOpen →
+  // End+return) is unreachable; it is retained as an idempotent safety net
+  // for deleted-entry paths and will become reachable again only if this
+  // guard is ever relaxed.
+  if (dispatched_immediate && !title_x_open) {
     return;
   }
   if (dispatched_immediate) {
@@ -2948,10 +3506,9 @@ void RenderEditModals(GuiState& state, GLFWwindow* window) {
       ImGui::End();
     }
     // Either the container was never opened, or it was closed on the previous
-    // frame. If the latter (or a mode switch is in flight), run centralized
-    // cleanup so mode switch / trackball restore / g_active_modal reset
-    // converge through HandlePopupClosed.
-    if (g_active_modal == ActiveModal::kOpen || g_pending_mode_switch) {
+    // frame. If the latter, run centralized cleanup so trackball restore /
+    // g_active_modal reset converge through HandlePopupClosed.
+    if (g_active_modal == ActiveModal::kOpen) {
       HandlePopupClosed(state);
     }
     return;
@@ -2980,26 +3537,6 @@ void RenderEditModals(GuiState& state, GLFWwindow* window) {
       ImGui::EndPopup();
     }
     return;
-  }
-
-  // Staged → Immediate mode-switch consume: because Begin (unlike
-  // BeginPopupModal on an empty stack) returns true on Frame N+1 with
-  // title_x_open=true, !window_open never fires → HandlePopupClosed cannot
-  // observe the switch. Consume g_pending_mode_switch inline here (body path).
-  // This is the structural inverse of the Immediate → Staged direction, where
-  // BeginPopupModal on an empty popup stack returns false and cleanup flows
-  // through HandlePopupClosed naturally. Known asymmetry: Immediate inbound
-  // (body consume) vs Staged inbound (HandlePopupClosed consume) — a direct
-  // consequence of ImGui's popup stack vs regular window dispatch split.
-  // Counterpart for Immediate → Staged direction: HandlePopupClosed's
-  // mode-switch branch (arms g_pending_open + g_pending_tab_select, keeps
-  // g_active_modal=kOpen), invoked from the !window_open path on Frame N+1
-  // when BeginPopupModal sees an empty popup stack.
-  // Invariant: never touch g_active_modal here (it must stay kOpen until a
-  // user-driven close; see F10 in plan).
-  if (dispatched_immediate && g_pending_mode_switch) {
-    g_pending_mode_switch = false;
-    g_pending_tab_select = true;
   }
 
   // Snapshot the SetSelected flags BEFORE any BeginTabItem body runs —
@@ -3167,6 +3704,12 @@ void RenderEditModals(GuiState& state, GLFWwindow* window) {
         "##modal_bottom_pane",
         ImVec2(-FLT_MIN, EditModalFlexPaneHeight(kModalContentHeight, kEditModalFlexPaneMinRows * kToolRow, max_h)),
         ImGuiChildFlags_None, ImGuiWindowFlags_None);
+    // The crossing's Tab ownership is settled here, Compact's half of the pair: inside the pane
+    // child, before its first item (the tab bar's included) has submitted — see
+    // RenderSummandTabGuard's comment for why the re-issued request has to precede every
+    // candidate it is meant to score. (The Expanded counterpart runs at the top of that layout's
+    // filter child — RenderModalTwoColumn.)
+    RenderSummandTabGuard();
     RenderModalTabBar(state, crystal_label, axis_label, filter_label, crystal_flags, axis_flags, filter_flags);
     ImGui::EndChild();
   } else {
@@ -3181,8 +3724,8 @@ void RenderEditModals(GuiState& state, GLFWwindow* window) {
   }
 
   ImGui::Separator();
-  // Bottom row: mode-specific buttons + Immediate mode checkbox anchored
-  // to the right edge.
+  // Bottom row: mode-specific buttons + the view-preference group (layout
+  // selector, and in Staged the read-only mode badge) anchored to the right edge.
   if (state.modal_immediate_mode) {
     // Immediate: single Close (no Cancel semantics — changes are already applied).
     // No CloseCurrentPopup: we are inside ImGui::Begin (regular window), the
@@ -3205,18 +3748,13 @@ void RenderEditModals(GuiState& state, GLFWwindow* window) {
     // storage outlives the IsItemHovered check below.
     std::string ok_tooltip_storage;
     const char* ok_tooltip = nullptr;
-    if (!g_filter_remove_intent) {
-      const auto kind = CurrentValidationKind();
-      for (size_t i = 0; i < g_summand_rows.size(); ++i) {
-        const auto v = ValidateSummandText(g_summand_rows[i].text, kind);
-        if (!SummandRowBlocksCommit(v.state)) {
-          continue;
-        }
-        ok_disabled = true;
-        ok_tooltip_storage = SummandRowOkTooltip(i, v);
-        ok_tooltip = ok_tooltip_storage.c_str();
-        break;
-      }
+    // The gate reads the shared predicate (FirstBlockingSummandRow) rather than its own copy of
+    // the walk, so the button and Duplicate's reject path answer from one source.
+    const auto blocked = FirstBlockingSummandRow();
+    if (blocked.index >= 0) {
+      ok_disabled = true;
+      ok_tooltip_storage = SummandRowOkTooltip(static_cast<size_t>(blocked.index), blocked.verdict);
+      ok_tooltip = ok_tooltip_storage.c_str();
     }
 
     ImGui::BeginDisabled(ok_disabled);
@@ -3258,8 +3796,8 @@ void RenderEditModals(GuiState& state, GLFWwindow* window) {
   // the window neither grows nor shrinks and the layout's own floor stays its actual width.
   //
   // The two widths below are exact rather than estimated: the combo is given its width explicitly,
-  // and the checkbox's is ImGui's own formula for it (square of GetFrameHeight, ItemInnerSpacing,
-  // label). Both follow font, DPI and style automatically, which a hand-tuned constant cannot.
+  // and the Staged badge's is its own measured text. Both follow font, DPI and style
+  // automatically, which a hand-tuned constant cannot.
   ImGui::SameLine();
   // Two-shape layout selector. Compact keeps most of the halo preview visible at the cost of one
   // tab click per section; Expanded shows Crystal, Axis and Filter at once and leaves almost no
@@ -3276,10 +3814,19 @@ void RenderEditModals(GuiState& state, GLFWwindow* window) {
     layout_combo_w = std::max(layout_combo_w, ImGui::CalcTextSize(name).x);
   }
   layout_combo_w += ImGui::GetFrameHeight() + style.FramePadding.x * 2.0f;
-  const float immediate_w = ImGui::GetFrameHeight() + style.ItemInnerSpacing.x +
-                            ImGui::CalcTextSize("Immediate##edit_modal", nullptr, true).x;
+  // The in-window mode checkbox retired with the Settings move (AC1: one entry, in Settings): the
+  // mode a session runs in is adopted at its open boundary and shown read-only. Immediate keeps
+  // no badge at all — the absence IS the default's presentation, and a permanent "Immediate"
+  // label would spend width on a state the user has no reason to inspect. Staged is the
+  // deprecated minority mode, and its window says so where the checkbox used to sit (AC4: the
+  // window must state its mode) — visible text, not a tooltip-only fact, because the deprecation
+  // is a statement about the feature's future that a user who never hovers must still see.
+  static constexpr const char* kStagedBadge = "Staged (deprecated)";
+  const float staged_badge_w = ImGui::CalcTextSize(kStagedBadge).x;
+  const float mode_badge_w = dispatched_immediate ? 0.0f : staged_badge_w;
   const float view_toggle_group_x =
-      ImGui::GetContentRegionMax().x - (layout_combo_w + style.ItemSpacing.x + immediate_w + InfoIconAdvance());
+      ImGui::GetContentRegionMax().x -
+      (layout_combo_w + (mode_badge_w > 0.0f ? style.ItemSpacing.x + mode_badge_w : 0.0f));
   if (view_toggle_group_x > ImGui::GetCursorPosX()) {
     ImGui::SetCursorPosX(view_toggle_group_x);
   }
@@ -3300,43 +3847,17 @@ void RenderEditModals(GuiState& state, GLFWwindow* window) {
   // The layouts' semantics ride one associated info icon (both entries' text); the combo's own
   // hover and the popup items' hover stay quiet per the two-tier rule.
   InfoIcon("modal_layout_help", "%s\n%s", kModalLayoutTooltips[0], kModalLayoutTooltips[1]);
-  ImGui::SameLine();
-  // ImGui::Checkbox returns true only on the frame the user actually toggled
-  // the value, so checking the return alone is sufficient to detect a change.
-  if (Checkbox("Immediate##edit_modal", &state.modal_immediate_mode)) {
-    g_pending_mode_switch = true;
-    if (state.modal_immediate_mode) {
-      // Staged → Immediate: commit in-flight buffer to state so any pending
-      // edits become the live baseline. Use the Immediate path (not
-      // CommitAllBuffers) to avoid routing crystal-only changes through
-      // MarkStructHardDirty — its epoch fence would drop the old generation's
-      // in-flight frames at the exact moment the user wants to start observing
-      // live changes.
-      CommitAllBuffersImmediate(state);
-      // Current frame is still inside BeginPopupModal (dispatch at frame-start
-      // used the old mode). CloseCurrentPopup keeps the popup stack clean;
-      // Frame N+1 enters the Immediate Begin branch and consumes
-      // g_pending_mode_switch inline (see race-case guard + inline consume).
-      ImGui::CloseCurrentPopup();
-    } else {
-      // Immediate → Staged: re-base on the pool, which the Immediate frames have been pushing
-      // into — so the dirty marks start from zero, except for what the commit gate refused
-      // (a kIncomplete row), which is uncommitted and shows as such.
-      SyncBaselineFromPool(state);
-      // Current frame is still inside ImGui::Begin (dispatch at frame-start
-      // used the old mode). Do NOT call CloseCurrentPopup — the popup stack
-      // has no "Edit Entry" entry to close. Flow:
-      //   Frame N+1: Staged BeginPopupModal on empty stack → returns false →
-      //              !window_open → HandlePopupClosed's mode-switch branch
-      //              keeps g_active_modal=kOpen, arms g_pending_open +
-      //              g_pending_tab_select.
-      //   Frame N+2: L713 reopen gate fires → OpenPopup + BeginPopupModal
-      //              return true same frame → modal visible with tab replay.
-      // Invariant: do NOT touch g_active_modal here (must stay kOpen for the
-      // reopen gate to fire in Frame N+2).
+  if (mode_badge_w > 0.0f) {
+    ImGui::SameLine();
+    ImGui::TextDisabled("%s", kStagedBadge);
+    if (ImGui::IsItemHovered()) {
+      SetWrappedTooltip(
+          "This editor is in Staged mode: OK commits all sections, Cancel / Esc / the title-bar "
+          "close discard uncommitted changes. Staged is deprecated and is planned for removal in "
+          "5.0.0 — switch back in Settings, Application preferences (takes effect for editors "
+          "opened after you save).");
     }
   }
-  InfoIcon("edit_modal_immediate_help", "Apply parameter changes to simulation in real-time");
 
   // Next frame's height request, and what of it the flexible pane cannot take away.
   EndHeightFollow(g_edit_modal_height);

@@ -93,7 +93,10 @@ struct CommitOutcome {
 CommitOutcome RunFilterPresenceToggle(ImGuiTestContext* ctx, bool start_with_filter, bool immediate) {
   ResetTestState();
   const ScopedPopups popup_guard(ctx);
-  gui::g_state.modal_immediate_mode = immediate;
+  // The mode a NEWLY OPENED editor adopts is the saved preference (the open boundary reads it):
+  // Staged asked for here means publishing the preference, not pinning the session field a test
+  // could no longer reach through any user path.
+  gui::SetEditEntryStagedModePreference(!immediate);
   if (start_with_filter) {
     gui::FilterConfig f;
     f.SetRaypath(gui::RaypathParams{ "3-1-5" });
@@ -123,7 +126,7 @@ CommitOutcome RunFilterPresenceToggle(ImGuiTestContext* ctx, bool start_with_fil
 
   const CommitOutcome out{ gui::g_state.dirty, gui::g_state.sim_state, gui::g_state.display_epoch_floor };
   if (immediate) {
-    gui::g_state.modal_immediate_mode = false;
+    gui::SetEditEntryStagedModePreference(false);
   }
   return out;
 }
@@ -190,6 +193,113 @@ std::string JoinRows(const std::vector<std::string>& rows) {
   std::string out;
   for (const std::string& r : rows) {
     out += "[" + r + "]";
+  }
+  return out;
+}
+
+// A second card in layer 0 on a crystal pool slot of its own, so a value or buffer that lands on
+// the wrong card cannot compare equal to the right one. The entry_management suite keeps its own
+// copy of this same two-liner; this one lives here because the follow cases are edit_modal cases
+// and the helper is too small to be worth a shared-header round trip.
+void AddSecondCardOnItsOwnCrystal(ImGuiTestContext* ctx) {
+  gui::CrystalConfig second;
+  second.type = gui::CrystalType::kPyramid;
+  gui::EntryCard card;
+  card.crystal_id = static_cast<int>(gui::g_state.crystals.size());
+  gui::g_state.crystals.push_back(second);
+  gui::g_state.layers[0].entries.push_back(card);
+  gui::g_thumbnail_cache.OnLayerStructureChanged();
+  ctx->Yield(3);
+}
+
+// Somewhere that is not a card and not the editor window. The cards' borders are driven by the
+// card child windows' own hover state, so any point outside every card (and outside the editor,
+// which the cases park on the right half) leaves them cold.
+ImVec2 PointOffEveryCard() {
+  const ImGuiViewport* vp = ImGui::GetMainViewport();
+  return ImVec2(vp->Pos.x + vp->Size.x * 0.2f, vp->Pos.y + vp->Size.y * 0.85f);
+}
+
+// Read one card's own rectangle back out of the default framebuffer, so two captures of the same
+// card can be diffed. Same g_fullframe_capture seam and rect arithmetic as the entry_management
+// suite's CaptureCardRect — a private copy because the two suites judge different things off the
+// pixels (a four-edge ring diff here, a label probe there), and the arithmetic has already
+// diverged once across suites on purpose. ImGui screen space -> framebuffer: scale by the Retina
+// factor and flip the origin (GL reads bottom-left, ImGui measures top-left).
+bool CaptureCardRect(ImGuiTestContext* ctx, int index, std::vector<unsigned char>& out, int& w_out, int& h_out) {
+  ImGuiWindow* card = CardWindow(index);
+  IM_CHECK_RETV(card != nullptr, false);
+  g_fullframe_capture.Reset();
+  const ImGuiIO& io = ImGui::GetIO();
+  const float sx = io.DisplayFramebufferScale.x;
+  const float sy = io.DisplayFramebufferScale.y;
+  const float fb_w = io.DisplaySize.x * sx;
+  const float fb_h = io.DisplaySize.y * sy;
+  const ImVec2 vp_pos = ImGui::GetMainViewport()->Pos;
+  const float x0 = std::max(0.0f, (card->Pos.x - vp_pos.x) * sx);
+  const float y0 = std::max(0.0f, (card->Pos.y - vp_pos.y) * sy);
+  const float x1 = std::min(fb_w, (card->Pos.x - vp_pos.x + card->Size.x) * sx);
+  const float y1 = std::min(fb_h, (card->Pos.y - vp_pos.y + card->Size.y) * sy);
+  g_fullframe_capture.rect_x = static_cast<int>(std::lround(x0));
+  g_fullframe_capture.rect_y = static_cast<int>(std::lround(fb_h - y1));
+  g_fullframe_capture.rect_w = static_cast<int>(std::lround(x1 - x0));
+  g_fullframe_capture.rect_h = static_cast<int>(std::lround(y1 - y0));
+  g_fullframe_capture.requested.store(true);
+  for (int i = 0; i < 10 && !g_fullframe_capture.done.load(); ++i) {
+    ctx->Yield();
+  }
+  IM_CHECK_RETV(g_fullframe_capture.done.load(), false);
+  out = g_fullframe_capture.pixels;
+  w_out = g_fullframe_capture.width;
+  h_out = g_fullframe_capture.height;
+  return true;
+}
+
+// Pixels that differ between two same-sized RGBA captures, counted separately for each of the four
+// `ring`-deep strips along the rectangle's edge. Per side, not one total — the lesson the
+// entry_management hover measurement recorded: a real border change moves all four counts, while
+// a local blob (a tooltip corner, a redrawn glyph) moves one side and leaves the rest at zero.
+// The interior is excluded entirely, so nothing the thumbnail cache does between two captures can
+// reach the judgement.
+struct RingDiff {
+  int left = -1;
+  int right = -1;
+  int top = -1;
+  int bottom = -1;
+
+  bool AllChanged() const { return left > 0 && right > 0 && top > 0 && bottom > 0; }
+};
+
+RingDiff EdgeRingDiff(const std::vector<unsigned char>& a, const std::vector<unsigned char>& b, int w, int h,
+                      int ring) {
+  RingDiff out;
+  if (a.size() != b.size() || w <= 2 * ring || h <= 2 * ring) {
+    return out;
+  }
+  out = RingDiff{ 0, 0, 0, 0 };
+  auto differs = [&](int x, int y) {
+    const size_t i = (static_cast<size_t>(y) * static_cast<size_t>(w) + static_cast<size_t>(x)) * 4;
+    return a[i] != b[i] || a[i + 1] != b[i + 1] || a[i + 2] != b[i + 2];
+  };
+  for (int y = 0; y < h; ++y) {
+    for (int x = 0; x < ring; ++x) {
+      if (differs(x, y)) {
+        ++out.left;
+      }
+      if (differs(w - 1 - x, y)) {
+        ++out.right;
+      }
+    }
+  }
+  for (int x = ring; x < w - ring; ++x) {
+    for (int y = 0; y < ring; ++y) {
+      if (differs(x, y)) {
+        ++out.top;
+      }
+      if (differs(x, h - 1 - y)) {
+        ++out.bottom;
+      }
+    }
   }
   return out;
 }
@@ -325,6 +435,7 @@ std::string JoinNames(const std::vector<const char*>& names) {
 bool DraggedHeightKeepsTheActionRowInside(ImGuiTestContext* ctx, bool compact) {
   gui::g_state.modal_layout_compact = compact;
   ctx->Yield(2);
+  gui::SetEditEntryStagedModePreference(true);  // OK/Cancel exist only in Staged
   OpenCardEditor(ctx, 0, kCrystalTabRef);
   ctx->Yield(6);
   ImGuiWindow* win = ctx->GetWindowByRef("Edit Entry");
@@ -346,6 +457,7 @@ bool DraggedHeightKeepsTheActionRowInside(ImGuiTestContext* ctx, bool compact) {
 
   ctx->ItemClick(kCancel);
   ctx->Yield(2);
+  gui::SetEditEntryStagedModePreference(true);  // OK/Cancel exist only in Staged
   OpenCardEditor(ctx, 0, kCrystalTabRef);
   ctx->Yield(4);
   IM_CHECK_RETV(std::fabs(win->Size.y - dragged_h) <= 1.0f, false);  // (e)
@@ -369,6 +481,7 @@ bool DraggedHeightKeepsTheActionRowInside(ImGuiTestContext* ctx, bool compact) {
 bool WorkAreaClampKeepsTheActionRowInside(ImGuiTestContext* ctx, bool compact) {
   gui::g_state.modal_layout_compact = compact;
   ctx->Yield(2);
+  gui::SetEditEntryStagedModePreference(true);  // OK/Cancel exist only in Staged
   OpenCardEditor(ctx, 0, kCrystalTabRef);
   ctx->Yield(6);
   ImGuiWindow* win = ctx->GetWindowByRef("Edit Entry");
@@ -400,6 +513,7 @@ bool ResetRestoresTheNaturalHeight(ImGuiTestContext* ctx, bool compact) {
   ResetTestState();
   gui::g_state.modal_layout_compact = compact;
   ctx->Yield(2);
+  gui::SetEditEntryStagedModePreference(true);  // OK/Cancel exist only in Staged
   OpenCardEditor(ctx, 0, kCrystalTabRef);
   ctx->Yield(6);
   ImGuiWindow* win = ctx->GetWindowByRef("Edit Entry");
@@ -414,6 +528,7 @@ bool ResetRestoresTheNaturalHeight(ImGuiTestContext* ctx, bool compact) {
   ResetTestState();
   gui::g_state.modal_layout_compact = compact;
   ctx->Yield(2);
+  gui::SetEditEntryStagedModePreference(true);  // OK/Cancel exist only in Staged
   OpenCardEditor(ctx, 0, kCrystalTabRef);
   ctx->Yield(6);
   IM_CHECK_RETV(win->Size.y == natural_h, false);
@@ -622,6 +737,10 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
       ResetTestState();
       const ScopedPopups popups(ctx);
       const ScopedTooltipUiScale scale(ctx);
+      // This case's gestures end on the OK/Cancel row, which exists only in Staged; the case
+      // publishes the Staged premise itself (the factory preference is Immediate since the
+      // Settings move, and the ResetTestState boundary repins the factory for the next case).
+      gui::SetEditEntryStagedModePreference(true);
       ctx->Yield(2);
       constexpr const char* kText =
           "Switches to this label: remembers the current parameters under the one you leave, then "
@@ -776,6 +895,9 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
       ResetTestState();
       const ScopedPopups popups(ctx);
       const ScopedTooltipUiScale scale(ctx);
+      // The OK/Cancel row this case closes with exists only in Staged; publish the premise
+      // itself (see the premise policy above — the factory preference is Immediate).
+      gui::SetEditEntryStagedModePreference(true);
       const auto exercise = [&](float multiplier, bool compact, bool fit_only = false) -> bool {
         gui::SetUiScaleMultiplierImmediate(multiplier);
         gui::g_state.modal_layout_compact = compact;
@@ -992,6 +1114,12 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
       IM_CHECK_EQ(gui::g_state.layers.size(), count + 1);
     };
   }
+  // Premise policy (post-deprecation): the harness default is the FACTORY preference (Immediate),
+  // not a pinned Staged field. A case whose gestures need the OK/Cancel row — buttons that exist
+  // only in Staged — publishes the preference itself (SetEditEntryStagedModePreference(true)); a
+  // case shaped for Immediate runs on the factory default and sets nothing. Neither pins the
+  // session field: every open adopts the holder at the close→open boundary.
+  //
   // ===================================================================================
   // The container: what kind of window each mode opens, and how it closes.
   // ===================================================================================
@@ -1001,12 +1129,16 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
   // Asserted on ImGui's own notion of "a modal is up" rather than by trying to click a background
   // control, because a click the modal correctly swallows and a click that missed its target are
   // the same observation.
+  //
+  // The mode comes from the saved preference through a REAL close→open boundary, both directions:
+  // Staged is published explicitly, Immediate is the factory default a fresh case starts from.
+  // There is no in-window switch to drive any more — the checkbox retired with the Settings move.
   {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "edit_modal", "staged_opens_a_real_modal_and_immediate_does_not");
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
       const ScopedPopups popup_guard(ctx);
-      gui::g_state.modal_immediate_mode = false;
+      gui::SetEditEntryStagedModePreference(true);
       ctx->Yield(2);
 
       OpenCardEditor(ctx, 0, kCrystalTabRef);
@@ -1015,15 +1147,18 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
       IM_CHECK(blocking != nullptr);
       IM_CHECK_STR_EQ(blocking->Name, "Edit Entry");
 
-      // The same window in Immediate mode blocks nothing.
-      ctx->ItemClick("**/Immediate##edit_modal");
-      ctx->Yield(8);
+      ctx->ItemClick(kCancel);
+      ctx->Yield(2);
+
+      // The factory preference is Immediate: the same editor reopened with it blocks nothing.
+      gui::SetEditEntryStagedModePreference(false);
+      OpenCardEditor(ctx, 0, kCrystalTabRef);
+      ctx->Yield(4);
       IM_CHECK(ctx->ItemExists("**/###crystal_tab"));  // premise: it is still open
       IM_CHECK(ImGui::GetTopMostPopupModal() == nullptr);
 
       ctx->ItemClick(kClose);
       ctx->Yield(2);
-      gui::g_state.modal_immediate_mode = false;
     };
   }
 
@@ -1035,7 +1170,6 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
       const ScopedPopups popup_guard(ctx);
-      gui::g_state.modal_immediate_mode = true;
       ctx->Yield(2);
 
       OpenCardEditor(ctx, 0, kCrystalTabRef);
@@ -1054,7 +1188,6 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
       ctx->Yield(2);
       ctx->ItemClick(kClose);
       ctx->Yield(4);
-      gui::g_state.modal_immediate_mode = false;
     };
   }
 
@@ -1070,7 +1203,6 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
       const ScopedPopups popup_guard(ctx);
-      gui::g_state.modal_immediate_mode = true;
       ctx->Yield(2);
 
       auto open = [ctx]() {
@@ -1103,8 +1235,6 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
       ctx->WindowClose("Edit Entry");
       ctx->Yield(4);
       expect_gone();
-
-      gui::g_state.modal_immediate_mode = false;
     };
   }
 
@@ -1117,7 +1247,6 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
       const ScopedPopups popup_guard(ctx);
-      gui::g_state.modal_immediate_mode = true;
       ctx->Yield(2);
       const float orig_h = EntryCrystal().height.center;
 
@@ -1138,8 +1267,6 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
       ctx->KeyPress(ImGuiKey_Escape);
       ctx->Yield(2);
       IM_CHECK_EQ(EntryCrystal().height, orig_h + 5.0f);
-
-      gui::g_state.modal_immediate_mode = false;
     };
   }
 
@@ -1151,7 +1278,6 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
       const ScopedPopups popup_guard(ctx);
-      gui::g_state.modal_immediate_mode = true;
       ctx->Yield(2);
 
       OpenCardEditor(ctx, 0, kCrystalTabRef);
@@ -1183,7 +1309,6 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
       const ScopedPopups popup_guard(ctx);
-      gui::g_state.modal_immediate_mode = true;
       ctx->Yield(2);
 
       OpenCardEditor(ctx, 0, kCrystalTabRef);
@@ -1196,7 +1321,6 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
 
       ctx->ItemClick(kClose);
       ctx->Yield(3);
-      gui::g_state.modal_immediate_mode = false;
     };
   }
 
@@ -1218,6 +1342,7 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
       const ScopedPopups popup_guard(ctx);
+      gui::SetEditEntryStagedModePreference(true);  // OK/Cancel exist only in Staged
       ctx->Yield(2);
 
       OpenCardEditor(ctx, 0, kAxisTabRef);
@@ -1259,6 +1384,7 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
       const ScopedPopups popup_guard(ctx);
+      gui::SetEditEntryStagedModePreference(true);  // OK/Cancel exist only in Staged
       ctx->Yield(2);
 
       auto expect_closed = [](const char* where) {
@@ -1330,6 +1456,7 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
       const ScopedPopups popup_guard(ctx);
+      gui::SetEditEntryStagedModePreference(true);  // OK/Cancel exist only in Staged
       ctx->Yield(2);
       const gui::CrystalConfig baseline = EntryCrystal();
 
@@ -1360,6 +1487,7 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
       const ScopedPopups popup_guard(ctx);
+      gui::SetEditEntryStagedModePreference(true);  // OK/Cancel exist only in Staged
       ctx->Yield(2);
 
       // "Finite rays just finished". run_intent=kLoaded is what makes kDone stick — the harness
@@ -1393,6 +1521,7 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
       const ScopedPopups popup_guard(ctx);
+      gui::SetEditEntryStagedModePreference(true);  // OK/Cancel exist only in Staged
       ctx->Yield(2);
 
       gui::FilterConfig f;
@@ -1459,7 +1588,6 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
       const ScopedPopups popup_guard(ctx);
-      gui::g_state.modal_immediate_mode = true;
       ctx->Yield(2);
       const float orig_h = EntryCrystal().height.center;
 
@@ -1471,7 +1599,6 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
 
       ctx->ItemClick(kClose);
       ctx->Yield(2);
-      gui::g_state.modal_immediate_mode = false;
     };
   }
 
@@ -1486,7 +1613,6 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
       const ScopedPopups popup_guard(ctx);
-      gui::g_state.modal_immediate_mode = false;
       ctx->Yield(2);
 
       gui::g_state.run_intent = gui::RunIntent::kLoaded;
@@ -1501,12 +1627,6 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
 
       OpenCardEditor(ctx, 0, kCrystalTabRef);
       ctx->Yield(4);
-      ctx->ItemClick("**/Immediate##edit_modal");
-      ctx->Yield(6);
-      // The mode switch closes and reopens the window without re-entering OpenEditModal, so the
-      // pending-tab request that normally selects Crystal is not replayed — select it explicitly.
-      ctx->ItemClick("**/###crystal_tab");
-      ctx->Yield(2);
 
       ctx->ItemInputValue(kHeightInput, orig_h + 1.0f);
       ctx->Yield(2);
@@ -1524,7 +1644,6 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
 
       ctx->ItemClick(kClose);
       ctx->Yield(2);
-      gui::g_state.modal_immediate_mode = false;
     };
   }
 
@@ -1542,7 +1661,6 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
       const ScopedPopups popup_guard(ctx);
-      gui::g_state.modal_immediate_mode = true;
       ctx->Yield(2);
 
       OpenCardEditor(ctx, 0, kCrystalTabRef);
@@ -1584,7 +1702,6 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
 
       ctx->ItemClick(kClose);
       ctx->Yield(2);
-      gui::g_state.modal_immediate_mode = false;
     };
   }
 
@@ -1602,6 +1719,7 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
       const ScopedPopups popup_guard(ctx);
+      gui::SetEditEntryStagedModePreference(true);  // OK/Cancel exist only in Staged
       ctx->Yield(2);
 
       OpenCardEditor(ctx, 0, kCrystalTabRef);
@@ -1646,6 +1764,9 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
       const ScopedPopups popup_guard(ctx);
       ctx->Yield(2);
       const float orig_h = EntryCrystal().height.center;
+      // The staged half of the claim: dirty marks exist only while Staged, so the first
+      // session publishes the preference explicitly (the factory default is Immediate now).
+      gui::SetEditEntryStagedModePreference(true);
 
       OpenCardEditor(ctx, 0, kCrystalTabRef);
       ctx->Yield(4);
@@ -1686,7 +1807,7 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
       ctx->Yield(2);
 
       // Immediate mode: every edit is already applied, so no tab may claim to be dirty.
-      gui::g_state.modal_immediate_mode = true;
+      gui::SetEditEntryStagedModePreference(false);
       ctx->Yield(2);
       OpenCardEditor(ctx, 0, kCrystalTabRef);
       ctx->Yield(4);
@@ -1697,42 +1818,13 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
       IM_CHECK(!TabIsDirty(ctx, "**/###filter_tab"));
       ctx->ItemClick(kClose);
       ctx->Yield(2);
-      gui::g_state.modal_immediate_mode = false;
     };
   }
 
-  // P117. Switching mode closes and reopens the window; the tab the user was on and the work they
-  // had staged must both come out the other side — and the staged work is committed on the way,
-  // because the Immediate window they land in has no buffer to hold it.
-  {
-    ImGuiTest* t = IM_REGISTER_TEST(engine, "edit_modal", "switching_commit_mode_keeps_the_tab_and_commits_the_buffer");
-    t->TestFunc = [](ImGuiTestContext* ctx) {
-      ResetTestState();
-      const ScopedPopups popup_guard(ctx);
-      gui::g_state.modal_immediate_mode = false;
-      ctx->Yield(2);
-
-      OpenCardEditor(ctx, 0, kCrystalTabRef);
-      ctx->Yield(4);
-      ctx->ItemClick("**/###filter_tab");
-      ctx->Yield(4);
-      ctx->ItemInputValue("**/##row_text_0", "3-1-5");
-      ctx->Yield(2);
-      IM_CHECK(!gui::g_state.layers[0].entries[0].filter_id.has_value());  // staged: not yet applied
-
-      ctx->ItemClick("**/Immediate##edit_modal");
-      ctx->Yield(8);
-
-      IM_CHECK(gui::g_state.layers[0].entries[0].filter_id.has_value());
-      IM_CHECK_STR_EQ(gui::g_state.filters[*gui::g_state.layers[0].entries[0].filter_id].RaypathText().c_str(),
-                      "3-1-5");
-      IM_CHECK(ctx->ItemExists("**/##row_text_0"));  // still on the Filter tab
-
-      ctx->ItemClick(kClose);
-      ctx->Yield(2);
-      gui::g_state.modal_immediate_mode = false;
-    };
-  }
+  // (The in-window switch witness "switching_commit_mode_keeps_the_tab_and_commits_the_buffer"
+  // retired with the checkbox: no user path closes-and-reopens a live editor into the other mode
+  // any more, so nothing commits a Staged draft except OK — a contract the OK/Cancel and
+  // Duplicate-transaction cases already carry.)
 
   // The leak this guards is a mechanism, not a field: crystal-card clicks are a raw hit test rather
   // than a real ImGui widget, so an InputText that is mid-edit is never deactivated the normal way.
@@ -1751,7 +1843,6 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
       ResetTestState();
       const ScopedPopups popup_guard(ctx);
       ctx->Yield(2);
-      gui::g_state.modal_immediate_mode = true;  // the bug is Immediate-mode only
 
       gui::CrystalConfig second;
       second.height = 5.0f;
@@ -1781,7 +1872,6 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
 
       ctx->ItemClick(kClose);
       ctx->Yield(2);
-      gui::g_state.modal_immediate_mode = false;
     };
   }
 
@@ -1792,7 +1882,6 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
       ResetTestState();
       const ScopedPopups popup_guard(ctx);
       ctx->Yield(2);
-      gui::g_state.modal_immediate_mode = true;
 
       gui::CrystalConfig second;
       second.height = 5.0f;  // distinct from entry 0's default, so "unchanged" is a strong claim
@@ -1829,7 +1918,6 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
 
       ctx->ItemClick(kClose);
       ctx->Yield(2);
-      gui::g_state.modal_immediate_mode = false;
     };
   }
 
@@ -1850,6 +1938,7 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
       const ScopedPopups popup_guard(ctx);
+      gui::SetEditEntryStagedModePreference(true);  // OK/Cancel exist only in Staged
       ctx->Yield(2);
 
       const gui::AxisDist az_full{ gui::AxisDistType::kUniform, 0.0f, 360.0f };
@@ -1933,6 +2022,7 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
                         gui::AxisDist roll) {
         ResetTestState();
         const ScopedPopups popup_guard(ctx);
+        gui::SetEditEntryStagedModePreference(true);  // OK/Cancel exist only in Staged
         ctx->Yield(2);
         auto& cr = EntryCrystal();
         cr.zenith = zenith;
@@ -2016,6 +2106,7 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
       const ScopedPopups popup_guard(ctx);
+      gui::SetEditEntryStagedModePreference(true);  // OK/Cancel exist only in Staged
       ctx->Yield(2);
       OpenCardEditor(ctx, 0, kCrystalTabRef);
       ctx->Yield(3);
@@ -2109,6 +2200,7 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
       const ScopedPopups popup_guard(ctx);
+      gui::SetEditEntryStagedModePreference(true);  // OK/Cancel exist only in Staged
       ctx->Yield(2);
       OpenCardEditor(ctx, 0, kCrystalTabRef);
       ctx->Yield(3);
@@ -2168,6 +2260,7 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
       const ScopedPopups popup_guard(ctx);
+      gui::SetEditEntryStagedModePreference(true);  // OK/Cancel exist only in Staged
       ctx->Yield(2);
       OpenCardEditor(ctx, 0, kCrystalTabRef);
       ctx->Yield(3);
@@ -2207,6 +2300,7 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
       const ScopedPopups popup_guard(ctx);
+      gui::SetEditEntryStagedModePreference(true);  // OK/Cancel exist only in Staged
       auto& cr = EntryCrystal();
       cr.zenith = gui::AxisDist{ gui::AxisDistType::kGauss, 0.0f, 150.0f };  // legal for Gauss (max 180)
       ctx->Yield(2);
@@ -2248,6 +2342,7 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
       const ScopedPopups popup_guard(ctx);
+      gui::SetEditEntryStagedModePreference(true);  // OK/Cancel exist only in Staged
       EntryCrystal().zenith = gui::AxisDist{ gui::AxisDistType::kGauss, 33.0f, 7.0f };
       ctx->Yield(2);
       gui::AxisDist seeded[3];
@@ -2317,6 +2412,7 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
       const ScopedPopups popup_guard(ctx);
+      gui::SetEditEntryStagedModePreference(true);  // OK/Cancel exist only in Staged
       EntryCrystal().zenith = gui::AxisDist{ gui::AxisDistType::kGauss, 33.0f, 7.0f };
       ctx->Yield(2);
       OpenCardEditor(ctx, 0, kCrystalTabRef);
@@ -2365,6 +2461,7 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
       const ScopedPopups popup_guard(ctx);
+      gui::SetEditEntryStagedModePreference(true);  // OK/Cancel exist only in Staged
       ctx->Yield(2);
       OpenCardEditor(ctx, 0, kCrystalTabRef);
       ctx->Yield(3);
@@ -2451,6 +2548,7 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
       const ScopedPopups popup_guard(ctx);
+      gui::SetEditEntryStagedModePreference(true);  // OK/Cancel exist only in Staged
       EntryCrystal().zenith = gui::AxisDist{ gui::AxisDistType::kGauss, 33.0f, 7.0f };  // P0, off D_R
       ctx->Yield(2);
       OpenCardEditor(ctx, 0, kCrystalTabRef);
@@ -2536,6 +2634,7 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
       const ScopedPopups popup_guard(ctx);
+      gui::SetEditEntryStagedModePreference(true);  // OK/Cancel exist only in Staged
       ctx->Yield(2);
       // C1: drift its opening triple off every definition so its memories are recognizable.
       EntryCrystal().zenith = gui::AxisDist{ gui::AxisDistType::kGauss, 33.0f, 7.0f };
@@ -2624,6 +2723,7 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
       const ScopedPopups popup_guard(ctx);
+      gui::SetEditEntryStagedModePreference(true);  // OK/Cancel exist only in Staged
       EntryCrystal().zenith = gui::AxisDist{ gui::AxisDistType::kGauss, 33.0f, 7.0f };
       ctx->Yield(2);
 
@@ -2703,6 +2803,7 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
       const ScopedPopups popup_guard(ctx);
+      gui::SetEditEntryStagedModePreference(true);  // OK/Cancel exist only in Staged
       ctx->Yield(2);
       OpenCardEditor(ctx, 0, kCrystalTabRef);
       ctx->Yield(3);
@@ -2756,6 +2857,7 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
       const ScopedPopups popup_guard(ctx);
+      gui::SetEditEntryStagedModePreference(true);  // OK/Cancel exist only in Staged
       auto& cr = EntryCrystal();
       cr.zenith = gui::AxisDist{ gui::AxisDistType::kUniform, 0.0f, 90.0f };
       ctx->Yield(2);
@@ -2787,7 +2889,6 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
       const ScopedPopups popup_guard(ctx);
-      gui::g_state.modal_immediate_mode = true;
       ctx->Yield(2);
 
       OpenCardEditor(ctx, 0, kCrystalTabRef);
@@ -2821,7 +2922,6 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
       IM_CHECK(ctx->ItemExists(kHeightInput));
       ctx->ItemClick(kClose);
       ctx->Yield(2);
-      gui::g_state.modal_immediate_mode = false;
     };
   }
 
@@ -2865,6 +2965,7 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
       for (const Row& row : kRows) {
         ResetTestState();
         const ScopedPopups popup_guard(ctx);
+        gui::SetEditEntryStagedModePreference(true);  // OK/Cancel exist only in Staged
         ctx->Yield(2);
         EntryCrystal().type = row.type;
         ctx->Yield();
@@ -2903,7 +3004,6 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
       const ScopedPopups popup_guard(ctx);
-      gui::g_state.modal_immediate_mode = true;  // so checkbox edits reach g_state every frame
       ctx->Yield(2);
 
       IM_CHECK_EQ(EntryCrystal().height.type, gui::ShapeDistType::kNoRandom);
@@ -2931,7 +3031,6 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
 
       ctx->ItemClick(kClose);
       ctx->Yield(2);
-      gui::g_state.modal_immediate_mode = false;
     };
   }
 
@@ -2944,7 +3043,6 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
       const ScopedPopups popup_guard(ctx);
-      gui::g_state.modal_immediate_mode = true;
       ctx->Yield(2);
 
       OpenCardEditor(ctx, 0, kCrystalTabRef);
@@ -2978,7 +3076,6 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
       ctx->Yield(2);
       ctx->ItemClick(kClose);
       ctx->Yield(2);
-      gui::g_state.modal_immediate_mode = false;
     };
   }
 
@@ -2991,6 +3088,7 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
       const ScopedPopups popup_guard(ctx);
+      gui::SetEditEntryStagedModePreference(true);  // OK/Cancel exist only in Staged
       ctx->Yield(2);
 
       // A non-default baseline, so "back to defaults" has something to differ from.
@@ -3083,6 +3181,7 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
       // trips, so the modal this case pops has to be handed back by an object rather than by the
       // ItemClose/ItemClick pair at the end of the body.
       const ScopedPopups popup_guard(ctx);
+      gui::SetEditEntryStagedModePreference(true);  // OK/Cancel exist only in Staged
 
       gui::g_state.modal_layout_compact = false;
       ctx->Yield(2);
@@ -3171,6 +3270,7 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
       // of how the previous one ended.
       auto check_layout = [ctx](bool compact) {
         const ScopedPopups popup_guard(ctx);
+        gui::SetEditEntryStagedModePreference(true);  // OK/Cancel exist only in Staged
         // Same flag-flip dance as the case above, for the same reason.
         gui::g_state.modal_layout_compact = !compact;
         ctx->Yield(2);
@@ -3246,6 +3346,7 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
       EntryCrystal().type = gui::CrystalType::kPyramid;
 
       const ScopedPopups popup_guard(ctx);
+      gui::SetEditEntryStagedModePreference(true);  // OK/Cancel exist only in Staged
 
       // Same flag-flip dance as the two cases above: the width floor is applied on the frame
       // RenderEditModals observes the CHANGE, so the window has to be open before the flip.
@@ -3309,6 +3410,7 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
       const ScopedPopups popup_guard(ctx);
+      gui::SetEditEntryStagedModePreference(true);  // OK/Cancel exist only in Staged
       constexpr int kRows = 20;
       SeedOutFilter("3-1-5");
       for (int i = 1; i < kRows; ++i) {
@@ -3368,6 +3470,7 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
       const ScopedPopups popup_guard(ctx);
+      gui::SetEditEntryStagedModePreference(true);  // OK/Cancel exist only in Staged
       EntryCrystal().type = gui::CrystalType::kPyramid;
       ctx->Yield(2);
 
@@ -3472,7 +3575,6 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
       const ScopedPopups popup_guard(ctx);
-      gui::g_state.modal_immediate_mode = true;
       ctx->Yield(2);
 
       OpenCardEditor(ctx, 0, kCrystalTabRef);
@@ -3529,7 +3631,6 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
       ctx->Yield(2);
       ctx->ItemClick(kClose);
       ctx->Yield(2);
-      gui::g_state.modal_immediate_mode = false;
     };
   }
 
@@ -3540,7 +3641,6 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
       const ScopedPopups popup_guard(ctx);
-      gui::g_state.modal_immediate_mode = true;
       ctx->Yield(2);
 
       OpenCardEditor(ctx, 0, kCrystalTabRef);
@@ -3582,7 +3682,6 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
       ctx->Yield(2);
       ctx->ItemClick(kClose);
       ctx->Yield(2);
-      gui::g_state.modal_immediate_mode = false;
     };
   }
 
@@ -3594,6 +3693,7 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();  // staged: OK/Cancel atomicity is what is under test
       const ScopedPopups popup_guard(ctx);
+      gui::SetEditEntryStagedModePreference(true);  // OK/Cancel exist only in Staged
       ctx->Yield(2);
 
       EntryCrystal().face_distance[0].sync_group = 2;
@@ -3638,7 +3738,6 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
       const ScopedPopups popup_guard(ctx);
-      gui::g_state.modal_immediate_mode = true;
       ctx->Yield(2);
       // height is prism-only; give it a group, then edit the crystal as a pyramid.
       EntryCrystal().height.sync_group = 4;
@@ -3669,7 +3768,6 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
 
       ctx->ItemClick(kClose);
       ctx->Yield(2);
-      gui::g_state.modal_immediate_mode = false;
     };
   }
 
@@ -3686,7 +3784,6 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
       const ScopedPopups popup_guard(ctx);
-      gui::g_state.modal_immediate_mode = true;
       ctx->Yield(2);
       EntryCrystal().face_distance[0] = gui::ShapeDist{ gui::ShapeDistType::kUniform, 1.6f, 0.3f };
       EntryCrystal().face_distance[0].sync_group = 1;  // the leader, lowest slot
@@ -3724,7 +3821,6 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
       ctx->Yield(2);
       ctx->ItemClick(kClose);
       ctx->Yield(2);
-      gui::g_state.modal_immediate_mode = false;
     };
   }
 
@@ -3747,7 +3843,6 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
       const ScopedPopups popup_guard(ctx);
-      gui::g_state.modal_immediate_mode = true;
       ctx->Yield(2);
       auto& cr = EntryCrystal();
       cr.type = gui::CrystalType::kPyramid;
@@ -3801,7 +3896,6 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
       ctx->Yield(2);
       ctx->ItemClick(kClose);
       ctx->Yield(2);
-      gui::g_state.modal_immediate_mode = false;
     };
   }
 
@@ -3850,7 +3944,6 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
       const bool layout_compact_before = gui::g_state.modal_layout_compact;
       IM_CHECK(gui::DeserializeFromJson(core_json, gui::g_state));
       gui::g_state.modal_layout_compact = layout_compact_before;
-      gui::g_state.modal_immediate_mode = true;
       ctx->Yield(2);
       IM_CHECK_EQ(EntryCrystal().type, gui::CrystalType::kPrism);
       IM_CHECK_EQ(EntryCrystal().height.sync_group, 1);
@@ -3902,7 +3995,6 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
       ctx->Yield(2);
       ctx->ItemClick(kClose);
       ctx->Yield(2);
-      gui::g_state.modal_immediate_mode = false;
 
       // (4) The group id was never the GUI's to clean up: it survives the walkthrough in state AND
       // through the production export path, read back rather than matched as a substring.
@@ -3938,7 +4030,6 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
       const ScopedPopups popup_guard(ctx);
-      gui::g_state.modal_immediate_mode = true;
       ctx->Yield(2);
 
       // The owner's reproduction verbatim: prism height (slot 0, no Sync control) grouped with
@@ -4023,7 +4114,6 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
       ctx->Yield(2);
       ctx->ItemClick(kClose);
       ctx->Yield(2);
-      gui::g_state.modal_immediate_mode = false;
     };
   }
 
@@ -4041,7 +4131,6 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
       const ScopedPopups popup_guard(ctx);
-      gui::g_state.modal_immediate_mode = true;
       ctx->Yield(2);
       EntryCrystal().type = gui::CrystalType::kPyramid;
 
@@ -4075,7 +4164,6 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
       ctx->Yield(2);
       ctx->ItemClick(kClose);
       ctx->Yield(2);
-      gui::g_state.modal_immediate_mode = false;
     };
   }
 
@@ -4088,7 +4176,7 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
       const ScopedPopups popup_guard(ctx);
-      gui::g_state.modal_immediate_mode = false;  // OK is what commits; this is the full user path
+      gui::SetEditEntryStagedModePreference(true);  // OK is what commits; this is the full user path
       ctx->Yield(2);
 
       OpenCardEditor(ctx, 0, kCrystalTabRef);
@@ -4199,7 +4287,6 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
       const ScopedPopups popup_guard(ctx);
-      gui::g_state.modal_immediate_mode = true;
       ctx->Yield(2);
 
       OpenCardEditor(ctx, 0, kCrystalTabRef);
@@ -4253,7 +4340,6 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
       ctx->Yield(2);
       ctx->ItemClick(kClose);
       ctx->Yield(2);
-      gui::g_state.modal_immediate_mode = false;
     };
   }
 
@@ -4269,7 +4355,6 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
       const ScopedPopups popup_guard(ctx);
-      gui::g_state.modal_immediate_mode = true;
       ctx->Yield(2);
 
       OpenCardEditor(ctx, 0, kCrystalTabRef);
@@ -4307,7 +4392,6 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
 
       ctx->ItemClick(kClose);
       ctx->Yield(2);
-      gui::g_state.modal_immediate_mode = false;
     };
   }
   // ===================================================================================
@@ -4360,7 +4444,6 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
         const WedgePopupScene& scene = kWedgePopupScenes[ctx->Test->ArgVariant];
         ResetTestState();
         const ScopedPopups popup_guard(ctx);
-        gui::g_state.modal_immediate_mode = true;
         ctx->Yield(2);
 
         OpenCardEditor(ctx, 0, kCrystalTabRef);
@@ -4451,7 +4534,6 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
 
         ctx->ItemClick(kClose);
         ctx->Yield(2);
-        gui::g_state.modal_immediate_mode = false;
       };
     }
   }
@@ -4465,7 +4547,7 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
       const ScopedPopups popup_guard(ctx);
-      gui::g_state.modal_immediate_mode = false;
+      gui::SetEditEntryStagedModePreference(true);
       ctx->Yield(2);
 
       OpenCardEditor(ctx, 0, kCrystalTabRef);
@@ -4517,7 +4599,6 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
       const ScopedPopups popup_guard(ctx);
-      gui::g_state.modal_immediate_mode = true;
       ctx->Yield(2);
 
       OpenCardEditor(ctx, 0, kCrystalTabRef);
@@ -4556,7 +4637,6 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
 
       ctx->ItemClick(kClose);
       ctx->Yield(2);
-      gui::g_state.modal_immediate_mode = false;
     };
   }
 
@@ -4572,7 +4652,6 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
       const ScopedPopups popup_guard(ctx);
-      gui::g_state.modal_immediate_mode = true;
       SeedOutFilter("1-3");
       ctx->Yield(2);
 
@@ -4609,7 +4688,6 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
 
       ctx->ItemClick(kClose);
       ctx->Yield(2);
-      gui::g_state.modal_immediate_mode = false;
     };
   }
 
@@ -4622,6 +4700,7 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
       const ScopedPopups popup_guard(ctx);
+      gui::SetEditEntryStagedModePreference(true);  // OK/Cancel exist only in Staged
       SeedOutFilter("1-3");
       ctx->Yield(2);
       const float orig_h = EntryCrystal().height.center;
@@ -4669,7 +4748,7 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
       const ScopedPopups popup_guard(ctx);
-      gui::g_state.modal_immediate_mode = false;
+      gui::SetEditEntryStagedModePreference(true);
       ctx->Yield(2);
 
       using B = gui::EditModalBuffers;
@@ -4799,7 +4878,7 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
       const ScopedPopups popup_guard(ctx);
-      gui::g_state.modal_immediate_mode = false;
+      gui::SetEditEntryStagedModePreference(true);
       ctx->Yield(2);
 
       OpenCardEditor(ctx, 0, kCrystalTabRef);
@@ -4841,7 +4920,7 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
       const ScopedPopups popup_guard(ctx);
-      gui::g_state.modal_immediate_mode = false;
+      gui::SetEditEntryStagedModePreference(true);
       ctx->Yield(2);
       auto& entry = gui::g_state.layers[0].entries[0];
       const float orig_prop = entry.proportion;
@@ -4889,16 +4968,19 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
     };
   }
 
-  // Immediate mode, the card's weight dragged while the editor is open: the card is an outside
-  // writer, the pull adopts the value into the entry bar's buffer, and the two controls converge.
-  // (The active-box reload semantics this row deliberately does NOT cover are the table-driven
-  // "Entry weight" row's subject — the box is never active during this drag.)
+  // Immediate mode, the editor open on entry A while the user starts a Weight gesture on entry
+  // B's card: the OPEN editor follows the card being edited — content, binding and the accent
+  // border move to B at gesture START (held down with no value change yet, so the follow is a
+  // gesture fact and not a value-change fact), the active tab survives the rebind, and the drag
+  // itself stays continuous: keep holding, move, release, and the final value lands in B with A
+  // untouched. (This reshapes the former card_weight_drag_is_pulled_into_the_immediate_editor:
+  // once the editor is bound to B, the drag's pull-into-the-editor convergence IS that case's
+  // original subject, carried here by the buffer-convergence assertion after the release.)
   {
-    ImGuiTest* t = IM_REGISTER_TEST(engine, "edit_modal", "card_weight_drag_is_pulled_into_the_immediate_editor");
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "edit_modal", "card_weight_gesture_pulls_the_immediate_editor_to_the_card");
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
       const ScopedPopups popup_guard(ctx);
-      gui::g_state.modal_immediate_mode = true;
       const gui::EditRequest req{ gui::EditTarget::kCrystal, 0, 0 };
       gui::OpenEditModal(req, gui::g_state);
       ctx->Yield(4);
@@ -4908,32 +4990,274 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
       ctx->WindowMove("//Edit Entry", ImVec2(760.0f, 40.0f));
       ctx->Yield(2);
 
-      auto& entry = gui::g_state.layers[0].entries[0];
-      const float before = entry.proportion;
+      AddSecondCardOnItsOwnCrystal(ctx);
+      auto& entry_a = gui::g_state.layers[0].entries[0];
+      auto& entry_b = gui::g_state.layers[0].entries[1];
+      entry_a.proportion = 60.0f;
+      entry_b.proportion = 15.0f;
+      ctx->Yield(3);
+      // Non-default tab: the follow must preserve it (the kCard resolve keeps the active tab).
+      ctx->ItemClick(kAxisTabRef);
+      ctx->Yield(2);
+      const float a_before = entry_a.proportion;
+      IM_CHECK_EQ(gui::GetEditModalTarget().layer_idx, 0);
+      IM_CHECK_EQ(gui::GetEditModalTarget().entry_idx, 0);  // premise: bound to A
 
-      // Drag the card's Weight track: down on its left, right, up (the colour picker's
-      // MouseMoveToPos/MouseDown/MouseUp shape).
-      const ImGuiTestItemInfo slider = ctx->ItemInfo("**/##Weight##prop_0_0_slider");
-      IM_CHECK(slider.ID != 0);
-      const ImVec2 lo = slider.RectFull.Min;
-      const ImVec2 hi = slider.RectFull.Max;
+      // Border baseline, mouse parked off every card so hover is out of the picture: A is the
+      // active-border card, B is plain.
+      ctx->MouseMoveToPos(PointOffEveryCard());
+      ctx->Yield(2);
+      std::vector<unsigned char> a_base, b_base, a_after, b_after;
+      int wa = 0, ha = 0, wb = 0, hb = 0;
+      IM_CHECK(CaptureCardRect(ctx, 0, a_base, wa, ha));
+      IM_CHECK(CaptureCardRect(ctx, 1, b_base, wb, hb));
+
+      // Press on B's slider track at the position matching its current value: the gesture starts
+      // with NO value change. 15.0 of a 0..100 range sits at 15% of the track.
+      const ImGuiTestItemInfo slider_b = ctx->ItemInfo("**/##Weight##prop_0_1_slider");
+      IM_CHECK(slider_b.ID != 0);
+      const ImGuiID slider_b_id = slider_b.ID;
+      const ImVec2 lo = slider_b.RectFull.Min;
+      const ImVec2 hi = slider_b.RectFull.Max;
       ctx->MouseMoveToPos(ImVec2(lo.x + (hi.x - lo.x) * 0.15f, (lo.y + hi.y) * 0.5f));
       ctx->MouseDown(0);
       ctx->Yield(2);
-      ctx->MouseMoveToPos(ImVec2(lo.x + (hi.x - lo.x) * 0.85f, (lo.y + hi.y) * 0.5f));
+
+      // Held, unmoved, unchanged — and already followed: binding, window content, tab, and the
+      // drag itself still live on B's slider.
+      IM_CHECK_EQ(ImGui::GetActiveID(), slider_b_id);
+      IM_CHECK_EQ(gui::GetEditModalTarget().layer_idx, 0);
+      IM_CHECK_EQ(gui::GetEditModalTarget().entry_idx, 1);  // the follow happened
+      IM_CHECK(gui::GetActiveTabAsEditTarget() == gui::EditTarget::kAxis);
+      IM_CHECK_EQ(gui::GetEditModalBuffers().entry_proportion, 15.0f);  // content moved to B
+      IM_CHECK_EQ(entry_b.proportion, 15.0f);                           // no value change yet
+      IM_CHECK_EQ(entry_a.proportion, a_before);                        // A untouched
+
+      // Still holding: drag to the middle, release. The gesture completes in B.
+      ctx->MouseMoveToPos(ImVec2(lo.x + (hi.x - lo.x) * 0.5f, (lo.y + hi.y) * 0.5f));
       ctx->Yield(2);
       ctx->MouseUp(0);
       // Two frames after release: one for the pull+push to settle, one to show it is stable
       // rather than mid-flight.
       ctx->Yield(2);
-      ctx->LogInfo("pool proportion after the drag: %f (was %f)", entry.proportion, before);
-      IM_CHECK(entry.proportion != before);
-      const gui::EditModalBuffers buffers = gui::GetEditModalBuffers();
-      IM_CHECK_EQ(buffers.entry_proportion, entry.proportion);
+      ctx->LogInfo("B proportion after the drag: %f (A stayed %f)", entry_b.proportion, entry_a.proportion);
+      // The release point sits at 50% of the track, but ImGui anchors the drag on the grab box
+      // (mouse position minus the grab's half width at press), so the settled value lands a few
+      // points past the cursor position — the tolerance is that grab offset, not a loose check:
+      // the assertions that matter here are "changed in B's direction" and "A untouched" above
+      // and below.
+      IM_CHECK(ImAbs(entry_b.proportion - 50.0f) <= 6.0f);
+      ;
+      IM_CHECK_EQ(entry_a.proportion, a_before);
+      IM_CHECK_EQ(gui::GetEditModalBuffers().entry_proportion, entry_b.proportion);  // pull convergence
+      IM_CHECK(gui::GetActiveTabAsEditTarget() == gui::EditTarget::kAxis);
+
+      // The borders actually moved. Mouse away again, let the next card frame draw, and compare
+      // each card's ring against its baseline: A lost the active border, B gained it — all four
+      // edges each, so a local blob cannot pass for a border.
+      ctx->MouseMoveToPos(PointOffEveryCard());
+      ctx->Yield(3);
+      IM_CHECK(CaptureCardRect(ctx, 0, a_after, wa, ha));
+      IM_CHECK(CaptureCardRect(ctx, 1, b_after, wb, hb));
+      const int ring = std::max(1, static_cast<int>(ImGui::GetIO().DisplayFramebufferScale.x));
+      const RingDiff a_diff = EdgeRingDiff(a_base, a_after, wa, ha, ring);
+      const RingDiff b_diff = EdgeRingDiff(b_base, b_after, wb, hb, ring);
+      IM_CHECK(a_diff.AllChanged());
+      IM_CHECK(b_diff.AllChanged());
 
       ctx->ItemClick(kClose);
       ctx->Yield(2);
-      gui::g_state.modal_immediate_mode = false;
+    };
+  }
+
+  // The card's paired Weight INPUT box is the second real entry into the same follow (a slider
+  // witness cannot stand in for it — focus, not drag, is what drives this path): focusing it
+  // re-targets the open editor before any value changed, the keyboard edit that follows keeps
+  // running in that box (the rebind must not steal the active id or drop the text), and a
+  // blur/refocus cycle finds the committed value with the same visible text. On the way out, the
+  // same-card leg (a gesture on the card the editor is ALREADY bound to must not disturb the
+  // session), the hover/wheel negatives, and the closed-editor leg (the same gestures must not
+  // open it, and in-place editing keeps working).
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "edit_modal", "card_weight_input_focus_follows_without_losing_the_edit");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      const ScopedPopups popup_guard(ctx);
+      const gui::EditRequest req{ gui::EditTarget::kCrystal, 0, 0 };
+      gui::OpenEditModal(req, gui::g_state);
+      ctx->Yield(4);
+      IM_CHECK(gui::IsEditModalOpen());
+      ctx->WindowMove("//Edit Entry", ImVec2(760.0f, 40.0f));
+      ctx->Yield(2);
+
+      AddSecondCardOnItsOwnCrystal(ctx);
+      auto& entry_a = gui::g_state.layers[0].entries[0];
+      auto& entry_b = gui::g_state.layers[0].entries[1];
+      entry_a.proportion = 60.0f;
+      entry_b.proportion = 30.0f;
+      ctx->Yield(3);
+      ctx->ItemClick(kAxisTabRef);
+      ctx->Yield(2);
+      const float a_before = entry_a.proportion;
+
+      // Focus B's input box: the follow fires on focus, before any value changed.
+      ctx->ItemClick("**/##Weight##prop_0_1_input");
+      ctx->Yield(2);
+      const ImGuiID input_b_id = ctx->ItemInfo("**/##Weight##prop_0_1_input").ID;
+      IM_CHECK_NE(input_b_id, 0);
+      IM_CHECK_EQ(ImGui::GetActiveID(), input_b_id);
+      IM_CHECK_EQ(gui::GetEditModalTarget().layer_idx, 0);
+      IM_CHECK_EQ(gui::GetEditModalTarget().entry_idx, 1);  // followed on focus
+      IM_CHECK(gui::GetActiveTabAsEditTarget() == gui::EditTarget::kAxis);
+      IM_CHECK_EQ(gui::GetEditModalBuffers().entry_proportion, 30.0f);  // content moved to B
+      IM_CHECK_EQ(entry_b.proportion, 30.0f);                           // no value yet
+
+      // Type: the keyboard stays in that box across the rebind frames.
+      ctx->KeyChars("25.5");
+      ctx->Yield(2);
+      IM_CHECK_EQ(ImGui::GetActiveID(), input_b_id);  // the edit was not interrupted
+
+      // A click on the panel below the cards is the blur; committing on blur is the input's own
+      // contract, and the value must land in B.
+      ctx->MouseMoveToPos(PointOffEveryCard());
+      ctx->MouseClick(0);
+      ctx->Yield(2);
+      IM_CHECK(ImAbs(entry_b.proportion - 25.5f) <= 0.05f);
+      ;
+      IM_CHECK_EQ(entry_a.proportion, a_before);
+      IM_CHECK_EQ(gui::GetEditModalTarget().entry_idx, 1);
+
+      // Refocus: the box comes back active with the committed value as its visible text.
+      ctx->ItemClick("**/##Weight##prop_0_1_input");
+      ctx->Yield(2);
+      IM_CHECK_EQ(ImGui::GetActiveID(), input_b_id);
+      const ImGuiInputTextState* input_state = ImGui::GetInputTextState(input_b_id);
+      IM_CHECK(input_state != nullptr);
+      IM_CHECK_STR_EQ(input_state->TextA.Data, "25.5");
+
+      // Same-card leg (AC4): already bound to B, typing more keeps accumulating in B and the
+      // binding does not move — no re-initialization of the session.
+      ctx->KeyCharsReplaceEnter("40.0");
+      ctx->Yield(2);
+      IM_CHECK(ImAbs(entry_b.proportion - 40.0f) <= 0.05f);
+      IM_CHECK_EQ(entry_a.proportion, a_before);
+      IM_CHECK_EQ(gui::GetEditModalTarget().entry_idx, 1);
+      IM_CHECK(gui::IsEditModalOpen());
+
+      // Disabled-weight leg (AC4), with the discrimination the negative needs: the editor is
+      // moved back to A first (a plain card-body click — the pre-existing background-click path),
+      // so that pressing B's disabled weight track against a binding on A is a live test. A click
+      // landing on the disabled track arms nothing and reaches no path: IsAnyItemHovered counts
+      // the disabled slider, so the card's background-click body test stays blocked, and the
+      // follow consumes no gesture — the binding and the editor content stay with A, and B's
+      // value stays. Any future change that lets a disabled control produce an edit request —
+      // follow or body-click passthrough — moves the binding to B and goes red here.
+      ctx->ItemClick("**/###enabled_0_1");  // exclude B — same-card gesture, no follow re-arm
+      ctx->Yield(2);
+      IM_CHECK(!entry_b.enabled);
+      ctx->MouseMoveToPos(CardBlankSpot(0));
+      ctx->MouseClick(0);  // background click: the pre-existing path moves the session to A
+      ctx->Yield(3);
+      IM_CHECK_EQ(gui::GetEditModalTarget().entry_idx, 0);  // premise: bound to A again
+      const ImGuiTestItemInfo slider_b_disabled = ctx->ItemInfo("**/##Weight##prop_0_1_slider");
+      IM_CHECK(slider_b_disabled.ID != 0);
+      const ImVec2 dlo = slider_b_disabled.RectFull.Min;
+      const ImVec2 dhi = slider_b_disabled.RectFull.Max;
+      ctx->MouseMoveToPos(ImVec2(dlo.x + (dhi.x - dlo.x) * 0.4f, (dlo.y + dhi.y) * 0.5f));
+      ctx->MouseDown(0);
+      ctx->Yield(2);
+      IM_CHECK_NE(ImGui::GetActiveID(), slider_b_disabled.ID);
+      IM_CHECK_EQ(gui::GetEditModalTarget().entry_idx, 0);              // no follow: still A
+      IM_CHECK_EQ(gui::GetEditModalBuffers().entry_proportion, 60.0f);  // content still A's
+      IM_CHECK(ImAbs(entry_b.proportion - 40.0f) <= 0.05f);             // disabled keeps its value
+      ctx->MouseUp(0);
+      ctx->ItemClick("**/###enabled_0_1");  // back in for the legs below
+      ctx->Yield(2);
+      IM_CHECK(entry_b.enabled);
+      // Restore the session to B (plain background click), the premise the hover/wheel and
+      // closed-editor legs below read against.
+      ctx->MouseMoveToPos(CardBlankSpot(1));
+      ctx->MouseClick(0);
+      ctx->Yield(3);
+      IM_CHECK_EQ(gui::GetEditModalTarget().entry_idx, 1);
+
+      // Hover and wheel must not move the binding: they are not gestures on the weight control.
+      ctx->MouseMoveToPos(CardBlankSpot(0));
+      ctx->Yield(2);
+      IM_CHECK_EQ(gui::GetEditModalTarget().entry_idx, 1);
+      ctx->MouseMoveToPos(CardBlankSpot(0));
+      ctx->MouseWheel(ImVec2(0.0f, -1.0f));
+      ctx->Yield(2);
+      IM_CHECK_EQ(gui::GetEditModalTarget().entry_idx, 1);
+      IM_CHECK(gui::IsEditModalOpen());
+
+      // Editor closed: the same gestures must NOT open it (a parameter edit never gains the
+      // background click's open ability), no persistent selection appears, and in-place editing
+      // keeps working.
+      ctx->ItemClick(kClose);
+      ctx->Yield(2);
+      IM_CHECK(!gui::IsEditModalOpen());
+      ctx->ItemClick("**/##Weight##prop_0_1_input");
+      ctx->Yield(2);
+      IM_CHECK(!gui::IsEditModalOpen());                     // focusing did not open the editor
+      IM_CHECK_EQ(gui::GetEditModalTarget().entry_idx, -1);  // no persistent selection either
+      ctx->KeyCharsReplaceEnter("70.0");
+      ctx->Yield(2);
+      IM_CHECK(ImAbs(entry_b.proportion - 70.0f) <= 0.05f);
+      ;  // in-place still edits B
+      IM_CHECK(!gui::IsEditModalOpen());
+    };
+  }
+
+  // The participation toggle is the discrete-action entry into the same follow: one click on B's
+  // toggle moves the open editor onto B showing the post-toggle state — excluded, with its weight
+  // greyed and its value kept — while the toggle's own semantics (exclude, re-run, kept value,
+  // reversible) are untouched. Toggling back restores the participating display.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "edit_modal", "card_participation_toggle_pulls_the_immediate_editor");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      const ScopedPopups popup_guard(ctx);
+      const gui::EditRequest req{ gui::EditTarget::kCrystal, 0, 0 };
+      gui::OpenEditModal(req, gui::g_state);
+      ctx->Yield(4);
+      IM_CHECK(gui::IsEditModalOpen());
+      ctx->WindowMove("//Edit Entry", ImVec2(760.0f, 40.0f));
+      ctx->Yield(2);
+
+      AddSecondCardOnItsOwnCrystal(ctx);
+      auto& entry_a = gui::g_state.layers[0].entries[0];
+      auto& entry_b = gui::g_state.layers[0].entries[1];
+      entry_a.proportion = 60.0f;
+      entry_b.proportion = 30.0f;
+      ctx->Yield(3);
+      ctx->ItemClick(kAxisTabRef);
+      ctx->Yield(2);
+      IM_CHECK_EQ(gui::GetEditModalTarget().entry_idx, 0);  // premise: bound to A
+      IM_CHECK(entry_b.enabled);
+
+      ctx->ItemClick("**/###enabled_0_1");  // exclude B
+      ctx->Yield(2);
+      IM_CHECK_EQ(gui::GetEditModalTarget().layer_idx, 0);
+      IM_CHECK_EQ(gui::GetEditModalTarget().entry_idx, 1);  // the follow happened
+      IM_CHECK(gui::GetActiveTabAsEditTarget() == gui::EditTarget::kAxis);
+      IM_CHECK(!entry_b.enabled);              // toggle semantics unchanged: excluded
+      IM_CHECK_EQ(entry_b.proportion, 30.0f);  // value kept
+      const gui::EditModalBuffers buffers = gui::GetEditModalBuffers();
+      IM_CHECK(!buffers.entry_enabled);  // editor shows the post-toggle state
+      // The editor's own weight row is greyed for the entry it now shows (the disable-when-inert
+      // convention), which is what "the editor followed to B" looks like to the user.
+      IM_CHECK(IsDisabled(ctx->ItemInfo("**/##Weight##modal_entry_input")));
+
+      ctx->ItemClick("**/###enabled_0_1");  // back in
+      ctx->Yield(2);
+      IM_CHECK(entry_b.enabled);
+      IM_CHECK(gui::GetEditModalBuffers().entry_enabled);
+      IM_CHECK_EQ(gui::GetEditModalTarget().entry_idx, 1);
+      IM_CHECK(!IsDisabled(ctx->ItemInfo("**/##Weight##modal_entry_input")));
+
+      ctx->ItemClick(kClose);
+      ctx->Yield(2);
     };
   }
   // A document reset (New / Open / Revert) replaces the pool the open editor is bound to. The
@@ -4950,6 +5274,7 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
       const ScopedPopups popup_guard(ctx);
+      gui::SetEditEntryStagedModePreference(true);  // OK/Cancel exist only in Staged
       ctx->Yield(2);
       const float fresh_h = EntryCrystal().height.center;
 
@@ -5022,6 +5347,7 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
       const ScopedPopups popup_guard(ctx);
+      gui::SetEditEntryStagedModePreference(true);  // OK/Cancel exist only in Staged
       gui::g_state.modal_layout_compact = false;
       ctx->Yield(2);
       OpenCardEditor(ctx, 0, kCrystalTabRef);
@@ -5062,6 +5388,7 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
       const ScopedPopups popup_guard(ctx);
+      gui::SetEditEntryStagedModePreference(true);  // OK/Cancel exist only in Staged
       gui::g_state.modal_layout_compact = true;
       gui::CrystalConfig& cr = EntryCrystal();
       cr.type = gui::CrystalType::kPyramid;

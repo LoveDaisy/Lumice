@@ -87,11 +87,14 @@ GUI 需要 display server 和支持 OpenGL 3.2 Core Profile 的 GPU。
   分别显示工作默认来源和当前预览。Entry Edit 内的样式 Combo 仍是临时会话选择，关闭重开、New/Open/Revert
   及 Reset View 都不重置，也不会反写默认。**Reset all my defaults** 只清文档默认勾选，不清应用偏好。
 
-  几乎所有列出的设置都可就地编辑：当前配置用不到的字段（另一色调下的地面色、无图时的背景变换、
-  Infinite rays 开启时的 `Rays(M)`、Globe 下的 `Roll`）保持可编辑，悬停说明取值被保留、待其生效
-  条件满足时采用。两类行有意保持只读并在悬停说明原因：`renderer.ray_color`（GUI 构建始终使用
-  材质自身光谱色，该值由 CLI 或 config JSON 设置），以及全屏镜头下的四个视角角（帧循环会在任何
-  保存生效前把它们归零）。`Presets` 区可调每个可存储预设（Column / Plate / Parry / Lowitz 与 Random；旧
+  几乎所有列出的设置都可就地编辑。存值在当前配置下暂不消费的字段——另一色调下的地面色、非 Globe
+  lens 下的 `Back fade`、不可翻转预设下的横竖屏方向——保持可编辑，悬停说明取值被保留、待其生效
+  条件满足时采用。当前模式完全用不到的控件则置灰并在悬停说明原因：Infinite rays 开启时的
+  `Rays(M)`、Globe 下的 `Roll`、full-sky lens 与 Globe 下的 `Front`、Print 下的 `Show As`、
+  Print / Channel B-R / 无图 / Show 关闭时的背景各行、Print 下的 overlay 与 marker 色板——主界面
+  按同一规则同步置灰，控件不会许诺画面给不出的效果。另有两类行有意保持只读并在悬停说明原因：
+  `renderer.ray_color`（GUI 构建始终使用材质自身光谱色，该值由 CLI 或 config JSON 设置），以及
+  full-sky lens 下的四个视角角（帧循环会在任何保存生效前把它们归零）。`Presets` 区可调每个可存储预设（Column / Plate / Parry / Lowitz 与 Random；旧
   文件缺 Random 覆盖时回退其内置定义）每根轴的每个面——分布类型、均值、离散度；每条已存 wedge
   预设的 Miller 指数可就地编辑（角度随之重算）。
 - **⚠ Revert**：位于顶栏右端、右面板折叠按钮左侧。仅当模拟结束后又改了参数（状态 `Modified`）时出现；用于把配置还原到产生上次结果时的状态。隐藏时它的位置仍被保留，所以它出现时栏上其他按钮都不会移动。
@@ -169,9 +172,9 @@ GUI 需要 display server 和支持 OpenGL 3.2 Core Profile 的 GPU。
 
 ### View（视图）
 
-- **Projection**：`Lens Type` 提供 11 种 lens 投影 —— Linear、Rectangular、Globe、Fisheye（Equidistant / Equal Area / Stereographic / Orthographic）以及 Dual Fisheye（Equidistant / Equal Area / Stereographic / Orthographic）。Combo 中按分组排序，使 Orthographic 变体紧邻其 fisheye / dual-fisheye 同族；`FOV` 由具体 lens 限定上限。`Visibility` 中 `Upper` / `Full` / `Lower` 选择天空的垂直范围，独立的 `Front` 复选框再裁掉相机背向半球；full-sky lens 会禁用 FOV 与视角滑条（全天投影没有视角姿态），而 `Visibility` 与 `Front` 仍可编辑——其选择被保留、只是当前不生效，悬停有说明。Globe 下视图固定 `Roll` 为 0（滑条编辑的是存储值，切回会用到 roll 的 lens 时恢复），另显示 `Back fade`：让球体背面的光与网格像雾一样透过近侧（0–2；0 只显示近侧）。
+- **Projection**：`Lens Type` 提供 11 种 lens 投影 —— Linear、Rectangular、Globe、Fisheye（Equidistant / Equal Area / Stereographic / Orthographic）以及 Dual Fisheye（Equidistant / Equal Area / Stereographic / Orthographic）。Combo 中按分组排序，使 Orthographic 变体紧邻其 fisheye / dual-fisheye 同族；`FOV` 由具体 lens 限定上限。`Visibility` 中 `Upper` / `Full` / `Lower` 选择天空的垂直范围，独立的 `Front` 复选框再裁掉相机背向半球；full-sky lens 同时禁用两者，Globe 则禁用 `Front`。Globe 下另显示 `Back fade`：让球体背面的光与网格像雾一样透过近侧（0–2；0 只显示近侧）。
 - **Camera**：`Elevation`、`Azimuth`、`Roll`。Dual-fisheye 这些 full-sky lens 会禁用三者并使用规范化的零姿态。
-  底行依次为 `Reset` → `Look At` → `Lock`。`Look At` 下拉框会立即把相机指向一个具名方向：Overlay 面板能画出的六个参考点（Zenith、Nadir、Sun、Subsun、Anthelion、Antisolar），以及一组相对太阳的 **Horizon** 地平线方位——`Toward sun`、`Sun +90°`、`Away from sun`、`Sun -90°`（仰角 0；标签里的数就是选中后 `Azimuth` 滑条会显示的数，因为太阳固定在方位角 0）。选择只写 `Elevation` 与 `Azimuth`，`Roll` 与 `FOV` 保持原取景。勾选 `Lock` 后，太阳高度等场景值变化时相机会持续跟随所选方向，无须先 Run。手动修改 `Elevation` / `Azimuth` 或在预览中拖动旋转会关闭 Lock 并保留本次手动视角；修改 `Roll`、`FOV` 或滚轮缩放不会解锁。手动接管后所选目标仍会保留，再次勾选 Lock 即可恢复跟随。初始 `Look At` 显示 `None`，表示尚未指定目标，此时 Lock 禁用，须先选择目标。选择 `None` 只清目标并关闭 Lock，不移动相机；`Reset` 同样回到 None，并按当前 lens 重置 FOV/Az/El/Roll。New、成功 Open 及有提交快照的 Revert 会清目标到 None；取消或失败的 Open、无快照的 Revert 保留原意图。切换到不同 lens 则只关闭 Lock、保留目标。Full-sky lens 下两个控件均禁用。
+  底行依次为 `Reset` → `Look At` → `Lock`。`Look At` 下拉框会立即把相机指向一个具名方向：Overlay 面板能画出的六个参考点（Zenith、Nadir、Sun、Subsun、Anthelion、Antisolar），以及一组相对太阳的 **Horizon** 地平线方位——`Toward sun`、`Sun +90°`、`Away from sun`、`Sun -90°`（仰角 0；标签里的数就是选中后 `Azimuth` 滑条会显示的数，因为太阳固定在方位角 0）。选择只写 `Elevation` 与 `Azimuth`，`Roll` 与 `FOV` 保持原取景。勾选 `Lock` 后，太阳高度等场景值变化时相机会持续跟随所选方向，无须先 Run。手动修改 `Elevation` / `Azimuth` 或在预览中**左键拖动**旋转（orbit）会关闭 Lock 并保留本次手动视角；修改 `Roll`（滑条或右键拖动）、`FOV` 或滚轮缩放不会解锁。手动接管后所选目标仍会保留，再次勾选 Lock 即可恢复跟随。初始 `Look At` 显示 `None`，表示尚未指定目标，此时 Lock 禁用，须先选择目标。选择 `None` 只清目标并关闭 Lock，不移动相机；`Reset` 同样回到 None，并按当前 lens 重置 FOV/Az/El/Roll。New、成功 Open 及有提交快照的 Revert 会清目标到 None；取消或失败的 Open、无快照的 Revert 保留原意图。切换到不同 lens 则只关闭 Lock、保留目标。Full-sky lens 下两个控件均禁用。
 
 不同 lens 的成像几何差异显著：
 
@@ -203,6 +206,8 @@ Render Preview 上的辅助线，以一张表格呈现——每条辅助线回�
 
 中央区域显示实时的、按 lens 投影的冰晕图像。空闲时显示禁用态的 `Render Preview` 占位文本；模拟一开始累积光线，纹理就会逐帧更新。Horizon / Grid / Angular Distance / Compass 等 overlay 标签会按当前 lens 同步投影叠加在纹理之上。
 
+预览同时是相机的指点操作面：**左键拖动** orbit（方位角 / 仰角）；**右键拖动** roll——画面随光标绕预览中心转动，转过的角度就是光标扫过的角度，中心附近的一小圈死区让停在那里的光标不会转动画面。roll 与 `Roll` 滑条一样在 ±180° 环绕。按住 `Alt` 时拖动与滚轮交给底图照片（平移 / 缩放）；`Alt` + 右键拖动没有动作——照片没有旋转操作。Full-sky lens 下两种拖动都不作用于相机（全天空投影没有可转的视角）；Globe 下右键拖动写入的是保留的 roll 值，画面仍保持 0，直到换用支持 roll 的 lens。
+
 ![Render Preview 渲染示例](../figs/gui_screenshot_example_04.jpg)
 
 **Raypath view** 地图与这里共用一份相机：任一图的拖动/滚轮都影响两图。
@@ -211,19 +216,19 @@ Render Preview 上的辅助线，以一张表格呈现——每条辅助线回�
 
 ## Popup Editor（编辑弹窗）
 
-晶体卡片上的 `Edit` 按钮会打开一个 **Edit Entry** 窗口，包含 Crystal / Axis / Filter 与每帧重画的晶体预览。顶部先显示共享状态，再是一条全宽 entry bar，包含参与开关与 Weight；这两个 entry 私有值不参与 Link 共享。底栏上的两个独立控件分别选择布局与提交模式。
+晶体卡片上的 `Edit` 按钮会打开一个 **Edit Entry** 窗口，包含 Crystal / Axis / Filter 与每帧重画的晶体预览。顶部先显示共享状态，再是一条全宽 entry bar，包含参与开关与 Weight；这两个 entry 私有值不参与 Link 共享。底栏的选择器选择布局；编辑如何提交则在 **Settings** 里一次性选定，不在这个窗口里切换。
 
 布局选择器在两种形态之间切换，选择会随文档保存：
 
 - **Compact（紧凑）**——预览在上，三个区块在下方共用一条 tab 栏。窗口窄，能留住弹窗后面大半的冰晕预览；换区块要点一次 tab。这是默认形态。
 - **Expanded（展开）**——左列是预览 + Crystal，右列是 Axis 叠 Filter，没有 tab 栏。三个区块一次全可见，代价是几乎盖住整个预览。
 
-**Immediate** 复选框决定编辑如何提交：
+编辑的提交方式是 **Settings → Application preferences** 里的应用偏好：
 
-- **Immediate 开（默认）** —— 普通非模态窗口。合法改动每帧应用，背后的冰晕预览仍可交互，动作按钮为 **Close**；关闭不会撤销已经应用的改动。
-- **Immediate 关（Staged）** —— 阻塞式 modal，底栏为 **OK / Cancel**。带未提交改动的 tab 显示 `*`；OK 原子提交全部区块，Cancel、Esc 或标题栏关闭则丢弃。
+- **Immediate（即时，默认）** —— 普通非模态窗口。合法改动每帧应用，背后的冰晕预览仍可交互，动作按钮为 **Close**；关闭不会撤销已经应用的改动。
+- **Staged（暂存，已弃用）** —— 阻塞式 modal，底栏为 **OK / Cancel**。带未提交改动的 tab 显示 `*`；OK 原子提交全部区块，Cancel、Esc 或标题栏关闭则丢弃。窗口底栏会显示 `Staged (deprecated)`：Staged 计划在 **5.0.0** 移除。
 
-从 Staged 切到 Immediate 会先提交当前缓冲区再重开；反向切换则以当前文档重新建立 staged baseline。
+模式在编辑器**打开**时采纳：在 Settings 勾选偏好并 Save 之后，此后新打开的每个 Edit Entry 都以所选模式打开，无须重启应用。已经打开的编辑器保持原模式——保存不会转换它、不会提交或丢弃草稿，在已打开的编辑器里切换卡片也不算「关闭后重开」。只有真正关闭过的编辑器才会重新读取偏好。该偏好属于应用本身：任何文档都不携带它，New、Open 与 Revert 都不会改动它。
 
 两档布局的宽度都是固定的，高度则可以拖：拖动窗口下边缘即可拉矮或拉高。预览和动作行保持原尺寸，高度差由区块区域吸收，所以 **Close** 或 **OK / Cancel** 始终留在窗口里。屏幕矮到放不下整个窗口时，窗口打开时就已经贴合屏幕；拖过的高度在关闭应用前一直保留。
 

@@ -111,13 +111,18 @@ From left to right, the Top Bar exposes:
   temporary across modal reopen, New/Open/Revert and Reset View; it never writes defaults.
   **Reset all my defaults** affects the document-default checkboxes, not application preferences.
 
-  Nearly every listed setting is editable in place: a field the current configuration does not
-  consume (a ground colour under the other tone, the background transform with no image, `Rays(M)`
-  under Infinite rays, `Roll` under Globe) stays editable and shows a hover note saying the value
-  is kept for when it applies again. Two kinds of row stay read-only on purpose and say why on
-  hover: `renderer.ray_color` (the GUI build always uses the material's own spectral colour; the
-  value is set from the CLI or a config JSON), and the four view angles under a full-sky lens
-  (whose frame loop zeroes them before any save could keep them). The `Presets` section tunes every face — type, mean, spread —
+  Nearly every listed setting is editable in place. A field whose stored choice the current
+  configuration does not consume — a ground colour under the other tone, `Back fade` under a lens
+  other than Globe, the portrait/landscape orientation under a preset that cannot be flipped —
+  stays editable and shows a hover note saying the value is kept for when it applies again. Rows
+  the current mode does not apply to at all are greyed instead, with the reason on hover: `Rays(M)`
+  under Infinite rays, `Roll` under Globe, `Front` under full-sky lenses and Globe, `Show As` under
+  Print, the background rows under Print / Channel B-R / with no image loaded or hidden, and the
+  overlay and marker colours under Print — greyed in the main panels by the same rule, so a
+  control never promises an effect the frame cannot show. Two further kinds of row stay read-only
+  on purpose and say why on hover: `renderer.ray_color` (the GUI build always uses the material's
+  own spectral colour; the value is set from the CLI or a config JSON), and the four view angles
+  under a full-sky lens (whose frame loop zeroes them before any save could keep them). The `Presets` section tunes every face — type, mean, spread —
   of every axis of every storable preset (Column / Plate / Parry / Lowitz and Random; old files
   without a retuned Random resolve to its built-in definition), and each saved wedge preset's
   Miller indices are editable in place (the angle follows).
@@ -196,9 +201,9 @@ The right panel groups every parameter that influences how the simulated rays ar
 
 ### View
 
-- **Projection**: `Lens Type` chooses among 11 lens projections — Linear, Rectangular, Globe, Fisheye (Equidistant / Equal Area / Stereographic / Orthographic), and Dual Fisheye (Equidistant / Equal Area / Stereographic / Orthographic). The combo presents them grouped so orthographic variants sit next to their siblings. `FOV` is clamped per lens. Under `Visibility`, `Upper` / `Full` / `Lower` select the vertical sky range, while the separate `Front` checkbox clips to the camera-facing hemisphere; full-sky lenses disable the FOV and view-angle sliders (a whole-sky projection has no view pose), while `Visibility` and `Front` stay editable — their choices are kept and simply not used there, which a hover note says. Under Globe the view keeps `Roll` at 0 (the slider edits the stored value, which comes back under a lens that uses roll), and a `Back fade` slider appears: it lets the far side of the sphere — light and grid alike — show through the near side with fog-like attenuation (0–2; 0 shows only the near side).
+- **Projection**: `Lens Type` chooses among 11 lens projections — Linear, Rectangular, Globe, Fisheye (Equidistant / Equal Area / Stereographic / Orthographic), and Dual Fisheye (Equidistant / Equal Area / Stereographic / Orthographic). The combo presents them grouped so orthographic variants sit next to their siblings. `FOV` is clamped per lens. Under `Visibility`, `Upper` / `Full` / `Lower` select the vertical sky range, while the separate `Front` checkbox clips to the camera-facing hemisphere; full-sky lenses disable both controls, and Globe disables `Front`. Under Globe a `Back fade` slider appears: it lets the far side of the sphere — light and grid alike — show through the near side with fog-like attenuation (0–2; 0 shows only the near side).
 - **Camera**: `Elevation`, `Azimuth`, `Roll`. The dual-fisheye full-sky lenses disable them and use the canonical zero pose.
-  The bottom row is `Reset` → `Look At` → `Lock`. The `Look At` combo points the camera at a named direction immediately: the six reference points the Overlay panel can draw (Zenith, Nadir, Sun, Subsun, Anthelion, Antisolar), and a **Horizon** series of four level bearings relative to the sun — `Toward sun`, `Sun +90°`, `Away from sun`, `Sun -90°` (elevation 0; the number is what the `Azimuth` slider will read, since the sun sits at azimuth 0). The choice writes only `Elevation` and `Azimuth`; `Roll` and `FOV` remain as framed. With `Lock` checked, the camera keeps following the selected direction as scene values such as Sun altitude change, without requiring Run. Editing `Elevation` or `Azimuth`, or dragging the preview to rotate it, turns Lock off and keeps that manual view; changing `Roll`, `FOV`, or preview zoom does not. The selected target is retained after manual takeover so checking Lock again resumes it. Initially, `Look At` shows `None`: no target is assigned and Lock is disabled until you choose one. Choosing `None` clears the target and Lock without moving the camera. `Reset` also returns to None and resets FOV/Az/El/Roll for the current lens. New, successful Open, and Revert with a committed snapshot clear the target to None; cancelled or failed Open and Revert without a snapshot leave it alone. A different lens only turns Lock off and retains the target. Full-sky lenses disable both controls.
+  The bottom row is `Reset` → `Look At` → `Lock`. The `Look At` combo points the camera at a named direction immediately: the six reference points the Overlay panel can draw (Zenith, Nadir, Sun, Subsun, Anthelion, Antisolar), and a **Horizon** series of four level bearings relative to the sun — `Toward sun`, `Sun +90°`, `Away from sun`, `Sun -90°` (elevation 0; the number is what the `Azimuth` slider will read, since the sun sits at azimuth 0). The choice writes only `Elevation` and `Azimuth`; `Roll` and `FOV` remain as framed. With `Lock` checked, the camera keeps following the selected direction as scene values such as Sun altitude change, without requiring Run. Editing `Elevation` or `Azimuth`, or left-dragging the preview to orbit it, turns Lock off and keeps that manual view; changing `Roll` (slider or right drag), `FOV`, or preview zoom does not. The selected target is retained after manual takeover so checking Lock again resumes it. Initially, `Look At` shows `None`: no target is assigned and Lock is disabled until you choose one. Choosing `None` clears the target and Lock without moving the camera. `Reset` also returns to None and resets FOV/Az/El/Roll for the current lens. New, successful Open, and Revert with a committed snapshot clear the target to None; cancelled or failed Open and Revert without a snapshot leave it alone. A different lens only turns Lock off and retains the target. Full-sky lenses disable both controls.
 
 The lens choice changes the geometry of the projected image dramatically:
 
@@ -230,6 +235,8 @@ Under the table sit two independent sections, each a collapsing header that is c
 
 The central area shows the live, lens-projected halo image. While idle the area shows a disabled `Render Preview` placeholder; once a simulation starts producing rays, the texture updates each frame. Overlay labels for horizon / grid / sun circles / compass are rendered on top of the texture, projected to match the active lens.
 
+The preview is also the camera's pointing surface. Dragging with the **left** button orbits the view (azimuth / elevation); dragging with the **right** button rolls it — the picture turns with the cursor around the centre of the preview, by exactly the angle the cursor sweeps, and a small dead zone around the centre keeps a resting cursor from spinning the view. Roll wraps around at ±180°, like the slider's domain. Holding `Alt` hands the drag and the wheel to the background photo (pan / zoom); `Alt` + right drag does nothing, because the photo has no rotate. Under full-sky lenses neither drag acts on the camera (a whole-sky projection has no pose to turn); under Globe a right drag edits the stored roll, which stays 0 in the view until a lens that uses roll is selected.
+
 ![Render Preview with halo](../figs/gui_screenshot_example_04.jpg)
 
 The **Raypath view** map shares this same camera: a drag/wheel or shared Fit/Full-sky preset
@@ -239,19 +246,19 @@ sets a sky point, and the report shows original resolution and partial status. S
 
 ## Popup Editor
 
-`Edit` buttons on a crystal card open one **Edit Entry** window holding Crystal, Axis, and Filter plus a crystal preview that redraws every frame. Its top area shows sharing state, then a full-width entry bar with the participation toggle and Weight control; these entry-private values are not shared by Link. Two independent controls on the bottom row choose layout and commit mode.
+`Edit` buttons on a crystal card open one **Edit Entry** window holding Crystal, Axis, and Filter plus a crystal preview that redraws every frame. Its top area shows sharing state, then a full-width entry bar with the participation toggle and Weight control; these entry-private values are not shared by Link. The bottom row's selector chooses the layout; how edits commit is chosen once in **Settings**, not in this window.
 
 The layout selector chooses between two shapes, and the choice is saved with the document:
 
 - **Compact** — the preview on top, the three sections stacked below it behind a tab bar. Narrow, and it keeps most of the halo preview behind the modal visible; you click a tab to move between sections. This is the default.
 - **Expanded** — the preview and Crystal in a left column, Axis over Filter in a right column, no tab bar. All three sections are visible at once, at the cost of covering nearly all of the preview.
 
-The **Immediate** checkbox chooses how edits commit:
+How edits commit is an application preference under **Settings → Application preferences**:
 
-- **Immediate on (default)** — a regular non-modal window. Valid changes are applied every frame, the halo preview remains interactive, and the action button is **Close**; closing cannot undo changes already applied.
-- **Immediate off (Staged)** — a blocking modal with **OK / Cancel**. Tab labels gain `*` for uncommitted changes; OK commits all sections atomically, while Cancel, Esc, or the title-bar close discards them.
+- **Immediate (default)** — a regular non-modal window. Valid changes are applied every frame, the halo preview remains interactive, and the action button is **Close**; closing cannot undo changes already applied.
+- **Staged (deprecated)** — a blocking modal with **OK / Cancel**. Tab labels gain `*` for uncommitted changes; OK commits all sections atomically, while Cancel, Esc, or the title-bar close discards them. The window says `Staged (deprecated)` on its button row: Staged is planned for removal in **5.0.0**.
 
-Switching Staged → Immediate commits the in-flight buffers before reopening in Immediate mode. Switching the other way rebases the staged buffers on the current document.
+The mode is adopted when an editor is **opened**: tick the Settings checkbox and press Save, and every Edit Entry window you open afterwards starts in the chosen mode, without restarting the app. An editor that is already open keeps its mode — saving does not convert it, commit or discard its draft, and switching between cards inside an open editor is not "closing and reopening". Only a genuinely closed editor re-reads the preference. The preference belongs to the application: no document carries it, and New, Open and Revert leave it alone.
 
 In both layouts the window's width is fixed, but its height is yours: drag the bottom edge to make it shorter or taller. The preview and action row keep their size and the section area gives or takes the difference, so **Close** or **OK / Cancel** stays in view at any height. On a screen too short for the whole window it opens already fitted to the screen. A height you drag is kept until the app is closed.
 

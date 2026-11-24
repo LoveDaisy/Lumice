@@ -361,6 +361,39 @@ void MoveEntryWithinLayer(GuiState& state, int layer_idx, int from_idx, int to_i
 // Returns the copy's index, or -1 when the indices are out of range.
 int DuplicateEntryBelow(GuiState& state, int layer_idx, int entry_idx);
 
+// Duplicate with the three-state focus semantics the owner ruled on (2026-11-22) — every product
+// duplicate goes through this one entry, and it is also the production surface the GUI tests drive:
+//
+//   - The edit modal is bound to the card being duplicated: commit the modal's pending edit first
+//     ("duplicate what you see" — the clone snapshots the pool AFTER the commit), then clone, then
+//     rebind the editor to the clone (buffers reinstalled from the clone's fresh pool slots, the
+//     section the user was on stays selected, active border migrates with the binding). A pending
+//     edit that cannot commit whole (a half-typed filter row — the same gate that disables the
+//     Staged OK button) REJECTS the whole duplicate before anything changes: the session stays on
+//     the source, the existing row feedback does the talking.
+//   - The edit modal is closed: no editor session to continue, so the focus gesture is the flash —
+//     the clone's border fades once over kDuplicateFlashSeconds (GuiState::DuplicateFlash).
+//   - The edit modal is bound to a DIFFERENT card: nothing about that session changes; the
+//     positional compensation inside MoveEntryWithinLayer keeps its binding meaning the same
+//     entry, and no flash is armed (the edit is not this card's).
+//
+// Returns the copy's index, -1 on out-of-range indices or on the reject path above. The plain
+// DuplicateEntryBelow stays a pure state transform (unit tests drive it without an ImGui context);
+// everything here that needs a frame clock or the modal lives in this wrapper.
+int DuplicateEntryWithFocusFollow(GuiState& state, int layer_idx, int entry_idx);
+
+// The fade factor the duplicate flash draws with, for THIS card: 1.0 at the arm frame decaying
+// linearly to 0.0 over kDuplicateFlashSeconds, 0.0 when this entry is not the flash target or the
+// flash has expired. Pure read over GuiState::duplicate_flash plus ImGui's frame clock — exported
+// so a GUI test can assert the exact quantity the border draw consumes, not a parallel one.
+// Requires an ImGui context (GetTime); production consumes it in RenderEntryCard.
+float DuplicateFlashStrength(const GuiState& state, int layer_idx, int entry_idx);
+
+// Expire an elapsed duplicate flash. Called once per frame from the layer-list render pass: the
+// draw-side strength check would hide it anyway, but the state itself is what tests and the tick
+// reason about, so the struct is dropped on the frame after its deadline, not kept as a zombie.
+void TickDuplicateFlash(GuiState& state);
+
 }  // namespace lumice::gui
 
 #endif  // LUMICE_GUI_PANELS_HPP

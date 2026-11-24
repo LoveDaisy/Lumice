@@ -51,6 +51,11 @@ inline void ResetUserDefaultsChannels() {
   // for the reason this header states at the top: the leak it prevents lands on the NEXT case, so
   // the rule has to hold for cases whose author never thought about wedge presets at all.
   gui::ResetUserWedgePresets();
+  // The Edit Entry mode preference (the `app` namespace's fifth member): a case that published
+  // Staged — through the Settings Save path or the setter — must not decide what the NEXT case's
+  // newly opened editor adopts. Factory = Immediate, the harness baseline every case is entitled
+  // to start from.
+  gui::SetEditEntryStagedModePreference(false);
   gui::TakeUserDefaultsDowngradeCount();
   gui::TakeUserDefaultsDowngradeNotices();
 }

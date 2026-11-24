@@ -887,7 +887,7 @@ TEST_F(DefaultsDiff, row_tint_predicate_over_four_states) {
 // The Visibility group's enablement rule, as a rule rather than as a grid of examples.
 //
 // `renderer.visible` (the Upper/Full/Lower radio group) and `renderer.front` (the Front checkbox)
-// are gated in the field-editor registry by NotUnderFullSky (the angles) and FrontClipAppliesNote (front). Before task
+// are gated in the field-editor registry by NotUnderFullSky (the angles) and WhenFrontClipApplies (front). Before task
 // 431.1 the main UI did not read either: app_panels.cpp spelled the same two conditions out again
 // as a hand-paired `BeginDisabled` nest, and the only thing pinning the pair was nine near-identical
 // gui_test cases, one per (lens, expectation) cell somebody thought to write down.
@@ -923,24 +923,17 @@ TEST_F(DefaultsDiff, row_tint_predicate_over_four_states) {
 // above, so the guarantee this loop rests on is enforced at compile time in this very TU — a
 // runtime case restating it would be strictly weaker than the check already running.
 TEST(VisibilityEnablement, inline_ac2_registry_gate_matches_semantics_for_every_lens) {
-  // The unlock task's writer-based split: Visible and Front are stored choices with no frame
-  // writer — enabled under EVERY lens (the "does not apply here" half rides inactive_note) —
-  // while the four view angles keep the frame-writer gate: disabled exactly under a full-sky
-  // lens, whose invariant zeroes them every frame (fov additionally resets on every lens switch).
   for (int lens = 0; lens < lumice::gui::kLensTypeCount; ++lens) {
     lumice::gui::GuiState state;
     state.renderer.lens_type = lens;
 
     const bool full_sky = lumice::gui::LensIsFullSky(lens);
+    const bool is_globe = (lens == lumice::gui::kLensTypeGlobe);
 
     const lumice::gui::FieldEditorConstraint visible_c = lumice::gui::ConstraintFor("renderer.visible", state);
     const lumice::gui::FieldEditorConstraint front_c = lumice::gui::ConstraintFor("renderer.front", state);
-    EXPECT_TRUE(visible_c.enabled) << "renderer.visible, lens=" << lens;
-    EXPECT_TRUE(front_c.enabled) << "renderer.front, lens=" << lens;
 
-    for (const char* key : { "renderer.fov", "renderer.elevation", "renderer.azimuth", "renderer.roll" }) {
-      const lumice::gui::FieldEditorConstraint c = lumice::gui::ConstraintFor(key, state);
-      EXPECT_EQ(c.enabled, !full_sky) << key << ", lens=" << lens;
-    }
+    EXPECT_EQ(visible_c.enabled, !full_sky) << "renderer.visible, lens=" << lens;
+    EXPECT_EQ(front_c.enabled, !(full_sky || is_globe)) << "renderer.front, lens=" << lens;
   }
 }

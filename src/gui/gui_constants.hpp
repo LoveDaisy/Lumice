@@ -310,6 +310,14 @@ constexpr float kCoSharedBorderAlpha = 0.55f;
 // distinguish from each other. Consumed by RenderEntryCard.
 constexpr float kCardHoverBorderAlpha = 0.30f;
 
+// Duration of the one-shot border flash a freshly duplicated card plays when the edit modal was
+// CLOSED at the moment of the duplicate (owner ruling 2026-11-22: no auto-opened modal, the flash
+// is the focus gesture). One fade, active-accent strength decaying to the plain border — not a
+// blink — and the value is the plan's declared design default (§2), replaceable without touching
+// the mechanism. Measured on ImGui's frame clock (GetTime), so a --fixed-dt gui_test replays it
+// deterministically. Consumed by panels.cpp (arm / tick / RenderEntryCard draw).
+constexpr float kDuplicateFlashSeconds = 1.0f;
+
 // Outline drawn over the entry card's "Link to" rail slot when that card shares its
 // (crystal, filter) pair with another. An outline rather than a different glyph: what the button
 // DOES is constant, and sharing is a separate fact drawn on top of it.
@@ -374,6 +382,13 @@ static_assert(kAnalysisRayBudgetTrackPt >= 100.0f, "the track stays well above t
 // camera. A feel value, not a ruling — there is no proxy to measure it by, so it is one number in
 // one place.
 constexpr float kAnalysisConeMarkerHitRadiusPt = 12.0f;
+
+// The roll drag's dead zone, in logical points around the actual render viewport's centre: inside
+// it the cursor's direction around the centre is not measured, so a press near the centre never
+// spins the view and crossing the centre can never read as a ~180 degree jump. A feel value like
+// the marker radius above — "big enough to rest a cursor on", chosen at 16 pt (one UI scale unit)
+// and read through UiPx(); there is deliberately no settings surface for it.
+constexpr float kRollDragDeadZonePt = 16.0f;
 
 // The display-mode segmented control in the preview's top-right corner (RenderPreviewPanel).
 // Geometry in logical points, read through UiPx(); the two alphas are opacities and are not.

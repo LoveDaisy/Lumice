@@ -197,6 +197,9 @@ inline constexpr FieldTierEntry kFieldTierTable[] = {
 
     // ==== T-session: runtime/session-only, not persisted, not dirty =============================
     { "pick_link_source",           FieldTier::kSession,    false },
+    // The duplicate feedback flash: which entry to flash and when it started — a one-shot visual
+    // gesture, not the document (see GuiState::DuplicateFlash for the lifecycle).
+    { "duplicate_flash",            FieldTier::kSession,    false },
     { "color_window_open",          FieldTier::kSession,    false },
     { "defaults_panel_open",        FieldTier::kSession,    false },
     { "config_summary_window_open", FieldTier::kSession,    false },

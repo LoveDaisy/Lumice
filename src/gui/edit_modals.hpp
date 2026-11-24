@@ -128,6 +128,26 @@ EditTarget GetActiveTabAsEditTarget();
 // so the modal call site adds it and the card call site does not.
 void StartLinkPickMode(GuiState& state, int layer_idx, int entry_idx);
 
+// The pending-edit half of Duplicate's focus transaction (owner ruling 2026-11-22, "duplicate what
+// you see"). Two primitives the card side composes; both answer no / no-op when no modal is open,
+// because with no editor open there is no in-flight edit to commit or lose.
+//
+// ModalEditCommittable: true when committing the open modal's buffers RIGHT NOW would commit them
+// whole — no Filter row is half-typed or malformed. This is the Staged OK button's own gate, read
+// through the same predicate that disables the button, so the button and this answer can never
+// disagree. Duplicate consults it BEFORE touching anything: its rebind step reinstalls the buffers
+// from the clone's pool slots, so a draft the commit refuses to write would be silently dropped by
+// that reinstall — the reject (keep the original session; the modal's existing row feedback does
+// the talking) must fire before any commit and before any pool append.
+//
+// CommitModalEditBuffers: pushes the open modal's buffers into the pool now — the same commit body
+// the OK button and the Immediate per-frame push run (diff-gated, so committing an untouched
+// editor is a no-op) — WITHOUT closing the modal and WITHOUT arming pick mode. StartLinkPickMode
+// commits and closes; Duplicate commits and keeps the editor, because the very next step rebinds
+// it to the clone.
+bool ModalEditCommittable();
+void CommitModalEditBuffers(GuiState& state);
+
 // Close the edit modal because the document it was bound into has been replaced or restored —
 // called unconditionally by ResetFrontendState() (production), for every reset reason. The modal
 // binds its entry by POSITION and holds copies of that entry's crystal and filter; after a reset
@@ -138,16 +158,19 @@ void StartLinkPickMode(GuiState& state, int layer_idx, int entry_idx);
 // session settings, not document state.
 //
 // Field-set note: ResetModalState() below (test teardown) is this PLUS the test-only forcing of
-// modal_immediate_mode / tab / uid counter / trackball save, and is implemented by calling this
-// first so the two cannot drift on the fields they share. A new edit-buffer field goes here.
+// tab / uid counter / trackball save, and is implemented by calling this first so the two cannot
+// drift on the fields they share. A new edit-buffer field goes here. The session mode needs no
+// reset: it is re-adopted from the saved preference at every open boundary, so nothing stale can
+// survive a teardown into the next editor.
 void CloseEditModalOnDocumentReset();
 
 // Reset all modal-internal static state (active modal, edit buffers, pending flags).
 // Called by test teardown (ResetTestState) to prevent state leakage between tests.
 // Delegates to CloseEditModalOnDocumentReset() for the document-bound part (see its field-set
-// note), then additionally forces modal_immediate_mode=false, the Crystal tab, the row-uid counter
+// note), then additionally forces the Crystal tab, the row-uid counter
 // and the trackball save back to their process-start values — things a test wants pinned and
-// production must not touch.
+// production must not touch. (The editing mode is not among them: it is re-adopted from the
+// saved preference at every open; the preference holder's reset lives in the test harness.)
 void ResetModalState();
 
 // Clears the axis modal's per-crystal preset memory (g_axis_preset_memory in edit_modals.cpp —

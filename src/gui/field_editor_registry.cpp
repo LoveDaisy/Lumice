@@ -37,11 +37,24 @@ namespace {
 // does not. This IS the BeginDisabled(...) expression at the field's main-UI call site: that call
 // site passes `!ConstraintFor(key, state).enabled` rather than recomputing the condition.
 //
-// Two outcomes since the defaults-panel unlock task, split by WRITER (see the header's rule 1):
-// `enabled=false` for a field whose value the frame loop or a lens switch rewrites — an edit it
-// erases within one frame is the "saved, then silently reset" wrong state; `note` (enabled stays
-// true) for a field the frame loop never touches, where the stored choice is kept and simply not
-// consumed yet — the sentence is shown on hover while the control is live.
+// A field is DISABLED (`enabled=false`, with a reason) under one of two kinds of gate; otherwise it
+// either simply applies or carries a NOTE (enabled stays true) for a stored choice the current
+// configuration does not consume:
+//   * writer-protection gates — the frame loop or a lens switch rewrites the value, so an edit it
+//     erases within one frame is the "saved, then silently reset" wrong state (the view angles
+//     under a full-sky lens);
+//   * mode-gating gates — the current mode does not consume the control at all, so a live control
+//     would promise an effect the frame cannot show. The 2026-11-23 owner ruling restored this leg
+//     for the groups PR #592 had opened into notes — Rays(M) under Infinite rays, Roll under
+//     Globe, Front under full-sky/Globe, the display mode under Print, the background family
+//     under print / Channel B-R / no image / Show off, and the annotation/marker colours under
+//     Print — on the grounds that the default-unlock ruling covered the Settings panel's listed
+//     rows only; "a control the current mode does not apply to is disabled" again, in BOTH places,
+//     with the historical reason on hover;
+//   * the NOTE leg survives for the stored choices the same ruling kept open: the two ground
+//     colours (the Display panel shows one or the other by its own view rule), globe_back_fade
+//     (the main UI draws it only under Globe), and the aspect orientation (meaningless under
+//     unflippable presets). The sentence rides on hover while the control stays live.
 struct Applicability {
   bool enabled = true;
   // Named to match FieldEditorConstraint::disabled_reason, which this becomes: keeping the two
@@ -366,12 +379,6 @@ FieldEditorEntry ComboField(SlotFn<int> access, const char* const* names, int co
 // ------------------------------------------------------------------------------------------------
 // Shared applicability gates. Each is written once here and read by every field that shares it —
 // and, through ConstraintFor, by that field's main-UI BeginDisabled(...) as well.
-//
-// Two populations since the defaults-panel unlock task (the header's rule 1, split by writer):
-// DISABLED gates — the frame loop or the lens switch rewrites the value, so an editable control
-// would be erased within a frame; NOTE gates — nothing rewrites the value, the stored choice is
-// simply not consumed by the current configuration, and the note says so while the control stays
-// live.
 // ------------------------------------------------------------------------------------------------
 
 Applicability NotUnderFullSky(const GuiState& state) {
@@ -381,43 +388,25 @@ Applicability NotUnderFullSky(const GuiState& state) {
   return {};
 }
 
-// roll's own split: full-sky DISABLES (the frame invariant zeroes it every frame), Globe only
-// NOTES (the render sites read EffectiveRollForLens without writing back, so the stored value
-// survives and applies again under a lens that uses roll).
-Applicability NotUnderFullSkyOrGlobeRoll(const GuiState& state) {
-  if (LensIsFullSky(state.renderer.lens_type)) {
-    return { false, "A full-sky lens shows every direction at once, so this view angle does not apply." };
+Applicability NotUnderFullSkyOrGlobe(const GuiState& state) {
+  const Applicability full_sky = NotUnderFullSky(state);
+  if (!full_sky.enabled) {
+    return full_sky;
   }
   if (state.renderer.lens_type == kLensTypeGlobe) {
-    return { true, nullptr,
-             "The Globe view keeps roll at 0. Your choice is kept and applies again under a lens "
-             "that uses roll." };
+    return { false, "The Globe lens orbits the observer around the sphere; roll is locked to 0." };
   }
   return {};
 }
 
-// A full-sky lens, as a NOTE: the field's stored value survives (no frame writer, no switch reset)
-// and is simply not consumed until a lens that uses it is selected.
-Applicability NotUnderFullSkyNote(const GuiState& state) {
-  if (LensIsFullSky(state.renderer.lens_type)) {
-    return { true, nullptr,
-             "A full-sky lens shows every direction at once, so this choice is not used right "
-             "now. It is kept and applies again under a lens that uses it." };
-  }
-  return {};
-}
-
-// renderer.front's gate: the choice is stored and never rewritten (the clip's consumers read
-// EffectiveFrontForLens), so full-sky and Globe only make it INERT — the note says the choice is
-// set aside, not lost.
-Applicability FrontClipAppliesNote(const GuiState& state) {
-  // The same lens set the effective value forces off (EffectiveFrontForLens): full-sky AND Globe.
-  // Missing one here would apply a clip the note claims is inert, or clip silently with no note.
-  if (!NotUnderFullSky(state).enabled || state.renderer.lens_type == kLensTypeGlobe) {
-    return { true, nullptr,
-             "This lens has no front or back to clip, so the front-hemisphere clip is not used "
-             "right now. Your choice is kept and comes back when you switch to a lens that uses "
-             "it." };
+// renderer.front's gate: the same lens set as NotUnderFullSkyOrGlobe (reused, not restated), with a
+// reason of its own — that gate's Globe wording is about roll, and the thing worth telling the user
+// here is that the choice is only set aside, not lost (EffectiveFrontForLens, gui_state.hpp).
+Applicability WhenFrontClipApplies(const GuiState& state) {
+  if (!NotUnderFullSkyOrGlobe(state).enabled) {
+    return { false,
+             "This lens has no front or back to clip, so the front-hemisphere clip does not apply. "
+             "Your previous choice is kept and comes back when you switch to a lens that uses it." };
   }
   return {};
 }
@@ -431,65 +420,64 @@ Applicability GlobeBackFadeNote(const GuiState& state) {
   return {};
 }
 
-// doc/rendering/print-mode-subtractive-ink.md §7 instance 1. Ordered BEFORE the "is an image
-// loaded" clause on purpose: when both hold, print is the one the user has to act on.
+// doc/rendering/print-mode-subtractive-ink.md §7 instance 1. Ordered BEFORE the "is an image loaded" check on
+// purpose: when both reasons hold, print is the one the user has to act on — loading an image would
+// not enable the control, and a reason that stops being true when you satisfy it is the wrong
+// reason to show.
 //
-// The exclusion is physical, not merely a note: a background photograph is a picture of the sky
-// the halo is drawn ON TOP of, which only means anything under an operator that ADDS light. Print
-// multiplies the paper down by a transmittance, so compositing the two would darken the
-// photograph everywhere the halo is bright — the wrong direction, not merely an odd look. That
-// half lives in app_panels.cpp's `pp.bg.enabled`, which keeps the texture out of the frame; the
-// stored bg_* choices keep round-tripping under it.
-Applicability BackgroundStoredChoice(const GuiState& state) {
+// The exclusion is physical, not merely a greyed control: a background photograph is a picture of
+// the sky the halo is drawn ON TOP of, which only means anything under an operator that ADDS light.
+// Print multiplies the paper down by a transmittance, so compositing the two would darken the
+// photograph everywhere the halo is bright — the wrong direction, not merely an odd look. The other
+// half of this instance is app_panels.cpp's `pp.bg.enabled`, which is what actually keeps the
+// texture out of the frame.
+Applicability WhenBackgroundLoaded(const GuiState& state) {
   if (IsPrintTone(state.renderer)) {
-    return { true, nullptr,
-             "A background photo is additive — the halo is drawn on top of the sky in it. Print "
-             "lays subtractive ink on paper, so the photo is left out of the frame while Mode is "
-             "Print. These choices are kept and apply again under Screen." };
+    return { false,
+             "A background photo is additive — the halo is drawn on top of the sky in it. Print lays "
+             "subtractive ink on paper, which can only darken it. Disabled while Mode is Print." };
   }
   // The channel-B-R display mode takes the colour channel over the same way print does (the same
   // rule, applied to a diagnostic rather than an operator): a photo composited over the grey B - R
-  // image would put the photo's own colours into the reading. Second in line after print.
+  // image would put the photo's own colours into the reading. Second in line after print for the
+  // reason above — while print is on, this mode is inert and so is its exclusion.
   if (IsChannelBrDisplay(state.renderer)) {
-    return { true, nullptr,
-             "The Channel B-R display shows blue minus red of the halo itself; the photo is left "
-             "out of the frame while it is on. These choices are kept and apply again under "
-             "Normal." };
+    return { false,
+             "The Channel B-R display shows blue minus red of the halo itself; a photo underneath "
+             "would mix its own colours into the reading. Disabled while the preview shows Channel B-R." };
   }
   if (!g_preview.HasBackground()) {
-    return { true, nullptr,
-             "No background image is loaded. These choices are stored and take effect once one "
-             "is loaded (Load Bg under Display)." };
+    return { false, "No background image is loaded." };
   }
   return {};
 }
 
-// The shown/hidden half, on top of the stored-choice gate: the transform sliders are inert while
-// the image is hidden (and under print/B-R/no-image, via the gate above).
-Applicability BackgroundShownNote(const GuiState& state) {
-  const Applicability loaded = BackgroundStoredChoice(state);
-  if (loaded.note != nullptr) {
+Applicability WhenBackgroundShown(const GuiState& state) {
+  const Applicability loaded = WhenBackgroundLoaded(state);
+  if (!loaded.enabled) {
     return loaded;
   }
   if (!state.bg_show) {
-    return { true, nullptr,
-             "The background image is hidden (Show under Display). The transform is kept and "
-             "applies again when it is shown." };
+    return { false, "The background image is hidden." };
   }
   return {};
 }
 
-// doc/rendering/print-mode-subtractive-ink.md §7 instance 4. The annotation colours still HAVE a
-// value and still round-trip under print — the CLI's print operator draws every overlay line by
-// density and never reads these colours (test_render_consumer_print_mode.cpp's
-// AnnotationColourDoesNotReachThePaper), and the preview shader's own overlay branch does the
-// same. So the note is purely the "kept, applies again" sentence: the swatch stays live so a
-// personal default can be set while print is up, and the hue is consumed again under Screen.
-Applicability AnnotationColourNote(const GuiState& state) {
+// doc/rendering/print-mode-subtractive-ink.md §7 instance 4. Named in the same verb form as NotUnderFullSky
+// above, and gating the same kind of thing: a field that still HAS a value and still round-trips,
+// but that the current configuration gives no way to observe.
+//
+// Unlike instance 1 (the background photo) there is nothing to switch off here — the CLI's print
+// operator already draws every overlay line by density and never reads these colours
+// (test_render_consumer_print_mode.cpp's AnnotationColourDoesNotReachThePaper is that claim), and
+// the preview shader's own overlay branch does the same. So this gate is purely the user-visible
+// half: without it the swatch invites an edit that changes nothing on screen, which is precisely
+// the "quietly not the picture you asked for" failure the notices elsewhere exist to prevent.
+Applicability NotUnderPrintMode(const GuiState& state) {
   if (IsPrintTone(state.renderer)) {
-    return { true, nullptr,
+    return { false,
              "Print mode draws overlay lines by ink density, not by hue, so this colour has no "
-             "effect on the frame. It is kept and applies again when Tone is Screen." };
+             "effect. It is kept and applies again when Tone is Screen." };
   }
   return {};
 }
@@ -517,13 +505,13 @@ Applicability PaperColourNote(const GuiState& state) {
 }
 
 // The display-mode combo's gate. The field is kept and round-trips under print, but print never
-// computes R and B separately, so there is no B - R to show — the same "kept, applies again"
-// shape as the gates above.
-Applicability DisplayModeNote(const GuiState& state) {
+// computes R and B separately, so there is no B - R to show — the same "kept, applies again" shape
+// as the gates above.
+Applicability DisplayModeUnderScreenTone(const GuiState& state) {
   if (IsPrintTone(state.renderer)) {
-    return { true, nullptr,
-             "Print lays one neutral ink and has no separate red and blue to subtract, so the "
-             "display mode has no effect. It is kept and applies again when Mode is Screen." };
+    return { false,
+             "Print lays one neutral ink and has no separate red and blue to subtract, so the display "
+             "mode has no effect. It is kept and applies again when Mode is Screen." };
   }
   return {};
 }
@@ -847,9 +835,7 @@ const std::unordered_map<std::string, FieldEditorEntry>& Registry() {
                             FixedDomain(kRayNumMinMillions, kRayNumMaxMillions), kRayNumSliderFmt, kRayNumSliderScale,
                             [](const GuiState& s) -> Applicability {
                               if (s.sim.infinite) {
-                                return { true, nullptr,
-                                         "Infinite rays is on, so this total is not used right now. "
-                                         "It is kept and applies when Infinite rays is off." };
+                                return { false, "Infinite rays is on, so no ray total applies." };
                               }
                               return {};
                             }),
@@ -891,7 +877,7 @@ const std::unordered_map<std::string, FieldEditorEntry>& Registry() {
                          "Azimuth"));
     map.emplace("renderer.roll",
                 Labelled(FloatField([](GuiState& s) { return &s.renderer.roll; }, FixedDomain(-180.0f, 180.0f), "%.2f",
-                                    SliderScale::kLinear, NotUnderFullSkyOrGlobeRoll),
+                                    SliderScale::kLinear, NotUnderFullSkyOrGlobe),
                          "Roll"));
     map.emplace("renderer.sim_resolution", Labelled(SimResolutionField(), "Resolution"));
     // "Visible" is NOT a word the panel prints: the control is three RadioButtons (Upper / Full /
@@ -900,14 +886,11 @@ const std::unordered_map<std::string, FieldEditorEntry>& Registry() {
     // Summary still needs a word for the row; this is it, chosen here rather than spelled from the
     // key so the choice is visible. test_config_summary_labels.cpp excludes exactly this key from
     // its "every declared label is the panel's literal" scan (kExcludedFromLabelParityCheck).
-    // The stored choice survives a full-sky lens (no frame writer, no switch reset) and applies
-    // again under a lens that consumes it — the NOTE form, per the census split; a full-sky lens
-    // is not one of those lenses.
     map.emplace("renderer.visible", Labelled(ComboField([](GuiState& s) { return &s.renderer.visible; }, kVisibleNames,
-                                                        kVisibleCount, NotUnderFullSkyNote),
+                                                        kVisibleCount, NotUnderFullSky),
                                              "Visible"));
     map.emplace("renderer.front",
-                Labelled(BoolField([](GuiState& s) { return &s.renderer.front; }, FrontClipAppliesNote,
+                Labelled(BoolField([](GuiState& s) { return &s.renderer.front; }, WhenFrontClipApplies,
                                    [](const GuiState& s, bool stored) {
                                      return EffectiveFrontForLens(s.renderer.lens_type, stored);
                                    }),
@@ -961,9 +944,10 @@ const std::unordered_map<std::string, FieldEditorEntry>& Registry() {
         Labelled(ComboField([](GuiState& s) { return &s.renderer.ev_mode; }, kEvModeNames, kEvModeCount), "EV Anchor"));
     map.emplace("renderer.tone",
                 Labelled(ComboField([](GuiState& s) { return &s.renderer.tone; }, kToneNames, kToneCount), "Mode"));
-    map.emplace("renderer.display_mode", Labelled(ComboField([](GuiState& s) { return &s.renderer.display_mode; },
-                                                             kDisplayModeNames, kDisplayModeCount, DisplayModeNote),
-                                                  "Show As"));
+    map.emplace("renderer.display_mode",
+                Labelled(ComboField([](GuiState& s) { return &s.renderer.display_mode; }, kDisplayModeNames,
+                                    kDisplayModeCount, DisplayModeUnderScreenTone),
+                         "Show As"));
 
     // ---- aspect ratio ----
     map.emplace("aspect_ratio", AspectPresetField());
@@ -982,22 +966,22 @@ const std::unordered_map<std::string, FieldEditorEntry>& Registry() {
 
     // ---- background image ----
     map.emplace("bg_path", BackgroundPathField());
-    map.emplace("bg_show", BoolField([](GuiState& s) { return &s.bg_show; }, BackgroundStoredChoice));
+    map.emplace("bg_show", BoolField([](GuiState& s) { return &s.bg_show; }, WhenBackgroundLoaded));
     map.emplace("bg_alpha", FloatField([](GuiState& s) { return &s.bg_alpha; }, FixedDomain(0.0f, 1.0f), "%.2f",
-                                       SliderScale::kLinear, BackgroundShownNote));
+                                       SliderScale::kLinear, WhenBackgroundShown));
     // Pan is measured in texture widths/heights (see ComputeBgUvTransform), so +-2 lets the user
     // push the image two full frames off-centre in either direction — comfortably past any real
     // crop, while still short enough that the slider's travel is usable at photo-alignment
     // precision. Zoom is multiplicative, hence kLog: a drag from 1.0 to 2.0 should cover the same
     // slider distance as one from 0.5 to 1.0, and kLog additionally requires min_val > 0.
-    // All three share bg_alpha's BackgroundShownNote gate, so "can I move the background" answers
+    // All three share bg_alpha's WhenBackgroundShown gate, so "can I move the background" answers
     // the same in the panel and on the canvas.
     map.emplace("bg_offset_x", FloatField([](GuiState& s) { return &s.bg_offset_x; }, FixedDomain(-2.0f, 2.0f), "%.3f",
-                                          SliderScale::kLinear, BackgroundShownNote));
+                                          SliderScale::kLinear, WhenBackgroundShown));
     map.emplace("bg_offset_y", FloatField([](GuiState& s) { return &s.bg_offset_y; }, FixedDomain(-2.0f, 2.0f), "%.3f",
-                                          SliderScale::kLinear, BackgroundShownNote));
+                                          SliderScale::kLinear, WhenBackgroundShown));
     map.emplace("bg_scale", FloatField([](GuiState& s) { return &s.bg_scale; }, FixedDomain(0.2f, 5.0f), "%.2f",
-                                       SliderScale::kLog, BackgroundShownNote));
+                                       SliderScale::kLog, WhenBackgroundShown));
 
     // ---- auxiliary line overlay ----
     map.emplace("overlay_horizon_line", BoolField([](GuiState& s) { return &s.show_horizon_line; }));
@@ -1006,10 +990,10 @@ const std::unordered_map<std::string, FieldEditorEntry>& Registry() {
     map.emplace("overlay_grid_label", BoolField([](GuiState& s) { return &s.show_grid_label; }));
     map.emplace("overlay_sun_circles_line", BoolField([](GuiState& s) { return &s.show_sun_circles_line; }));
     map.emplace("overlay_sun_circles_label", BoolField([](GuiState& s) { return &s.show_sun_circles_label; }));
-    map.emplace("overlay_horizon_color", ColorField([](GuiState& s) { return s.horizon_color; }, AnnotationColourNote));
-    map.emplace("overlay_grid_color", ColorField([](GuiState& s) { return s.grid_color; }, AnnotationColourNote));
+    map.emplace("overlay_horizon_color", ColorField([](GuiState& s) { return s.horizon_color; }, NotUnderPrintMode));
+    map.emplace("overlay_grid_color", ColorField([](GuiState& s) { return s.grid_color; }, NotUnderPrintMode));
     map.emplace("overlay_sun_circles_color",
-                ColorField([](GuiState& s) { return s.sun_circles_color; }, AnnotationColourNote));
+                ColorField([](GuiState& s) { return s.sun_circles_color; }, NotUnderPrintMode));
     map.emplace("overlay_horizon_alpha",
                 FloatField([](GuiState& s) { return &s.horizon_alpha; }, FixedDomain(0.0f, 1.0f), "%.2f"));
     map.emplace("overlay_grid_alpha",
@@ -1026,7 +1010,7 @@ const std::unordered_map<std::string, FieldEditorEntry>& Registry() {
     map.emplace("overlay_view_dist_line", BoolField([](GuiState& s) { return &s.show_view_dist_line; }));
     map.emplace("overlay_view_dist_label", BoolField([](GuiState& s) { return &s.show_view_dist_label; }));
     map.emplace("overlay_view_dist_color",
-                ColorField([](GuiState& s) { return s.view_dist_color; }, AnnotationColourNote));
+                ColorField([](GuiState& s) { return s.view_dist_color; }, NotUnderPrintMode));
     map.emplace("overlay_view_dist_alpha",
                 FloatField([](GuiState& s) { return &s.view_dist_alpha; }, FixedDomain(0.0f, 1.0f), "%.2f"));
     // The axis-referenced ring family's angle list, behind the same editor as the sun circles'.
@@ -1044,7 +1028,7 @@ const std::unordered_map<std::string, FieldEditorEntry>& Registry() {
       map.emplace(MarkerFieldKey(i, MarkerKeyPart::kLabel),
                   BoolField([i](GuiState& s) { return &s.markers[i].label; }));
       map.emplace(MarkerFieldKey(i, MarkerKeyPart::kColor),
-                  ColorField([i](GuiState& s) { return s.markers[i].color; }, AnnotationColourNote));
+                  ColorField([i](GuiState& s) { return s.markers[i].color; }, NotUnderPrintMode));
     }
     // Family-wide, so outside the loop — one alpha and one radius for all six, mirroring both
     // GuiState and LUMICE_RenderParam. Domains unchanged from the pair these generalize.
@@ -1065,7 +1049,7 @@ const std::unordered_map<std::string, FieldEditorEntry>& Registry() {
     // stay ungated because print still consumes both — the branch's alpha IS the ink coverage, and the switch
     // above still turns the border off.
     map.emplace("overlay_lens_border_color",
-                ColorField([](GuiState& s) { return s.lens_border_color; }, AnnotationColourNote));
+                ColorField([](GuiState& s) { return s.lens_border_color; }, NotUnderPrintMode));
     map.emplace("overlay_lens_border_alpha",
                 FloatField([](GuiState& s) { return &s.lens_border_alpha; }, FixedDomain(0.0f, 1.0f), "%.2f"));
 

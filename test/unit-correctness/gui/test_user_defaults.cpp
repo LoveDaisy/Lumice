@@ -677,6 +677,82 @@ TEST_F(UserDefaults, TheStartupLoaderResolvesTheMultiplierOrFallsBackToFactory) 
   EXPECT_GT(gui::TakeUserDefaultsDowngradeCount(), 0);
 }
 
+// The fifth member of the `app` namespace: the Edit Entry editing-mode preference. Like the UI
+// scale it has no GuiState field, so its contract is the document pair plus the startup loader and
+// the holder — the holder being the thing the open boundary reads and a successful Save publishes.
+// Both stored states are written explicitly (no erase), so the pair is two-shaped rather than a
+// read/write/erase trio; "stored Immediate" and "never stored" differ in the file and agree in
+// behavior, which is exactly the resolution the loader's value_or spells.
+TEST_F(UserDefaults, EditEntryStagedModeRoundTripThroughTheAppRootKey) {
+  json doc = json::object();
+  EXPECT_FALSE(gui::ReadEditEntryStagedModeFromDoc(doc).has_value()) << "an empty document stores nothing";
+
+  gui::WriteEditEntryStagedModeToDoc(doc, true);
+  ASSERT_TRUE(gui::ReadEditEntryStagedModeFromDoc(doc).has_value());
+  EXPECT_TRUE(*gui::ReadEditEntryStagedModeFromDoc(doc));
+  EXPECT_TRUE(doc["app"].contains("edit_entry_staged_mode"));
+  EXPECT_FALSE(doc.contains("edit_entry_staged_mode")) << "the value must NOT land at the document half's top level";
+
+  // Immediate is a stored answer like Staged, not an erase — the same argument as use_gpu's false.
+  gui::WriteEditEntryStagedModeToDoc(doc, false);
+  ASSERT_TRUE(gui::ReadEditEntryStagedModeFromDoc(doc).has_value());
+  EXPECT_FALSE(*gui::ReadEditEntryStagedModeFromDoc(doc));
+
+  // Independent of its siblings, in both directions.
+  gui::WriteWorkerCountToDoc(doc, 2);
+  gui::WriteEditEntryStagedModeToDoc(doc, true);
+  EXPECT_EQ(gui::ReadWorkerCountFromDoc(doc), 2);
+  EXPECT_TRUE(*gui::ReadEditEntryStagedModeFromDoc(doc));
+}
+
+TEST_F(UserDefaults, AnEditEntryStagedModeTypeErrorReadsAsNothingStored) {
+  json value_is_a_string = json::object();
+  value_is_a_string["app"]["edit_entry_staged_mode"] = "true";
+  EXPECT_FALSE(gui::ReadEditEntryStagedModeFromDoc(value_is_a_string).has_value());
+
+  json value_is_a_number = json::object();
+  value_is_a_number["app"]["edit_entry_staged_mode"] = 1;
+  EXPECT_FALSE(gui::ReadEditEntryStagedModeFromDoc(value_is_a_number).has_value())
+      << "JSON 1 is not JSON true; a number here is a hand-edit, not a value";
+
+  json app_not_an_object = json::object();
+  app_not_an_object["app"] = "yes";
+  EXPECT_FALSE(gui::ReadEditEntryStagedModeFromDoc(app_not_an_object).has_value());
+
+  json not_an_object = json::array();
+  EXPECT_FALSE(gui::ReadEditEntryStagedModeFromDoc(not_an_object).has_value());
+
+  // No downgrade: a typo in the app half must not cost the document half anything.
+  EXPECT_EQ(gui::TakeUserDefaultsDowngradeCount(), 0);
+}
+
+// The startup loader and the holder it feeds. Factory is Immediate; only a legal stored true
+// publishes Staged at startup, and every unusable shape falls back without touching the file's
+// other members. The loader sets the holder, so a caller cannot forget the second half.
+TEST_F(UserDefaults, TheStagedModeStartupLoaderResolvesOrFallsBackToFactory) {
+  EXPECT_FALSE(gui::LoadEditEntryStagedModeAtStartup(std::nullopt)) << "the harness baseline has no config directory";
+  EXPECT_FALSE(gui::GetEditEntryStagedModePreference());
+
+  const std::filesystem::path dir = FreshOverlayDir("staged_mode_startup");
+  EXPECT_FALSE(gui::LoadEditEntryStagedModeAtStartup(dir)) << "no file yet: factory";
+
+  WriteRawOverlay(dir, R"({"app": {"edit_entry_staged_mode": true}})");
+  EXPECT_TRUE(gui::LoadEditEntryStagedModeAtStartup(dir));
+  EXPECT_TRUE(gui::GetEditEntryStagedModePreference());
+
+  WriteRawOverlay(dir, R"({"app": {"edit_entry_staged_mode": false}})");
+  EXPECT_FALSE(gui::LoadEditEntryStagedModeAtStartup(dir));
+  EXPECT_FALSE(gui::GetEditEntryStagedModePreference());
+
+  WriteRawOverlay(dir, R"({"app": {"edit_entry_staged_mode": 1}})");
+  EXPECT_FALSE(gui::LoadEditEntryStagedModeAtStartup(dir)) << "a number is not an answer";
+  EXPECT_FALSE(gui::GetEditEntryStagedModePreference());
+
+  WriteRawOverlay(dir, "{ not json");
+  EXPECT_FALSE(gui::LoadEditEntryStagedModeAtStartup(dir));
+  EXPECT_FALSE(gui::GetEditEntryStagedModePreference());
+}
+
 // The file is user-editable, so every malformed shape has to read as "nothing stored" rather than
 // throw. Each arm is a different node of the path being the wrong type, because they fail in
 // different places in the reader.
