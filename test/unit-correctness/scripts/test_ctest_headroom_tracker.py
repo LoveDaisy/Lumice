@@ -1640,6 +1640,9 @@ def install_concurrent_update_hook(bare: Path) -> None:
     hook = bare / "hooks" / "pre-receive"
     hook.write_text(
         "#!/bin/bash\n"
+        'exec >>"$PWD/.hook-trace.log" 2>&1\n'
+        'echo "=== pre-receive fired: git=$(git --version) user=$(id -un) pwd=$PWD"\n'
+        'set -x\n'
         'set -e\n'
         'count_file="$PWD/.pushcount"\n'
         'n=$(($(cat "$count_file" 2>/dev/null || echo 0) + 1))\n'
@@ -1685,8 +1688,12 @@ def test_publish_replaces_only_headroom_and_merges_a_concurrent_update(tmp_path)
 
     published_samples = read_remote_file(bare, "refs/heads/gh-pages:headroom/samples.jsonl")
     keys = {json.loads(line)["key"] for line in published_samples.splitlines() if line}
+    hook_log = (bare / ".hook-trace.log").read_text() if (bare / ".hook-trace.log").exists() else "<no trace>"
     assert "101:1:macOS ARM64:ctest" in keys  # ours survived
-    assert "999:1:macOS ARM64:ctest" in keys  # the concurrent side's record survived too
+    assert "999:1:macOS ARM64:ctest" in keys, (
+        f"DIAGNOSTIC keys={sorted(keys)}\n=== HOOK TRACE ===\n{hook_log}\n"
+        f"=== PUBLISHED SAMPLES ===\n{published_samples}"
+    )  # the concurrent side's record survived too
     assert read_remote_file(bare, "refs/heads/gh-pages:bench/chart.json") == "chart-v1"  # untouched
     # Snapshot self-consistency: the published event ledger must cover every
     # event the published samples derive — the merge cannot leave summary,
