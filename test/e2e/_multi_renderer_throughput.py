@@ -71,7 +71,11 @@ changed only CI/docs read 0.695/0.706 on a hosted runner while the same SHA read
 0.945/0.965 on the reference machine the same day, so the hosted ratio cannot
 carry a blocking verdict on its own. What still blocks on PRs: the parity
 battery (``test_metal_multi_renderer_parity.py`` — routing and per-renderer
-planes) and the reference machines' scheduled precise gate. The asserts inside
+planes). The reference machines' scheduled precise gate is post-merge
+feedback, not a PR check: it follows ``origin/main`` only and reports through
+a GitHub issue, so a general regression this ratio would have caught now
+surfaces on PRs only as the warning, and gets measured on main the next day.
+The asserts inside
 ``run_dual_renderer_gate`` (routing, drain alignment, legacy sanity, the ratio
 itself) stay hard — a hosted red fails the test and is reported as a warning;
 the call layer decides that the failure does not red the PR. The power figures
