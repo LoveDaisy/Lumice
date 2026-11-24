@@ -2,27 +2,27 @@
 
 - Config: threshold `6.0%`, min streak `2`, identity `cfg-bda3694d65f2`
 - Coverage: 2 run(s) processed this harvest, 0 run(s) listed but not processed (already-harvested overlap or budget backlog), 8 new sample/gap record(s), 0 out-of-population run(s) ignored
-- Sample pool: 0 sample(s) and 344 gap(s) across 8 series
+- Sample pool: 0 sample(s) and 348 gap(s) across 8 series
 
 ### Gaps this harvest
 
-- `main/Ubuntu ARM64/ctest` run 2176: log-unreadable: the response contains terminal escape sequences; pass --allow-escape-sequences to output it anyway (https://github.com/LoveDaisy/Lumice/actions/runs/45438333143)
-- `main/Ubuntu x86_64/ctest` run 2176: log-unreadable: the response contains terminal escape sequences; pass --allow-escape-sequences to output it anyway (https://github.com/LoveDaisy/Lumice/actions/runs/45438333143)
-- `main/Windows MSVC x86_64/ctest` run 2176: log-unreadable: the response contains terminal escape sequences; pass --allow-escape-sequences to output it anyway (https://github.com/LoveDaisy/Lumice/actions/runs/45438333143)
-- `main/macOS ARM64/ctest` run 2176: log-unreadable: the response contains terminal escape sequences; pass --allow-escape-sequences to output it anyway (https://github.com/LoveDaisy/Lumice/actions/runs/45438333143)
 - `main/Ubuntu ARM64/ctest` run 2178: log-unreadable: the response contains terminal escape sequences; pass --allow-escape-sequences to output it anyway (https://github.com/LoveDaisy/Lumice/actions/runs/45490924219)
 - `main/Ubuntu x86_64/ctest` run 2178: log-unreadable: the response contains terminal escape sequences; pass --allow-escape-sequences to output it anyway (https://github.com/LoveDaisy/Lumice/actions/runs/45490924219)
 - `main/Windows MSVC x86_64/ctest` run 2178: log-unreadable: the response contains terminal escape sequences; pass --allow-escape-sequences to output it anyway (https://github.com/LoveDaisy/Lumice/actions/runs/45490924219)
 - `main/macOS ARM64/ctest` run 2178: log-unreadable: the response contains terminal escape sequences; pass --allow-escape-sequences to output it anyway (https://github.com/LoveDaisy/Lumice/actions/runs/45490924219)
+- `main/Ubuntu ARM64/ctest` run 2180: log-unreadable: the response contains terminal escape sequences; pass --allow-escape-sequences to output it anyway (https://github.com/LoveDaisy/Lumice/actions/runs/45495775928)
+- `main/Ubuntu x86_64/ctest` run 2180: log-unreadable: the response contains terminal escape sequences; pass --allow-escape-sequences to output it anyway (https://github.com/LoveDaisy/Lumice/actions/runs/45495775928)
+- `main/Windows MSVC x86_64/ctest` run 2180: log-unreadable: the response contains terminal escape sequences; pass --allow-escape-sequences to output it anyway (https://github.com/LoveDaisy/Lumice/actions/runs/45495775928)
+- `main/macOS ARM64/ctest` run 2180: log-unreadable: the response contains terminal escape sequences; pass --allow-escape-sequences to output it anyway (https://github.com/LoveDaisy/Lumice/actions/runs/45495775928)
 
 ### Series (latest reading; every reading is a log-rounding approximation)
 
 | Line / job / phase | Latest run | T / raw f | implied C | headroom | Status | Streak | Signal |
 |---|---|---|---|---|---|---|---|
-| main/Ubuntu ARM64/ctest | run 2178: gap (log-unreadable: the response contains terminal escape sequences; pass --allow-escape-sequences to output it anyway) | - | - | - | - | 0 | - |
-| main/Ubuntu x86_64/ctest | run 2178: gap (log-unreadable: the response contains terminal escape sequences; pass --allow-escape-sequences to output it anyway) | - | - | - | - | 0 | - |
-| main/Windows MSVC x86_64/ctest | run 2178: gap (log-unreadable: the response contains terminal escape sequences; pass --allow-escape-sequences to output it anyway) | - | - | - | - | 0 | - |
-| main/macOS ARM64/ctest | run 2178: gap (log-unreadable: the response contains terminal escape sequences; pass --allow-escape-sequences to output it anyway) | - | - | - | - | 0 | - |
+| main/Ubuntu ARM64/ctest | run 2180: gap (log-unreadable: the response contains terminal escape sequences; pass --allow-escape-sequences to output it anyway) | - | - | - | - | 0 | - |
+| main/Ubuntu x86_64/ctest | run 2180: gap (log-unreadable: the response contains terminal escape sequences; pass --allow-escape-sequences to output it anyway) | - | - | - | - | 0 | - |
+| main/Windows MSVC x86_64/ctest | run 2180: gap (log-unreadable: the response contains terminal escape sequences; pass --allow-escape-sequences to output it anyway) | - | - | - | - | 0 | - |
+| main/macOS ARM64/ctest | run 2180: gap (log-unreadable: the response contains terminal escape sequences; pass --allow-escape-sequences to output it anyway) | - | - | - | - | 0 | - |
 | release:release/4.7.7/Ubuntu ARM64/ctest | run 2171: gap (log-unreadable: the response contains terminal escape sequences; pass --allow-escape-sequences to output it anyway) | - | - | - | - | 0 | - |
 | release:release/4.7.7/Ubuntu x86_64/ctest | run 2171: gap (log-unreadable: the response contains terminal escape sequences; pass --allow-escape-sequences to output it anyway) | - | - | - | - | 0 | - |
 | release:release/4.7.7/Windows MSVC x86_64/ctest | run 2171: gap (log-unreadable: the response contains terminal escape sequences; pass --allow-escape-sequences to output it anyway) | - | - | - | - | 0 | - |
