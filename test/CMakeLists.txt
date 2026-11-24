@@ -753,6 +753,10 @@ if(BUILD_GUI)
     # Document reset (every FrontendResetReason) -> the open edit modal: closed, its positional
     # binding dropped, since the pool its buffers were copied from has been replaced.
     "${PROJ_TEST_DIR}/composition-correctness/gui/test_edit_modal_document_reset_chain.cpp"
+    # Duplicate's focus transaction (owner ruling 2026-11-22) -> panels x edit_modals x gui_state:
+    # the editor commits before the clone snapshots the pool and rebinds to the copy; an editor on
+    # another card is only compensated; the duplicate flash rides the same positional Notify* rule.
+    "${PROJ_TEST_DIR}/composition-correctness/gui/test_duplicate_focus_chain.cpp"
     "${PROJ_TEST_DIR}/composition-correctness/gui/test_preview_projection_chain.cpp"
     # Core anchors -> the family label builders -> the Screenshot export options: the text half,
     # gated per family apart from the lines.

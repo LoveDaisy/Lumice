@@ -1515,16 +1515,17 @@ EntryCardAction RenderEntryCard(GuiState& state, int layer_idx, int entry_idx) {
   // hover, which only says the pointer happens to be here.
   const float flash_strength = (!active && !co_shared) ? DuplicateFlashStrength(state, layer_idx, entry_idx) : 0.0f;
   if (flash_strength > 0.0f) {
-    // Color and width move together: at strength 1 the border is the active card's form (the
-    // NavHighlight accent at the active width), at 0 it is exactly this card's resting look. The
-    // plain width comes from the live style rather than a constant, so the fade ends on whatever
-    // the theme actually draws — no pop at either end, and the lerp stays inside the two colors
-    // the card already knows.
+    // Color and width move together, in the SAME unit space: the resting width is read live off
+    // the style (it is the final value BeginChild consumes — the vendored ScaleAllSizes does not
+    // rescale ChildBorderSize, so this is not a logical token to push through UiPx again), and
+    // only the logical kActiveCardBorder endpoint is converted. At strength 1 the border is the
+    // active card's form, at 0 it is exactly the resting look, so the fade ends on the state it
+    // started from with no pop at expiry at any UI scale.
     const ImVec4 plain = ImGui::GetStyleColorVec4(ImGuiCol_Border);
     const ImVec4 accent = ImGui::GetStyleColorVec4(ImGuiCol_NavHighlight);
     const float plain_w = ImGui::GetStyle().ChildBorderSize;
     ImGui::PushStyleColor(ImGuiCol_Border, ImLerp(plain, accent, flash_strength));
-    ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, UiPx(plain_w + (kActiveCardBorder - plain_w) * flash_strength));
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, plain_w + (UiPx(kActiveCardBorder) - plain_w) * flash_strength);
   }
 
   // ---- Whole-card hover feedback ----
