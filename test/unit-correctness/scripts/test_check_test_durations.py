@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -913,6 +914,132 @@ def test_main_consumes_the_per_test_report_end_to_end_for_the_factor(tmp_path, c
     report.write_text(json.dumps({"unrelated.py::t": 1.0}), encoding="utf-8")
     assert ctd.main(argv) == 1
     assert "fails closed" in capsys.readouterr().out
+
+
+# --- headroom observation notices ---------------------------------------------
+#
+# Pure observation (appended output, zero judgment change): one notice per
+# machine_factor phase with computable readings, dividing by the RAW factor —
+# the clamp keeps the gate's budget sane and must not inflate the reading —
+# against the registered max_seconds. The literal worked example: T=350,
+# raw factor 0.5, B=480 -> C=700, headroom -45.83%; judging from the clamped
+# 0.8 would fake C=437.5 / headroom +8.85%, which is exactly the defect this
+# notice exists to prevent.
+
+
+def headroom_notices(notices):
+    return [n for n in notices if "headroom" in n]
+
+
+def run_machine_raw(seconds: float, factor: float):
+    return ctd.check_phases(JOB, {"ctest": seconds}, [MACHINE_BUDGET], durations=ruler_durations(factor))
+
+
+def test_headroom_notice_literal_example_uses_the_raw_factor_not_the_clamp():
+    _, notices, warnings = run_machine_raw(350.0, 0.5)
+    assert len(warnings) == 1  # the clamp warning still fires, untouched
+    heads = headroom_notices(notices)
+    assert len(heads) == 1
+    assert heads[0] == (
+        "phase budget 'ctest' for job 'E2E Slow (Ubuntu x86_64)': "
+        "headroom -45.83% (implied C 700.0s = 350.0s / raw factor 0.5000; budget 480s)"
+    )
+    assert "437.5" not in heads[0] and "+8.85" not in heads[0]
+
+
+def test_headroom_notice_format_is_stable_and_greppable():
+    _, notices, _ = run_machine_raw(450.0, 1.25)
+    heads = headroom_notices(notices)
+    assert len(heads) == 1
+    assert re.fullmatch(
+        r"phase budget 'ctest' for job '[^']*': headroom -?\d+\.\d{2}% "
+        r"\(implied C \d+\.\ds = \d+\.\ds / raw factor \d+\.\d{4}; budget \d+s\)",
+        heads[0],
+    ), heads[0]
+    # C = 450 / 1.25 = 360.0, headroom = 100 x (1 - 360/480) = 25.00%.
+    assert "headroom 25.00%" in heads[0]
+    assert notices[-1] == heads[0]  # appended after the untouched green notice
+
+
+def test_headroom_notice_appended_on_the_red_path_too():
+    errors, notices, _ = run_machine_raw(1000.0, 0.5)
+    assert len(errors) == 1 and "machine-normalized limit" in errors[0]
+    heads = headroom_notices(notices)
+    assert len(heads) == 1
+    # C = 350/0.5 x (1000/350) = 2000.0 -> 100 x (1 - 2000/480) = -316.67%.
+    assert "headroom -316.67%" in heads[0] and "implied C 2000.0s" in heads[0]
+
+
+def test_headroom_notice_uses_raw_when_a_clamped_run_is_red():
+    errors, notices, warnings = run_machine_raw(1000.0, 2.5)
+    assert len(errors) == 1 and len(warnings) == 1
+    heads = headroom_notices(notices)
+    assert len(heads) == 1
+    # raw 2.5 -> C = 400.0, headroom 16.67%; the clamped 2.0 would fake
+    # C = 500.0 / headroom -4.17%.
+    assert "raw factor 2.5000" in heads[0]
+    assert "implied C 400.0s" in heads[0] and "headroom 16.67%" in heads[0]
+    assert "500.0s" not in heads[0] and "-4.17" not in heads[0]
+
+
+def test_headroom_notice_at_exactly_the_registered_budget_reads_zero():
+    # T = B x f_raw -> C = B -> 0.00%, without a negative-zero artifact.
+    _, notices, _ = run_machine_raw(480.0 * 0.5, 0.5)
+    heads = headroom_notices(notices)
+    assert len(heads) == 1
+    assert "headroom 0.00%" in heads[0] and "-0.00" not in heads[0]
+
+
+def test_headroom_notice_absent_when_the_ruler_fails_closed():
+    durations = ruler_durations(1.0, skip="LumiceUnitCorrectnessTest::Schema3.FoldKeepsEveryRayAccounted")
+    errors, notices, _ = ctd.check_phases(JOB, {"ctest": 100.0}, [MACHINE_BUDGET], durations=durations)
+    assert len(errors) == 1
+    assert headroom_notices(notices) == []  # no numbers to fabricate
+
+
+def test_headroom_notice_absent_without_a_per_test_report():
+    _, notices, _ = ctd.check_phases(JOB, {"ctest": 100.0}, [MACHINE_BUDGET], durations=None)
+    assert headroom_notices(notices) == []
+
+
+def test_appended_notice_is_the_only_output_difference():
+    # Differential pin over a mixed budget set: the full notice list equals
+    # the pre-change shape with exactly one headroom line appended at the
+    # machine budget's position; errors and warnings are byte-identical.
+    budgets = [phase_budget("build", 420), MACHINE_BUDGET]
+    errors, notices, warnings = ctd.check_phases(
+        JOB, {"build": 100.0, "ctest": 506.8}, budgets, durations=ruler_durations(1.253)
+    )
+    assert errors == [] and warnings == []
+    heads = headroom_notices(notices)
+    assert len(heads) == 1 and notices[-1] == heads[0]
+    assert [n for n in notices if "headroom" not in n] == [
+        "phase budget 'build' for job 'E2E Slow (Ubuntu x86_64)': 100.0s / 420s",
+        "phase budget 'ctest' for job 'E2E Slow (Ubuntu x86_64)': 506.8s / 601.4s "
+        "(machine factor 1.253 from 3 rulers)",
+    ]
+
+
+def test_main_prints_the_headroom_notice_and_keeps_the_exit_code(tmp_path, capsys):
+    report = tmp_path / "durations.json"
+    report.write_text(json.dumps(ruler_durations(1.253)), encoding="utf-8")
+    phase = tmp_path / "ctest.json"
+    phase.write_text(json.dumps({"phase": "ctest", "seconds": 506.8, "exit_code": 0}), encoding="utf-8")
+    registry = write_registry(tmp_path, {"version": 4, "entries": [], "phase_budgets": [MACHINE_BUDGET]})
+    argv = ["--job", JOB, "--report", str(report), "--phase-report", str(phase), "--registry", str(registry)]
+    assert ctd.main(argv) == 0
+    out = capsys.readouterr().out
+    headroom_lines = [line for line in out.splitlines() if "headroom" in line]
+    assert len(headroom_lines) == 1
+    assert headroom_lines[0].startswith("::notice::")
+    # C = 506.8 / 1.253 ~= 404.5s, headroom ~= 15.74%.
+    assert "implied C 404.5s" in out and "headroom 15.74%" in out
+
+    # Same wiring, red path: the judgment output is unchanged, the notice rides along.
+    phase.write_text(json.dumps({"phase": "ctest", "seconds": 700.0, "exit_code": 0}), encoding="utf-8")
+    assert ctd.main(argv) == 1
+    out = capsys.readouterr().out
+    assert "machine-normalized limit" in out and sum("headroom" in line for line in out.splitlines()) == 1
 
 # --- the plugin, from a real pytest session ---------------------------------
 

@@ -15,6 +15,12 @@ readings. All are checked against the single tracked authority,
 `test/duration_registry.json`. A maintainer-authorized cold-build run may
 accept only over-limit phase budgets whose registered members include
 `build`.
+
+Every machine_factor phase with computable readings also carries one
+observational notice — implied C (`seconds / raw_factor`) and headroom
+against `max_seconds`, raw factor even where the gate judged from the
+clamp — so silent margin erosion is visible before it turns red. The
+notice is appended output only: it never feeds any judgment here.
 """
 from __future__ import annotations
 
@@ -482,6 +488,24 @@ def check_phases(
                 misses = report["misses"]
                 notice += f", {misses} misses" + (f" ({seconds / misses:.2f} s/miss)" if misses else "")
             notices.append(notice)
+        # Observation, not judgment: one appended notice per machine_factor
+        # phase with computable readings. implied C divides by the RAW factor
+        # — the clamp keeps the gate's budget sane but must not inflate the
+        # machine-relative reading — and headroom is measured against the
+        # registered max_seconds, not the clamped effective limit (the two
+        # denominators differ: 1 - C/B, never B/C - 1). Green and red phases
+        # alike carry it; a missing or broken ruler has no numbers to
+        # fabricate, so the fail-closed branches above never reach here.
+        # Appended only: every pre-existing line, and their relative order,
+        # stays byte-identical.
+        if machine_factor_value is not None and machine_raw is not None:
+            implied_c = seconds / machine_raw
+            headroom_pct = 100.0 * (1.0 - implied_c / budget["max_seconds"])
+            notices.append(
+                f"phase budget {budget['phase']!r} for job {job!r}: headroom {headroom_pct:.2f}% "
+                f"(implied C {implied_c:.1f}s = {seconds:.1f}s / raw factor {machine_raw:.4f}; "
+                f"budget {budget['max_seconds']}s)"
+            )
     if not selected:
         notices.append(f"the registry has no phase budgets for job {job!r}")
     if allow_cold_build:
