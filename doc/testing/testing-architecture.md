@@ -182,7 +182,8 @@ naming convention / physical location**. Cadence names refer to the five actual 
   baseline (see §4.1). Report `median` + `CoV` across repeats.
 - **Threshold convention**: ratio-to-legacy-CPU floor; statistics reported with `median` and
   coefficient of variation; floors tightened once a committed bench harness provides `CoV`.
-- **Cadence**: the `ci` throughput profile runs in the PR layer as a disaster floor; the
+- **Cadence**: the `ci` throughput profile runs in the PR layer as a disaster floor, reported as a
+  non-blocking warning since PR #633 (§7.0's PR row is the authority on that disposition); the
   `precise` profile runs on the reference machines' local daily schedule. `Lumice benchmark`
   history runs on pushes to `main`. §7.0 is the authority for these execution tiers; there is no
   nightly tier. The committed `scripts/bench_throughput.py` harness remains the standard tool for
