@@ -1505,21 +1505,37 @@ void RegisterDefaultsPanelTests(ImGuiTestEngine* engine) {
 
   {
     // AC3's boundary: the mode belongs to the SESSION. A Save that publishes Staged must not
-    // convert the editor that is already open, and a card switch that re-binds the open editor
-    // must not re-adopt either — both would read the preference where only a genuine close→open
-    // boundary may. The rebinding goes through OpenEditModal directly (the entry-leak cases'
-    // standing reason: the click is itself one of the things an open editor changes), which is the
-    // exact function whose guard this case pins.
+    // convert the editor that is already open, and a real cross-card switch must not re-adopt
+    // either — both would read the preference where only a genuine close→open boundary may.
+    //
+    // The card switch is a REAL A→B gesture (the entry-leak cases' shape): the Immediate editor is
+    // parked at the right edge so card 1 stays clickable, the click really moves the binding A→B
+    // (asserted on the target), and a legal edit after the switch still applies live — the plan's
+    // AC3 row, not a same-entry function call that would pass even from a closed editor.
     ImGuiTest* t = IM_REGISTER_TEST(engine, "defaults_panel", "saving_the_staged_mode_leaves_the_open_editor_alone");
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ScopedPanel panel(ctx, "panel_app_staged_session");
       panel.OpenOn(gui::DefaultsPanelSection::kSettings);
       panel.Close();
 
+      // Card 1 on a DISTINCT crystal, so "rebound to B" is a strong claim (the entry-leak cases'
+      // convention: a shared pool slot would propagate the edit and mask the claim).
+      gui::CrystalConfig second;
+      second.height = 5.0f;
+      gui::EntryCard e_second;
+      e_second.crystal_id = static_cast<int>(gui::g_state.crystals.size());
+      gui::g_state.crystals.push_back(second);
+      gui::g_state.layers[0].entries.push_back(e_second);
+      ctx->Yield(2);
+
       OpenCardEditor(ctx, 0, kCrystalTabRef);
       ctx->Yield(2);
       IM_CHECK(ImGui::GetTopMostPopupModal() == nullptr);  // opened Immediate (factory)
       IM_CHECK(gui::g_state.modal_immediate_mode);
+      if (ImGuiWindow* w = ctx->GetWindowByRef("Edit Entry")) {
+        ctx->WindowMove("Edit Entry", ImVec2(ImGui::GetIO().DisplaySize.x - w->Size.x, 0.0f));
+        ctx->Yield(2);
+      }
 
       // The Settings modal sits above the plain editor window, so the click chain is the real one.
       panel.OpenOn(gui::DefaultsPanelSection::kSettings);
@@ -1528,15 +1544,24 @@ void RegisterDefaultsPanelTests(ImGuiTestEngine* engine) {
       SaveDefaultsPanel(ctx);
       panel.Close();
 
-      // The open session did not convert, and a rebind on the same session does not re-adopt.
+      // The open session did not convert.
       IM_CHECK(ImGui::GetTopMostPopupModal() == nullptr);
       IM_CHECK(ctx->ItemExists("**/###crystal_tab"));
       IM_CHECK(gui::g_state.modal_immediate_mode);
-      gui::EditRequest rebind{ gui::EditTarget::kFilter, 0, 0 };
-      gui::OpenEditModal(rebind, gui::g_state);
-      ctx->Yield(2);
-      IM_CHECK(ImGui::GetTopMostPopupModal() == nullptr);
+
+      // Real cross-card gesture: click card 1's blank spot; the binding must move A→B without
+      // re-adopting the preference, and a legal edit must still apply live on B.
+      ctx->MouseMoveToPos(CardBlankSpot(1));
+      ctx->MouseClick(ImGuiMouseButton_Left);
+      ctx->Yield(4);
+      IM_CHECK(gui::IsEditModalOpen());
+      IM_CHECK_EQ(gui::GetEditModalTarget().entry_idx, 1);  // the switch really happened
+      IM_CHECK(ImGui::GetTopMostPopupModal() == nullptr);   // ...and did not re-adopt into a modal
       IM_CHECK(gui::g_state.modal_immediate_mode);
+      const int cid_b = gui::g_state.layers[0].entries[1].crystal_id;
+      ctx->ItemInputValue("**/##Height##modal_cr_input", 6.5f);
+      ctx->Yield(2);
+      IM_CHECK_EQ(gui::g_state.crystals[cid_b].height.center, 6.5f);  // live commit on B survived
 
       // Only a genuine close→open boundary adopts.
       ctx->ItemClick("**/Close##edit_modal");

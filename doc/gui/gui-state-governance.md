@@ -637,8 +637,11 @@ S1–S8 是立项时的种子，S9 / S10 是 S3 / S4 两个待核实分支核实
 按真边界采纳。偏好是 store-owned（`app` 命名空间第 5 成员，无 GuiState 字段、无 tier 行）——文档替换路径整体重置
 GuiState（JSON import 显式丢弃个人默认），GuiState 承载会让文档操作改写用户选择；`kIneligibleScalarResetFieldCount`
 因此保持 3。测试 harness 的基线是 factory（Immediate），经 `ResetUserDefaultsChannels` / `ResetTestState` /
-`ScopedPopups` 三处钉回；gui_test 不做启动加载（visual 隔离纪律）。跨进程持久化证据 = loader 单测（file→holder）
-+ Save 发布 gui_test（UI→file→holder）两半拼合，另留真机冒烟给 owner。
+`ScopedPopups` 三处钉回；gui_test 不做启动加载（visual 隔离纪律）。AC2 的跨进程持久化由真实应用冒烟承担
+（2026-11-24 已执行，隔离 `--user-config`：进程 1 真机 Settings→Save Staged→Cmd+Q 正常退出 exit 0；进程 2 读同一
+配置启动，开窗即 Staged modal；同进程内再存 Immediate 后不重启开窗即普通窗口；两进程退出码与截图均已存档）；
+suite 内的 loader 单测与 Save gui_test 用例是这两半的常驻回归见证，不是跨进程证明本身的替代品——
+gui_test 刻意不跑生产启动加载，它们抓不住 main 漏调 loader 这类接线缺陷。
 
 ---
 
