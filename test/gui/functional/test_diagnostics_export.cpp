@@ -248,7 +248,10 @@ void RegisterDiagnosticsTests(ImGuiTestEngine* engine) {
       ctx->Yield(2);
       IM_CHECK(gui::g_diagnostics_include_logs == false);
 
-      ctx->ItemClick("##TopBar/Save");
+      // Port note: the source line's toolbar Save is a plain "Save" button; main's
+      // toolbar labels carry the ###toolbar_save stable id (kToolbarSave), so the
+      // entry point is addressed by that id — same button, same SaveMenu chain.
+      ctx->ItemClick("##TopBar/###toolbar_save");
       ctx->Yield(2);
       // "**/" searches every window: the SaveMenu popup's registered name is
       // not worth pinning, only the item's reachability and effect are.
@@ -268,7 +271,7 @@ void RegisterDiagnosticsTests(ImGuiTestEngine* engine) {
       IM_CHECK(!ImGui::IsPopupOpen("Export Diagnostics"));
 
       // Second open: the choice reset. Opt-in per export, not a preference.
-      ctx->ItemClick("##TopBar/Save");
+      ctx->ItemClick("##TopBar/###toolbar_save");
       ctx->Yield(2);
       ctx->ItemClick("**/Export Diagnostics...");
       ctx->Yield(2);
@@ -775,7 +778,7 @@ void RegisterDiagnosticsTests(ImGuiTestEngine* engine) {
       RunDiagOp(ctx);
 
       gui::g_diagnostics_dialog_seam_path = std::filesystem::path(path);
-      ctx->ItemClick("##TopBar/Save");
+      ctx->ItemClick("##TopBar/###toolbar_save");
       ctx->Yield(2);
       ctx->ItemClick("**/Export Diagnostics...");
       ctx->Yield(2);
