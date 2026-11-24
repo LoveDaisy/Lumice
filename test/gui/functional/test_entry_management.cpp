@@ -951,11 +951,14 @@ void RegisterEntryManagementTests(ImGuiTestEngine* engine) {
         IM_REGISTER_TEST(engine, "entry_management", "a_duplicate_with_the_editor_closed_flashes_once_and_fades");
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
-      // A second card SHARING entry 0's crystal: linked entries are the case where an identity
-      // keyed by pool slot would light both cards.
-      gui::EntryCard sibling;
-      sibling.crystal_id = gui::g_state.layers[0].entries[0].crystal_id;
-      gui::g_state.layers[0].entries.push_back(sibling);
+      // A second card on its own slot. The negative control below is about crystal identity, so
+      // the card is pointed at the CLONE's crystal after the duplicate — sharing the SOURCE's
+      // crystal (the pre-duplicate link) would miss a wrong implementation that keys the flash on
+      // the clone's pool slot, because the clone's slot is fresh and nobody shares it.
+      gui::EntryCard other;
+      other.crystal_id = static_cast<int>(gui::g_state.crystals.size());
+      gui::g_state.crystals.emplace_back();
+      gui::g_state.layers[0].entries.push_back(other);
       ctx->Yield(3);
 
       ctx->ItemClick("**/" ICON_FA_COPY "##dup_0_0");
@@ -966,6 +969,14 @@ void RegisterEntryManagementTests(ImGuiTestEngine* engine) {
       IM_CHECK(gui::g_state.duplicate_flash.has_value());
       IM_CHECK_EQ(gui::g_state.duplicate_flash->layer_idx, 0);
       IM_CHECK_EQ(gui::g_state.duplicate_flash->entry_idx, 1);
+      // The negative-control premise, built and proven INSIDE the flash window: the card at
+      // index 2 now shares the clone's crystal. A flash keyed by pool crystal would light it
+      // together with the clone; the entry-keyed flash must not.
+      gui::g_state.layers[0].entries[2].crystal_id = gui::g_state.layers[0].entries[1].crystal_id;
+      ctx->Yield(2);
+      IM_CHECK_EQ(gui::g_state.layers[0].entries[2].crystal_id, gui::g_state.layers[0].entries[1].crystal_id);
+      IM_CHECK(gui::g_state.duplicate_flash.has_value());
+      IM_CHECK_EQ(gui::g_state.duplicate_flash->entry_idx, 1);
       const float s0 = gui::DuplicateFlashStrength(gui::g_state, 0, 1);
       IM_CHECK_GT(s0, 0.9f);  // armed this frame; fixed-dt makes the age exact
 
@@ -974,10 +985,13 @@ void RegisterEntryManagementTests(ImGuiTestEngine* engine) {
       ctx->MouseMoveToPos(PointOffEveryCard());
       ctx->Yield(2);
 
-      std::vector<unsigned char> clone_start, clone_mid, clone_end, clone_rest, src_start, src_end, sib_start, sib_end;
+      std::vector<unsigned char> clone_start, clone_mid, clone_end, clone_rest, src_start, src_end, other_start,
+          other_end;
       int w = 0, h = 0;
       IM_CHECK(CaptureCardRect(ctx, 1, clone_start, w, h));  // the clone, early in its fade
-      ctx->Yield(30);                                        // 1/60 fixed dt: ~0.5s in
+      IM_CHECK(CaptureCardRect(ctx, 0, src_start, w, h));    // the source, DURING the window
+      IM_CHECK(CaptureCardRect(ctx, 2, other_start, w, h));  // the crystal-sharing card, DURING
+      ctx->Yield(20);                                        // 1/60 fixed dt: ~0.4s in
       const float s_mid = gui::DuplicateFlashStrength(gui::g_state, 0, 1);
       IM_CHECK_GT(s_mid, 0.2f);  // still mid-fade — the fade is gradual, not a one-frame pop
       IM_CHECK(CaptureCardRect(ctx, 1, clone_mid, w, h));
@@ -985,21 +999,76 @@ void RegisterEntryManagementTests(ImGuiTestEngine* engine) {
       IM_CHECK(!gui::g_state.duplicate_flash.has_value());  // the tick dropped it
       IM_CHECK(CaptureCardRect(ctx, 1, clone_end, w, h));
       IM_CHECK(CaptureCardRect(ctx, 1, clone_rest, w, h));
-      IM_CHECK(CaptureCardRect(ctx, 0, src_start, w, h));  // the source, settled after the click
       IM_CHECK(CaptureCardRect(ctx, 0, src_end, w, h));
-      IM_CHECK(CaptureCardRect(ctx, 2, sib_start, w, h));  // the linked sibling (slid to index 2)
-      IM_CHECK(CaptureCardRect(ctx, 2, sib_end, w, h));
+      IM_CHECK(CaptureCardRect(ctx, 2, other_end, w, h));
 
       // The clone's border actually moved, on all four edges, across the fade...
       IM_CHECK(EdgeRingDiff(clone_start, clone_mid, w, h, 2).AllChanged());
       IM_CHECK(EdgeRingDiff(clone_mid, clone_end, w, h, 2).AllChanged());
       // ...and is back at rest: two captures after expiry agree everywhere.
       IM_CHECK(EdgeRingDiff(clone_end, clone_rest, w, h, 2).AllZero());
-      // The source card ran no flash: its ring is identical across the same window. So is the
-      // sibling's — sharing the clone's crystal does not share the flash: the gesture names the
-      // entry, not the pool slot.
+      // The negative controls span the flash window: each card's ring captured DURING the fade
+      // against the same card after expiry. The source ran no flash, and neither did the card
+      // sharing the clone's crystal — the gesture names the entry, not the pool slot.
       IM_CHECK(EdgeRingDiff(src_start, src_end, w, h, 2).AllZero());
-      IM_CHECK(EdgeRingDiff(sib_start, sib_end, w, h, 2).AllZero());
+      IM_CHECK(EdgeRingDiff(other_start, other_end, w, h, 2).AllZero());
+    };
+  }
+
+  // The duplicate flash at a non-default UI scale. The flash path scales its width endpoint
+  // through UiPx (panels.cpp: plain_w + (UiPx(kActiveCardBorder) - plain_w) * strength), so the
+  // 2x layout exercises different arithmetic than the 1x case above does: this witness pins that
+  // the flash still arms on the clone, still renders visibly thicker than the resting border, and
+  // still expires back to rest without the state lingering — the scale-path smoke around the
+  // mechanism. What it deliberately does NOT claim: that the fade's width endpoint can be
+  // discriminated pixel-wise between same-unit and re-scaled interpolation. That claim is carried
+  // by the interpolation itself (both endpoints live in the same final-pixel space, so strength 0
+  // lands exactly on the resting style value — there is no third unit to pop from). The pixel
+  // channel cannot carry it at 1x framebuffer: measured across four instrument generations, the
+  // rendered row-coverage pattern is dominated by the card rect's fractional edge phase and by the
+  // flash's concurrent color fade (~7x the resting per-row delta), and the draw-list vertex
+  // cluster tracks width at ~0.22 px/px against a ~0.15 px noise floor. An instrument that could
+  // carry this claim would need a framebuffer scale above 1x (coverage then resolves whole
+  // device lines) or a stroke-level seam that names the pushed width directly.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "entry_management", "the_duplicate_flash_runs_at_a_non_default_ui_scale");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      ctx->Yield(2);
+      const float previous_scale = gui::g_ui_scale_multiplier;
+      const ScopedWindowBasis window_basis(ctx);  // the 2x rebuild raises the window minimum
+      gui::SetUiScaleMultiplierImmediate(2.0f);
+      ctx->Yield(4);  // the style/font rebuild runs at the frame boundary
+      IM_CHECK(!gui::g_ui_scale_dirty);
+
+      ctx->ItemClick("**/" ICON_FA_COPY "##dup_0_0");
+      ctx->Yield(1);
+      IM_CHECK_EQ(static_cast<int>(gui::g_state.layers[0].entries.size()), 2);
+      // The owner's hard constraint holds at 2x too: no modal pops, the flash IS the gesture.
+      IM_CHECK(!gui::IsEditModalOpen());
+      IM_CHECK(gui::g_state.duplicate_flash.has_value());
+      IM_CHECK_EQ(gui::g_state.duplicate_flash->entry_idx, 1);
+      ctx->MouseMoveToPos(PointOffEveryCard());
+      ctx->Yield(2);
+
+      std::vector<unsigned char> flash_px, rest_px;
+      int w = 0, h = 0;
+      IM_CHECK(CaptureCardRect(ctx, 1, flash_px, w, h));  // the clone, early in its fade
+      const float s_flash = gui::DuplicateFlashStrength(gui::g_state, 0, 1);
+      IM_CHECK_GT(s_flash, 0.60f);  // captured while the fade is still near its top
+      ctx->Yield(60);               // past the 1.0s deadline (fixed dt: 1/60)
+      IM_CHECK(!gui::g_state.duplicate_flash.has_value());
+      IM_CHECK(CaptureCardRect(ctx, 1, rest_px, w, h));
+
+      // The rendered border actually moved across the fade, on all four edges...
+      IM_CHECK(EdgeRingDiff(flash_px, rest_px, w, h, 2).AllChanged());
+      // ...and is back at rest: a second capture after expiry agrees everywhere.
+      std::vector<unsigned char> rest2_px;
+      IM_CHECK(CaptureCardRect(ctx, 1, rest2_px, w, h));
+      IM_CHECK(EdgeRingDiff(rest_px, rest2_px, w, h, 2).AllZero());
+
+      gui::SetUiScaleMultiplierImmediate(previous_scale);
+      ctx->Yield(3);
     };
   }
 
