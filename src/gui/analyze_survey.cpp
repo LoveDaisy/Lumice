@@ -246,6 +246,9 @@ struct SurveyExecutor::Impl {
   // copy, and the blocked copy keeps the target alive.
   std::function<void(QueryFace)> pickup_gate;     // guarded by mu
   CompletionObserverForTest completion_observer;  // guarded by mu; read-only, non-blocking inspection
+  // The map sample override's value (SetMapSampleCountForTest): guarded by mu like the two
+  // faces above; 0 (the default) passes every request through verbatim.
+  int map_sample_count_for_test = 0;
   // Set inside ShutdownAndJoin's lock section, strictly after the in-flight cancel request —
   // the write point IS the confirmation semantics (see the header). Atomic so the read needs no
   // mutex and cannot lag the write's intent.
@@ -522,6 +525,13 @@ void SurveyExecutor::IssueMapQuery(SurveyQueryId id, const LUMICE_PathMapRequest
   if (impl_->inflight_token && impl_->inflight_face == QueryFace::kMap) {
     LUMICE_PathCancelTokenRequest(impl_->inflight_token.get());
   }
+  // The lifecycle tests' cost seam (test face): ONLY the sample volume is rewritten, at
+  // reception, on this executor's job copy — the caller's request is const and untouched.
+  // Production never sets the override, so the 0 default passes every request through
+  // verbatim.
+  if (impl_->map_sample_count_for_test > 0) {
+    job.map_request.sample_count = impl_->map_sample_count_for_test;
+  }
   impl_->pending_map = std::move(job);
   impl_->cv.notify_one();
 }
@@ -713,6 +723,11 @@ void SurveyExecutor::SetPickupGateForTest(PickupGateForTest gate) {
 void SurveyExecutor::SetCompletionObserverForTest(CompletionObserverForTest observer) {
   std::lock_guard<std::mutex> lock(impl_->mu);
   impl_->completion_observer = std::move(observer);
+}
+
+void SurveyExecutor::SetMapSampleCountForTest(int sample_count) {
+  std::lock_guard<std::mutex> lock(impl_->mu);
+  impl_->map_sample_count_for_test = sample_count;
 }
 
 bool SurveyExecutor::ShutdownCancelRequestedForTest() const {

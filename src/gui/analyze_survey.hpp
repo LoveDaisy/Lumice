@@ -615,6 +615,17 @@ class SurveyExecutor {
   using CompletionObserverForTest = std::function<void(const Finished&)>;
   void SetCompletionObserverForTest(CompletionObserverForTest observer);
 
+  // The map lifecycle tests' cost seam: when set to a positive n, every MAP request this
+  // executor receives is rewritten at reception — its sample_count becomes n before the job is
+  // queued — so the query runs the real worker/executor/mailbox/pump chain at a cost the
+  // lifecycle propositions (identity change, new class, late result) can afford. ONLY the
+  // sample volume moves: the request's identity, faces, wavelength and budget, the id/cancel/
+  // mailbox chain, and the other query faces pass through untouched, and the result's sample
+  // echo names the n that actually ran. 0 (the default) is the whole production story: requests
+  // pass through verbatim and production never calls this. Scope is this executor instance
+  // only — no global, env or cross-case state.
+  void SetMapSampleCountForTest(int sample_count);
+
   // True once ShutdownAndJoin has EXECUTED its in-flight cancel request: the flag is set inside
   // ShutdownAndJoin's lock section, immediately after LUMICE_PathCancelTokenRequest returns, so
   // observing true means the cancel has happened — never merely that a shutdown thread has
