@@ -1220,6 +1220,95 @@ def test_legacy_pending_entry_still_listed_is_collected_not_abandoned(tmp_path):
     assert "pending" not in state
 
 
+def test_legacy_removed_reason_rows_are_dropped_at_the_read_edge():
+    # The removed re-resolution subsystem's own rows (`run-pending` backlog
+    # fences, `run-not-found` identity records) are mechanism residue, not
+    # evidence: dropped wherever a ledger is read. The current vocabulary —
+    # `run-unprocessed` fences and discharged `run-abandoned` gaps — survives.
+    keep = [
+        make_sample(1, 560.0, 1.0, 560.0, created="2026-11-20T00:00:00Z"),
+        make_gap(2, created="2026-11-21T00:00:00Z", job="", reason="run-unprocessed"),
+        make_gap(3, created="2026-11-22T00:00:00Z", job="", reason="run-abandoned"),
+        make_gap(4, created="2026-11-23T00:00:00Z", job="", reason="run-in-progress"),
+    ]
+    drop = [
+        make_gap(5, created="2026-11-19T00:00:00Z", job="", reason="run-pending"),
+        make_gap(6, created="2026-11-19T06:00:00Z", job="", reason="run-not-found"),
+    ]
+    kept = tracker.drop_legacy_removed_reason_rows(keep + drop)
+    assert {record["key"] for record in kept} == {record["key"] for record in keep}
+    assert tracker.drop_legacy_removed_reason_rows([]) == []
+
+
+def test_state_merge_clears_legacy_removed_reason_rows_from_both_sides(tmp_path):
+    ours = tmp_path / "ours"
+    theirs = tmp_path / "theirs"
+    ours.mkdir()
+    theirs.mkdir()
+    tracker.write_jsonl(ours / "samples.jsonl", [
+        make_gap(5, created="2026-11-19T00:00:00Z", job="", reason="run-pending"),
+    ])
+    tracker.write_jsonl(theirs / "samples.jsonl", [
+        make_gap(6, created="2026-11-19T06:00:00Z", job="", reason="run-not-found"),
+    ])
+    (ours / "state.json").write_text(json.dumps({
+        "config": {"config_id": "cfg-x"}, "cursor": {"run_id": 1, "created_at": "2026-11-20T00:00:00Z"},
+    }))
+    (theirs / "state.json").write_text(json.dumps({
+        "config": {"config_id": "cfg-x"}, "cursor": {"run_id": 3, "created_at": "2026-11-22T00:00:00Z"},
+    }))
+    tracker.merge_into_state_dir(ours, theirs)
+    samples = [json.loads(line) for line in (ours / "samples.jsonl").read_text().splitlines() if line]
+    assert samples == []  # both sides' residue rows are gone from the union
+    state = json.loads((ours / "state.json").read_text())
+    assert state["cursor"]["run_id"] == 3
+
+
+def test_legacy_run_pending_fence_row_is_cleared_and_the_run_recollected(tmp_path):
+    # A ledger written by the pre-shrink code carries the removed subsystem's
+    # budget-backlog fence: reason run-pending, job "", line-wide key. After
+    # the shrink that reason is no longer retryable, so the completeness
+    # check read it as "collection complete" and the run the window listing
+    # still presented was skipped forever. The repair clears the row at the
+    # read edge: the identity returns to ordinary listing-driven collection
+    # (registry evidence actually lands), the stale row never comes back,
+    # and no by-id query or abandoned discharge is involved.
+    run = make_run(931, 1, "main", "2026-11-20T00:00:00Z", "sha-a")
+    bin_path, env = setup_fake_gh(
+        tmp_path, [run],
+        {931: {"jobs": {MACOS_JOB: (9931, "success")}, "logs": {9931: MAIN_GREEN_MACOS}}},
+        {"sha-a": MAIN_REGISTRY},
+    )
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    fence = make_gap(931, created="2026-11-20T00:00:00Z", job="", reason="run-pending")
+    (state_dir / "samples.jsonl").write_text(json.dumps(fence) + "\n")
+    (state_dir / "events.jsonl").write_text("")
+    (state_dir / "state.json").write_text(json.dumps({
+        "schema": 1, "config": None,
+        "cursor": {"run_id": 930, "created_at": "2026-11-19T00:00:00Z", "run_number": 0},
+        "pending": [{"run_id": 931, "created_at": "2026-11-20T00:00:00Z", "run_number": 1, "branch": "main"}],
+    }))
+    process, state_dir = run_harvest(tmp_path, bin_path, env)
+    assert process.returncode == 0
+    requested = (tmp_path / "requests.log").read_text()
+    assert "contents/test/duration_registry.json" in requested  # collected for real
+    assert not re.search(r"/actions/runs/\d+$", requested)  # listing identity only — no by-id query
+    samples = [json.loads(line) for line in (state_dir / "samples.jsonl").read_text().splitlines() if line]
+    assert any(record["key"] == "931:1:macOS ARM64:ctest" and record["type"] == "sample" for record in samples)
+    assert not [record for record in samples if record.get("reason") in ("run-pending", "run-not-found")]
+    assert not [record for record in samples if record.get("reason") == "run-abandoned"]  # listed → not discharged
+    state = json.loads((state_dir / "state.json").read_text())
+    assert "pending" not in state
+
+    # Idempotent: the cleared row stays cleared on the next harvest.
+    second, state_dir = run_harvest(tmp_path, bin_path, env)
+    assert second.returncode == 0
+    samples_after = [json.loads(line) for line in (state_dir / "samples.jsonl").read_text().splitlines() if line]
+    assert not [record for record in samples_after if record.get("reason") in ("run-pending", "run-not-found")]
+    assert any(record["key"] == "931:1:macOS ARM64:ctest" and record["type"] == "sample" for record in samples_after)
+
+
 def test_abandoned_gap_breaks_pairing_and_is_never_evidence():
     # The discharged run's gap row fences the timeline at its position — two
     # lows separated by it never pair — and the row itself is never a reading:

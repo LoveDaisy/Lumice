@@ -61,7 +61,11 @@ the listing cannot see. A run owed but not collected this round — a budget
 backlog — is fenced with a retryable `run-unprocessed` line-wide gap and
 re-collected from the listing while it stays in the `created=>` window. A
 run pinned by an older state schema's pending queue is discharged once as a
-PERMANENT `run-abandoned` gap: the hole is recorded, never backfilled. The
+PERMANENT `run-abandoned` gap: the hole is recorded, never backfilled.
+Ledger rows the removed subsystem itself wrote (`run-pending` backlog
+fences, `run-not-found` identity records) are cleared at the read edge —
+they are statements about a mechanism that no longer exists, and keeping
+them would fence already-listed runs out of collection. The
 direction of every missing-evidence case is missing signal (under-signal),
 never fabricated health. Known limitation, accepted for v1: whole-run
 availability is judged by the run's LATEST attempt conclusion, so an
@@ -617,6 +621,35 @@ def drop_superseded_line_wide_gaps(records: list[dict]) -> list[dict]:
             and is_retryable_gap(record)
             and record["run_id"] in complete_runs
         )
+    ]
+
+
+# Gap reasons only the removed re-resolution subsystem ever wrote: they are
+# load-time residue, not evidence, and are dropped wherever a ledger is read.
+LEGACY_REMOVED_GAP_REASONS = ("run-pending", "run-not-found")
+
+
+def drop_legacy_removed_reason_rows(records: list[dict]) -> list[dict]:
+    """Discard ledger rows written by the removed re-resolution subsystem.
+
+    Pre-shrink code fenced budget-backlog runs with line-wide gaps keyed
+    `run:1::` and reason `run-pending`, and recorded unresolvable identities
+    as `run-not-found` (today's vocabulary has neither: budget fences are
+    `run-unprocessed`, and no identity is ever queried by id again). Such a
+    row is a statement about the removed mechanism's queue, not about the
+    run's evidence — but left in the ledger it poisons the completeness
+    check: an unknown, non-retryable reason reads as "collection complete",
+    so a run the window listing still presents would be skipped forever.
+    Dropping the rows wherever a ledger is read restores those identities to
+    ordinary listing-driven collection: a budget-backlog fence's run is by
+    construction still inside the listing window, so the next harvest either
+    re-collects it or re-fences it under the current vocabulary. New code
+    never writes these reasons; this is residue cleanup at the read edge,
+    not a migration mechanism.
+    """
+    return [
+        record for record in records
+        if not (record.get("type") == "gap" and record.get("reason") in LEGACY_REMOVED_GAP_REASONS)
     ]
 
 
@@ -1200,10 +1233,13 @@ def merge_into_state_dir(state_dir: Path, theirs: Path) -> None:
 
     A `pending` key surviving in either side's state.json belongs to the
     removed re-resolution subsystem of an older schema; it is dropped, not
-    unioned — those runs' fences already live in the unioned samples ledger,
-    and no identity is carried across harvests (v1 boundary).
+    unioned. That subsystem's own ledger rows (`run-pending` backlog fences,
+    `run-not-found` identity records) are likewise cleared from the unioned
+    ledger — statements about a removed mechanism, not evidence — and no
+    identity is carried across harvests (v1 boundary).
     """
     samples = merge_records(load_jsonl(state_dir / "samples.jsonl"), load_jsonl(theirs / "samples.jsonl"))
+    samples = drop_legacy_removed_reason_rows(samples)
     samples = drop_superseded_line_wide_gaps(samples)
     write_jsonl(state_dir / "samples.jsonl", samples)
     events = merge_records(
@@ -1415,7 +1451,7 @@ def harvest_command(args: argparse.Namespace) -> int:
             config_change_marker(previous_state["config"].get("config_id") or "", config_id)
         )
 
-    samples = load_jsonl(paths["samples"])
+    samples = drop_legacy_removed_reason_rows(load_jsonl(paths["samples"]))
     events = load_jsonl(paths["events"])
     records_by_run: dict[int, list[dict]] = {}
     for record in samples:
@@ -1648,7 +1684,7 @@ def harvest_command(args: argparse.Namespace) -> int:
     # describe the merged truth, not the pre-publish snapshot. Recompute is
     # deterministic, so this cannot invent events the pre-publish pass
     # did not see.
-    final_samples = load_jsonl(paths["samples"])
+    final_samples = drop_legacy_removed_reason_rows(load_jsonl(paths["samples"]))
     per_series_rows, active_events, _ = evaluate_series(
         final_samples, config_id, args.threshold_pct, args.min_streak, extant_release
     )
