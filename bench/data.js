@@ -1,56 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795504693620,
+  "lastUpdate": 1795508654365,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "a0bce739786ae19df76253a07e518ea470b5f422",
-          "message": "Merge pull request #514 from LoveDaisy/chore/ci-build-budget-per-miss\n\nci: per-miss build budget — adaptive limit + absolute backstop (registry v3)",
-          "timestamp": "2026-10-19T09:55:27+08:00",
-          "tree_id": "44c0290ab73f18304b5552f748f3c0a49390d2dd",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/a0bce739786ae19df76253a07e518ea470b5f422"
-        },
-        "date": 1792375116353,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 327381.9,
-            "unit": "rays/sec",
-            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 503958,
-            "unit": "rays/sec",
-            "extra": "CPU: Neoverse-N2\\nCores: 4"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 426425.7,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 9V74 80-Core Processor\\nCores: 4"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 303547.5,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -4800,6 +4752,54 @@ window.BENCHMARK_DATA = {
             "value": 461275.1,
             "unit": "rays/sec",
             "extra": "CPU: Intel(R) Xeon(R) 6973P-C\\nCores: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "390c995b286acbd17618dd50ae2adb3b2498a024",
+          "message": "Merge pull request #642 from LoveDaisy/feat/metal-gate-blocking-scope\n\nci(e2e-slow): Metal dual-renderer throughput ratio becomes a reported signal",
+          "timestamp": "2026-11-24T16:18:36+08:00",
+          "tree_id": "f4143a5d0a9e1378f579c84b5b9e1a36183c4021",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/390c995b286acbd17618dd50ae2adb3b2498a024"
+        },
+        "date": 1795508652564,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 301294.9,
+            "unit": "rays/sec",
+            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 504168.2,
+            "unit": "rays/sec",
+            "extra": "CPU: Neoverse-N2\\nCores: 4"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 525226.1,
+            "unit": "rays/sec",
+            "extra": "CPU: Intel(R) Xeon(R) 6975P-C\\nCores: 4"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 310720.1,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
           }
         ]
       }
