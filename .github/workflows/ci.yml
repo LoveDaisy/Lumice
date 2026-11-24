@@ -1764,23 +1764,57 @@ jobs:
           # include test/performance run this (the leg named "parity" lists files
           # explicitly and has no perf tests → skipped). Cheap (~2 gates); no -n
           # on purpose.
-          # --dual-gate-profile=ci: the dual-renderer gate here is the DISASTER
-          # floor (0.75 over 5 reps), not the precise 0.85 over 21 — a hosted
-          # runner's per-arm CoV (0.155-0.229) reads the precise number red with
-          # nothing wrong. A red here is a red PR. The precise gate runs on the
-          # reference machines on a schedule (doc/testing/performance-testing.md,
-          # "Precise throughput gate (local schedule)"); why the two numbers:
+          # ONE measure_ci_phase envelope wraps BOTH pytest calls below. The phase
+          # identity stays singular (check_test_durations rejects a second report
+          # named e2e-slow-performance), and the envelope's wall clock must keep
+          # paying for both calls plus the extra pytest startup. The performance
+          # phase's ceiling was re-derived for exactly this composition (180 -> 210,
+          # 2026-11-24, run 45346727049 evidence; derivation in the registry reason);
+          # the aggregate budget in test/duration_registry.json does not move.
+          #
+          # The two calls PARTITION test/performance; nothing is dropped or run
+          # twice. The REST call carries every perf test except the Metal
+          # dual-renderer throughput gate, deselected by its exact nodeid (--ignore
+          # would not do: pytest applies it only to paths discovered by recursing
+          # into a positional, and a -k pattern would be a wide match). Its exit
+          # code stays blocking like any other perf failure. The SIGNAL call runs
+          # that one gate alone, arguments unchanged (--dual-gate-profile=ci: the
+          # DISASTER floor, 0.75 over 5 reps, not the precise 0.85 over 21 — a
+          # hosted runner's per-arm CoV 0.155-0.229 reads the precise number red
+          # with nothing wrong). The precise gate runs on the reference machines on
+          # a schedule (doc/testing/performance-testing.md, "Precise throughput gate
+          # (local schedule)"); why the two numbers:
           # test/e2e/_multi_renderer_throughput.py. -rP keeps the gates' measured
           # ratio/CoV lines in the log when they pass, which pytest otherwise drops.
+          #
+          # The signal call is REPORTED, NOT BLOCKING: its non-zero exit prints a
+          # ::warning and never reaches the step's exit code. Since PR #633
+          # (main@1efc673fc) the hosted dual/single ratio is not trusted as a
+          # blocking signal — the same tree read 0.695/0.706 on the hosted runner
+          # and 0.945/0.965 on the reference machine, so a hosted red no longer
+          # reds the PR. The propositions the gate guarded are carried by the
+          # parity battery (phase 1's test_metal_multi_renderer_parity.py —
+          # routing and per-renderer planes) and the scheduled precise gate. The
+          # eligibility line is drawn at the CALL boundary: the whole signal
+          # test's outcome is a signal, routing/drain/legacy asserts inside it
+          # included. Both duration reports stay separate files and are merged by
+          # the "Check test durations" step (the gate is registered at 124 s for
+          # this job; a missing reading reds the duration check).
           case "${{ matrix.pytest_args }}" in
             *test/performance*)
               phase2_rc=0
               python3 scripts/measure_ci_phase.py \
                 --report "$RUNNER_TEMP/e2e-slow-phases/performance.json" \
                 --phase e2e-slow-performance -- \
-                pytest test/performance -v -m slow --durations=20 -rP \
-                  --dual-gate-profile=ci \
-                  -p duration_report_plugin --duration-report="$RUNNER_TEMP/durations-phase2.json" || phase2_rc=$?
+                bash -c '
+                  perf_rest_rc=0; perf_signal_rc=0
+                  pytest test/performance --deselect=test/performance/test_metal_multi_renderer_throughput.py::test_metal_dual_renderer_throughput -v -m slow --durations=20 -rP --dual-gate-profile=ci -p duration_report_plugin --duration-report="$RUNNER_TEMP/durations-phase2.json" || perf_rest_rc=$?
+                  pytest test/performance/test_metal_multi_renderer_throughput.py::test_metal_dual_renderer_throughput -v -m slow --durations=20 -rP --dual-gate-profile=ci -p duration_report_plugin --duration-report="$RUNNER_TEMP/durations-phase2-signal.json" || perf_signal_rc=$?
+                  if [ "$perf_signal_rc" -ne 0 ]; then
+                    echo "::warning title=Metal dual-renderer throughput (reported, not blocking)::test_metal_dual_renderer_throughput exited $perf_signal_rc — the hosted dual/single throughput ratio is a reported signal since PR #633; it does not red this PR. Original failure output is above. The precise gate (0.85 over 21 reps) runs on the reference machines on a schedule."
+                  fi
+                  exit "$perf_rest_rc"
+                ' || phase2_rc=$?
               if [ "$rc" -eq 0 ]; then rc=$phase2_rc; fi
               ;;
           esac
@@ -1797,17 +1831,27 @@ jobs:
         # Those 278-296s were the precise profile (21 reps). Phase 2 now runs the ci
         # profile (5 reps): the gate measured 104s / 124s and phase 2 124s / 147s on runs
         # 36756401783 / 36758254351 (28-41s on the Metal reference machine), job totals
-        # 811s / 830s. The timeout is left at 25; where it should go is a whole-leg call.
+        # 811s / 830s. Phase 2 is now two serial pytest calls inside one envelope (the
+        # rest pool, then the Metal dual gate alone as a reported signal): the measured
+        # work is unchanged plus one extra pytest startup, still inside this envelope
+        # and the registry's e2e-slow-performance budget. The timeout is left at 25;
+        # where it should go is a whole-leg call.
         timeout-minutes: 25
 
       - name: Check test durations
         # Same runtime gate as e2e-test's step of this name; phase 2 writes its
         # report only on legs that run it, so the second --report is conditional.
+        # The phase-2 split adds a third file: the isolated signal call's per-test
+        # durations (its gate is registered for this job — dropping its reading
+        # would red the check as "registered but did not run").
         run: |
           reports=(--report "$RUNNER_TEMP/durations-phase1.json")
           phases=(--phase-report "$RUNNER_TEMP/e2e-slow-phases/correctness.json")
           if [ -f "$RUNNER_TEMP/durations-phase2.json" ]; then
             reports+=(--report "$RUNNER_TEMP/durations-phase2.json")
+          fi
+          if [ -f "$RUNNER_TEMP/durations-phase2-signal.json" ]; then
+            reports+=(--report "$RUNNER_TEMP/durations-phase2-signal.json")
           fi
           if [ -f "$RUNNER_TEMP/e2e-slow-phases/performance.json" ]; then
             phases+=(--phase-report "$RUNNER_TEMP/e2e-slow-phases/performance.json")
@@ -1823,6 +1867,7 @@ jobs:
           path: |
             ${{ runner.temp }}/durations-phase1.json
             ${{ runner.temp }}/durations-phase2.json
+            ${{ runner.temp }}/durations-phase2-signal.json
             ${{ runner.temp }}/e2e-slow-phases
           if-no-files-found: warn
           retention-days: 30
