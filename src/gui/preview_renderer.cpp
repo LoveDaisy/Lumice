@@ -15,6 +15,16 @@
 
 namespace lumice::gui {
 
+// A retired mirror representation loses its STORAGE, not just its element count: std::vector's
+// clear() keeps the heap block, so a representation switch or a document close that only cleared
+// would leave hundreds of MiB of dead capacity resident on exactly the machines this renderer
+// serves. Same-representation rewrites keep their capacity (the assign path below reuses it).
+template <typename T>
+void ReleaseMirrorStorage(std::vector<T>& mirror) {
+  std::vector<T>().swap(mirror);
+}
+
+
 // clang-format off
 static const char* kVertexShader = R"glsl(
 #version 330 core
@@ -59,6 +69,12 @@ uniform float u_globe_back_fade;  // globe only: far-side fade range (> 0 whenev
 #endif
 uniform float u_intensity_scale;  // = intensity_factor / per_pixel_intensity (0 = RGB mode)
 uniform int u_tex_mode;           // kTexModeSrgbComposited / kTexModeXyz / kTexModeSrgbRadiance
+// Whether the sim layer may be sampled at all (PreviewRenderer::sim_layer_valid_). The no-image
+// state — a revoked display after an OOM, a cleared document whose blank has not (yet) landed —
+// must not depend on "the blank redefinition will succeed": zero means the fetch below is skipped
+// entirely, the zero-energy colour stands in for the sky, and NOT ONE texel of whatever the
+// storage actually holds reaches the screen. Background photo and overlay keep drawing.
+uniform int u_sim_valid;
 // kTexModeXyz only: the texture holds xyz / u_xyz_scale as float16 (see src/gui/xyz_half_codec.hpp),
 // so one multiply at the sample site restores the frame's linear XYZ before anything reads it.
 uniform float u_xyz_scale;
@@ -206,7 +222,12 @@ const vec3 kWhitePointD65 = vec3(0.95047, 1.00000, 1.08883);
 // The .lmc bake is NOT one of them any more: it reaches the background-free overload, because the
 // sky is a setting rather than part of the stored picture and joins right here instead. See
 // app.cpp's RefreshCpuTextureForSave and PreviewRenderer::TextureMode.
-
+)glsl"
+// MSVC caps a single string literal at 16384 bytes (C2026); the shader source is split into
+// adjacent literals the compiler concatenates back into the identical bytes. Split points are
+// function boundaries, picked when a segment would cross the cap — see check_policies.py's
+// msvc-string-literal-limit rule.
+R"glsl(
 // Gamut clip + XYZ->RGB matrix. NOT clamped and NOT gamma-encoded: the background composites here.
 vec3 xyzToLinearRgb(vec3 xyz) {
     // Normalize by accumulated intensity
@@ -1076,7 +1097,7 @@ void main() {
       float back_w = 0.0;
       vec4 back = globeFarDir(pos, half_fov, back_ri, back_w);
       far_pixel_visible = back.w >= 0.5 && dirPassesClip(back.xyz);
-      if (far_pixel_visible && u_tex_mode != kTexModeSrgbComposited) {
+      if (far_pixel_visible && u_sim_valid == 1 && u_tex_mode != kTexModeSrgbComposited) {
         has_back = true;
         back_tex = sampleDualFisheye(back.xyz);
         if (u_tex_mode == kTexModeXyz) {
@@ -1102,11 +1123,17 @@ void main() {
 #ifdef LUMICE_GLOBE_BACK_FADE
       if (pixel_visible) {
 #endif
-        tex_color = sampleDualFisheye(world_dir);
-        if (u_tex_mode == kTexModeXyz) {
-          // Undo the float16 storage scale here, once, so every consumer below — the gamut clip,
-          // the print branch's tex_color.y — reads the frame's own linear XYZ.
-          tex_color *= u_xyz_scale;
+        // The sim-valid gate is the no-image contract's render-side half: while it is 0 the
+        // fetch does not run at all, tex_color stays the zero-energy vec3(0.0), and every branch
+        // below behaves exactly as it would for an empty frame (paper under print, black
+        // otherwise). See sim_layer_valid_ in the header.
+        if (u_sim_valid == 1) {
+          tex_color = sampleDualFisheye(world_dir);
+          if (u_tex_mode == kTexModeXyz) {
+            // Undo the float16 storage scale here, once, so every consumer below — the gamut clip,
+            // the print branch's tex_color.y — reads the frame's own linear XYZ.
+            tex_color *= u_xyz_scale;
+          }
         }
 #ifdef LUMICE_GLOBE_BACK_FADE
       }
@@ -1308,6 +1335,9 @@ static unsigned int CheckCompiledShader(unsigned int shader) {
 }
 
 static unsigned int CompileShader(unsigned int type, const char* source) {
+  if (PreviewRenderer::ShaderCompileFaultArmedForTest()) {
+    return 0;  // test seam: a compile failure with nothing created
+  }
   unsigned int shader = glCreateShader(type);
   glShaderSource(shader, 1, &source, nullptr);
   glCompileShader(shader);
@@ -1316,6 +1346,9 @@ static unsigned int CompileShader(unsigned int type, const char* source) {
 
 // The fragment shader from its parts — version, optional define, body; see kFragmentShader.
 static unsigned int CompileFragmentShader(bool globe_back_fade) {
+  if (PreviewRenderer::ShaderCompileFaultArmedForTest()) {
+    return 0;  // test seam: a compile failure with nothing created
+  }
   unsigned int shader = glCreateShader(GL_FRAGMENT_SHADER);
   const char* parts[5] = { kFragmentShaderVersion, globe_back_fade ? kGlobeBackFadeDefine : "", kFragmentShader,
                            kProjectionShader, kFragmentAfterProjection };
@@ -1348,18 +1381,46 @@ bool PreviewRenderer::Init() {
   unsigned int fs = CompileFragmentShader(false);
   unsigned int fs_back_fade = CompileFragmentShader(true);
   if (!vs || !fs || !fs_back_fade) {
+    // Partial-init cleanup: this renderer used to only exist at process scope, where a failed
+    // init preceded exit and the leak was invisible; the transient full-source export renderer
+    // can now fail init repeatedly inside a live application, and every shader left here would
+    // stay leaked in a context that keeps running.
+    if (vs != 0) {
+      glDeleteShader(vs);
+    }
+    if (fs != 0) {
+      glDeleteShader(fs);
+    }
+    if (fs_back_fade != 0) {
+      glDeleteShader(fs_back_fade);
+    }
     return false;
   }
 
   shader_program_ = LinkProgram(vs, fs);
   globe_back_fade_program_ = LinkProgram(vs, fs_back_fade);
   if (!shader_program_ || !globe_back_fade_program_) {
+    if (shader_program_ != 0) {
+      glDeleteProgram(shader_program_);
+      shader_program_ = 0;
+    }
+    if (globe_back_fade_program_ != 0) {
+      glDeleteProgram(globe_back_fade_program_);
+      globe_back_fade_program_ = 0;
+    }
+    glDeleteShader(vs);
+    glDeleteShader(fs);
+    glDeleteShader(fs_back_fade);
     return false;
   }
 
   glDeleteShader(vs);
   glDeleteShader(fs);
   glDeleteShader(fs_back_fade);
+  // Both programs linked (a link failure returned above with its own cleanup, before any
+  // counting): the two live program objects enter the paired create/delete counter here.
+  ++s_live_gl_objects_for_test_;
+  ++s_live_gl_objects_for_test_;
 
   // Fullscreen quad (two triangles, NDC coordinates)
   // clang-format off
@@ -1374,7 +1435,9 @@ bool PreviewRenderer::Init() {
   // clang-format on
 
   glGenVertexArrays(1, &vao_);
+  ++s_live_gl_objects_for_test_;
   glGenBuffers(1, &vbo_);
+  ++s_live_gl_objects_for_test_;
 
   glBindVertexArray(vao_);
   glBindBuffer(GL_ARRAY_BUFFER, vbo_);
@@ -1385,6 +1448,7 @@ bool PreviewRenderer::Init() {
 
   // Create equirect texture
   glGenTextures(1, &texture_);
+  ++s_live_gl_objects_for_test_;
   glBindTexture(GL_TEXTURE_2D, texture_);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
@@ -1411,6 +1475,7 @@ bool PreviewRenderer::Init() {
   // where the averaging has already been done. MAG stays GL_LINEAR: magnification has no footprint
   // to cover and no mip level above 0 to reach for.
   glGenTextures(1, &bg_texture_);
+  ++s_live_gl_objects_for_test_;
   glBindTexture(GL_TEXTURE_2D, bg_texture_);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
@@ -1435,50 +1500,83 @@ void PreviewRenderer::Destroy() {
     }
   }
   pbo_byte_count_ = { 0, 0 };
-  pbo_index_ = 0;
 
   if (texture_) {
     glDeleteTextures(1, &texture_);
     texture_ = 0;
+    --s_live_gl_objects_for_test_;
   }
   if (bg_texture_) {
     glDeleteTextures(1, &bg_texture_);
     bg_texture_ = 0;
+    --s_live_gl_objects_for_test_;
   }
   if (vbo_) {
     glDeleteBuffers(1, &vbo_);
     vbo_ = 0;
+    --s_live_gl_objects_for_test_;
   }
   if (vao_) {
     glDeleteVertexArrays(1, &vao_);
     vao_ = 0;
+    --s_live_gl_objects_for_test_;
   }
   if (shader_program_) {
     glDeleteProgram(shader_program_);
     shader_program_ = 0;
+    --s_live_gl_objects_for_test_;
   }
   if (globe_back_fade_program_) {
     glDeleteProgram(globe_back_fade_program_);
     globe_back_fade_program_ = 0;
+    --s_live_gl_objects_for_test_;
   }
   tex_width_ = 0;
   tex_height_ = 0;
-  tex_data_.clear();
-  tex_xyz_data_.clear();
+  ReleaseMirrorStorage(tex_data_);
+  ReleaseMirrorStorage(tex_xyz_data_);
+  ReleaseMirrorStorage(tex_xyz_half_data_);
+  tex_xyz_half_scale_ = 0.0f;
   tex_xyz_meta_ = XyzTextureMeta{};
   cpu_tex_mode_ = TextureMode::kSrgbComposited;
+  cpu_tex_width_ = 0;
+  cpu_tex_height_ = 0;
   bg_width_ = 0;
   bg_height_ = 0;
   bg_aspect_ = 1.0f;
 }
 
+void PreviewRenderer::ReleaseCpuMirrorStorage() {
+  ReleaseMirrorStorage(tex_data_);
+  ReleaseMirrorStorage(tex_xyz_data_);
+  ReleaseMirrorStorage(tex_xyz_half_data_);
+  tex_xyz_half_scale_ = 0.0f;
+  tex_xyz_meta_ = XyzTextureMeta{};
+  cpu_tex_mode_ = TextureMode::kSrgbComposited;
+  cpu_tex_width_ = 0;
+  cpu_tex_height_ = 0;
+}
+
 void PreviewRenderer::ClearTexture() {
   tex_width_ = 0;
   tex_height_ = 0;
-  tex_data_.clear();
-  tex_xyz_data_.clear();
+  // Every mirror retires WITH ITS STORAGE: the document is gone, no representation has a
+  // consumer, and a stale capacity would hold the previous document's frame size on the machine
+  // after the document that needed it.
+  ReleaseMirrorStorage(tex_data_);
+  ReleaseMirrorStorage(tex_xyz_data_);
+  ReleaseMirrorStorage(tex_xyz_half_data_);
+  tex_xyz_half_scale_ = 0.0f;
   tex_xyz_meta_ = XyzTextureMeta{};
   cpu_tex_mode_ = TextureMode::kSrgbComposited;
+  cpu_tex_width_ = 0;
+  cpu_tex_height_ = 0;
+  // CPU-side (no GL): the display stops being sampleable the moment the document is gone, not
+  // when the deferred blank finally lands — between here and that blank, whatever the storage
+  // still holds belongs to no document.
+  sim_layer_valid_ = false;
+  // A fresh document is a fresh allocation climate: the blank retry budget resets with it.
+  blank_attempts_ = 0;
   // GL reset deferred to next Render() (main thread) — this method is called
   // from gui_test coroutine workers with no GL context; a direct gl* call
   // would SIGILL. See preview_renderer.hpp needs_gl_blank_ contract.
@@ -1499,22 +1597,60 @@ void PreviewRenderer::ClearTexture() {
 void PreviewRenderer::UploadBlankSimTexture() {
   static const unsigned char kBlack[3] = { 0, 0, 0 };
   glBindTexture(GL_TEXTURE_2D, texture_);
-  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, 1, 1, 0, GL_RGB, GL_UNSIGNED_BYTE, kBlack);
+  // The hook consults here too (before the real call): the blank redefinition is a genuine
+  // allocation that can fail under the same pressure, and a test must be able to witness the
+  // no-sample gate holding while the blank cannot land.
+  int forced = HookFaultFor(UploadResult::Stage::kTexImage);
+  GLenum err = GL_NO_ERROR;
+  if (forced == 0) {
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, 1, 1, 0, GL_RGB, GL_UNSIGNED_BYTE, kBlack);
+    err = glGetError();
+  } else {
+    err = static_cast<GLenum>(forced);
+  }
   glBindTexture(GL_TEXTURE_2D, 0);
+  if (err != GL_NO_ERROR) {
+    // The blank itself failed to allocate (a real OOM leaves the GL state undefined — spec §2.5,
+    // and the reviewer's point stands even for a 1x1): the storage behind texture_ is not
+    // trustworthy, so the no-sample gate stays CLOSED. The retry is BOUNDED: each frame's
+    // re-attempt is an allocation the machine just refused, so after kMaxBlankAttempts the
+    // attempt stops until a successful upload or a document switch re-arms it — the gate stays
+    // closed the whole time, so stopping costs nothing visually and the log stops growing.
+    ++blank_attempts_;
+    if (blank_attempts_ >= kMaxBlankAttempts) {
+      needs_gl_blank_ = false;
+      GUI_LOG_ERROR(
+          "[GL] UploadBlankSimTexture: glTexImage2D failed (gl_error=0x{:04X}) — retry budget spent; the "
+          "display stays un-sampled until the next verified upload",
+          err);
+    } else {
+      GUI_LOG_ERROR(
+          "[GL] UploadBlankSimTexture: glTexImage2D failed (gl_error=0x{:04X}) — sim layer stays "
+          "un-sampled, blank re-armed",
+          err);
+    }
+    tex_mode_ = TextureMode::kSrgbComposited;
+    return;
+  }
   tex_mode_ = TextureMode::kSrgbComposited;
+  sim_layer_valid_ = true;
+  needs_gl_blank_ = false;
+  blank_attempts_ = 0;
 }
 
-void PreviewRenderer::UpdateCpuTextureData(const unsigned char* data, int width, int height) {
+void PreviewRenderer::UpdateCpuTextureData(const unsigned char* data, int width, int height, TextureMode mode) {
   if (!data || width <= 0 || height <= 0) {
     return;
   }
   size_t byte_count = static_cast<size_t>(width) * height * 3;
   tex_data_.assign(data, data + byte_count);
-  tex_xyz_data_.clear();
+  ReleaseMirrorStorage(tex_xyz_data_);
+  ReleaseMirrorStorage(tex_xyz_half_data_);
+  tex_xyz_half_scale_ = 0.0f;
   tex_xyz_meta_ = XyzTextureMeta{};
-  cpu_tex_mode_ = TextureMode::kSrgbRadiance;
-  tex_width_ = width;
-  tex_height_ = height;
+  cpu_tex_mode_ = mode;
+  cpu_tex_width_ = width;
+  cpu_tex_height_ = height;
 }
 
 void PreviewRenderer::UpdateCpuXyzTextureData(const float* data, int width, int height, const XyzTextureMeta& meta) {
@@ -1523,143 +1659,849 @@ void PreviewRenderer::UpdateCpuXyzTextureData(const float* data, int width, int 
   }
   size_t float_count = static_cast<size_t>(width) * height * 3;
   tex_xyz_data_.assign(data, data + float_count);
+  ReleaseMirrorStorage(tex_xyz_half_data_);
+  tex_xyz_half_scale_ = 0.0f;
   tex_xyz_meta_ = meta;
-  tex_data_.clear();
+  ReleaseMirrorStorage(tex_data_);
   cpu_tex_mode_ = TextureMode::kXyz;
-  tex_width_ = width;
-  tex_height_ = height;
+  cpu_tex_width_ = width;
+  cpu_tex_height_ = height;
 }
 
-void PreviewRenderer::UploadTexture(const unsigned char* data, int width, int height) {
-  UploadUint8Texture(data, width, height, TextureMode::kSrgbComposited);
+void PreviewRenderer::UpdateCpuXyzHalfTextureData(std::vector<uint16_t>&& half_bits, int width, int height, float scale,
+                                                  const XyzTextureMeta& meta) {
+  if (half_bits.size() != static_cast<size_t>(width) * height * 3) {
+    return;
+  }
+  // The buffer becomes the mirror; the open that handed it over keeps an empty vector.
+  tex_xyz_half_data_ = std::move(half_bits);
+  tex_xyz_half_scale_ = scale;
+  tex_xyz_meta_ = meta;
+  ReleaseMirrorStorage(tex_xyz_data_);
+  ReleaseMirrorStorage(tex_data_);
+  cpu_tex_mode_ = TextureMode::kXyz;
+  cpu_tex_width_ = width;
+  cpu_tex_height_ = height;
 }
 
-void PreviewRenderer::UploadRadianceTexture(const unsigned char* data, int width, int height) {
-  UploadUint8Texture(data, width, height, TextureMode::kSrgbRadiance);
+void PreviewRenderer::UpdateCpuXyzHalfTextureData(const uint16_t* half_bits, int width, int height, float scale,
+                                                  const XyzTextureMeta& meta) {
+  if (!half_bits || width <= 0 || height <= 0) {
+    return;
+  }
+  size_t component_count = static_cast<size_t>(width) * height * 3;
+  tex_xyz_half_data_.assign(half_bits, half_bits + component_count);
+  tex_xyz_half_scale_ = scale;
+  tex_xyz_meta_ = meta;
+  ReleaseMirrorStorage(tex_xyz_data_);
+  ReleaseMirrorStorage(tex_data_);
+  cpu_tex_mode_ = TextureMode::kXyz;
+  cpu_tex_width_ = width;
+  cpu_tex_height_ = height;
+}
+
+UploadResult PreviewRenderer::UploadTexture(const unsigned char* data, int width, int height) {
+  return UploadUint8Texture(data, width, height, TextureMode::kSrgbComposited);
+}
+
+UploadResult PreviewRenderer::UploadRadianceTexture(const unsigned char* data, int width, int height) {
+  return UploadUint8Texture(data, width, height, TextureMode::kSrgbRadiance);
+}
+
+// Human-readable stage names for the upload logs: the log is what an owner without a debugger
+// reads first, and a bare integer stage code would have to be decoded against the header.
+PreviewRenderer::UploadFaultHook PreviewRenderer::s_upload_fault_hook_all_ = nullptr;
+std::atomic<int> PreviewRenderer::s_live_instances_for_test_{ 0 };
+std::atomic<int> PreviewRenderer::s_live_gl_objects_for_test_{ 0 };
+int PreviewRenderer::s_strip_rows_override_for_test_ = 0;
+
+void PreviewRenderer::SetXyzStripRowsForTest(int max_rows) {
+  s_strip_rows_override_for_test_ = max_rows;
+}
+
+XyzStripPlan ComputeXyzStripPlan(int width, int height, int max_rows_override) {
+  XyzStripPlan plan;
+  plan.row_bytes = static_cast<size_t>(width) * 3 * sizeof(uint16_t);
+  // The budget rule: as many rows as ~2 MiB of half bits holds, at least one row, then the test
+  // cap (shrink only — the override exists to force multi-strip cuts of small frames), then the
+  // frame's own height (a small frame is one strip; the plan never invents empty strips).
+  int rows = static_cast<int>(kXyzStagingSlotTargetBytes / plan.row_bytes);
+  if (rows < 1) {
+    rows = 1;
+  }
+  if (max_rows_override > 0 && max_rows_override < rows) {
+    rows = max_rows_override;
+  }
+  if (rows > height) {
+    rows = height;
+  }
+  plan.rows_per_strip = rows;
+  plan.strip_count = (height + rows - 1) / rows;
+  plan.slot_bytes = static_cast<size_t>(rows) * plan.row_bytes;
+  return plan;
+}
+
+PreviewRenderer::PreviewRenderer() {
+  ++s_live_instances_for_test_;
+}
+PreviewRenderer::~PreviewRenderer() {
+  --s_live_instances_for_test_;
+}
+int PreviewRenderer::s_shader_compile_fault_for_test_ = 0;
+
+void PreviewRenderer::SetUploadFaultHookForAllForTest(UploadFaultHook hook) {
+  s_upload_fault_hook_all_ = std::move(hook);
+}
+
+void PreviewRenderer::SetShaderCompileFaultForTest(int remaining_failures) {
+  s_shader_compile_fault_for_test_ = remaining_failures;
+}
+
+void PreviewRenderer::RevokeDisplayForContextOom() {
+  // The conservative revoke itself logs the ruling; the caller supplies the context by being the
+  // one that observed the OOM on a renderer sharing this context.
+  ConservativeRevoke(UploadResult::Stage::kTexImage, GL_OUT_OF_MEMORY, tex_width_, tex_height_);
+}
+
+const char* UploadStageName(UploadResult::Stage stage) {
+  switch (stage) {
+    case UploadResult::Stage::kNone:
+      return "none";
+    case UploadResult::Stage::kInvalidInput:
+      return "invalid-input";
+    case UploadResult::Stage::kFenceWait:
+      return "fence-wait";
+    case UploadResult::Stage::kPboAllocate:
+      return "pbo-allocate";
+    case UploadResult::Stage::kPboMap:
+      return "pbo-map";
+    case UploadResult::Stage::kPboUnmap:
+      return "pbo-unmap";
+    case UploadResult::Stage::kTexImage:
+      return "texture-define";
+    case UploadResult::Stage::kTexUpdate:
+      return "texture-update";
+    case UploadResult::Stage::kFenceCreate:
+      return "fence-create";
+    case UploadResult::Stage::kStorageMismatch:
+      return "storage-mismatch";
+    case UploadResult::Stage::kCpuAllocation:
+      return "cpu-allocation";
+    case UploadResult::Stage::kRenderTargetAllocation:
+      return "render-target-allocation";
+  }
+  return "unknown";
+}
+
+// The GL store backing the staging slots is leaving the upload path (recovery tier >= 1, an
+// explicit-unavailable state) or the display just revoked an in-flight attempt: drop both
+// buffers and forget their registered sizes, and delete both fences. See the header for why
+// deleting a buffer that an in-flight DMA may still be reading is safe, and why a revoked
+// attempt must not leave guards behind.
+void PreviewRenderer::ReleaseStagingSlots() {
+  for (int slot = 0; slot < 2; ++slot) {
+    if (pbo_fence_[slot] != nullptr) {
+      glDeleteSync(static_cast<GLsync>(pbo_fence_[slot]));
+      pbo_fence_[slot] = nullptr;
+    }
+    TearDownPboSlot(slot);
+  }
+}
+
+void PreviewRenderer::TearDownPboSlot(int slot) {
+  if (pbo_[slot] != 0) {
+    glDeleteBuffers(1, &pbo_[slot]);
+    pbo_[slot] = 0;
+    --s_live_gl_objects_for_test_;
+  }
+  pbo_byte_count_[slot] = 0;
+}
+
+UploadResult PreviewRenderer::ConservativeRevoke(UploadResult::Stage stage, int gl_error, int req_w, int req_h) {
+  UploadResult r;
+  r.ok = false;
+  r.stage = stage;
+  r.gl_error = gl_error;
+  r.request_width = req_w;
+  r.request_height = req_h;
+  r.old_frame_retained = false;
+  // The display stops describing any frame AND stops being sampleable: the storage behind it may
+  // be corrupt, and querying its dimensions back cannot prove otherwise — an OOM leaves the
+  // results of the GL undefined (OpenGL 3.3 core §2.5), so "the size query still agrees" is not
+  // evidence of health, and the deferred blank (even a 1x1) can fail under the same pressure.
+  // u_sim_valid=0 keeps whatever the storage holds off the screen until a verified blank or a
+  // verified upload re-arms it. The mirror is deliberately untouched: the save source outlives
+  // the display failure.
+  tex_width_ = 0;
+  tex_height_ = 0;
+  sim_layer_valid_ = false;
+  needs_gl_blank_ = true;
+  GUI_LOG_ERROR(
+      "[GL] texture upload failed: stage={} gl_error=0x{:04X} request={}x{} — display revoked, blank "
+      "re-armed; save source retained",
+      UploadStageName(stage), gl_error, req_w, req_h);
+  return r;
 }
 
 // The GL half both uint8 entry points share. `mode` is the only thing that differs, and it is a
 // property of what the CALLER baked, which is why it is a parameter here rather than a guess.
-void PreviewRenderer::UploadUint8Texture(const unsigned char* data, int width, int height, TextureMode mode) {
-  if (!texture_ || !data) {
-    return;
+UploadResult PreviewRenderer::UploadUint8Texture(const unsigned char* data, int width, int height, TextureMode mode) {
+  UploadResult r;
+  r.request_width = width;
+  r.request_height = height;
+  if (!texture_ || !data || width <= 0 || height <= 0) {
+    r.stage = UploadResult::Stage::kInvalidInput;
+    return r;
   }
-  // Fresh real pixel data is about to land in texture_; make the newest write
-  // win over any pending deferred blank so a Clear→Upload sequence (with no
-  // intervening Render) doesn't get overwritten with black on the next frame.
-  needs_gl_blank_ = false;
 
-  // Keep CPU-side copy for .lmc file save, under the mode the caller declared: a reopened pre-v4
-  // document re-saved without a run must go back out flagged composited, not radiance-only.
+  glBindTexture(GL_TEXTURE_2D, texture_);
+  glPixelStorei(GL_UNPACK_ALIGNMENT, 1);  // RGB data may not be 4-byte aligned
+
+  // Re-allocate when switching from float to uint8 or size changed; update in place otherwise.
+  // The hook is consulted BEFORE the real call and skips it when it forces a failure: an ordinary
+  // GL error's contract is "the offending command was ignored with no side effect", and skipping
+  // the call reproduces exactly that end state (the storage never changes) — which is what makes
+  // the injected case faithful enough for a pixel-readback witness. Neither display metadata nor
+  // the CPU mirror commits here: they commit together below, only after the call has been
+  // error-checked and the level-0 storage has been witness-verified. An OOM means the storage is
+  // undefined (spec §2.5) and the conservative revoke applies.
+  const UploadResult::Stage tex_stage =
+      (width != tex_width_ || height != tex_height_ || tex_mode_ == TextureMode::kXyz) ?
+          UploadResult::Stage::kTexImage :
+          UploadResult::Stage::kTexUpdate;
+  int forced_tex = HookFaultFor(tex_stage);
+  if (forced_tex == 0) {
+    if (tex_stage == UploadResult::Stage::kTexImage) {
+      glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB8, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, data);
+    } else {
+      glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, GL_RGB, GL_UNSIGNED_BYTE, data);
+    }
+  }
+  GLenum err = forced_tex ? static_cast<GLenum>(forced_tex) : glGetError();
+  if (err == GL_OUT_OF_MEMORY) {
+    glBindTexture(GL_TEXTURE_2D, 0);
+    return ConservativeRevoke(tex_stage, static_cast<int>(err), width, height);
+  }
+  if (err != GL_NO_ERROR) {
+    glBindTexture(GL_TEXTURE_2D, 0);
+    // Ordinary error: the command was ignored — the previous frame and its metadata stand, and
+    // the storage is untouched, so the no-sample gate stays open.
+    GUI_LOG_ERROR("[GL] texture upload failed: stage={} gl_error=0x{:04X} request={}x{} — previous frame retained",
+                  UploadStageName(tex_stage), err, width, height);
+    r.stage = tex_stage;
+    r.gl_error = static_cast<int>(err);
+    r.old_frame_retained = true;
+    return r;
+  }
+
+  // Storage witness: level-0 dimensions (and internal format) must agree with the request. The
+  // query is necessary evidence that the define landed — it proves nothing about CONTENT, which
+  // is what the injection cases below read back for. A disagreement means the frame cannot be
+  // claimed even though the define reported success: revoke rather than display an unverified
+  // frame.
+  int forced_mismatch = HookFaultFor(UploadResult::Stage::kStorageMismatch);
+  GLint stored_w = 0;
+  GLint stored_h = 0;
+  GLint stored_fmt = 0;
+  glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH, &stored_w);
+  glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_HEIGHT, &stored_h);
+  glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_INTERNAL_FORMAT, &stored_fmt);
+  if (forced_mismatch || stored_w != static_cast<GLint>(width) || stored_h != static_cast<GLint>(height) ||
+      stored_fmt != GL_RGB8) {
+    glBindTexture(GL_TEXTURE_2D, 0);
+    UploadResult revoke = ConservativeRevoke(UploadResult::Stage::kStorageMismatch, forced_mismatch, width, height);
+    // The witness DID run here — its disagreement is the revoke's cause, and
+    // the measured values (not the request) are what the report's "actual"
+    // block should carry. Filled after the revoke returns because the shared
+    // revoke helper takes none of them.
+    revoke.actual_queried = true;
+    revoke.actual_width = stored_w;
+    revoke.actual_height = stored_h;
+    revoke.actual_internal_format = static_cast<unsigned int>(stored_fmt);
+    return revoke;
+  }
+
+  // Success — now and only now commit. Display first (the frame IS on the GPU and verified), then
+  // the CPU mirror under the mode the caller declared: a reopened pre-v4 document re-saved
+  // without a run must go back out flagged composited, not radiance-only. The newest real frame
+  // cancels any pending deferred blank, the sim layer is sampleable again, and the blank retry
+  // budget resets (the pressure that spent it did not stop this upload).
+  needs_gl_blank_ = false;
+  sim_layer_valid_ = true;
+  blank_attempts_ = 0;
+  if (tex_stage == UploadResult::Stage::kTexImage) {
+    tex_width_ = width;
+    tex_height_ = height;
+  }
+  tex_mode_ = mode;
   size_t byte_count = static_cast<size_t>(width) * height * 3;
   tex_data_.assign(data, data + byte_count);
   tex_xyz_data_.clear();
   tex_xyz_meta_ = XyzTextureMeta{};
   cpu_tex_mode_ = mode;
-
-  glBindTexture(GL_TEXTURE_2D, texture_);
-  glPixelStorei(GL_UNPACK_ALIGNMENT, 1);  // RGB data may not be 4-byte aligned
-
-  if (width != tex_width_ || height != tex_height_ || tex_mode_ == TextureMode::kXyz) {
-    // Re-allocate texture when switching from float to uint8 or size changed
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB8, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, data);
-    tex_width_ = width;
-    tex_height_ = height;
-  } else {
-    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, GL_RGB, GL_UNSIGNED_BYTE, data);
-  }
-
-  tex_mode_ = mode;
+  cpu_tex_width_ = width;
+  cpu_tex_height_ = height;
+  // The witness ran clean to get here — its measurements are this attempt's
+  // "actual" block, riding the structured result to the caller's diagnostics
+  // bracket. Observer-only: the acceptance logic above never reads them.
+  r.actual_queried = true;
+  r.actual_width = stored_w;
+  r.actual_height = stored_h;
+  r.actual_internal_format = static_cast<unsigned int>(stored_fmt);
+  r.ok = true;
   glBindTexture(GL_TEXTURE_2D, 0);
+  return r;
 }
 
-void PreviewRenderer::UploadXyzTexture(const float* data, int width, int height) {
+UploadResult PreviewRenderer::UploadXyzTexture(const float* data, int width, int height) {
+  UploadResult r;
+  r.request_width = width;
+  r.request_height = height;
   if (!texture_ || !data || width <= 0 || height <= 0) {
-    return;
+    r.stage = UploadResult::Stage::kInvalidInput;
+    return r;
   }
-  // Fresh real pixel data is about to land in texture_; make the newest write
-  // win over any pending deferred blank (see UploadUint8Texture for rationale).
-  needs_gl_blank_ = false;
-
   // Does NOT touch the CPU-side mirror (tex_data_ / tex_xyz_data_): this runs at the poll rate,
   // and Save refreshes the mirror from the retained poller payload instead — see
-  // UpdateCpuXyzTextureData.
-  //
-  // The texture is GL_RGB16F, and the float16 bits it receives are made HERE, by the same codec
-  // the .lmc writer runs on the same floats (src/gui/xyz_half_codec.hpp) — not by handing the
-  // driver GL_FLOAT data and letting it convert. That is what makes a reopened document's texture
-  // bit-identical to the live one's: quantize(dequantize(quantize(x))) == quantize(x), and no
-  // second converter is in either path to disagree. The scale the halves were divided by rides
-  // along in tex_xyz_scale_ and reaches the shader as u_xyz_scale from Render().
-  const size_t component_count = static_cast<size_t>(width) * height * 3;
-  const size_t byte_count = component_count * sizeof(uint16_t);
-  const float scale = ComputeXyzHalfScale(data, component_count);
-  int w = pbo_index_;
+  // UpdateCpuXyzTextureData. The texture is GL_RGB16F, and the float16 bits it receives are made
+  // inside UploadXyzStrips by the same codec the .lmc writer runs on the same floats
+  // (src/gui/xyz_half_codec.hpp) — not by handing the driver GL_FLOAT data and letting it
+  // convert. That is what makes a reopened document's texture bit-identical to the live one's.
+  XyzUploadInput in;
+  in.floats = data;
+  in.width = width;
+  in.height = height;
+  return UploadXyzStrips(in, /*use_staging=*/true);
+}
 
-  // Wait for prior fence (ensure GPU finished reading PBO[w])
-  if (pbo_fence_[w] != nullptr) {
-    auto sync = static_cast<GLsync>(pbo_fence_[w]);
-    GLenum wait_result = glClientWaitSync(sync, GL_SYNC_FLUSH_COMMANDS_BIT, 2'000'000'000ULL);
-    glDeleteSync(sync);
-    pbo_fence_[w] = nullptr;
-    if (wait_result == GL_TIMEOUT_EXPIRED || wait_result == GL_WAIT_FAILED) {
-      GUI_LOG_WARNING("[GL] UploadXyzTexture: fence wait failed (result={}), skipping frame", wait_result);
-      return;
+UploadResult PreviewRenderer::UploadXyzHalfTexture(const uint16_t* half_bits, int width, int height, float scale) {
+  UploadResult r;
+  r.request_width = width;
+  r.request_height = height;
+  if (!texture_ || !half_bits || width <= 0 || height <= 0 || !(scale > 0.0f) || !std::isfinite(scale)) {
+    r.stage = UploadResult::Stage::kInvalidInput;
+    return r;
+  }
+  // The file's own bits and the file's own scale, uploaded as they are: the strip copies below
+  // never re-quantize, so a v6 document's GPU texture is bit-identical to what its live frame
+  // sampled while the CPU side never held anything but the file's half bits.
+  XyzUploadInput in;
+  in.half_bits = half_bits;
+  in.half_scale = scale;
+  in.width = width;
+  in.height = height;
+  return UploadXyzStrips(in, /*use_staging=*/true);
+}
+
+UploadResult PreviewRenderer::UploadXyzTextureNoStaging(const float* data, int width, int height) {
+  UploadResult r;
+  r.request_width = width;
+  r.request_height = height;
+  if (!texture_ || !data || width <= 0 || height <= 0) {
+    r.stage = UploadResult::Stage::kInvalidInput;
+    return r;
+  }
+  // Same codec, same floats, same scale rule as the staging path — the only difference is WHERE
+  // the half bits live while the driver copies them: strip-sized CPU scratch, never a full-frame
+  // transient (the memory pressure this recovery tier serves is exactly where a 192 MiB scratch
+  // would throw).
+  XyzUploadInput in;
+  in.floats = data;
+  in.width = width;
+  in.height = height;
+  return UploadXyzStrips(in, /*use_staging=*/false);
+}
+
+UploadResult PreviewRenderer::UploadXyzHalfTextureNoStaging(const uint16_t* half_bits, int width, int height,
+                                                            float scale) {
+  UploadResult r;
+  r.request_width = width;
+  r.request_height = height;
+  if (!texture_ || !half_bits || width <= 0 || height <= 0 || !(scale > 0.0f) || !std::isfinite(scale)) {
+    r.stage = UploadResult::Stage::kInvalidInput;
+    return r;
+  }
+  // The half client-memory tier needs no scratch at all: the bits are already in client memory
+  // and already quantized, so each strip's glTexSubImage2D reads straight from the held buffer.
+  XyzUploadInput in;
+  in.half_bits = half_bits;
+  in.half_scale = scale;
+  in.width = width;
+  in.height = height;
+  return UploadXyzStrips(in, /*use_staging=*/false);
+}
+
+UploadResult PreviewRenderer::UploadXyzStrips(const XyzUploadInput& input, bool use_staging) {
+  UploadResult r;
+  r.request_width = input.width;
+  r.request_height = input.height;
+  const int width = input.width;
+  const int height = input.height;
+  const size_t component_count = static_cast<size_t>(width) * height * 3;
+  const XyzStripPlan plan = ComputeXyzStripPlan(width, height, s_strip_rows_override_for_test_);
+  // The staging request is known the moment the plan exists — a fact of what
+  // this attempt ASKS the driver for, set before any GL work so every exit
+  // (each failure included) reports it. Client-memory attempts leave it 0:
+  // they genuinely use no staging storage.
+  if (use_staging) {
+    r.pbo_bytes = plan.slot_bytes;
+  }
+  // Every conservative revoke inside this attempt must carry the same
+  // already-known facts: ConservativeRevoke builds a fresh result, so the
+  // shared exits below go through this wrapper instead (same call shape as
+  // the helper it forwards to).
+  auto revoke = [&](UploadResult::Stage stage, int gl_error, int req_w, int req_h) {
+    UploadResult out = ConservativeRevoke(stage, gl_error, req_w, req_h);
+    out.pbo_bytes = r.pbo_bytes;
+    return out;
+  };
+  // The scale ruling, ONCE per attempt: a float source is scanned whole here and every strip is
+  // quantized through the one codec at that one scale; a half source's scale is the file's own
+  // and nothing re-quantizes its bits. A per-strip scale would let two strips of one frame
+  // disagree by a factor — exactly the mixed frame the acceptance boundary below exists to keep
+  // off the screen. The scale the halves carry reaches the shader as u_xyz_scale from Render().
+  const float scale = input.floats != nullptr ? ComputeXyzHalfScale(input.floats, component_count) : input.half_scale;
+
+  // The client-memory float path quantizes into one strip-sized scratch, allocated ONCE before
+  // any GL work so a std::bad_alloc here reports the same pre-touch kCpuAllocation the
+  // full-frame transient used to: an exhausted machine lands in the recovery state machine, not
+  // in std::terminate, and no GL call has been made to clean up or attribute.
+  std::vector<uint16_t> client_scratch;
+  if (!use_staging && input.floats != nullptr) {
+    try {
+      client_scratch.resize(plan.slot_bytes / sizeof(uint16_t));
+    } catch (const std::bad_alloc&) {
+      GUI_LOG_ERROR(
+          "[GL] UploadXyzStrips: host allocation failed for the client-memory scratch ({} bytes), skipping frame",
+          plan.slot_bytes);
+      r.stage = UploadResult::Stage::kCpuAllocation;
+      return r;
     }
   }
 
-  // Lazy-init + resize PBO
-  if (pbo_[w] == 0) {
-    glGenBuffers(1, &pbo_[w]);
-  }
-  glBindBuffer(GL_PIXEL_UNPACK_BUFFER, pbo_[w]);
-  if (pbo_byte_count_[w] != byte_count) {
-    glBufferData(GL_PIXEL_UNPACK_BUFFER, static_cast<GLsizeiptr>(byte_count), nullptr, GL_STREAM_DRAW);
-    pbo_byte_count_[w] = byte_count;
-  }
+  // Whether this attempt (re)defines the texture storage or updates it in place, decided ONCE —
+  // every strip of the attempt rides the same decision, and the display facts commit only on
+  // the define's terms.
+  const bool needs_define = width != tex_width_ || height != tex_height_ || tex_mode_ != TextureMode::kXyz;
+  // Whether this attempt has successfully modified the texture: a successful define (the old
+  // frame's storage is gone — replaced with UNDEFINED content the strips below must fill) or any
+  // successful strip write. This is the frame-level validity predicate every failure below rules
+  // on: an ordinary error while it is still false leaves the previous frame provably standing;
+  // any failure once it is true cannot claim the old frame retained, because the texture then
+  // holds a mix of the old frame and this attempt's strips.
+  bool touched = false;
+  // Whether this attempt committed while its last strip's fence creation
+  // failed (the staged path's one fence fact the structured result would
+  // otherwise lose): the frame is displayed, but the torn-down slot's next
+  // write runs unguarded. The branch's own GL error flag reading rides
+  // beside it — a failed creation may stand behind a driver error, and the
+  // code must survive into the report.
+  bool commit_fence_failed = false;
+  unsigned int commit_fence_gl_error = 0;
 
-  // Map PBO and write data
-  void* ptr = glMapBufferRange(GL_PIXEL_UNPACK_BUFFER, 0, static_cast<GLsizeiptr>(byte_count),
-                               GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT | GL_MAP_UNSYNCHRONIZED_BIT);
-  if (!ptr) {
-    GUI_LOG_ERROR("[GL] UploadXyzTexture: glMapBufferRange failed");
-    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
-    return;
-  }
-  // Quantize straight into the mapped PBO: one pass, no staging copy.
-  QuantizeXyzToHalf(data, component_count, scale, static_cast<uint16_t*>(ptr));
-  if (glUnmapBuffer(GL_PIXEL_UNPACK_BUFFER) == GL_FALSE) {
-    GUI_LOG_WARNING("[GL] UploadXyzTexture: glUnmapBuffer failed, buffer data may be corrupt, skipping frame");
-    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
-    return;
-  }
-
-  // Upload from PBO to texture (async DMA)
+  glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
   glBindTexture(GL_TEXTURE_2D, texture_);
   // Rows are width*3*2 bytes: even, but a multiple of 4 only for even widths, so the unpack
-  // alignment has to say 2 (the sRGB path says 1 for the same reason).
+  // alignment has to say 2 (the sRGB path says 1 for the same reason, and each path sets its own
+  // value every upload, so a failure leaving it here strands nothing).
   glPixelStorei(GL_UNPACK_ALIGNMENT, 2);
-  if (width != tex_width_ || height != tex_height_ || tex_mode_ != TextureMode::kXyz) {
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB16F, width, height, 0, GL_RGB, GL_HALF_FLOAT, nullptr);
-    tex_width_ = width;
-    tex_height_ = height;
-  } else {
-    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, GL_RGB, GL_HALF_FLOAT, nullptr);
+
+  for (int k = 0; k < plan.strip_count; ++k) {
+    const int slot = k & 1;
+    const int y0 = k * plan.rows_per_strip;
+    const int rows = std::min(plan.rows_per_strip, height - y0);
+    const size_t strip_components = static_cast<size_t>(rows) * width * 3;
+
+    if (use_staging) {
+      // ---- staging slot (k&1)'s lifecycle for this strip ----
+
+      // The slot's fence from two strips ago — the guard that says its DMA has finished reading
+      // the buffer this strip is about to map. Consulted BEFORE the real wait: skipping it and
+      // taking the failure branch leaves the same end state as a real timeout (fence deleted,
+      // DMA possibly still in flight — which the teardown below answers).
+      if (pbo_fence_[slot] != nullptr) {
+        auto sync = static_cast<GLsync>(pbo_fence_[slot]);
+        int forced_wait = HookFaultFor(UploadResult::Stage::kFenceWait);
+        GLenum wait_result = forced_wait ? static_cast<GLenum>(forced_wait) :
+                                           glClientWaitSync(sync, GL_SYNC_FLUSH_COMMANDS_BIT, 2'000'000'000ULL);
+        glDeleteSync(sync);
+        pbo_fence_[slot] = nullptr;
+        if (forced_wait || wait_result == GL_TIMEOUT_EXPIRED || wait_result == GL_WAIT_FAILED) {
+          // A sync STATUS is not a GL error code, but a failed wait is allowed to leave a driver
+          // error flag set (an invalid sync object is the spec's own example). Reading the flag
+          // HERE — before any teardown — attributes the failure to the driver's actual error
+          // when there is one, and DRAINS the flag so it cannot leak past this attempt into the
+          // next candidate's error reads, where it would label a successful texture write as
+          // failed with the new frame already on the GPU — the exact pixel-vs-metadata split
+          // this file exists to prevent.
+          const GLenum wait_err = glGetError();
+          GUI_LOG_WARNING(
+              "[GL] UploadXyzStrips: fence wait failed on slot {} strip {}/{} (result=0x{:X} "
+              "driver_error=0x{:04X})",
+              slot, k + 1, plan.strip_count, wait_result, wait_err);
+          if (touched) {
+            // Strips 0..k-1 of THIS attempt are already in the texture: the display candidate is
+            // a mix, and no ruling can call the old frame retained. Revoke, and end the slots —
+            // a revoked attempt leaves no unguarded slot and no orphan fence behind.
+            ReleaseStagingSlots();
+            glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+            glBindTexture(GL_TEXTURE_2D, 0);
+            UploadResult out = revoke(
+                UploadResult::Stage::kFenceWait,
+                wait_err != GL_NO_ERROR ? static_cast<int>(wait_err) : static_cast<int>(wait_result), width, height);
+            out.fence_wait_code_is_sync_status = wait_err == GL_NO_ERROR;
+            return out;
+          }
+          // Strip 0: this attempt has written nothing, and the waited fence guarded the
+          // PREVIOUS attempt's last writes — that frame was accepted whole and stands.
+          TearDownPboSlot(slot);
+          glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+          glBindTexture(GL_TEXTURE_2D, 0);
+          r.stage = UploadResult::Stage::kFenceWait;
+          r.gl_error = wait_err != GL_NO_ERROR ? static_cast<int>(wait_err) : static_cast<int>(wait_result);
+          r.fence_wait_code_is_sync_status = wait_err == GL_NO_ERROR;
+          r.old_frame_retained = true;
+          return r;
+        }
+      }
+
+      // Lazy-init + resize the slot. The size registration below is a SUCCESS record: writing it
+      // before the allocation is known good would let a failed glBufferData leave a slot
+      // claiming a size it does not hold, and the next cycle would skip the allocation it
+      // actually needs.
+      if (pbo_[slot] == 0) {
+        glGenBuffers(1, &pbo_[slot]);
+        ++s_live_gl_objects_for_test_;
+      }
+      glBindBuffer(GL_PIXEL_UNPACK_BUFFER, pbo_[slot]);
+      if (pbo_byte_count_[slot] != plan.slot_bytes) {
+        // The hook is consulted BEFORE the real call and skips it when it forces a failure — a
+        // real GL_OUT_OF_MEMORY leaves the old store undefined-but-alive, and skipping the call
+        // reproduces exactly that state. Either way the slot must not claim the new size.
+        int forced_alloc = HookFaultFor(UploadResult::Stage::kPboAllocate);
+        GLenum alloc_err = GL_NO_ERROR;
+        if (forced_alloc == 0) {
+          glBufferData(GL_PIXEL_UNPACK_BUFFER, static_cast<GLsizeiptr>(plan.slot_bytes), nullptr, GL_STREAM_DRAW);
+          alloc_err = glGetError();
+        } else {
+          alloc_err = static_cast<GLenum>(forced_alloc);
+        }
+        if (alloc_err != GL_NO_ERROR) {
+          TearDownPboSlot(slot);
+          // The 814 unified OOM ruling: the spec leaves the GL's WHOLE state undefined after
+          // GL_OUT_OF_MEMORY (§2.5), so an OOM revokes wherever it lands. An ordinary error
+          // leaves the command ignored with no side effect — the previous frame only stands,
+          // though, while this attempt has not modified the texture yet; once a strip is in,
+          // the candidate is a mix and the ruling is the revoke.
+          if (alloc_err == GL_OUT_OF_MEMORY || touched) {
+            ReleaseStagingSlots();
+            glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+            glBindTexture(GL_TEXTURE_2D, 0);
+            return revoke(UploadResult::Stage::kPboAllocate, static_cast<int>(alloc_err), width, height);
+          }
+          GUI_LOG_ERROR(
+              "[GL] UploadXyzStrips: staging allocation failed (gl_error=0x{:04X}, {} bytes), skipping "
+              "frame",
+              alloc_err, plan.slot_bytes);
+          glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+          glBindTexture(GL_TEXTURE_2D, 0);
+          r.stage = UploadResult::Stage::kPboAllocate;
+          r.gl_error = static_cast<int>(alloc_err);
+          r.old_frame_retained = true;
+          return r;
+        }
+        pbo_byte_count_[slot] = plan.slot_bytes;
+      }
+
+      // Map. The hook is consulted BEFORE the real map: a forced failure after a successful map
+      // would leave the buffer mapped, a state the real null-map failure never produces.
+      int forced_map = HookFaultFor(UploadResult::Stage::kPboMap);
+      void* ptr = forced_map ?
+                      nullptr :
+                      glMapBufferRange(GL_PIXEL_UNPACK_BUFFER, 0, static_cast<GLsizeiptr>(plan.slot_bytes),
+                                       GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT | GL_MAP_UNSYNCHRONIZED_BIT);
+      if (!ptr) {
+        // A null map may or may not have left an error flag (GL_OUT_OF_MEMORY is allowed here);
+        // drain and attribute whatever the driver reported, then rule as above.
+        GLenum map_err = forced_map ? static_cast<GLenum>(forced_map) : glGetError();
+        TearDownPboSlot(slot);
+        if (map_err == GL_OUT_OF_MEMORY || touched) {
+          ReleaseStagingSlots();
+          glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+          glBindTexture(GL_TEXTURE_2D, 0);
+          return revoke(UploadResult::Stage::kPboMap, static_cast<int>(map_err), width, height);
+        }
+        GUI_LOG_ERROR("[GL] UploadXyzStrips: glMapBufferRange failed (gl_error=0x{:04X}), skipping frame", map_err);
+        glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+        glBindTexture(GL_TEXTURE_2D, 0);
+        r.stage = UploadResult::Stage::kPboMap;
+        r.gl_error = static_cast<int>(map_err);
+        r.old_frame_retained = true;
+        return r;
+      }
+      // Fill the strip: quantize rows of the float source at the attempt's one scale, or copy
+      // rows of the already-held half bits. The tail strip writes only its own rows — the
+      // subimage's height below is what bounds the driver's read, not the slot's capacity.
+      uint16_t* out = static_cast<uint16_t*>(ptr);
+      if (input.floats != nullptr) {
+        QuantizeXyzToHalf(input.floats + static_cast<size_t>(y0) * width * 3, strip_components, scale, out);
+      } else {
+        std::memcpy(out, input.half_bits + static_cast<size_t>(y0) * width * 3, strip_components * sizeof(uint16_t));
+      }
+      // The REAL unmap runs unconditionally — the injected failure is consulted after it (a
+      // successful unmap followed by a forced failure has the same observable end state as a
+      // real corrupt-data unmap failure: buffer unmapped, contents distrusted and never
+      // uploaded). Consulting before the call instead would strand a permanently mapped buffer:
+      // the failure branch assumes an unmapped buffer, and only an executed glUnmapBuffer
+      // produces one.
+      bool unmapped = glUnmapBuffer(GL_PIXEL_UNPACK_BUFFER) == GL_TRUE;
+      int forced_unmap = HookFaultFor(UploadResult::Stage::kPboUnmap);
+      if (forced_unmap || !unmapped) {
+        GLenum unmap_err = forced_unmap ? static_cast<GLenum>(forced_unmap) : glGetError();
+        GUI_LOG_WARNING(
+            "[GL] UploadXyzStrips: glUnmapBuffer failed (gl_error=0x{:04X}) strip {}/{}, buffer data may be "
+            "corrupt, skipping frame",
+            unmap_err, k + 1, plan.strip_count);
+        if (touched) {
+          ReleaseStagingSlots();
+          glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+          glBindTexture(GL_TEXTURE_2D, 0);
+          return revoke(UploadResult::Stage::kPboUnmap, static_cast<int>(unmap_err), width, height);
+        }
+        glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+        glBindTexture(GL_TEXTURE_2D, 0);
+        r.stage = UploadResult::Stage::kPboUnmap;
+        r.gl_error = static_cast<int>(unmap_err);
+        r.old_frame_retained = true;
+        return r;
+      }
+
+      // The define (when this attempt re-defines the storage) runs with NO staging buffer bound:
+      // with one bound, the null pixel pointer would read as a PBO offset and the define would
+      // consume a full frame's worth of a strip-sized buffer. glTexImage2D allocates the full
+      // storage with UNDEFINED content — the strips are what fill it, which is why a successful
+      // define itself counts as touched: the old frame's texels are gone even before the first
+      // strip write.
+      if (k == 0 && needs_define) {
+        glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+        int forced_tex = HookFaultFor(UploadResult::Stage::kTexImage);
+        if (forced_tex == 0) {
+          glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB16F, width, height, 0, GL_RGB, GL_HALF_FLOAT, nullptr);
+        }
+        GLenum define_err = forced_tex ? static_cast<GLenum>(forced_tex) : glGetError();
+        if (define_err != GL_NO_ERROR) {
+          if (define_err == GL_OUT_OF_MEMORY) {
+            ReleaseStagingSlots();
+            glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+            glBindTexture(GL_TEXTURE_2D, 0);
+            return revoke(UploadResult::Stage::kTexImage, static_cast<int>(define_err), width, height);
+          }
+          // Ordinary error at strip 0: the command was ignored and the storage is exactly as it
+          // was — the previous frame and its metadata stand.
+          glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+          glBindTexture(GL_TEXTURE_2D, 0);
+          GUI_LOG_ERROR(
+              "[GL] texture upload failed: stage={} gl_error=0x{:04X} request={}x{} — previous frame "
+              "retained",
+              UploadStageName(UploadResult::Stage::kTexImage), define_err, width, height);
+          r.stage = UploadResult::Stage::kTexImage;
+          r.gl_error = static_cast<int>(define_err);
+          r.old_frame_retained = true;
+          return r;
+        }
+        touched = true;
+      }
+
+      // The strip write. The PBO is bound again through the subimage — the null pixel pointer is
+      // what makes it read the strip from the buffer (the async DMA the slot's fence guards).
+      glBindBuffer(GL_PIXEL_UNPACK_BUFFER, pbo_[slot]);
+      int forced_sub = HookFaultFor(UploadResult::Stage::kTexUpdate);
+      if (forced_sub == 0) {
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, y0, width, rows, GL_RGB, GL_HALF_FLOAT, nullptr);
+      }
+      GLenum sub_err = forced_sub ? static_cast<GLenum>(forced_sub) : glGetError();
+      if (sub_err != GL_NO_ERROR) {
+        if (sub_err == GL_OUT_OF_MEMORY || touched) {
+          ReleaseStagingSlots();
+          glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+          glBindTexture(GL_TEXTURE_2D, 0);
+          return revoke(UploadResult::Stage::kTexUpdate, static_cast<int>(sub_err), width, height);
+        }
+        // Strip 0's subimage was ignored and no define ran: the storage is exactly as it was.
+        glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+        glBindTexture(GL_TEXTURE_2D, 0);
+        GUI_LOG_ERROR(
+            "[GL] texture upload failed: stage={} gl_error=0x{:04X} request={}x{} — previous frame "
+            "retained",
+            UploadStageName(UploadResult::Stage::kTexUpdate), sub_err, width, height);
+        r.stage = UploadResult::Stage::kTexUpdate;
+        r.gl_error = static_cast<int>(sub_err);
+        r.old_frame_retained = true;
+        return r;
+      }
+      touched = true;
+
+      // Fence for the slot's DMA. A real failure here is not one thing, and the strip attempt
+      // splits the ordinary case one step further than the 814 full-frame upload could:
+      glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+      pbo_fence_[slot] = static_cast<void*>(glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0));
+      int forced_fence = HookFaultFor(UploadResult::Stage::kFenceCreate);
+      if (forced_fence || !pbo_fence_[slot]) {
+        GLenum fence_err = forced_fence ? static_cast<GLenum>(forced_fence) : glGetError();
+        if (pbo_fence_[slot]) {
+          glDeleteSync(static_cast<GLsync>(pbo_fence_[slot]));
+          pbo_fence_[slot] = nullptr;
+        }
+        TearDownPboSlot(slot);
+        if (fence_err == GL_OUT_OF_MEMORY || k + 1 < plan.strip_count) {
+          // OOM: the GL's state is undefined (§2.5) and the frame cannot be trusted after all.
+          // Ordinary failure BEFORE the last strip: strips 0..k are in the texture, the rest of
+          // the frame is not, and the slot whose fence just failed is unguarded — continuing
+          // would write into it unprotected and stopping would strand a mixed frame. Both
+          // rulings revoke.
+          ReleaseStagingSlots();
+          glBindTexture(GL_TEXTURE_2D, 0);
+          return revoke(UploadResult::Stage::kFenceCreate, static_cast<int>(fence_err), width, height);
+        }
+        // Ordinary failure on the LAST strip: the complete frame is issued; the 814 contract
+        // stands — the slot is torn down, the commit below is real.
+        GUI_LOG_WARNING(
+            "[GL] UploadXyzStrips: glFenceSync failed (gl_error=0x{:04X}) on the last strip, tearing down "
+            "staging slot {}; frame committed",
+            fence_err, slot);
+        commit_fence_failed = true;
+        commit_fence_gl_error = static_cast<unsigned int>(fence_err);
+      }
+    } else {
+      // ---- client-memory strip: no slots, no fences, no async DMA to guard ----
+      const uint16_t* src_bits = nullptr;
+      if (input.floats != nullptr) {
+        // Quantize this attempt's rows into the strip-sized scratch at the one scale.
+        QuantizeXyzToHalf(input.floats + static_cast<size_t>(y0) * width * 3, strip_components, scale,
+                          client_scratch.data());
+        src_bits = client_scratch.data();
+      } else {
+        // The held bits ARE the upload input; the strip reads them where they lie.
+        src_bits = input.half_bits + static_cast<size_t>(y0) * width * 3;
+      }
+      if (k == 0 && needs_define) {
+        int forced_tex = HookFaultFor(UploadResult::Stage::kTexImage);
+        if (forced_tex == 0) {
+          glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB16F, width, height, 0, GL_RGB, GL_HALF_FLOAT, nullptr);
+        }
+        GLenum define_err = forced_tex ? static_cast<GLenum>(forced_tex) : glGetError();
+        if (define_err != GL_NO_ERROR) {
+          if (define_err == GL_OUT_OF_MEMORY) {
+            glBindTexture(GL_TEXTURE_2D, 0);
+            return revoke(UploadResult::Stage::kTexImage, static_cast<int>(define_err), width, height);
+          }
+          glBindTexture(GL_TEXTURE_2D, 0);
+          GUI_LOG_ERROR(
+              "[GL] texture upload failed: stage={} gl_error=0x{:04X} request={}x{} — previous frame "
+              "retained",
+              UploadStageName(UploadResult::Stage::kTexImage), define_err, width, height);
+          r.stage = UploadResult::Stage::kTexImage;
+          r.gl_error = static_cast<int>(define_err);
+          r.old_frame_retained = true;
+          return r;
+        }
+        touched = true;
+      }
+      int forced_sub = HookFaultFor(UploadResult::Stage::kTexUpdate);
+      if (forced_sub == 0) {
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, y0, width, rows, GL_RGB, GL_HALF_FLOAT, src_bits);
+      }
+      GLenum sub_err = forced_sub ? static_cast<GLenum>(forced_sub) : glGetError();
+      if (sub_err != GL_NO_ERROR) {
+        if (sub_err == GL_OUT_OF_MEMORY || touched) {
+          glBindTexture(GL_TEXTURE_2D, 0);
+          return revoke(UploadResult::Stage::kTexUpdate, static_cast<int>(sub_err), width, height);
+        }
+        glBindTexture(GL_TEXTURE_2D, 0);
+        GUI_LOG_ERROR(
+            "[GL] texture upload failed: stage={} gl_error=0x{:04X} request={}x{} — previous frame "
+            "retained",
+            UploadStageName(UploadResult::Stage::kTexUpdate), sub_err, width, height);
+        r.stage = UploadResult::Stage::kTexUpdate;
+        r.gl_error = static_cast<int>(sub_err);
+        r.old_frame_retained = true;
+        return r;
+      }
+      touched = true;
+    }
   }
 
-  GLenum err = glGetError();
-  if (err != GL_NO_ERROR) {
-    GUI_LOG_WARNING("[GL] UploadXyzTexture: glGetError={} after {}x{} upload", err, width, height);
+  // Storage witness: level-0 dimensions and internal format must agree with the request before
+  // the frame can be called displayed — one query per attempt, immediately before the commit,
+  // exactly the 814 position. The query is necessary evidence that the define landed (and, on
+  // the update path, that the storage still matches); it is not a content proof, which the
+  // per-texel witnesses read back for. A disagreement, real or injected, revokes: every strip is
+  // in the texture by now, so `touched` holds and no ruling can call the old frame retained.
+  int forced_mismatch = HookFaultFor(UploadResult::Stage::kStorageMismatch);
+  GLint stored_w = 0;
+  GLint stored_h = 0;
+  GLint stored_fmt = 0;
+  glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH, &stored_w);
+  glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_HEIGHT, &stored_h);
+  glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_INTERNAL_FORMAT, &stored_fmt);
+  if (forced_mismatch || stored_w != static_cast<GLint>(width) || stored_h != static_cast<GLint>(height) ||
+      stored_fmt != GL_RGB16F) {
+    if (use_staging) {
+      ReleaseStagingSlots();
+    }
+    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    UploadResult mismatch_revoke = revoke(UploadResult::Stage::kStorageMismatch, forced_mismatch, width, height);
+    // The witness DID run here — its disagreement is the revoke's cause, and
+    // the measured values (not the request) are what the report's "actual"
+    // block should carry. Filled after the revoke returns because the shared
+    // revoke helper takes none of them; the staging request itself rides the
+    // wrapper.
+    mismatch_revoke.actual_queried = true;
+    mismatch_revoke.actual_width = stored_w;
+    mismatch_revoke.actual_height = stored_h;
+    mismatch_revoke.actual_internal_format = static_cast<unsigned int>(stored_fmt);
+    return mismatch_revoke;
   }
-  pbo_fence_[w] = static_cast<void*>(glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0));
-  if (!pbo_fence_[w]) {
-    GUI_LOG_WARNING("[GL] UploadXyzTexture: glFenceSync failed, next write to slot {} will be unguarded", w);
+
+  // Success — now and only now commit the display facts, re-arm the no-sample gate (the frame on
+  // the GPU is verified), and make the newest write win over any pending deferred blank (see
+  // UploadUint8Texture for rationale).
+  needs_gl_blank_ = false;
+  sim_layer_valid_ = true;
+  blank_attempts_ = 0;
+  if (needs_define) {
+    tex_width_ = width;
+    tex_height_ = height;
   }
-  glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
   tex_mode_ = TextureMode::kXyz;
   tex_xyz_scale_ = scale;
   glBindTexture(GL_TEXTURE_2D, 0);
-  pbo_index_ = 1 - pbo_index_;
+  // Observer fields riding the structured result (diagnostics_report's
+  // consumer; the acceptance logic above never reads them): the clean
+  // witness's measurements, the staging capacity this attempt allocated at
+  // (client-memory paths honestly carry none), the one scale the attempt
+  // quantized with, and the last-strip fence fact from the staged loop.
+  r.actual_queried = true;
+  r.actual_width = stored_w;
+  r.actual_height = stored_h;
+  r.actual_internal_format = static_cast<unsigned int>(stored_fmt);
+  if (use_staging) {
+    r.pbo_bytes = plan.slot_bytes;
+  }
+  r.xyz_half_scale = scale;
+  r.fence_create_failed = commit_fence_failed;
+  r.fence_create_gl_error = commit_fence_gl_error;
+  r.ok = true;
+  return r;
+}
+
+void PreviewRenderer::RaiseRealGlInvalidOperationForTest() {
+  // GL_UNPACK_ALIGNMENT accepts 1/2/4/8 only: 3 is rejected with GL_INVALID_VALUE and changes no
+  // state (the old alignment stays). Deliberately NOT drained — the caller arranges the read;
+  // this is what lets a witness place a driver-set error flag ahead of a branch whose contract
+  // is to read and clear it.
+  glPixelStorei(GL_UNPACK_ALIGNMENT, 3);
 }
 
 void PreviewRenderer::UploadBgTexture(const unsigned char* data, int width, int height) {
@@ -2012,10 +2854,12 @@ void PreviewRenderer::Render(int vp_x, int vp_y, int vp_w, int vp_h, const Previ
   // any texture binding / sampling below runs, so the sim layer samples a
   // fresh 1x1 black instead of the previous scene's stale pixels. Must run
   // before glActiveTexture/glBindTexture(texture_) below to avoid stashing
-  // state; UploadBlankSimTexture unbinds itself.
+  // state; UploadBlankSimTexture unbinds itself and — since the blank can
+  // fail under real pressure — now owns the flag: it clears needs_gl_blank_
+  // and re-arms sim_layer_valid_ only on a verified define, and leaves both
+  // in the revoked state for the next frame's retry when the define fails.
   if (needs_gl_blank_) {
     UploadBlankSimTexture();
-    needs_gl_blank_ = false;
   }
 
   // Save/restore GL state that ImGui might depend on
@@ -2039,6 +2883,9 @@ void PreviewRenderer::Render(int vp_x, int vp_y, int vp_w, int vp_h, const Previ
     glUniform1f(glGetUniformLocation(program, "u_globe_back_fade"), params.view_proj.globe_back_fade);
   }
   glUniform1i(glGetUniformLocation(program, "u_tex_mode"), static_cast<int>(tex_mode_));
+  // The no-image gate: 0 makes the shader skip the sim fetch entirely (see sim_layer_valid_).
+  // Set on both programs' source, so one lookup per frame whichever variant is bound.
+  glUniform1i(glGetUniformLocation(program, "u_sim_valid"), sim_layer_valid_ ? 1 : 0);
   glUniform1f(glGetUniformLocation(program, "u_xyz_scale"), tex_xyz_scale_);
   glUniform3f(glGetUniformLocation(program, "u_background"), params.background_color_linear[0],
               params.background_color_linear[1], params.background_color_linear[2]);

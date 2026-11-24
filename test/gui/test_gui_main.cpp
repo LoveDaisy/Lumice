@@ -197,6 +197,12 @@ void ResetTestState() {
   lumice::test::JoinGuiServerTasksForTeardown();
   // Document state (delegates to DoNew: g_state, g_preview, g_crystal_mesh_id/hash)
   gui::DoNew();
+  // Process-static renderer test seams belong to the case boundary the same way the fault hook
+  // does (cleared per-case by the suites' own discipline) — but a seam a case leaves RAISED on
+  // an early return must not silently re-cut every later case's uploads: the strip override is
+  // reset here, at the one cleanup boundary every case passes through, so a leaked cap cannot
+  // outlive the case that armed it.
+  gui::PreviewRenderer::SetXyzStripRowsForTest(0);
   // What the previous case copied must not be what this case's copy assertion reads back.
   g_test_clipboard.clear();
 
@@ -852,6 +858,7 @@ int main(int argc, char** argv) {
   RegisterScreenshotExportOptionsTests(engine);
   RegisterPreviewPixelTests(engine);
   RegisterPreviewTextureTests(engine);
+  RegisterFullArchiveAcceptanceTests(engine);
   RegisterPreviewBackgroundTests(engine);
   RegisterPreviewGlobeBackFadeTests(engine);
   RegisterPreviewPrintModeTests(engine);
@@ -862,6 +869,7 @@ int main(int argc, char** argv) {
   RegisterBackgroundOverlayTests(engine);
   RegisterBgColorPickerModeTests(engine);
   RegisterFileOpsTests(engine);
+  RegisterDiagnosticsTests(engine);
   RegisterColorWindowTests(engine);
   RegisterFilterEditorTests(engine);
   RegisterEditModalTests(engine);
@@ -1142,6 +1150,13 @@ int main(int argc, char** argv) {
     // failure mode it exists to prevent, so it has to be reachable from here.
     gui::RenderExportOverwriteConfirmPopup();
     gui::RenderScreenshotExportOptionsPopup();
+    // Mirrors src/gui/main.cpp's diagnostics popups for the same reason as the
+    // two above: an export prompt only the product renders cannot be driven.
+    gui::RenderDiagnosticsExportPopup();
+    gui::RenderDiagnosticsOverwriteConfirmPopup();
+    // The saved notice, same mirror: the full-chain case's last assertion is
+    // that the user who just chose a location sees the outcome and the path.
+    gui::RenderDiagnosticsSavedPopup();
     // Mirrors src/gui/main.cpp: a Render*Panel that only the production loop calls is
     // unreachable for every gui_test ("Unable to locate item"), a failure this repo has
     // already paid for twice.

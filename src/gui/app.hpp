@@ -13,6 +13,7 @@
 #include "gui/annotation_anchors.hpp"
 #include "gui/crystal_preview.hpp"
 #include "gui/crystal_renderer.hpp"
+#include "gui/diagnostics_report.hpp"
 #include "gui/file_io.hpp"
 #include "gui/gui_constants.hpp"
 #include "gui/gui_state.hpp"
@@ -427,10 +428,16 @@ ScreenshotRender RenderScreenshot(const ScreenshotExportSelection& sel);
 ScreenshotFrameFacts CurrentScreenshotFrameFacts();
 void DoExportDualFisheyeEqualAreaPng();
 void DoExportEquirectangularPng();
+// The no-dialog bodies of the two all-sky panorama exports (dialog → these, gui tests drive
+// these directly since a native save dialog cannot be driven from a test). Return whether the
+// file was written; every failure inside is logged and explicit (no file, never a truncated or
+// pseudo-full-resolution delivery). Needs the GL context.
+bool ExportDualFisheyeEqualAreaPng(const std::filesystem::path& path);
+bool ExportEquirectangularPng(const std::filesystem::path& path);
 void DoExportConfigJson();
 
 // The half of DoExportConfigJson that is not the file dialog: write `json_str` to `path`, OR — when
-// something is already at `path` (ConfigJsonExportNeedsOverwriteConfirm) — hold both in the pending
+// something is already at `path` (TextExportNeedsOverwriteConfirm) — hold both in the pending
 // slots above and raise the confirmation prompt instead. Exporting is the one way the GUI can write
 // over a document it did not author, and what it writes is only what the GUI can express, so that
 // write is an explicit act rather than a side effect of picking a filename.
@@ -443,6 +450,67 @@ void RequestConfigJsonExport(const std::filesystem::path& path, const std::strin
 // clear the pending slots, and both are no-ops when nothing is pending.
 void ConfirmPendingConfigJsonExport();
 void CancelPendingConfigJsonExport();
+
+// ---------------- The diagnostics report's export flow ----------------
+//
+// The "Export Diagnostics..." flow (Save menu). Same dialog → frozen content →
+// overwrite-confirm shape as the config JSON export above; the additions are
+// the per-export raw-log opt-in (its checkbox state lives in the popup, never
+// persisted) and the diagnostics report assembly itself
+// (BuildDiagnosticsReportJson — diagnostics_report.* holds the recorder and
+// the JSON).
+
+// The options popup (Save > Export Diagnostics...): raw-log checkbox +
+// privacy note. Opened by the menu item; rendered beside the other export
+// popups in app_panels.cpp. Not persisted — every export asks again.
+extern bool g_show_diagnostics_export_popup;
+extern bool g_diagnostics_include_logs;
+
+// Diagnostics overwrite prompt state — same contract as the config JSON twins
+// above: JSON frozen before the prompt, held until the answer, written
+// verbatim whatever the user does to the document in between.
+extern bool g_show_diagnostics_overwrite_confirm_popup;
+extern std::filesystem::path g_pending_diagnostics_path;
+extern std::string g_pending_diagnostics_json;
+// The saved-report notice (success only — a write failure has its own modal,
+// cancel raises nothing) and the one-shot save-dialog seam beside it: when
+// the seam holds a path, the next export uses it as the dialog's answer
+// instead of opening the native dialog, which would block a test harness.
+// Production never sets the seam; every export consumes it once.
+extern bool g_show_diagnostics_result_popup;
+extern std::string g_diagnostics_result_path;
+extern std::filesystem::path g_diagnostics_dialog_seam_path;
+
+// Assembles the full report JSON from the live app state, the recorder's
+// history and the export-time environment. `include_logs` decides whether the
+// raw log ring is snapshotted in (the opt-in is explicit and per-export).
+// Pure reads — no dirty/epoch/texture side effects.
+std::string BuildDiagnosticsReportJson(bool include_logs);
+
+// The export entry the popup's "Export..." button reaches: dialog, freeze,
+// request. `include_logs` travels from the popup's checkbox.
+void DoExportDiagnosticsReport(bool include_logs);
+
+// The half of DoExportDiagnosticsReport that is not the file dialog: write the
+// frozen report to `path`, or — when the target already exists — hold both and
+// raise the confirm prompt instead. Test seam for the whole write chain
+// (NFD cannot be driven from a test). Empty path does nothing.
+void RequestDiagnosticsExport(std::filesystem::path path, std::string json_str);
+
+// The caller's half of one upload event's diagnostics bracket (the closing
+// call; the matching Begin is diagnostics::Diagnostics().BeginUpload). Every
+// production upload action site closes its event through this — the action's
+// structured UploadResult is the fact source, and the display facts are what
+// the caller committed under the 814 policy. Exported for the witnesses that
+// drive a real upload OUTSIDE the production sites (gui_test): a test
+// bracketing an upload by hand must close it through the same translation
+// production uses, never a private copy of it.
+void CompleteUploadDiagnostics(const UploadResult& result, diagnostics::UploadPath path, bool display_advanced,
+                               bool display_revoked);
+
+// Resolve a pending diagnostics export; same contract as the config JSON twins.
+void ConfirmPendingDiagnosticsExport();
+void CancelPendingDiagnosticsExport();
 void DoOpen();
 void DoOpen(const std::filesystem::path& path);
 void DoNew();
@@ -580,9 +648,13 @@ enum class FrontendResetReason {
 
 // `baked` is the decoded texture section for `kOpenBaked` (LoadLmcFile's output, owned by the
 // caller). It must remain valid for the duration of the `ResetFrontendState` call and no longer:
-// the owner uploads it and copies what Save will need, and retains no pointer into it. Its
-// `mode` selects the PreviewRenderer upload entry point — see LmcTexture (file_io.hpp).
-void ResetFrontendState(GuiState& state, FrontendResetReason reason, const LmcTexture* baked = nullptr);
+// the owner uploads it and — for the kXyz half representation — takes the buffer itself by move
+// (the one-complete-source rule: a v6 document's inflated half bits BECOME the CPU mirror
+// instead of being copied beside the caller's copy, so the open never holds two full frames at
+// once; a v5 float section is still copied, the legacy shape). Nothing retains a pointer into
+// it, and the caller's vector is left empty for the moved representation. Its `mode` selects
+// the PreviewRenderer upload entry point — see LmcTexture (file_io.hpp).
+void ResetFrontendState(GuiState& state, FrontendResetReason reason, LmcTexture* baked = nullptr);
 
 // Single-owner sim_state reconcile (I2, blueprint §4/§5). Pure function of the last user intent,
 // the epoch the GUI committed, the last backend observation (may be null before the first poll),
@@ -636,6 +708,82 @@ bool ShouldUseCompositeUpload(bool payload_is_composite, bool show_composite_pre
 bool ShouldFireCompositeUpload(const PreviewSnapshot& snap, unsigned long long last_uploaded_texture_serial,
                                uint64_t display_epoch_floor, bool show_composite_preview,
                                bool last_uploaded_as_composite);
+
+// 814 upload failure latch: true while a failed upload's pause still applies to the CURRENT
+// generation. SyncFromPoller sets upload_latched + upload_latch_epoch = committed_epoch when an
+// upload returns !ok, and consults this before the fire gate — so a constrained machine is never
+// made to re-attempt a giant allocation at the poll rate (a newly minted serial inside the same
+// generation is not a new authorization). A new Run mints committed_epoch+1, which is what
+// un-latches with no explicit unlock (the recorded epoch no longer matches); a document switch
+// clears the latch outright in ResetFrontendState. Pure predicate, no globals, same testable-
+// contract convention as the gates above (truth table in
+// test/composition-correctness/gui/test_run_lifecycle_chain.cpp).
+bool ShouldBlockUploadForLatch(bool upload_latched, unsigned long long latch_epoch, unsigned long long committed_epoch);
+
+// ---- Preview recovery surface (814 §3.2/§3.3/§3.4) ----
+//
+// The ladder, its notice and its incident record live in app.cpp (runtime machine-resource state,
+// same ownership class as the upload latch); these accessors are the panel's and the diagnostics
+// exporter's whole view of it.
+
+// What the preview panel's one-time notice should say right now: 0 = nothing to report (healthy
+// or notice dismissed), 1 = degraded (the ladder established a reduced tier — the preview shows a
+// smaller but valid picture), 2 = unavailable (the last authorized cycle ran out of candidates;
+// an explicit retry or a new run is the way back). Dismissal only silences the notice; it never
+// fakes recovery.
+int PreviewRecoveryNoticeKind();
+
+// The notice's text for the current kind (empty when kind == 0). Names what happened, what the
+// user is looking at, and what the way back is.
+const char* PreviewRecoveryNoticeText();
+
+// Dismiss the notice. Deliberately not named "retry": dismissal hides the message only — it
+// changes no upload state, triggers no allocation, and a NEW failure re-shows the notice.
+void DismissPreviewRecoveryNotice();
+
+// Whether an explicit retry currently has a target: the last cycle ended exhausted AND a
+// retained newest-qualifying source exists. This is the Retry button's visibility predicate,
+// deliberately independent of the notice text's kind/dismissal state — dismissing the notice
+// must never take away the recovery exit, and a degraded-but-working display (kind 1, whose
+// source was already promoted) has no retry target to offer.
+bool PreviewRecoveryRetryAvailable();
+
+// The explicit recovery entry (plan 814 §3.2: reachable near the unavailable/degraded notice,
+// using the retained newest qualifying source — including a backend-completed terminal frame the
+// poller self-paused on — without re-running the simulation). Re-authorizes ONE full ladder
+// cycle, from candidate 0, against that retained source, on the caller's thread. With no
+// retained source there is nothing to retry and this is a no-op (a new Run is the way back then).
+// Main thread only (GL calls).
+void RetryPreviewUpload();
+
+// The minimal incident record of the last failed upload cycle (814 §3.4): the first failure's
+// stage, raw GL error, requested size, the ladder tier being attempted when it happened, and the
+// frame's serial. has_incident is false until a failure exists; a later success never erases the
+// record. This is what the hardware-diagnostics task reads — no new report UI, no hardware
+// enumeration, no dependency on that task landing first.
+struct PreviewUploadIncident {
+  bool has_incident = false;
+  int stage = 0;
+  int gl_error = 0;
+  int request_width = 0;
+  int request_height = 0;
+  int tier_tried = 0;
+  unsigned long long texture_serial = 0;
+};
+PreviewUploadIncident GetPreviewUploadIncident();
+
+// The pixel count absolute EV normalization divides by (plan 814 §3.3: the ORIGINAL source's
+// pixel count, never the display's). Priority: the accepted frame's payload — the authoritative
+// source extent while it is held — then the save mirror's own dimensions, then, only when neither
+// holds anything (a fresh document), the GPU display extent, which for an undegraded display IS
+// the source extent. A degraded display alone (ladder tier > 0) must never shrink this number:
+// using the displayed pixel count there is worth exactly -2 EV per halving of each axis.
+long PreviewSourcePixelCount();
+
+// The full source's own extent (payload first, then the save mirror, then the display — the same
+// priority order as PreviewSourcePixelCount, whose count is this product). Zeroes when nothing
+// holds a source.
+void PreviewSourceExtent(int* out_w, int* out_h);
 
 // task-348.3 AC3 (⑦): decide whether opening the Colors window should force
 // show_composite_preview=true. True only when no color classes exist yet (nothing
@@ -836,6 +984,16 @@ extern const char* const kExportOverwriteWarningText;
 void RenderExportOverwriteConfirmPopup();
 // Opens iff g_show_screenshot_export_options_popup is true; every frame, like the one above.
 void RenderScreenshotExportOptionsPopup();
+// Diagnostics export, same every-frame contract as the two above:
+// g_show_diagnostics_export_popup opens the options popup (raw-log checkbox +
+// privacy note; the "Export..." button runs DoExportDiagnosticsReport with the
+// checkbox's value), g_show_diagnostics_overwrite_confirm_popup opens the
+// overwrite prompt resolving through ConfirmPendingDiagnosticsExport /
+// CancelPendingDiagnosticsExport, and g_show_diagnostics_result_popup opens
+// the saved notice naming the written path.
+void RenderDiagnosticsExportPopup();
+void RenderDiagnosticsOverwriteConfirmPopup();
+void RenderDiagnosticsSavedPopup();
 // Generic GUI warning modal (see app_panels.cpp). SetGuiWarning queues a message (idempotent
 // while the same message is in-flight, so a persistent condition re-detected every debounced
 // commit does not re-spam the modal). ClearGuiWarning re-arms it (called on a successful

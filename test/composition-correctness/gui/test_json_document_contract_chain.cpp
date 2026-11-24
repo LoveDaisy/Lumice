@@ -1,7 +1,7 @@
 // Composition chain: what a core JSON document on disk is allowed to have done to it.
 //
 // Units in the chain: app (DoOpen / RequestConfigJsonExport) × file_io (DeserializeFromJson /
-// ParseShapeDist / the downgrade counters / ConfigJsonExportNeedsOverwriteConfirm) × gui_state.
+// ParseShapeDist / the downgrade counters / TextExportNeedsOverwriteConfirm) × gui_state.
 //
 // The GUI's expressive power is strictly smaller than the core config JSON's, so an import
 // degrades — and the owner ruling is that the degradation is confined to the copy in memory,

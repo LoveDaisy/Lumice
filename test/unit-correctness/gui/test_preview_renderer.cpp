@@ -30,12 +30,14 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
 #include "gui/forward_projection.hpp"
 #include "gui/gui_constants.hpp"
 #include "gui/overlay_labels.hpp"
+#include "gui/preview_downgrade.hpp"
 #include "gui/preview_renderer.hpp"
 
 namespace {
@@ -809,4 +811,392 @@ TEST(BgTransform, TheModifierHintNamesTheKeyThisPlatformEngraves) {
 #else
   EXPECT_STREQ(lumice::gui::kBgModifierName, "Alt");
 #endif
+}
+
+// ---- The recovery ladder's pure pixel math (preview_downgrade.hpp) ----
+//
+// The prefiltered downgrade candidates the 814 ladder offers when neither the staging buffers nor
+// the full-size texture fit. Two laws are under witness, because they are the two the plan's
+// exposure contracts lean on and the two a clever-looking implementation silently breaks. Law 1 —
+// average, not sum, in the linear source domain — is what keeps a constant-radiance frame
+// gain-free through a downgrade (the relative mode shows the same brightness) and keeps every
+// texel's per-original-texel unit (the absolute mode, which divides by the ORIGINAL pixel count,
+// stays correct). Law 2 — every candidate derived from the original frame by step count — is what
+// keeps a retry from compounding blur: the ladder re-derives from the retained source, it never
+// downgrades a downgrade. Headless by construction: the header carries no GL, no GuiState and no
+// ImGui.
+
+namespace preview_downgrade_test {
+
+std::vector<float> ConstantPlane(int w, int h, float v) {
+  return std::vector<float>(static_cast<size_t>(w) * h * 3, v);
+}
+
+// A coordinate pattern whose every texel differs, so a wrong stencil (a skip instead of an
+// average, a transposed read) cannot land on the right answer by accident.
+std::vector<float> CoordinatePlane(int w, int h, int seed) {
+  std::vector<float> tex(static_cast<size_t>(w) * h * 3);
+  for (int y = 0; y < h; ++y) {
+    for (int x = 0; x < w; ++x) {
+      const size_t idx = (static_cast<size_t>(y) * w + x) * 3;
+      for (int c = 0; c < 3; ++c) {
+        tex[idx + c] = static_cast<float>(((x * 7 + y * 5 + c * 13 + seed) % 61) - 30) / 30.0f;
+      }
+    }
+  }
+  return tex;
+}
+
+}  // namespace preview_downgrade_test
+
+// Law 1, relative-mode form: a constant radiance downgrades to the same constant — no gain, no
+// bias. A summing implementation fails this by exactly 4x; a clamping one fails on bright values.
+TEST(PreviewDowngrade, ConstantRadianceDowngradesGainFree) {
+  using namespace preview_downgrade_test;
+  // One step above the floor: 256x128 downgrades to 128x64. Smaller planes are below the
+  // ladder's minimum valid dual-disc size and are refused by design (CanDowngradeOnce), which is
+  // its own case below.
+  constexpr int kW = 256;
+  constexpr int kH = 128;
+  for (float v : { 0.0f, 0.5f, 1.0f, 12.75f }) {
+    const std::vector<float> src = ConstantPlane(kW, kH, v);
+    std::vector<float> dst;
+    int out_w = 0;
+    int out_h = 0;
+    const bool applied = lumice::gui::DowngradeXyzPlaneBounded(src.data(), kW, kH, 1, &out_w, &out_h, dst);
+    // Non-fatal + continue (loop-fatal-assert rule): one failed value must not hide the others.
+    if (!applied) {
+      ADD_FAILURE() << "the step did not apply for v=" << v;
+      continue;
+    }
+    EXPECT_EQ(out_w, kW / 2);
+    EXPECT_EQ(out_h, kH / 2);
+    for (size_t i = 0; i < dst.size(); ++i) {
+      // Non-fatal on purpose (loop-fatal-assert rule): one bad texel must not hide the rest.
+      // The candidate runs over the CANONICAL-half input, so a constant survives its own
+      // quantize-dequantize round trip: the tolerance is one fp16 ulp's worth of relative error,
+      // not the raw sum/4 exactness. A summing implementation still fails this by exactly 4x.
+      EXPECT_NEAR(dst[i], v, std::max(1e-6f, std::abs(v) * 2e-3f))
+          << "texel " << i << " of a constant " << v << " plane moved";
+    }
+  }
+}
+
+// Law 1, exact-stencil form: each destination texel is the plain area average of its source
+// block in the linear domain, per component, with no reweighting and no skip. Pinning the number
+// (not just the range) is what rejects a skip-stencil (nearest-neighbour resample in disguise)
+// and a corner-weighted one alike. The isolated block sits in a zero plane at the floor-legal
+// size, so the destination texel at the block's corner carries the block's own average alone.
+TEST(PreviewDowngrade, CandidateIsThePlainBlockAverage) {
+  constexpr int kW = 256;
+  constexpr int kH = 128;
+  std::vector<float> src(static_cast<size_t>(kW) * kH * 3, 0.0f);
+  const float blocks[4][3] = { { 1.0f, 2.0f, 3.0f }, { 3.0f, 2.0f, 1.0f }, { 5.0f, 4.0f, 7.0f }, { 7.0f, 4.0f, 5.0f } };
+  for (int y = 0; y < 2; ++y) {
+    for (int x = 0; x < 2; ++x) {
+      for (int c = 0; c < 3; ++c) {
+        src[(static_cast<size_t>(y) * kW + x) * 3 + c] = blocks[y * 2 + x][c];
+      }
+    }
+  }
+  std::vector<float> dst;
+  int out_w = 0;
+  int out_h = 0;
+  ASSERT_TRUE(lumice::gui::DowngradeXyzPlaneBounded(src.data(), kW, kH, 1, &out_w, &out_h, dst));
+  ASSERT_EQ(out_w, kW / 2);
+  ASSERT_EQ(out_h, kH / 2);
+  // The canonical round trip moves each raw value by at most a fp16 ulp's worth; a skip stencil
+  // would be off by ~25%, a corner weighting by ~12% — orders above the tolerance.
+  const float tol = 7.0f * 2e-3f;
+  EXPECT_NEAR(dst[0], (1.0f + 3.0f + 5.0f + 7.0f) / 4.0f, tol);
+  EXPECT_NEAR(dst[1], (2.0f + 2.0f + 4.0f + 4.0f) / 4.0f, tol);
+  EXPECT_NEAR(dst[2], (3.0f + 1.0f + 7.0f + 5.0f) / 4.0f, tol);
+  // Every other destination texel saw only zeros.
+  for (size_t i = 3; i < dst.size(); ++i) {
+    EXPECT_NEAR(dst[i], 0.0f, tol) << "texel " << i << " of the zero field moved";
+  }
+}
+
+// Law 2, bounded form: a candidate depends on (source, step count) ALONE. The direct block
+// computation makes this hold by construction — it always reads the original plane — and the
+// assertion pins it: a repeated derivation is bit-identical, and a derivation against a copy of
+// the source matches one against the source, so a retry that re-derives from the retained
+// source cannot depend on how many failed attempts came before it. (This is the property the
+// old nested form expressed as compose-equality; with one-pass blocks the two orders differ by
+// one extra canonical round trip at a rounding boundary, which is a value-class difference, not
+// the law.)
+TEST(PreviewDowngrade, StepsAlwaysDeriveFromTheOriginalPlane) {
+  using namespace preview_downgrade_test;
+  constexpr int kW = 512;
+  constexpr int kH = 256;
+  const std::vector<float> src = CoordinatePlane(kW, kH, /*seed=*/5);
+  std::vector<float> dst_a;
+  int w = 0;
+  int h = 0;
+  ASSERT_TRUE(lumice::gui::DowngradeXyzPlaneBounded(src.data(), kW, kH, 2, &w, &h, dst_a));
+  ASSERT_EQ(w, kW / 4);
+  ASSERT_EQ(h, kH / 4);
+
+  std::vector<float> dst_b;
+  int w2 = 0;
+  int h2 = 0;
+  ASSERT_TRUE(lumice::gui::DowngradeXyzPlaneBounded(src.data(), kW, kH, 2, &w2, &h2, dst_b));
+  EXPECT_EQ(dst_a, dst_b);
+
+  const std::vector<float> src_copy = src;  // the retained-source copy a retry would hold
+  std::vector<float> dst_copy;
+  int wc = 0;
+  int hc = 0;
+  ASSERT_TRUE(lumice::gui::DowngradeXyzPlaneBounded(src_copy.data(), kW, kH, 2, &wc, &hc, dst_copy));
+  EXPECT_EQ(dst_a, dst_copy);
+}
+
+// The candidate runs over the CANONICAL-half input — the same values the .lmc codec stores — so
+// a live frame's candidate and a reopened document's candidate are derived from one input, not
+// two nearly-equal ones. The reference here canonicalizes the plane itself through the codec and
+// averages it with the plain nested form; the bounded function must agree with that reference,
+// not invent its own input domain.
+TEST(PreviewDowngrade, CandidateRunsOverTheCanonicalHalfInput) {
+  using namespace preview_downgrade_test;
+  constexpr int kW = 256;
+  constexpr int kH = 128;
+  const std::vector<float> src = CoordinatePlane(kW, kH, /*seed=*/9);
+  std::vector<float> dst;
+  int out_w = 0;
+  int out_h = 0;
+  ASSERT_TRUE(lumice::gui::DowngradeXyzPlaneBounded(src.data(), kW, kH, 1, &out_w, &out_h, dst));
+  ASSERT_EQ(out_w, kW / 2);
+  ASSERT_EQ(out_h, kH / 2);
+
+  // Reference: canonicalize the whole plane through the codec, then quarter-sum each 2x2 block.
+  const size_t count = static_cast<size_t>(kW) * kH * 3;
+  std::vector<uint16_t> half(count);
+  std::vector<float> canonical(count);
+  lumice::gui::QuantizeXyzToHalf(src.data(), count, lumice::gui::ComputeXyzHalfScale(src.data(), count), half.data());
+  lumice::gui::DequantizeHalfToXyz(half.data(), count, lumice::gui::ComputeXyzHalfScale(src.data(), count),
+                                   canonical.data());
+  std::vector<float> reference(static_cast<size_t>(kW / 2) * (kH / 2) * 3, 0.0f);
+  for (int y = 0; y < kH / 2; ++y) {
+    for (int x = 0; x < kW / 2; ++x) {
+      for (int c = 0; c < 3; ++c) {
+        const float a = canonical[(static_cast<size_t>(y * 2) * kW + x * 2) * 3 + c];
+        const float b = canonical[(static_cast<size_t>(y * 2) * kW + x * 2 + 1) * 3 + c];
+        const float e = canonical[(static_cast<size_t>((y * 2 + 1)) * kW + x * 2) * 3 + c];
+        const float f = canonical[(static_cast<size_t>((y * 2 + 1)) * kW + x * 2 + 1) * 3 + c];
+        reference[(static_cast<size_t>(y) * (kW / 2) + x) * 3 + c] = 0.25f * (a + b + e + f);
+      }
+    }
+  }
+  for (size_t i = 0; i < dst.size(); ++i) {
+    EXPECT_NEAR(dst[i], reference[i], std::max(1e-5f, std::abs(dst[i]) * 2e-3f)) << "texel " << i;
+  }
+}
+
+// A host allocation failure is a REPORTED stage, not a process exit: the fault seam throws from
+// the bounded function's own buffer allocations, the ladder's caller converts it, and after the
+// fault is cleared the same candidate computes.
+TEST(PreviewDowngrade, AllocationFailureThrowsAndRecovers) {
+  using namespace preview_downgrade_test;
+  constexpr int kW = 256;
+  constexpr int kH = 128;
+  const std::vector<float> src = ConstantPlane(kW, kH, 0.5f);
+  std::vector<float> dst;
+  int out_w = 0;
+  int out_h = 0;
+  lumice::gui::SetDowngradeAllocFaultForTest(/*remaining_failures=*/1);
+  EXPECT_THROW(lumice::gui::DowngradeXyzPlaneBounded(src.data(), kW, kH, 1, &out_w, &out_h, dst), std::bad_alloc);
+  lumice::gui::SetDowngradeAllocFaultForTest(/*remaining_failures=*/0);
+  EXPECT_TRUE(lumice::gui::DowngradeXyzPlaneBounded(src.data(), kW, kH, 1, &out_w, &out_h, dst));
+  EXPECT_EQ(out_w, kW / 2);
+}
+
+// The ladder terminates: from a full-size dual-disc frame the sizes halve until the floor
+// (8192x4096 -> 128x64 in six steps), and the seventh step — which would cross it — is refused.
+// Finite candidates by construction, plan 814 §3.2.
+TEST(PreviewDowngrade, LadderStopsAtTheMinimumDualDiscFloor) {
+  int w = 0;
+  int h = 0;
+  ASSERT_TRUE(lumice::gui::DowngradedSize(8192, 4096, 6, &w, &h));
+  EXPECT_EQ(w, 128);
+  EXPECT_EQ(h, 64);
+  EXPECT_FALSE(lumice::gui::DowngradedSize(8192, 4096, 7, &w, &h));
+  EXPECT_FALSE(lumice::gui::CanDowngradeOnce(128, 64));
+  // A frame already at the floor has no next candidate; steps == 0 is the frame itself.
+  EXPECT_TRUE(lumice::gui::DowngradedSize(128, 64, 0, &w, &h));
+  EXPECT_FALSE(lumice::gui::DowngradedSize(128, 64, 1, &w, &h));
+}
+
+// The half-source twin must be INDISTINGUISHABLE from the float twin run on the canonical values:
+// a held frame's bits ARE its canonical values (the bits were produced by QuantizeXyzToHalf), so
+// dequantizing one row is exactly the float twin's quantize-then-dequantize of that row. Pinning
+// byte equality between the twins is what forbids the half variant from ever growing a second
+// averaging path that drifts.
+TEST(PreviewDowngrade, HalfSourceTwinMatchesTheFloatTwinOnTheCanonicalValues) {
+  // 512x256 takes two steps to the floor-sized 128x64; a 256x128 plane would cross the floor on
+  // the second step and the step would (correctly) refuse.
+  constexpr int kW = 512;
+  constexpr int kH = 256;
+  const auto coordinate = [](int x, int y, int c) {
+    return static_cast<float>(((x * 7 + y * 5 + c * 13) % 61) - 30) / 30.0f * 40.0f;
+  };
+  std::vector<float> floats(static_cast<size_t>(kW) * kH * 3);
+  for (int y = 0; y < kH; ++y) {
+    for (int x = 0; x < kW; ++x) {
+      for (int c = 0; c < 3; ++c) {
+        floats[(static_cast<size_t>(y) * kW + x) * 3 + c] = coordinate(x, y, c);
+      }
+    }
+  }
+  const float scale = lumice::gui::ComputeXyzHalfScale(floats.data(), floats.size());
+  std::vector<uint16_t> bits(floats.size());
+  lumice::gui::QuantizeXyzToHalf(floats.data(), floats.size(), scale, bits.data());
+
+  std::vector<float> from_floats;
+  int fw = 0;
+  int fh = 0;
+  ASSERT_TRUE(lumice::gui::DowngradeXyzPlaneBounded(floats.data(), kW, kH, 2, &fw, &fh, from_floats));
+  std::vector<float> from_bits;
+  int bw = 0;
+  int bh = 0;
+  ASSERT_TRUE(lumice::gui::DowngradeXyzHalfPlaneBounded(bits.data(), scale, kW, kH, 2, &bw, &bh, from_bits));
+  ASSERT_EQ(fw, bw);
+  ASSERT_EQ(fh, bh);
+  ASSERT_EQ(from_floats.size(), from_bits.size());
+  for (size_t i = 0; i < from_floats.size(); ++i) {
+    EXPECT_EQ(from_floats[i], from_bits[i]) << "texel " << i << ": the twins disagree";
+  }
+
+  // Law 1 still holds through the twin: a constant half plane downgrades to the same constant.
+  std::vector<float> constant(static_cast<size_t>(kW) * kH * 3, 8.0f);
+  const float c_scale = lumice::gui::ComputeXyzHalfScale(constant.data(), constant.size());
+  std::vector<uint16_t> c_bits(constant.size());
+  lumice::gui::QuantizeXyzToHalf(constant.data(), constant.size(), c_scale, c_bits.data());
+  std::vector<float> c_dst;
+  int cw = 0;
+  int ch = 0;
+  ASSERT_TRUE(lumice::gui::DowngradeXyzHalfPlaneBounded(c_bits.data(), c_scale, kW, kH, 1, &cw, &ch, c_dst));
+  ASSERT_EQ(cw, kW / 2);
+  ASSERT_EQ(ch, kH / 2);
+  for (size_t i = 0; i < c_dst.size(); ++i) {
+    EXPECT_NEAR(c_dst[i], 8.0f, 8.0f * 2e-3f) << "texel " << i << " of a constant half plane moved";
+  }
+
+  // Every candidate derives from the ORIGINAL plane by step count — the twin reads the caller's
+  // bits, so re-running it must reproduce the same candidate (no compounding across attempts).
+  std::vector<float> again;
+  int aw = 0;
+  int ah = 0;
+  ASSERT_TRUE(lumice::gui::DowngradeXyzHalfPlaneBounded(bits.data(), scale, kW, kH, 2, &aw, &ah, again));
+  ASSERT_EQ(again, from_bits);
+
+  // The allocation fault propagates from the twin like it does from the float twin.
+  lumice::gui::SetDowngradeAllocFaultForTest(1);
+  std::vector<float> faulted;
+  int xw = 0;
+  int xh = 0;
+  EXPECT_THROW(lumice::gui::DowngradeXyzHalfPlaneBounded(bits.data(), scale, kW, kH, 1, &xw, &xh, faulted),
+               std::bad_alloc);
+  lumice::gui::SetDowngradeAllocFaultForTest(0);
+}
+
+// Mirror retirement: a representation switch and a document clear must release the RETIRED
+// mirror's heap block, not merely empty it — capacity() is the witness, and the null-pointer
+// queries cannot carry it (a cleared-but-allocated vector passes them while holding its old
+// allocation). The move handover also consumes the caller's buffer, which is what keeps the
+// production open at ONE full frame instead of two.
+TEST(PreviewRenderer, MirrorRetirementReleasesTheRetiredRepresentationsStorage) {
+  namespace g = lumice::gui;
+  g::PreviewRenderer renderer;  // no Init: the mirror writers are CPU-only
+  constexpr int kW = 8;
+  constexpr int kH = 4;
+  const size_t float_bytes = static_cast<size_t>(kW) * kH * 3 * sizeof(float);
+  const size_t half_bytes = static_cast<size_t>(kW) * kH * 3 * sizeof(uint16_t);
+  g::XyzTextureMeta meta;
+
+  std::vector<float> floats(static_cast<size_t>(kW) * kH * 3, 1.0f);
+  renderer.UpdateCpuXyzTextureData(floats.data(), kW, kH, meta);
+  // Allocation sizes are >= (a standard library may round a growth up); RELEASE is == 0, the
+  // one exact statement a swap-based retirement makes on every implementation.
+  EXPECT_GE(renderer.CpuMirrorCapacityBytesForTest(), float_bytes);
+  EXPECT_TRUE(renderer.CpuXyzStorageIsHalf() == false);
+
+  // The production open's handover: MOVE the half buffer in. The float mirror retires with its
+  // storage, the moved-from vector leaves empty, and the mirror's heap is the half's alone.
+  std::vector<uint16_t> bits(static_cast<size_t>(kW) * kH * 3, 0x3C00u);  // half 1.0
+  renderer.UpdateCpuXyzHalfTextureData(std::move(bits), kW, kH, 1.0f, meta);
+  EXPECT_TRUE(bits.empty()) << "the move handover consumed the caller's buffer";
+  EXPECT_TRUE(renderer.GetXyzTextureData() == nullptr);
+  EXPECT_EQ(renderer.CpuMirrorCapacityBytesForTest(), half_bytes)
+      << "the retired float representation's storage must be released, not kept as capacity";
+  EXPECT_TRUE(renderer.CpuXyzStorageIsHalf());
+
+  // The copy writer (tests seeding from their own bytes) retires the same way.
+  std::vector<uint16_t> bits2(static_cast<size_t>(kW) * kH * 3, 0x0000u);
+  renderer.UpdateCpuXyzHalfTextureData(bits2.data(), kW, kH, 2.0f, meta);
+  EXPECT_GE(renderer.CpuMirrorCapacityBytesForTest(), half_bytes);
+  EXPECT_LE(renderer.CpuMirrorCapacityBytesForTest(), 2 * half_bytes);
+
+  // A uint8 mirror write retires BOTH XYZ representations' storage.
+  std::vector<unsigned char> srgb(static_cast<size_t>(kW) * kH * 3, 7);
+  renderer.UpdateCpuTextureData(srgb.data(), kW, kH);
+  const size_t srgb_bytes = static_cast<size_t>(kW) * kH * 3;
+  EXPECT_GE(renderer.CpuMirrorCapacityBytesForTest(), srgb_bytes);
+  EXPECT_LT(renderer.CpuMirrorCapacityBytesForTest(), srgb_bytes + half_bytes)
+      << "uint8 bytes only: both XYZ representations' storage released";
+
+  // Document clear retires everything: the heap is empty, not merely element-free.
+  renderer.UpdateCpuXyzHalfTextureData(std::vector<uint16_t>(static_cast<size_t>(kW) * kH * 3, 0x3C00u), kW, kH, 1.0f,
+                                       meta);
+  EXPECT_GT(renderer.CpuMirrorCapacityBytesForTest(), 0u);
+  renderer.ClearTexture();
+  EXPECT_EQ(renderer.CpuMirrorCapacityBytesForTest(), 0u)
+      << "a cleared document keeps no mirror allocation of any representation";
+}
+
+// The strip staging plan: rows are what the budget buys, the override only shrinks, a small
+// frame is one strip, the tail strip is the remaining rows (never an empty strip), and the slot
+// allocation is the capacity the plan actually holds — the numbers the renderer maps, fences and
+// subimages against, asserted here so the GL code never re-derives a second cut.
+TEST(XyzStripPlan, BudgetOverrideAndTailAreAllRowGranular) {
+  namespace g = lumice::gui;
+  // The production cut of the archive size: the budget buys whole rows, the count is the ceil,
+  // and the two slots together stay inside the ~4 MiB staging budget.
+  const g::XyzStripPlan big = g::ComputeXyzStripPlan(8192, 4096, 0);
+  EXPECT_EQ(big.row_bytes, static_cast<size_t>(8192) * 3 * sizeof(uint16_t));
+  EXPECT_GT(big.rows_per_strip, 0);
+  EXPECT_EQ(big.slot_bytes, static_cast<size_t>(big.rows_per_strip) * big.row_bytes);
+  EXPECT_EQ(big.strip_count, (4096 + big.rows_per_strip - 1) / big.rows_per_strip);
+  EXPECT_LE(2 * big.slot_bytes, 2 * g::kXyzStagingSlotTargetBytes);
+  EXPECT_LT(2 * big.slot_bytes, 8192.0 * 4096.0 * 3.0 * 2.0) << "staging is a fraction of the frame, not a copy";
+
+  // A small frame is ONE strip: the plan never invents empty strips, and the slot is exactly the
+  // frame's own byte count.
+  const g::XyzStripPlan small = g::ComputeXyzStripPlan(16, 10, 0);
+  EXPECT_EQ(small.rows_per_strip, 10);
+  EXPECT_EQ(small.strip_count, 1);
+  EXPECT_EQ(small.slot_bytes, static_cast<size_t>(16) * 10 * 3 * sizeof(uint16_t));
+
+  // The override only shrinks: 2-row strips of a 9-row frame are 2,2,2,2,1 — four full strips
+  // and a one-row tail, the cut the multi-strip witnesses ride.
+  const g::XyzStripPlan capped = g::ComputeXyzStripPlan(16, 9, 2);
+  EXPECT_EQ(capped.rows_per_strip, 2);
+  EXPECT_EQ(capped.strip_count, 5);
+  EXPECT_EQ(capped.slot_bytes, 2 * capped.row_bytes);
+  // The override cannot push past the budget rule: a cap above what ~2 MiB buys is ignored.
+  const g::XyzStripPlan uncapped = g::ComputeXyzStripPlan(8192, 4096, 100000);
+  EXPECT_EQ(uncapped.rows_per_strip, big.rows_per_strip);
+
+  // Odd width: a row is still one unit (width*6 bytes, even, alignment 2), never split.
+  const g::XyzStripPlan odd = g::ComputeXyzStripPlan(15, 9, 2);
+  EXPECT_EQ(odd.row_bytes, static_cast<size_t>(15) * 3 * sizeof(uint16_t));
+  EXPECT_EQ(odd.strip_count, 5);
+
+  // Degenerate sizes stay sane: a one-row frame is one one-row strip; a width so wide the
+  // budget buys less than a row still gets that row.
+  const g::XyzStripPlan tiny = g::ComputeXyzStripPlan(4, 1, 0);
+  EXPECT_EQ(tiny.rows_per_strip, 1);
+  EXPECT_EQ(tiny.strip_count, 1);
+  const g::XyzStripPlan wide = g::ComputeXyzStripPlan(400000, 3, 0);
+  EXPECT_EQ(wide.rows_per_strip, 1);
+  EXPECT_EQ(wide.strip_count, 3);
 }

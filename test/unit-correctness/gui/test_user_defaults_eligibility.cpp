@@ -99,7 +99,12 @@ namespace {
 // kDerivedFieldsExcludeList: a per-frame re-derivation owns no state between frames — nothing
 // to pre-set, so ineligible as every derived row is.
 // 99 with the app-only startup preview style, a pure client view default.
-constexpr std::size_t kExpectedGovernedFieldCount = 99;
+// 101 with the upload failure latch (814): upload_latched / upload_latch_epoch join
+// kDerivedFieldsExcludeList beside last_uploaded_texture_serial — runtime pause state owned by
+// SyncFromPoller's upload branch (a failed giant allocation must not be re-attempted at the poll
+// rate). A measurement of a failed attempt is not a setting, so deliberately ineligible as a
+// personal default, exactly like the cursor beside it.
+constexpr std::size_t kExpectedGovernedFieldCount = 101;
 
 std::vector<std::string> AllGovernedFieldNames() {
   std::vector<std::string> names;

@@ -244,6 +244,9 @@ inline constexpr const char* kDerivedFieldsExcludeList[] = {
     "committed_epoch",
     "display_epoch_floor",
     "last_uploaded_texture_serial",
+    // Upload failure latch (814): runtime pause state owned by SyncFromPoller's upload branch.
+    "upload_latched",
+    "upload_latch_epoch",
     // Stats readbacks (populated from poller snapshots)
     "stats_ray_seg_num",
     "stats_sim_ray_num",

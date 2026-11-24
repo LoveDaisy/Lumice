@@ -611,6 +611,13 @@ void RenderTopBar(float window_width) {
       if (ImGui::MenuItem("Config JSON...")) {
         DoExportConfigJson();
       }
+      if (ImGui::MenuItem("Export Diagnostics...")) {
+        // The one diagnostic entry, always reachable (a fault scene is worth
+        // exporting even mid-failure, and the report is read-only). Opens the
+        // options popup (raw-log opt-in), not the dialog directly — the choice
+        // must be made explicitly per export, never persisted.
+        g_show_diagnostics_export_popup = true;
+      }
       ImGui::Separator();
       // Personal defaults are NOT in this menu. They used to be, on the reasoning that "what a new
       // document starts from" is a file-scope decision and so belongs with the other export
@@ -2468,7 +2475,7 @@ void AssemblePreviewPictureParams(GuiState& state, PreviewParams& pp, std::vecto
   mono_ev_in.ev_auto = state.ev_auto;
   mono_ev_in.snapshot_intensity = state.snapshot_intensity;
   mono_ev_in.snapshot_emitted_energy = state.snapshot_emitted_energy;
-  mono_ev_in.total_pixels = g_preview.GetTextureWidth() * g_preview.GetTextureHeight();
+  mono_ev_in.total_pixels = PreviewSourcePixelCount();
   const lumice::gui::MonoExposure mono_ev = lumice::gui::ComputeMonoExposure(rc.ev_mode, mono_ev_in);
   pp.exposure.intensity_factor = mono_ev.intensity_factor;
 
@@ -2840,6 +2847,33 @@ void RenderPreviewPanel(GLFWwindow* window, float window_width, float window_hei
   // GUI-frame camera-intent reconciliation. It runs whether or not a picture exists or the View
   // section is expanded, and before this frame assembles any view-dependent inputs.
   UpdateLockedLookAt(g_state);
+
+  // 814 AC3: the preview recovery notice — one-time dismissible, with the explicit retry within
+  // reach (plan §3.2). Drawn inside this window so it reads as part of the preview area: the
+  // deferred FBO blit runs before ImGui's draw data, so this text lands on top of whatever the
+  // preview is (or is not) showing. The Retry button's visibility is INDEPENDENT of the notice's
+  // dismissal state — dismissing the message never takes away the recovery exit; it shows only
+  // when an exhausted cycle left a retained source to re-attempt (a degraded-but-working display
+  // has no retry target, and its way back is a new Run).
+  const int notice_kind = PreviewRecoveryNoticeKind();
+  const bool retry_available = PreviewRecoveryRetryAvailable();
+  if (notice_kind != 0 || retry_available) {
+    ImGui::SetCursorPos(ImVec2(UiPx(8), UiPx(8)));
+    ImGui::BeginGroup();
+    if (notice_kind != 0) {
+      ImGui::TextUnformatted(PreviewRecoveryNoticeText());
+    }
+    if (retry_available && ImGui::SmallButton("Retry preview")) {
+      RetryPreviewUpload();
+    }
+    if (notice_kind != 0) {
+      ImGui::SameLine();
+      if (ImGui::SmallButton("Dismiss")) {
+        DismissPreviewRecoveryNotice();
+      }
+    }
+    ImGui::EndGroup();
+  }
 
   // Renderer invariants, every frame (the shared body carries the history).
   ClampRendererViewInvariants(g_state.renderer);
@@ -3277,6 +3311,92 @@ void RenderExportOverwriteConfirmPopup() {
       ImGui::CloseCurrentPopup();
     }
 
+    ImGui::EndPopup();
+  }
+}
+
+// Save > Export Diagnostics... The
+// checkbox is the report's one option (attach the raw log ring); it resets to
+// unchecked on every open because the log is the only part of the report that
+// can carry private text, and "opt-in per export" means no remembered yes.
+void RenderDiagnosticsExportPopup() {
+  if (g_show_diagnostics_export_popup) {
+    ImGui::OpenPopup("Export Diagnostics");
+    g_show_diagnostics_export_popup = false;
+    g_diagnostics_include_logs = false;
+  }
+
+  if (ImGui::BeginPopupModal("Export Diagnostics", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    ImGui::TextUnformatted(
+        "Write a JSON report of this machine, the current document and\n"
+        "this session's texture-upload attempts to a file you choose.");
+    ImGui::Separator();
+    ImGui::Checkbox("Include raw log", &g_diagnostics_include_logs);
+    ImGui::TextDisabled("The raw log can contain file paths and similar details from\nyour session.");
+    ImGui::TextDisabled("Without it, the report contains no paths, file names or\nimage data.");
+    ImGui::Separator();
+
+    if (ImGui::Button("Export...", ImVec2(UiPx(120.0f), 0.0f))) {
+      ImGui::CloseCurrentPopup();
+      DoExportDiagnosticsReport(g_diagnostics_include_logs);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel", ImVec2(UiPx(80.0f), 0.0f))) {
+      ImGui::CloseCurrentPopup();
+    }
+
+    ImGui::EndPopup();
+  }
+}
+
+// The diagnostics report's overwrite prompt. A report file is not the GUI's
+// re-emission of a document, so the config export's warning text (which tells
+// a .json-import user to keep the .lmc instead) does not fit; what is lost is
+// the previous report.
+void RenderDiagnosticsOverwriteConfirmPopup() {
+  if (g_show_diagnostics_overwrite_confirm_popup) {
+    ImGui::OpenPopup("Overwrite Diagnostics File");
+    g_show_diagnostics_overwrite_confirm_popup = false;
+  }
+
+  if (ImGui::BeginPopupModal("Overwrite Diagnostics File", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    ImGui::TextUnformatted("A file already exists at:");
+    ImGui::TextUnformatted(PathToU8(g_pending_diagnostics_path).c_str());
+    ImGui::Separator();
+    ImGui::TextUnformatted("The existing file will be replaced by this diagnostics\nreport and cannot be recovered.");
+    ImGui::Separator();
+
+    if (ImGui::Button("Overwrite", ImVec2(UiPx(120.0f), 0.0f))) {
+      ConfirmPendingDiagnosticsExport();
+      ImGui::CloseCurrentPopup();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel", ImVec2(UiPx(80.0f), 0.0f))) {
+      CancelPendingDiagnosticsExport();
+      ImGui::CloseCurrentPopup();
+    }
+
+    ImGui::EndPopup();
+  }
+}
+
+// The saved report's receipt: the user who just chose a location sees the
+// outcome and the path without opening the log panel (the log line alone is
+// filterable and sits in a panel that defaults closed). Success only — a
+// write failure has its own modal and a cancel raises nothing.
+void RenderDiagnosticsSavedPopup() {
+  if (g_show_diagnostics_result_popup) {
+    ImGui::OpenPopup("Diagnostics Report Saved");
+    g_show_diagnostics_result_popup = false;
+  }
+
+  if (ImGui::BeginPopupModal("Diagnostics Report Saved", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    ImGui::TextUnformatted("The diagnostics report was written to:");
+    ImGui::TextUnformatted(g_diagnostics_result_path.c_str());
+    ImGui::Separator();
+    if (ImGui::Button("OK", ImVec2(UiPx(80.0f), 0.0f))) {
+      ImGui::CloseCurrentPopup();
+    }
     ImGui::EndPopup();
   }
 }

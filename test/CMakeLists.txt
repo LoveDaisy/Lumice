@@ -634,6 +634,12 @@ if(BUILD_GUI)
     "${PROJ_TEST_DIR}/unit-correctness/gui/test_bg_color_picker.cpp"
     "${PROJ_TEST_DIR}/unit-correctness/gui/test_sampling_density_stats.cpp"
     "${PROJ_TEST_DIR}/unit-correctness/gui/test_server_poller.cpp"
+    # The diagnostics report's pure half: schema, missing-state honesty, the upload-event
+    # taxonomy, the privacy whitelist (structural — only the opted-in log section carries free
+    # text) and the retention latch. nlohmann and diagnostics_report.cpp come with
+    # lumice_gui_obj; the GL and ResetFrontendState halves live elsewhere on purpose (see the
+    # file's header comment).
+    "${PROJ_TEST_DIR}/unit-correctness/gui/test_diagnostics_report.cpp"
     "${PROJ_TEST_DIR}/unit-correctness/gui/test_face_number_overlay.cpp"
     "${PROJ_TEST_DIR}/unit-correctness/gui/test_overlay_labels.cpp"
     # The print half of the labels: each Build*LabelSet hands the drawer ink (black, no plate) under
@@ -772,6 +778,12 @@ if(BUILD_GUI)
     "${PROJ_TEST_DIR}/composition-correctness/gui/test_lmc_load_atomicity_chain.cpp"
     "${PROJ_TEST_DIR}/composition-correctness/gui/test_document_defaults_chain.cpp"
     "${PROJ_TEST_DIR}/composition-correctness/gui/test_document_switch_chain.cpp"
+    # The diagnostics recorder's identity law over the real document entry
+    # points: a switch ages every retained event (it keeps its own serial) and
+    # re-arms "current document has seen an upload attempt"; Revert is the
+    # same-document carve-out. Reopen-with-texture needs GL and is witnessed in
+    # gui_test instead.
+    "${PROJ_TEST_DIR}/composition-correctness/gui/test_diagnostics_context_chain.cpp"
     "${PROJ_TEST_DIR}/composition-correctness/gui/test_legacy_document_chain.cpp"
     "${PROJ_TEST_DIR}/composition-correctness/gui/test_json_document_contract_chain.cpp"
     "${PROJ_TEST_DIR}/composition-correctness/gui/test_scene_commit_chain.cpp"

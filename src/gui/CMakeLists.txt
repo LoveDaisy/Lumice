@@ -77,6 +77,8 @@ add_library(lumice_gui_obj OBJECT
     ${PROJ_SRC_DIR}/gui/defaults_diff.cpp
     ${PROJ_SRC_DIR}/gui/defaults_panel.cpp
     ${PROJ_SRC_DIR}/gui/destructive_style.cpp
+    ${PROJ_SRC_DIR}/gui/diagnostics_platform.cpp
+    ${PROJ_SRC_DIR}/gui/diagnostics_report.cpp
     ${PROJ_SRC_DIR}/gui/face_number_overlay.cpp
     ${PROJ_SRC_DIR}/gui/export_fbo_renderer.cpp
     ${PROJ_SRC_DIR}/gui/edit_modals.cpp

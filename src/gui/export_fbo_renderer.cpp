@@ -26,7 +26,12 @@ struct ScopedFbo {
   GLuint rbo = 0;
   GLint prev_fbo = 0;
   bool complete = false;
+  int gl_error = 0;  // first GL error observed while creating the storage, GL_NO_ERROR if none
 };
+
+// SetRgba8StorageFaultForTest's counter (see the header); CreateRgba8Fbo consumes it. Declared
+// here, above its only reader, so the use sees the declaration.
+int s_rgba8_storage_fault_for_test_ = 0;
 
 ScopedFbo CreateRgba8Fbo(int w, int h) {
   ScopedFbo s;
@@ -39,7 +44,23 @@ ScopedFbo CreateRgba8Fbo(int w, int h) {
   glRenderbufferStorage(GL_RENDERBUFFER, GL_RGBA8, w, h);
   glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, s.rbo);
 
+  // The storage/attach errors are the failure CAUSE the framebuffer-completeness check can only
+  // hint at: an incomplete FBO after a failed glRenderbufferStorage is a real GL_OUT_OF_MEMORY
+  // on exactly the constrained machines the degraded-export path serves, and the caller that
+  // owns the shared context needs to know that (GL spec §2.5 — the whole context's state is
+  // then unprovable), not merely that pixels did not come back.
+  s.gl_error = glGetError();
   s.complete = (glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE);
+  if (!s.complete && s.gl_error == GL_NO_ERROR) {
+    s.gl_error = glGetError();  // the status check itself may have surfaced the error
+  }
+  // Test seam (see the header): report the real target-OOM failure shape — a consumed
+  // GL_OUT_OF_MEMORY and an incomplete framebuffer — without touching the driver.
+  if (s_rgba8_storage_fault_for_test_ > 0) {
+    --s_rgba8_storage_fault_for_test_;
+    s.gl_error = GL_OUT_OF_MEMORY;
+    s.complete = false;
+  }
   return s;
 }
 
@@ -139,9 +160,14 @@ PersistentFbo g_preview_frame_fbo;
 
 }  // namespace
 
+void SetRgba8StorageFaultForTest(int remaining_failures) {
+  s_rgba8_storage_fault_for_test_ = remaining_failures;
+}
+
+
 std::vector<unsigned char> RenderExportToRgba(PreviewRenderer& renderer, const PreviewParams& params, int dst_w,
                                               int dst_h, const std::vector<CurveLabelSet>& curve_labels,
-                                              float dpi_scale_x, float dpi_scale_y) {
+                                              float dpi_scale_x, float dpi_scale_y, int* out_gl_error) {
   if (dst_w <= 0 || dst_h <= 0) {
     return {};
   }
@@ -165,6 +191,9 @@ std::vector<unsigned char> RenderExportToRgba(PreviewRenderer& renderer, const P
     DestroyFbo(s);
     glViewport(prev_viewport[0], prev_viewport[1], prev_viewport[2], prev_viewport[3]);
     glClearColor(prev_clear_color[0], prev_clear_color[1], prev_clear_color[2], prev_clear_color[3]);
+    if (out_gl_error != nullptr) {
+      *out_gl_error = s.gl_error;
+    }
     return {};
   }
 
