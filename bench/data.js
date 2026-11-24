@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795556975121,
+  "lastUpdate": 1795556977226,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9620,50 +9620,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "0c999555a069ca1ba6716ec874872bf1cfd785ac",
-          "message": "Merge pull request #518 from LoveDaisy/chore/per-miss-all-legs\n\nci: per-miss budget on all four legs + envelope-derived outer bounds",
-          "timestamp": "2026-10-19T17:39:48+08:00",
-          "tree_id": "b435ae70681f441518035f9c2c7980f4c4eeef3b",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/0c999555a069ca1ba6716ec874872bf1cfd785ac"
-        },
-        "date": 1792403155540,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 85.1,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 99.7,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 98.6,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 95.4,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "3d1db8784fde656bdfd16735733b0763fef6523e",
           "message": "Merge pull request #516 from LoveDaisy/refactor/math-constants-consolidation\n\nrefactor: single authority for the pi/vec3 families (census ledger item 2)",
           "timestamp": "2026-10-19T18:09:03+08:00",
@@ -14003,6 +13959,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 93.8,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "af73a164c48b2e48472d2cbd4cb07bc215f6fa5d",
+          "message": "Merge pull request #648 from LoveDaisy/port/477-interaction\n\nPort the 4.7.7 interaction/UI cluster to main (#635 #638 #641 #644)",
+          "timestamp": "2026-11-25T05:25:15+08:00",
+          "tree_id": "a92be6ef32b900df06a2ed42efdf111ed38b4a31",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/af73a164c48b2e48472d2cbd4cb07bc215f6fa5d"
+        },
+        "date": 1795556976748,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 80.5,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 100.1,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 95.7,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 95.1,
             "unit": "%"
           }
         ]
