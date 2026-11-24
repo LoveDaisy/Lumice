@@ -704,13 +704,20 @@ def test_backlog_continues_across_harvests_without_losing_the_streak(tmp_path):
     assert first.returncode == 0
     assert "run budget (1) reached" in first.stdout
     assert "Backlog" in first.stdout
-    samples = (state_dir / "samples.jsonl").read_text().splitlines()
-    assert len(samples) == 2  # run 101 only (macOS sample + Windows gap)
+    samples = [json.loads(line) for line in (state_dir / "samples.jsonl").read_text().splitlines() if line]
+    keys = {record["key"] for record in samples}
+    assert "101:1:macOS ARM64:ctest" in keys
+    # The two backlog runs carry continuity fences until collected.
+    assert {r["key"] for r in samples if r.get("reason") == "run-pending"} == {
+        "102:1::", "103:1::",
+    }
     events = (state_dir / "events.jsonl").read_text().strip()
-    assert events == ""  # one low sample never fires
+    assert events == ""  # one low + fenced holes never fires
 
     second, state_dir = run_harvest(tmp_path, bin_path, env)
     assert second.returncode == 0
+    samples = [json.loads(line) for line in (state_dir / "samples.jsonl").read_text().splitlines() if line]
+    assert not [r for r in samples if r.get("reason") == "run-pending"]  # fences retired once collected
     events = [json.loads(line) for line in (state_dir / "events.jsonl").read_text().splitlines() if line]
     assert len(events) == 1 and events[0]["first_run"]["id"] == 101  # recompute spans the backlog boundary
 
@@ -927,10 +934,17 @@ def test_in_progress_run_between_lows_fences_and_upgrades_on_completion(tmp_path
     state = json.loads((state_dir / "state.json").read_text())
     assert {entry["run_id"] for entry in state["pending"]} == {892}
 
-    # The run completes: next harvest re-resolves it, harvests the real
-    # evidence, and the stale fence is retired by the sweep.
-    serve(tmp_path / "fakegh", "repos/O/R/actions/runs/892",
-          json.dumps(make_run(892, 2, "main", "2026-11-21T00:00:00Z", "sha-b")))
+    # The run completes: the listing and the run object both say so on the
+    # next harvest; the real evidence replaces the stale fence via the sweep.
+    runs_second = [
+        make_run(891, 1, "main", "2026-11-20T00:00:00Z", "sha-a"),
+        make_run(892, 2, "main", "2026-11-21T00:00:00Z", "sha-b"),
+        make_run(893, 3, "main", "2026-11-22T00:00:00Z", "sha-c"),
+    ]
+    serve(tmp_path / "fakegh", "repos/O/R/actions/workflows/ci.yml/runs?event=push&per_page=100&page=1",
+          json.dumps({"total_count": len(runs_second), "workflow_runs": runs_second}))
+    for run in runs_second:
+        serve(tmp_path / "fakegh", f"repos/O/R/actions/runs/{run['id']}", json.dumps(run))
     serve(tmp_path / "fakegh", "repos/O/R/actions/runs/892/attempts/1/jobs",
           json.dumps({"total_count": 1, "jobs": [{"id": 9902, "name": MACOS_JOB, "status": "completed",
                                                   "conclusion": "success", "html_url": ""}]}))
@@ -1005,30 +1019,135 @@ def test_crash_leaves_a_named_warning_and_a_summary(tmp_path):
 
 
 def test_transient_pending_reresolve_keeps_the_run_pending_without_collecting(tmp_path):
-    bare_runs = [make_run(911, 1, "main", "2026-11-20T00:00:00Z", "sha-a", conclusion=None)]
-    bin_path, env = setup_fake_gh(
-        tmp_path, bare_runs, {}, {}
-    )
+    # The pending run is OUTSIDE the listing window (cursor moved past it) and
+    # its re-resolve fails with a transient 403: the placeholder must collect
+    # nothing, stay pending, and fence the timeline.
+    bin_path, env = setup_fake_gh(tmp_path, [], {}, {})
     state_dir = tmp_path / "state"
     state_dir.mkdir()
     (state_dir / "samples.jsonl").write_text("")
     (state_dir / "events.jsonl").write_text("")
     (state_dir / "state.json").write_text(json.dumps({
         "schema": 1, "config": None,
-        "cursor": {"run_id": 911, "created_at": "2026-11-20T00:00:00Z", "run_number": 1},
+        "cursor": {"run_id": 911, "created_at": "2026-11-23T00:00:00Z", "run_number": 1},
         "pending": [{"run_id": 911, "created_at": "2026-11-20T00:00:00Z", "run_number": 1, "branch": "main"}],
     }))
-    # The re-resolve of the pending run fails with a transient 403:
-    # mark its runs/{id} endpoint forbidden.
     key = norm_path("repos/O/R/actions/runs/911")
     (tmp_path / "fakegh" / (key + ".txt.forbidden")).touch()
     process, state_dir = run_harvest(tmp_path, bin_path, env)
     assert process.returncode == 0
-    assert "::warning::[ctest-headroom] pending run 1 could not be re-resolved" in process.stdout
+    assert "::warning::[ctest-headroom] pending run 1 re-resolve failed" in process.stdout
     requested = (tmp_path / "requests.log").read_text()
     assert "contents/test/duration_registry.json" not in requested  # no empty-ref registry fetch
+    samples = [json.loads(line) for line in (state_dir / "samples.jsonl").read_text().splitlines() if line]
+    assert {record["key"] for record in samples} == {"911:1::"}  # the continuity fence is recorded
+    assert samples[0]["reason"] == "run-pending"
     state = json.loads((state_dir / "state.json").read_text())
     assert {entry["run_id"] for entry in state["pending"]} == {911}  # stays pending, nothing signed
+
+
+def test_listing_object_replaces_a_failed_reresolve_placeholder(tmp_path):
+    # The pending re-resolve fails transiently, but the window listing carries
+    # the run's fresh authoritative state: the placeholder must not shadow it —
+    # the run is harvested normally on the strength of the listing object.
+    run = make_run(931, 1, "main", "2026-11-20T00:00:00Z", "sha-a")
+    bin_path, env = setup_fake_gh(
+        tmp_path, [run],
+        {931: {"jobs": {MACOS_JOB: (9931, "success")}, "logs": {9931: MAIN_GREEN_MACOS}}},
+        {"sha-a": MAIN_REGISTRY},
+    )
+    key = norm_path("repos/O/R/actions/runs/931")
+    (tmp_path / "fakegh" / (key + ".txt.forbidden")).touch()  # re-resolve 403s
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    (state_dir / "samples.jsonl").write_text("")
+    (state_dir / "events.jsonl").write_text("")
+    (state_dir / "state.json").write_text(json.dumps({
+        "schema": 1, "config": None,
+        "cursor": {"run_id": 930, "created_at": "2026-11-19T00:00:00Z", "run_number": 0},
+        "pending": [{"run_id": 931, "created_at": "2026-11-20T00:00:00Z", "run_number": 1, "branch": "main"}],
+    }))
+    process, state_dir = run_harvest(tmp_path, bin_path, env)
+    assert process.returncode == 0
+    samples = [json.loads(line) for line in (state_dir / "samples.jsonl").read_text().splitlines() if line]
+    assert any(record["key"] == "931:1:macOS ARM64:ctest" and record["type"] == "sample" for record in samples)
+    state = json.loads((state_dir / "state.json").read_text())
+    assert state["pending"] == []
+
+
+def test_pending_reresolution_is_bounded_and_backlogged_runs_fence(tmp_path):
+    # 30 pending entries, a tiny budget: identity queries must not eat the
+    # whole harvest — the cap stops them, the backlog note names the rest,
+    # every uncollected pending run carries its continuity fence, and the
+    # next harvest continues from there.
+    pending_runs = [make_run(940 + i, 940 + i, "main", f"2026-11-20T00:00:{i:02d}Z", f"sha-{i}")
+                    for i in range(30)]
+    bin_path, env = setup_fake_gh(tmp_path, pending_runs, {}, {})
+    # All 30 pending runs sit OUTSIDE the listing window (cursor past them):
+    # the listing is empty, so every identity must come from a bounded
+    # get_run re-resolve.
+    serve(tmp_path / "fakegh", "repos/O/R/actions/workflows/ci.yml/runs?event=push&per_page=100&page=1",
+          json.dumps({"total_count": 0, "workflow_runs": []}))
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    (state_dir / "samples.jsonl").write_text("")
+    (state_dir / "events.jsonl").write_text("")
+    (state_dir / "state.json").write_text(json.dumps({
+        "schema": 1, "config": None,
+        "cursor": {"run_id": 969, "created_at": "2026-11-20T00:00:29Z", "run_number": 969},
+        "pending": [{"run_id": r["id"], "created_at": r["created_at"], "run_number": r["id"], "branch": "main"}
+                    for r in pending_runs],
+    }))
+    process, state_dir = run_harvest(tmp_path, bin_path, env, extra_args=("--max-api-calls", "40"))
+    assert process.returncode == 0
+    requested = (tmp_path / "requests.log").read_text().splitlines()
+    rereresolve_calls = [call for call in requested if "/actions/runs/" in call and "/attempts/" not in call and "/logs" not in call]
+    assert len(rereresolve_calls) <= tracker.MAX_PENDING_RERESOLVE_PER_HARVEST
+    assert "Backlog" in process.stdout
+    samples = [json.loads(line) for line in (state_dir / "samples.jsonl").read_text().splitlines() if line]
+    fenced = {record["run_id"] for record in samples if record.get("reason") == "run-pending"}
+    assert len(fenced) >= 1  # un-collected pending runs are fenced, not silent holes
+
+
+def test_partial_published_state_fails_loudly(tmp_path):
+    bare = tmp_path / "partial.git"
+    subprocess.run(["git", "init", "-q", "--bare", str(bare)], check=True)
+    subprocess.run(["git", "-C", str(bare), "config", "core.hooksPath", str(bare / "hooks")], check=True)
+    work = tmp_path / "partial-seed"
+    subprocess.run(["git", "init", "-q", str(work)], check=True)
+    subprocess.run(["git", "-C", str(work), "config", "user.email", "s@test"], check=True)
+    subprocess.run(["git", "-C", str(work), "config", "user.name", "s"], check=True)
+    (work / "headroom").mkdir()
+    (work / "headroom" / "events.jsonl").write_text("")  # samples.jsonl MISSING: partial authority
+    subprocess.run(["git", "-C", str(work), "add", "-A"], check=True)
+    subprocess.run(["git", "-C", str(work), "commit", "-q", "-m", "partial"], check=True)
+    subprocess.run(["git", "-C", str(work), "branch", "-M", "main"], check=True)
+    subprocess.run(["git", "-C", str(work), "push", "-q", str(bare), "main:gh-pages"], check=True)
+
+    repo_root = tmp_path / "repo-root"
+    repo_root.mkdir()
+    subprocess.run(["git", "init", "-q", str(repo_root)], check=True)
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    tracker.write_jsonl(state_dir / "samples.jsonl", [])
+    tracker.write_jsonl(state_dir / "events.jsonl", [])
+    (state_dir / "state.json").write_text('{"schema": 1, "config": null, "cursor": null, "pending": []}')
+    (state_dir / "summary.md").write_text("local")
+    ok, detail = tracker.publish_state(repo_root, str(bare), "gh-pages", state_dir)
+    assert not ok
+    assert "published-state-corrupt" in detail  # never treated as a fresh initialization
+
+
+def test_gh_timeout_gaps_are_retryable():
+    # A timeout is transient: the same attempt-1 evidence may read fine next
+    # harvest, so the gap must classify retryable — before the fix a timeout
+    # fossilized into a permanent terminal hole.
+    assert tracker.is_retryable_gap(
+        make_gap(1, created="2026-11-20T00:00:00Z", reason="gh-timeout: repos/x/y/logs: no output within 120s")
+    )
+    assert tracker.is_retryable_gap(
+        make_gap(2, created="2026-11-20T00:00:00Z", reason="log-unreadable: gh-timeout: repos/x/y/logs")
+    )
 
 
 def test_new_series_lows_cannot_pair_across_a_dead_run(tmp_path):

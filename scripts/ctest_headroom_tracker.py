@@ -96,6 +96,7 @@ DEFAULT_MAX_RUNS = 100
 DEFAULT_MAX_API_CALLS = 300
 DEFAULT_TIME_BUDGET_SEC = 300.0
 PUBLISH_RETRIES = 3
+MAX_PENDING_RERESOLVE_PER_HARVEST = 25  # identity queries never starve evidence collection
 PUBLISH_DIR = "headroom"
 STATE_FILES = ("samples.jsonl", "events.jsonl", "state.json", "summary.md")
 STATE_SCHEMA = 1
@@ -493,7 +494,7 @@ def merge_records(*batches: list[dict], key_of=record_key) -> list[dict]:
     return list(merged.values())
 
 
-RETRYABLE_GAP_PREFIXES = ("api-budget-exhausted", "harvest-error", "run-in-progress")
+RETRYABLE_GAP_PREFIXES = ("api-budget-exhausted", "harvest-error", "run-in-progress", "run-pending", "gh-timeout")
 
 
 def is_retryable_gap(record: dict) -> bool:
@@ -1062,15 +1063,23 @@ def read_published_files(repo_root: Path, ref_head: str, names: tuple[str, ...],
     must fail loudly, never treat it as empty — silently continuing here is
     how a concurrent harvester's records get overwritten.
     """
-    probe = _git(repo_root, "show", f"{ref_head}:{PUBLISH_DIR}/{names[0]}")
-    if probe.returncode != 0:
-        return False
     into.mkdir(parents=True, exist_ok=True)
+    reads = {}
     for name in names:
         blob = _git(repo_root, "show", f"{ref_head}:{PUBLISH_DIR}/{name}")
-        if blob.returncode != 0:
-            raise HarvestError(f"published-state-corrupt: {PUBLISH_DIR}/{name} unreadable on {ref_head}")
-        (into / name).write_text(blob.stdout, encoding="utf-8")
+        reads[name] = blob
+        if blob.returncode == 0:
+            (into / name).write_text(blob.stdout, encoding="utf-8")
+    found = [name for name, blob in reads.items() if blob.returncode == 0]
+    if not found:
+        return False  # no headroom/ on the ref at all: a legitimately fresh line
+    missing = [name for name in names if name not in found]
+    if missing:
+        # Some files exist and some do not: the persistent authority is
+        # partially corrupt. Treating that as "fresh initialization" would
+        # publish a snapshot that silently drops the surviving files'
+        # facts — fail loudly instead.
+        raise HarvestError(f"published-state-corrupt: {PUBLISH_DIR}/ is partial on {ref_head}: missing {', '.join(missing)}")
     return True
 
 
@@ -1325,16 +1334,38 @@ def harvest_command(args: argparse.Namespace) -> int:
     client = GhClient(args.gh_bin, args.repo, budget, timeout_sec=args.api_timeout_sec)
     new_records: list[dict] = []
 
-    # Runs still owed collection: pending entries from the previous state
-    # (re-resolved by id — a completed, cancelled or deleted run changes what
-    # it can give us) plus anything the window listing finds that the ledger
-    # has not fully collected. A run with only retryable gaps is NOT done.
+    # Runs still owed collection: anything the window listing finds that the
+    # ledger has not fully collected (the listing gives fresh authoritative
+    # objects for free) plus pending entries the listing cannot see — those
+    # are re-resolved by id, bounded: spending the whole budget on identity
+    # queries would stall a large backlog forever (fences below keep every
+    # un-re-resolved run's continuity until its turn comes).
     work: dict[int, dict] = {}
+    try:
+        runs, out_of_population, unfinished = list_push_runs(client, since_iso, args.current_run)
+    except HarvestError as error:
+        warnings.append(f"run listing failed: {classify_harvest_error(error, default='listing-failed')}")
+        runs, unfinished, out_of_population = [], [], []
+    for run in unfinished:
+        work[run["id"]] = run
+    for run in runs:
+        if run["id"] not in complete_run_ids:
+            work[run["id"]] = run
+
+    reresolved = 0
     for entry in previous_state.get("pending") or []:
-        if entry["run_id"] in complete_run_ids:
+        if entry["run_id"] in complete_run_ids or entry["run_id"] in work:
+            continue
+        if reresolved >= MAX_PENDING_RERESOLVE_PER_HARVEST or budget.exhausted:
+            work.setdefault(entry["run_id"], {
+                "id": entry["run_id"], "run_number": entry.get("run_number"),
+                "head_branch": entry.get("branch") or "", "created_at": entry.get("created_at") or "",
+                "html_url": "", "head_sha": "", "status": "unknown", "conclusion": None,
+            })
             continue
         try:
             run_obj = client.get_run(entry["run_id"])
+            reresolved += 1
         except HarvestError as error:
             reason = classify_harvest_error(error, default="run-unreadable")
             if "not found or expired" in reason:
@@ -1357,18 +1388,13 @@ def harvest_command(args: argparse.Namespace) -> int:
                 "html_url": "", "head_sha": "", "status": "unknown", "conclusion": None,
             }
             continue
+        # A fresh authoritative object replaces any placeholder.
         work[run_obj["id"]] = run_obj
-
-    try:
-        runs, out_of_population, unfinished = list_push_runs(client, since_iso, args.current_run)
-    except HarvestError as error:
-        warnings.append(f"run listing failed: {classify_harvest_error(error, default='listing-failed')}")
-        runs, unfinished, out_of_population = [], [], []
-    for run in unfinished:
-        work.setdefault(run["id"], run)
-    for run in runs:
-        if run["id"] not in complete_run_ids:
-            work.setdefault(run["id"], run)
+    for run in list(unfinished) + list(runs):
+        # The listing knows the run's real current state; it outranks an
+        # unknown placeholder from a failed re-resolve of the same run.
+        if work.get(run["id"], {}).get("status") == "unknown":
+            work[run["id"]] = run
 
     ordered_work = sorted(work.values(), key=lambda r: (r.get("created_at") or "", r["id"]))
     processed_runs: list[dict] = []
@@ -1444,6 +1470,26 @@ def harvest_command(args: argparse.Namespace) -> int:
             }
         )
     pending.sort(key=lambda p: (p["created_at"], p["run_id"]))
+
+    # A pending run with NO ledger row yet (budget backlog, un-resolvable
+    # identity) is a hole in every series timeline it belongs to: without a
+    # fence, the low samples on either side of it are ledger-adjacent and
+    # pair. A retryable line-wide gap records the hole until real evidence
+    # replaces it.
+    owed_fences = []
+    for entry in pending:
+        if not records_by_run.get(entry["run_id"]):
+            owed_fences.append(
+                gap_record(
+                    run={"id": entry["run_id"], "run_number": entry.get("run_number"),
+                         "head_branch": entry.get("branch") or "", "html_url": "",
+                         "head_sha": "", "created_at": entry.get("created_at") or ""},
+                    line=line_of_branch(entry.get("branch") or "main"),
+                    job="", phase="", reason="run-pending", config_id=config_id,
+                )
+            )
+    if owed_fences:
+        merged_samples = drop_superseded_line_wide_gaps(merge_records(merged_samples, owed_fences))
 
     _, _, fired_events = evaluate_series(merged_samples, config_id, args.threshold_pct, args.min_streak)
 
