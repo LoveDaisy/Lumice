@@ -49,7 +49,8 @@
 #include "gui/edit_modals.hpp"  // IsEditModalOpen / OpenEditModal / GetEditModalTarget — the toggle must not also trip the card's click handler, and the delete cases below read the editor's binding
 #include "gui/gui_state.hpp"
 #include "gui/raypath_segments.hpp"  // ParseSummandText — the filter row below is built the way the loader builds it
-#include "imgui_internal.h"          // ImGuiWindow — a card's widgets are not addressable by path; see CardWindow
+#include "gui/user_defaults.hpp"  // SetEditEntryStagedModePreference — the Staged premise publishes through the holder
+#include "imgui_internal.h"       // ImGuiWindow — a card's widgets are not addressable by path; see CardWindow
 #include "test_gui_shared.hpp"
 
 namespace {
@@ -96,16 +97,15 @@ void MakeThreeIndependentEntries(ImGuiTestContext* ctx) {
   IM_CHECK_SILENT(entries.size() == 3);
 }
 
-// Open the editor on one entry the way the production default leaves it: Immediate mode, so it is a
+// Open the editor the way the factory preference leaves it: Immediate mode, so it is a
 // plain window and the cards behind it stay clickable, parked off to the right so the rail is not
 // covered — which is how a user who dragged it aside (or onto a second display, this window can
 // become its own OS viewport) leaves it without noticing it is still open.
 //
 // Driven through OpenEditModal rather than by clicking the card, because a click on the card is
 // itself one of the things the editor's presence changes; what these cases are about starts once it
-// is open.
+// is open. No mode pin here: the factory preference is Immediate, and the open boundary adopts it.
 void OpenImmediateEditorOnEntry(ImGuiTestContext* ctx, int entry_idx, int layer_idx = 0) {
-  gui::g_state.modal_immediate_mode = true;
   gui::EditRequest req{ gui::EditTarget::kCrystal, layer_idx, entry_idx };
   gui::OpenEditModal(req, gui::g_state);
   ctx->Yield(4);
@@ -850,9 +850,12 @@ void RegisterEntryManagementTests(ImGuiTestEngine* engine) {
     ImGuiTest* t =
         IM_REGISTER_TEST(engine, "entry_management", "staged_pending_edit_commits_into_the_duplicate_transaction");
     t->TestFunc = [](ImGuiTestContext* ctx) {
-      ResetTestState();  // Staged is the process default (modal_immediate_mode=false)
+      ResetTestState();
       ctx->Yield(2);
       const ScopedPopups popup_guard(ctx);
+      // Staged is the premise the transaction is about (an uncommitted draft OK-less), so it is
+      // published explicitly: the harness default is the factory preference (Immediate).
+      gui::SetEditEntryStagedModePreference(true);
       OpenCardEditor(ctx, 0, kCrystalTabRef);
       const float h0 = gui::g_state.crystals[gui::g_state.layers[0].entries[0].crystal_id].height.center;
       ctx->ItemInputValue("**/##Height##modal_cr_input", h0 + 1.25f);
@@ -1115,6 +1118,7 @@ void RegisterEntryManagementTests(ImGuiTestEngine* engine) {
         // closes the modal regardless, so that click has nothing left to do once this iteration
         // has already failed.
         const ScopedPopups popup_guard(ctx);
+        gui::SetEditEntryStagedModePreference(true);  // OK/Cancel exist only in Staged
         OpenCardEditor(ctx, 0, s.tab_ref);
         if (!ctx->ItemExists(s.tab_content)) {
           IM_ERRORF("opening on %s did not land on the tab that owns %s", s.tab_ref, s.tab_content);
@@ -1137,6 +1141,7 @@ void RegisterEntryManagementTests(ImGuiTestEngine* engine) {
       ResetTestState();
       ctx->Yield(2);
       const ScopedPopups popup_guard(ctx);
+      gui::SetEditEntryStagedModePreference(true);  // OK/Cancel exist only in Staged
       IM_CHECK(!gui::IsEditModalOpen());
 
       ctx->MouseMoveToPos(CardBlankSpot(0));
@@ -1207,15 +1212,20 @@ void RegisterEntryManagementTests(ImGuiTestEngine* engine) {
       ctx->ItemInputValue("**/##Height##modal_cr_input", orig_h + 33.0f);
       ctx->Yield(2);
 
+      // The re-request is live only under Immediate (a Staged modal would swallow the click), and
+      // the factory preference is exactly that: the card click resolves to "already on this card",
+      // app_panels skips the reopen, and nothing — buffer, binding, committed value — resets.
+      // Immediate has no OK to commit with; the value's presence on the entry after the click IS
+      // the commit, and the OK-shaped commit half lives in the name case beside this one.
       ctx->MouseMoveToPos(CardBlankSpot(0));
       ctx->MouseClick(0);
       ctx->Yield(4);
       IM_CHECK(gui::IsEditModalOpen());
       IM_CHECK_EQ(gui::GetEditModalTarget().entry_idx, 0);
-
-      ctx->ItemClick("**/" ICON_FA_CHECK " OK##edit_modal");
-      ctx->Yield(2);
       IM_CHECK_EQ(gui::g_state.crystals[gui::g_state.layers[0].entries[0].crystal_id].height, orig_h + 33.0f);
+
+      ctx->ItemClick("**/Close##edit_modal");
+      ctx->Yield(2);
     };
   }
 
@@ -1233,6 +1243,7 @@ void RegisterEntryManagementTests(ImGuiTestEngine* engine) {
       ResetTestState();
       ctx->Yield(2);
       const ScopedPopups popup_guard(ctx);
+      gui::SetEditEntryStagedModePreference(true);  // OK/Cancel exist only in Staged
       const int shared_cid = gui::g_state.layers[0].entries[0].crystal_id;
       gui::EntryCard sibling;
       sibling.crystal_id = shared_cid;
@@ -1382,6 +1393,7 @@ void RegisterEntryManagementTests(ImGuiTestEngine* engine) {
       ResetTestState();
       ctx->Yield(2);
       const ScopedPopups popup_guard(ctx);
+      gui::SetEditEntryStagedModePreference(true);  // OK/Cancel exist only in Staged
 
       // The target carries a Column axis, so its default pose is a different matrix from the
       // source's Random one — without that, "the pose was reset" and "the pose was left alone"
@@ -1557,6 +1569,7 @@ void RegisterEntryManagementTests(ImGuiTestEngine* engine) {
       ResetTestState();
       ctx->Yield(2);
       const ScopedPopups popup_guard(ctx);
+      gui::SetEditEntryStagedModePreference(true);  // OK/Cancel exist only in Staged
       const int cid = gui::g_state.layers[0].entries[0].crystal_id;
       IM_CHECK(gui::g_state.crystals[cid].name.empty());
 
@@ -1591,6 +1604,7 @@ void RegisterEntryManagementTests(ImGuiTestEngine* engine) {
       ResetTestState();
       ctx->Yield(2);
       const ScopedPopups popup_guard(ctx);
+      gui::SetEditEntryStagedModePreference(true);  // OK/Cancel exist only in Staged
       gui::EntryCard sibling;
       sibling.crystal_id = gui::g_state.layers[0].entries[0].crystal_id;
       gui::g_state.layers[0].entries.push_back(sibling);
@@ -1621,6 +1635,7 @@ void RegisterEntryManagementTests(ImGuiTestEngine* engine) {
       ResetTestState();
       ctx->Yield(2);
       const ScopedPopups popup_guard(ctx);
+      gui::SetEditEntryStagedModePreference(true);  // OK/Cancel exist only in Staged
       gui::FilterConfig f;
       f.SetRaypath(gui::RaypathParams{ "3-5" });
       gui::SetFilter(gui::g_state, gui::g_state.layers[0].entries[0], f);
@@ -2045,6 +2060,7 @@ void RegisterEntryManagementTests(ImGuiTestEngine* engine) {
       ResetTestState();
       ctx->Yield(3);
       const ScopedPopups popup_guard(ctx);
+      gui::SetEditEntryStagedModePreference(true);  // OK/Cancel exist only in Staged
       GiveEntry0TheReportedFilter(ctx);
 
       const ImGuiTestItemInfo value = ctx->ItemInfo("**/##card_0_0_row_2_value");

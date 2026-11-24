@@ -403,6 +403,11 @@ bool CommitCopy(const GuiState& state) {
   // The wedge shortcuts follow the same disk-first rule, as a whole-list adoption rather than a
   // per-entry diff — the same shape the axis loop above now uses.
   AdoptWedgePresetOverridesInMemory(ReadWedgePresetsFromDoc(next));
+  // The Edit Entry mode preference publishes through the same disk-first rule, with one listener
+  // instead of a cache: the holder the open boundary reads (OpenEditModal). Only a write that
+  // landed may publish — a failed Save must leave every future editor of this session on the old
+  // preference, or "I pressed Save and nothing changed" would be a lie the holder tells.
+  SetEditEntryStagedModePreference(ReadEditEntryStagedModeFromDoc(next).value_or(false));
   g_copy_doc = std::move(next);
   g_snapshot_doc = g_copy_doc;
   return true;
@@ -560,6 +565,38 @@ void RenderAppPreferences(const GuiState& state) {
   // The state field is a startup input; only this global owns the current session selection.
   ImGui::TextDisabled("(%s; session: %s)", stored_style.has_value() ? "Custom" : "Factory",
                       kCrystalStyleNames[g_crystal_style]);
+
+  // The Edit Entry editing-mode preference — the section's fifth control, deprecated on purpose.
+  // The application time is its own, and the two states it must not be confused with are spelled
+  // here rather than left to the tooltip: the working copy is "what Save would store", and the
+  // parenthetical is what an editor opened RIGHT NOW would adopt (the holder, not the copy). The
+  // deprecation line stays visible beside the control, not inside a tooltip — a user who never
+  // hovers must still learn that this is scheduled for removal in 5.0.0 (AC2/AC6).
+  bool stored_staged = ReadEditEntryStagedModeFromDoc(g_copy_doc).value_or(false);
+  if (Checkbox("Use staged editing for Edit Entry (deprecated)###defaults_app_staged_mode", &stored_staged)) {
+    // Both states written explicitly (the GPU row's rationale): "stored Immediate" and "never
+    // stored" behave the same today, and recording the answer keeps it the user's if that ever
+    // moves.
+    WriteEditEntryStagedModeToDoc(g_copy_doc, stored_staged);
+  }
+  if (ImGui::IsItemHovered()) {
+    SetWrappedTooltip(
+        "Whether a NEWLY OPENED Edit Entry window runs in Staged mode: a blocking dialog whose OK "
+        "commits all sections atomically and whose Cancel, Esc and title-bar close discard "
+        "uncommitted changes. This is the stored preference — changing it here does not affect an "
+        "editor that is already open, and it takes effect only after Save, for editors opened "
+        "afterwards. Immediate (the default) applies valid changes in real time and closes without "
+        "undoing what was applied.");
+  }
+  ImGui::SameLine();
+  ImGui::TextDisabled("(next opened editor: %s)", GetEditEntryStagedModePreference() ? "Staged" : "Immediate");
+  // Wrapped, in the disabled tone: at the panel's pinned width this rides two text lines, and the
+  // height constants below budget it as one control row plus margin rather than measuring it.
+  ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+  ImGui::TextWrapped(
+      "Deprecated; planned for removal in version 5.0.0. Save applies it to Edit Entry windows "
+      "opened afterwards — an editor that is already open keeps its mode.");
+  ImGui::PopStyleColor();
 }
 
 // Section header whose open state is forced only on the frame an entry point requested it.

@@ -477,11 +477,6 @@ static unsigned long long g_modal_preview_epoch = 0;
 // on the frame following the EditRequest.
 static bool g_pending_open = false;
 
-// Flag: Immediate↔Staged switch is a close+reopen cycle that must bypass
-// the Staged Cancel trackball-restore path in HandlePopupClosed; set by the
-// checkbox handler in RenderEditModals, consumed on the next-frame close.
-static bool g_pending_mode_switch = false;
-
 // ============================================================
 // Wedge angle presets for edit modal
 // ============================================================
@@ -1006,9 +1001,8 @@ bool CrystalTabFieldsEqual(const CrystalConfig& a, const CrystalConfig& b) {
 }
 
 // Re-base every buffer's baseline on the pool as it is NOW (see the baseline note at the
-// declarations). Used by OpenEditModal (the first baseline), the Immediate→Staged mode switch and
-// Unlink (a new pool slot underneath the same buffers). Does NOT touch the trackball save — that
-// keeps its open-time value.
+// declarations). Used by OpenEditModal (the first baseline) and Unlink (a new pool slot underneath
+// the same buffers). Does NOT touch the trackball save — that keeps its open-time value.
 //
 // The baseline is taken from the POOL, never copied from the buffers, because the two differ
 // exactly when the difference matters: a row the commit gate refused (kIncomplete) is in the
@@ -1229,6 +1223,19 @@ void OpenEditModal(const EditRequest& req, GuiState& state) {
   }
   if (en < 0 || en >= static_cast<int>(state.layers[ly].entries.size())) {
     return;
+  }
+
+  // Adopt the saved editing-mode preference exactly at a real close→open boundary. The mode is a
+  // property of the SESSION, not of the open call: a card click that re-binds an already-open
+  // editor (Immediate mode routes cross-card requests through here; app_panels.cpp) must not
+  // re-read the preference, and neither may the preference a Save publishes reach an editor that
+  // is already open — Settings promises "editors opened afterwards". Pick completion reopens
+  // through this same path after StartLinkPickMode genuinely closed the modal: a real boundary,
+  // and it adopts like one. Document replacement is covered by construction: every reset reason
+  // closes the modal (CloseEditModalOnDocumentReset), so the next open re-adopts whatever the
+  // holder holds — and the holder is outside GuiState, so no reset can rewrite it.
+  if (g_active_modal != ActiveModal::kOpen) {
+    state.modal_immediate_mode = !GetEditEntryStagedModePreference();
   }
 
   auto& entry = state.layers[ly].entries[en];
@@ -2799,9 +2806,8 @@ void CloseEditModalOnDocumentReset() {
   g_entry_buf = {};  // {} is the field default (100.0 / enabled) via the struct's member initializers
   g_entry_buf_snapshot = {};
   g_pull_adopted = {};
-  // A deferred open or a mode switch in flight was for the modal that just closed.
+  // A deferred open was for the modal that just closed.
   g_pending_open = false;
-  g_pending_mode_switch = false;
   g_pending_tab_select = false;
   g_modal_mesh_hash = 0;
   g_modal_preview_epoch++;  // New preview session: reset the animation ticker (epoch-keyed)
@@ -2811,10 +2817,10 @@ void ResetModalState() {
   ResetSpectrumModalStateGlobals();  // clear the spectrum-editor statics too (Major: test isolation)
   CloseEditModalOnDocumentReset();
   g_active_tab = ActiveTab::kCrystal;
-  // modal_immediate_mode is GuiState-owned; the test harness's DoNew-based
-  // reset overwrites g_state, but we also clear it here for belt-and-braces
-  // (test lambdas that fail mid-flight may skip their own cleanup tails).
-  g_state.modal_immediate_mode = false;
+  // No mode reset here, and none is needed: modal_immediate_mode is re-adopted from the saved
+  // preference at every open boundary (OpenEditModal), so a stale session value cannot leak into
+  // the next case's editor. The preference holder itself is the harness's to reset
+  // (ResetUserDefaultsChannels), not this production teardown's.
   g_next_summand_row_uid = 0;
   std::memset(g_saved_rotation, 0, sizeof(g_saved_rotation));
   g_saved_zoom = 1.0f;
@@ -3102,34 +3108,19 @@ void CommitAllBuffersImmediate(GuiState& state) {
 }
 
 // Centralized cleanup for every path that causes BeginPopup* to return false
-// on the frame after a close was requested. Three branches:
-//   1. mode-switch close+reopen: consume g_pending_mode_switch, arm
-//      g_pending_open, keep g_active_modal = kOpen, do NOT restore trackball
-//      (we want to resurface the modal on the next frame with all state
-//      intact).
-//   2. Immediate normal close (bottom Close / Esc / click-outside): changes
+// on the frame after a close was requested. Two branches:
+//   1. Immediate normal close (bottom Close / Esc / click-outside): changes
 //      are already committed every frame, so just clear g_active_modal.
 //      Trackball edits are user-intentional in Immediate mode — don't revert.
-//   3. Staged close (Cancel button / title-bar × / Esc): revert trackball to
+//   2. Staged close (Cancel button / title-bar × / Esc): revert trackball to
 //      the Open-time snapshot and clear g_active_modal. This branch also
 //      covers the deleted-entry race (the in-body guard calls
 //      CloseCurrentPopup when indices go out of range); the trackball restore
 //      is idempotent and harmless when the entry is already gone.
 void HandlePopupClosed(GuiState& state) {
-  if (g_pending_mode_switch) {
-    g_pending_mode_switch = false;
-    g_pending_open = true;
-    // Replay the OpenEditModal tab-select mechanic so the newly reopened
-    // popup forces BeginTabItem(g_active_tab) onto SetSelected on its first
-    // rendered frame. Without this, ImGui's TabBar silently defaults to the
-    // first tab after the ID stack is regenerated post-close+reopen.
-    g_pending_tab_select = true;
-    return;
-  }
   if (state.modal_immediate_mode) {
     g_active_modal = ActiveModal::kNone;
-    // Terminal close: the keyboard session ends with it (the mode-switch branch above keeps the
-    // session — same entry, same rows — and must not drop its parked request).
+    // Terminal close: the keyboard session ends with it.
     ClearSummandKeyboardSession();
     return;
   }
@@ -3145,9 +3136,9 @@ void HandlePopupClosed(GuiState& state) {
 // is handled by the caller's BeginChild sizing.
 void RenderModalTabBar(GuiState& state, const char* crystal_label, const char* axis_label, const char* filter_label,
                        ImGuiTabItemFlags crystal_flags, ImGuiTabItemFlags axis_flags, ImGuiTabItemFlags filter_flags) {
-  // Note: the layout selector lives on the bottom button row alongside the
-  // Immediate checkbox for visual consistency (both are view-preference
-  // toggles; gui-polish-v15 round 2 UX feedback). See RenderEditModals below.
+  // Note: the layout selector lives on the bottom button row (a view preference
+  // beside the mode badge in Staged; gui-polish-v15 round 2 UX feedback). See
+  // RenderEditModals below.
   //
   // task-fix-modal-edit-state-leak — per-entry ID scope for all tab *content*.
   // The "Edit Entry" window is a single persistent ImGui window reused for every
@@ -3432,7 +3423,7 @@ void RenderEditModals(GuiState& state, GLFWwindow* window) {
   // explicit close via the bottom Close button or the title-bar ×).
   //
   // title_x_open initialization is load-bearing for Immediate: Begin uses it as
-  // p_open, so code-driven close paths (Close button, title-bar ×, mode switch)
+  // p_open, so code-driven close paths (Close button, title-bar ×)
   // set g_active_modal = kNone → next frame title_x_open = false → Begin returns
   // false → cleanup via HandlePopupClosed's !window_open branch. If this were
   // kept as `true` unconditionally, code-driven close in Immediate would fail
@@ -3448,9 +3439,8 @@ void RenderEditModals(GuiState& state, GLFWwindow* window) {
   //              BeginPopupModal's visibility is determined by the popup stack.
   bool title_x_open = (g_active_modal == ActiveModal::kOpen);
   bool window_open = false;
-  // Pin the dispatch mode for this frame. The Immediate-mode checkbox
-  // (rendered later in body) may flip state.modal_immediate_mode mid-frame,
-  // but End/EndPopup must pair with the container we actually opened here.
+  // Pin the dispatch mode for this frame: End/EndPopup must pair with the container we actually
+  // opened here, whatever the field reads later in the frame.
   const bool dispatched_immediate = state.modal_immediate_mode;
   // H0 outer guard: the Immediate path uses ImGui::Begin, which — unlike
   // BeginPopupModal — keeps a registered ImGuiWindow in g.Windows and
@@ -3459,15 +3449,12 @@ void RenderEditModals(GuiState& state, GLFWwindow* window) {
   // ImGui pattern for closing a window is to skip the entire Begin/End block
   // at the call site. Guard only the Immediate branch; Staged
   // BeginPopupModal on an empty popup stack already returns false without
-  // leaving a stray title bar. The !g_pending_mode_switch clause preserves
-  // the Staged→Immediate mode-switch consume path further down (the body
-  // branch that arms g_pending_tab_select needs Begin to run). Once this
-  // guard is in effect, the inner race-case exit
-  // (dispatched_immediate && g_active_modal != kOpen → End+return) is
-  // unreachable; it is retained as an idempotent safety net for deleted-
-  // entry paths and will become reachable again only if this guard is ever
-  // relaxed.
-  if (dispatched_immediate && !title_x_open && !g_pending_mode_switch) {
+  // leaving a stray title bar. Once this guard is in effect, the inner
+  // race-case exit (dispatched_immediate && g_active_modal != kOpen →
+  // End+return) is unreachable; it is retained as an idempotent safety net
+  // for deleted-entry paths and will become reachable again only if this
+  // guard is ever relaxed.
+  if (dispatched_immediate && !title_x_open) {
     return;
   }
   if (dispatched_immediate) {
@@ -3502,10 +3489,9 @@ void RenderEditModals(GuiState& state, GLFWwindow* window) {
       ImGui::End();
     }
     // Either the container was never opened, or it was closed on the previous
-    // frame. If the latter (or a mode switch is in flight), run centralized
-    // cleanup so mode switch / trackball restore / g_active_modal reset
-    // converge through HandlePopupClosed.
-    if (g_active_modal == ActiveModal::kOpen || g_pending_mode_switch) {
+    // frame. If the latter, run centralized cleanup so trackball restore /
+    // g_active_modal reset converge through HandlePopupClosed.
+    if (g_active_modal == ActiveModal::kOpen) {
       HandlePopupClosed(state);
     }
     return;
@@ -3534,26 +3520,6 @@ void RenderEditModals(GuiState& state, GLFWwindow* window) {
       ImGui::EndPopup();
     }
     return;
-  }
-
-  // Staged → Immediate mode-switch consume: because Begin (unlike
-  // BeginPopupModal on an empty stack) returns true on Frame N+1 with
-  // title_x_open=true, !window_open never fires → HandlePopupClosed cannot
-  // observe the switch. Consume g_pending_mode_switch inline here (body path).
-  // This is the structural inverse of the Immediate → Staged direction, where
-  // BeginPopupModal on an empty popup stack returns false and cleanup flows
-  // through HandlePopupClosed naturally. Known asymmetry: Immediate inbound
-  // (body consume) vs Staged inbound (HandlePopupClosed consume) — a direct
-  // consequence of ImGui's popup stack vs regular window dispatch split.
-  // Counterpart for Immediate → Staged direction: HandlePopupClosed's
-  // mode-switch branch (arms g_pending_open + g_pending_tab_select, keeps
-  // g_active_modal=kOpen), invoked from the !window_open path on Frame N+1
-  // when BeginPopupModal sees an empty popup stack.
-  // Invariant: never touch g_active_modal here (it must stay kOpen until a
-  // user-driven close; see F10 in plan).
-  if (dispatched_immediate && g_pending_mode_switch) {
-    g_pending_mode_switch = false;
-    g_pending_tab_select = true;
   }
 
   // Snapshot the SetSelected flags BEFORE any BeginTabItem body runs —
@@ -3741,8 +3707,8 @@ void RenderEditModals(GuiState& state, GLFWwindow* window) {
   }
 
   ImGui::Separator();
-  // Bottom row: mode-specific buttons + Immediate mode checkbox anchored
-  // to the right edge.
+  // Bottom row: mode-specific buttons + the view-preference group (layout
+  // selector, and in Staged the read-only mode badge) anchored to the right edge.
   if (state.modal_immediate_mode) {
     // Immediate: single Close (no Cancel semantics — changes are already applied).
     // No CloseCurrentPopup: we are inside ImGui::Begin (regular window), the
@@ -3813,8 +3779,8 @@ void RenderEditModals(GuiState& state, GLFWwindow* window) {
   // the window neither grows nor shrinks and the layout's own floor stays its actual width.
   //
   // The two widths below are exact rather than estimated: the combo is given its width explicitly,
-  // and the checkbox's is ImGui's own formula for it (square of GetFrameHeight, ItemInnerSpacing,
-  // label). Both follow font, DPI and style automatically, which a hand-tuned constant cannot.
+  // and the Staged badge's is its own measured text. Both follow font, DPI and style
+  // automatically, which a hand-tuned constant cannot.
   ImGui::SameLine();
   // Two-shape layout selector. Compact keeps most of the halo preview visible at the cost of one
   // tab click per section; Expanded shows Crystal, Axis and Filter at once and leaves almost no
@@ -3831,10 +3797,19 @@ void RenderEditModals(GuiState& state, GLFWwindow* window) {
     layout_combo_w = std::max(layout_combo_w, ImGui::CalcTextSize(name).x);
   }
   layout_combo_w += ImGui::GetFrameHeight() + style.FramePadding.x * 2.0f;
-  const float immediate_w = ImGui::GetFrameHeight() + style.ItemInnerSpacing.x +
-                            ImGui::CalcTextSize("Immediate##edit_modal", nullptr, true).x;
+  // The in-window mode checkbox retired with the Settings move (AC1: one entry, in Settings): the
+  // mode a session runs in is adopted at its open boundary and shown read-only. Immediate keeps
+  // no badge at all — the absence IS the default's presentation, and a permanent "Immediate"
+  // label would spend width on a state the user has no reason to inspect. Staged is the
+  // deprecated minority mode, and its window says so where the checkbox used to sit (AC4: the
+  // window must state its mode) — visible text, not a tooltip-only fact, because the deprecation
+  // is a statement about the feature's future that a user who never hovers must still see.
+  static constexpr const char* kStagedBadge = "Staged (deprecated)";
+  const float staged_badge_w = ImGui::CalcTextSize(kStagedBadge).x;
+  const float mode_badge_w = dispatched_immediate ? 0.0f : staged_badge_w;
   const float view_toggle_group_x =
-      ImGui::GetContentRegionMax().x - (layout_combo_w + style.ItemSpacing.x + immediate_w);
+      ImGui::GetContentRegionMax().x -
+      (layout_combo_w + (mode_badge_w > 0.0f ? style.ItemSpacing.x + mode_badge_w : 0.0f));
   if (view_toggle_group_x > ImGui::GetCursorPosX()) {
     ImGui::SetCursorPosX(view_toggle_group_x);
   }
@@ -3858,44 +3833,16 @@ void RenderEditModals(GuiState& state, GLFWwindow* window) {
   if (ImGui::IsItemHovered()) {
     ImGui::SetTooltip("%s", kModalLayoutTooltips[layout_selector_idx]);
   }
-  ImGui::SameLine();
-  // ImGui::Checkbox returns true only on the frame the user actually toggled
-  // the value, so checking the return alone is sufficient to detect a change.
-  if (Checkbox("Immediate##edit_modal", &state.modal_immediate_mode)) {
-    g_pending_mode_switch = true;
-    if (state.modal_immediate_mode) {
-      // Staged → Immediate: commit in-flight buffer to state so any pending
-      // edits become the live baseline. Use the Immediate path (not
-      // CommitAllBuffers) to avoid routing crystal-only changes through
-      // MarkStructHardDirty — its epoch fence would drop the old generation's
-      // in-flight frames at the exact moment the user wants to start observing
-      // live changes.
-      CommitAllBuffersImmediate(state);
-      // Current frame is still inside BeginPopupModal (dispatch at frame-start
-      // used the old mode). CloseCurrentPopup keeps the popup stack clean;
-      // Frame N+1 enters the Immediate Begin branch and consumes
-      // g_pending_mode_switch inline (see race-case guard + inline consume).
-      ImGui::CloseCurrentPopup();
-    } else {
-      // Immediate → Staged: re-base on the pool, which the Immediate frames have been pushing
-      // into — so the dirty marks start from zero, except for what the commit gate refused
-      // (a kIncomplete row), which is uncommitted and shows as such.
-      SyncBaselineFromPool(state);
-      // Current frame is still inside ImGui::Begin (dispatch at frame-start
-      // used the old mode). Do NOT call CloseCurrentPopup — the popup stack
-      // has no "Edit Entry" entry to close. Flow:
-      //   Frame N+1: Staged BeginPopupModal on empty stack → returns false →
-      //              !window_open → HandlePopupClosed's mode-switch branch
-      //              keeps g_active_modal=kOpen, arms g_pending_open +
-      //              g_pending_tab_select.
-      //   Frame N+2: L713 reopen gate fires → OpenPopup + BeginPopupModal
-      //              return true same frame → modal visible with tab replay.
-      // Invariant: do NOT touch g_active_modal here (must stay kOpen for the
-      // reopen gate to fire in Frame N+2).
+  if (mode_badge_w > 0.0f) {
+    ImGui::SameLine();
+    ImGui::TextDisabled("%s", kStagedBadge);
+    if (ImGui::IsItemHovered()) {
+      ImGui::SetTooltip(
+          "This editor is in Staged mode: OK commits all sections, Cancel / Esc / the title-bar "
+          "close discard uncommitted changes. Staged is deprecated and is planned for removal in "
+          "5.0.0 — switch back in Settings, Application preferences (takes effect for editors "
+          "opened after you save).");
     }
-  }
-  if (ImGui::IsItemHovered()) {
-    ImGui::SetTooltip("Apply parameter changes to simulation in real-time");
   }
 
   // Next frame's height request, and what of it the flexible pane cannot take away.

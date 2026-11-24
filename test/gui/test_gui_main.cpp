@@ -202,12 +202,16 @@ void ResetTestState() {
   gui::InitializeCrystalPreviewSession(gui::g_state);
   gui::g_state.left_panel_collapsed = false;
   gui::g_state.right_panel_collapsed = false;
-  // Modal view preferences: pin to Compact + Staged for test determinism. Compact is the layout
-  // that has a tab bar, which is what the bulk of the edit_modal cases address their clicks
-  // through (OpenCardEditor and friends reach for ###crystal_tab / ###filter_tab); the Expanded
-  // layout has no tab bar at all, so a case that wants it says so explicitly.
+  // Modal view preferences: pin to Compact + the factory editing mode for test determinism.
+  // Compact is the layout that has a tab bar, which is what the bulk of the edit_modal cases
+  // address their clicks through (OpenCardEditor and friends reach for ###crystal_tab /
+  // ###filter_tab); the Expanded layout has no tab bar at all, so a case that wants it says so
+  // explicitly. The mode is the SAVED PREFERENCE, not the session field: every open adopts it at
+  // the close→open boundary (OpenEditModal), so pinning the holder to factory (Immediate) is what
+  // gives a case the default user path; a case that wants Staged for its editor says so through
+  // the same holder (SetEditEntryStagedModePreference).
   gui::g_state.modal_layout_compact = true;
-  gui::g_state.modal_immediate_mode = false;
+  gui::SetEditEntryStagedModePreference(false);
   gui::g_preview_vp.active = false;
   gui::g_preview_vp.curve_labels.clear();
   gui::ResetWindowResizeEvents();
@@ -370,11 +374,12 @@ ScopedPopups::~ScopedPopups() {
   // editor has no statics of its own: it is opened straight from its button and needs only the
   // stack pop below.
   gui::ResetModalState();
-  // The two view preferences a case may have flipped to reach a layout, pinned back to the values
-  // ResetTestState() hands every case. Listed so this object is a complete statement of what it
-  // borrowed, not a list of what ResetTestState() happens to miss today.
+  // The two view preferences a case may have flipped to reach a layout or a mode, pinned back to
+  // the values ResetTestState() hands every case. Listed so this object is a complete statement of
+  // what it borrowed, not a list of what ResetTestState() happens to miss today. The mode goes
+  // through the preference holder (what the next open adopts), not the session field.
   gui::g_state.modal_layout_compact = true;
-  gui::g_state.modal_immediate_mode = false;
+  gui::SetEditEntryStagedModePreference(false);
   // ImGui's own stack is the part nothing else reaches. Level 0 rather than a search for our entry:
   // by the time a case is leaving, every popup on the stack was opened by it (a sync-group popup
   // nested inside the modal is the common second one), and restore_focus=false keeps this to a

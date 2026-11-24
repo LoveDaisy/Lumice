@@ -412,7 +412,6 @@ void RegisterRunLifecycleTests(ImGuiTestEngine* engine) {
     const ScopedPopups popup_guard(ctx);
     const ScopedRunBaseline baseline_guard;
 
-    gui::g_state.modal_immediate_mode = true;
     // A rectilinear lens, so the view angle inputs are live here.
     gui::g_state.renderer.lens_type = gui::kLensTypeLinear;
 

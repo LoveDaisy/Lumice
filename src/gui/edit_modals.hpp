@@ -158,16 +158,19 @@ void CommitModalEditBuffers(GuiState& state);
 // session settings, not document state.
 //
 // Field-set note: ResetModalState() below (test teardown) is this PLUS the test-only forcing of
-// modal_immediate_mode / tab / uid counter / trackball save, and is implemented by calling this
-// first so the two cannot drift on the fields they share. A new edit-buffer field goes here.
+// tab / uid counter / trackball save, and is implemented by calling this first so the two cannot
+// drift on the fields they share. A new edit-buffer field goes here. The session mode needs no
+// reset: it is re-adopted from the saved preference at every open boundary, so nothing stale can
+// survive a teardown into the next editor.
 void CloseEditModalOnDocumentReset();
 
 // Reset all modal-internal static state (active modal, edit buffers, pending flags).
 // Called by test teardown (ResetTestState) to prevent state leakage between tests.
 // Delegates to CloseEditModalOnDocumentReset() for the document-bound part (see its field-set
-// note), then additionally forces modal_immediate_mode=false, the Crystal tab, the row-uid counter
+// note), then additionally forces the Crystal tab, the row-uid counter
 // and the trackball save back to their process-start values — things a test wants pinned and
-// production must not touch.
+// production must not touch. (The editing mode is not among them: it is re-adopted from the
+// saved preference at every open; the preference holder's reset lives in the test harness.)
 void ResetModalState();
 
 // Clears the axis modal's per-crystal preset memory (g_axis_preset_memory in edit_modals.cpp —
