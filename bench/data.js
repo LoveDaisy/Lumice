@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795504690790,
+  "lastUpdate": 1795504693620,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9620,50 +9620,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "6edfd93e4b15b31fb7103c58cbe8e08d64ea0770",
-          "message": "Merge pull request #513 from LoveDaisy/feat/axis-preset-memory\n\nGUI: axis chips switch label and parameters, Reset row replaces apply combo",
-          "timestamp": "2026-10-19T08:29:50+08:00",
-          "tree_id": "3b226eb5638e474f8fba92b298af79680e608bb3",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/6edfd93e4b15b31fb7103c58cbe8e08d64ea0770"
-        },
-        "date": 1792370006874,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 88.5,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 99.6,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 98.2,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 92.2,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "a0bce739786ae19df76253a07e518ea470b5f422",
           "message": "Merge pull request #514 from LoveDaisy/chore/ci-build-budget-per-miss\n\nci: per-miss build budget — adaptive limit + absolute backstop (registry v3)",
           "timestamp": "2026-10-19T09:55:27+08:00",
@@ -14003,6 +13959,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 95.3,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "8d161eba2c6c4dde9e29651ca26b4ba7e5bc8be4",
+          "message": "Merge pull request #639 from LoveDaisy/feat/map-session-test-contract\n\ntest(gui): decouple map lifecycle cases from the full-budget compute",
+          "timestamp": "2026-11-24T15:14:15+08:00",
+          "tree_id": "b15b27b5a50961505b81cf5b4afd60f0895365f4",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/8d161eba2c6c4dde9e29651ca26b4ba7e5bc8be4"
+        },
+        "date": 1795504693000,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 91,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 100,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 99.2,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 88.8,
             "unit": "%"
           }
         ]
