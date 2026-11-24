@@ -193,6 +193,113 @@ std::string JoinRows(const std::vector<std::string>& rows) {
   return out;
 }
 
+// A second card in layer 0 on a crystal pool slot of its own, so a value or buffer that lands on
+// the wrong card cannot compare equal to the right one. The entry_management suite keeps its own
+// copy of this same two-liner; this one lives here because the follow cases are edit_modal cases
+// and the helper is too small to be worth a shared-header round trip.
+void AddSecondCardOnItsOwnCrystal(ImGuiTestContext* ctx) {
+  gui::CrystalConfig second;
+  second.type = gui::CrystalType::kPyramid;
+  gui::EntryCard card;
+  card.crystal_id = static_cast<int>(gui::g_state.crystals.size());
+  gui::g_state.crystals.push_back(second);
+  gui::g_state.layers[0].entries.push_back(card);
+  gui::g_thumbnail_cache.OnLayerStructureChanged();
+  ctx->Yield(3);
+}
+
+// Somewhere that is not a card and not the editor window. The cards' borders are driven by the
+// card child windows' own hover state, so any point outside every card (and outside the editor,
+// which the cases park on the right half) leaves them cold.
+ImVec2 PointOffEveryCard() {
+  const ImGuiViewport* vp = ImGui::GetMainViewport();
+  return ImVec2(vp->Pos.x + vp->Size.x * 0.2f, vp->Pos.y + vp->Size.y * 0.85f);
+}
+
+// Read one card's own rectangle back out of the default framebuffer, so two captures of the same
+// card can be diffed. Same g_fullframe_capture seam and rect arithmetic as the entry_management
+// suite's CaptureCardRect — a private copy because the two suites judge different things off the
+// pixels (a four-edge ring diff here, a label probe there), and the arithmetic has already
+// diverged once across suites on purpose. ImGui screen space -> framebuffer: scale by the Retina
+// factor and flip the origin (GL reads bottom-left, ImGui measures top-left).
+bool CaptureCardRect(ImGuiTestContext* ctx, int index, std::vector<unsigned char>& out, int& w_out, int& h_out) {
+  ImGuiWindow* card = CardWindow(index);
+  IM_CHECK_RETV(card != nullptr, false);
+  g_fullframe_capture.Reset();
+  const ImGuiIO& io = ImGui::GetIO();
+  const float sx = io.DisplayFramebufferScale.x;
+  const float sy = io.DisplayFramebufferScale.y;
+  const float fb_w = io.DisplaySize.x * sx;
+  const float fb_h = io.DisplaySize.y * sy;
+  const ImVec2 vp_pos = ImGui::GetMainViewport()->Pos;
+  const float x0 = std::max(0.0f, (card->Pos.x - vp_pos.x) * sx);
+  const float y0 = std::max(0.0f, (card->Pos.y - vp_pos.y) * sy);
+  const float x1 = std::min(fb_w, (card->Pos.x - vp_pos.x + card->Size.x) * sx);
+  const float y1 = std::min(fb_h, (card->Pos.y - vp_pos.y + card->Size.y) * sy);
+  g_fullframe_capture.rect_x = static_cast<int>(std::lround(x0));
+  g_fullframe_capture.rect_y = static_cast<int>(std::lround(fb_h - y1));
+  g_fullframe_capture.rect_w = static_cast<int>(std::lround(x1 - x0));
+  g_fullframe_capture.rect_h = static_cast<int>(std::lround(y1 - y0));
+  g_fullframe_capture.requested.store(true);
+  for (int i = 0; i < 10 && !g_fullframe_capture.done.load(); ++i) {
+    ctx->Yield();
+  }
+  IM_CHECK_RETV(g_fullframe_capture.done.load(), false);
+  out = g_fullframe_capture.pixels;
+  w_out = g_fullframe_capture.width;
+  h_out = g_fullframe_capture.height;
+  return true;
+}
+
+// Pixels that differ between two same-sized RGBA captures, counted separately for each of the four
+// `ring`-deep strips along the rectangle's edge. Per side, not one total — the lesson the
+// entry_management hover measurement recorded: a real border change moves all four counts, while
+// a local blob (a tooltip corner, a redrawn glyph) moves one side and leaves the rest at zero.
+// The interior is excluded entirely, so nothing the thumbnail cache does between two captures can
+// reach the judgement.
+struct RingDiff {
+  int left = -1;
+  int right = -1;
+  int top = -1;
+  int bottom = -1;
+
+  bool AllChanged() const { return left > 0 && right > 0 && top > 0 && bottom > 0; }
+};
+
+RingDiff EdgeRingDiff(const std::vector<unsigned char>& a, const std::vector<unsigned char>& b, int w, int h,
+                      int ring) {
+  RingDiff out;
+  if (a.size() != b.size() || w <= 2 * ring || h <= 2 * ring) {
+    return out;
+  }
+  out = RingDiff{ 0, 0, 0, 0 };
+  auto differs = [&](int x, int y) {
+    const size_t i = (static_cast<size_t>(y) * static_cast<size_t>(w) + static_cast<size_t>(x)) * 4;
+    return a[i] != b[i] || a[i + 1] != b[i + 1] || a[i + 2] != b[i + 2];
+  };
+  for (int y = 0; y < h; ++y) {
+    for (int x = 0; x < ring; ++x) {
+      if (differs(x, y)) {
+        ++out.left;
+      }
+      if (differs(w - 1 - x, y)) {
+        ++out.right;
+      }
+    }
+  }
+  for (int x = ring; x < w - ring; ++x) {
+    for (int y = 0; y < ring; ++y) {
+      if (differs(x, y)) {
+        ++out.top;
+      }
+      if (differs(x, h - 1 - y)) {
+        ++out.bottom;
+      }
+    }
+  }
+  return out;
+}
+
 // One text box the pull must reload when it is active: which value it edits, how to write that
 // value into the pool behind the modal's back, and how to read it back out of the buffers.
 struct ActiveBoxRow {
@@ -4321,12 +4428,16 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
     };
   }
 
-  // Immediate mode, the card's weight dragged while the editor is open: the card is an outside
-  // writer, the pull adopts the value into the entry bar's buffer, and the two controls converge.
-  // (The active-box reload semantics this row deliberately does NOT cover are the table-driven
-  // "Entry weight" row's subject — the box is never active during this drag.)
+  // Immediate mode, the editor open on entry A while the user starts a Weight gesture on entry
+  // B's card: the OPEN editor follows the card being edited — content, binding and the accent
+  // border move to B at gesture START (held down with no value change yet, so the follow is a
+  // gesture fact and not a value-change fact), the active tab survives the rebind, and the drag
+  // itself stays continuous: keep holding, move, release, and the final value lands in B with A
+  // untouched. (This reshapes the former card_weight_drag_is_pulled_into_the_immediate_editor:
+  // once the editor is bound to B, the drag's pull-into-the-editor convergence IS that case's
+  // original subject, carried here by the buffer-convergence assertion after the release.)
   {
-    ImGuiTest* t = IM_REGISTER_TEST(engine, "edit_modal", "card_weight_drag_is_pulled_into_the_immediate_editor");
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "edit_modal", "card_weight_gesture_pulls_the_immediate_editor_to_the_card");
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
       const ScopedPopups popup_guard(ctx);
@@ -4340,28 +4451,275 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
       ctx->WindowMove("//Edit Entry", ImVec2(760.0f, 40.0f));
       ctx->Yield(2);
 
-      auto& entry = gui::g_state.layers[0].entries[0];
-      const float before = entry.proportion;
+      AddSecondCardOnItsOwnCrystal(ctx);
+      auto& entry_a = gui::g_state.layers[0].entries[0];
+      auto& entry_b = gui::g_state.layers[0].entries[1];
+      entry_a.proportion = 60.0f;
+      entry_b.proportion = 15.0f;
+      ctx->Yield(3);
+      // Non-default tab: the follow must preserve it (the kCard resolve keeps the active tab).
+      ctx->ItemClick(kAxisTabRef);
+      ctx->Yield(2);
+      const float a_before = entry_a.proportion;
+      IM_CHECK_EQ(gui::GetEditModalTarget().layer_idx, 0);
+      IM_CHECK_EQ(gui::GetEditModalTarget().entry_idx, 0);  // premise: bound to A
 
-      // Drag the card's Weight track: down on its left, right, up (the colour picker's
-      // MouseMoveToPos/MouseDown/MouseUp shape).
-      const ImGuiTestItemInfo slider = ctx->ItemInfo("**/##Weight##prop_0_0_slider");
-      IM_CHECK(slider.ID != 0);
-      const ImVec2 lo = slider.RectFull.Min;
-      const ImVec2 hi = slider.RectFull.Max;
+      // Border baseline, mouse parked off every card so hover is out of the picture: A is the
+      // active-border card, B is plain.
+      ctx->MouseMoveToPos(PointOffEveryCard());
+      ctx->Yield(2);
+      std::vector<unsigned char> a_base, b_base, a_after, b_after;
+      int wa = 0, ha = 0, wb = 0, hb = 0;
+      IM_CHECK(CaptureCardRect(ctx, 0, a_base, wa, ha));
+      IM_CHECK(CaptureCardRect(ctx, 1, b_base, wb, hb));
+
+      // Press on B's slider track at the position matching its current value: the gesture starts
+      // with NO value change. 15.0 of a 0..100 range sits at 15% of the track.
+      const ImGuiTestItemInfo slider_b = ctx->ItemInfo("**/##Weight##prop_0_1_slider");
+      IM_CHECK(slider_b.ID != 0);
+      const ImGuiID slider_b_id = slider_b.ID;
+      const ImVec2 lo = slider_b.RectFull.Min;
+      const ImVec2 hi = slider_b.RectFull.Max;
       ctx->MouseMoveToPos(ImVec2(lo.x + (hi.x - lo.x) * 0.15f, (lo.y + hi.y) * 0.5f));
       ctx->MouseDown(0);
       ctx->Yield(2);
-      ctx->MouseMoveToPos(ImVec2(lo.x + (hi.x - lo.x) * 0.85f, (lo.y + hi.y) * 0.5f));
+
+      // Held, unmoved, unchanged — and already followed: binding, window content, tab, and the
+      // drag itself still live on B's slider.
+      IM_CHECK_EQ(ImGui::GetActiveID(), slider_b_id);
+      IM_CHECK_EQ(gui::GetEditModalTarget().layer_idx, 0);
+      IM_CHECK_EQ(gui::GetEditModalTarget().entry_idx, 1);  // the follow happened
+      IM_CHECK(gui::GetActiveTabAsEditTarget() == gui::EditTarget::kAxis);
+      IM_CHECK_EQ(gui::GetEditModalBuffers().entry_proportion, 15.0f);  // content moved to B
+      IM_CHECK_EQ(entry_b.proportion, 15.0f);                           // no value change yet
+      IM_CHECK_EQ(entry_a.proportion, a_before);                        // A untouched
+
+      // Still holding: drag to the middle, release. The gesture completes in B.
+      ctx->MouseMoveToPos(ImVec2(lo.x + (hi.x - lo.x) * 0.5f, (lo.y + hi.y) * 0.5f));
       ctx->Yield(2);
       ctx->MouseUp(0);
       // Two frames after release: one for the pull+push to settle, one to show it is stable
       // rather than mid-flight.
       ctx->Yield(2);
-      ctx->LogInfo("pool proportion after the drag: %f (was %f)", entry.proportion, before);
-      IM_CHECK(entry.proportion != before);
+      ctx->LogInfo("B proportion after the drag: %f (A stayed %f)", entry_b.proportion, entry_a.proportion);
+      // The release point sits at 50% of the track, but ImGui anchors the drag on the grab box
+      // (mouse position minus the grab's half width at press), so the settled value lands a few
+      // points past the cursor position — the tolerance is that grab offset, not a loose check:
+      // the assertions that matter here are "changed in B's direction" and "A untouched" above
+      // and below.
+      IM_CHECK(ImAbs(entry_b.proportion - 50.0f) <= 6.0f);
+      ;
+      IM_CHECK_EQ(entry_a.proportion, a_before);
+      IM_CHECK_EQ(gui::GetEditModalBuffers().entry_proportion, entry_b.proportion);  // pull convergence
+      IM_CHECK(gui::GetActiveTabAsEditTarget() == gui::EditTarget::kAxis);
+
+      // The borders actually moved. Mouse away again, let the next card frame draw, and compare
+      // each card's ring against its baseline: A lost the active border, B gained it — all four
+      // edges each, so a local blob cannot pass for a border.
+      ctx->MouseMoveToPos(PointOffEveryCard());
+      ctx->Yield(3);
+      IM_CHECK(CaptureCardRect(ctx, 0, a_after, wa, ha));
+      IM_CHECK(CaptureCardRect(ctx, 1, b_after, wb, hb));
+      const int ring = std::max(1, static_cast<int>(ImGui::GetIO().DisplayFramebufferScale.x));
+      const RingDiff a_diff = EdgeRingDiff(a_base, a_after, wa, ha, ring);
+      const RingDiff b_diff = EdgeRingDiff(b_base, b_after, wb, hb, ring);
+      IM_CHECK(a_diff.AllChanged());
+      IM_CHECK(b_diff.AllChanged());
+
+      ctx->ItemClick(kClose);
+      ctx->Yield(2);
+      gui::g_state.modal_immediate_mode = false;
+    };
+  }
+
+  // The card's paired Weight INPUT box is the second real entry into the same follow (a slider
+  // witness cannot stand in for it — focus, not drag, is what drives this path): focusing it
+  // re-targets the open editor before any value changed, the keyboard edit that follows keeps
+  // running in that box (the rebind must not steal the active id or drop the text), and a
+  // blur/refocus cycle finds the committed value with the same visible text. On the way out, the
+  // same-card leg (a gesture on the card the editor is ALREADY bound to must not disturb the
+  // session), the hover/wheel negatives, and the closed-editor leg (the same gestures must not
+  // open it, and in-place editing keeps working).
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "edit_modal", "card_weight_input_focus_follows_without_losing_the_edit");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      const ScopedPopups popup_guard(ctx);
+      gui::g_state.modal_immediate_mode = true;
+      const gui::EditRequest req{ gui::EditTarget::kCrystal, 0, 0 };
+      gui::OpenEditModal(req, gui::g_state);
+      ctx->Yield(4);
+      IM_CHECK(gui::IsEditModalOpen());
+      ctx->WindowMove("//Edit Entry", ImVec2(760.0f, 40.0f));
+      ctx->Yield(2);
+
+      AddSecondCardOnItsOwnCrystal(ctx);
+      auto& entry_a = gui::g_state.layers[0].entries[0];
+      auto& entry_b = gui::g_state.layers[0].entries[1];
+      entry_a.proportion = 60.0f;
+      entry_b.proportion = 30.0f;
+      ctx->Yield(3);
+      ctx->ItemClick(kAxisTabRef);
+      ctx->Yield(2);
+      const float a_before = entry_a.proportion;
+
+      // Focus B's input box: the follow fires on focus, before any value changed.
+      ctx->ItemClick("**/##Weight##prop_0_1_input");
+      ctx->Yield(2);
+      const ImGuiID input_b_id = ctx->ItemInfo("**/##Weight##prop_0_1_input").ID;
+      IM_CHECK_NE(input_b_id, 0);
+      IM_CHECK_EQ(ImGui::GetActiveID(), input_b_id);
+      IM_CHECK_EQ(gui::GetEditModalTarget().layer_idx, 0);
+      IM_CHECK_EQ(gui::GetEditModalTarget().entry_idx, 1);  // followed on focus
+      IM_CHECK(gui::GetActiveTabAsEditTarget() == gui::EditTarget::kAxis);
+      IM_CHECK_EQ(gui::GetEditModalBuffers().entry_proportion, 30.0f);  // content moved to B
+      IM_CHECK_EQ(entry_b.proportion, 30.0f);                           // no value yet
+
+      // Type: the keyboard stays in that box across the rebind frames.
+      ctx->KeyChars("25.5");
+      ctx->Yield(2);
+      IM_CHECK_EQ(ImGui::GetActiveID(), input_b_id);  // the edit was not interrupted
+
+      // A click on the panel below the cards is the blur; committing on blur is the input's own
+      // contract, and the value must land in B.
+      ctx->MouseMoveToPos(PointOffEveryCard());
+      ctx->MouseClick(0);
+      ctx->Yield(2);
+      IM_CHECK(ImAbs(entry_b.proportion - 25.5f) <= 0.05f);
+      ;
+      IM_CHECK_EQ(entry_a.proportion, a_before);
+      IM_CHECK_EQ(gui::GetEditModalTarget().entry_idx, 1);
+
+      // Refocus: the box comes back active with the committed value as its visible text.
+      ctx->ItemClick("**/##Weight##prop_0_1_input");
+      ctx->Yield(2);
+      IM_CHECK_EQ(ImGui::GetActiveID(), input_b_id);
+      const ImGuiInputTextState* input_state = ImGui::GetInputTextState(input_b_id);
+      IM_CHECK(input_state != nullptr);
+      IM_CHECK_STR_EQ(input_state->TextA.Data, "25.5");
+
+      // Same-card leg (AC4): already bound to B, typing more keeps accumulating in B and the
+      // binding does not move — no re-initialization of the session.
+      ctx->KeyCharsReplaceEnter("40.0");
+      ctx->Yield(2);
+      IM_CHECK(ImAbs(entry_b.proportion - 40.0f) <= 0.05f);
+      IM_CHECK_EQ(entry_a.proportion, a_before);
+      IM_CHECK_EQ(gui::GetEditModalTarget().entry_idx, 1);
+      IM_CHECK(gui::IsEditModalOpen());
+
+      // Disabled-weight leg (AC4), with the discrimination the negative needs: the editor is
+      // moved back to A first (a plain card-body click — the pre-existing background-click path),
+      // so that pressing B's disabled weight track against a binding on A is a live test. A click
+      // landing on the disabled track arms nothing and reaches no path: IsAnyItemHovered counts
+      // the disabled slider, so the card's background-click body test stays blocked, and the
+      // follow consumes no gesture — the binding and the editor content stay with A, and B's
+      // value stays. Any future change that lets a disabled control produce an edit request —
+      // follow or body-click passthrough — moves the binding to B and goes red here.
+      ctx->ItemClick("**/###enabled_0_1");  // exclude B — same-card gesture, no follow re-arm
+      ctx->Yield(2);
+      IM_CHECK(!entry_b.enabled);
+      ctx->MouseMoveToPos(CardBlankSpot(0));
+      ctx->MouseClick(0);  // background click: the pre-existing path moves the session to A
+      ctx->Yield(3);
+      IM_CHECK_EQ(gui::GetEditModalTarget().entry_idx, 0);  // premise: bound to A again
+      const ImGuiTestItemInfo slider_b_disabled = ctx->ItemInfo("**/##Weight##prop_0_1_slider");
+      IM_CHECK(slider_b_disabled.ID != 0);
+      const ImVec2 dlo = slider_b_disabled.RectFull.Min;
+      const ImVec2 dhi = slider_b_disabled.RectFull.Max;
+      ctx->MouseMoveToPos(ImVec2(dlo.x + (dhi.x - dlo.x) * 0.4f, (dlo.y + dhi.y) * 0.5f));
+      ctx->MouseDown(0);
+      ctx->Yield(2);
+      IM_CHECK_NE(ImGui::GetActiveID(), slider_b_disabled.ID);
+      IM_CHECK_EQ(gui::GetEditModalTarget().entry_idx, 0);              // no follow: still A
+      IM_CHECK_EQ(gui::GetEditModalBuffers().entry_proportion, 60.0f);  // content still A's
+      IM_CHECK(ImAbs(entry_b.proportion - 40.0f) <= 0.05f);             // disabled keeps its value
+      ctx->MouseUp(0);
+      ctx->ItemClick("**/###enabled_0_1");  // back in for the legs below
+      ctx->Yield(2);
+      IM_CHECK(entry_b.enabled);
+      // Restore the session to B (plain background click), the premise the hover/wheel and
+      // closed-editor legs below read against.
+      ctx->MouseMoveToPos(CardBlankSpot(1));
+      ctx->MouseClick(0);
+      ctx->Yield(3);
+      IM_CHECK_EQ(gui::GetEditModalTarget().entry_idx, 1);
+
+      // Hover and wheel must not move the binding: they are not gestures on the weight control.
+      ctx->MouseMoveToPos(CardBlankSpot(0));
+      ctx->Yield(2);
+      IM_CHECK_EQ(gui::GetEditModalTarget().entry_idx, 1);
+      ctx->MouseMoveToPos(CardBlankSpot(0));
+      ctx->MouseWheel(ImVec2(0.0f, -1.0f));
+      ctx->Yield(2);
+      IM_CHECK_EQ(gui::GetEditModalTarget().entry_idx, 1);
+      IM_CHECK(gui::IsEditModalOpen());
+
+      // Editor closed: the same gestures must NOT open it (a parameter edit never gains the
+      // background click's open ability), no persistent selection appears, and in-place editing
+      // keeps working.
+      ctx->ItemClick(kClose);
+      ctx->Yield(2);
+      IM_CHECK(!gui::IsEditModalOpen());
+      ctx->ItemClick("**/##Weight##prop_0_1_input");
+      ctx->Yield(2);
+      IM_CHECK(!gui::IsEditModalOpen());                     // focusing did not open the editor
+      IM_CHECK_EQ(gui::GetEditModalTarget().entry_idx, -1);  // no persistent selection either
+      ctx->KeyCharsReplaceEnter("70.0");
+      ctx->Yield(2);
+      IM_CHECK(ImAbs(entry_b.proportion - 70.0f) <= 0.05f);
+      ;  // in-place still edits B
+      IM_CHECK(!gui::IsEditModalOpen());
+      gui::g_state.modal_immediate_mode = false;
+    };
+  }
+
+  // The participation toggle is the discrete-action entry into the same follow: one click on B's
+  // toggle moves the open editor onto B showing the post-toggle state — excluded, with its weight
+  // greyed and its value kept — while the toggle's own semantics (exclude, re-run, kept value,
+  // reversible) are untouched. Toggling back restores the participating display.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "edit_modal", "card_participation_toggle_pulls_the_immediate_editor");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      const ScopedPopups popup_guard(ctx);
+      gui::g_state.modal_immediate_mode = true;
+      const gui::EditRequest req{ gui::EditTarget::kCrystal, 0, 0 };
+      gui::OpenEditModal(req, gui::g_state);
+      ctx->Yield(4);
+      IM_CHECK(gui::IsEditModalOpen());
+      ctx->WindowMove("//Edit Entry", ImVec2(760.0f, 40.0f));
+      ctx->Yield(2);
+
+      AddSecondCardOnItsOwnCrystal(ctx);
+      auto& entry_a = gui::g_state.layers[0].entries[0];
+      auto& entry_b = gui::g_state.layers[0].entries[1];
+      entry_a.proportion = 60.0f;
+      entry_b.proportion = 30.0f;
+      ctx->Yield(3);
+      ctx->ItemClick(kAxisTabRef);
+      ctx->Yield(2);
+      IM_CHECK_EQ(gui::GetEditModalTarget().entry_idx, 0);  // premise: bound to A
+      IM_CHECK(entry_b.enabled);
+
+      ctx->ItemClick("**/###enabled_0_1");  // exclude B
+      ctx->Yield(2);
+      IM_CHECK_EQ(gui::GetEditModalTarget().layer_idx, 0);
+      IM_CHECK_EQ(gui::GetEditModalTarget().entry_idx, 1);  // the follow happened
+      IM_CHECK(gui::GetActiveTabAsEditTarget() == gui::EditTarget::kAxis);
+      IM_CHECK(!entry_b.enabled);              // toggle semantics unchanged: excluded
+      IM_CHECK_EQ(entry_b.proportion, 30.0f);  // value kept
       const gui::EditModalBuffers buffers = gui::GetEditModalBuffers();
-      IM_CHECK_EQ(buffers.entry_proportion, entry.proportion);
+      IM_CHECK(!buffers.entry_enabled);  // editor shows the post-toggle state
+      // The editor's own weight row is greyed for the entry it now shows (the disable-when-inert
+      // convention), which is what "the editor followed to B" looks like to the user.
+      IM_CHECK(IsDisabled(ctx->ItemInfo("**/##Weight##modal_entry_input")));
+
+      ctx->ItemClick("**/###enabled_0_1");  // back in
+      ctx->Yield(2);
+      IM_CHECK(entry_b.enabled);
+      IM_CHECK(gui::GetEditModalBuffers().entry_enabled);
+      IM_CHECK_EQ(gui::GetEditModalTarget().entry_idx, 1);
+      IM_CHECK(!IsDisabled(ctx->ItemInfo("**/##Weight##modal_entry_input")));
 
       ctx->ItemClick(kClose);
       ctx->Yield(2);

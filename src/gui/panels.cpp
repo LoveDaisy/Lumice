@@ -1427,6 +1427,31 @@ void ResetPendingDeleteState() {
 
 // ========== Entry Card ==========
 
+// Re-target an OPEN Immediate edit session onto this card when a real parameter gesture lands
+// here — the Weight slider or its paired input becoming active, the participation toggle being
+// clicked. The request goes through the same g_edit_request channel a card click uses, so the
+// consumer resolves it to the active tab (the session keeps its tab), rebinds when the target
+// differs, and is a no-op when it does not. Three gates narrow this to exactly the follow
+// semantics, each an acceptance boundary rather than a convenience:
+//   - an open session in Immediate mode: a parameter gesture must not gain the background click's
+//     ability to OPEN the editor — with the editor closed this stays a plain in-place edit. The
+//     explicit Immediate gate also keeps the Staged contract written down (its BeginPopupModal
+//     blocks background input anyway; the gate holds without relying on that routing accident).
+//   - not during a Link pick: the card under the pointer is a pick SOURCE there, not an edit
+//     target.
+//   - a different target: gestures on the card the session is already bound to arm nothing, so
+//     the steady state stays silent instead of re-arming a request every active frame.
+static void ArmEditTargetFollow(const GuiState& state, int layer_idx, int entry_idx, bool gesture, bool pick_active) {
+  if (!gesture || pick_active || !state.modal_immediate_mode || !IsEditModalOpen()) {
+    return;
+  }
+  const EditModalTarget bound = GetEditModalTarget();
+  if (bound.layer_idx == layer_idx && bound.entry_idx == entry_idx) {
+    return;
+  }
+  g_edit_request = { EditTarget::kCard, layer_idx, entry_idx };
+}
+
 EntryCardAction RenderEntryCard(GuiState& state, int layer_idx, int entry_idx) {
   auto& entry = state.layers[layer_idx].entries[entry_idx];
 
@@ -1777,12 +1802,17 @@ EntryCardAction RenderEntryCard(GuiState& state, int layer_idx, int entry_idx) {
   // disable-when-inert convention as the layer prob slider. BeginDisabled only blocks
   // interaction; entry.proportion keeps its value, which is what makes the toggle reversible.
   ImGui::BeginDisabled(!entry.enabled);
+  bool weight_active = false;
   SliderWithInput(prop_label, &entry.proportion, 0.0f, 100.0f, "%.1f", SliderScale::kLinear, LabelPlacement::kLeading,
-                  nullptr, nullptr, row_w);
+                  nullptr, &weight_active, row_w);
   ImGui::EndDisabled();
   if (!entry.enabled && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
     ImGui::SetTooltip("%s", kWeightInertTooltip);
   }
+  // Either half of the pair being interacted with counts: the slider and the input are two real
+  // entries into the same gesture, and `active` is true from the frame the interaction starts —
+  // before any value changes.
+  ArmEditTargetFollow(state, layer_idx, entry_idx, weight_active, pick_active);
 
   // ---- Icon rail: four always-visible slots down the right edge ----
   //
@@ -1832,6 +1862,9 @@ EntryCardAction RenderEntryCard(GuiState& state, int layer_idx, int entry_idx) {
     if (toggle_clicked) {
       entry.enabled = !entry.enabled;
     }
+    // The toggle click IS the gesture: the rebind lands on the click frame, so the editor's next
+    // pull reads the post-toggle state (see the test for the disable/keep-value expectations).
+    ArmEditTargetFollow(state, layer_idx, entry_idx, toggle_clicked, pick_active);
     if (ImGui::IsItemHovered()) {
       ImGui::SetTooltip("%s", ParticipationToggleTooltip(entry.enabled));
     }
