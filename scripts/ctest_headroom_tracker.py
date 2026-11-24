@@ -817,8 +817,9 @@ def render_summary(
         lines.append(f"- {config_changed_note}")
     lines.extend(
         [
-            f"- Coverage: {totals['runs_processed']} run(s) processed this harvest "
-            f"({totals['runs_new']} new, {totals['runs_overlap']} already known), "
+            f"- Coverage: {totals['runs_processed']} run(s) processed this harvest, "
+            f"{totals['runs_overlap']} run(s) listed but not processed (already-harvested overlap "
+            f"or budget backlog), "
             f"{totals['records_new']} new sample/gap record(s), {out_of_population} out-of-population run(s) ignored",
             f"- Sample pool: {totals['samples']} sample(s) and {totals['gaps']} gap(s) across "
             f"{len(per_series)} series",

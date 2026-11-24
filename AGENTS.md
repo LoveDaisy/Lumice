@@ -208,7 +208,10 @@ fails the check.
   and a PR whole-run/job
   rerun cannot consume it again. Operating rules: `test/AGENTS.md`; full rules, the 60 s / 2×
   calibration and the per-miss constants: `doc/testing/testing-architecture.md` §7.7. The cold-build protocol's
-  single authority is §7.8.
+  single authority is §7.8. The §7.7 headroom observation layer (the checker's appended implied-C/
+  headroom notice and the cross-line `ctest_headroom_tracker.py` aggregation behind
+  `benchmark-summary`) is observation only — read that §7.7 subsection before touching duration-check
+  output formats, the tracker, or anything that would break the two shared old notice formats.
 - E2E split essentials: `./scripts/test.sh <quick|full|pr|inner>` is the recommended entry point for a
   local run (one call, a single per-layer summary ending in one `RESULT:` line). `inner` runs a
   diff-derived subset of these layers during iteration and is covered by the test-scope table

@@ -1266,6 +1266,36 @@ budget** 的一次性冷构建授权；它不改变本段的单测试规则。�
 
 本闸自身开销：末尾 step 读两份小 JSON 的几秒，加上插件在运行中的记账；不新增 job，也不新增 runner。
 
+**Headroom 观测层（2026-11-24 起）。** 闸裁单次 run；它看不见的是裕量静默侵蚀——归一化成本从
+90% 爬到 99% 全程绿灯，然后红成串。为此新增两件纯观测仪器（零判定变更；闸的判定、常数、ruler
+与配对校准语义两者均不触碰）：
+
+1. *checker 追加 notice。* 每个可计算的 `machine_factor` 相位追加一行
+   `headroom <h>% (implied C <T>/<raw factor>; budget <B>s)`，其中 `C = seconds / raw_factor`、
+   `h = 100 × (1 − C/B)`。分子用**被钳掉的 raw factor**（用钳后因子会虚减 up to ~9% 的 implied C，
+   恰在最需要准确的样本上失真），分母用登记的 `max_seconds` 而非钳后有效上限
+   （`1 − C/B`，不是 `B/C − 1`）。绿/红相位都带；ruler 缺失或坏读数不伪造任何数字。
+2. *跨线聚合器*（`scripts/ctest_headroom_tracker.py`，挂在 `benchmark-summary` 内
+   `continue-on-error`）。它读 **push 到 `main` 与现存 `release/*` 分支**的 run 日志里 checker
+   打的行——只消费两线共有旧 v4 格式（绿 notice、machine-normalized 红、触钳 warning），release
+   覆盖因此不依赖第 1 条移植过去——并按 **run 自己 head_sha 的 registry 快照**（contents API 读，
+   绝不用当前 main 常数兜底）重算同式 `C`/`h`。PR run 是另一总体，永不进入 push-run 序列。某
+   `(线, job, phase)` 序列 **连续 ≥ 2 个样本** `h < 6%`（暂定 ~2σ 占位，待噪声分解任务修订）时，
+   收割在聚合 run 页面发一条 `::notice::` annotation 并把事件持久化到 gh-pages 的 `headroom/`；
+   该记录加逐 run 的样本/缺口即 owner 的消费入口。不自动开任务、不自动调常数：处置归 owner
+   （零和审计或 raise 评估）。
+
+序列规则（「连续 2 次」能有意义的原因）：每 (run, job, phase) 只取 **attempt 1** 一个样本（rerun
+不替换不累加）；日志读数是显示精度近似、原行随行保存，舍入区间跨阈值记 *阈值不确定*；**gap**
+（取消 run、日志过期、快照不可读、无解析行）双向断连续——不伪健康也不累 streak，低/gap/低不成对；
+预算/ruler/钳制带变更开**新校准段**，streak 不跨段；阈值变更以新配置身份重置连续性，不静默沿用旧
+信号。两线互为独立序列：release 样本出自 release 分支自己的快照。
+
+已披露成本：release run 要等下一次 `main` push 聚合时才被收割——main 静默期 release 可见性延迟，
+不存在每日提醒（聚合故意搭既有 `benchmark-summary` 触发器；计划评审否决了新增 scheduled 触发器）。
+收割或发布失败打 `::warning::`、永不构成红条件；状态目录以 `if: always()` artifact 留底，下次收割
+从已发布游标补收。发布只替换 gh-pages 的 `headroom/` 目录；`bench/` 下的 benchmark 历史不受触碰。
+
 ## §7.8 单次冷构建例外
 
 完整协议以英文版 [`§7.8 The one-run cold-build exception`](testing-architecture.md#78-the-one-run-cold-build-exception)
