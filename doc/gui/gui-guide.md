@@ -229,19 +229,19 @@ The preview is also the camera's pointing surface. Dragging with the **left** bu
 
 ## Popup Editor
 
-`Edit` buttons on a crystal card open one **Edit Entry** window holding Crystal, Axis, and Filter plus a crystal preview that redraws every frame. Its top area shows sharing state, then a full-width entry bar with the participation toggle and Weight control; these entry-private values are not shared by Link. Two independent controls on the bottom row choose layout and commit mode.
+`Edit` buttons on a crystal card open one **Edit Entry** window holding Crystal, Axis, and Filter plus a crystal preview that redraws every frame. Its top area shows sharing state, then a full-width entry bar with the participation toggle and Weight control; these entry-private values are not shared by Link. The bottom row's selector chooses the layout; how edits commit is chosen once in **Settings**, not in this window.
 
 The layout selector chooses between two shapes, and the choice is saved with the document:
 
 - **Compact** — the preview on top, the three sections stacked below it behind a tab bar. Narrow, and it keeps most of the halo preview behind the modal visible; you click a tab to move between sections. This is the default.
 - **Expanded** — the preview and Crystal in a left column, Axis over Filter in a right column, no tab bar. All three sections are visible at once, at the cost of covering nearly all of the preview.
 
-The **Immediate** checkbox chooses how edits commit:
+How edits commit is an application preference under **Settings → Application preferences**:
 
-- **Immediate on (default)** — a regular non-modal window. Valid changes are applied every frame, the halo preview remains interactive, and the action button is **Close**; closing cannot undo changes already applied.
-- **Immediate off (Staged)** — a blocking modal with **OK / Cancel**. Tab labels gain `*` for uncommitted changes; OK commits all sections atomically, while Cancel, Esc, or the title-bar close discards them.
+- **Immediate (default)** — a regular non-modal window. Valid changes are applied every frame, the halo preview remains interactive, and the action button is **Close**; closing cannot undo changes already applied.
+- **Staged (deprecated)** — a blocking modal with **OK / Cancel**. Tab labels gain `*` for uncommitted changes; OK commits all sections atomically, while Cancel, Esc, or the title-bar close discards them. The window says `Staged (deprecated)` on its button row: Staged is planned for removal in **5.0.0**.
 
-Switching Staged → Immediate commits the in-flight buffers before reopening in Immediate mode. Switching the other way rebases the staged buffers on the current document.
+The mode is adopted when an editor is **opened**: tick the Settings checkbox and press Save, and every Edit Entry window you open afterwards starts in the chosen mode, without restarting the app. An editor that is already open keeps its mode — saving does not convert it, commit or discard its draft, and switching between cards inside an open editor is not "closing and reopening". Only a genuinely closed editor re-reads the preference. The preference belongs to the application: no document carries it, and New, Open and Revert leave it alone.
 
 In both layouts the window's width is fixed, but its height is yours: drag the bottom edge to make it shorter or taller. The preview and action row keep their size and the section area gives or takes the difference, so **Close** or **OK / Cancel** stays in view at any height. On a screen too short for the whole window it opens already fitted to the screen. A height you drag is kept until the app is closed.
 
