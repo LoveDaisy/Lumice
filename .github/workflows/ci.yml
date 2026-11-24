@@ -2222,8 +2222,13 @@ jobs:
             --job-summary "$GITHUB_STEP_SUMMARY" \
             --publish
 
+      # Non-blocking like the collect step above: `if: always()` alone only
+      # makes the upload ATTEMPT run — an upload failure would still turn the
+      # job red and skip the benchmark steps behind it. The evidence copy is
+      # a convenience, never a gate.
       - name: Upload headroom evidence
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@v7
         with:
           name: headroom-state

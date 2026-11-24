@@ -378,6 +378,11 @@ class GhClient:
         payload = self.api_json(f"repos/{self.repo}/actions/runs/{run_id}/attempts/1/jobs")
         return {job["name"]: job for job in payload.get("jobs", [])}
 
+    def get_run(self, run_id: int) -> dict:
+        """Re-resolve one run by id (pending entries may have completed,
+        been cancelled, or been deleted since they were discovered)."""
+        return self.api_json(f"repos/{self.repo}/actions/runs/{run_id}")
+
     def job_log(self, job_id: int) -> str:
         return self.api(f"repos/{self.repo}/actions/jobs/{job_id}/logs")
 
@@ -390,17 +395,20 @@ def in_population(branch: str) -> bool:
     return branch == "main" or branch.startswith("release/")
 
 
-def list_push_runs(client: GhClient, since_iso: str, current_run: int | None) -> tuple[list[dict], list[dict]]:
+def list_push_runs(
+    client: GhClient, since_iso: str, current_run: int | None
+) -> tuple[list[dict], list[dict], list[dict]]:
     """Completed push runs on main / release/*, oldest first.
 
-    Returns (harvestable, out_of_population). The current run — the one
-    whose benchmark-summary step is executing this harvest — is included
-    even though the workflow run is not completed yet: its build matrix is
-    (`needs: build`), and filtering by whole-run completion here would make
-    the harvest wait for the run to wait for itself.
+    Returns (harvestable, out_of_population, unfinished). Unfinished runs
+    (still in progress, not the current run) are returned, not dropped: the
+    caller must keep them pending — a run merely DISCOVERED late that is
+    then filtered out here would be skipped by the created=> cursor forever,
+    leaving no sample and no gap (a silent hole in the sequence).
     """
     harvestable: dict[int, dict] = {}
     out_of_population: list[dict] = []
+    unfinished: list[dict] = []
     page = 1
     while True:
         query = f"repos/{client.repo}/actions/workflows/ci.yml/runs?event=push&per_page=100&page={page}"
@@ -409,20 +417,22 @@ def list_push_runs(client: GhClient, since_iso: str, current_run: int | None) ->
         batch = payload.get("workflow_runs", [])
         for run in batch:
             branch = run.get("head_branch") or ""
-            # Any terminal conclusion (success/failure/cancelled/...) is
-            # harvestable: a cancelled run must become a named gap, not
-            # silently vanish — a vanished run would let a streak bridge it.
-            done = run.get("status") == "completed"
-            is_current = current_run is not None and run["id"] == current_run
             if not in_population(branch):
                 out_of_population.append(run)
-            elif done or is_current:
+            elif run.get("status") == "completed" or (current_run is not None and run["id"] == current_run):
+                # Any terminal conclusion (success/failure/cancelled/...) is
+                # harvestable: a cancelled run must become a named gap, not
+                # silently vanish — a vanished run would let a streak bridge
+                # it. The current run is harvestable before completion
+                # because `needs: build` has finished its build matrix.
                 harvestable[run["id"]] = run
+            else:
+                unfinished.append(run)
         if len(batch) < 100 or page >= MAX_LIST_PAGES:
             break
         page += 1
     ordered = sorted(harvestable.values(), key=lambda r: (r.get("created_at") or "", r["id"]))
-    return ordered, out_of_population
+    return ordered, out_of_population, unfinished
 
 
 # --- persistence ------------------------------------------------------------------
@@ -460,16 +470,58 @@ def event_key(event: dict) -> str:
 
 
 def merge_records(*batches: list[dict], key_of=record_key) -> list[dict]:
-    """Union-merge record batches keeping the first occurrence of each key.
+    """Union-merge record batches by key, with upgrade-only supersession.
 
-    Records are append-only facts: the earliest written copy of a sample,
-    gap or event is authoritative and later harvests cannot rewrite it.
+    Numeric evidence is immutable once written: a sample is never replaced.
+    A gap may be superseded upward only — a retryable collection failure
+    (budget exhausted mid-run, transport error) must be able to become real
+    evidence on a later harvest, and a retryable gap may firm up into a
+    terminal one — but nothing ever downgrades, and equal classes keep the
+    earliest copy.
     """
     merged: dict[str, dict] = {}
     for batch in batches:
         for record in batch:
-            merged.setdefault(key_of(record), record)
+            key = key_of(record)
+            existing = merged.get(key)
+            if existing is None or record_precedence(record) > record_precedence(existing):
+                merged[key] = record
     return list(merged.values())
+
+
+RETRYABLE_GAP_PREFIXES = ("api-budget-exhausted", "harvest-error")
+
+
+def is_retryable_gap(record: dict) -> bool:
+    """Whether a gap's missing evidence may still be collected later.
+
+    Terminal: the run's own shape says the evidence does not exist (no
+    parsable reading, cancelled, job absent, expired log, unparsable
+    snapshot). Retryable: the tracker's own budget or a transient transport
+    failure stopped collection — the same attempt-1 evidence may read fine
+    next harvest, and must be given the chance.
+    """
+    if record.get("type") != "gap":
+        return False
+    reason = record.get("reason") or ""
+    if reason.startswith(RETRYABLE_GAP_PREFIXES):
+        return True
+    if "not found or expired" in reason:
+        return False  # the log or snapshot is gone; no retry will resurrect it
+    if reason.startswith(("registry-unreadable", "jobs-unreadable", "log-unreadable")):
+        return True  # transport-class failure; the HTTP verdict text says which
+    return False
+
+
+def record_precedence(record: dict) -> int:
+    if record.get("type") == "sample":
+        return 2
+    return 0 if is_retryable_gap(record) else 1
+
+
+def runs_collection_complete(records: list[dict]) -> bool:
+    """A run is fully collected when none of its records is a retryable gap."""
+    return all(not is_retryable_gap(record) for record in records)
 
 
 def utc_now_iso() -> str:
@@ -560,12 +612,13 @@ def sample_record(
 def harvest_run(
     client: GhClient,
     run: dict,
-    known_series: dict[str, list[tuple[str, str]]],
+    known_series: dict[tuple[str, str], list[tuple[str, str]]],
     config_id: str,
 ) -> list[dict]:
     """Every (job, phase) of one run: a sample or an honest gap, never a skip."""
-    line = line_of_branch(run.get("head_branch") or "")
-    series = known_series.get(line, [])
+    branch = run.get("head_branch") or ""
+    line = line_of_branch(branch)
+    series = known_series.get((line, branch), [])
     line_wide = [gap_record(run=run, line=line, job="", phase="", reason="PLACEHOLDER", config_id=config_id)]
 
     def line_or_series_gaps(reason: str) -> list[dict]:
@@ -666,39 +719,47 @@ def annotate_status(record: dict, threshold_pct: float) -> str:
     return classify_headroom(interval, threshold_pct)
 
 
-def walk_series(entries: list[dict], threshold_pct: float, min_streak: int) -> dict:
+def walk_series(
+    entries: list[dict], current_config_id: str, threshold_pct: float, min_streak: int
+) -> dict:
     """Recompute streak continuity and fired events for one series' history.
 
     Deterministic from the ledger: the same history always derives the same
     event ids, so re-harvesting never duplicates a signal. Rules:
-      - low: streak +1; reaching min_streak with no active event fires one
+      - the evaluated era is the suffix of the history collected under the
+        CURRENT observation config; entries from earlier config eras are
+        past evidence — they can neither fire new events (their identity
+        belongs to another threshold) nor keep a signal active across the
+        change (`harvested_at` config of a sample never silently carries)
+      - low: streak +1; reaching min_streak fires one event
       - healthy: streak reset and the active event cleared (recovery is an
         observed healthy reading — absence of evidence is not recovery)
       - uncertain / gap: streak reset, active event kept
-      - a segment change or a config change between neighbours resets the
-        streak; a config change also clears the active event (a threshold
-        change never carries an old signal silently)
+      - a calibration segment change between neighbours resets the streak —
+        no streak spans a re-anchor
     """
+    era_start = 0
+    for index, entry in enumerate(entries):
+        if entry.get("config_id") != current_config_id:
+            era_start = index + 1
+    era = entries[era_start:]
     streak = 0
     streak_refs: list[dict] = []
     active: dict | None = None
     fired: list[dict] = []
     previous: dict | None = None
-    for entry in entries:
-        if previous is not None:
-            if entry.get("segment") != previous.get("segment"):
-                streak = 0
-                streak_refs = []
-            if entry.get("config_id") != previous.get("config_id"):
-                streak = 0
-                streak_refs = []
-                active = None
+    for entry in era:
+        if previous is not None and entry.get("segment") != previous.get("segment"):
+            streak = 0
+            streak_refs = []
         status = annotate_status(entry, threshold_pct)
         if status == "low":
             streak += 1
             streak_refs.append(entry)
             if streak >= min_streak and active is None:
-                active = fire_event(entry, streak_refs, threshold_pct, min_streak, streak)
+                active = fire_event(
+                    entry, streak_refs, current_config_id, threshold_pct, min_streak, streak
+                )
                 fired.append(active)
         elif status == "healthy":
             streak = 0
@@ -714,6 +775,7 @@ def walk_series(entries: list[dict], threshold_pct: float, min_streak: int) -> d
 def fire_event(
     latest: dict,
     streak_refs: list[dict],
+    config_id: str,
     threshold_pct: float,
     min_streak: int,
     streak: int,
@@ -723,9 +785,10 @@ def fire_event(
     identity = json.dumps(
         {
             "line": latest["line"],
+            "branch": latest.get("branch") or "",
             "job": latest["job"],
             "phase": latest["phase"],
-            "config_id": latest["config_id"],
+            "config_id": config_id,
             "segment": latest.get("segment"),
             "first_run_id": first["run_id"],
         },
@@ -740,7 +803,7 @@ def fire_event(
         "phase": latest["phase"],
         "threshold_pct": threshold_pct,
         "min_streak": min_streak,
-        "config_id": latest["config_id"],
+        "config_id": config_id,
         "segment": latest.get("segment"),
         "first_run": {"id": first["run_id"], "number": first.get("run_number"), "url": first.get("run_url") or ""},
         "second_run": {"id": second["run_id"], "number": second.get("run_number"), "url": second.get("run_url") or ""},
@@ -752,35 +815,57 @@ def fire_event(
     }
 
 
-def group_series(records: list[dict]) -> dict[tuple[str, str, str], list[dict]]:
-    series: dict[tuple[str, str, str], list[dict]] = {}
+def group_series(records: list[dict]) -> dict[tuple[str, str, str, str], list[dict]]:
+    """Group the ledger into per-branch series timelines.
+
+    The series key carries the ACTUAL branch: two release lines inherit the
+    same registry and would otherwise pair each other's low samples into a
+    cross-branch trigger (and each other's recovery into a silent reset).
+    Line-wide gaps (job == "") — cancelled runs or unreadable snapshots
+    recorded before the line's series were known — are projected onto every
+    series of the same line and branch as continuity barriers, including
+    series this same batch or a later harvest discovers: the projection
+    re-runs on the full merged ledger each time, so a barrier recorded
+    before a series existed still fences it.
+    """
+    series: dict[tuple[str, str, str, str], list[dict]] = {}
+    line_wide: list[dict] = []
     for record in records:
         if record.get("job") == "":
-            continue  # line-wide gap rows belong to no series; they surface in the gap list only
-        key = (record["line"], record["job"], record["phase"])
+            line_wide.append(record)
+            continue
+        key = (record["line"], record.get("branch") or "", record["job"], record["phase"])
         series.setdefault(key, []).append(record)
+    for key, entries in series.items():
+        seen_runs = {entry["run_id"] for entry in entries}
+        for gap in line_wide:
+            if gap["line"] == key[0] and (gap.get("branch") or "") == key[1] and gap["run_id"] not in seen_runs:
+                entries.append(gap)
     for entries in series.values():
         entries.sort(key=lambda r: (r.get("run_created_at") or "", r["run_id"]))
     return series
 
 
+def series_label(line: str, branch: str, job: str, phase: str) -> str:
+    where = line if line == "main" else f"{line}:{branch}"
+    return f"{where}/{job}/{phase}"
+
+
 def evaluate_series(
-    records: list[dict], threshold_pct: float, min_streak: int
+    records: list[dict], current_config_id: str, threshold_pct: float, min_streak: int
 ) -> tuple[list[dict], list[dict], list[dict]]:
     """Per-series walk over the merged ledger; returns (summary rows, active events, fired events)."""
     rows: list[dict] = []
     active_all: list[dict] = []
     fired_all: list[dict] = []
-    for (line, job, phase), entries in sorted(group_series(records).items()):
-        result = walk_series(entries, threshold_pct, min_streak)
+    for (line, branch, job, phase), entries in sorted(group_series(records).items()):
+        result = walk_series(entries, current_config_id, threshold_pct, min_streak)
         latest = entries[-1]
         active_all.extend([result["active"]] if result["active"] else [])
         fired_all.extend(result["fired"])
         rows.append(
             {
-                "line": line,
-                "job": job,
-                "phase": phase,
+                "label": series_label(line, branch, job, phase),
                 "latest": latest if latest.get("type") == "sample" else None,
                 "latest_run_number": latest.get("run_number"),
                 "latest_reason": latest.get("reason", ""),
@@ -844,12 +929,12 @@ def render_summary(
         if sample is None:
             latest_text = f"run {entry['latest_run_number']}: gap ({entry['latest_reason']})"
             lines.append(
-                f"| {entry['line']}/{entry['job']}/{entry['phase']} | {latest_text} | - | - | - | - | "
+                f"| {entry['label']} | {latest_text} | - | - | - | - | "
                 f"{entry['streak']} | {entry['signal']} |"
             )
         else:
             lines.append(
-                f"| {entry['line']}/{entry['job']}/{entry['phase']} | "
+                f"| {entry['label']} | "
                 f"[{sample['run_number']}]({sample['run_url']}) | "
                 f"{sample['phase_seconds']}s / {sample['raw_factor']} | "
                 f"{sample['implied_c']:.1f}s vs {sample['budget_seconds']}s | "
@@ -876,8 +961,9 @@ def render_summary(
 
 
 def annotation_line(event: dict) -> str:
+    where = event["line"] if event["line"] == "main" else f"{event['line']}:{event.get('branch') or ''}"
     return (
-        f"::notice::[ctest-headroom] {event['line']}/{event['job']}/{event['phase']}: headroom "
+        f"::notice::[ctest-headroom] {where}/{event['job']}/{event['phase']}: headroom "
         f"{event['headroom_latest_pct']:.2f}% < {event['threshold_pct']}% over "
         f"{event['streak_at_fire']}+ consecutive runs (segment {event['segment']}, "
         f"first run {event['first_run']['number']}: {event['first_run']['url']}) — "
@@ -907,15 +993,23 @@ def fetch_publish_ref(repo_root: Path, remote: str, ref: str) -> bool:
 
 
 def read_published_files(repo_root: Path, ref_head: str, names: tuple[str, ...], into: Path) -> bool:
-    """Copy published state files out of a fetched ref head, without a worktree."""
+    """Copy published state files out of a fetched ref head, without a worktree.
+
+    Returns False only when the headroom/ directory does not exist on the ref
+    (a legitimately fresh line). If the directory exists but ANY state file
+    fails to read, that is a corrupt or partial published state: the caller
+    must fail loudly, never treat it as empty — silently continuing here is
+    how a concurrent harvester's records get overwritten.
+    """
     probe = _git(repo_root, "show", f"{ref_head}:{PUBLISH_DIR}/{names[0]}")
     if probe.returncode != 0:
         return False
     into.mkdir(parents=True, exist_ok=True)
     for name in names:
         blob = _git(repo_root, "show", f"{ref_head}:{PUBLISH_DIR}/{name}")
-        if blob.returncode == 0:
-            (into / name).write_text(blob.stdout, encoding="utf-8")
+        if blob.returncode != 0:
+            raise HarvestError(f"published-state-corrupt: {PUBLISH_DIR}/{name} unreadable on {ref_head}")
+        (into / name).write_text(blob.stdout, encoding="utf-8")
     return True
 
 
@@ -955,16 +1049,24 @@ def merge_into_state_dir(state_dir: Path, theirs: Path) -> None:
     (state_dir / "state.json").write_text(json.dumps(ours_state, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
-def publish_state(repo_root: Path, remote: str, ref: str, state_dir: Path) -> tuple[bool, str]:
+def publish_state(
+    repo_root: Path, remote: str, ref: str, state_dir: Path, rebuild_summary=None
+) -> tuple[bool, str]:
     """Replace headroom/ on the publish ref with the state dir; touch nothing else.
 
-    Non-fast-forward rejections re-read the remote state, merge it into ours
-    (records are union-merged by key — both sides' facts survive), and retry,
-    bounded. Force push does not exist on this path.
+    EVERY successful fetch is merged before committing — the first attempt
+    included. Between this harvest's bootstrap and its publish, another
+    aggregation run may have landed records: committing our bootstrap-era
+    snapshot on top of that newer commit would be a legal fast-forward that
+    silently deletes their evidence, and the rejection-retry path would
+    never see it. Merging the actual parent snapshot each attempt (records
+    union-merged by key, events by id, cursor max) makes every push carry
+    both sides' facts; force push does not exist on this path. A fetched
+    headroom/ whose files do not all read is a hard failure, never treated
+    as empty.
 
-    All worktree git operations run with `core.hooksPath` pointed at an empty
-    directory: the publish commit is machine output — a developer's or CI
-    ambient hook chain must neither gate nor mutate it.
+    `rebuild_summary` runs after each merge and before the commit so the
+    published copy always describes the exact ledger being committed.
     """
     worktrees: list[Path] = []
     hooks_off = state_dir.parent / f"{state_dir.name}-no-hooks"
@@ -983,13 +1085,16 @@ def publish_state(repo_root: Path, remote: str, ref: str, state_dir: Path) -> tu
         for attempt in range(1, PUBLISH_RETRIES + 1):
             if not fetch_publish_ref(repo_root, remote, ref):
                 return False, "fetch of the publish ref failed"
-            if attempt > 1:
-                theirs = state_dir.parent / f"{state_dir.name}-theirs-{attempt}"
-                theirs.mkdir(parents=True, exist_ok=True)
-                for name in STATE_FILES:
-                    blob = _git(repo_root, "show", f"FETCH_HEAD:{PUBLISH_DIR}/{name}")
-                    (theirs / name).write_text(blob.stdout if blob.returncode == 0 else "", encoding="utf-8")
+            theirs = state_dir.parent / f"{state_dir.name}-theirs-{attempt}"
+            theirs.mkdir(parents=True, exist_ok=True)
+            try:
+                had_published = read_published_files(repo_root, "FETCH_HEAD", STATE_FILES, theirs)
+            except HarvestError as error:
+                return False, str(error)
+            if had_published:
                 merge_into_state_dir(state_dir, theirs)
+                if rebuild_summary is not None:
+                    rebuild_summary(state_dir)
             worktree = state_dir.parent / f"{state_dir.name}-publish-{attempt}"
             _git(repo_root, "worktree", "remove", "--force", str(worktree))
             add = _git(repo_root, "worktree", "add", "--detach", str(worktree), "FETCH_HEAD")
@@ -1039,8 +1144,6 @@ def publish_state(repo_root: Path, remote: str, ref: str, state_dir: Path) -> tu
 
 def finalize(
     *,
-    samples: list[dict],
-    events: list[dict],
     config: dict,
     config_changed_note: str | None,
     totals: dict,
@@ -1053,7 +1156,12 @@ def finalize(
     paths: dict,
     args: argparse.Namespace,
 ) -> None:
-    """Write the summary; print signals and warnings. Ledgers/state are already on disk."""
+    """Write the local outcome summary; print signals and warnings.
+
+    Ledgers/state/summary are already on disk (the publish snapshot was
+    written before publishing; this pass rewrites the local summary with the
+    attempt's actual outcome and appends it to the Job summary).
+    """
     summary = render_summary(
         repo=args.repo,
         config=config,
@@ -1081,7 +1189,7 @@ def finalize(
 
 def persist_ledgers(
     *, samples: list[dict], events: list[dict], fired_events: list[dict],
-    cursor: dict | None, config: dict, paths: dict,
+    cursor: dict | None, pending: list[dict], config: dict, paths: dict,
 ) -> None:
     """Write the merged ledgers and state BEFORE publishing.
 
@@ -1092,7 +1200,7 @@ def persist_ledgers(
     all_events = merge_records(events, fired_events, key_of=event_key)
     write_jsonl(paths["samples"], samples)
     write_jsonl(paths["events"], all_events)
-    state = {"schema": STATE_SCHEMA, "config": config, "cursor": cursor}
+    state = {"schema": STATE_SCHEMA, "config": config, "cursor": cursor, "pending": pending}
     paths["state"].write_text(json.dumps(state, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
@@ -1111,7 +1219,10 @@ def harvest_command(args: argparse.Namespace) -> int:
     config = {"threshold_pct": args.threshold_pct, "min_streak": args.min_streak, "config_id": config_id}
 
     if args.publish:
-        read_published_state(args.repo_root, args.publish_remote, args.publish_ref, state_dir)
+        try:
+            read_published_state(args.repo_root, args.publish_remote, args.publish_ref, state_dir)
+        except HarvestError as error:
+            warnings.append(f"published state bootstrap: {error}")
 
     previous_state = load_state(paths["state"])
     config_changed_note = None
@@ -1119,18 +1230,23 @@ def harvest_command(args: argparse.Namespace) -> int:
         config_changed_note = (
             f"Observation config changed (threshold {previous_state['config'].get('threshold_pct')}% -> "
             f"{args.threshold_pct}%, streak {previous_state['config'].get('min_streak')} -> {args.min_streak}): "
-            f"streak continuity resets from this harvest; signals re-derive under identity `{config_id}`"
+            f"signals re-derive under identity `{config_id}`; history from earlier config eras cannot "
+            f"fire events or keep a signal active under this one"
         )
 
     samples = load_jsonl(paths["samples"])
     events = load_jsonl(paths["events"])
-    known_run_ids = {record["run_id"] for record in samples}
-    known_series: dict[str, list[tuple[str, str]]] = {}
+    records_by_run: dict[int, list[dict]] = {}
+    for record in samples:
+        records_by_run.setdefault(record["run_id"], []).append(record)
+    complete_run_ids = {run_id for run_id, recs in records_by_run.items() if runs_collection_complete(recs)}
+    known_series: dict[tuple[str, str], list[tuple[str, str]]] = {}
     for record in samples:
         if record.get("job"):
             pair = (record["job"], record["phase"])
-            if pair not in known_series.setdefault(record["line"], []):
-                known_series[record["line"]].append(pair)
+            key = (record["line"], record.get("branch") or "")
+            if pair not in known_series.setdefault(key, []):
+                known_series[key].append(pair)
 
     if previous_state.get("cursor"):
         since_iso = one_second_before(previous_state["cursor"]["created_at"])
@@ -1139,36 +1255,58 @@ def harvest_command(args: argparse.Namespace) -> int:
 
     budget = ApiBudget(args.max_api_calls, time.monotonic() + args.time_budget_sec)
     client = GhClient(args.gh_bin, args.repo, budget)
+    new_records: list[dict] = []
+
+    # Runs still owed collection: pending entries from the previous state
+    # (re-resolved by id — a completed, cancelled or deleted run changes what
+    # it can give us) plus anything the window listing finds that the ledger
+    # has not fully collected. A run with only retryable gaps is NOT done.
+    work: dict[int, dict] = {}
+    for entry in previous_state.get("pending") or []:
+        if entry["run_id"] in complete_run_ids:
+            continue
+        try:
+            run_obj = client.get_run(entry["run_id"])
+        except HarvestError as error:
+            reason = classify_harvest_error(error, default="run-unreadable")
+            if "not found or expired" in reason:
+                # Deleted from the server: a terminal gap fences the sequence,
+                # and the pending entry is discharged.
+                new_records.append(
+                    gap_record(
+                        run={"id": entry["run_id"], "run_number": entry.get("run_number"),
+                             "head_branch": entry.get("branch") or "", "html_url": "",
+                             "head_sha": "", "created_at": entry.get("created_at") or ""},
+                        line=line_of_branch(entry.get("branch") or "main"),
+                        job="", phase="", reason="run-not-found", config_id=config_id,
+                    )
+                )
+                continue
+            warnings.append(f"pending run {entry.get('run_number')} re-resolve failed: {reason}")
+            work[entry["run_id"]] = {
+                "id": entry["run_id"], "run_number": entry.get("run_number"),
+                "head_branch": entry.get("branch") or "", "created_at": entry.get("created_at") or "",
+                "html_url": "", "head_sha": "", "status": "unknown", "conclusion": None,
+            }
+            continue
+        work[run_obj["id"]] = run_obj
 
     try:
-        runs, out_of_population = list_push_runs(client, since_iso, args.current_run)
+        runs, out_of_population, unfinished = list_push_runs(client, since_iso, args.current_run)
     except HarvestError as error:
         warnings.append(f"run listing failed: {classify_harvest_error(error, default='listing-failed')}")
-        rows, active, fired = evaluate_series(samples, args.threshold_pct, args.min_streak)
-        persist_ledgers(
-            samples=samples, events=events, fired_events=fired,
-            cursor=previous_state.get("cursor"), config=config, paths=paths,
-        )
-        finalize(
-            samples=samples, events=events, config=config, config_changed_note=config_changed_note,
-            totals={
-                "runs_processed": 0, "runs_new": 0, "runs_overlap": 0, "records_new": 0,
-                "samples": sum(1 for r in samples if r["type"] == "sample"),
-                "gaps": sum(1 for r in samples if r["type"] == "gap"),
-            },
-            per_series=rows, active_events=active, gaps_this_harvest=[],
-            out_of_population=0, backlog_note=None,
-            publish_note="local only (listing failed; no publish attempted)",
-            paths=paths, args=args,
-        )
-        report_warnings(warnings)
-        return 0
+        runs, unfinished, out_of_population = [], [], []
+    for run in unfinished:
+        work.setdefault(run["id"], run)
+    for run in runs:
+        if run["id"] not in complete_run_ids:
+            work.setdefault(run["id"], run)
 
-    new_records: list[dict] = []
+    ordered_work = sorted(work.values(), key=lambda r: (r.get("created_at") or "", r["id"]))
     processed_runs: list[dict] = []
     backlog_note = None
-    for run in runs:
-        if run["id"] in known_run_ids:
+    for run in ordered_work:
+        if run["id"] in complete_run_ids:
             continue
         if len(processed_runs) >= args.max_runs or budget.exhausted:
             backlog_note = (
@@ -1176,6 +1314,8 @@ def harvest_command(args: argparse.Namespace) -> int:
                 else f"API/time budget reached ({budget.calls} calls)"
             )
             break
+        if run.get("status") not in ("completed", "unknown") and run["id"] != args.current_run:
+            continue  # still in progress and not this harvest's own run: stays pending, collects nothing yet
         try:
             batch = harvest_run(client, run, known_series, config_id)
         except HarvestError as error:
@@ -1186,7 +1326,32 @@ def harvest_command(args: argparse.Namespace) -> int:
         processed_runs.append(run)
 
     merged_samples = merge_records(samples, new_records)
-    _, _, fired_events = evaluate_series(merged_samples, args.threshold_pct, args.min_streak)
+    records_by_run = {}
+    for record in merged_samples:
+        records_by_run.setdefault(record["run_id"], []).append(record)
+
+    # Pending = every owed run that is still not fully collected, now or from
+    # previous states. This is what keeps a mid-run budget death or a
+    # transient transport failure from becoming a permanent hole: the cursor
+    # may move past such a run, but pending pins its identity for the next
+    # harvest to re-resolve and re-collect, and the retryable gap is then
+    # upgraded in place (merge is upgrade-only).
+    pending: list[dict] = []
+    for run_id, run_obj in work.items():
+        recs = records_by_run.get(run_id, [])
+        if recs and runs_collection_complete(recs):
+            continue
+        pending.append(
+            {
+                "run_id": run_id,
+                "created_at": run_obj.get("created_at") or "",
+                "run_number": run_obj.get("run_number"),
+                "branch": run_obj.get("head_branch") or "",
+            }
+        )
+    pending.sort(key=lambda p: (p["created_at"], p["run_id"]))
+
+    _, _, fired_events = evaluate_series(merged_samples, config_id, args.threshold_pct, args.min_streak)
 
     cursor = previous_state.get("cursor")
     if processed_runs:
@@ -1201,12 +1366,51 @@ def harvest_command(args: argparse.Namespace) -> int:
 
     persist_ledgers(
         samples=merged_samples, events=events, fired_events=fired_events,
-        cursor=cursor, config=config, paths=paths,
+        cursor=cursor, pending=pending, config=config, paths=paths,
     )
+
+    # The publish snapshot must be complete before publishing: all four files,
+    # with a summary derived from exactly this ledger. The attempt's outcome
+    # line is written to the local copy after the publish returns — the
+    # published copy carries the neutral published-state line instead.
+    def render_into(state: Path, note: str) -> None:
+        ledgers = {
+            "samples": load_jsonl(state / "samples.jsonl"),
+        }
+        rows, active, _ = evaluate_series(ledgers["samples"], config_id, args.threshold_pct, args.min_streak)
+        summary = render_summary(
+            repo=args.repo,
+            config=config,
+            config_changed_note=config_changed_note,
+            totals={
+                "runs_processed": len(processed_runs),
+                "runs_overlap": max(0, len(runs) + len(unfinished) + len(previous_state.get("pending") or []) - len(processed_runs)),
+                "records_new": len(new_records),
+                "samples": sum(1 for r in ledgers["samples"] if r["type"] == "sample"),
+                "gaps": sum(1 for r in ledgers["samples"] if r["type"] == "gap"),
+            },
+            per_series=rows,
+            active_events=active,
+            gaps_this_harvest=[r for r in new_records if r["type"] == "gap"],
+            out_of_population=len(out_of_population),
+            backlog_note=backlog_note,
+            publish_note=note,
+        )
+        (state / "summary.md").write_text(summary, encoding="utf-8")
+        return
+
+    published_copy_note = (
+        "published to the gh-pages headroom/ directory (this copy describes the committed ledger; "
+        "the harvest attempt's outcome is in the aggregation run's Job summary)"
+    )
+    render_into(state_dir, published_copy_note)
 
     publish_note = "local only (no --publish)"
     if args.publish:
-        ok, detail = publish_state(args.repo_root, args.publish_remote, args.publish_ref, state_dir)
+        ok, detail = publish_state(
+            args.repo_root, args.publish_remote, args.publish_ref, state_dir,
+            rebuild_summary=lambda state: render_into(state, published_copy_note),
+        )
         publish_note = (
             detail if ok
             else f"NOT PERSISTED — {detail}; the next harvest re-collects from the published cursor"
@@ -1220,23 +1424,21 @@ def harvest_command(args: argparse.Namespace) -> int:
     # deterministic, so this cannot invent events the pre-publish pass
     # did not see.
     final_samples = load_jsonl(paths["samples"])
-    per_series_rows, active_events, fired_after = evaluate_series(
-        final_samples, args.threshold_pct, args.min_streak
+    per_series_rows, active_events, _ = evaluate_series(
+        final_samples, config_id, args.threshold_pct, args.min_streak
     )
-    gaps_this_harvest = [r for r in new_records if r["type"] == "gap"]
     totals = {
         "runs_processed": len(processed_runs),
-        "runs_new": len(processed_runs),
-        "runs_overlap": len(runs) - len(processed_runs),
+        "runs_overlap": max(0, len(runs) + len(unfinished) + len(previous_state.get("pending") or []) - len(processed_runs)),
         "records_new": len(new_records),
         "samples": sum(1 for r in final_samples if r["type"] == "sample"),
         "gaps": sum(1 for r in final_samples if r["type"] == "gap"),
     }
     finalize(
-        samples=final_samples, events=load_jsonl(paths["events"]), config=config,
+        config=config,
         config_changed_note=config_changed_note,
         totals=totals, per_series=per_series_rows,
-        active_events=active_events, gaps_this_harvest=gaps_this_harvest,
+        active_events=active_events, gaps_this_harvest=[r for r in new_records if r["type"] == "gap"],
         out_of_population=len(out_of_population), backlog_note=backlog_note,
         publish_note=publish_note, paths=paths, args=args,
     )

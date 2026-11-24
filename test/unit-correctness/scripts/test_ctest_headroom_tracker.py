@@ -240,8 +240,10 @@ def make_gap(run_id, *, line="main", job=MACOS_JOB, created, config=CFG, reason=
     return tracker.gap_record(run=run, line=line, job=job, phase="ctest", reason=reason, config_id=config)
 
 
-def walk(records, threshold=6.0, streak=2):
-    return tracker.walk_series(tracker.group_series(records)[("main", MACOS_JOB, "ctest")], threshold, streak)
+def walk(records, threshold=6.0, streak=2, config=CFG):
+    grouped = tracker.group_series(records)
+    key = next(k for k in grouped if k[0] == "main" and k[2] == MACOS_JOB)
+    return tracker.walk_series(grouped[key], config, threshold, streak)
 
 
 def test_two_consecutive_lows_fire_exactly_one_deterministic_event():
@@ -332,23 +334,34 @@ def test_calibration_segment_change_breaks_the_streak():
     assert result["fired"] == [] and result["streak"] == 1  # a re-anchor never pairs with the old anchor
 
 
-def test_threshold_config_change_breaks_streaks_and_clears_the_active_signal():
-    # Entries 1-2 form a legitimate streak inside the old config's era (a real
-    # ledger would already carry that event; recomputation re-derives the same
-    # identity). The change boundary sits between 2 and 3: entry 3 starts a
-    # fresh streak and the active signal does not silently carry over.
-    records = [
+def test_threshold_config_change_puts_history_in_a_past_era():
+    # Era semantics: the walk evaluates only the suffix collected under the
+    # CURRENT config. While the old config is current, its own era fires
+    # legitimately (a real ledger already holds that event; recompute
+    # re-derives the same identity). Once the config changes, earlier eras
+    # evaluate to nothing — no event, no active signal — and the first
+    # sample of the new era starts a fresh streak that inherits no count.
+    pair_old = [
         make_sample(1, 560.0, 1.0, 560.0, created="2026-11-20T00:00:00Z", config=CFG),
         make_sample(2, 580.0, 1.0, 560.0, created="2026-11-21T00:00:00Z", config=CFG),
+    ]
+    old_era = walk(pair_old, config=CFG)
+    assert len(old_era["fired"]) == 1 and old_era["fired"][0]["config_id"] == CFG
+    records = pair_old + [
         make_sample(3, 585.0, 1.0, 560.0, created="2026-11-22T00:00:00Z", config=OTHER_CFG),
     ]
-    result = walk(records)
-    assert len(result["fired"]) == 1 and result["fired"][0]["config_id"] == CFG
-    assert result["active"] is None and result["streak"] == 1
-    # A streak fully inside the new era fires under the new identity.
-    more = records + [make_sample(4, 590.0, 1.0, 560.0, created="2026-11-23T00:00:00Z", config=OTHER_CFG)]
-    after = walk(more)
-    assert len(after["fired"]) == 2 and after["fired"][1]["config_id"] == OTHER_CFG
+    new_era = walk(records, config=OTHER_CFG)
+    assert new_era["fired"] == [] and new_era["active"] is None
+    assert new_era["streak"] == 1  # the era's own first sample, no inherited count
+    # New evidence under the new config builds its own streak and fires under
+    # the new identity, never inheriting the old era's count.
+    more = records + [
+        make_sample(4, 590.0, 1.0, 560.0, created="2026-11-23T00:00:00Z", config=OTHER_CFG),
+        make_sample(5, 595.0, 1.0, 560.0, created="2026-11-24T00:00:00Z", config=OTHER_CFG),
+    ]
+    after = walk(more, config=OTHER_CFG)
+    assert len(after["fired"]) == 1 and after["fired"][0]["config_id"] == OTHER_CFG
+    assert after["fired"][0]["first_run"]["id"] == 3  # entry 3 was collected under the new config: it is the era's start
 
 
 def test_lines_and_platforms_do_not_share_a_series():
@@ -357,9 +370,12 @@ def test_lines_and_platforms_do_not_share_a_series():
         make_sample(2, 580.0, 1.0, 560.0, created="2026-11-21T00:00:00Z", line="release", job=WINDOWS_JOB),
     ]
     grouped = tracker.group_series(records)
-    assert set(grouped) == {("main", MACOS_JOB, "ctest"), ("release", WINDOWS_JOB, "ctest")}
-    assert all(walk_series_result["fired"] == [] for walk_series_result in [
-        tracker.walk_series(entries, 6.0, 2) for entries in grouped.values()
+    assert set(grouped) == {
+        ("main", "main", MACOS_JOB, "ctest"),
+        ("release", "release/4.7.7", WINDOWS_JOB, "ctest"),
+    }
+    assert all(result["fired"] == [] for result in [
+        tracker.walk_series(entries, CFG, 6.0, 2) for entries in grouped.values()
     ])
 
 
@@ -368,6 +384,56 @@ def test_rerun_sample_never_enters_the_ledger_as_a_second_attempt():
     # rerun's rows cannot be appended under a second key.
     rec = make_sample(1, 560.0, 1.0, 560.0, created="2026-11-20T00:00:00Z")
     assert rec["key"] == "1:1:macOS ARM64:ctest" and rec["attempt"] == 1
+
+
+def test_line_wide_gap_barriers_a_series_discovered_in_the_same_or_later_batch():
+    # A cancelled run recorded as a line-wide gap (before the branch's series
+    # were known) must fence the series anyway — including when the series'
+    # first numeric samples arrive in the very same batch on either side.
+    cancelled = make_gap(2, created="2026-11-21T00:00:00Z", job="", reason="run-cancelled")
+    records = [
+        make_sample(1, 560.0, 1.0, 560.0, created="2026-11-20T00:00:00Z"),
+        cancelled,
+        make_sample(3, 580.0, 1.0, 560.0, created="2026-11-22T00:00:00Z"),
+    ]
+    result = walk(records)
+    assert result["fired"] == [] and result["streak"] == 1
+    # The same fencing for the registry-unreadable class, projected onto the
+    # series from a line-wide gap recorded outside any known series.
+    between = [
+        make_sample(10, 560.0, 1.0, 560.0, created="2026-11-20T00:00:00Z"),
+        make_gap(9, created="2026-11-20T12:00:00Z", job="", reason="registry-unreadable: ..."),
+        make_sample(11, 580.0, 1.0, 560.0, created="2026-11-21T00:00:00Z"),
+    ]
+    assert walk(between)["fired"] == [] and walk(between)["streak"] == 1
+    # Two lows adjacent AFTER a barrier pair with each other — the barrier
+    # breaks continuity at its own position, it does not fence the future.
+    after = [
+        make_gap(9, created="2026-11-19T00:00:00Z", job="", reason="run-cancelled"),
+        make_sample(10, 560.0, 1.0, 560.0, created="2026-11-20T00:00:00Z"),
+        make_sample(11, 580.0, 1.0, 560.0, created="2026-11-21T00:00:00Z"),
+    ]
+    assert len(walk(after)["fired"]) == 1
+
+
+def test_retryable_gaps_upgrade_to_samples_and_samples_never_downgrade():
+    retryable = make_gap(1, created="2026-11-20T00:00:00Z", reason="api-budget-exhausted")
+    sample = make_sample(1, 560.0, 1.0, 560.0, created="2026-11-20T00:00:00Z")
+    merged = tracker.merge_records([retryable], [sample])
+    assert len(merged) == 1 and merged[0]["type"] == "sample"  # upgrade
+    merged = tracker.merge_records([sample], [retryable])
+    assert len(merged) == 1 and merged[0]["type"] == "sample"  # never a downgrade
+    terminal = make_gap(1, created="2026-11-20T00:00:00Z", reason="reading: no-machine-factor-reading")
+    merged = tracker.merge_records([terminal], [retryable])
+    assert merged[0]["reason"].startswith("reading:")  # terminal outranks retryable
+    assert tracker.is_retryable_gap(retryable)
+    assert not tracker.is_retryable_gap(terminal)
+    assert tracker.is_retryable_gap(
+        make_gap(2, created="2026-11-20T00:00:00Z", reason="log-unreadable: forbidden — check token permissions (x)")
+    )
+    assert not tracker.is_retryable_gap(
+        make_gap(3, created="2026-11-20T00:00:00Z", reason="log-unreadable: not found or expired (404)")
+    )
 
 
 # --- fake gh plumbing for the end-to-end harvest -------------------------------------
@@ -450,6 +516,9 @@ def setup_fake_gh(tmp_path: Path, runs: list[dict], jobs_and_logs: dict, registr
     }
     serve(root, "repos/O/R/actions/workflows/ci.yml/runs?event=push&per_page=100&page=1",
           json.dumps({"total_count": len(runs), "workflow_runs": runs}))
+    for run in runs:
+        # Pending entries re-resolve the run by id on the next harvest.
+        serve(root, f"repos/O/R/actions/runs/{run['id']}", json.dumps(run))
     for run_id, spec in jobs_and_logs.items():
         jobs_payload = {
             "total_count": len(spec["jobs"]),
@@ -729,6 +798,175 @@ def test_new_release_branch_gets_its_own_line_and_budget(tmp_path):
     assert clamp["budget_seconds"] == 480 and samples[802]["budget_seconds"] == 480
 
 
+def test_two_release_branches_with_the_same_registry_never_pair(tmp_path):
+    # A new release line inherits the old one's budget, rulers and clamp — the
+    # segment hash is identical. Series identity must still be per branch, or
+    # one low sample on each line pairs into a cross-branch trigger, and one
+    # line's healthy reading resets the other's trend.
+    low_log = RELEASE_RED  # h = -0.32% low vs the shared B=480 registry
+    healthy_log = RELEASE_CLAMP_NOTICE  # h ~ 27% healthy vs B=480
+    runs = [
+        make_run(851, 1, "release/4.7.7", "2026-11-20T00:00:00Z", "sha-r1"),
+        make_run(852, 2, "release/4.7.8", "2026-11-21T00:00:00Z", "sha-r2"),
+        make_run(853, 3, "release/4.7.7", "2026-11-22T00:00:00Z", "sha-r3"),
+        make_run(854, 4, "release/4.7.8", "2026-11-23T00:00:00Z", "sha-r4"),
+    ]
+    bin_path, env = setup_fake_gh(
+        tmp_path, runs,
+        {
+            851: {"jobs": {WINDOWS_JOB: (9501, "success")}, "logs": {9501: low_log}},
+            852: {"jobs": {WINDOWS_JOB: (9502, "success")}, "logs": {9502: low_log}},
+            853: {"jobs": {WINDOWS_JOB: (9503, "success")}, "logs": {9503: low_log}},
+            854: {"jobs": {WINDOWS_JOB: (9504, "success")}, "logs": {9504: healthy_log}},
+        },
+        {"sha-r1": RELEASE_REGISTRY, "sha-r2": RELEASE_REGISTRY,
+         "sha-r3": RELEASE_REGISTRY, "sha-r4": RELEASE_REGISTRY},
+    )
+    process, state_dir = run_harvest(tmp_path, bin_path, env)
+    assert process.returncode == 0
+    events = [json.loads(line) for line in (state_dir / "events.jsonl").read_text().splitlines() if line]
+    assert len(events) == 1
+    assert events[0]["branch"] == "release/4.7.7"  # 4.7.8's low never pairs into 4.7.7's streak
+    assert events[0]["first_run"]["id"] == 851 and events[0]["latest_run"]["id"] == 853
+    # 4.7.8's healthy reading must not clear 4.7.7's active signal.
+    assert "::notice::" in process.stdout
+    assert "release:release/4.7.8" in process.stdout  # the second series is reported under its own branch
+
+
+def test_cold_start_low_cancelled_low_never_fires(tmp_path):
+    # First harvest, empty ledger: the cancelled run lands as a line-wide gap
+    # (no series known yet) and must still fence the series the same batch
+    # discovers, exactly as a named gap would.
+    runs = [
+        make_run(861, 1, "main", "2026-11-20T00:00:00Z", "sha-a"),
+        make_run(862, 2, "main", "2026-11-21T00:00:00Z", "sha-b", conclusion="cancelled"),
+        make_run(863, 3, "main", "2026-11-22T00:00:00Z", "sha-c"),
+    ]
+    low_log = MAIN_GREEN_MACOS.replace("537.7", "600.0").replace("1.018", "1.000")
+    bin_path, env = setup_fake_gh(
+        tmp_path, runs,
+        {
+            861: {"jobs": {MACOS_JOB: (9601, "success")}, "logs": {9601: low_log}},
+            862: {"jobs": {}, "logs": {}},  # cancelled: no jobs are consulted
+            863: {"jobs": {MACOS_JOB: (9603, "success")}, "logs": {9603: low_log}},
+        },
+        {"sha-a": MAIN_REGISTRY, "sha-c": MAIN_REGISTRY},  # sha-b never read
+    )
+    process, state_dir = run_harvest(tmp_path, bin_path, env)
+    assert process.returncode == 0
+    events = (state_dir / "events.jsonl").read_text().strip()
+    assert events == ""  # low / cancelled / low never pairs
+    assert "::notice::" not in process.stdout
+
+
+def test_budget_death_mid_run_is_pinned_pending_and_upgraded_next_harvest(tmp_path):
+    # Harvest 1 dies of API budget mid-run-2: that run's retryable gap must
+    # NOT become final — the run stays pending, and harvest 2 re-collects the
+    # same attempt-1 evidence, upgrades the gap into a sample, and the streak
+    # recomputes across the previously interrupted boundary.
+    runs = [
+        make_run(871, 1, "main", "2026-11-20T00:00:00Z", "sha-a"),
+        make_run(872, 2, "main", "2026-11-21T00:00:00Z", "sha-b"),
+        make_run(873, 3, "main", "2026-11-22T00:00:00Z", "sha-c"),
+    ]
+    low_log = MAIN_GREEN_MACOS.replace("537.7", "600.0").replace("1.018", "1.000")  # h=-7.14
+    jobs_and_logs = {
+        871: {"jobs": {MACOS_JOB: (9701, "success")}, "logs": {9701: low_log}},
+        872: {"jobs": {MACOS_JOB: (9702, "success")}, "logs": {9702: low_log}},
+        873: {"jobs": {MACOS_JOB: (9703, "success")}, "logs": {9703: low_log}},
+    }
+    registries = {"sha-a": MAIN_REGISTRY, "sha-b": MAIN_REGISTRY, "sha-c": MAIN_REGISTRY}
+    bin_path, env = setup_fake_gh(tmp_path, runs, jobs_and_logs, registries)
+    # Calls: listing 1 + run 871 (registry/jobs/log) 3 + run 872 registry 1
+    # + jobs 1 + log REFUSED -> api-budget-exhausted; run 873 never starts.
+    first, state_dir = run_harvest(tmp_path, bin_path, env, extra_args=("--max-api-calls", "6"))
+    assert first.returncode == 0
+    samples = {json.loads(line)["key"]: json.loads(line)
+               for line in (state_dir / "samples.jsonl").read_text().splitlines() if line}
+    assert samples["872:1:macOS ARM64:ctest"]["type"] == "gap"
+    assert "api-budget-exhausted" in samples["872:1:macOS ARM64:ctest"]["reason"]
+    state = json.loads((state_dir / "state.json").read_text())
+    assert {entry["run_id"] for entry in state["pending"]} == {872, 873}
+    assert (state_dir / "events.jsonl").read_text().strip() == ""  # one low + retryable hole fires nothing
+
+    second, state_dir = run_harvest(tmp_path, bin_path, env)
+    assert second.returncode == 0
+    samples = {json.loads(line)["key"]: json.loads(line)
+               for line in (state_dir / "samples.jsonl").read_text().splitlines() if line}
+    assert samples["872:1:macOS ARM64:ctest"]["type"] == "sample"  # the retryable gap upgraded
+    assert samples["873:1:macOS ARM64:ctest"]["type"] == "sample"
+    events = [json.loads(line) for line in (state_dir / "events.jsonl").read_text().splitlines() if line]
+    assert len(events) == 1 and events[0]["first_run"]["id"] == 871
+    state = json.loads((state_dir / "state.json").read_text())
+    assert state["pending"] == []  # everything collected; nothing owed
+
+
+def test_threshold_change_with_no_new_runs_clears_the_active_signal(tmp_path):
+    bin_path, env = basic_scenario(tmp_path)
+    first, state_dir = run_harvest(tmp_path, bin_path, env)
+    assert first.returncode == 0
+    assert len([l for l in first.stdout.splitlines() if l.startswith("::notice::")]) == 1
+    events_before = (state_dir / "events.jsonl").read_text()
+
+    # Threshold revised 6% -> 7%, no new runs anywhere: the old-era signal
+    # must not survive as active, no event may fire under a mixed identity,
+    # and the persisted history stays as it was.
+    second, state_dir = run_harvest(tmp_path, bin_path, env, extra_args=("--threshold-pct", "7"))
+    assert second.returncode == 0
+    assert len([l for l in second.stdout.splitlines() if l.startswith("::notice::")]) == 0
+    assert "Observation config changed" in second.stdout
+    assert (state_dir / "events.jsonl").read_text() == events_before
+    assert "ACTIVE" not in second.stdout.split("### Active low-headroom signals")[1].split("###")[0] or \
+        "None." in second.stdout.split("### Active low-headroom signals")[1].split("###")[0]
+
+
+def test_threshold_change_then_new_runs_fire_under_the_new_identity(tmp_path):
+    tmp2 = tmp_path / "scenario"
+    tmp2.mkdir()
+    low = MAIN_GREEN_MACOS.replace("537.7", "600.0").replace("1.018", "1.000")  # low at 6%, low at 7%
+    very_low = MAIN_GREEN_MACOS.replace("537.7", "640.0").replace("1.018", "1.000")
+    healthy = MAIN_GREEN_MACOS  # h=5.68: low at 6, healthy at 7
+    runs = [make_run(881, 1, "main", "2026-11-20T00:00:00Z", "sha-a")]
+    bin_path, env = setup_fake_gh(
+        tmp2, runs, {881: {"jobs": {MACOS_JOB: (9801, "success")}, "logs": {9801: healthy}}},
+        {"sha-a": MAIN_REGISTRY},
+    )
+    first, state_dir = run_harvest(tmp2, bin_path, env, extra_args=("--threshold-pct", "7"))
+    assert first.returncode == 0
+    assert (state_dir / "events.jsonl").read_text().strip() == ""  # 5.68% is healthy at 7%
+
+    # Revise to 6% and deliver two low runs: the era restarts at the change,
+    # and the new pair fires strictly under the new config identity.
+    runs += [
+        make_run(882, 2, "main", "2026-11-21T00:00:00Z", "sha-b"),
+        make_run(883, 3, "main", "2026-11-22T00:00:00Z", "sha-c"),
+    ]
+    for run in runs:
+        serve(tmp2 / "fakegh", f"repos/O/R/actions/runs/{run['id']}", json.dumps(run))
+    serve(tmp2 / "fakegh", "repos/O/R/actions/workflows/ci.yml/runs?event=push&per_page=100&page=1",
+          json.dumps({"total_count": len(runs), "workflow_runs": runs}))
+    serve(tmp2 / "fakegh", "repos/O/R/actions/runs/882/attempts/1/jobs",
+          json.dumps({"total_count": 1, "jobs": [{"id": 9802, "name": MACOS_JOB, "status": "completed",
+                                                  "conclusion": "success", "html_url": ""}]}))
+    serve(tmp2 / "fakegh", "repos/O/R/actions/jobs/9802/logs", low)
+    serve(tmp2 / "fakegh", "repos/O/R/actions/runs/883/attempts/1/jobs",
+          json.dumps({"total_count": 1, "jobs": [{"id": 9803, "name": MACOS_JOB, "status": "completed",
+                                                  "conclusion": "success", "html_url": ""}]}))
+    serve(tmp2 / "fakegh", "repos/O/R/actions/jobs/9803/logs", very_low)
+    serve(tmp2 / "fakegh", "repos/O/R/contents/test/duration_registry.json?ref=sha-b",
+          contents_payload(MAIN_REGISTRY, "blob-b"))
+    serve(tmp2 / "fakegh", "repos/O/R/contents/test/duration_registry.json?ref=sha-c",
+          contents_payload(MAIN_REGISTRY, "blob-c"))
+
+    second, state_dir = run_harvest(tmp2, bin_path, env, extra_args=("--threshold-pct", "6"))
+    assert second.returncode == 0
+    events = [json.loads(line) for line in (state_dir / "events.jsonl").read_text().splitlines() if line]
+    assert len(events) == 1
+    assert events[0]["config_id"] == tracker.config_identity(6.0, 2)
+    assert events[0]["threshold_pct"] == 6.0
+    assert events[0]["first_run"]["id"] == 882  # the change reset the streak; era starts at 882
+
+
 # --- publish chain --------------------------------------------------------------------
 
 
@@ -837,6 +1075,73 @@ def test_publish_failure_names_itself_not_persisted_and_exits_three(tmp_path):
     assert (state_dir / "samples.jsonl").exists()
 
 
+def make_bench_only_remote(tmp_path: Path) -> Path:
+    """A gh-pages ref that carries benchmark history but has no headroom/ yet —
+    the first-production-publish precondition on a clean runner."""
+    bare = tmp_path / "bench-only.git"
+    subprocess.run(["git", "init", "-q", "--bare", str(bare)], check=True)
+    subprocess.run(["git", "-C", str(bare), "config", "core.hooksPath", str(bare / "hooks")], check=True)
+    work = tmp_path / "bench-seed"
+    subprocess.run(["git", "init", "-q", str(work)], check=True)
+    subprocess.run(["git", "-C", str(work), "config", "user.email", "seed@test"], check=True)
+    subprocess.run(["git", "-C", str(work), "config", "user.name", "seed"], check=True)
+    (work / "bench").mkdir()
+    (work / "bench" / "chart.json").write_text("chart-v1")
+    subprocess.run(["git", "-C", str(work), "add", "-A"], check=True)
+    subprocess.run(["git", "-C", str(work), "commit", "-q", "-m", "seed"], check=True)
+    subprocess.run(["git", "-C", str(work), "branch", "-M", "main"], check=True)
+    subprocess.run(["git", "-C", str(work), "push", "-q", str(bare), "main:gh-pages"], check=True)
+    return bare
+
+
+def test_first_publish_on_a_ref_without_headroom_succeeds_end_to_end(tmp_path):
+    bare = make_bench_only_remote(tmp_path)
+    bin_path, env = basic_scenario(tmp_path)
+    process, state_dir = run_harvest(tmp_path, bin_path, env, publish=True, publish_remote=str(bare))
+    assert process.returncode == 0, process.stdout + process.stderr
+    assert "published to gh-pages:headroom/" in process.stdout
+    published_samples = read_remote_file(bare, "refs/heads/gh-pages:headroom/samples.jsonl")
+    assert "101:1:macOS ARM64:ctest" in published_samples
+    # The published summary describes THIS ledger, not a stale or absent file.
+    published_summary = read_remote_file(bare, "refs/heads/gh-pages:headroom/summary.md")
+    assert "macOS ARM64" in published_summary and "Ctest headroom" in published_summary
+    assert read_remote_file(bare, "refs/heads/gh-pages:bench/chart.json") == "chart-v1"
+    assert len([l for l in process.stdout.splitlines() if l.startswith("::notice::")]) == 1
+
+
+def test_publish_merges_a_remote_that_advanced_after_bootstrap(tmp_path):
+    bare, _ = make_bare_remote(tmp_path)
+    bin_path, env = basic_scenario(tmp_path)
+    # Harvest locally (no publish): the ledger now holds our records.
+    _, state_dir = run_harvest(tmp_path, bin_path, env)
+    repo_root = tmp_path / "repo-root"
+    repo_root.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["git", "init", "-q", str(repo_root)], check=True)
+    # ...meanwhile another harvester lands a record on the remote BEFORE our
+    # publish runs — a legal fast-forward away from our bootstrap snapshot.
+    work = tmp_path / "competitor"
+    subprocess.run(["git", "clone", "-q", "--single-branch", "--branch", "gh-pages", str(bare), str(work)], check=True)
+    subprocess.run(["git", "-C", str(work), "config", "user.email", "c@test"], check=True)
+    subprocess.run(["git", "-C", str(work), "config", "user.name", "competitor"], check=True)
+    foreign = json.dumps(
+        {"type": "sample", "key": "999:1:macOS ARM64:ctest", "line": "main", "branch": "main",
+         "job": MACOS_JOB, "phase": "ctest", "run_id": 999, "run_number": 998, "run_url": "",
+         "attempt": 1, "head_sha": "x", "run_created_at": "2026-11-25T00:00:00Z", "config_id": "cfg-x"}
+    ) + "\n"
+    with (work / "headroom" / "samples.jsonl").open("a") as fh:
+        fh.write(foreign)
+    subprocess.run(["git", "-C", str(work), "add", "-A"], check=True)
+    subprocess.run(["git", "-C", str(work), "commit", "-q", "-m", "competitor"], check=True)
+    subprocess.run(["git", "-C", str(work), "push", "-q", "origin", "gh-pages"], check=True)
+
+    ok, detail = tracker.publish_state(repo_root, str(bare), "gh-pages", state_dir)
+    assert ok, detail
+    published = read_remote_file(bare, "refs/heads/gh-pages:headroom/samples.jsonl")
+    keys = {json.loads(line)["key"] for line in published.splitlines() if line}
+    assert "999:1:macOS ARM64:ctest" in keys  # the concurrent side's record survived a legal fast-forward
+    assert "101:1:macOS ARM64:ctest" in keys
+
+
 # --- the workflow wiring contract ------------------------------------------------------
 
 
@@ -881,6 +1186,9 @@ def test_headroom_step_is_observation_only_and_non_blocking():
         (s for s in summary["steps"] if (s.get("name") or "") == "Upload headroom evidence"), None
     )
     assert upload is not None and upload.get("if") == "always()"
+    # The upload is convenience evidence, never a gate: if it fails the job
+    # stays green and the benchmark steps behind it still run.
+    assert str(upload.get("continue-on-error", "")).lower() == "true"
     # The observation step runs before the benchmark artifact download.
     step_names = [s.get("name") or s.get("uses", "") for s in summary["steps"]]
     assert step_names.index(next(n for n in step_names if "headroom" in n.lower())) < step_names.index(
