@@ -1767,8 +1767,10 @@ jobs:
           # ONE measure_ci_phase envelope wraps BOTH pytest calls below. The phase
           # identity stays singular (check_test_durations rejects a second report
           # named e2e-slow-performance), and the envelope's wall clock must keep
-          # paying for both calls plus the extra pytest startup — the per-phase and
-          # aggregate budgets in test/duration_registry.json do not move.
+          # paying for both calls plus the extra pytest startup. The performance
+          # phase's ceiling was re-derived for exactly this composition (180 -> 210,
+          # 2026-11-24, run 45346727049 evidence; derivation in the registry reason);
+          # the aggregate budget in test/duration_registry.json does not move.
           #
           # The two calls PARTITION test/performance; nothing is dropped or run
           # twice. The REST call carries every perf test except the Metal

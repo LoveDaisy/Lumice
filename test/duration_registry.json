@@ -327,8 +327,8 @@
     {
       "job": "E2E Slow (macOS ARM64 rest)",
       "phase": "e2e-slow-performance",
-      "max_seconds": 180,
-      "reason": "Caps the serial Metal throughput pool separately from the concurrent correctness workload."
+      "max_seconds": 210,
+      "reason": "Caps the serial Metal throughput pool separately from the concurrent correctness workload. 2026-11-24 re-anchor 180 -> 210 for the #642 phase-2 partition (rest perf call + the dual-renderer gate isolated as a report-only call, one extra pytest lifecycle): pre-partition envelope readings 132.7/140.6/174.8 (runs 45108467880/45346437152/45234916741) already rode this ceiling at the fleet's slow end (worst 97%), and the first partitioned reading 191.8s (run 45346727049: rest call ~29s + the gate alone ~163s on a slow hosted machine) red at 180 with the partition's structural pytest startup stacked on the same thermal spread the macOS ctest entry documents at 1.0-1.42. Derivation: worst observed 191.8 x remaining thermal headroom (1.42/1.31, today's gate reading at 1.31x its 124s registered cost) ~ 208 -> 210. The gate's per-test registration (124s) is unchanged: 163s sits at 1.31x, inside the 2x slowdown band. Aggregate e2e-slow (720) governs observed sums (406.2+191.8=598.0 on run 45346727049) and is untouched; its nominal member-ceiling sum already exceeded it before this change. A second adjustment of any constant here within 60 days of 2026-11-24 requires a structural task."
     },
     {
       "job": "E2E Slow (macOS ARM64 rest)",
