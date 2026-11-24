@@ -17659,7 +17659,7 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       // Opened through OpenEditModal rather than by a card click, the way
       // marker_sits_under_a_modal_not_over_it does: the click's own path is not what this case
       // is about, the modal's presence is.
-      gui::g_state.modal_immediate_mode = false;  // staged: a real modal, on the popup stack
+      gui::SetEditEntryStagedModePreference(true);  // staged: a real modal, on the popup stack
       const gui::EditRequest req{ gui::EditTarget::kCrystal, 0, 0 };
       gui::OpenEditModal(req, gui::g_state);
       ctx->Yield(4);
@@ -18498,6 +18498,16 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       // (the same arming path the Render suite drives): the right press is the pick's cancel,
       // and the cancel latches the press to the right button, so the frames of travel before
       // the release roll nothing.
+      // The fold lives in the Overlay table's Sun row. DoNew resets the document but not the
+      // ImGui window storage, so a prior case's scroll position or a collapsed Overlay header
+      // would leave the fold clipped out and unaddressable; restore both before the clicks.
+      ctx->SetRef("//##RightPanel");
+      ctx->ItemOpen("**/Overlay");
+      if (ImGuiWindow* rp = ImGui::FindWindowByName("##RightPanel")) {
+        rp->Scroll.y = 0.0f;
+      }
+      ctx->Yield(2);
+      ctx->SetRef("");
       gui::g_state.angular_dist_section_open = true;
       ctx->Yield(3);
       ctx->ItemClick("**/###sun_circles_fold");

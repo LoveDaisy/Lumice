@@ -737,6 +737,10 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
       ResetTestState();
       const ScopedPopups popups(ctx);
       const ScopedTooltipUiScale scale(ctx);
+      // This case's gestures end on the OK/Cancel row, which exists only in Staged; the case
+      // publishes the Staged premise itself (the factory preference is Immediate since the
+      // Settings move, and the ResetTestState boundary repins the factory for the next case).
+      gui::SetEditEntryStagedModePreference(true);
       ctx->Yield(2);
       constexpr const char* kText =
           "Switches to this label: remembers the current parameters under the one you leave, then "
@@ -891,6 +895,9 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
       ResetTestState();
       const ScopedPopups popups(ctx);
       const ScopedTooltipUiScale scale(ctx);
+      // The OK/Cancel row this case closes with exists only in Staged; publish the premise
+      // itself (see the premise policy above — the factory preference is Immediate).
+      gui::SetEditEntryStagedModePreference(true);
       const auto exercise = [&](float multiplier, bool compact, bool fit_only = false) -> bool {
         gui::SetUiScaleMultiplierImmediate(multiplier);
         gui::g_state.modal_layout_compact = compact;
