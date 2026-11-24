@@ -419,6 +419,23 @@ void FreezeMapSun(GuiState& state) {
   state.analysis.frozen_sun_altitude = 20.0f;
 }
 
+// The lifecycle cases' real request size. The lifecycle propositions — an identity change
+// clears the old source, a new id adopts a new class, a late result never revives — need real
+// work (a real worker, executor, mailbox and pump round trip) but only enough of it to tell two
+// legal identities and payloads apart, so every migrated case sets the executor's map sample
+// override to this n instead of riding the production 500k compute. The production request
+// keeps its own carrier (RequestCarriesClassViewLambdaAndTheConstants); no case here waits out
+// a full-budget compute, and none asserts that production finishes one within any wall clock.
+constexpr int kLifecycleMapSampleCount = 2000;
+
+// The lifecycle face of an adopted map: identity, cleanup and routing evidence — the adoption
+// gate's own conditions (PumpMapQuery's: a readable handle, FINITE, the current intent's id)
+// plus the class's labels, the frozen sun, the actual lattice echo and a non-empty pixel
+// array. Deliberately not the numeric contract: no COMPLETED, no full member set, no
+// untruncated demand, and the sample echo is the lifecycle override's n, not the production
+// 500k — those propositions live with their own carriers
+// (RequestCarriesClassViewLambdaAndTheConstants, CaliberLinesSpellTruncationFiniteZeroAndRank0,
+// and engine-side ReferenceMap.StopKeepsCompletedPrefixAndNamesTheStop).
 void ExpectAdoptedMap(const GuiState& state, const std::vector<int>& faces, bool full_sky) {
   const MapQuerySession& map = state.analysis.map;
   EXPECT_FALSE(state.analysis.survey.intent_valid);
@@ -432,18 +449,15 @@ void ExpectAdoptedMap(const GuiState& state, const std::vector<int>& faces, bool
   LUMICE_PathMapInfo info{};
   info.struct_size = sizeof(info);
   ASSERT_EQ(LUMICE_PathMapGetInfo(map.adopted_result.get(), &info), LUMICE_PATH_READ_OK);
-  EXPECT_EQ(info.execution, LUMICE_PATH_OUTCOME_COMPLETED);
   EXPECT_EQ(info.state, LUMICE_PATH_STATE_FINITE);
   EXPECT_EQ(info.crystal_id, 1);
   ASSERT_NE(info.faces, nullptr);
   EXPECT_EQ(std::vector<int>(info.faces, info.faces + info.face_count), faces);
   EXPECT_DOUBLE_EQ(info.sun_altitude_deg, 20.0);
   EXPECT_DOUBLE_EQ(info.sun_azimuth_deg, 0.0);
-  EXPECT_EQ(info.sample_count, kMapQuerySampleCount);
+  EXPECT_EQ(info.sample_count, kLifecycleMapSampleCount);
   EXPECT_GT(info.member_count, 0);
-  EXPECT_EQ(info.members_evaluated, info.member_count);
   EXPECT_GT(info.kept_count, 0);
-  EXPECT_EQ(info.truncated, 0);
   EXPECT_EQ(info.view_full_sky, full_sky ? 1 : 0);
   LUMICE_PathMapPixels pixels{};
   pixels.struct_size = sizeof(pixels);
@@ -469,6 +483,7 @@ TEST(AnalyzeMapView, ObservationNeverIssuesAndRetryRepeatsFullSky) {
   ASSERT_EQ(LUMICE_SceneFromJson(kMapSceneJson, &raw_scene), LUMICE_OK);
   SurveyExecutor executor;
   executor.SetScene(std::unique_ptr<LUMICE_Scene, SceneDeleter>(raw_scene));
+  executor.SetMapSampleCountForTest(kLifecycleMapSampleCount);
   GuiState state;
   state.analysis_result.payload = Rows(7, { "1-2" }, { { 1, 2 } });
   state.analysis_result.analyzed_scene = GuiState::AnalysisSceneIdentity::From(state);
@@ -571,6 +586,7 @@ TEST(AnalyzeMapView, DeterministicLateGateAndMailboxPeak) {
   LUMICE_Scene* raw_scene = nullptr;
   ASSERT_EQ(LUMICE_SceneFromJson(kMapSceneJson, &raw_scene), LUMICE_OK);
   executor.SetScene(std::unique_ptr<LUMICE_Scene, SceneDeleter>(raw_scene));
+  executor.SetMapSampleCountForTest(kLifecycleMapSampleCount);
   executor.SetPickupGateForTest([&](QueryFace face) { gate.Pickup(face); });
   executor.SetCompletionObserverForTest([&](const auto& result) { ledger.Observe(result); });
   GuiState state;
@@ -609,6 +625,7 @@ TEST(AnalyzeMapView, SelectionChangeKillsTheWholeMapSession) {
   std::unique_ptr<LUMICE_Scene, SceneDeleter> scene(raw_scene);
   SurveyExecutor executor;
   executor.SetScene(std::move(scene));
+  executor.SetMapSampleCountForTest(kLifecycleMapSampleCount);
 
   GuiState state;
   state.analysis_result.payload = Rows(7, { "1-2", "1-3-2" }, { { 1, 2 }, { 1, 3, 2 } });
@@ -684,6 +701,7 @@ TEST(AnalyzeMapView, MapFaceNeverTouchesTheRoiState) {
   std::unique_ptr<LUMICE_Scene, SceneDeleter> scene(raw_scene);
   SurveyExecutor executor;
   executor.SetScene(std::move(scene));
+  executor.SetMapSampleCountForTest(kLifecycleMapSampleCount);
 
   GuiState state;
   state.analysis_result.payload = Rows(7, { "1-2" }, { { 1, 2 } });
