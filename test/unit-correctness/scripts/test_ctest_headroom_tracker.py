@@ -335,33 +335,44 @@ def test_calibration_segment_change_breaks_the_streak():
 
 
 def test_threshold_config_change_puts_history_in_a_past_era():
-    # Era semantics: the walk evaluates only the suffix collected under the
-    # CURRENT config. While the old config is current, its own era fires
-    # legitimately (a real ledger already holds that event; recompute
-    # re-derives the same identity). Once the config changes, earlier eras
-    # evaluate to nothing — no event, no active signal — and the first
-    # sample of the new era starts a fresh streak that inherits no count.
+    # Era semantics with ledger-fenced boundaries: a real ledger contains a
+    # config-change marker at every observed change; the walk evaluates only
+    # the suffix after the LAST marker. While the old config is current, its
+    # own era fires legitimately (recompute re-derives the same identity).
+    # After the change, earlier eras evaluate to nothing — and a return to
+    # the old threshold value does NOT resurrect them: the return writes its
+    # own marker, and the era after it is still empty.
     pair_old = [
         make_sample(1, 560.0, 1.0, 560.0, created="2026-11-20T00:00:00Z", config=CFG),
         make_sample(2, 580.0, 1.0, 560.0, created="2026-11-21T00:00:00Z", config=CFG),
     ]
     old_era = walk(pair_old, config=CFG)
     assert len(old_era["fired"]) == 1 and old_era["fired"][0]["config_id"] == CFG
-    records = pair_old + [
-        make_sample(3, 585.0, 1.0, 560.0, created="2026-11-22T00:00:00Z", config=OTHER_CFG),
-    ]
+
+    change_up = tracker.config_change_marker(CFG, OTHER_CFG)
+    change_up["run_created_at"] = "2026-11-21T12:00:00Z"
+    records = pair_old + [change_up, make_sample(3, 585.0, 1.0, 560.0, created="2026-11-22T00:00:00Z", config=OTHER_CFG)]
     new_era = walk(records, config=OTHER_CFG)
     assert new_era["fired"] == [] and new_era["active"] is None
     assert new_era["streak"] == 1  # the era's own first sample, no inherited count
-    # New evidence under the new config builds its own streak and fires under
-    # the new identity, never inheriting the old era's count.
-    more = records + [
-        make_sample(4, 590.0, 1.0, 560.0, created="2026-11-23T00:00:00Z", config=OTHER_CFG),
-        make_sample(5, 595.0, 1.0, 560.0, created="2026-11-24T00:00:00Z", config=OTHER_CFG),
+
+    # Threshold returns to the old VALUE: without the marker fence the hash
+    # would resurrect the cleared era; with it, the post-return era is empty.
+    change_back = tracker.config_change_marker(OTHER_CFG, CFG)
+    change_back["run_created_at"] = "2026-11-22T12:00:00Z"
+    resurrected = walk(records + [change_back], config=CFG)
+    assert resurrected["fired"] == [] and resurrected["active"] is None and resurrected["streak"] == 0
+
+    # New evidence under the returned config builds its own streak and fires
+    # under the same config identity but a distinct first_run identity.
+    more = records + [change_back] + [
+        make_sample(4, 590.0, 1.0, 560.0, created="2026-11-23T00:00:00Z", config=CFG),
+        make_sample(5, 595.0, 1.0, 560.0, created="2026-11-24T00:00:00Z", config=CFG),
     ]
-    after = walk(more, config=OTHER_CFG)
-    assert len(after["fired"]) == 1 and after["fired"][0]["config_id"] == OTHER_CFG
-    assert after["fired"][0]["first_run"]["id"] == 3  # entry 3 was collected under the new config: it is the era's start
+    after = walk(more, config=CFG)
+    assert len(after["fired"]) == 1 and after["fired"][0]["config_id"] == CFG
+    assert after["fired"][0]["first_run"]["id"] == 4
+    assert after["fired"][0]["event_id"] != old_era["fired"][0]["event_id"]
 
 
 def test_lines_and_platforms_do_not_share_a_series():
@@ -434,6 +445,55 @@ def test_retryable_gaps_upgrade_to_samples_and_samples_never_downgrade():
     assert not tracker.is_retryable_gap(
         make_gap(3, created="2026-11-20T00:00:00Z", reason="log-unreadable: not found or expired (404)")
     )
+
+
+def test_line_wide_retryable_gaps_are_retired_once_the_run_is_collected():
+    # A cold-start collection failure records `run:1::`; the successful
+    # collection writes `run:1:job:phase`. The key-difference merge cannot
+    # supersede across them, so the sweep must retire the stale line-wide row
+    # once real per-series evidence covers the run — otherwise the run stays
+    # pending forever and every harvest pays to re-collect it.
+    line_wide_retryable = make_gap(1, created="2026-11-20T00:00:00Z", job="", reason="registry-unreadable: ...")
+    per_series = [
+        make_sample(1, 560.0, 1.0, 560.0, created="2026-11-20T00:00:00Z"),
+        make_gap(1, created="2026-11-20T00:00:00Z", job=WINDOWS_JOB),  # terminal gap, series known
+    ]
+    swept = tracker.drop_superseded_line_wide_gaps([line_wide_retryable] + per_series)
+    assert line_wide_retryable not in swept and len(swept) == 2
+    # A terminal line-wide row survives: it fences series that may not exist yet.
+    line_wide_terminal = make_gap(2, created="2026-11-21T00:00:00Z", job="", reason="run-cancelled")
+    assert tracker.drop_superseded_line_wide_gaps([line_wide_terminal]) == [line_wide_terminal]
+    # A run whose per-series records are still retryable keeps its line-wide row.
+    incomplete = [
+        make_gap(3, created="2026-11-22T00:00:00Z", job="", reason="run-in-progress"),
+        make_gap(3, created="2026-11-22T00:00:00Z", job=MACOS_JOB, reason="api-budget-exhausted"),
+    ]
+    assert tracker.drop_superseded_line_wide_gaps(incomplete) == incomplete
+
+
+def test_state_merge_unions_pending_and_takes_the_max_cursor(tmp_path):
+    ours = tmp_path / "ours"
+    theirs = tmp_path / "theirs"
+    ours.mkdir()
+    theirs.mkdir()
+    write_jsonl = tracker.write_jsonl
+    write_jsonl(ours / "samples.jsonl", [])
+    write_jsonl(theirs / "samples.jsonl", [])
+    (ours / "state.json").write_text(json.dumps({
+        "config": {"config_id": "cfg-x"}, "cursor": {"run_id": 1, "created_at": "2026-11-20T00:00:00Z"},
+        "pending": [{"run_id": 7, "created_at": "2026-11-19T00:00:00Z", "run_number": 7, "branch": "main"}],
+    }))
+    (theirs / "state.json").write_text(json.dumps({
+        "config": {"config_id": "cfg-x"}, "cursor": {"run_id": 3, "created_at": "2026-11-22T00:00:00Z"},
+        "pending": [
+            {"run_id": 2, "created_at": "2026-11-21T00:00:00Z", "run_number": 2, "branch": "main"},
+            {"run_id": 7, "created_at": "2026-11-19T00:00:00Z", "run_number": 7, "branch": "main"},
+        ],
+    }))
+    tracker.merge_into_state_dir(ours, theirs)
+    state = json.loads((ours / "state.json").read_text())
+    assert state["cursor"]["run_id"] == 3
+    assert {entry["run_id"] for entry in state["pending"]} == {2, 7}  # the remote's owed run 2 is not dropped
 
 
 # --- fake gh plumbing for the end-to-end harvest -------------------------------------
@@ -833,6 +893,56 @@ def test_two_release_branches_with_the_same_registry_never_pair(tmp_path):
     assert "release:release/4.7.8" in process.stdout  # the second series is reported under its own branch
 
 
+def test_in_progress_run_between_lows_fences_and_upgrades_on_completion(tmp_path):
+    # A run discovered while still in progress must appear in the timeline the
+    # moment it is skipped — pending-only identity would leave the lows around
+    # it adjacent and pair them. When it completes, the fence upgrades into
+    # the run's real evidence in the same ledger positions.
+    runs = [
+        make_run(891, 1, "main", "2026-11-20T00:00:00Z", "sha-a"),
+        make_run(892, 2, "main", "2026-11-21T00:00:00Z", "sha-b", conclusion=None),
+        make_run(893, 3, "main", "2026-11-22T00:00:00Z", "sha-c"),
+    ]
+    low_log = MAIN_GREEN_MACOS.replace("537.7", "600.0").replace("1.018", "1.000")  # h=-7.14
+    bin_path, env = setup_fake_gh(
+        tmp_path, runs,
+        {
+            891: {"jobs": {MACOS_JOB: (9901, "success")}, "logs": {9901: low_log}},
+            893: {"jobs": {MACOS_JOB: (9903, "success")}, "logs": {9903: low_log}},
+        },
+        {"sha-a": MAIN_REGISTRY, "sha-c": MAIN_REGISTRY},
+    )
+    first, state_dir = run_harvest(tmp_path, bin_path, env)
+    assert first.returncode == 0
+    samples = {json.loads(line)["key"]: json.loads(line)
+               for line in (state_dir / "samples.jsonl").read_text().splitlines() if line}
+    assert samples["892:1::"]["reason"] == "run-in-progress"  # the fence is in the ledger
+    assert (state_dir / "events.jsonl").read_text().strip() == ""  # low / in-progress / low never pairs
+    state = json.loads((state_dir / "state.json").read_text())
+    assert {entry["run_id"] for entry in state["pending"]} == {892}
+
+    # The run completes: next harvest re-resolves it, harvests the real
+    # evidence, and the stale fence is retired by the sweep.
+    serve(tmp_path / "fakegh", "repos/O/R/actions/runs/892",
+          json.dumps(make_run(892, 2, "main", "2026-11-21T00:00:00Z", "sha-b")))
+    serve(tmp_path / "fakegh", "repos/O/R/actions/runs/892/attempts/1/jobs",
+          json.dumps({"total_count": 1, "jobs": [{"id": 9902, "name": MACOS_JOB, "status": "completed",
+                                                  "conclusion": "success", "html_url": ""}]}))
+    serve(tmp_path / "fakegh", "repos/O/R/actions/jobs/9902/logs", low_log)
+    serve(tmp_path / "fakegh", "repos/O/R/contents/test/duration_registry.json?ref=sha-b",
+          contents_payload(MAIN_REGISTRY, "blob-b"))
+    second, state_dir = run_harvest(tmp_path, bin_path, env)
+    assert second.returncode == 0
+    samples = {json.loads(line)["key"]: json.loads(line)
+               for line in (state_dir / "samples.jsonl").read_text().splitlines() if line}
+    assert samples["892:1:macOS ARM64:ctest"]["type"] == "sample"
+    assert "892:1::" not in samples  # the stale fence is retired once the run is collected
+    state = json.loads((state_dir / "state.json").read_text())
+    assert state["pending"] == []
+    events = [json.loads(line) for line in (state_dir / "events.jsonl").read_text().splitlines() if line]
+    assert len(events) == 1 and events[0]["first_run"]["id"] == 891  # three consecutive lows now pair
+
+
 def test_cold_start_low_cancelled_low_never_fires(tmp_path):
     # First harvest, empty ledger: the cancelled run lands as a line-wide gap
     # (no series known yet) and must still fence the series the same batch
@@ -935,11 +1045,12 @@ def test_threshold_change_then_new_runs_fire_under_the_new_identity(tmp_path):
     assert first.returncode == 0
     assert (state_dir / "events.jsonl").read_text().strip() == ""  # 5.68% is healthy at 7%
 
-    # Revise to 6% and deliver two low runs: the era restarts at the change,
-    # and the new pair fires strictly under the new config identity.
+    # Revise to 6% and deliver two low runs created AFTER the change moment
+    # (the era boundary is the change; runs the change predates stay in the
+    # prior era): the new pair fires strictly under the new config identity.
     runs += [
-        make_run(882, 2, "main", "2026-11-21T00:00:00Z", "sha-b"),
-        make_run(883, 3, "main", "2026-11-22T00:00:00Z", "sha-c"),
+        make_run(882, 2, "main", "2026-11-25T00:00:00Z", "sha-b"),
+        make_run(883, 3, "main", "2026-11-26T00:00:00Z", "sha-c"),
     ]
     for run in runs:
         serve(tmp2 / "fakegh", f"repos/O/R/actions/runs/{run['id']}", json.dumps(run))
@@ -1060,8 +1171,16 @@ def test_publish_replaces_only_headroom_and_merges_a_concurrent_update(tmp_path)
     assert "101:1:macOS ARM64:ctest" in keys  # ours survived
     assert "999:1:macOS ARM64:ctest" in keys  # the concurrent side's record survived too
     assert read_remote_file(bare, "refs/heads/gh-pages:bench/chart.json") == "chart-v1"  # untouched
-    events = read_remote_file(bare, "refs/heads/gh-pages:headroom/events.jsonl")
-    assert "main/macOS ARM64" in events or "macOS ARM64" in events
+    # Snapshot self-consistency: the published event ledger must cover every
+    # event the published samples derive — the merge cannot leave summary,
+    # samples and events disagreeing about the same history.
+    remote_events = {json.loads(line)["event_id"]
+                     for line in read_remote_file(bare, "refs/heads/gh-pages:headroom/events.jsonl").splitlines() if line}
+    derived = tracker.evaluate_series(
+        [json.loads(line) for line in published_samples.splitlines() if line],
+        tracker.config_identity(6.0, 2), 6.0, 2,
+    )[2]
+    assert {event["event_id"] for event in derived} <= remote_events
 
 
 def test_publish_failure_names_itself_not_persisted_and_exits_three(tmp_path):

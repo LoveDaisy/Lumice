@@ -489,7 +489,7 @@ def merge_records(*batches: list[dict], key_of=record_key) -> list[dict]:
     return list(merged.values())
 
 
-RETRYABLE_GAP_PREFIXES = ("api-budget-exhausted", "harvest-error")
+RETRYABLE_GAP_PREFIXES = ("api-budget-exhausted", "harvest-error", "run-in-progress")
 
 
 def is_retryable_gap(record: dict) -> bool:
@@ -497,9 +497,9 @@ def is_retryable_gap(record: dict) -> bool:
 
     Terminal: the run's own shape says the evidence does not exist (no
     parsable reading, cancelled, job absent, expired log, unparsable
-    snapshot). Retryable: the tracker's own budget or a transient transport
-    failure stopped collection — the same attempt-1 evidence may read fine
-    next harvest, and must be given the chance.
+    snapshot). Retryable: the tracker's own budget, a transient transport
+    failure, or an in-progress run stopped collection — the same attempt-1
+    evidence may read fine next harvest, and must be given the chance.
     """
     if record.get("type") != "gap":
         return False
@@ -522,6 +522,37 @@ def record_precedence(record: dict) -> int:
 def runs_collection_complete(records: list[dict]) -> bool:
     """A run is fully collected when none of its records is a retryable gap."""
     return all(not is_retryable_gap(record) for record in records)
+
+
+def drop_superseded_line_wide_gaps(records: list[dict]) -> list[dict]:
+    """Retire a run's line-wide retryable gaps once the run is collected.
+
+    A cold-start collection failure (or an in-progress run) records a
+    line-wide gap keyed `run:1::`; the successful collection later writes
+    per-series records keyed `run:1:job:phase`. The upgrade-only merge
+    cannot replace across those keys, so the stale line-wide row would pin
+    the run pending forever. Once a run holds real per-series evidence that
+    is fully terminal-or-sample, its line-wide retryable rows have served
+    their purpose (the timeline barrier they provided is now redundant) and
+    are dropped. Line-wide TERMINAL rows survive: they fence series that
+    may not exist yet.
+    """
+    per_series: dict[int, list[dict]] = {}
+    for record in records:
+        if record.get("job") != "":
+            per_series.setdefault(record["run_id"], []).append(record)
+    complete_runs = {
+        run_id for run_id, recs in per_series.items() if runs_collection_complete(recs)
+    }
+    return [
+        record for record in records
+        if not (
+            record.get("job") == ""
+            and record.get("type") == "gap"
+            and is_retryable_gap(record)
+            and record["run_id"] in complete_runs
+        )
+    ]
 
 
 def utc_now_iso() -> str:
@@ -726,11 +757,11 @@ def walk_series(
 
     Deterministic from the ledger: the same history always derives the same
     event ids, so re-harvesting never duplicates a signal. Rules:
-      - the evaluated era is the suffix of the history collected under the
-        CURRENT observation config; entries from earlier config eras are
-        past evidence — they can neither fire new events (their identity
-        belongs to another threshold) nor keep a signal active across the
-        change (`harvested_at` config of a sample never silently carries)
+      - the evaluated era is the suffix of the history after the LAST
+        config-change marker (projected into the timeline by group_series):
+        history from earlier config eras can neither fire new events under a
+        foreign identity nor keep a signal active across a change — including
+        a change BACK to a threshold whose hash older samples carry
       - low: streak +1; reaching min_streak fires one event
       - healthy: streak reset and the active event cleared (recovery is an
         observed healthy reading — absence of evidence is not recovery)
@@ -740,7 +771,7 @@ def walk_series(
     """
     era_start = 0
     for index, entry in enumerate(entries):
-        if entry.get("config_id") != current_config_id:
+        if entry.get("type") == "config-change":
             era_start = index + 1
     era = entries[era_start:]
     streak = 0
@@ -815,34 +846,68 @@ def fire_event(
     }
 
 
+def config_change_marker(previous_config_id: str, config_id: str) -> dict:
+    """A ledger fence for an observation-config change.
+
+    Era boundaries cannot be derived from the samples' config hashes alone:
+    a threshold revised 6% -> 7% -> 6% returns to a hash the older samples
+    already carry, and hashing would resurrect the era that the 7% interlude
+    explicitly reset. The marker is written the moment a harvest observes a
+    change, keyed by the transition so concurrent harvesters detecting the
+    same change converge on one fence.
+    """
+    return {
+        "type": "config-change",
+        "key": f"cfg-change:{previous_config_id or 'none'}:{config_id}",
+        "line": "",
+        "branch": "",
+        "job": "",
+        "phase": "",
+        "run_id": 0,
+        "run_number": None,
+        "run_url": "",
+        "attempt": 0,
+        "head_sha": "",
+        "run_created_at": utc_now_iso(),
+        "previous_config_id": previous_config_id or "",
+        "config_id": config_id,
+    }
+
+
 def group_series(records: list[dict]) -> dict[tuple[str, str, str, str], list[dict]]:
     """Group the ledger into per-branch series timelines.
 
     The series key carries the ACTUAL branch: two release lines inherit the
     same registry and would otherwise pair each other's low samples into a
     cross-branch trigger (and each other's recovery into a silent reset).
-    Line-wide gaps (job == "") — cancelled runs or unreadable snapshots
-    recorded before the line's series were known — are projected onto every
-    series of the same line and branch as continuity barriers, including
-    series this same batch or a later harvest discovers: the projection
-    re-runs on the full merged ledger each time, so a barrier recorded
-    before a series existed still fences it.
+    Line-wide gaps (job == "" and type == "gap") — cancelled runs or
+    unreadable snapshots recorded before the line's series were known — are
+    projected onto every series of the same line and branch as continuity
+    barriers, including series this same batch or a later harvest discovers:
+    the projection re-runs on the full merged ledger each time, so a barrier
+    recorded before a series existed still fences it. Config-change markers
+    project the same way and carry the era boundary the walk evaluates from.
     """
     series: dict[tuple[str, str, str, str], list[dict]] = {}
     line_wide: list[dict] = []
+    markers: list[dict] = []
     for record in records:
-        if record.get("job") == "":
+        if record.get("type") == "config-change":
+            markers.append(record)
+        elif record.get("job") == "":
             line_wide.append(record)
             continue
-        key = (record["line"], record.get("branch") or "", record["job"], record["phase"])
-        series.setdefault(key, []).append(record)
+        else:
+            key = (record["line"], record.get("branch") or "", record["job"], record["phase"])
+            series.setdefault(key, []).append(record)
     for key, entries in series.items():
         seen_runs = {entry["run_id"] for entry in entries}
         for gap in line_wide:
             if gap["line"] == key[0] and (gap.get("branch") or "") == key[1] and gap["run_id"] not in seen_runs:
                 entries.append(gap)
+        entries.extend(markers)
     for entries in series.values():
-        entries.sort(key=lambda r: (r.get("run_created_at") or "", r["run_id"]))
+        entries.sort(key=lambda r: (r.get("run_created_at") or "", r["run_id"], r.get("type") or ""))
     return series
 
 
@@ -1025,16 +1090,22 @@ def read_published_state(repo_root: Path, remote: str, ref: str, into: Path) -> 
 
 
 def merge_into_state_dir(state_dir: Path, theirs: Path) -> None:
-    """Union-merge another copy of the state into ours (records by key, cursor max).
+    """Union-merge another copy of the state into ours (records by key, cursor
+    and pending max/union). Both sides' facts survive; the config of the
+    acting harvest wins and the config-change annotation explains the break.
 
-    Both sides' facts survive; the config of the acting harvest wins and the
-    config-change annotation explains the continuity break.
+    Pending is UNIONED, not kept one-sided: the remote may have a newer
+    cursor while still owing runs older than it — dropping their pending
+    entries here would push those runs out of the created=> window forever
+    (the cursor moves on, the run never completes its collection, and no
+    gap records the hole).
     """
     samples = merge_records(load_jsonl(state_dir / "samples.jsonl"), load_jsonl(theirs / "samples.jsonl"))
+    samples = drop_superseded_line_wide_gaps(samples)
+    write_jsonl(state_dir / "samples.jsonl", samples)
     events = merge_records(
         load_jsonl(state_dir / "events.jsonl"), load_jsonl(theirs / "events.jsonl"), key_of=event_key
     )
-    write_jsonl(state_dir / "samples.jsonl", samples)
     write_jsonl(state_dir / "events.jsonl", events)
     ours_state = load_state(state_dir / "state.json")
     theirs_state = load_state(theirs / "state.json") if (theirs / "state.json").exists() else {}
@@ -1046,6 +1117,10 @@ def merge_into_state_dir(state_dir: Path, theirs: Path) -> None:
 
     winner = ours_cursor if cursor_order(ours_cursor) >= cursor_order(theirs_cursor) else theirs_cursor
     ours_state["cursor"] = winner
+    pending: dict[int, dict] = {entry["run_id"]: entry for entry in ours_state.get("pending") or []}
+    for entry in theirs_state.get("pending") or []:
+        pending.setdefault(entry["run_id"], entry)
+    ours_state["pending"] = sorted(pending.values(), key=lambda p: (p.get("created_at") or "", p["run_id"]))
     (state_dir / "state.json").write_text(json.dumps(ours_state, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
@@ -1226,12 +1301,16 @@ def harvest_command(args: argparse.Namespace) -> int:
 
     previous_state = load_state(paths["state"])
     config_changed_note = None
+    era_markers: list[dict] = []
     if previous_state.get("config") and previous_state["config"].get("config_id") != config_id:
         config_changed_note = (
             f"Observation config changed (threshold {previous_state['config'].get('threshold_pct')}% -> "
             f"{args.threshold_pct}%, streak {previous_state['config'].get('min_streak')} -> {args.min_streak}): "
-            f"signals re-derive under identity `{config_id}`; history from earlier config eras cannot "
-            f"fire events or keep a signal active under this one"
+            f"signals re-derive under identity `{config_id}`; the era boundary is fenced in the ledger, "
+            f"so history from earlier config eras cannot fire events or keep a signal active under this one"
+        )
+        era_markers.append(
+            config_change_marker(previous_state["config"].get("config_id") or "", config_id)
         )
 
     samples = load_jsonl(paths["samples"])
@@ -1315,7 +1394,16 @@ def harvest_command(args: argparse.Namespace) -> int:
             )
             break
         if run.get("status") not in ("completed", "unknown") and run["id"] != args.current_run:
-            continue  # still in progress and not this harvest's own run: stays pending, collects nothing yet
+            # Still in progress and not this harvest's own run: it must fence
+            # the timeline NOW — a pending-only identity would leave the two
+            # low samples around it adjacent in the ledger and pair them — so
+            # a retryable line-wide gap is recorded; the run stays pending and
+            # the gap upgrades to real evidence when collection succeeds.
+            new_records.append(
+                gap_record(run=run, line=line_of_branch(run.get("head_branch") or ""), job="", phase="",
+                           reason="run-in-progress", config_id=config_id)
+            )
+            continue
         try:
             batch = harvest_run(client, run, known_series, config_id)
         except HarvestError as error:
@@ -1325,7 +1413,9 @@ def harvest_command(args: argparse.Namespace) -> int:
         new_records.extend(batch)
         processed_runs.append(run)
 
-    merged_samples = merge_records(samples, new_records)
+    merged_samples = drop_superseded_line_wide_gaps(
+        merge_records(samples + era_markers, new_records)
+    )
     records_by_run = {}
     for record in merged_samples:
         records_by_run.setdefault(record["run_id"], []).append(record)
@@ -1373,11 +1463,23 @@ def harvest_command(args: argparse.Namespace) -> int:
     # with a summary derived from exactly this ledger. The attempt's outcome
     # line is written to the local copy after the publish returns — the
     # published copy carries the neutral published-state line instead.
+    published_copy_note = (
+        "published to the gh-pages headroom/ directory (this copy describes the committed ledger; "
+        "the harvest attempt's outcome is in the aggregation run's Job summary)"
+    )
+
+    # The publish snapshot must be complete and self-consistent: all four
+    # files derived from exactly the ledger being committed. A publish-side
+    # merge (concurrent harvester) can bring records that change the derived
+    # events — those MUST be recomputed into events.jsonl along with the
+    # summary, or the snapshot would carry a summary and an event ledger that
+    # disagree about the same samples.
     def render_into(state: Path, note: str) -> None:
-        ledgers = {
-            "samples": load_jsonl(state / "samples.jsonl"),
-        }
-        rows, active, _ = evaluate_series(ledgers["samples"], config_id, args.threshold_pct, args.min_streak)
+        merged = drop_superseded_line_wide_gaps(load_jsonl(state / "samples.jsonl"))
+        write_jsonl(state / "samples.jsonl", merged)
+        rows, active, fired = evaluate_series(merged, config_id, args.threshold_pct, args.min_streak)
+        existing_events = load_jsonl(state / "events.jsonl")
+        write_jsonl(state / "events.jsonl", merge_records(existing_events, fired, key_of=event_key))
         summary = render_summary(
             repo=args.repo,
             config=config,
@@ -1386,8 +1488,8 @@ def harvest_command(args: argparse.Namespace) -> int:
                 "runs_processed": len(processed_runs),
                 "runs_overlap": max(0, len(runs) + len(unfinished) + len(previous_state.get("pending") or []) - len(processed_runs)),
                 "records_new": len(new_records),
-                "samples": sum(1 for r in ledgers["samples"] if r["type"] == "sample"),
-                "gaps": sum(1 for r in ledgers["samples"] if r["type"] == "gap"),
+                "samples": sum(1 for r in merged if r["type"] == "sample"),
+                "gaps": sum(1 for r in merged if r["type"] == "gap"),
             },
             per_series=rows,
             active_events=active,
@@ -1399,10 +1501,6 @@ def harvest_command(args: argparse.Namespace) -> int:
         (state / "summary.md").write_text(summary, encoding="utf-8")
         return
 
-    published_copy_note = (
-        "published to the gh-pages headroom/ directory (this copy describes the committed ledger; "
-        "the harvest attempt's outcome is in the aggregation run's Job summary)"
-    )
     render_into(state_dir, published_copy_note)
 
     publish_note = "local only (no --publish)"
