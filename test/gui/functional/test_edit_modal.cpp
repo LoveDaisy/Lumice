@@ -4603,10 +4603,31 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
       ctx->KeyCharsReplaceEnter("40.0");
       ctx->Yield(2);
       IM_CHECK(ImAbs(entry_b.proportion - 40.0f) <= 0.05f);
-      ;
       IM_CHECK_EQ(entry_a.proportion, a_before);
       IM_CHECK_EQ(gui::GetEditModalTarget().entry_idx, 1);
       IM_CHECK(gui::IsEditModalOpen());
+
+      // Disabled-weight leg (AC4): excluding B greys its weight row, and pressing that disabled
+      // track produces no active id and no value change — a disabled control cannot produce the
+      // gesture the follow consumes. (Whatever click reaches the card body past a disabled item
+      // follows the background-click path instead, which is pre-existing semantics this leg does
+      // not judge; the value assertion below is what pins "disabled stays inert".)
+      ctx->ItemClick("**/###enabled_0_1");  // exclude B — same-card gesture, no follow re-arm
+      ctx->Yield(2);
+      IM_CHECK(!entry_b.enabled);
+      const ImGuiTestItemInfo slider_b_disabled = ctx->ItemInfo("**/##Weight##prop_0_1_slider");
+      IM_CHECK(slider_b_disabled.ID != 0);
+      const ImVec2 dlo = slider_b_disabled.RectFull.Min;
+      const ImVec2 dhi = slider_b_disabled.RectFull.Max;
+      ctx->MouseMoveToPos(ImVec2(dlo.x + (dhi.x - dlo.x) * 0.4f, (dlo.y + dhi.y) * 0.5f));
+      ctx->MouseDown(0);
+      ctx->Yield(2);
+      IM_CHECK_NE(ImGui::GetActiveID(), slider_b_disabled.ID);
+      IM_CHECK(ImAbs(entry_b.proportion - 40.0f) <= 0.05f);  // disabled keeps its value
+      ctx->MouseUp(0);
+      ctx->ItemClick("**/###enabled_0_1");  // back in for the legs below
+      ctx->Yield(2);
+      IM_CHECK(entry_b.enabled);
 
       // Hover and wheel must not move the binding: they are not gestures on the weight control.
       ctx->MouseMoveToPos(CardBlankSpot(0));
