@@ -440,17 +440,35 @@ pytest option `--dual-gate-profile` (default `precise`; the numbers and the reas
 
 | Profile | Threshold × reps | Where | What catches it when red |
 |---|---|---|---|
-| `ci` — disaster floor | **0.75** × 5 | `E2E Slow (macOS ARM64 rest)` phase 2, every PR and every push to `main` | the PR's checks: a red here is a red PR, like any other test |
+| `ci` — disaster floor | **0.75** × 5 | `E2E Slow (macOS ARM64 rest)` phase 2, every PR and every push to `main` or `release/*` | a `Metal dual-renderer throughput (reported, not blocking)` warning annotation on the run; since PR #633 a red here does **not** red the PR (see below) |
 | `precise` | **0.85**; Metal: 21 ratio-of-median reps; CUDA: 63 reps, 10% winsorized paired-ratio mean | the reference machines, daily (this section) | a `[throughput-gate] <leg> fail` GitHub issue (see "Where to look" below) |
 
-The floor exists so a change that makes the second plane cost a large fraction of the session
-cannot merge on a green PR and wait up to a day for the schedule: against a true ratio of 0.6 it
-fires with ≥ 99.9% probability on the hosted runner's measured noise (per-arm CoV 0.155–0.229), and
-it deliberately cannot see a 10% regression — that is the precise gate's job, and the only place a
+The floor measures the same proposition it always did — against a true ratio of 0.6 it fires with
+≥ 99.9% probability on the hosted runner's measured noise (per-arm CoV 0.155–0.229), and it
+deliberately cannot see a 10% regression — that is the precise gate's job, and the only place a
 drift between 0.85 and 0.75 is reported. Demonstrated red on the Metal reference machine by real
 GPU contention during the dual arm only (dual/single 0.531 / 0.560 → red; the same harness without
 the load read 0.900 / 0.933 → green). The floor's power figure models within-run variance only;
 two CI runs' median ratios differed by 0.17, which it does not cover.
+
+**Reported, not blocking (since PR #633).** The hosted floor's red used to fail the PR. PR #633
+(main@1efc673fc) is why it no longer does: a tree that changed only CI/docs read 0.695/0.706 on
+the hosted runner while the same SHA read 0.945/0.965 on the reference machine the same day, so
+the hosted ratio cannot carry a blocking verdict on its own. A hosted red now means: the ratio
+fell below 0.75 on that runner on that day — a signal to look at, not a verdict. The test's own
+asserts (routing, drain alignment, legacy sanity, the ratio) stay hard; only the CI call layer
+stopped merging that exit code into the step's. Three boundaries of the disposition, stated as
+losses rather than fine print:
+
+- **General (non-structural) regressions lost their PR-blocking discovery channel.** This ratio
+  was the perf measurement that could red a PR; a slowdown it would have caught now surfaces as
+  the warning annotation, or up to a day later on the scheduled precise gate.
+- **A ratio is not a complete performance guard.** Both arms slowing together leaves the ratio
+  unchanged (dual and single lose by the same factor), and the ratio says nothing about absolute
+  throughput. Structural correctness — routing, per-renderer planes, the dual ledger — is the
+  parity battery's job (`test_metal_multi_renderer_parity.py`, still blocking in phase 1).
+- **The scheduled gate follows `origin/main` only.** A release candidate branch is not measured
+  automatically; covering release candidates is an owner decision, not a built facility.
 
 **CUDA calibration.** Fourteen idle same-commit runs of the old 21-rep
 ratio-of-medians statistic put the worst-arm ratio at mean 0.911, sample standard deviation 0.045,

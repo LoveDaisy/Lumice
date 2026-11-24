@@ -58,13 +58,24 @@ because a GitHub-hosted macOS runner is not the machine 0.85 was calibrated on:
 its per-arm CoV measured 0.155-0.229 (two runs; absolute rate ~7M rays/s
 against the reference machine's 28M), and a bootstrap of those samples puts
 P(median ratio < 0.85) at 0.77% for 5 reps and 0.08% for 9 — a real 0.845 was
-read on a PR with nothing wrong. So CI holds a loose floor instead: 0.75 over 5
+read on a PR with nothing wrong. So CI runs a loose floor instead: 0.75 over 5
 interleaved reps, whose measured power is >= 99.9% against a true ratio of 0.6
 and 91% against 0.7. It catches a disaster (the second plane costing a large
 fraction of the session) and deliberately cannot see a 10% regression; that is
 the precise gate's job, run on the reference machines on a schedule
 (``doc/testing/performance-testing.md``, "Precise throughput gate (local schedule)").
-The power figures cover within-run variance only: the two runs' median ratios
+
+Blocking eligibility is the caller's, not this file's. On hosted CI the ``ci``
+profile is a REPORTED signal, not a blocking one, since PR #633: a tree that
+changed only CI/docs read 0.695/0.706 on a hosted runner while the same SHA read
+0.945/0.965 on the reference machine the same day, so the hosted ratio cannot
+carry a blocking verdict on its own. What still blocks on PRs: the parity
+battery (``test_metal_multi_renderer_parity.py`` — routing and per-renderer
+planes) and the reference machines' scheduled precise gate. The asserts inside
+``run_dual_renderer_gate`` (routing, drain alignment, legacy sanity, the ratio
+itself) stay hard — a hosted red fails the test and is reported as a warning;
+the call layer decides that the failure does not red the PR. The power figures
+cover within-run variance only: the two runs' median ratios
 differed by 0.17, which the bootstrap does not model.
 
 The profile is chosen by the caller, never by the environment: the pytest option
