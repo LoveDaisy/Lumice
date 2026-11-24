@@ -5175,14 +5175,21 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
       IM_CHECK_EQ(gui::GetEditModalTarget().entry_idx, 1);
       IM_CHECK(gui::IsEditModalOpen());
 
-      // Disabled-weight leg (AC4): excluding B greys its weight row, and pressing that disabled
-      // track produces no active id and no value change — a disabled control cannot produce the
-      // gesture the follow consumes. (Whatever click reaches the card body past a disabled item
-      // follows the background-click path instead, which is pre-existing semantics this leg does
-      // not judge; the value assertion below is what pins "disabled stays inert".)
+      // Disabled-weight leg (AC4), with the discrimination the negative needs: the editor is
+      // moved back to A first (a plain card-body click — the pre-existing background-click path),
+      // so that pressing B's disabled weight track against a binding on A is a live test. A click
+      // landing on the disabled track arms nothing and reaches no path: IsAnyItemHovered counts
+      // the disabled slider, so the card's background-click body test stays blocked, and the
+      // follow consumes no gesture — the binding and the editor content stay with A, and B's
+      // value stays. Any future change that lets a disabled control produce an edit request —
+      // follow or body-click passthrough — moves the binding to B and goes red here.
       ctx->ItemClick("**/###enabled_0_1");  // exclude B — same-card gesture, no follow re-arm
       ctx->Yield(2);
       IM_CHECK(!entry_b.enabled);
+      ctx->MouseMoveToPos(CardBlankSpot(0));
+      ctx->MouseClick(0);  // background click: the pre-existing path moves the session to A
+      ctx->Yield(3);
+      IM_CHECK_EQ(gui::GetEditModalTarget().entry_idx, 0);  // premise: bound to A again
       const ImGuiTestItemInfo slider_b_disabled = ctx->ItemInfo("**/##Weight##prop_0_1_slider");
       IM_CHECK(slider_b_disabled.ID != 0);
       const ImVec2 dlo = slider_b_disabled.RectFull.Min;
@@ -5191,11 +5198,19 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
       ctx->MouseDown(0);
       ctx->Yield(2);
       IM_CHECK_NE(ImGui::GetActiveID(), slider_b_disabled.ID);
-      IM_CHECK(ImAbs(entry_b.proportion - 40.0f) <= 0.05f);  // disabled keeps its value
+      IM_CHECK_EQ(gui::GetEditModalTarget().entry_idx, 0);              // no follow: still A
+      IM_CHECK_EQ(gui::GetEditModalBuffers().entry_proportion, 60.0f);  // content still A's
+      IM_CHECK(ImAbs(entry_b.proportion - 40.0f) <= 0.05f);             // disabled keeps its value
       ctx->MouseUp(0);
       ctx->ItemClick("**/###enabled_0_1");  // back in for the legs below
       ctx->Yield(2);
       IM_CHECK(entry_b.enabled);
+      // Restore the session to B (plain background click), the premise the hover/wheel and
+      // closed-editor legs below read against.
+      ctx->MouseMoveToPos(CardBlankSpot(1));
+      ctx->MouseClick(0);
+      ctx->Yield(3);
+      IM_CHECK_EQ(gui::GetEditModalTarget().entry_idx, 1);
 
       // Hover and wheel must not move the binding: they are not gestures on the weight control.
       ctx->MouseMoveToPos(CardBlankSpot(0));
