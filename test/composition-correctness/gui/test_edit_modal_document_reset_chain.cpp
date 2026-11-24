@@ -40,9 +40,15 @@ class EditModalDocumentResetChain : public ::testing::Test {
  protected:
   void SetUp() override {
     ResetModalState();
+    // The preference is process-wide across this binary's cases; factory baseline, including on
+    // the failing path (SetUp/TearDown run regardless of assertions).
+    SetEditEntryStagedModePreference(false);
     g_state = MakeNewDocumentState();
   }
-  void TearDown() override { ResetModalState(); }
+  void TearDown() override {
+    ResetModalState();
+    SetEditEntryStagedModePreference(false);
+  }
 
   static void OpenOnEntryZero() {
     const EditRequest req{ EditTarget::kCrystal, 0, 0 };
@@ -81,15 +87,36 @@ TEST_F(EditModalDocumentResetChain, RevertClosesTheOpenModal) {
   EXPECT_FALSE(IsEditModalOpen());
 }
 
-// The reset does not touch the modal's view preference: it is a session setting the reset reasons
-// have no say over, and the test-only ResetModalState is the one place that forces it.
-TEST_F(EditModalDocumentResetChain, TheResetLeavesTheImmediateModePreferenceAlone) {
-  g_state.modal_immediate_mode = true;
+// The saved mode preference is the application's, not the document's: no reset reason may rewrite
+// it (AC5), and the next session opened after any reset adopts what it says — not the reset's
+// byproduct. The preference is set to the NON-factory value (Staged) so the witness cannot pass on
+// a build that merely leaves everything at factory; the session field is then only ever observed
+// through the adoption, which is the production read path.
+TEST_F(EditModalDocumentResetChain, NoResetReasonRewritesTheSavedModePreference) {
+  SetEditEntryStagedModePreference(true);
   OpenOnEntryZero();
+  EXPECT_FALSE(g_state.modal_immediate_mode);  // guard: the open really adopted Staged
+
   ResetFrontendState(g_state, FrontendResetReason::kNewDocument);
   EXPECT_FALSE(IsEditModalOpen());
-  EXPECT_TRUE(g_state.modal_immediate_mode);
-}
+  EXPECT_TRUE(GetEditEntryStagedModePreference());
+  // The session field is untouched by the reset (the contract the old case pinned): it still holds
+  // what the closed session adopted. The preference is what governs the next open.
+  EXPECT_FALSE(g_state.modal_immediate_mode);
 
+  // The next close→open boundary adopts the surviving preference, not the reset byproduct.
+  OpenOnEntryZero();
+  EXPECT_FALSE(g_state.modal_immediate_mode);
+
+  for (const FrontendResetReason reason :
+       { FrontendResetReason::kOpenLmcBlank, FrontendResetReason::kOpenJson, FrontendResetReason::kRevert }) {
+    // Non-fatal on purpose (check_loop_fatal_asserts): one reason failing must not hide the others.
+    ResetFrontendState(g_state, reason);
+    EXPECT_FALSE(IsEditModalOpen()) << static_cast<int>(reason);
+    EXPECT_TRUE(GetEditEntryStagedModePreference()) << static_cast<int>(reason);
+  }
+  OpenOnEntryZero();
+  EXPECT_FALSE(g_state.modal_immediate_mode);
+}
 }  // namespace
 }  // namespace lumice::gui

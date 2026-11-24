@@ -263,10 +263,11 @@ void RegisterModalLayoutTests(ImGuiTestEngine* engine) {
                                      g_fullframe_capture.height, 3));
 
       // Close the modal. Not strictly required — ResetTestState -> ResetModalState clears
-      // g_active_modal, and BeginPopupModal closes a popup whose p_open reads false on the very
+      // g_active_modal, and a plain window closes when its Begin's p_open reads false on the very
       // next frame — but leaving one open would hand the following test a frame of stale modal
-      // for no reason. Placed after the capture so it cannot influence the compared pixels.
-      ctx->ItemClick("**/" ICON_FA_XMARK " Cancel##edit_modal");
+      // for no reason. Placed after the capture so it cannot influence the compared pixels. The
+      // factory preference is Immediate, so the exit is that mode's button.
+      ctx->ItemClick("**/Close##edit_modal");
       ctx->Yield(2);
 
       IM_CHECK(lumice::test::CheckAgainstReference("modal_layout", scene.name, tmp_path, ref_path, g_keep_export_png,

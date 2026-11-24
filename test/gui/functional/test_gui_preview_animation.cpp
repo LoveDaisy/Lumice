@@ -8,6 +8,10 @@
 //   AC4  ticker resets across preview sessions (epoch-keyed) → preview_animation_epoch_resets_across_sessions
 //   AC5  animation coexists with trackball drag            → preview_animation_coexists_with_trackball_drag
 //
+// The cases run on the FACTORY editing mode (Immediate): their propositions are mode-independent
+// (the preview animation is the same window content either way), and the exit below is the
+// button that mode actually shows — Close. Nothing here publishes the Staged preference.
+
 // All cases run in the fast --fixed-dt pool: ImGuiTestEngine overrides IO.DeltaTime to a constant
 // 1/60s, so ceil(kCrystalPreviewAnimIntervalMs / (1000/60)) = 18 Yield frames deterministically
 // crosses one animation tick — no real-timing isolation pool needed.
@@ -67,7 +71,7 @@ void RegisterPreviewAnimationTests(ImGuiTestEngine* engine) {
       // A new sample_seed after the tick must produce a different draw.
       IM_CHECK(before != after);
 
-      ctx->ItemClick("**/" ICON_FA_XMARK " Cancel##edit_modal");
+      ctx->ItemClick("**/Close##edit_modal");  // factory default is Immediate: Close is this window's exit
       ctx->Yield(2);
     };
   }
@@ -101,7 +105,7 @@ void RegisterPreviewAnimationTests(ImGuiTestEngine* engine) {
         }
       }
 
-      ctx->ItemClick("**/" ICON_FA_XMARK " Cancel##edit_modal");
+      ctx->ItemClick("**/Close##edit_modal");  // factory default is Immediate: Close is this window's exit
       ctx->Yield(2);
     };
   }
@@ -146,7 +150,7 @@ void RegisterPreviewAnimationTests(ImGuiTestEngine* engine) {
       ctx->Yield(kFramesPastOneTick * 2);
       const std::vector<float> advanced = SnapshotPreviewVertices();
 
-      ctx->ItemClick("**/" ICON_FA_XMARK " Cancel##edit_modal");
+      ctx->ItemClick("**/Close##edit_modal");  // factory default is Immediate: Close is this window's exit
       ctx->Yield(2);
 
       // Reopen the same entry: the first built frame must match the fixed-seed reference exactly,
@@ -164,7 +168,7 @@ void RegisterPreviewAnimationTests(ImGuiTestEngine* engine) {
       // Sanity: the reset genuinely rewound — the reopened frame differs from the advanced one.
       IM_CHECK(reopened != advanced);
 
-      ctx->ItemClick("**/" ICON_FA_XMARK " Cancel##edit_modal");
+      ctx->ItemClick("**/Close##edit_modal");  // factory default is Immediate: Close is this window's exit
       ctx->Yield(2);
     };
   }
@@ -201,7 +205,7 @@ void RegisterPreviewAnimationTests(ImGuiTestEngine* engine) {
       ctx->Yield(kFramesPastOneTick);
       IM_CHECK(std::memcmp(gui::g_crystal_rotation, rot_dragged, sizeof(rot_dragged)) == 0);
 
-      ctx->ItemClick("**/" ICON_FA_XMARK " Cancel##edit_modal");
+      ctx->ItemClick("**/Close##edit_modal");  // factory default is Immediate: Close is this window's exit
       ctx->Yield(2);
     };
   }

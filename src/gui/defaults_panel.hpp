@@ -41,17 +41,20 @@ inline constexpr const char* kDefaultsPanelTitle = "Settings";
 
 // The panel's geometry (doc/gui/gui-visual-language.md §9, "semi-variable"): the width is pinned, the
 // height opens at the default and is the user's to drag between the floor and the work area. The
-// The minimum reserves both section floors and the pinned action row. With all four application
-// controls, real-frame measurement at 408 px still reported 3 px of panel scroll; 416 leaves the
-// footer inside at both 1x and 1.5x. Sections scroll internally rather than moving the action row.
+// The minimum reserves both section floors and the pinned action row. The staged-mode row costs
+// two rows (its checkbox line and its wrapped deprecation note); the floor moves with the default
+// by the same amount so both section floors and the footer stay inside at 1x and 1.5x — the
+// layout test that pins the footer's reach is what confirms the number, as it did for the four
+// predecessors. Sections scroll internally rather than moving the action row.
 inline constexpr float kDefaultsPanelWidth = 760.0f;
-// 632 = the pre-semi-variable 560 plus three control rows (24 px each at 1x),
-// one per control the app section gained after its first, including the startup preview style. A
-// control added ABOVE the two collapsible sections has to bring its own height with it rather
-// than take it out of their budget, which is not slack (shrinking the preset library by one row
-// once put an already-expanded preset's std input out of reach).
-inline constexpr float kDefaultsPanelDefaultHeight = 632.0f;
-inline constexpr float kDefaultsPanelMinHeight = 416.0f;
+// 680 = the pre-semi-variable 560 plus five control rows (24 px each at 1x), one per control the
+// app section gained after its first — three single-row controls, the startup preview style, and
+// the staged-mode row's wrapped deprecation note (budgeted as its own row even where it measures
+// a little less). A control added ABOVE the two collapsible sections has to bring its own height
+// with it rather than take it out of their budget, which is not slack (shrinking the preset
+// library by one row once put an already-expanded preset's std input out of reach).
+inline constexpr float kDefaultsPanelDefaultHeight = 680.0f;
+inline constexpr float kDefaultsPanelMinHeight = 464.0f;
 
 // Open the panel and rebuild its row set from the CURRENT state. Also recomputes the checkbox set
 // from scratch and clears the search/filter controls: every opening starts from "here is what your

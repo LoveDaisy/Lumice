@@ -179,6 +179,10 @@ int main(int argc, char** argv) {
   // authoritative glfwGetWindowContentScale read once the window exists. Both go through the one
   // PlanWindowSizeForScale rule the runtime rebuild uses, so creation and rescale cannot disagree.
   gui::g_ui_scale_multiplier = gui::LoadUiScaleMultiplierAtStartup();
+  // The Edit Entry mode preference rides the same startup read: the holder must carry the saved
+  // value before the user can open their first editor, and the open boundary reads the holder —
+  // not the file — so a load that never runs would silently pin every session to the factory mode.
+  gui::LoadEditEntryStagedModeAtStartup();
   int init_w = gui::kInitWindowWidth;
   int init_h = gui::kInitWindowHeight;
   {

@@ -1675,13 +1675,18 @@ struct GuiState {
   // re-seed the live selection from this field.
   int entry_edit_preview_style = static_cast<int>(CrystalStyle::kHiddenLine);
 
-  // Edit modal mode (UI-only, session-only, not in ConfigSnapshot).
-  // Staged mode: BeginPopupModal + OK/Cancel + dirty-mark on tabs.
-  // Immediate mode (default, gui-polish-v15 round 2): ImGui::Begin + single
-  // Close button + no dirty-mark; every frame commits buffer to state via
-  // CommitAllBuffersImmediate (crystal/axis edits only MarkDirty — filter
-  // edits still MarkStructHardDirty — so infinite-rays accumulation persists
-  // while the user drags a crystal slider).
+  // The CURRENT Edit Entry session's mode (UI-only, session-only, not in ConfigSnapshot, never
+  // persisted). Adopted once from the saved app preference at the close→open boundary
+  // (OpenEditModal reads GetEditEntryStagedModePreference) and stable until that editor closes —
+  // card switches, Duplicate rebinds and tab changes do not re-read it. There is no in-window
+  // control and nothing to persist: the only mode entry is Settings' "Use staged editing for
+  // Edit Entry (deprecated)" app preference (user_defaults.hpp's app-preferences block), and
+  // every open re-adopts it, so a restart arrives at the same value without storage.
+  // Staged: BeginPopupModal + OK/Cancel + dirty-mark on tabs. Immediate (default):
+  // ImGui::Begin + single Close button + no dirty-mark; every frame commits buffer to state via
+  // CommitAllBuffersImmediate (crystal/axis edits only MarkDirty — filter edits still
+  // MarkStructHardDirty — so infinite-rays accumulation persists while the user drags a crystal
+  // slider).
   bool modal_immediate_mode = true;
 
   // Mark the config dirty. sim_state is NOT touched here — it is derived once per frame by
