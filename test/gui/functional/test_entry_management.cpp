@@ -221,6 +221,19 @@ struct ScopedColorWindow {
   }
 };
 
+// Restores the UI scale multiplier the case changed, on every exit path. Declared AFTER the
+// window-basis guard at the use site so it is destroyed FIRST: the scale must be back before the
+// window shrinks, or the grown window minimum of the raised scale clamps the size restore.
+struct ScopedUiScale {
+  explicit ScopedUiScale(ImGuiTestContext* ctx) : ctx_(ctx), previous_(gui::g_ui_scale_multiplier) {}
+  ~ScopedUiScale() {
+    gui::SetUiScaleMultiplierImmediate(previous_);
+    ctx_->Yield(3);  // the style/font rebuild runs at the frame boundary
+  }
+  ImGuiTestContext* ctx_;
+  float previous_;
+};
+
 // Read one card's own rectangle back out of the default framebuffer.
 //
 // The theme_scan suite does this same rect arithmetic in ExportRegion, but it writes a PNG for a
@@ -1035,8 +1048,9 @@ void RegisterEntryManagementTests(ImGuiTestEngine* engine) {
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
       ctx->Yield(2);
-      const float previous_scale = gui::g_ui_scale_multiplier;
+      // Declaration order is destruction order: the scale drops first, then the window shrinks.
       const ScopedWindowBasis window_basis(ctx);  // the 2x rebuild raises the window minimum
+      const ScopedUiScale ui_scale(ctx);
       gui::SetUiScaleMultiplierImmediate(2.0f);
       ctx->Yield(4);  // the style/font rebuild runs at the frame boundary
       IM_CHECK(!gui::g_ui_scale_dirty);
@@ -1066,9 +1080,6 @@ void RegisterEntryManagementTests(ImGuiTestEngine* engine) {
       std::vector<unsigned char> rest2_px;
       IM_CHECK(CaptureCardRect(ctx, 1, rest2_px, w, h));
       IM_CHECK(EdgeRingDiff(rest_px, rest2_px, w, h, 2).AllZero());
-
-      gui::SetUiScaleMultiplierImmediate(previous_scale);
-      ctx->Yield(3);
     };
   }
 
