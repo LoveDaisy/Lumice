@@ -1036,7 +1036,7 @@ void SeedRichDocument() {
 }
 
 // The default document under a full-sky lens: fov, the pose angles, visible and front all stop
-// applying on the panel (the full-sky disabled gates / FrontClipAppliesNote), while the export keeps
+// applying on the panel (the full-sky disabled gates / WhenFrontClipApplies), while the export keeps
 // writing each of them.
 void SeedFullSkyDocument() {
   DoNew();
