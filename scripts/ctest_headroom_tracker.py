@@ -55,6 +55,24 @@ a streak cannot span one. A threshold configuration change breaks streak
 continuity as well (re-fired only as a new event, never silently carried).
 No new runs means no samples and an untouched streak.
 
+v1 boundary (no backfill): collection consumes only the identities the run
+listing presents in the same round; there is no by-id re-resolution of runs
+the listing cannot see. A run owed but not collected this round — a budget
+backlog — is fenced with a retryable `run-unprocessed` line-wide gap and
+re-collected from the listing while it stays in the `created=>` window. A
+run pinned by an older state schema's pending queue is discharged once as a
+PERMANENT `run-abandoned` gap: the hole is recorded, never backfilled. The
+direction of every missing-evidence case is missing signal (under-signal),
+never fabricated health. Known limitation, accepted for v1: whole-run
+availability is judged by the run's LATEST attempt conclusion, so an
+attempt-2 cancellation can mask an attempt-1 reading that a stricter
+attempt-1 lookup would have kept (again under-signal, not over-signal).
+A future re-introduction of bounded identity re-resolution — readable-first
+collection, then a pending phase with its own request AND time budget and
+extant-population filtering — is an explicit new task, not an extension of
+this one; the six-round review trend bundle of this task's history is the
+design risk map for it.
+
 Persistence: the state directory holds `samples.jsonl` (append-only
 sequence ledger of samples and gaps, union-merged by record key),
 `events.jsonl` (append-only fired signals, union-merged by event id),
@@ -101,7 +119,6 @@ DEFAULT_MAX_RUNS = 100
 DEFAULT_MAX_API_CALLS = 300
 DEFAULT_TIME_BUDGET_SEC = 300.0
 PUBLISH_RETRIES = 3
-MAX_PENDING_RERESOLVE_PER_HARVEST = 25  # identity queries never starve evidence collection
 PUBLISH_DIR = "headroom"
 STATE_FILES = ("samples.jsonl", "events.jsonl", "state.json", "summary.md")
 STATE_SCHEMA = 1
@@ -388,11 +405,6 @@ class GhClient:
         payload = self.api_json(f"repos/{self.repo}/actions/runs/{run_id}/attempts/1/jobs")
         return {job["name"]: job for job in payload.get("jobs", [])}
 
-    def get_run(self, run_id: int) -> dict:
-        """Re-resolve one run by id (pending entries may have completed,
-        been cancelled, or been deleted since they were discovered)."""
-        return self.api_json(f"repos/{self.repo}/actions/runs/{run_id}")
-
     def job_log(self, job_id: int) -> str:
         return self.api(f"repos/{self.repo}/actions/jobs/{job_id}/logs")
 
@@ -451,9 +463,13 @@ def list_push_runs(
 
     Returns (harvestable, out_of_population, unfinished). Unfinished runs
     (still in progress, not the current run) are returned, not dropped: the
-    caller must keep them pending — a run merely DISCOVERED late that is
-    then filtered out here would be skipped by the created=> cursor forever,
-    leaving no sample and no gap (a silent hole in the sequence).
+    caller fences them with a retryable line-wide gap so the timeline never
+    bridges across them — a run merely DISCOVERED late that is then filtered
+    out here would be skipped by the created=> cursor forever, leaving no
+    sample and no gap (a silent hole in the sequence). No identity is carried
+    across harvests: a run not completed in time for a listing's window is
+    that window's fence, nothing more (see the v1 boundary in the module
+    docstring).
     """
     harvestable: dict[int, dict] = {}
     out_of_population: list[dict] = []
@@ -538,7 +554,7 @@ def merge_records(*batches: list[dict], key_of=record_key) -> list[dict]:
     return list(merged.values())
 
 
-RETRYABLE_GAP_PREFIXES = ("api-budget-exhausted", "harvest-error", "run-in-progress", "run-pending", "gh-timeout")
+RETRYABLE_GAP_PREFIXES = ("api-budget-exhausted", "harvest-error", "run-in-progress", "run-unprocessed", "gh-timeout")
 
 
 def is_retryable_gap(record: dict) -> bool:
@@ -579,8 +595,8 @@ def drop_superseded_line_wide_gaps(records: list[dict]) -> list[dict]:
     A cold-start collection failure (or an in-progress run) records a
     line-wide gap keyed `run:1::`; the successful collection later writes
     per-series records keyed `run:1:job:phase`. The upgrade-only merge
-    cannot replace across those keys, so the stale line-wide row would pin
-    the run pending forever. Once a run holds real per-series evidence that
+    cannot replace across those keys, so the stale line-wide row would keep
+    the run uncollected forever. Once a run holds real per-series evidence that
     is fully terminal-or-sample, its line-wide retryable rows have served
     their purpose (the timeline barrier they provided is now redundant) and
     are dropped. Line-wide TERMINAL rows survive: they fence series that
@@ -1178,16 +1194,14 @@ def read_published_state(repo_root: Path, remote: str, ref: str, into: Path) -> 
 
 
 def merge_into_state_dir(state_dir: Path, theirs: Path) -> None:
-    """Union-merge another copy of the state into ours (records by key, cursor
-    max, pending union incl. the latest re-resolve attempt stamp). Both
-    sides' facts survive; the config of the acting harvest wins and the
-    config-change annotation explains the break.
+    """Union-merge another copy of the state into ours (records by key,
+    cursor max). Both sides' facts survive; the config of the acting harvest
+    wins and the config-change annotation explains the break.
 
-    Pending is UNIONED, not kept one-sided: the remote may have a newer
-    cursor while still owing runs older than it — dropping their pending
-    entries here would push those runs out of the created=> window forever
-    (the cursor moves on, the run never completes its collection, and no
-    gap records the hole).
+    A `pending` key surviving in either side's state.json belongs to the
+    removed re-resolution subsystem of an older schema; it is dropped, not
+    unioned — those runs' fences already live in the unioned samples ledger,
+    and no identity is carried across harvests (v1 boundary).
     """
     samples = merge_records(load_jsonl(state_dir / "samples.jsonl"), load_jsonl(theirs / "samples.jsonl"))
     samples = drop_superseded_line_wide_gaps(samples)
@@ -1206,25 +1220,7 @@ def merge_into_state_dir(state_dir: Path, theirs: Path) -> None:
 
     winner = ours_cursor if cursor_order(ours_cursor) >= cursor_order(theirs_cursor) else theirs_cursor
     ours_state["cursor"] = winner
-    pending: dict[int, dict] = {}
-    for entry in ours_state.get("pending") or []:
-        pending[entry["run_id"]] = dict(entry)
-    for entry in theirs_state.get("pending") or []:
-        existing = pending.get(entry["run_id"])
-        if existing is None:
-            pending[entry["run_id"]] = dict(entry)
-            continue
-        # The re-resolve rotation stamp records that identity queries were
-        # ATTEMPTED, so the union takes the latest attempt either side
-        # observed — dropping the other side's stamp would re-attempt runs
-        # this line already rotated past, or skip ones it has not tried.
-        stamp = max(existing.get("last_attempted_at") or "", entry.get("last_attempted_at") or "")
-        for field in ("run_number", "branch", "created_at"):
-            if not existing.get(field) and entry.get(field):
-                existing[field] = entry.get(field)
-        if stamp:
-            existing["last_attempted_at"] = stamp
-    ours_state["pending"] = sorted(pending.values(), key=lambda p: (p.get("created_at") or "", p["run_id"]))
+    ours_state.pop("pending", None)
     (state_dir / "state.json").write_text(json.dumps(ours_state, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
@@ -1370,7 +1366,7 @@ def finalize(
 
 def persist_ledgers(
     *, samples: list[dict], events: list[dict], fired_events: list[dict],
-    cursor: dict | None, pending: list[dict], config: dict, paths: dict,
+    cursor: dict | None, config: dict, paths: dict,
 ) -> None:
     """Write the merged ledgers and state BEFORE publishing.
 
@@ -1381,7 +1377,7 @@ def persist_ledgers(
     all_events = merge_records(events, fired_events, key_of=event_key)
     write_jsonl(paths["samples"], samples)
     write_jsonl(paths["events"], all_events)
-    state = {"schema": STATE_SCHEMA, "config": config, "cursor": cursor, "pending": pending}
+    state = {"schema": STATE_SCHEMA, "config": config, "cursor": cursor}
     paths["state"].write_text(json.dumps(state, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
@@ -1458,11 +1454,11 @@ def harvest_command(args: argparse.Namespace) -> int:
     )
 
     # Runs still owed collection: anything the window listing finds that the
-    # ledger has not fully collected (the listing gives fresh authoritative
-    # objects for free) plus pending entries the listing cannot see — those
-    # are re-resolved by id, bounded: spending the whole budget on identity
-    # queries would stall a large backlog forever (fences below keep every
-    # un-re-resolved run's continuity until its turn comes).
+    # ledger has not fully collected. The listing gives fresh authoritative
+    # objects, so every consumed identity is resolvable THIS round — there is
+    # no by-id re-resolution of runs the listing cannot see (v1 boundary,
+    # module docstring): a run owed only through an older schema's pending
+    # queue is discharged as a permanent gap below, never re-resolved.
     work: dict[int, dict] = {}
     try:
         runs, out_of_population, unfinished = list_push_runs(client, since_iso, args.current_run, extant_release)
@@ -1475,69 +1471,34 @@ def harvest_command(args: argparse.Namespace) -> int:
         if run["id"] not in complete_run_ids:
             work[run["id"]] = run
 
-    # Pending identity metadata, keyed by run id: the re-resolve rotation
-    # stamps (`last_attempted_at`) live here and are carried into the rebuilt
-    # pending at the end of the harvest.
-    pending_meta: dict[int, dict] = {
-        entry["run_id"]: dict(entry) for entry in previous_state.get("pending") or []
-    }
-
-    def reresolve_rank(entry: dict) -> tuple:
-        # Never-attempted entries first (oldest first), then least-recently
-        # attempted. Selecting the same oldest slice every harvest would
-        # starve the rest of the backlog forever when the front entries keep
-        # failing retryably; stamping EVERY attempt — success, 403, timeout —
-        # rotates the bounded batch across harvests.
-        attempted = entry.get("last_attempted_at") or ""
-        return (1 if attempted else 0, attempted, entry.get("created_at") or "", entry["run_id"])
-
-    reresolved = 0
-    for entry in sorted(pending_meta.values(), key=reresolve_rank):
-        if entry["run_id"] in complete_run_ids or entry["run_id"] in work:
-            continue
-        if reresolved >= MAX_PENDING_RERESOLVE_PER_HARVEST or budget.exhausted:
-            work.setdefault(entry["run_id"], {
-                "id": entry["run_id"], "run_number": entry.get("run_number"),
-                "head_branch": entry.get("branch") or "", "created_at": entry.get("created_at") or "",
-                "html_url": "", "head_sha": "", "status": "unknown", "conclusion": None,
-            })
-            continue
-        # The attempt itself consumes the phase quota — a failed identity
-        # query costs exactly what a successful one costs, or the failure
-        # path would bypass the cap and eat the evidence budget.
-        reresolved += 1
-        pending_meta[entry["run_id"]]["last_attempted_at"] = utc_now_iso()
-        try:
-            run_obj = client.get_run(entry["run_id"])
-        except HarvestError as error:
-            reason = classify_harvest_error(error, default="run-unreadable")
-            if "not found or expired" in reason:
-                # Deleted from the server: a terminal gap fences the sequence,
-                # and the pending entry is discharged.
-                new_records.append(
-                    gap_record(
-                        run={"id": entry["run_id"], "run_number": entry.get("run_number"),
-                             "head_branch": entry.get("branch") or "", "html_url": "",
-                             "head_sha": "", "created_at": entry.get("created_at") or ""},
-                        line=line_of_branch(entry.get("branch") or "main"),
-                        job="", phase="", reason="run-not-found", config_id=config_id,
-                    )
-                )
+    # One-time discharge of runs pinned by the removed pending re-resolution
+    # subsystem (an older state schema's `pending` queue). Their identity is
+    # never queried by id again. A pinned run with no per-series ledger row
+    # and no listing presence this round becomes a PERMANENT line-wide gap:
+    # the hole stays recorded, direction under-signal, never backfilled. A
+    # pinned run the listing still presents is collected normally instead —
+    # this round's listing is the only identity source there is.
+    legacy_pending = previous_state.get("pending") or []
+    if legacy_pending:
+        abandoned_count = 0
+        for entry in legacy_pending:
+            if records_by_run.get(entry["run_id"]) or entry["run_id"] in work:
                 continue
-            warnings.append(f"pending run {entry.get('run_number')} re-resolve failed: {reason}")
-            work[entry["run_id"]] = {
-                "id": entry["run_id"], "run_number": entry.get("run_number"),
-                "head_branch": entry.get("branch") or "", "created_at": entry.get("created_at") or "",
-                "html_url": "", "head_sha": "", "status": "unknown", "conclusion": None,
-            }
-            continue
-        # A fresh authoritative object replaces any placeholder.
-        work[run_obj["id"]] = run_obj
-    for run in list(unfinished) + list(runs):
-        # The listing knows the run's real current state; it outranks an
-        # unknown placeholder from a failed re-resolve of the same run.
-        if work.get(run["id"], {}).get("status") == "unknown":
-            work[run["id"]] = run
+            new_records.append(
+                gap_record(
+                    run={"id": entry["run_id"], "run_number": entry.get("run_number"),
+                         "head_branch": entry.get("branch") or "", "html_url": "",
+                         "head_sha": "", "created_at": entry.get("created_at") or ""},
+                    line=line_of_branch(entry.get("branch") or "main"),
+                    job="", phase="", reason="run-abandoned", config_id=config_id,
+                )
+            )
+            abandoned_count += 1
+        if abandoned_count:
+            warnings.append(
+                f"legacy pinned runs discharged as permanent run-abandoned gaps: {abandoned_count} "
+                "(no backfill; the re-resolution subsystem was removed)"
+            )
 
     ordered_work = sorted(work.values(), key=lambda r: (r.get("created_at") or "", r["id"]))
     processed_runs: list[dict] = []
@@ -1556,26 +1517,15 @@ def harvest_command(args: argparse.Namespace) -> int:
             status == "in_progress" and run["id"] == args.current_run
         )
         if not harvestable_now:
-            if status == "unknown":
-                # A transient re-resolve failure left this pending run with no
-                # trustworthy identity: collecting it now would fetch a
-                # registry "snapshot" with no ref. It stays pending for the
-                # next harvest — the warn names it, nothing is signed.
-                warnings.append(
-                    f"pending run {run.get('run_number')} could not be re-resolved; "
-                    "kept pending (no evidence collected)"
-                )
-            else:
-                # Still in progress and not this harvest's own run: it must
-                # fence the timeline NOW — a pending-only identity would leave
-                # the two low samples around it adjacent in the ledger and
-                # pair them — so a retryable line-wide gap is recorded; the
-                # run stays pending and the gap upgrades to real evidence
-                # when collection succeeds.
-                new_records.append(
-                    gap_record(run=run, line=line_of_branch(run.get("head_branch") or ""), job="", phase="",
-                               reason="run-in-progress", config_id=config_id)
-                )
+            # Still in progress and not this harvest's own run: it must fence
+            # the timeline NOW — a fenceless hole would leave the two low
+            # samples around it adjacent in the ledger and pair them — so a
+            # retryable line-wide gap is recorded; the gap upgrades to real
+            # evidence when a later listing presents the completed run.
+            new_records.append(
+                gap_record(run=run, line=line_of_branch(run.get("head_branch") or ""), job="", phase="",
+                           reason="run-in-progress", config_id=config_id)
+            )
             continue
         try:
             batch = harvest_run(client, run, config_id)
@@ -1593,44 +1543,21 @@ def harvest_command(args: argparse.Namespace) -> int:
     for record in merged_samples:
         records_by_run.setdefault(record["run_id"], []).append(record)
 
-    # Pending = every owed run that is still not fully collected, now or from
-    # previous states. This is what keeps a mid-run budget death or a
-    # transient transport failure from becoming a permanent hole: the cursor
-    # may move past such a run, but pending pins its identity for the next
-    # harvest to re-resolve and re-collect, and the retryable gap is then
-    # upgraded in place (merge is upgrade-only).
-    pending: list[dict] = []
-    for run_id, run_obj in work.items():
-        recs = records_by_run.get(run_id, [])
-        if recs and runs_collection_complete(recs):
-            continue
-        entry = {
-            "run_id": run_id,
-            "created_at": run_obj.get("created_at") or "",
-            "run_number": run_obj.get("run_number"),
-            "branch": run_obj.get("head_branch") or "",
-        }
-        meta = pending_meta.get(run_id)
-        if meta and meta.get("last_attempted_at"):
-            entry["last_attempted_at"] = meta["last_attempted_at"]
-        pending.append(entry)
-    pending.sort(key=lambda p: (p["created_at"], p["run_id"]))
-
-    # A pending run with NO ledger row yet (budget backlog, un-resolvable
-    # identity) is a hole in every series timeline it belongs to: without a
-    # fence, the low samples on either side of it are ledger-adjacent and
-    # pair. A retryable line-wide gap records the hole until real evidence
-    # replaces it.
+    # A work run with NO ledger row yet (the run/max-runs budget stopped the
+    # loop before reaching it) is a hole in every series timeline it belongs
+    # to: without a fence, the low samples on either side of it are ledger-
+    # adjacent and pair. A retryable line-wide gap records the hole until a
+    # later harvest re-collects the run from the listing (upgrade-only merge).
     owed_fences = []
-    for entry in pending:
-        if not records_by_run.get(entry["run_id"]):
+    for run_id, run_obj in work.items():
+        if not records_by_run.get(run_id):
             owed_fences.append(
                 gap_record(
-                    run={"id": entry["run_id"], "run_number": entry.get("run_number"),
-                         "head_branch": entry.get("branch") or "", "html_url": "",
-                         "head_sha": "", "created_at": entry.get("created_at") or ""},
-                    line=line_of_branch(entry.get("branch") or "main"),
-                    job="", phase="", reason="run-pending", config_id=config_id,
+                    run={"id": run_id, "run_number": run_obj.get("run_number"),
+                         "head_branch": run_obj.get("head_branch") or "", "html_url": "",
+                         "head_sha": "", "created_at": run_obj.get("created_at") or ""},
+                    line=line_of_branch(run_obj.get("head_branch") or "main"),
+                    job="", phase="", reason="run-unprocessed", config_id=config_id,
                 )
             )
     if owed_fences:
@@ -1653,7 +1580,7 @@ def harvest_command(args: argparse.Namespace) -> int:
 
     persist_ledgers(
         samples=merged_samples, events=events, fired_events=fired_events,
-        cursor=cursor, pending=pending, config=config, paths=paths,
+        cursor=cursor, config=config, paths=paths,
     )
 
     # The publish snapshot must be complete before publishing: all four files,
@@ -1685,7 +1612,7 @@ def harvest_command(args: argparse.Namespace) -> int:
             config_changed_note=config_changed_note,
             totals={
                 "runs_processed": len(processed_runs),
-                "runs_overlap": max(0, len(runs) + len(unfinished) + len(previous_state.get("pending") or []) - len(processed_runs)),
+                "runs_overlap": max(0, len(runs) + len(unfinished) - len(processed_runs)),
                 "records_new": len(new_records),
                 "samples": sum(1 for r in merged if r["type"] == "sample"),
                 "gaps": sum(1 for r in merged if r["type"] == "gap"),
@@ -1727,7 +1654,7 @@ def harvest_command(args: argparse.Namespace) -> int:
     )
     totals = {
         "runs_processed": len(processed_runs),
-        "runs_overlap": max(0, len(runs) + len(unfinished) + len(previous_state.get("pending") or []) - len(processed_runs)),
+        "runs_overlap": max(0, len(runs) + len(unfinished) - len(processed_runs)),
         "records_new": len(new_records),
         "samples": sum(1 for r in final_samples if r["type"] == "sample"),
         "gaps": sum(1 for r in final_samples if r["type"] == "gap"),

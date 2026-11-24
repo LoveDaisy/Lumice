@@ -2435,9 +2435,20 @@ are independent series: release samples come from release branches' own snapshot
 lines' population is the **extant branch set**, read fresh every harvest: a deleted release
 branch's history stays in the ledger but leaves the population and never fires or annotates again;
 a failed branch read defers release-line signals with a named warning and is never read as "all
-retired". Pending runs whose identity must be re-resolved by id draw from a per-harvest bounded
-quota that counts failed attempts too, and the batch rotates least-recently-attempted-first, so a
-persistently failing front slice cannot starve a readable backlog entry.
+retired".
+
+**v1 boundary (no backfill, by design).** The tracker consumes only the identities the run listing
+presents in the same round; it never resolves a run's identity by id. A run the budget never
+reached is fenced with a retryable `run-unprocessed` line-wide gap and re-collected from the
+listing while it stays in the window; a run pinned by the pre-shrink pending queue is discharged
+once as a **permanent** `run-abandoned` gap — recorded, never backfilled. Every missing-evidence
+case therefore errs toward missing signal, never toward fabricated health. One accepted
+limitation follows the same direction: whole-run availability is judged by the run's **latest**
+attempt conclusion, so an attempt-2 cancellation masks an attempt-1 reading a stricter
+attempt-1 lookup would have kept. Re-introducing bounded identity re-resolution — readable-first
+collection, then a pending phase with its own request *and* time budget, filtered by the extant
+population — is an explicit future task, not an extension of this one; this task's six-round
+review trend bundle is the design risk map for it.
 
 Known costs, disclosed: release runs are harvested when the next `main` push aggregates — a quiet
 main line delays release visibility and no daily reminder exists (the aggregation rides the

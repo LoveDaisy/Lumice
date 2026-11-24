@@ -451,8 +451,8 @@ def test_line_wide_retryable_gaps_are_retired_once_the_run_is_collected():
     # A cold-start collection failure records `run:1::`; the successful
     # collection writes `run:1:job:phase`. The key-difference merge cannot
     # supersede across them, so the sweep must retire the stale line-wide row
-    # once real per-series evidence covers the run — otherwise the run stays
-    # pending forever and every harvest pays to re-collect it.
+    # once real per-series evidence covers the run — otherwise the stale
+    # fence would sit next to the evidence forever.
     line_wide_retryable = make_gap(1, created="2026-11-20T00:00:00Z", job="", reason="registry-unreadable: ...")
     per_series = [
         make_sample(1, 560.0, 1.0, 560.0, created="2026-11-20T00:00:00Z"),
@@ -471,7 +471,7 @@ def test_line_wide_retryable_gaps_are_retired_once_the_run_is_collected():
     assert tracker.drop_superseded_line_wide_gaps(incomplete) == incomplete
 
 
-def test_state_merge_unions_pending_and_takes_the_max_cursor(tmp_path):
+def test_state_merge_takes_the_max_cursor_and_drops_legacy_pending(tmp_path):
     ours = tmp_path / "ours"
     theirs = tmp_path / "theirs"
     ours.mkdir()
@@ -481,25 +481,17 @@ def test_state_merge_unions_pending_and_takes_the_max_cursor(tmp_path):
     write_jsonl(theirs / "samples.jsonl", [])
     (ours / "state.json").write_text(json.dumps({
         "config": {"config_id": "cfg-x"}, "cursor": {"run_id": 1, "created_at": "2026-11-20T00:00:00Z"},
-        "pending": [{"run_id": 7, "created_at": "2026-11-19T00:00:00Z", "run_number": 7, "branch": "main",
-                     "last_attempted_at": "2026-11-23T10:00:00Z"}],
     }))
+    # A legacy `pending` key from the removed re-resolution subsystem is
+    # dropped, not unioned: those runs' fences live in the samples ledger.
     (theirs / "state.json").write_text(json.dumps({
         "config": {"config_id": "cfg-x"}, "cursor": {"run_id": 3, "created_at": "2026-11-22T00:00:00Z"},
-        "pending": [
-            {"run_id": 2, "created_at": "2026-11-21T00:00:00Z", "run_number": 2, "branch": "main"},
-            {"run_id": 7, "created_at": "2026-11-19T00:00:00Z", "run_number": 7, "branch": "main",
-             "last_attempted_at": "2026-11-23T12:00:00Z"},
-        ],
+        "pending": [{"run_id": 2, "created_at": "2026-11-21T00:00:00Z", "run_number": 2, "branch": "main"}],
     }))
     tracker.merge_into_state_dir(ours, theirs)
     state = json.loads((ours / "state.json").read_text())
-    assert state["cursor"]["run_id"] == 3
-    assert {entry["run_id"] for entry in state["pending"]} == {2, 7}  # the remote's owed run 2 is not dropped
-    by_id = {entry["run_id"]: entry for entry in state["pending"]}
-    # The rotation stamp is the latest attempt either side observed — the
-    # union must not let one side's older stamp resurrect a rotated-past run.
-    assert by_id[7]["last_attempted_at"] == "2026-11-23T12:00:00Z"
+    assert state["cursor"]["run_id"] == 3  # the newer cursor wins regardless of side
+    assert "pending" not in state
 
 
 # --- fake gh plumbing for the end-to-end harvest -------------------------------------
@@ -601,9 +593,6 @@ def setup_fake_gh(
               json.dumps([{"name": name} for name in release_branches]))
     serve(root, "repos/O/R/actions/workflows/ci.yml/runs?event=push&per_page=100&page=1",
           json.dumps({"total_count": len(runs), "workflow_runs": runs}))
-    for run in runs:
-        # Pending entries re-resolve the run by id on the next harvest.
-        serve(root, f"repos/O/R/actions/runs/{run['id']}", json.dumps(run))
     for run_id, spec in jobs_and_logs.items():
         jobs_payload = {
             "total_count": len(spec["jobs"]),
@@ -727,7 +716,7 @@ def test_backlog_continues_across_harvests_without_losing_the_streak(tmp_path):
     keys = {record["key"] for record in samples}
     assert "101:1:macOS ARM64:ctest" in keys
     # The two backlog runs carry continuity fences until collected.
-    assert {r["key"] for r in samples if r.get("reason") == "run-pending"} == {
+    assert {r["key"] for r in samples if r.get("reason") == "run-unprocessed"} == {
         "102:1::", "103:1::",
     }
     events = (state_dir / "events.jsonl").read_text().strip()
@@ -736,7 +725,7 @@ def test_backlog_continues_across_harvests_without_losing_the_streak(tmp_path):
     second, state_dir = run_harvest(tmp_path, bin_path, env)
     assert second.returncode == 0
     samples = [json.loads(line) for line in (state_dir / "samples.jsonl").read_text().splitlines() if line]
-    assert not [r for r in samples if r.get("reason") == "run-pending"]  # fences retired once collected
+    assert not [r for r in samples if r.get("reason") == "run-unprocessed"]  # fences retired once collected
     events = [json.loads(line) for line in (state_dir / "events.jsonl").read_text().splitlines() if line]
     assert len(events) == 1 and events[0]["first_run"]["id"] == 101  # recompute spans the backlog boundary
 
@@ -1052,9 +1041,9 @@ def test_branch_discovery_failure_defers_release_signals_and_recovery_fires(tmp_
 
 def test_in_progress_run_between_lows_fences_and_upgrades_on_completion(tmp_path):
     # A run discovered while still in progress must appear in the timeline the
-    # moment it is skipped — pending-only identity would leave the lows around
-    # it adjacent and pair them. When it completes, the fence upgrades into
-    # the run's real evidence in the same ledger positions.
+    # moment it is skipped — a fenceless hole would leave the lows around it
+    # adjacent and pair them. When it completes, the fence upgrades into the
+    # run's real evidence in the same ledger positions.
     runs = [
         make_run(891, 1, "main", "2026-11-20T00:00:00Z", "sha-a"),
         make_run(892, 2, "main", "2026-11-21T00:00:00Z", "sha-b", conclusion=None),
@@ -1076,10 +1065,10 @@ def test_in_progress_run_between_lows_fences_and_upgrades_on_completion(tmp_path
     assert samples["892:1::"]["reason"] == "run-in-progress"  # the fence is in the ledger
     assert (state_dir / "events.jsonl").read_text().strip() == ""  # low / in-progress / low never pairs
     state = json.loads((state_dir / "state.json").read_text())
-    assert {entry["run_id"] for entry in state["pending"]} == {892}
+    assert "pending" not in state  # no identity is carried across harvests
 
-    # The run completes: the listing and the run object both say so on the
-    # next harvest; the real evidence replaces the stale fence via the sweep.
+    # The run completes: the listing says so on the next harvest; the real
+    # evidence replaces the stale fence via the sweep.
     runs_second = [
         make_run(891, 1, "main", "2026-11-20T00:00:00Z", "sha-a"),
         make_run(892, 2, "main", "2026-11-21T00:00:00Z", "sha-b"),
@@ -1087,8 +1076,6 @@ def test_in_progress_run_between_lows_fences_and_upgrades_on_completion(tmp_path
     ]
     serve(tmp_path / "fakegh", "repos/O/R/actions/workflows/ci.yml/runs?event=push&per_page=100&page=1",
           json.dumps({"total_count": len(runs_second), "workflow_runs": runs_second}))
-    for run in runs_second:
-        serve(tmp_path / "fakegh", f"repos/O/R/actions/runs/{run['id']}", json.dumps(run))
     serve(tmp_path / "fakegh", "repos/O/R/actions/runs/892/attempts/1/jobs",
           json.dumps({"total_count": 1, "jobs": [{"id": 9902, "name": MACOS_JOB, "status": "completed",
                                                   "conclusion": "success", "html_url": ""}]}))
@@ -1102,7 +1089,7 @@ def test_in_progress_run_between_lows_fences_and_upgrades_on_completion(tmp_path
     assert samples["892:1:macOS ARM64:ctest"]["type"] == "sample"
     assert "892:1::" not in samples  # the stale fence is retired once the run is collected
     state = json.loads((state_dir / "state.json").read_text())
-    assert state["pending"] == []
+    assert "pending" not in state
     events = [json.loads(line) for line in (state_dir / "events.jsonl").read_text().splitlines() if line]
     assert len(events) == 1 and events[0]["first_run"]["id"] == 891  # three consecutive lows now pair
 
@@ -1162,46 +1149,59 @@ def test_crash_leaves_a_named_warning_and_a_summary(tmp_path):
     assert "HARVEST CRASHED" in (state_dir / "summary.md").read_text()
 
 
-def test_transient_pending_reresolve_keeps_the_run_pending_without_collecting(tmp_path):
-    # The pending run is OUTSIDE the listing window (cursor moved past it) and
-    # its re-resolve fails with a transient 403: the placeholder must collect
-    # nothing, stay pending, and fence the timeline.
-    bin_path, env = setup_fake_gh(tmp_path, [], {}, {})
+def test_legacy_pending_entries_become_permanent_abandoned_gaps(tmp_path):
+    # A state written by the removed re-resolution subsystem pins runs the
+    # listing can no longer see (they sit behind the cursor). The discharge
+    # is a PERMANENT line-wide gap: the hole is recorded, never backfilled,
+    # and no identity is queried by id — ever.
+    bin_path, env = setup_fake_gh(tmp_path, [], {}, {})  # empty window: both entries are behind the cursor
     state_dir = tmp_path / "state"
     state_dir.mkdir()
     (state_dir / "samples.jsonl").write_text("")
     (state_dir / "events.jsonl").write_text("")
     (state_dir / "state.json").write_text(json.dumps({
         "schema": 1, "config": None,
-        "cursor": {"run_id": 911, "created_at": "2026-11-23T00:00:00Z", "run_number": 1},
-        "pending": [{"run_id": 911, "created_at": "2026-11-20T00:00:00Z", "run_number": 1, "branch": "main"}],
+        "cursor": {"run_id": 950, "created_at": "2026-11-21T00:00:00Z", "run_number": 950},
+        "pending": [
+            {"run_id": 911, "created_at": "2026-11-20T00:00:00Z", "run_number": 1, "branch": "main"},
+            {"run_id": 913, "created_at": "2026-11-19T00:00:00Z", "run_number": 2, "branch": "release/4.7.7"},
+        ],
     }))
-    key = norm_path("repos/O/R/actions/runs/911")
-    (tmp_path / "fakegh" / (key + ".txt.forbidden")).touch()
     process, state_dir = run_harvest(tmp_path, bin_path, env)
     assert process.returncode == 0
-    assert "::warning::[ctest-headroom] pending run 1 re-resolve failed" in process.stdout
+    assert "legacy pinned runs discharged as permanent run-abandoned gaps: 2" in process.stdout
     requested = (tmp_path / "requests.log").read_text()
-    assert "contents/test/duration_registry.json" not in requested  # no empty-ref registry fetch
+    assert not re.search(r"/actions/runs/\d+$", requested)  # no by-id identity query, ever
+    assert "contents/test/duration_registry.json" not in requested  # nothing signed on an unresolvable run
     samples = [json.loads(line) for line in (state_dir / "samples.jsonl").read_text().splitlines() if line]
-    assert {record["key"] for record in samples} == {"911:1::"}  # the continuity fence is recorded
-    assert samples[0]["reason"] == "run-pending"
+    abandoned = {record["key"]: record for record in samples if record.get("reason") == "run-abandoned"}
+    assert set(abandoned) == {"911:1::", "913:1::"}
+    assert all(record["type"] == "gap" and record["job"] == "" for record in abandoned.values())
+    assert all(not tracker.is_retryable_gap(record) for record in abandoned.values())  # permanent
+    assert {record["branch"] for record in abandoned.values()} == {"main", "release/4.7.7"}
     state = json.loads((state_dir / "state.json").read_text())
-    assert {entry["run_id"] for entry in state["pending"]} == {911}  # stays pending, nothing signed
+    assert "pending" not in state  # the queue is gone for good
+
+    # Idempotent: the second harvest re-derives the same ledger and fires nothing.
+    events_before = (state_dir / "events.jsonl").read_text()
+    second, state_dir = run_harvest(tmp_path, bin_path, env)
+    assert second.returncode == 0
+    assert "run-abandoned gaps" not in second.stdout  # discharge happened once
+    samples_after = [json.loads(line) for line in (state_dir / "samples.jsonl").read_text().splitlines() if line]
+    assert {record["key"] for record in samples_after} == {record["key"] for record in samples}
+    assert (state_dir / "events.jsonl").read_text() == events_before
 
 
-def test_listing_object_replaces_a_failed_reresolve_placeholder(tmp_path):
-    # The pending re-resolve fails transiently, but the window listing carries
-    # the run's fresh authoritative state: the placeholder must not shadow it —
-    # the run is harvested normally on the strength of the listing object.
+def test_legacy_pending_entry_still_listed_is_collected_not_abandoned(tmp_path):
+    # A pinned run the window listing still presents has a resolvable identity
+    # this round: it is collected normally — the listing is the only identity
+    # source, and no abandoned gap is written for it.
     run = make_run(931, 1, "main", "2026-11-20T00:00:00Z", "sha-a")
     bin_path, env = setup_fake_gh(
         tmp_path, [run],
         {931: {"jobs": {MACOS_JOB: (9931, "success")}, "logs": {9931: MAIN_GREEN_MACOS}}},
         {"sha-a": MAIN_REGISTRY},
     )
-    key = norm_path("repos/O/R/actions/runs/931")
-    (tmp_path / "fakegh" / (key + ".txt.forbidden")).touch()  # re-resolve 403s
     state_dir = tmp_path / "state"
     state_dir.mkdir()
     (state_dir / "samples.jsonl").write_text("")
@@ -1215,141 +1215,28 @@ def test_listing_object_replaces_a_failed_reresolve_placeholder(tmp_path):
     assert process.returncode == 0
     samples = [json.loads(line) for line in (state_dir / "samples.jsonl").read_text().splitlines() if line]
     assert any(record["key"] == "931:1:macOS ARM64:ctest" and record["type"] == "sample" for record in samples)
+    assert not [record for record in samples if record.get("reason") == "run-abandoned"]
     state = json.loads((state_dir / "state.json").read_text())
-    assert state["pending"] == []
+    assert "pending" not in state
 
 
-def test_pending_reresolution_is_bounded_and_backlogged_runs_fence(tmp_path):
-    # 30 pending entries, a tiny budget: identity queries must not eat the
-    # whole harvest — the cap stops them, the backlog note names the rest,
-    # every uncollected pending run carries its continuity fence, and the
-    # next harvest continues from there.
-    pending_runs = [make_run(940 + i, 940 + i, "main", f"2026-11-20T00:00:{i:02d}Z", f"sha-{i}")
-                    for i in range(30)]
-    bin_path, env = setup_fake_gh(tmp_path, pending_runs, {}, {})
-    # All 30 pending runs sit OUTSIDE the listing window (cursor past them):
-    # the listing is empty, so every identity must come from a bounded
-    # get_run re-resolve.
-    serve(tmp_path / "fakegh", "repos/O/R/actions/workflows/ci.yml/runs?event=push&per_page=100&page=1",
-          json.dumps({"total_count": 0, "workflow_runs": []}))
-    state_dir = tmp_path / "state"
-    state_dir.mkdir()
-    (state_dir / "samples.jsonl").write_text("")
-    (state_dir / "events.jsonl").write_text("")
-    (state_dir / "state.json").write_text(json.dumps({
-        "schema": 1, "config": None,
-        "cursor": {"run_id": 969, "created_at": "2026-11-20T00:00:29Z", "run_number": 969},
-        "pending": [{"run_id": r["id"], "created_at": r["created_at"], "run_number": r["id"], "branch": "main"}
-                    for r in pending_runs],
-    }))
-    process, state_dir = run_harvest(tmp_path, bin_path, env, extra_args=("--max-api-calls", "40"))
-    assert process.returncode == 0
-    requested = (tmp_path / "requests.log").read_text().splitlines()
-    rereresolve_calls = [call for call in requested if "/actions/runs/" in call and "/attempts/" not in call and "/logs" not in call]
-    assert len(rereresolve_calls) <= tracker.MAX_PENDING_RERESOLVE_PER_HARVEST
-    assert "Backlog" in process.stdout
-    samples = [json.loads(line) for line in (state_dir / "samples.jsonl").read_text().splitlines() if line]
-    fenced = {record["run_id"] for record in samples if record.get("reason") == "run-pending"}
-    assert len(fenced) >= 1  # un-collected pending runs are fenced, not silent holes
-
-
-def test_failed_pending_reresolve_consumes_quota_and_new_runs_still_harvest(tmp_path):
-    # 30 out-of-window pending entries whose identity queries ALL fail with a
-    # transient 403, plus two fresh fully-readable runs inside the listing
-    # window: the identity cap must count FAILURES too (the batch stops at
-    # 25 attempts), and the budget that remains must reach the new runs'
-    # evidence — the failure path may not starve collection.
-    pending_runs = [make_run(940 + i, 940 + i, "main", f"2026-11-18T00:00:{i:02d}Z", f"sha-p{i}")
-                    for i in range(30)]
-    new_runs = [
-        make_run(971, 2154, "main", "2026-11-22T00:00:00Z", "sha-n1"),
-        make_run(972, 2155, "main", "2026-11-22T06:00:00Z", "sha-n2"),
+def test_abandoned_gap_breaks_pairing_and_is_never_evidence():
+    # The discharged run's gap row fences the timeline at its position — two
+    # lows separated by it never pair — and the row itself is never a reading:
+    # a terminal discharge can only lose signal, never invent it, and a later
+    # retryable fence cannot downgrade it back to retryable.
+    records = [
+        make_sample(1, 600.0, 1.0, 560.0, created="2026-11-20T00:00:00Z"),  # low
+        make_gap(2, created="2026-11-21T00:00:00Z", job="", reason="run-abandoned"),
+        make_sample(3, 600.0, 1.0, 560.0, created="2026-11-22T00:00:00Z"),  # low
     ]
-    healthy = MAIN_GREEN_MACOS.replace("537.7", "480.0").replace("1.018", "1.000")  # h=14.29
-    bin_path, env = setup_fake_gh(
-        tmp_path, new_runs,
-        {
-            971: {"jobs": {MACOS_JOB: (9901, "success")}, "logs": {9901: MAIN_GREEN_MACOS}},
-            972: {"jobs": {MACOS_JOB: (9902, "success")}, "logs": {9902: healthy}},
-        },
-        {"sha-n1": MAIN_REGISTRY, "sha-n2": MAIN_REGISTRY},
-    )
-    for run in pending_runs:
-        key = norm_path(f"repos/O/R/actions/runs/{run['id']}")
-        (tmp_path / "fakegh" / (key + ".txt.forbidden")).touch()
-    # The listing window starts at the cursor; the 30 pending runs predate it,
-    # so every one of their identities must come from the bounded re-resolve.
-    serve(tmp_path / "fakegh", "repos/O/R/actions/workflows/ci.yml/runs?event=push&per_page=100&page=1",
-          json.dumps({"total_count": len(new_runs), "workflow_runs": new_runs}))
-    state_dir = tmp_path / "state"
-    state_dir.mkdir()
-    (state_dir / "samples.jsonl").write_text("")
-    (state_dir / "events.jsonl").write_text("")
-    (state_dir / "state.json").write_text(json.dumps({
-        "schema": 1, "config": None,
-        "cursor": {"run_id": 970, "created_at": "2026-11-21T00:00:00Z", "run_number": 970},
-        "pending": [{"run_id": r["id"], "created_at": r["created_at"], "run_number": r["id"], "branch": "main"}
-                    for r in pending_runs],
-    }))
-    process, state_dir = run_harvest(tmp_path, bin_path, env, extra_args=("--max-api-calls", "40"))
-    assert process.returncode == 0
-    requested = (tmp_path / "requests.log").read_text().splitlines()
-    identity = [call for call in requested if re.search(r"/actions/runs/\d+$", call)]
-    assert len(identity) <= tracker.MAX_PENDING_RERESOLVE_PER_HARVEST  # failures consume the cap too
-    samples = {json.loads(line)["key"] for line in (state_dir / "samples.jsonl").read_text().splitlines() if line}
-    assert "971:1:macOS ARM64:ctest" in samples and "972:1:macOS ARM64:ctest" in samples  # evidence progressed
-    assert (state_dir / "events.jsonl").read_text().strip() == ""  # single lows, nothing pairs
-
-
-def test_pending_reresolve_rotates_so_a_readable_backlog_run_progresses(tmp_path):
-    # 25 front pending entries fail identity re-resolve (retryable 403) and
-    # stay pending; the 26th entry is fully readable. A fixed oldest-first
-    # batch would leave it un-queried forever; the rotation stamp must hand
-    # it the identity query on the NEXT harvest, upgrading it from a fence
-    # into real evidence.
-    failing = [make_run(940 + i, 940 + i, "main", f"2026-11-18T00:00:{i:02d}Z", f"sha-p{i}")
-               for i in range(25)]
-    readable = make_run(966, 966, "main", "2026-11-19T00:00:00Z", "sha-ok")
-    bin_path, env = setup_fake_gh(
-        tmp_path, [readable],
-        {966: {"jobs": {MACOS_JOB: (9966, "success")}, "logs": {9966: MAIN_GREEN_MACOS}}},
-        {"sha-ok": MAIN_REGISTRY},
-    )
-    for run in failing:
-        key = norm_path(f"repos/O/R/actions/runs/{run['id']}")
-        (tmp_path / "fakegh" / (key + ".txt.forbidden")).touch()
-    serve(tmp_path / "fakegh", "repos/O/R/actions/workflows/ci.yml/runs?event=push&per_page=100&page=1",
-          json.dumps({"total_count": 0, "workflow_runs": []}))
-    state_dir = tmp_path / "state"
-    state_dir.mkdir()
-    (state_dir / "samples.jsonl").write_text("")
-    (state_dir / "events.jsonl").write_text("")
-    pending_all = failing + [readable]
-    (state_dir / "state.json").write_text(json.dumps({
-        "schema": 1, "config": None,
-        "cursor": {"run_id": 967, "created_at": "2026-11-19T06:00:00Z", "run_number": 967},
-        "pending": [{"run_id": r["id"], "created_at": r["created_at"], "run_number": r["id"], "branch": "main"}
-                    for r in pending_all],
-    }))
-
-    first, state_dir = run_harvest(tmp_path, bin_path, env)
-    assert first.returncode == 0
-    requested = (tmp_path / "requests.log").read_text()
-    assert "/actions/runs/966" not in requested  # the cap spent itself on the front failures
-    samples = {json.loads(line)["key"] for line in (state_dir / "samples.jsonl").read_text().splitlines() if line}
-    assert "966:1::" in samples  # fenced, not silent
-
-    second, state_dir = run_harvest(tmp_path, bin_path, env)
-    assert second.returncode == 0
-    requested = (tmp_path / "requests.log").read_text()
-    assert "/actions/runs/966" in requested  # the rotation reached the readable entry
-    assert "/actions/jobs/9966/logs" in requested  # and its evidence was collected
-    samples = {json.loads(line)["key"]: json.loads(line)
-               for line in (state_dir / "samples.jsonl").read_text().splitlines() if line}
-    assert samples["966:1:macOS ARM64:ctest"]["type"] == "sample"  # fence upgraded to evidence
-    assert "966:1::" not in samples  # the stale fence retired
-    state = json.loads((state_dir / "state.json").read_text())
-    assert 966 not in {entry["run_id"] for entry in state["pending"]}  # collected, no longer owed
+    result = walk(records)
+    assert result["fired"] == [] and result["streak"] == 1  # barrier, not evidence
+    abandoned = make_gap(9, created="2026-11-19T00:00:00Z", job="", reason="run-abandoned")
+    assert not tracker.is_retryable_gap(abandoned)
+    fence = make_gap(9, created="2026-11-19T00:00:00Z", job="", reason="run-unprocessed")
+    merged = tracker.merge_records([abandoned], [fence])
+    assert merged[0]["reason"] == "run-abandoned"  # permanence survives the merge
 
 
 def test_partial_published_state_fails_loudly(tmp_path):
@@ -1374,7 +1261,7 @@ def test_partial_published_state_fails_loudly(tmp_path):
     state_dir.mkdir()
     tracker.write_jsonl(state_dir / "samples.jsonl", [])
     tracker.write_jsonl(state_dir / "events.jsonl", [])
-    (state_dir / "state.json").write_text('{"schema": 1, "config": null, "cursor": null, "pending": []}')
+    (state_dir / "state.json").write_text('{"schema": 1, "config": null, "cursor": null}')
     (state_dir / "summary.md").write_text("local")
     ok, detail = tracker.publish_state(repo_root, str(bare), "gh-pages", state_dir)
     assert not ok
@@ -1467,11 +1354,12 @@ def test_cold_start_low_cancelled_low_never_fires(tmp_path):
     assert "::notice::" not in process.stdout
 
 
-def test_budget_death_mid_run_is_pinned_pending_and_upgraded_next_harvest(tmp_path):
-    # Harvest 1 dies of API budget mid-run-2: that run's retryable gap must
-    # NOT become final — the run stays pending, and harvest 2 re-collects the
-    # same attempt-1 evidence, upgrades the gap into a sample, and the streak
-    # recomputes across the previously interrupted boundary.
+def test_budget_death_fences_the_backlog_and_the_listing_recollects_it(tmp_path):
+    # Harvest 1 dies of API budget mid-run-2: no identity is carried across
+    # harvests — run 873 (never reached) is fenced with a retryable
+    # `run-unprocessed` line-wide gap so the timeline has no silent hole, and
+    # harvest 2 re-collects both runs from the window listing (the cursor
+    # never moved past them), upgrading the fences into samples.
     runs = [
         make_run(871, 1, "main", "2026-11-20T00:00:00Z", "sha-a"),
         make_run(872, 2, "main", "2026-11-21T00:00:00Z", "sha-b"),
@@ -1493,9 +1381,13 @@ def test_budget_death_mid_run_is_pinned_pending_and_upgraded_next_harvest(tmp_pa
                for line in (state_dir / "samples.jsonl").read_text().splitlines() if line}
     assert samples["872:1:macOS ARM64:ctest"]["type"] == "gap"
     assert "api-budget-exhausted" in samples["872:1:macOS ARM64:ctest"]["reason"]
+    assert samples["873:1::"]["reason"] == "run-unprocessed"  # the un-reached run is fenced, not silent
+    assert tracker.is_retryable_gap(samples["873:1::"])  # retryable: the listing re-presents it next round
     state = json.loads((state_dir / "state.json").read_text())
-    assert {entry["run_id"] for entry in state["pending"]} == {872, 873}
-    assert (state_dir / "events.jsonl").read_text().strip() == ""  # one low + retryable hole fires nothing
+    assert "pending" not in state  # no identity crosses the harvest boundary
+    assert (state_dir / "events.jsonl").read_text().strip() == ""  # one low + fenced hole fires nothing
+    requested = (tmp_path / "requests.log").read_text()
+    assert not re.search(r"/actions/runs/\d+$", requested)  # collection never resolves identity by id
 
     second, state_dir = run_harvest(tmp_path, bin_path, env)
     assert second.returncode == 0
@@ -1503,10 +1395,11 @@ def test_budget_death_mid_run_is_pinned_pending_and_upgraded_next_harvest(tmp_pa
                for line in (state_dir / "samples.jsonl").read_text().splitlines() if line}
     assert samples["872:1:macOS ARM64:ctest"]["type"] == "sample"  # the retryable gap upgraded
     assert samples["873:1:macOS ARM64:ctest"]["type"] == "sample"
+    assert "873:1::" not in samples  # the fence retired once the run was collected
     events = [json.loads(line) for line in (state_dir / "events.jsonl").read_text().splitlines() if line]
     assert len(events) == 1 and events[0]["first_run"]["id"] == 871
     state = json.loads((state_dir / "state.json").read_text())
-    assert state["pending"] == []  # everything collected; nothing owed
+    assert "pending" not in state
 
 
 def test_threshold_change_with_no_new_runs_clears_the_active_signal(tmp_path):
