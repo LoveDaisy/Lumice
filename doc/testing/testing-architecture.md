@@ -2396,6 +2396,68 @@ still has costs outside those phases, which is why the GitHub cohort remains the
 
 The gate's own cost is a few seconds for XML conversion and JSON checks; it adds no job or runner.
 
+**The headroom observation layer.** The gate judges single runs; the recurrence it cannot see is
+slow margin erosion — a phase whose normalized cost creeps from 90% to 99% of its budget stays
+green the whole way, then produces a burst of reds. Two observational instruments (no new judgment)
+were added for that; the gate's verdicts, constants, ruler and calibration semantics are untouched
+by both.
+
+1. *The checker's appended notice.* Every `machine_factor` phase with computable readings now also
+   prints one notice: `headroom <h>% (implied C <T>/<raw factor>; budget <B>s)`, where
+   `C = seconds / raw_factor` and `h = 100 × (1 − C/B)`. The raw factor is the one that was
+   **clamped out** when calibration trips — dividing by the clamped factor would fake up to ~9%
+   less implied C on the exact samples where accuracy matters most — and the denominator is the
+   registered `max_seconds`, not the clamped effective limit (`1 − C/B`, never `B/C − 1`).
+   Green and red phases alike carry the line; a missing or broken ruler fabricates nothing. The
+   notice is appended output only: it feeds no judgment here or in CI.
+2. *The cross-line tracker* (`scripts/ctest_headroom_tracker.py`, wired into `benchmark-summary`
+   behind `continue-on-error`). It reads the checker's printed lines out of the run logs of **push
+   runs on `main` and existing `release/*` branches** — the two-line-old v4 formats only (green
+   notice, machine-normalized red, clamp warning), so release coverage does not depend on item 1
+   being ported there — and recomputes the same `C`/`h` per run against the budget of **the run's
+   own registry snapshot** (read via the contents API at the run's `head_sha`; never the current
+   main constants). PR runs are a different population and never enter a push-run series. When a
+   `(line, job, phase)` series reads `h < 6%` — a provisional ~2σ placeholder pending the noise
+   decomposition task — on **≥ 2 consecutive samples**, the harvest emits one `::notice::`
+   annotation on the aggregation run's page and persists an event to `headroom/` on gh-pages; that
+   record plus the per-run samples/gaps is the owner's consumption entry. Nothing is opened or
+   retuned automatically: disposition stays with the owner (zero-sum audit or raise evaluation).
+
+Sequence rules, which are what make "2 consecutive" mean anything: one sample per (run, job, phase)
+from **attempt 1** (a rerun never replaces or extends the first result); log readings are
+displayed-precision approximations, kept next to their original lines, and a reading whose rounding
+interval straddles the threshold is recorded *threshold-uncertain*; a **gap** (cancelled run,
+expired log, unreadable snapshot, no parsable reading) breaks continuity in both directions — it
+neither fakes health nor accumulates a streak, so low/gap/low never pairs; a budget/ruler/clamp
+change opens a **new calibration segment** and no streak spans one; a threshold change resets
+continuity under a new config identity rather than carrying an old signal silently. The two lines
+are independent series: release samples come from release branches' own snapshots. The release
+lines' population is the **extant branch set**, read fresh every harvest: a deleted release
+branch's history stays in the ledger but leaves the population and never fires or annotates again;
+a failed branch read defers release-line signals with a named warning and is never read as "all
+retired".
+
+**v1 boundary (no backfill, by design).** The tracker consumes only the identities the run listing
+presents in the same round; it never resolves a run's identity by id. A run the budget never
+reached is fenced with a retryable `run-unprocessed` line-wide gap and re-collected from the
+listing while it stays in the window; a run pinned by the pre-shrink pending queue is discharged
+once as a **permanent** `run-abandoned` gap — recorded, never backfilled. Every missing-evidence
+case therefore errs toward missing signal, never toward fabricated health. One accepted
+limitation follows the same direction: whole-run availability is judged by the run's **latest**
+attempt conclusion, so an attempt-2 cancellation masks an attempt-1 reading a stricter
+attempt-1 lookup would have kept. Re-introducing bounded identity re-resolution — readable-first
+collection, then a pending phase with its own request *and* time budget, filtered by the extant
+population — is an explicit future task, not an extension of this one; this task's six-round
+review trend bundle is the design risk map for it.
+
+Known costs, disclosed: release runs are harvested when the next `main` push aggregates — a quiet
+main line delays release visibility and no daily reminder exists (the aggregation rides the
+existing `benchmark-summary` trigger on purpose; a scheduled second trigger was rejected in plan
+review). A failed harvest or publish prints `::warning::` and is never a red condition; its state
+directory uploads as an `if: always()` artifact and the next harvest re-collects from the published
+cursor. The published state replaces only the `headroom/` directory on gh-pages; benchmark history
+under `bench/` is untouched.
+
 ### §7.8 The one-run cold-build exception
 
 This exception exists for one measured failure shape: a pull request's compiler cache missed, the

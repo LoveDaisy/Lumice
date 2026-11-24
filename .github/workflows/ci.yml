@@ -2182,16 +2182,59 @@ jobs:
 
   # The `push` guard STAYS here, and now reads as "main only" — which is the
   # intent: this job publishes the benchmark history to gh-pages, and a PR must
-  # not write to it.
+  # not write to it. `build` sits in `needs` for the headroom harvest below: it
+  # must read the current run's build matrix, whose duration-check steps have
+  # only run once every build leg is done.
   benchmark-summary:
     if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [bench-ipo]
+    needs: [bench-ipo, build]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
       actions: read
     steps:
       - uses: actions/checkout@v7
+
+      # Ctest headroom harvest — observation only, never a gate. Reads the
+      # duration checker's machine-factor lines out of this repository's run
+      # logs (push runs on main + release/*), classifies each against the
+      # budget of the run's own registry snapshot, persists samples/gaps/
+      # signals to gh-pages `headroom/`, and emits one `::notice::` per active
+      # low-headroom series — a real Actions annotation, because this runs
+      # inside a hosted-runner step (a local machine printing the same prefix
+      # would reach no consumer). `continue-on-error` is the whole point: a
+      # failed harvest is a `::warning::` plus the artifact below, never a new
+      # red condition, and it cannot alter the duration or benchmark verdicts.
+      # The harvest reads completed jobs of the still-running workflow rather
+      # than waiting for whole-run completion, so `needs` here creates no
+      # self-wait deadlock.
+      - name: Collect ctest headroom (observation only)
+        id: headroom_collect
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 scripts/ctest_headroom_tracker.py harvest \
+            --repo "${{ github.repository }}" \
+            --state-dir "${{ github.workspace }}/headroom-state" \
+            --current-run "${{ github.run_id }}" \
+            --emit-annotation \
+            --job-summary "$GITHUB_STEP_SUMMARY" \
+            --publish
+
+      # Non-blocking like the collect step above: `if: always()` alone only
+      # makes the upload ATTEMPT run — an upload failure would still turn the
+      # job red and skip the benchmark steps behind it. The evidence copy is
+      # a convenience, never a gate.
+      - name: Upload headroom evidence
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v7
+        with:
+          name: headroom-state
+          path: headroom-state
+          retention-days: 30
+          if-no-files-found: ignore
 
       - name: Download benchmark artifacts
         uses: actions/download-artifact@v8
