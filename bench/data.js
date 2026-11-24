@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795527809467,
+  "lastUpdate": 1795527812571,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9620,50 +9620,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "31fd56b1341b4ec0624cb56ae875d26f0d037089",
-          "message": "docs: slim root AGENTS.md to constitution + route map (983→396 lines) (#515)\n\n* docs(test): sink test-tree operating rules into test/AGENTS.md\n\nStep 2 (M1) of the AGENTS.md slimming: the Testing section's operational\ndetail (three-platform matrix, placement gates, isolation discipline,\nshared-library plumbing, E2E layout, the full reference-regeneration\nworkflow) moves to test/AGENTS.md; src/raypath/AGENTS.md states the module\nsurface. Root keeps the test-scope table, judgment discipline, gate\nsummaries and the duration-registry paragraph with the cold-build contract\nstrings verbatim. Pointers that named AGENTS.md sections now name the new\nhomes (checkers, CONTRIBUTING, e2e README, testing-architecture en/zh).\n\nCo-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>\n\n* docs(index): recycle AGENTS.md doc-index summaries into the docs themselves\n\nStep 3 (M2): the Documentation Index's 38 entries collapse to one/two-line\ntrigger hooks — the docs are the sole content authority. Claim-diff against\nthe doc bodies found only three real gaps, now ported: the v4.7.0\nfilter-symmetry baseline anchor (raypath-symmetry en+zh), the CUDA TU\ncompile guard script and its gtest-zero-match false-green rationale\n(gpu-remote-cuda-build-testing), and the GPU implementation-discipline\nblock with the legacy PropagateSlab reference (seam-design header; the\n#295 incident narrative stays in gpu-route-history). The index also drops\nstale claims the docs had already superseded (overlay blueprint→as-built,\nparity 10/10→30/30).\n\nCo-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>\n\n* docs(root): compress AGENTS.md to the constitution + route-map shape\n\nStep 4 (M3): root drops from 983 to 395 lines. Code Structure one-liners\nper directory (raypath/test rules point at the sub-AGENTS files); Style\nkeeps every rule statement and checker-referenced sentence, compressing\nonly narrative blocks (launcher history, env incident, naming sub-bullets);\nthe KB section keeps the retrieval discipline and the completeness-claim\nrule with the PR #261 evidence, compressing the story; the Testing\nsection's scope table and judgment discipline stay verbatim. Line count is\nthe target, not the judge: no checker-referenced or route-bearing sentence\nwas removed to hit it.\n\nCo-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>\n\n* docs(test): reconcile duration-registry summaries with registry v3 and fix the PR-261 pointer\n\nRebase onto main (a0bce739, PR #514) moved the duration registry to v3: the\nroot AGENTS.md summary still said \"v2 / two quantities\", which no checker\nwould have caught after merge. Root side now shrinks to the pytest-pinned\nstrings plus pointers (operating rules single-sourced in test/AGENTS.md,\nrewritten for v3 semantics: per-miss adaptive ruler + absolute backstop).\nThe KB completeness-rule paragraph no longer claims \"PR #261 has the full\nnarrative\" (falsified: the PR description does not carry it) and inlines the\nfour supporting measurements instead. The windows physical-desktop line moves\nout of root (test/AGENTS.md already holds it).\n\nCo-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>\n\n---------\n\nCo-authored-by: Claude Sonnet 5 <noreply@anthropic.com>",
-          "timestamp": "2026-10-19T11:25:46+08:00",
-          "tree_id": "8c68466a2ee7859b6f3cbfb33be0938673d9e9c4",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/31fd56b1341b4ec0624cb56ae875d26f0d037089"
-        },
-        "date": 1792380555223,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 89.8,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 99.9,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 98.5,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 93.5,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "5d28c6f252fce9b6b55e845b47eaf5cc77815f6e",
           "message": "Merge pull request #517 from LoveDaisy/chore/li-parity-fixture-lfs\n\nchore(test): track li-parity fixtures in Git LFS",
           "timestamp": "2026-10-19T16:00:23+08:00",
@@ -14003,6 +13959,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 94,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "73891fd38b1448ff47bc0a3976104785c9a48413",
+          "message": "Merge pull request #646 from LoveDaisy/feat/ctest-headroom-tracker\n\nfeat(scripts): ctest headroom tracker — implied-C/headroom observation with streak signals",
+          "timestamp": "2026-11-24T21:22:44+08:00",
+          "tree_id": "3abfec62a61fd7542d9d5f18868b4bebfbea82c6",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/73891fd38b1448ff47bc0a3976104785c9a48413"
+        },
+        "date": 1795527811937,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 83.1,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 100,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 97.9,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 93.2,
             "unit": "%"
           }
         ]
