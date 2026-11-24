@@ -129,7 +129,7 @@
 |---|----------|------|------|
 | ① 单例文档默认 | `FieldTier::kStructSoft` 中的单例字段（`sun` / `sim` / `renderer`） | 进覆盖文件的 GuiState 半区 |
 | ② 预设库 | 内置 axis 预设表每个可存储行的全三轴 × type/mean/std 九个面（2026-11-15 起含 Random；都不是 `GuiState` 的顶层字段，落地时机与运行时形态见 8.7） | 进覆盖文件独立的 `presets` 子树，不占用 GuiState 半区的键名空间 |
-| ③ app 偏好 | `use_gpu_backend` / `worker_count`（服务器构造属性）、`entry_edit_preview_style`（纯客户端启动输入）；另有不在 GuiState 的 `ui_scale_multiplier` | 均存于覆盖文件独立的 `app` 根键，不进文档；三个 GuiState 字段各由 tier 行的 `app_preference_eligible` 登记资格，经具名读写函数加载。日志和面板折叠等其他未序列化 view 字段仍不解禁。后端/worker 在新建文档时生效，UI scale 即时应用，预览样式只在进程启动时播种一次；共同点是用户的应用偏好而不是晕的场景数据，不要求共同的应用时机。 |
+| ③ app 偏好 | `use_gpu_backend` / `worker_count`（服务器构造属性）、`entry_edit_preview_style`（纯客户端启动输入）；另有不在 GuiState 的 `ui_scale_multiplier` 与 `edit_entry_staged_mode`（Edit Entry 模式偏好，2026-11-24 起标弃用，计划 5.0.0 移除） | 均存于覆盖文件独立的 `app` 根键，不进文档；三个 GuiState 字段各由 tier 行的 `app_preference_eligible` 登记资格，经具名读写函数加载；两个无 GuiState 字段的成员持有进程内 holder，文档替换路径在结构上够不到它们。日志和面板折叠等其他未序列化 view 字段仍不解禁。后端/worker 在新建文档时生效，UI scale 即时应用，预览样式只在进程启动时播种一次，编辑模式偏好**成功 Save 后发布、下一次新开 Edit Entry 时采纳**（已打开的会话不转换，见 §11.4）；共同点是用户的应用偏好而不是晕的场景数据，不要求共同的应用时机。 |
 | ④ 集合区 | `FieldTier::kStructHard` 的成员，以及 `kStructSoft` 里被 `kCollectionFields`（`user_defaults.hpp:64`）标记的容器：晶体 / layer / filter / 染色规则 | 排除。这些容器在序列化后的 key path 里携带文档局部下标（如某个数组的第几项），脱离具体文档后这个下标没有意义 |
 
 ### 8.2 资格判定：从档位表派生，不手写第二份清单
@@ -561,11 +561,12 @@ GUI 的网格由 overlay 状态 + FOV 派生，核心文档的逐行角度表在
   `c_ours != c_base` 保留 ours（也是挡住「上一帧自己 push 的行回流成第二份」的那条），否则按差值增删。空白行是编辑器
   affordance 不是行：不参与比对；缓冲区**只剩**空白行而 pool 来了行，空白行让位。新行 uid 只从递增计数器取、绝不
   回收——被删掉的空白行的 `InputText` 可能仍是活动控件，复用其 id 会继承它的编辑态。
-- **baseline 取自 pool，不取自缓冲区**（`SyncBaselineFromPool`，开窗 / Immediate→Staged 切换 / Unlink 三处）：二者恰在
+- **baseline 取自 pool，不取自缓冲区**（`SyncBaselineFromPool`，开窗 / Unlink 两处）：二者恰在
   要紧处不同——被提交闸拒绝的半行在缓冲区不在 pool，从缓冲区拍的 baseline 会让下一帧 pull 把它当「外部删除」抹掉。
   `IsFilterDirty` 因此改比「去空白行后的行集」vs baseline（pool 本身无空白行），副作用是「用户加一个空白行」不再标脏，
   这更正确（提交结果相同）。`crystal_dirty` 改用 `CrystalTabFieldsEqual`，排除 `CrystalConfig` 里从未被 Axis 面板
   使用的死轴字段 `zenith/azimuth/roll`——整体 `operator==` 会把 pool 侧的活轴与缓冲区侧的死拷贝比出假脏。
+  （2026-11-24 勘误：原三处中的「Immediate→Staged 切换」随窗内模式复选框一起退役，现仅开窗与 Unlink 两处。）
 - **ImGui 活动编辑态保护（reload-if-active）**：`InputText` 在活动期间持有一份私有文本副本，且**该副本优先于调用方
   传入的缓冲区**——每帧二者不同时，控件把私有副本写回缓冲区（`imgui_widgets.cpp` `InputTextEx`：「as soon as the
   input box is active, the in-widget value gets priority over any underlying modification of the input buffer」）；
@@ -621,6 +622,26 @@ S1–S8 是立项时的种子，S9 / S10 是 S3 / S4 两个待核实分支核实
 - **重新评估条件**（任一成立即重提评审并考虑加门禁）：(a) `src/gui/` 新增了视图侧副本或位置引用而**没有**在
   §11.4 追加裁定、code review 放过、直到用户报告缺陷才发现——证明「文档 + review 纪律」不够；(b) 出现第二次
   「同类缺陷合入 main 后才被发现」的实例（不论是否与 S1/S9/S10 同源）。
+
+### 11.6 Edit Entry 模式的三个生命期（2026-11-24，Staged 退役过渡）
+
+窗内 `Immediate` 复选框退役后（827），编辑模式有三个互不同步的生命期，任何「保存直接写当前会话」的接线都是缺陷：
+
+| 生命期 | 承载者 | 写者 | 读者 |
+|---|---|---|---|
+| Settings 工作副本 | `g_copy_doc` 的 `app.edit_entry_staged_mode` | 偏好复选框（不发布） | 偏好行的勾选态与 Save 预览 |
+| 已保存偏好（含进程内 holder） | 覆盖文件 `app` 根键 + `user_defaults.cpp` 的 holder（启动 `LoadEditEntryStagedModeAtStartup` 播种，`CommitCopy` 成功写盘后发布） | 仅成功 Save | 开窗边界 |
+| 当前会话模式 | `GuiState::modal_immediate_mode`（T-session，从不持久化） | 仅 `OpenEditModal` 的采纳（`g_active_modal != kOpen` 时读 holder） | 分派、每帧提交、手势门禁 |
+
+采纳只发生在真实的关闭→开窗边界：跨卡切换 / Duplicate 重绑 / 参数跟随不重读；pick 完成重开是先真关闭再真重开，
+按真边界采纳。偏好是 store-owned（`app` 命名空间第 5 成员，无 GuiState 字段、无 tier 行）——文档替换路径整体重置
+GuiState（JSON import 显式丢弃个人默认），GuiState 承载会让文档操作改写用户选择；`kIneligibleScalarResetFieldCount`
+因此保持 3。测试 harness 的基线是 factory（Immediate），经 `ResetUserDefaultsChannels` / `ResetTestState` /
+`ScopedPopups` 三处钉回；gui_test 不做启动加载（visual 隔离纪律）。AC2 的跨进程持久化由真实应用冒烟承担
+（2026-11-24 已执行，隔离 `--user-config`：进程 1 真机 Settings→Save Staged→Cmd+Q 正常退出 exit 0；进程 2 读同一
+配置启动，开窗即 Staged modal；同进程内再存 Immediate 后不重启开窗即普通窗口；两进程退出码与截图均已存档）；
+suite 内的 loader 单测与 Save gui_test 用例是这两半的常驻回归见证，不是跨进程证明本身的替代品——
+gui_test 刻意不跑生产启动加载，它们抓不住 main 漏调 loader 这类接线缺陷。
 
 ---
 

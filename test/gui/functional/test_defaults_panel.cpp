@@ -1430,6 +1430,152 @@ void RegisterDefaultsPanelTests(ImGuiTestEngine* engine) {
   }
 
   {
+    // §app's fifth control, and the one whose application time is its own: a successful Save
+    // publishes the preference, and the NEXT NEWLY OPENED Edit Entry adopts it — an editor already
+    // open does not convert (that boundary lives in the case below), and an unsaved edit reaches
+    // nothing (the discard shape is the shared case above; this one still walks the chain end to
+    // end because the publication half — holder, not only file — is this control's own contract).
+    //
+    // The editor open is a real card click and the modal status is ImGui's own popup stack, not
+    // the mode field: what AC1/AC4 ask for is the window the user gets, not a boolean.
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "defaults_panel",
+                                    "the_staged_mode_preference_is_stored_published_and_reaches_the_next_editor");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ScopedPanel panel(ctx, "panel_app_staged_mode");
+      panel.OpenOn(gui::DefaultsPanelSection::kSettings);
+
+      const char* kStagedCheckbox = "**/###defaults_app_staged_mode";
+      IM_CHECK(ctx->ItemExists(kStagedCheckbox));
+      IM_CHECK(!ctx->ItemIsChecked(kStagedCheckbox));
+      IM_CHECK(!gui::GetEditEntryStagedModePreference());  // factory: Immediate
+      // The deprecation statement is visible text, not a tooltip-only fact; its pixels are pinned
+      // by the defaults_panel_layout references (a TextWrapped item cannot be ref-matched by a
+      // substring of itself, and the visible-text claim is what a reference actually proves).
+
+      ctx->ItemClick(kStagedCheckbox);
+      ctx->Yield(2);
+      IM_CHECK(ctx->ItemIsChecked(kStagedCheckbox));
+      // Still an editor: no file, no publication, and the NEXT editor of this session is still
+      // Immediate (the checkbox alone must not publish).
+      IM_CHECK(!ReadOverlayFile(panel.dir()).contains("app"));
+      IM_CHECK(!gui::GetEditEntryStagedModePreference());
+
+      SaveDefaultsPanel(ctx);
+      const json saved = ReadOverlayFile(panel.dir());
+      IM_CHECK(saved["app"].contains("edit_entry_staged_mode"));
+      IM_CHECK_EQ(saved["app"]["edit_entry_staged_mode"].get<bool>(), true);
+      IM_CHECK(!saved.contains("edit_entry_staged_mode"));  // never in the document half
+      // Save is the publication point: the holder the open boundary reads flipped here.
+      IM_CHECK(gui::GetEditEntryStagedModePreference());
+
+      panel.Close();
+      // A real close→open boundary: the editor adopts the published preference.
+      OpenCardEditor(ctx, 0, kCrystalTabRef);
+      ctx->Yield(2);
+      IM_CHECK(ImGui::GetTopMostPopupModal() != nullptr);
+      IM_CHECK_STR_EQ(ImGui::GetTopMostPopupModal()->Name, "Edit Entry");
+      // AC4: the window states its mode in visible text. Text items carry no entry in the test
+      // engine's item registry (imgui_widgets.cpp TextEx has no item-info hook), so the badge is
+      // read the way ObserveSettingsTooltip reads a tooltip: log the rendered frame, search it.
+      ImGui::LogToBuffer(0);
+      GImGui->LogWindow = nullptr;
+      ctx->Yield();
+      const std::string rendered = GImGui->LogBuffer.c_str();
+      ImGui::LogFinish();
+      IM_CHECK(rendered.find("Staged (deprecated)") != std::string::npos);
+      ctx->ItemClick("**/" ICON_FA_XMARK " Cancel##edit_modal");
+      ctx->Yield(2);
+
+      // Unchecking is an edit like any other: stored on Save, published on Save.
+      panel.OpenOn(gui::DefaultsPanelSection::kSettings);
+      ctx->ItemClick(kStagedCheckbox);
+      ctx->Yield(2);
+      SaveDefaultsPanel(ctx);
+      IM_CHECK_EQ(ReadOverlayFile(panel.dir())["app"]["edit_entry_staged_mode"].get<bool>(), false);
+      IM_CHECK(!gui::GetEditEntryStagedModePreference());
+      panel.Close();
+      OpenCardEditor(ctx, 0, kCrystalTabRef);
+      ctx->Yield(2);
+      IM_CHECK(ImGui::GetTopMostPopupModal() == nullptr);
+      IM_CHECK(ctx->ItemExists("**/###crystal_tab"));
+      ctx->ItemClick("**/Close##edit_modal");
+      ctx->Yield(2);
+    };
+  }
+
+  {
+    // AC3's boundary: the mode belongs to the SESSION. A Save that publishes Staged must not
+    // convert the editor that is already open, and a real cross-card switch must not re-adopt
+    // either — both would read the preference where only a genuine close→open boundary may.
+    //
+    // The card switch is a REAL A→B gesture (the entry-leak cases' shape): the Immediate editor is
+    // parked at the right edge so card 1 stays clickable, the click really moves the binding A→B
+    // (asserted on the target), and a legal edit after the switch still applies live — the plan's
+    // AC3 row, not a same-entry function call that would pass even from a closed editor.
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "defaults_panel", "saving_the_staged_mode_leaves_the_open_editor_alone");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ScopedPanel panel(ctx, "panel_app_staged_session");
+      panel.OpenOn(gui::DefaultsPanelSection::kSettings);
+      panel.Close();
+
+      // Card 1 on a DISTINCT crystal, so "rebound to B" is a strong claim (the entry-leak cases'
+      // convention: a shared pool slot would propagate the edit and mask the claim).
+      gui::CrystalConfig second;
+      second.height = 5.0f;
+      gui::EntryCard e_second;
+      e_second.crystal_id = static_cast<int>(gui::g_state.crystals.size());
+      gui::g_state.crystals.push_back(second);
+      gui::g_state.layers[0].entries.push_back(e_second);
+      ctx->Yield(2);
+
+      OpenCardEditor(ctx, 0, kCrystalTabRef);
+      ctx->Yield(2);
+      IM_CHECK(ImGui::GetTopMostPopupModal() == nullptr);  // opened Immediate (factory)
+      IM_CHECK(gui::g_state.modal_immediate_mode);
+      if (ImGuiWindow* w = ctx->GetWindowByRef("Edit Entry")) {
+        ctx->WindowMove("Edit Entry", ImVec2(ImGui::GetIO().DisplaySize.x - w->Size.x, 0.0f));
+        ctx->Yield(2);
+      }
+
+      // The Settings modal sits above the plain editor window, so the click chain is the real one.
+      panel.OpenOn(gui::DefaultsPanelSection::kSettings);
+      ctx->ItemClick("**/###defaults_app_staged_mode");
+      ctx->Yield(2);
+      SaveDefaultsPanel(ctx);
+      panel.Close();
+
+      // The open session did not convert.
+      IM_CHECK(ImGui::GetTopMostPopupModal() == nullptr);
+      IM_CHECK(ctx->ItemExists("**/###crystal_tab"));
+      IM_CHECK(gui::g_state.modal_immediate_mode);
+
+      // Real cross-card gesture: click card 1's blank spot; the binding must move A→B without
+      // re-adopting the preference, and a legal edit must still apply live on B.
+      ctx->MouseMoveToPos(CardBlankSpot(1));
+      ctx->MouseClick(ImGuiMouseButton_Left);
+      ctx->Yield(4);
+      IM_CHECK(gui::IsEditModalOpen());
+      IM_CHECK_EQ(gui::GetEditModalTarget().entry_idx, 1);  // the switch really happened
+      IM_CHECK(ImGui::GetTopMostPopupModal() == nullptr);   // ...and did not re-adopt into a modal
+      IM_CHECK(gui::g_state.modal_immediate_mode);
+      const int cid_b = gui::g_state.layers[0].entries[1].crystal_id;
+      ctx->ItemInputValue("**/##Height##modal_cr_input", 6.5f);
+      ctx->Yield(2);
+      IM_CHECK_EQ(gui::g_state.crystals[cid_b].height.center, 6.5f);  // live commit on B survived
+
+      // Only a genuine close→open boundary adopts.
+      ctx->ItemClick("**/Close##edit_modal");
+      ctx->Yield(2);
+      OpenCardEditor(ctx, 0, kCrystalTabRef);
+      ctx->Yield(2);
+      IM_CHECK(ImGui::GetTopMostPopupModal() != nullptr);
+      IM_CHECK_STR_EQ(ImGui::GetTopMostPopupModal()->Name, "Edit Entry");
+      ctx->ItemClick("**/" ICON_FA_XMARK " Cancel##edit_modal");
+      ctx->Yield(2);
+    };
+  }
+
+  {
     // Closing without saving discards this row like every other edit. Stated for §app on its own
     // because its control writes g_copy_doc DIRECTLY (as §1's preset cells do) instead of going
     // through the checkbox set §2's rows use — the two paths reach the copy differently and only
@@ -1637,10 +1783,10 @@ void RegisterDefaultsPanelTests(ImGuiTestEngine* engine) {
       IM_CHECK(shaded != g_capture.pixels);  // Actual modal FBO, not a second test renderer.
       ctx->ItemClick("**/Reset View##modal");
       IM_CHECK_EQ(gui::g_crystal_style, 0);
-      ctx->ItemClick("**/" ICON_FA_XMARK " Cancel##edit_modal");
+      ctx->ItemClick("**/Close##edit_modal");  // factory default is Immediate: Close is this exit
       OpenCardEditor(ctx, 0, kCrystalTabRef);
       IM_CHECK_EQ(gui::g_crystal_style, 0);
-      ctx->ItemClick("**/" ICON_FA_XMARK " Cancel##edit_modal");
+      ctx->ItemClick("**/Close##edit_modal");  // factory default is Immediate: Close is this exit
       gui::DoNew();
       IM_CHECK_EQ(gui::g_crystal_style, 0);
       const auto lmc_path = panel.dir() / "preview_session.lmc";
@@ -1697,7 +1843,7 @@ void RegisterDefaultsPanelTests(ImGuiTestEngine* engine) {
           break;
         }
         for (const char* ref : { "Settings/###defaults_app_preview_style", "**/###defaults_app_preview_factory",
-                                 "**/###defaults_save", "**/###defaults_close" }) {
+                                 "**/###defaults_app_staged_mode", "**/###defaults_save", "**/###defaults_close" }) {
           const auto item = ctx->ItemInfo(ref);
           if (item.ID == 0 || !win->InnerRect.Contains(item.RectFull) ||
               item.RectFull.GetHeight() != item.RectClipped.GetHeight()) {
@@ -3482,6 +3628,11 @@ void RegisterDefaultsPanelTests(ImGuiTestEngine* engine) {
       ctx->Yield(3);
       SaveDefaultsPanel(ctx);
       panel.Close();
+      // The editor's exit is OK — a Staged-only button — so the case publishes Staged. AFTER the
+      // Save, on purpose: a successful Save publishes the holder from the document just written,
+      // and that document carries no mode key (the fixture started from an empty file), so a
+      // premise set earlier would be overwritten here — exactly what a user's Save does.
+      gui::SetEditEntryStagedModePreference(true);
 
       gui::EditRequest req{ gui::EditTarget::kAxis, /*layer_idx=*/0, /*entry_idx=*/0 };
       gui::OpenEditModal(req, gui::g_state);
@@ -3518,6 +3669,9 @@ void RegisterDefaultsPanelTests(ImGuiTestEngine* engine) {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "defaults_panel", "the_axis_modal_never_writes_back_to_the_library");
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ScopedPanel panel(ctx, "panel_modal_no_writeback");
+      // The editor's exit is OK — a Staged-only button — so the case publishes Staged (after the
+      // fixture, whose constructor resets the holder to the factory value).
+      gui::SetEditEntryStagedModePreference(true);
 
       // A Gauss zenith, so the Zenith row's second control is the Std input (a uniform row shows a
       // Range control instead). Seeded before the modal opens, so the buffers pull it.

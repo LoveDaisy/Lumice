@@ -33,6 +33,7 @@
 #include "gui/raypath_segments.hpp"
 #include "gui/sim_state_rules.hpp"
 #include "gui/theme.hpp"
+#include "gui/user_defaults.hpp"  // SetEditEntryStagedModePreference — the Staged premise publishes through the holder
 #include "imgui_internal.h"
 #include "include/lumice_base.h"
 #include "include/lumice_engine.h"
@@ -665,7 +666,6 @@ bool ExcludeWhileTheImmediateEditorIsOpen(ImGuiTestContext* ctx, bool start_with
   IM_CHECK_RETV(gui::g_state.filters.size() == (start_with_out_filter ? 1u : 0u), false);
 
   const ScopedPopups popup_guard(ctx);
-  gui::g_state.modal_immediate_mode = true;
   const gui::EditRequest req{ gui::EditTarget::kFilter, 0, 0 };
   gui::OpenEditModal(req, gui::g_state);
   ctx->Yield(4);
@@ -733,7 +733,6 @@ bool ExcludeWhileTheImmediateEditorIsOpen(ImGuiTestContext* ctx, bool start_with
 
   ctx->ItemClick("**/Close##edit_modal");
   ctx->Yield(2);
-  gui::g_state.modal_immediate_mode = false;
   return true;
 }
 
@@ -909,7 +908,6 @@ bool IncludeAgainWhileTheImmediateEditorIsOpen(ImGuiTestContext* ctx) {
   ctx->SetRef("");
 
   const ScopedPopups popup_guard(ctx);
-  gui::g_state.modal_immediate_mode = true;
   const gui::EditRequest req{ gui::EditTarget::kFilter, 0, 0 };
   gui::OpenEditModal(req, gui::g_state);
   ctx->Yield(4);
@@ -961,7 +959,6 @@ bool IncludeAgainWhileTheImmediateEditorIsOpen(ImGuiTestContext* ctx) {
 
   ctx->ItemClick("**/Close##edit_modal");
   ctx->Yield(2);
-  gui::g_state.modal_immediate_mode = false;
   return true;
 }
 
@@ -1649,7 +1646,7 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
 
       // Opened through OpenEditModal rather than by a card click, the way test_entry_management
       // does: the click's own path is not what this case is about, the window's presence is.
-      gui::g_state.modal_immediate_mode = false;  // staged: a real modal, on the popup stack
+      gui::SetEditEntryStagedModePreference(true);  // staged: a real modal, on the popup stack
       const gui::EditRequest req{ gui::EditTarget::kCrystal, 0, 0 };
       gui::OpenEditModal(req, gui::g_state);
       ctx->Yield(4);

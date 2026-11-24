@@ -37,17 +37,26 @@
 #include "gui/file_io.hpp"           // SaveLmcFile / LoadLmcFile
 #include "gui/gui_state.hpp"
 #include "gui/raypath_segments.hpp"  // ParseSummandText / FormatSopExpansionPreview — the preview's own spelling
+#include "gui/user_defaults.hpp"     // SetEditEntryStagedModePreference — OpenFilterModal's mode premise
 #include "test_gui_shared.hpp"
 
 namespace {
 
 const char* const kOk = "**/" ICON_FA_CHECK " OK##edit_modal";
 const char* const kCancel = "**/" ICON_FA_XMARK " Cancel##edit_modal";
+const char* const kClose = "**/Close##edit_modal";  // Immediate's single exit button
 const char* const kAddRow = "**/+ Add OR row##summand_add";
 
 // Open the entry's Edit modal on its Filter tab. Four frames because the tab's SetSelected only
 // takes effect on the frame after the popup opens.
-void OpenFilterModal(ImGuiTestContext* ctx) {
+//
+// This suite's subject is the Staged transaction — the OK gate, the Cancel discards, the
+// keyboard-row session that OK closes over — and OK/Cancel exist only in Staged, so opening
+// through here publishes the Staged preference by default. The two Immediate-commit cases pass
+// `staged=false` (the factory preference) and are the suite's only Close-button callers. No case
+// pins the session field: every open adopts the holder at the close→open boundary.
+void OpenFilterModal(ImGuiTestContext* ctx, bool staged = true) {
+  gui::SetEditEntryStagedModePreference(staged);
   OpenCardEditor(ctx, 0, kFilterTabRef);
   ctx->Yield(4);
 }
@@ -1389,7 +1398,9 @@ void RegisterFilterEditorTests(ImGuiTestEngine* engine) {
       IM_CHECK(!ctx->ItemExists("**/##row_text_1"));
       IM_CHECK_STR_EQ(RowTexts()[0].c_str(), "1-2");
 
-      ctx->ItemClick(kCancel);
+      // Leg A opens through OpenCardEditor on the factory preference (Immediate), so its exit is
+      // that mode's button; the crossing contract it asserts is mode-independent.
+      ctx->ItemClick(kClose);
       ctx->Yield(2);
     };
   }
@@ -2032,11 +2043,7 @@ void RegisterFilterEditorTests(ImGuiTestEngine* engine) {
       ctx->Yield();
       IM_CHECK_EQ(gui::g_state.display_epoch_floor, 0u);  // guard: the floor has not moved yet
 
-      OpenFilterModal(ctx);
-      ctx->ItemClick("**/Immediate##edit_modal");
-      ctx->Yield(6);
-      ctx->ItemClick("**/###filter_tab");
-      ctx->Yield(2);
+      OpenFilterModal(ctx, /*staged=*/false);  // the Immediate-commit contract
       ctx->ItemClick("**/Remove Filter##filter");
       ctx->Yield(2);
 
@@ -2045,17 +2052,15 @@ void RegisterFilterEditorTests(ImGuiTestEngine* engine) {
 
       ctx->ItemClick("**/Close##edit_modal");
       ctx->Yield(2);
-      // Courtesy reset, not a guard: any fatal IM_CHECK above skips this line and leaves the flag
-      // set. That is safe because ResetTestState() pins modal_immediate_mode back to false
-      // (test_gui_main.cpp:142), so the next case starts from the documented default either way.
-      // Left in so a reader of THIS case does not have to know that.
-      gui::g_state.modal_immediate_mode = false;
     };
   }
 
   // The same delete-to-empty under Immediate mode, where there is no OK to press: the frame that
   // refills the blank row is the frame that pushes the buffers back, so the document must read
   // "no filter" at once — the same thing clearing the row's text would have committed.
+  //
+  // Immediate is the factory preference, so the editor opens in it directly; the in-window switch
+  // these cases used to click retired with the Settings move.
   {
     ImGuiTest* t =
         IM_REGISTER_TEST(engine, "filter_editor", "immediate_mode_deleting_the_last_row_commits_as_no_filter");
@@ -2066,11 +2071,7 @@ void RegisterFilterEditorTests(ImGuiTestEngine* engine) {
       ctx->Yield();
       IM_CHECK(CommittedFilter() != nullptr);
 
-      OpenFilterModal(ctx);
-      ctx->ItemClick("**/Immediate##edit_modal");
-      ctx->Yield(6);
-      ctx->ItemClick("**/###filter_tab");
-      ctx->Yield(2);
+      OpenFilterModal(ctx, /*staged=*/false);                                      // the Immediate-commit contract
       IM_CHECK(!IsDisabled(ctx->ItemInfo("**/" ICON_FA_XMARK "##row_delete_0")));  // the only row, and live
       ctx->ItemClick("**/" ICON_FA_XMARK "##row_delete_0");
       ctx->Yield(2);
@@ -2082,8 +2083,6 @@ void RegisterFilterEditorTests(ImGuiTestEngine* engine) {
 
       ctx->ItemClick("**/Close##edit_modal");
       ctx->Yield(2);
-      // Courtesy reset, as in the case above: ResetTestState() pins the flag back regardless.
-      gui::g_state.modal_immediate_mode = false;
     };
   }
 

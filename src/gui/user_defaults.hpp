@@ -692,7 +692,11 @@ void NoteUserDefaultsDowngrade(std::string notice);
 // worker_count and entry_edit_preview_style. The first two are server construction properties;
 // the third is a startup-only client view input. Reconsidered at the third member: retain named
 // readers rather than hiding these different application times behind a generic registry.
-// UI scale has no GuiState field. All four describe the application/person, not the halo.
+// UI scale has no GuiState field; neither does the fifth member, the Edit Entry editing-mode
+// preference below — for it that non-membership is load-bearing, not incidental (see its own
+// block). Each of the five describes the application/person, not the halo, and each has its own
+// application time: next new document, next application start, or — for the mode preference — the
+// next newly opened Edit Entry window.
 //
 // The read is tolerant because the file is user-editable: a missing key, a non-object `app`, or a
 // value of the wrong JSON type all read as nullopt, i.e. "nothing stored", and NO downgrade is
@@ -760,6 +764,44 @@ void EraseUiScaleMultiplierFromDoc(nlohmann::json& doc);
 // three lines it wraps (directory → overlay → field) are named so the three outcomes can be pinned
 // without a window. `override_dir` is the test seam MakeNewDocumentState has, for the same reason.
 float LoadUiScaleMultiplierAtStartup(std::optional<std::filesystem::path> override_dir = std::nullopt);
+
+// The Edit Entry editing-mode preference — the `app` namespace's fifth member, and the first whose
+// application time is none of the four above: the value a successful Save publishes is what the
+// NEXT NEWLY OPENED Edit Entry window adopts (production adoption sits at the close→open boundary
+// in OpenEditModal, edit_modals.cpp). An editor that is already open keeps the mode it opened
+// with, across Save, card switches and Duplicate rebinds alike.
+//
+// Like ui_scale_multiplier it has NO GuiState field — and for a stronger reason than "that table
+// classifies GuiState fields": every document-replacement path (New, .lmc/.json Open, Revert)
+// resets GuiState wholesale, and a GuiState-backed field here would let a document operation
+// rewrite the user's mode choice. The preference is the application's, so its holder lives here,
+// outside every GuiState reset's reach; the document half of the override file cannot decide it
+// for the same structural reason the other `app` members cannot (BuildMergedOverlayDocument and
+// SerializeGuiStateJson never touch the `app` root key).
+//
+// Same tolerant read as its siblings: a missing key, a non-object `app`, or a non-bool value read
+// as nothing stored, with no downgrade counted. Unset means factory (false = Immediate); the
+// panel writes BOTH states explicitly rather than erasing, so "saved Immediate" and "never
+// saved" stay distinguishable in the file for the same reason use_gpu_backend's do.
+std::optional<bool> ReadEditEntryStagedModeFromDoc(const nlohmann::json& doc);
+void WriteEditEntryStagedModeToDoc(nlohmann::json& doc, bool value);
+
+// The read half of the cross-restart channel: load the stored value into the holder below, from
+// `override_dir` or the active config directory. No directory / no file / unusable value leaves
+// the holder at its factory value. Called by the GUI main before the first editor can open;
+// gui_test does NOT call it (its harness baseline is factory, and ResetUserDefaultsChannels
+// resets the holder per case), so a machine's saved preference never leaks into a capture.
+bool LoadEditEntryStagedModeAtStartup(std::optional<std::filesystem::path> override_dir = std::nullopt);
+
+// The in-process holder — the adopted preference the open boundary reads and the only thing a
+// successful Save publishes. Factory value false = Immediate (AC1's default). Deliberately NOT
+// an optional: "no preference stored" and "preference stored as Immediate" resolve to the same
+// behavior for a new editor, and the file-level distinction lives in the stored key, where it
+// belongs. SetEditEntryStagedModePreference is called by defaults_panel's CommitCopy after the
+// write lands (disk first, then memory — same order as the preset adoptions beside it) and by
+// the test harness's per-case reset; nothing else may write it.
+bool GetEditEntryStagedModePreference();
+void SetEditEntryStagedModePreference(bool staged);
 
 // Apply the app-preferences half of `doc` to `state`: each stored field is assigned, each absent
 // one leaves `state` untouched (so an overlay with no `app` key yields the factory value).
