@@ -876,10 +876,10 @@ inline float EffectiveRollForLens(int lens_type, float stored_roll) {
 //
 // Every reader that asks "is the picture clipped to the front hemisphere?" goes through here — the
 // preview's ViewProjection, the annotation anchors' view input, the exported config (kJsonExport)
-// and the checkbox's displayed tick. The lens set is the one the front control's note
-// (field_editor_registry.cpp's WhenFrontClipApplies) still spells:
-// (field_editor_registry.cpp) greys the control under, built from the same two primitives
-// (LensIsFullSky / kLensTypeGlobe); test_field_editor_chain.cpp pins the two to agree per lens.
+// and the checkbox's displayed tick. The lens set is the one the front control's gate
+// (field_editor_registry.cpp's WhenFrontClipApplies) greys the control under, built from the
+// same two primitives (LensIsFullSky / kLensTypeGlobe); test_field_editor_chain.cpp pins the
+// two to agree per lens.
 //
 // Wider than EffectiveRollForLens on purpose: roll is inert in the full-sky lenses' shader paths
 // anyway, so only Globe needs forcing; the front clip is NOT inert there — the preview shader's

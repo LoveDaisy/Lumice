@@ -1981,6 +1981,13 @@ static int FirstFaceTheCrystalLacks(const char* row_text, const LUMICE_CrystalPa
       const bool legal = face == 1 || face == 2 || (face >= 3 && face <= 8) || (face >= 13 && face <= 18) ||
                          (face >= 23 && face <= 28);
       if (!legal || LUMICE_CouldFilterMatchFace(&crystal, face, symmetry) == 0) {
+        // face <= 0 can only reach !legal through a malformed EE token bailing to 0
+        // downstream (ParseFaceNumberOrZero; a negative is impossible there — '-' is a
+        // non-digit). "No crystal has face 0" is true, but 0 is also this function's
+        // none-found sentinel, so returning it suppresses the caller's warning row below.
+        // That suppression is the accepted worst case: text with a bail-to-0 token is what
+        // the commit path's own validator rejects, so the note path loses a hint line, not
+        // a commit — and misreporting the number (to keep the note visible) would be worse.
         return face;
       }
     }
