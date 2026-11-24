@@ -18503,9 +18503,7 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       // would leave the fold clipped out and unaddressable; restore both before the clicks.
       ctx->SetRef("//##RightPanel");
       ctx->ItemOpen("**/Overlay");
-      if (ImGuiWindow* rp = ImGui::FindWindowByName("##RightPanel")) {
-        rp->Scroll.y = 0.0f;
-      }
+      ctx->ScrollToItemY("**/Overlay");
       ctx->Yield(2);
       ctx->SetRef("");
       gui::g_state.angular_dist_section_open = true;
