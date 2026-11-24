@@ -6,8 +6,10 @@ Why this exists. The 0.85 dual-vs-single throughput gate
 machines' noise (Metal CoV 6-10%, CUDA 10-17%). A GitHub-hosted runner is slower
 and noisier than that, so on CI the same number reads red with nothing wrong.
 The precise gate therefore runs here, on a schedule (``launchd``, installed by
-``scripts/install_throughput_gate.sh``), and CI keeps only a loose disaster
-floor. Where it runs, how often, where results land and how to install it:
+``scripts/install_throughput_gate.sh``), and CI runs only a loose disaster
+floor, as a reported signal — non-blocking on hosted runners since PR #633
+(a tree that changed only CI/docs read 0.695/0.706 there while the same SHA read
+0.945/0.965 on the reference machine the same day). Where it runs, how often, where results land and how to install it:
 ``doc/testing/performance-testing.md``, "Precise throughput gate (local schedule)".
 
 What one run does, per leg, in a fixed order:

@@ -23,7 +23,8 @@ at ~1.06× legacy.
 reference machine above; measured 278 s on a GitHub-hosted macOS CI runner (PR run
 35169897211) with the precise profile — do not reuse the 70 s figure for CI timeout
 budgeting. CI runs the ``ci`` profile (``--dual-gate-profile=ci``: 0.75 over 5 reps),
-not the numbers above; see the shared module's docstring for why.
+not the numbers above, and since PR #633 its result there is a reported signal,
+not a blocking one — see the shared module's docstring for both whys.
 """
 
 from __future__ import annotations
