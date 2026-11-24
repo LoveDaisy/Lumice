@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795539682400,
+  "lastUpdate": 1795539684352,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9620,50 +9620,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "5d28c6f252fce9b6b55e845b47eaf5cc77815f6e",
-          "message": "Merge pull request #517 from LoveDaisy/chore/li-parity-fixture-lfs\n\nchore(test): track li-parity fixtures in Git LFS",
-          "timestamp": "2026-10-19T16:00:23+08:00",
-          "tree_id": "457c05fb6b6b02b293a736c7b48a89a1eb9f6353",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/5d28c6f252fce9b6b55e845b47eaf5cc77815f6e"
-        },
-        "date": 1792397030054,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 91.3,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 100,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 98.7,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 94.5,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "0c999555a069ca1ba6716ec874872bf1cfd785ac",
           "message": "Merge pull request #518 from LoveDaisy/chore/per-miss-all-legs\n\nci: per-miss budget on all four legs + envelope-derived outer bounds",
           "timestamp": "2026-10-19T17:39:48+08:00",
@@ -14003,6 +13959,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 93.2,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c8b8f111be3f7aa884289413e955ee9e54a3e1a4",
+          "message": "Merge pull request #647 from LoveDaisy/port/477-infra\n\nPort release/4.7.7 infra cluster to main (#619 #627 #630 #632)",
+          "timestamp": "2026-11-25T00:32:29+08:00",
+          "tree_id": "907721e98226835ad1da12a6903ca476eb47deb4",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/c8b8f111be3f7aa884289413e955ee9e54a3e1a4"
+        },
+        "date": 1795539683917,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 85.5,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 100,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 98.2,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 93.8,
             "unit": "%"
           }
         ]
