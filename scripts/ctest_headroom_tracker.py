@@ -331,21 +331,25 @@ class GhClient:
     """The tracker's only GitHub access, through `gh api` (auth comes from
     the ambient gh configuration — the script never handles tokens)."""
 
-    def __init__(self, gh_bin: str, repo: str, budget: ApiBudget):
+    def __init__(self, gh_bin: str, repo: str, budget: ApiBudget, timeout_sec: float = 120.0):
         self.gh_bin = gh_bin
         self.repo = repo
         self.budget = budget
+        self.timeout_sec = timeout_sec
 
     def api(self, path: str) -> str:
         if not self.budget.spend():
             raise HarvestError("api-budget-exhausted")
-        result = subprocess.run(
-            [self.gh_bin, "api", path],
-            capture_output=True,
-            text=True,
-            errors="replace",
-            timeout=120,
-        )
+        try:
+            result = subprocess.run(
+                [self.gh_bin, "api", path],
+                capture_output=True,
+                text=True,
+                errors="replace",
+                timeout=self.timeout_sec,
+            )
+        except subprocess.TimeoutExpired:
+            raise HarvestError(f"gh-timeout: {path}: no output within {self.timeout_sec}s")
         if result.returncode != 0:
             detail = result.stderr.strip().splitlines()[-1] if result.stderr.strip() else "no stderr"
             raise HarvestError(f"gh-api-failed: {path}: {detail[:200]}")
@@ -640,50 +644,39 @@ def sample_record(
     }
 
 
-def harvest_run(
-    client: GhClient,
-    run: dict,
-    known_series: dict[tuple[str, str], list[tuple[str, str]]],
-    config_id: str,
-) -> list[dict]:
-    """Every (job, phase) of one run: a sample or an honest gap, never a skip."""
+def harvest_run(client: GhClient, run: dict, config_id: str) -> list[dict]:
+    """Every (job, phase) of one run: a sample or an honest gap, never a skip.
+
+    Whole-run failures (cancelled, unreadable snapshot, jobs listing dead)
+    record a single BRANCH-SCOPED line-wide gap rather than per-series rows:
+    the branch barrier projects onto EVERY series of that branch — including
+    series this same batch or a later harvest introduces — so a new leg's two
+    lows can never pair across a dead run that predates the leg's first
+    sample. Narrowing the fence to the series known at harvest start would
+    leave exactly that hole.
+    """
     branch = run.get("head_branch") or ""
     line = line_of_branch(branch)
-    series = known_series.get((line, branch), [])
-    line_wide = [gap_record(run=run, line=line, job="", phase="", reason="PLACEHOLDER", config_id=config_id)]
 
-    def line_or_series_gaps(reason: str) -> list[dict]:
-        if series:
-            return [
-                gap_record(run=run, line=line, job=job, phase=phase, reason=reason, config_id=config_id)
-                for job, phase in series
-            ]
-        for record in line_wide:
-            record["reason"] = reason
-        return line_wide
+    def line_wide_gaps(reason: str) -> list[dict]:
+        return [gap_record(run=run, line=line, job="", phase="", reason=reason, config_id=config_id)]
 
     conclusion = run.get("conclusion")
     if conclusion in UNUSABLE_RUN_CONCLUSIONS:
-        return line_or_series_gaps(f"run-{conclusion}")
+        return line_wide_gaps(f"run-{conclusion}")
     try:
         registry_text, blob_sha = client.registry_at(run["head_sha"])
         budgets = parse_registry_snapshot(registry_text)
     except HarvestError as error:
-        return line_or_series_gaps(classify_harvest_error(error, default="registry-unreadable"))
+        return line_wide_gaps(classify_harvest_error(error, default="registry-unreadable"))
     except (json.JSONDecodeError, KeyError, TypeError) as error:
-        return line_or_series_gaps(f"registry-unparsable: {error}")
+        return line_wide_gaps(f"registry-unparsable: {error}")
 
     registry_sha256 = hashlib.sha256(registry_text.encode("utf-8")).hexdigest()
     try:
         jobs = client.attempt_one_jobs(run["id"])
     except HarvestError as error:
-        return [
-            gap_record(
-                run=run, line=line, job=job, phase=phase,
-                reason=classify_harvest_error(error, default="jobs-unreadable"), config_id=config_id,
-            )
-            for job, phase in budgets
-        ]
+        return line_wide_gaps(classify_harvest_error(error, default="jobs-unreadable"))
 
     records: list[dict] = []
     for (job, phase), budget_entry in sorted(budgets.items()):
@@ -852,13 +845,16 @@ def config_change_marker(previous_config_id: str, config_id: str) -> dict:
     Era boundaries cannot be derived from the samples' config hashes alone:
     a threshold revised 6% -> 7% -> 6% returns to a hash the older samples
     already carry, and hashing would resurrect the era that the 7% interlude
-    explicitly reset. The marker is written the moment a harvest observes a
-    change, keyed by the transition so concurrent harvesters detecting the
-    same change converge on one fence.
+    explicitly reset. Each observed change writes its own fence — the key
+    carries the detection time, because a transition may LEGITIMATELY recur
+    (6->7->6->7) and a second occurrence must not be merged away into the
+    first: the newest fence is the live era boundary. Concurrent harvesters
+    detecting the same change write near-simultaneous fences, which is
+    harmless — the era starts after the last of them either way.
     """
     return {
         "type": "config-change",
-        "key": f"cfg-change:{previous_config_id or 'none'}:{config_id}",
+        "key": f"cfg-change:{previous_config_id or 'none'}:{config_id}:{utc_now_iso()}",
         "line": "",
         "branch": "",
         "job": "",
@@ -1319,13 +1315,6 @@ def harvest_command(args: argparse.Namespace) -> int:
     for record in samples:
         records_by_run.setdefault(record["run_id"], []).append(record)
     complete_run_ids = {run_id for run_id, recs in records_by_run.items() if runs_collection_complete(recs)}
-    known_series: dict[tuple[str, str], list[tuple[str, str]]] = {}
-    for record in samples:
-        if record.get("job"):
-            pair = (record["job"], record["phase"])
-            key = (record["line"], record.get("branch") or "")
-            if pair not in known_series.setdefault(key, []):
-                known_series[key].append(pair)
 
     if previous_state.get("cursor"):
         since_iso = one_second_before(previous_state["cursor"]["created_at"])
@@ -1333,7 +1322,7 @@ def harvest_command(args: argparse.Namespace) -> int:
         since_iso = (datetime.now(timezone.utc) - timedelta(days=args.window_days)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     budget = ApiBudget(args.max_api_calls, time.monotonic() + args.time_budget_sec)
-    client = GhClient(args.gh_bin, args.repo, budget)
+    client = GhClient(args.gh_bin, args.repo, budget, timeout_sec=args.api_timeout_sec)
     new_records: list[dict] = []
 
     # Runs still owed collection: pending entries from the previous state
@@ -1393,19 +1382,34 @@ def harvest_command(args: argparse.Namespace) -> int:
                 else f"API/time budget reached ({budget.calls} calls)"
             )
             break
-        if run.get("status") not in ("completed", "unknown") and run["id"] != args.current_run:
-            # Still in progress and not this harvest's own run: it must fence
-            # the timeline NOW — a pending-only identity would leave the two
-            # low samples around it adjacent in the ledger and pair them — so
-            # a retryable line-wide gap is recorded; the run stays pending and
-            # the gap upgrades to real evidence when collection succeeds.
-            new_records.append(
-                gap_record(run=run, line=line_of_branch(run.get("head_branch") or ""), job="", phase="",
-                           reason="run-in-progress", config_id=config_id)
-            )
+        status = run.get("status")
+        harvestable_now = status == "completed" or (
+            status == "in_progress" and run["id"] == args.current_run
+        )
+        if not harvestable_now:
+            if status == "unknown":
+                # A transient re-resolve failure left this pending run with no
+                # trustworthy identity: collecting it now would fetch a
+                # registry "snapshot" with no ref. It stays pending for the
+                # next harvest — the warn names it, nothing is signed.
+                warnings.append(
+                    f"pending run {run.get('run_number')} could not be re-resolved; "
+                    "kept pending (no evidence collected)"
+                )
+            else:
+                # Still in progress and not this harvest's own run: it must
+                # fence the timeline NOW — a pending-only identity would leave
+                # the two low samples around it adjacent in the ledger and
+                # pair them — so a retryable line-wide gap is recorded; the
+                # run stays pending and the gap upgrades to real evidence
+                # when collection succeeds.
+                new_records.append(
+                    gap_record(run=run, line=line_of_branch(run.get("head_branch") or ""), job="", phase="",
+                               reason="run-in-progress", config_id=config_id)
+                )
             continue
         try:
-            batch = harvest_run(client, run, known_series, config_id)
+            batch = harvest_run(client, run, config_id)
         except HarvestError as error:
             warnings.append(f"run {run.get('run_number')} harvest failed: {classify_harvest_error(error, default='harvest-failed')}")
             batch = [gap_record(run=run, line=line_of_branch(run.get("head_branch") or ""), job="", phase="",
@@ -1561,6 +1565,8 @@ def main(argv: list[str] | None = None) -> int:
     harvest.add_argument("--threshold-pct", type=float, default=DEFAULT_THRESHOLD_PCT)
     harvest.add_argument("--min-streak", type=int, default=DEFAULT_MIN_STREAK)
     harvest.add_argument("--gh-bin", default="gh")
+    harvest.add_argument("--api-timeout-sec", type=float, default=120.0,
+                         help="per-call subprocess timeout; a timeout is a retryable failure")
     harvest.add_argument("--emit-annotation", action="store_true")
     harvest.add_argument("--job-summary", type=Path)
     harvest.add_argument("--publish", action="store_true")
@@ -1568,7 +1574,21 @@ def main(argv: list[str] | None = None) -> int:
     harvest.add_argument("--publish-remote", default="origin")
     args = parser.parse_args(argv)
     if args.command == "harvest":
-        return harvest_command(args)
+        try:
+            return harvest_command(args)
+        except Exception as error:  # noqa: BLE001 - the tracker is observation: any crash
+            # must still leave the evidence trail (a named warning and a
+            # summary naming the crash) instead of a bare traceback.
+            message = f"harvest crashed: {type(error).__name__}: {error}"
+            print(f"::warning::[ctest-headroom] {message}")
+            try:
+                state_dir = Path(args.state_dir)
+                state_dir.mkdir(parents=True, exist_ok=True)
+                with (state_dir / "summary.md").open("a", encoding="utf-8") as output:
+                    output.write(f"\n## HARVEST CRASHED\n\n- {message}\n")
+            except OSError:
+                pass
+            return 2
     parser.error(f"unknown command {args.command!r}")
     return 2
 

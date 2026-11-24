@@ -499,7 +499,7 @@ def test_state_merge_unions_pending_and_takes_the_max_cursor(tmp_path):
 # --- fake gh plumbing for the end-to-end harvest -------------------------------------
 
 FAKE_GH = r'''#!/usr/bin/env python3
-import os, re, sys, urllib.parse
+import os, re, sys, time, urllib.parse
 root = os.environ["HEADROOM_FAKE_GH_DIR"]
 args = sys.argv[1:]
 assert args[:1] == ["api"], args
@@ -519,7 +519,13 @@ log = os.environ.get("HEADROOM_FAKE_GH_LOG")
 if log:
     with open(log, "a") as fh:
         fh.write(path + "\n")
+delay = os.environ.get("HEADROOM_FAKE_GH_DELAY")
+if delay:
+    time.sleep(float(delay))
 target = os.path.join(root, name + ".txt")
+if os.path.exists(target + ".forbidden"):
+    sys.stderr.write("gh: forbidden (HTTP 403)\n")
+    sys.exit(1)
 if not os.path.exists(target):
     sys.stderr.write("gh: Not Found (HTTP 404)\n")
     sys.exit(1)
@@ -941,6 +947,136 @@ def test_in_progress_run_between_lows_fences_and_upgrades_on_completion(tmp_path
     assert state["pending"] == []
     events = [json.loads(line) for line in (state_dir / "events.jsonl").read_text().splitlines() if line]
     assert len(events) == 1 and events[0]["first_run"]["id"] == 891  # three consecutive lows now pair
+
+
+def test_repeated_config_transition_keeps_every_fence():
+    # A transition may legitimately recur (6->7->6->7): each occurrence is
+    # its own fence. The transition-pair key of earlier rounds let the
+    # upgrade-only merge swallow the newest fence into the first one, and the
+    # era boundary silently fell back to the previous return.
+    m1 = tracker.config_change_marker(CFG, OTHER_CFG)
+    m1["run_created_at"] = "2026-11-20T12:00:00Z"
+    m2 = tracker.config_change_marker(OTHER_CFG, CFG)
+    m2["run_created_at"] = "2026-11-21T12:00:00Z"
+    m3 = tracker.config_change_marker(CFG, OTHER_CFG)
+    m3["run_created_at"] = "2026-11-22T12:00:00Z"
+    merged = tracker.merge_records([m1], [m3])
+    assert {m["key"] for m in merged} == {m1["key"], m3["key"]}  # no swallow
+    history = [
+        make_sample(1, 560.0, 1.0, 560.0, created="2026-11-20T00:00:00Z", config=CFG),
+        make_sample(2, 580.0, 1.0, 560.0, created="2026-11-20T06:00:00Z", config=CFG),
+        m1,
+        make_sample(3, 480.0, 1.0, 560.0, created="2026-11-21T00:00:00Z", config=OTHER_CFG),  # healthy at 6, low at 4?
+        m2,
+        make_sample(4, 560.0, 1.0, 560.0, created="2026-11-22T00:00:00Z", config=CFG),
+        make_sample(5, 580.0, 1.0, 560.0, created="2026-11-22T06:00:00Z", config=CFG),
+        m3,
+        make_sample(6, 590.0, 1.0, 560.0, created="2026-11-23T00:00:00Z", config=OTHER_CFG),
+    ]
+    # Current config OTHER (the second 6->7): the era starts after m3, so only
+    # sample 6 evaluates — one low, no fire, and samples 4-5 (an OLD cfg-6 era
+    # misread under the new threshold) never pair.
+    grouped = tracker.group_series(history)
+    key = next(k for k in grouped if k[0] == "main" and k[2] == MACOS_JOB)
+    result = tracker.walk_series(grouped[key], tracker.config_identity(4.0, 2), 4.0, 2)
+    assert result["streak"] == 1 and result["fired"] == [] and result["active"] is None
+
+
+def test_gh_timeout_is_a_named_warning_with_a_summary_not_a_traceback(tmp_path):
+    bin_path, env = basic_scenario(tmp_path)
+    env = {**env, "HEADROOM_FAKE_GH_DELAY": "2"}
+    process, state_dir = run_harvest(tmp_path, bin_path, env, extra_args=("--api-timeout-sec", "0.5"))
+    assert process.returncode == 0
+    assert "gh-timeout" in process.stdout
+    assert "::warning::[ctest-headroom] run listing failed" in process.stdout
+    assert "Traceback" not in process.stdout and "Traceback" not in process.stderr
+    assert "Ctest headroom" in (state_dir / "summary.md").read_text()
+
+
+def test_crash_leaves_a_named_warning_and_a_summary(tmp_path):
+    bin_path, env = basic_scenario(tmp_path)
+    # Poison the listing payload: a JSONDecodeError escapes harvest_command
+    # and must be caught by the top-level guard, not printed as a traceback.
+    serve(tmp_path / "fakegh", "repos/O/R/actions/workflows/ci.yml/runs?event=push&per_page=100&page=1", "{not json")
+    process, state_dir = run_harvest(tmp_path, bin_path, env)
+    assert process.returncode == 2
+    assert "::warning::[ctest-headroom] harvest crashed: JSONDecodeError" in process.stdout
+    assert "HARVEST CRASHED" in (state_dir / "summary.md").read_text()
+
+
+def test_transient_pending_reresolve_keeps_the_run_pending_without_collecting(tmp_path):
+    bare_runs = [make_run(911, 1, "main", "2026-11-20T00:00:00Z", "sha-a", conclusion=None)]
+    bin_path, env = setup_fake_gh(
+        tmp_path, bare_runs, {}, {}
+    )
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    (state_dir / "samples.jsonl").write_text("")
+    (state_dir / "events.jsonl").write_text("")
+    (state_dir / "state.json").write_text(json.dumps({
+        "schema": 1, "config": None,
+        "cursor": {"run_id": 911, "created_at": "2026-11-20T00:00:00Z", "run_number": 1},
+        "pending": [{"run_id": 911, "created_at": "2026-11-20T00:00:00Z", "run_number": 1, "branch": "main"}],
+    }))
+    # The re-resolve of the pending run fails with a transient 403:
+    # mark its runs/{id} endpoint forbidden.
+    key = norm_path("repos/O/R/actions/runs/911")
+    (tmp_path / "fakegh" / (key + ".txt.forbidden")).touch()
+    process, state_dir = run_harvest(tmp_path, bin_path, env)
+    assert process.returncode == 0
+    assert "::warning::[ctest-headroom] pending run 1 could not be re-resolved" in process.stdout
+    requested = (tmp_path / "requests.log").read_text()
+    assert "contents/test/duration_registry.json" not in requested  # no empty-ref registry fetch
+    state = json.loads((state_dir / "state.json").read_text())
+    assert {entry["run_id"] for entry in state["pending"]} == {911}  # stays pending, nothing signed
+
+
+def test_new_series_lows_cannot_pair_across_a_dead_run(tmp_path):
+    # Known series at harvest start: macOS only (from harvest 1). The batch
+    # then contains a dead registry run BETWEEN two lows of a NEW Windows leg
+    # introduced by the same batch: the fence must cover the new series too,
+    # not only the series known when the harvest began.
+    runs1 = [make_run(921, 1, "main", "2026-11-20T00:00:00Z", "sha-r1")]
+    mac_registry = registry_payload([machine_budget(MACOS_JOB, 560)])
+    both_registry = registry_payload([machine_budget(MACOS_JOB, 560), machine_budget(WINDOWS_JOB, 480)])
+    low_mac = MAIN_GREEN_MACOS.replace("537.7", "600.0").replace("1.018", "1.000")
+    low_win = RELEASE_RED
+    bin_path, env = setup_fake_gh(
+        tmp_path, runs1,
+        {921: {"jobs": {MACOS_JOB: (9921, "success")}, "logs": {9921: low_mac}}},
+        {"sha-r1": mac_registry},
+    )
+    first, state_dir = run_harvest(tmp_path, bin_path, env)
+    assert first.returncode == 0
+
+    runs = runs1 + [
+        make_run(922, 2, "main", "2026-11-21T00:00:00Z", "sha-r2"),
+        make_run(923, 3, "main", "2026-11-22T00:00:00Z", "sha-gone"),
+        make_run(924, 4, "main", "2026-11-23T00:00:00Z", "sha-r2b"),
+    ]
+    for run in runs:
+        serve(tmp_path / "fakegh", f"repos/O/R/actions/runs/{run['id']}", json.dumps(run))
+    serve(tmp_path / "fakegh", "repos/O/R/actions/workflows/ci.yml/runs?event=push&per_page=100&page=1",
+          json.dumps({"total_count": len(runs), "workflow_runs": runs}))
+    serve(tmp_path / "fakegh", "repos/O/R/actions/runs/922/attempts/1/jobs",
+          json.dumps({"total_count": 1, "jobs": [{"id": 9922, "name": WINDOWS_JOB, "status": "completed",
+                                                  "conclusion": "success", "html_url": ""}]}))
+    serve(tmp_path / "fakegh", "repos/O/R/actions/jobs/9922/logs", low_win)
+    # sha-gone: no registry snapshot (the dead run between the two Windows lows)
+    serve(tmp_path / "fakegh", "repos/O/R/actions/runs/924/attempts/1/jobs",
+          json.dumps({"total_count": 1, "jobs": [{"id": 9924, "name": WINDOWS_JOB, "status": "completed",
+                                                  "conclusion": "success", "html_url": ""}]}))
+    serve(tmp_path / "fakegh", "repos/O/R/actions/jobs/9924/logs", low_win)
+    serve(tmp_path / "fakegh", "repos/O/R/contents/test/duration_registry.json?ref=sha-r2",
+          contents_payload(both_registry, "blob-r2"))
+    serve(tmp_path / "fakegh", "repos/O/R/contents/test/duration_registry.json?ref=sha-r2b",
+          contents_payload(both_registry, "blob-r2b"))
+
+    second, state_dir = run_harvest(tmp_path, bin_path, env)
+    assert second.returncode == 0
+    events = (state_dir / "events.jsonl").read_text().strip()
+    assert events == ""  # win-low / dead-registry / win-low never pairs on the new leg
+    assert "::notice::" not in second.stdout
 
 
 def test_cold_start_low_cancelled_low_never_fires(tmp_path):
