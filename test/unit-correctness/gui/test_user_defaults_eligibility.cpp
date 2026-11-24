@@ -82,7 +82,10 @@ namespace {
 // SyncFromPoller's upload branch (a failed giant allocation must not be re-attempted at the poll
 // rate). A measurement of a failed attempt is not a setting, so deliberately ineligible as a
 // personal default, exactly like the cursor beside it.
-constexpr std::size_t kExpectedGovernedFieldCount = 92;
+// 93 with duplicate_flash: the one-shot border fade a duplicate with the editor closed plays —
+// session-only visual feedback naming an entry by position, never persisted anywhere, so
+// kSessionOnly and deliberately ineligible like every gesture field beside it (pick_link_source).
+constexpr std::size_t kExpectedGovernedFieldCount = 93;
 
 std::vector<std::string> AllGovernedFieldNames() {
   std::vector<std::string> names;

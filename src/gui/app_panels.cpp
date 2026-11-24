@@ -2324,7 +2324,75 @@ bool RenderDisplayModeControl() {
   return over_control;
 }
 
+// One press of the roll gesture (right drag = camera roll). Display-time only, like the eyedropper
+// mode above it in spirit: nothing here is a document field, and a gesture that is not running
+// leaves nothing behind. The state is SCREEN-space by construction — the reference is a cursor
+// direction around the viewport's centre, and the centre is panel geometry — so no document
+// quantity enters it, and the gesture reads identically over any picture. What the state does
+// carry is the CONTEXT the press was admitted under: the lens it started on. The document side
+// needs no snapshot here because document changes all route through ResetFrontendState (the
+// frontend reset owner), which calls ResetPreviewRollDrag — a press that survives a New / Open /
+// Revert, or a lens switch, never resumes: the reset cancelled it, and only a fresh press
+// re-admits.
+struct RollDragGesture {
+  // The press is alive: admitted on the press frame and not yet ended by release, Alt, a full-sky
+  // lens, an arbitration lock, a lens switch, or a document reset. Once ended, the SAME press can
+  // never resume — only a new press re-admits.
+  bool active = false;
+  // Whether `ref_*` holds a valid direction to measure against. False on admission (the first
+  // valid sample only sets the reference — the admission frame itself samples, so the press
+  // position is the reference whenever it sits outside the dead zone), and again whenever the
+  // cursor sits in the dead zone or off the interaction face — re-establishing costs one sample
+  // and is what keeps those steps from contributing roll.
+  bool has_reference = false;
+  // The last valid sample, window-local logical points, and its screen angle around the centre
+  // (atan2, y down like everything else that talks to io.MousePos).
+  float ref_x = 0.0f;
+  float ref_y = 0.0f;
+  float ref_angle = 0.0f;
+  // The lens the press was admitted under: a lens switch ends the gesture (the view the cursor
+  // was rolling is not the view it would now be rolling — and the dead zone's centre is not the
+  // only thing that moved).
+  int lens_type = 0;
+};
+
+RollDragGesture g_roll_drag;
+
+constexpr float kRadToDeg = 57.29577951308232f;
+
+// The latch-owning button is stored as a plain int in GuiState (no imgui types there); these are
+// the ImGui values it is set from, pinned so the pairing cannot drift apart silently.
+static_assert(ImGuiMouseButton_Left == 0 && ImGuiMouseButton_Right == 1,
+              "GuiState::AngularDistPicker::swallow_button stores these as 0/1");
+
+// Distance from the origin to the segment (ax,ay)-(bx,by). Both endpoints are already outside the
+// dead zone when this is consulted, so the answer only decides whether the step's chord cut
+// through (or grazed) the centre.
+float SegmentDistanceFromCentre(float ax, float ay, float bx, float by) {
+  const float abx = bx - ax;
+  const float aby = by - ay;
+  const float len_sq = abx * abx + aby * aby;
+  if (len_sq <= 0.0f) {
+    return std::sqrt(ax * ax + ay * ay);
+  }
+  const float t = std::max(0.0f, std::min(1.0f, -(ax * abx + ay * aby) / len_sq));
+  const float px = ax + t * abx;
+  const float py = ay + t * aby;
+  return std::sqrt(px * px + py * py);
+}
+
 }  // namespace
+
+// The document-reset owner's hook (declared in app.hpp, called from ResetFrontendState, app.cpp —
+// every New / Open / Revert route): a running roll press belongs to the context it started in, and
+// that context just ended. Deliberately not folded into the picture-gone check in
+// RenderPreviewPanel: an OpenBaked clears and re-uploads within one call and a Revert keeps the
+// picture, so "the panel saw a picture-less frame" never fires for either — the reset EVENT is the
+// only reliable boundary. External linkage on purpose (app.cpp calls it); the state it clears is
+// this file's static above, which stays private.
+void ResetPreviewRollDrag() {
+  g_roll_drag = RollDragGesture{};
+}
 
 void RenderPreviewPanel(GLFWwindow* window, float window_width, float window_height) {
   // Eyedropper mode: two ways out that must be taken before anything else this frame reads the
@@ -2364,8 +2432,19 @@ void RenderPreviewPanel(GLFWwindow* window, float window_width, float window_hei
   if (g_state.angular_dist_picker.armed && (ImGui::IsKeyPressed(ImGuiKey_Escape, false) || !PreviewShowsPicture())) {
     g_state.angular_dist_picker.armed = false;
   }
-  if (g_state.angular_dist_picker.swallow_drag_until_release && !ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+  // The latch ends with the release of the button that set it — the press that set it, wherever
+  // that release happens (the eyedropper's latch shape above, generalized to the owning button:
+  // the cancel spelling sets it from a right click, the confirm spelling from a left one).
+  if (g_state.angular_dist_picker.swallow_drag_until_release &&
+      !ImGui::IsMouseDown(g_state.angular_dist_picker.swallow_button)) {
     g_state.angular_dist_picker.swallow_drag_until_release = false;
+  }
+  // The roll drag ends with the press that owns it, wherever the release happens; and the picture
+  // going away under it (a document switch, a texture cleared) ends it too — a gesture whose
+  // surface disappeared mid-press must not resume when the picture comes back while the button is
+  // still down. Both are the same two exits the armed modes above take.
+  if (g_roll_drag.active && (!ImGui::IsMouseDown(ImGuiMouseButton_Right) || !PreviewShowsPicture())) {
+    g_roll_drag = RollDragGesture{};
   }
 
   float left_w = UiPx(g_state.left_panel_collapsed ? kCollapseBtnSize : kLeftPanelWidth);
@@ -2865,6 +2944,95 @@ void RenderPreviewPanel(GLFWwindow* window, float window_width, float window_hei
         rc.fov = std::max(1.0f, std::min(fov_max, rc.fov));
       }
 
+      // Right drag: camera roll, the slider's third sibling beside left-drag orbit and the FOV
+      // wheel. The mapping is pointing-style, not a fixed deg-per-pixel gain: the roll added each
+      // frame is the angle the cursor swept around the ACTUAL render viewport's centre, so the
+      // picture turns with the hand at every FOV, viewport shape and DPI (the measurement is done
+      // in window points at one isotropic scale — never a per-axis-normalized circle). A dead
+      // zone around the centre keeps a press near the middle quiet.
+      //
+      // Sign. BuildViewMatrix rotates the camera basis by -roll in the view plane (column 0 at
+      // roll r is cos(r)*col0(0) + sin(r)*col1(0)), so a fixed world direction's view angle moves
+      // by -delta-roll. The projections hand view +x to screen right and view +y to screen UP
+      // (ProjectFisheye's output is the shader's own centre-origin y-up space — see the marker
+      // overlay that compares the two directly), so the content's screen angle, measured y-down
+      // the way the cursor's is, moves by +delta-roll. Content following the cursor is therefore
+      // roll += the cursor's swept angle: no sign flip anywhere.
+      //
+      // Admission is the press frame only, and ownership is for the whole press: a right press
+      // that did not start here (off the preview, over the display-mode control, under Alt, while
+      // an armed pick or a non-camera cone verdict held the click, on a full-sky lens) can never
+      // take over mid-press once its edge is spent. The same three gates the left branches carry
+      // (!bg_modifier — Alt states the photo's intent, and the photo has no rotate; !full_sky —
+      // the entry rejects rather than writing into the per-frame zeroing; !gestures_locked) end
+      // an in-flight drag outright, instead of pausing it, so an unlocked lock cannot inherit a
+      // press that began under it — and so does a lens switch (the snapshot below) or a document
+      // reset (ResetFrontendState's hook). Leaving the interaction face, by contrast, only
+      // PAUSES: the reference is dropped and the first sample back re-establishes it, so no
+      // off-screen travel is ever back-computed. Like every gesture above, none of this touches
+      // Look At — roll is a T-view framing value (gui-state-governance): no UnlockLookAt, no
+      // dirty, no epoch, no re-sim.
+      const bool roll_admissible = !gestures_locked && !bg_modifier && !full_sky;
+      if (!g_roll_drag.active && roll_admissible && is_hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+        // The press frame. Ownership decided here, once, from this frame's locks and modifiers;
+        // the lens is recorded so a later switch ends the press. Admission FALLS THROUGH to the
+        // sampling block below in the same frame: the press position itself is the first
+        // reference candidate, so the sweep is measured from where the press actually was —
+        // never from wherever the cursor has already travelled to by the next frame.
+        g_roll_drag.active = true;
+        g_roll_drag.has_reference = false;
+        g_roll_drag.lens_type = rc.lens_type;
+      }
+      if (g_roll_drag.active) {
+        if (!roll_admissible || rc.lens_type != g_roll_drag.lens_type) {
+          g_roll_drag = RollDragGesture{};  // cancelled for the rest of this press
+        } else if (!is_hovered) {
+          g_roll_drag.has_reference = false;  // paused off the face; re-entry re-establishes
+        } else {
+          // The centre of the GL viewport, which is the panel rectangle itself (vp_w/vp_h come
+          // from panel_width/preview_height, not the padded content region), in the same
+          // window-local points as the cursor.
+          const float cx = panel_width * 0.5f;
+          const float cy = preview_height * 0.5f;
+          const float dx = io.MousePos.x - vp_origin.x - cx;
+          const float dy = io.MousePos.y - vp_origin.y - cy;
+          const float dead_zone = UiPx(kRollDragDeadZonePt);
+          if (dx * dx + dy * dy <= dead_zone * dead_zone) {
+            g_roll_drag.has_reference = false;  // inside the dead zone: no angle, no accumulation
+          } else {
+            const float angle = std::atan2(dy, dx);
+            if (!g_roll_drag.has_reference) {
+              g_roll_drag.has_reference = true;
+            } else if (SegmentDistanceFromCentre(g_roll_drag.ref_x, g_roll_drag.ref_y, dx, dy) <= dead_zone) {
+              // The step's chord passed through or near the centre — a cut across, not a sweep
+              // (the same degeneracy the dead zone exists for, met in one fast frame). Drop the
+              // reference; the next valid sample re-establishes, and no ~180 degree jump lands.
+              g_roll_drag.has_reference = false;
+            } else {
+              // Angles are radians (atan2); the slider's domain and the wrap are degrees.
+              float delta = (angle - g_roll_drag.ref_angle) * kRadToDeg;
+              if (delta > 180.0f) {
+                delta -= 360.0f;
+              } else if (delta < -180.0f) {
+                delta += 360.0f;
+              }
+              rc.roll += delta;
+              // Wrap into the slider's [-180, 180] domain rather than clamping at the seam —
+              // the azimuth drag's law. One gesture may sweep past 180 repeatedly; each frame's
+              // step is at most a half-circle, so one subtraction always settles it.
+              if (rc.roll > 180.0f) {
+                rc.roll -= 360.0f;
+              } else if (rc.roll < -180.0f) {
+                rc.roll += 360.0f;
+              }
+            }
+            g_roll_drag.ref_x = dx;
+            g_roll_drag.ref_y = dy;
+            g_roll_drag.ref_angle = angle;
+          }
+        }
+      }
+
       // The eyedropper's own branch, gated on the flag the four above are gated on the negation of:
       // exactly one of the seven (the analysis window's two below included) can run in a frame, and while picking, the
       // click that would have orbited the camera samples a colour instead.
@@ -2932,6 +3100,12 @@ void RenderPreviewPanel(GLFWwindow* window, float window_width, float window_hei
         auto& picker = g_state.angular_dist_picker;
         if (ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
           picker.armed = false;
+          // The rest of THIS press belongs to the cancel: latch it to the right button, so the
+          // frames of travel before the release reach nothing — neither the camera branches the
+          // lock gates, nor a roll gesture whose press edge was consumed here. Cleared by the
+          // button-keyed cleanup at the top of the panel, so the next independent press is free.
+          picker.swallow_button = ImGuiMouseButton_Right;
+          picker.swallow_drag_until_release = true;
         } else {
           const std::optional<CanvasPixel> px =
               PreviewPointToCanvasPixel(io.MousePos.x - vp_origin.x, io.MousePos.y - vp_origin.y, dpi_scale_x,
@@ -2962,6 +3136,13 @@ void RenderPreviewPanel(GLFWwindow* window, float window_width, float window_hei
                            picker.family == AngularDistFamily::kSun ? "sun" : "lens-center",
                            added ? "" : " — already in the list, not added again");
               picker.armed = false;
+              // Every latch producer declares its owner: this spelling is the LEFT press's latch,
+              // and the button-keyed cleanup at the top of the panel reads this field to decide
+              // which release ends it. (The cancel spelling above writes Right.) Without the
+              // write-back here, a cancel earlier in the session would leave the field pointing
+              // at the right button, and this left latch would be cleared by the right button's
+              // release — handing the rest of THIS left press to the orbit branch.
+              picker.swallow_button = ImGuiMouseButton_Left;
               picker.swallow_drag_until_release = true;
             }
           }

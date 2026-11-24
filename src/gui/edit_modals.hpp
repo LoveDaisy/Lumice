@@ -128,6 +128,26 @@ EditTarget GetActiveTabAsEditTarget();
 // so the modal call site adds it and the card call site does not.
 void StartLinkPickMode(GuiState& state, int layer_idx, int entry_idx);
 
+// The pending-edit half of Duplicate's focus transaction (owner ruling 2026-11-22, "duplicate what
+// you see"). Two primitives the card side composes; both answer no / no-op when no modal is open,
+// because with no editor open there is no in-flight edit to commit or lose.
+//
+// ModalEditCommittable: true when committing the open modal's buffers RIGHT NOW would commit them
+// whole — no Filter row is half-typed or malformed. This is the Staged OK button's own gate, read
+// through the same predicate that disables the button, so the button and this answer can never
+// disagree. Duplicate consults it BEFORE touching anything: its rebind step reinstalls the buffers
+// from the clone's pool slots, so a draft the commit refuses to write would be silently dropped by
+// that reinstall — the reject (keep the original session; the modal's existing row feedback does
+// the talking) must fire before any commit and before any pool append.
+//
+// CommitModalEditBuffers: pushes the open modal's buffers into the pool now — the same commit body
+// the OK button and the Immediate per-frame push run (diff-gated, so committing an untouched
+// editor is a no-op) — WITHOUT closing the modal and WITHOUT arming pick mode. StartLinkPickMode
+// commits and closes; Duplicate commits and keeps the editor, because the very next step rebinds
+// it to the clone.
+bool ModalEditCommittable();
+void CommitModalEditBuffers(GuiState& state);
+
 // Close the edit modal because the document it was bound into has been replaced or restored —
 // called unconditionally by ResetFrontendState() (production), for every reset reason. The modal
 // binds its entry by POSITION and holds copies of that entry's crystal and filter; after a reset

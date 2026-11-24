@@ -1410,6 +1410,25 @@ struct GuiState {
   };
   std::optional<EntryRef> pick_link_source;
 
+  // Duplicate focus feedback (owner ruling 2026-11-22): duplicating a card with the edit modal
+  // CLOSED flashes the new card's border once (a ~kDuplicateFlashSeconds fade from the active
+  // accent down to the plain border) instead of auto-opening a modal on the clone. Session-only:
+  // never serialized, not in ConfigSnapshot, no dirty — a pure visual gesture. It names an ENTRY
+  // by position, not a pool crystal, so cards sharing the clone's crystal do not flash with it;
+  // it follows that entry through reorder / unrelated deletes via the NotifyEntryMoved /
+  // NotifyEntryDeleted / NotifyLayerDeleted compensation (the same rule pick_link_source rides),
+  // drops when the entry or its layer is deleted, and ResetFrontendState clears it on every
+  // document reset (New / Open / Revert). Only the most recent successful duplicate holds it —
+  // a second duplicate replaces it; it is never a queue or a history.
+  struct DuplicateFlash {
+    int layer_idx = -1;
+    int entry_idx = -1;
+    double start_time = 0.0;  // ImGui::GetTime() when armed. The fade is measured on ImGui's frame
+                              // clock so a --fixed-dt gui_test replay is deterministic; no wall
+                              // clock anywhere on this path.
+  };
+  std::optional<DuplicateFlash> duplicate_flash;
+
   // Layers (entry cards reference crystals/filters via pool ids)
   std::vector<Layer> layers;
 
@@ -1867,6 +1886,16 @@ struct GuiState {
     // the click that adds the ring fires on the mouse-DOWN frame, and the rest of that press must
     // not reach the camera-orbit branch as a drag once the mode is off. Cleared on release.
     bool swallow_drag_until_release = false;
+    // WHICH button's press the latch is holding off — the left click that confirms a pick, or the
+    // right click that cancels the armed mode (a plain int, not ImGui's type: this header is also
+    // compiled by unit TUs with no imgui include path; the values are the ImGuiMouseButton_Left /
+    // _Right constants, pinned by static_assert where imgui.h is present, in app_panels.cpp). The
+    // latch ends when THAT button comes up: the release that ends the press that set it, wherever
+    // the release happens. Keying the clear to the owning button is what keeps the two spellings
+    // independent — a right-click cancel followed by a left release (or the reverse order of
+    // buttons) must not clear the other press's latch early, and the left-confirm latch must keep
+    // clearing on left release exactly as it always did.
+    int swallow_button = 0;
   };
   AngularDistPicker angular_dist_picker;
 
