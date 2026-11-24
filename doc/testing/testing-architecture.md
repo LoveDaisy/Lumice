@@ -2431,7 +2431,13 @@ expired log, unreadable snapshot, no parsable reading) breaks continuity in both
 neither fakes health nor accumulates a streak, so low/gap/low never pairs; a budget/ruler/clamp
 change opens a **new calibration segment** and no streak spans one; a threshold change resets
 continuity under a new config identity rather than carrying an old signal silently. The two lines
-are independent series: release samples come from release branches' own snapshots.
+are independent series: release samples come from release branches' own snapshots. The release
+lines' population is the **extant branch set**, read fresh every harvest: a deleted release
+branch's history stays in the ledger but leaves the population and never fires or annotates again;
+a failed branch read defers release-line signals with a named warning and is never read as "all
+retired". Pending runs whose identity must be re-resolved by id draw from a per-harvest bounded
+quota that counts failed attempts too, and the batch rotates least-recently-attempted-first, so a
+persistently failing front slice cannot starve a readable backlog entry.
 
 Known costs, disclosed: release runs are harvested when the next `main` push aggregates — a quiet
 main line delays release visibility and no daily reminder exists (the aggregation rides the

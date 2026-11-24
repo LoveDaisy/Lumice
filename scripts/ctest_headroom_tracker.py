@@ -42,7 +42,12 @@ rerun (attempt 2+) never replaces or extends the first result, and a run
 whose attempt 1 yields no computable number is a gap, not "fixed green" by
 its rerun. The population is push runs on `main` and existing `release/*`
 branches only; PR runs are candidate trees and never enter a push-run
-series. A cancelled, unreadable, or number-less run is an honest gap that
+series. "Existing" is the branch list, read fresh every harvest: a deleted
+release branch's runs are retired history — kept in the ledger, but out of
+the population, and its series never fires or annotates again. A failed
+branch read defers release-line signals with a named warning; it is never
+read as "all retired". A cancelled, unreadable, or number-less run is an
+honest gap that
 breaks continuity — a gap neither fakes health nor accumulates a streak,
 and two low samples separated by a gap must not pair into a trigger. A
 budget/ruler/clamp change in the snapshot forms a new calibration segment;
@@ -396,14 +401,53 @@ def line_of_branch(branch: str) -> str:
     return "main" if branch == "main" else "release"
 
 
-def in_population(branch: str) -> bool:
-    return branch == "main" or branch.startswith("release/")
+def in_population(branch: str, extant_release: set[str] | None) -> bool:
+    """Whether a push-run branch is in the formal sampling population.
+
+    `main` is unambiguous. A release branch qualifies only while it EXISTS:
+    deleted branches keep their runs listed forever, and without this check
+    a retired line would keep feeding the formal population long after its
+    lifecycle ended. `extant_release is None` means discovery FAILED this
+    harvest — that is not "all retired": the prefix rule then governs
+    collection (fail-open, upgrade-only), while release signals are
+    withheld elsewhere (fail-closed) until the extant set is readable again.
+    """
+    if branch == "main":
+        return True
+    if not branch.startswith("release/"):
+        return False
+    return extant_release is None or branch in extant_release
+
+
+def list_release_branches(client: GhClient) -> set[str]:
+    """Extant `release/*` branch names — the release line's lifecycle authority.
+
+    Read fresh every harvest: runs of branches absent from this set are
+    retired history, not population. Raises HarvestError on transport
+    failure; the caller must NOT read that as "all retired".
+    """
+    names: set[str] = set()
+    page = 1
+    while True:
+        payload = client.api_json(f"repos/{client.repo}/branches?per_page=100&page={page}")
+        # The branches endpoint returns a bare JSON array; tolerate an object
+        # wrapper so a payload shape change degrades to "no branches parsed",
+        # never to a crash.
+        batch = payload if isinstance(payload, list) else (payload.get("branches") or [])
+        for entry in batch:
+            name = entry.get("name") if isinstance(entry, dict) else None
+            if name and name.startswith("release/"):
+                names.add(name)
+        if len(batch) < 100 or page >= MAX_LIST_PAGES:
+            break
+        page += 1
+    return names
 
 
 def list_push_runs(
-    client: GhClient, since_iso: str, current_run: int | None
+    client: GhClient, since_iso: str, current_run: int | None, extant_release: set[str] | None
 ) -> tuple[list[dict], list[dict], list[dict]]:
-    """Completed push runs on main / release/*, oldest first.
+    """Completed push runs on main / extant release branches, oldest first.
 
     Returns (harvestable, out_of_population, unfinished). Unfinished runs
     (still in progress, not the current run) are returned, not dropped: the
@@ -422,7 +466,7 @@ def list_push_runs(
         batch = payload.get("workflow_runs", [])
         for run in batch:
             branch = run.get("head_branch") or ""
-            if not in_population(branch):
+            if not in_population(branch, extant_release):
                 out_of_population.append(run)
             elif run.get("status") == "completed" or (current_run is not None and run["id"] == current_run):
                 # Any terminal conclusion (success/failure/cancelled/...) is
@@ -913,18 +957,54 @@ def series_label(line: str, branch: str, job: str, phase: str) -> str:
     return f"{where}/{job}/{phase}"
 
 
+def notification_scope(line: str, branch: str, extant_release: set[str] | None) -> bool:
+    """Whether a series may raise or keep raising a signal this harvest.
+
+    main is always in scope. A release series is in scope only while its
+    branch exists — a deleted branch's history stays in the ledger and the
+    summary, but it stops firing and annotating: a retired line must not
+    keep emitting signals nobody can act on, and a backfill must not pull
+    retired history into the trigger population. Discovery FAILED (None) is
+    not "all retired": release series are deferred — collected, evaluated,
+    but neither fired nor annotated until the extant set is readable again.
+    """
+    if line == "main":
+        return True
+    return extant_release is not None and branch in extant_release
+
+
 def evaluate_series(
-    records: list[dict], current_config_id: str, threshold_pct: float, min_streak: int
+    records: list[dict],
+    current_config_id: str,
+    threshold_pct: float,
+    min_streak: int,
+    extant_release: set[str] | None = None,
 ) -> tuple[list[dict], list[dict], list[dict]]:
-    """Per-series walk over the merged ledger; returns (summary rows, active events, fired events)."""
+    """Per-series walk over the merged ledger; returns (summary rows, active events, fired events).
+
+    `extant_release` scopes the release line's signals: events for retired
+    branches — or for every release line while branch discovery has failed —
+    are neither fired into the ledger nor annotated; the affected rows say
+    `retired` / `deferred` instead of ACTIVE, so the summary never reads a
+    suppressed signal as health.
+    """
     rows: list[dict] = []
     active_all: list[dict] = []
     fired_all: list[dict] = []
     for (line, branch, job, phase), entries in sorted(group_series(records).items()):
         result = walk_series(entries, current_config_id, threshold_pct, min_streak)
         latest = entries[-1]
-        active_all.extend([result["active"]] if result["active"] else [])
-        fired_all.extend(result["fired"])
+        in_scope = notification_scope(line, branch, extant_release)
+        if result["active"] is not None and in_scope:
+            active_all.append(result["active"])
+        if in_scope:
+            fired_all.extend(result["fired"])
+        if result["active"] is None:
+            signal = "-"
+        elif in_scope:
+            signal = "ACTIVE"
+        else:
+            signal = "retired" if extant_release is not None else "deferred"
         rows.append(
             {
                 "label": series_label(line, branch, job, phase),
@@ -933,7 +1013,7 @@ def evaluate_series(
                 "latest_reason": latest.get("reason", ""),
                 "status": annotate_status(latest, threshold_pct),
                 "streak": result["streak"],
-                "signal": "ACTIVE" if result["active"] else "-",
+                "signal": signal,
             }
         )
     return rows, active_all, fired_all
@@ -953,6 +1033,7 @@ def render_summary(
     out_of_population: int,
     backlog_note: str | None,
     publish_note: str,
+    scope_note: str | None = None,
 ) -> str:
     lines = [
         "## Ctest headroom (observation only — never a gate)",
@@ -962,6 +1043,8 @@ def render_summary(
     ]
     if config_changed_note:
         lines.append(f"- {config_changed_note}")
+    if scope_note:
+        lines.append(f"- {scope_note}")
     lines.extend(
         [
             f"- Coverage: {totals['runs_processed']} run(s) processed this harvest, "
@@ -1096,8 +1179,9 @@ def read_published_state(repo_root: Path, remote: str, ref: str, into: Path) -> 
 
 def merge_into_state_dir(state_dir: Path, theirs: Path) -> None:
     """Union-merge another copy of the state into ours (records by key, cursor
-    and pending max/union). Both sides' facts survive; the config of the
-    acting harvest wins and the config-change annotation explains the break.
+    max, pending union incl. the latest re-resolve attempt stamp). Both
+    sides' facts survive; the config of the acting harvest wins and the
+    config-change annotation explains the break.
 
     Pending is UNIONED, not kept one-sided: the remote may have a newer
     cursor while still owing runs older than it — dropping their pending
@@ -1122,9 +1206,24 @@ def merge_into_state_dir(state_dir: Path, theirs: Path) -> None:
 
     winner = ours_cursor if cursor_order(ours_cursor) >= cursor_order(theirs_cursor) else theirs_cursor
     ours_state["cursor"] = winner
-    pending: dict[int, dict] = {entry["run_id"]: entry for entry in ours_state.get("pending") or []}
+    pending: dict[int, dict] = {}
+    for entry in ours_state.get("pending") or []:
+        pending[entry["run_id"]] = dict(entry)
     for entry in theirs_state.get("pending") or []:
-        pending.setdefault(entry["run_id"], entry)
+        existing = pending.get(entry["run_id"])
+        if existing is None:
+            pending[entry["run_id"]] = dict(entry)
+            continue
+        # The re-resolve rotation stamp records that identity queries were
+        # ATTEMPTED, so the union takes the latest attempt either side
+        # observed — dropping the other side's stamp would re-attempt runs
+        # this line already rotated past, or skip ones it has not tried.
+        stamp = max(existing.get("last_attempted_at") or "", entry.get("last_attempted_at") or "")
+        for field in ("run_number", "branch", "created_at"):
+            if not existing.get(field) and entry.get(field):
+                existing[field] = entry.get(field)
+        if stamp:
+            existing["last_attempted_at"] = stamp
     ours_state["pending"] = sorted(pending.values(), key=lambda p: (p.get("created_at") or "", p["run_id"]))
     (state_dir / "state.json").write_text(json.dumps(ours_state, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
@@ -1233,6 +1332,7 @@ def finalize(
     out_of_population: int,
     backlog_note: str | None,
     publish_note: str,
+    scope_note: str | None,
     paths: dict,
     args: argparse.Namespace,
 ) -> None:
@@ -1253,6 +1353,7 @@ def finalize(
         out_of_population=out_of_population,
         backlog_note=backlog_note,
         publish_note=publish_note,
+        scope_note=scope_note,
     )
     paths["summary"].write_text(summary, encoding="utf-8")
     if args.job_summary:
@@ -1334,6 +1435,28 @@ def harvest_command(args: argparse.Namespace) -> int:
     client = GhClient(args.gh_bin, args.repo, budget, timeout_sec=args.api_timeout_sec)
     new_records: list[dict] = []
 
+    # The release line's lifecycle authority, read fresh every harvest: only
+    # branches that still exist feed the formal population and raise signals.
+    # A failed read is NOT "all retired" — collection falls back to the
+    # prefix rule (fail-open, upgrade-only) while release signals are
+    # deferred (fail-closed), both with a named warning.
+    extant_release: set[str] | None
+    try:
+        extant_release = list_release_branches(client)
+    except HarvestError as error:
+        extant_release = None
+        warnings.append(
+            "release branch discovery failed: "
+            f"{classify_harvest_error(error, default='branches-unreadable')} — existing release "
+            "lines cannot be told from retired ones this harvest; release evidence is still "
+            "collected, release-line signals are deferred"
+        )
+    scope_note = (
+        "release branch discovery failed this harvest: existing release lines cannot be told "
+        "from retired ones, so release-line signals are deferred (coverage incomplete, not "
+        "all-retired)" if extant_release is None else None
+    )
+
     # Runs still owed collection: anything the window listing finds that the
     # ledger has not fully collected (the listing gives fresh authoritative
     # objects for free) plus pending entries the listing cannot see — those
@@ -1342,7 +1465,7 @@ def harvest_command(args: argparse.Namespace) -> int:
     # un-re-resolved run's continuity until its turn comes).
     work: dict[int, dict] = {}
     try:
-        runs, out_of_population, unfinished = list_push_runs(client, since_iso, args.current_run)
+        runs, out_of_population, unfinished = list_push_runs(client, since_iso, args.current_run, extant_release)
     except HarvestError as error:
         warnings.append(f"run listing failed: {classify_harvest_error(error, default='listing-failed')}")
         runs, unfinished, out_of_population = [], [], []
@@ -1352,8 +1475,24 @@ def harvest_command(args: argparse.Namespace) -> int:
         if run["id"] not in complete_run_ids:
             work[run["id"]] = run
 
+    # Pending identity metadata, keyed by run id: the re-resolve rotation
+    # stamps (`last_attempted_at`) live here and are carried into the rebuilt
+    # pending at the end of the harvest.
+    pending_meta: dict[int, dict] = {
+        entry["run_id"]: dict(entry) for entry in previous_state.get("pending") or []
+    }
+
+    def reresolve_rank(entry: dict) -> tuple:
+        # Never-attempted entries first (oldest first), then least-recently
+        # attempted. Selecting the same oldest slice every harvest would
+        # starve the rest of the backlog forever when the front entries keep
+        # failing retryably; stamping EVERY attempt — success, 403, timeout —
+        # rotates the bounded batch across harvests.
+        attempted = entry.get("last_attempted_at") or ""
+        return (1 if attempted else 0, attempted, entry.get("created_at") or "", entry["run_id"])
+
     reresolved = 0
-    for entry in previous_state.get("pending") or []:
+    for entry in sorted(pending_meta.values(), key=reresolve_rank):
         if entry["run_id"] in complete_run_ids or entry["run_id"] in work:
             continue
         if reresolved >= MAX_PENDING_RERESOLVE_PER_HARVEST or budget.exhausted:
@@ -1363,9 +1502,13 @@ def harvest_command(args: argparse.Namespace) -> int:
                 "html_url": "", "head_sha": "", "status": "unknown", "conclusion": None,
             })
             continue
+        # The attempt itself consumes the phase quota — a failed identity
+        # query costs exactly what a successful one costs, or the failure
+        # path would bypass the cap and eat the evidence budget.
+        reresolved += 1
+        pending_meta[entry["run_id"]]["last_attempted_at"] = utc_now_iso()
         try:
             run_obj = client.get_run(entry["run_id"])
-            reresolved += 1
         except HarvestError as error:
             reason = classify_harvest_error(error, default="run-unreadable")
             if "not found or expired" in reason:
@@ -1461,14 +1604,16 @@ def harvest_command(args: argparse.Namespace) -> int:
         recs = records_by_run.get(run_id, [])
         if recs and runs_collection_complete(recs):
             continue
-        pending.append(
-            {
-                "run_id": run_id,
-                "created_at": run_obj.get("created_at") or "",
-                "run_number": run_obj.get("run_number"),
-                "branch": run_obj.get("head_branch") or "",
-            }
-        )
+        entry = {
+            "run_id": run_id,
+            "created_at": run_obj.get("created_at") or "",
+            "run_number": run_obj.get("run_number"),
+            "branch": run_obj.get("head_branch") or "",
+        }
+        meta = pending_meta.get(run_id)
+        if meta and meta.get("last_attempted_at"):
+            entry["last_attempted_at"] = meta["last_attempted_at"]
+        pending.append(entry)
     pending.sort(key=lambda p: (p["created_at"], p["run_id"]))
 
     # A pending run with NO ledger row yet (budget backlog, un-resolvable
@@ -1491,7 +1636,9 @@ def harvest_command(args: argparse.Namespace) -> int:
     if owed_fences:
         merged_samples = drop_superseded_line_wide_gaps(merge_records(merged_samples, owed_fences))
 
-    _, _, fired_events = evaluate_series(merged_samples, config_id, args.threshold_pct, args.min_streak)
+    _, _, fired_events = evaluate_series(
+        merged_samples, config_id, args.threshold_pct, args.min_streak, extant_release
+    )
 
     cursor = previous_state.get("cursor")
     if processed_runs:
@@ -1527,7 +1674,9 @@ def harvest_command(args: argparse.Namespace) -> int:
     def render_into(state: Path, note: str) -> None:
         merged = drop_superseded_line_wide_gaps(load_jsonl(state / "samples.jsonl"))
         write_jsonl(state / "samples.jsonl", merged)
-        rows, active, fired = evaluate_series(merged, config_id, args.threshold_pct, args.min_streak)
+        rows, active, fired = evaluate_series(
+            merged, config_id, args.threshold_pct, args.min_streak, extant_release
+        )
         existing_events = load_jsonl(state / "events.jsonl")
         write_jsonl(state / "events.jsonl", merge_records(existing_events, fired, key_of=event_key))
         summary = render_summary(
@@ -1547,6 +1696,7 @@ def harvest_command(args: argparse.Namespace) -> int:
             out_of_population=len(out_of_population),
             backlog_note=backlog_note,
             publish_note=note,
+            scope_note=scope_note,
         )
         (state / "summary.md").write_text(summary, encoding="utf-8")
         return
@@ -1573,7 +1723,7 @@ def harvest_command(args: argparse.Namespace) -> int:
     # did not see.
     final_samples = load_jsonl(paths["samples"])
     per_series_rows, active_events, _ = evaluate_series(
-        final_samples, config_id, args.threshold_pct, args.min_streak
+        final_samples, config_id, args.threshold_pct, args.min_streak, extant_release
     )
     totals = {
         "runs_processed": len(processed_runs),
@@ -1588,7 +1738,7 @@ def harvest_command(args: argparse.Namespace) -> int:
         totals=totals, per_series=per_series_rows,
         active_events=active_events, gaps_this_harvest=[r for r in new_records if r["type"] == "gap"],
         out_of_population=len(out_of_population), backlog_note=backlog_note,
-        publish_note=publish_note, paths=paths, args=args,
+        publish_note=publish_note, scope_note=scope_note, paths=paths, args=args,
     )
     report_warnings(warnings)
     if args.publish and publish_note.startswith("NOT PERSISTED"):

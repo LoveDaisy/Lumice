@@ -481,19 +481,25 @@ def test_state_merge_unions_pending_and_takes_the_max_cursor(tmp_path):
     write_jsonl(theirs / "samples.jsonl", [])
     (ours / "state.json").write_text(json.dumps({
         "config": {"config_id": "cfg-x"}, "cursor": {"run_id": 1, "created_at": "2026-11-20T00:00:00Z"},
-        "pending": [{"run_id": 7, "created_at": "2026-11-19T00:00:00Z", "run_number": 7, "branch": "main"}],
+        "pending": [{"run_id": 7, "created_at": "2026-11-19T00:00:00Z", "run_number": 7, "branch": "main",
+                     "last_attempted_at": "2026-11-23T10:00:00Z"}],
     }))
     (theirs / "state.json").write_text(json.dumps({
         "config": {"config_id": "cfg-x"}, "cursor": {"run_id": 3, "created_at": "2026-11-22T00:00:00Z"},
         "pending": [
             {"run_id": 2, "created_at": "2026-11-21T00:00:00Z", "run_number": 2, "branch": "main"},
-            {"run_id": 7, "created_at": "2026-11-19T00:00:00Z", "run_number": 7, "branch": "main"},
+            {"run_id": 7, "created_at": "2026-11-19T00:00:00Z", "run_number": 7, "branch": "main",
+             "last_attempted_at": "2026-11-23T12:00:00Z"},
         ],
     }))
     tracker.merge_into_state_dir(ours, theirs)
     state = json.loads((ours / "state.json").read_text())
     assert state["cursor"]["run_id"] == 3
     assert {entry["run_id"] for entry in state["pending"]} == {2, 7}  # the remote's owed run 2 is not dropped
+    by_id = {entry["run_id"]: entry for entry in state["pending"]}
+    # The rotation stamp is the latest attempt either side observed — the
+    # union must not let one side's older stamp resurrect a rotated-past run.
+    assert by_id[7]["last_attempted_at"] == "2026-11-23T12:00:00Z"
 
 
 # --- fake gh plumbing for the end-to-end harvest -------------------------------------
@@ -565,11 +571,17 @@ def serve(root: Path, path: str, content: str) -> None:
     (root / (norm_path(path) + ".txt")).write_text(content)
 
 
-def setup_fake_gh(tmp_path: Path, runs: list[dict], jobs_and_logs: dict, registries: dict) -> tuple[Path, dict]:
+def setup_fake_gh(
+    tmp_path: Path, runs: list[dict], jobs_and_logs: dict, registries: dict,
+    release_branches="auto",
+) -> tuple[Path, dict]:
     """Install the fake gh binary and the canned responses.
 
     jobs_and_logs: {run_id: {"jobs": {job_name: (job_id, conclusion)}, "logs": {job_id: text}}}
     registries: {sha: registry_text}
+    release_branches: "auto" derives the extant release/* set from the runs;
+      a list is served verbatim (empty = every release branch retired);
+      None does not serve the endpoint at all (discovery fails with a 404).
     """
     root = tmp_path / "fakegh"
     root.mkdir()
@@ -580,6 +592,13 @@ def setup_fake_gh(tmp_path: Path, runs: list[dict], jobs_and_logs: dict, registr
         "HEADROOM_FAKE_GH_DIR": str(root),
         "HEADROOM_FAKE_GH_LOG": str(tmp_path / "requests.log"),
     }
+    if release_branches == "auto":
+        release_branches = sorted(
+            {r["head_branch"] for r in runs if (r.get("head_branch") or "").startswith("release/")}
+        )
+    if release_branches is not None:
+        serve(root, "repos/O/R/branches?per_page=100&page=1",
+              json.dumps([{"name": name} for name in release_branches]))
     serve(root, "repos/O/R/actions/workflows/ci.yml/runs?event=push&per_page=100&page=1",
           json.dumps({"total_count": len(runs), "workflow_runs": runs}))
     for run in runs:
@@ -906,6 +925,131 @@ def test_two_release_branches_with_the_same_registry_never_pair(tmp_path):
     assert "release:release/4.7.8" in process.stdout  # the second series is reported under its own branch
 
 
+def test_deleted_release_branch_stops_signaling_but_keeps_its_history(tmp_path):
+    # release/4.7.7 fires (two lows) while extant; the branch is then deleted
+    # and a later main push is harvested: the retired line's history stays in
+    # the ledger, but it must not keep annotating as ACTIVE — and the summary
+    # must say "retired", never silently treat the suppression as health.
+    low_rel = RELEASE_RED  # h=-0.32% low vs B=480
+    runs1 = [
+        make_run(1001, 1, "release/4.7.7", "2026-11-20T00:00:00Z", "sha-r1", conclusion="failure"),
+        make_run(1002, 2, "release/4.7.7", "2026-11-21T00:00:00Z", "sha-r2", conclusion="failure"),
+    ]
+    bin_path, env = setup_fake_gh(
+        tmp_path, runs1,
+        {
+            1001: {"jobs": {WINDOWS_JOB: (9101, "failure")}, "logs": {9101: low_rel}},
+            1002: {"jobs": {WINDOWS_JOB: (9102, "failure")}, "logs": {9102: low_rel}},
+        },
+        {"sha-r1": RELEASE_REGISTRY, "sha-r2": RELEASE_REGISTRY},
+    )
+    first, state_dir = run_harvest(tmp_path, bin_path, env)
+    assert first.returncode == 0
+    assert len([l for l in first.stdout.splitlines() if l.startswith("::notice::")]) == 1
+
+    # The branch is deleted; a later main push arrives with a healthy reading.
+    runs2 = runs1 + [make_run(1003, 3, "main", "2026-11-23T00:00:00Z", "sha-m1")]
+    serve(tmp_path / "fakegh", "repos/O/R/actions/workflows/ci.yml/runs?event=push&per_page=100&page=1",
+          json.dumps({"total_count": len(runs2), "workflow_runs": runs2}))
+    serve(tmp_path / "fakegh", "repos/O/R/branches?per_page=100&page=1", json.dumps([]))  # deleted
+    serve(tmp_path / "fakegh", "repos/O/R/actions/runs/1003", json.dumps(runs2[-1]))
+    serve(tmp_path / "fakegh", "repos/O/R/actions/runs/1003/attempts/1/jobs",
+          json.dumps({"total_count": 1, "jobs": [{"id": 9103, "name": MACOS_JOB, "status": "completed",
+                                                  "conclusion": "success", "html_url": ""}]}))
+    serve(tmp_path / "fakegh", "repos/O/R/actions/jobs/9103/logs", MAIN_GREEN_MACOS)
+    serve(tmp_path / "fakegh", "repos/O/R/contents/test/duration_registry.json?ref=sha-m1",
+          contents_payload(MAIN_REGISTRY, "blob-m1"))
+    second, state_dir = run_harvest(tmp_path, bin_path, env)
+    assert second.returncode == 0
+    assert len([l for l in second.stdout.splitlines() if l.startswith("::notice::")]) == 0  # retired is silent
+    assert "retired" in second.stdout  # the summary names the suppression explicitly
+    events = [json.loads(line) for line in (state_dir / "events.jsonl").read_text().splitlines() if line]
+    assert len(events) == 1 and events[0]["branch"] == "release/4.7.7"  # history preserved, never re-fired
+    samples = {json.loads(line)["key"]
+               for line in (state_dir / "samples.jsonl").read_text().splitlines() if line}
+    assert "1001:1:Windows MSVC x86_64:ctest" in samples  # retired samples stay in the ledger
+
+
+def test_backfill_window_skips_a_deleted_branchs_runs_entirely(tmp_path):
+    # Cold start, full window: two low runs on a release branch that no
+    # longer exists must not enter the population. The old prefix-only rule
+    # would harvest them and pair their lows into a trigger for a line the
+    # owner has already retired.
+    low_rel = RELEASE_RED
+    runs = [
+        make_run(1021, 1, "release/4.7.6", "2026-11-20T00:00:00Z", "sha-d1", conclusion="failure"),
+        make_run(1022, 2, "release/4.7.6", "2026-11-21T00:00:00Z", "sha-d2", conclusion="failure"),
+        make_run(1023, 3, "main", "2026-11-22T00:00:00Z", "sha-m2"),
+    ]
+    bin_path, env = setup_fake_gh(
+        tmp_path, runs,
+        {
+            1021: {"jobs": {WINDOWS_JOB: (9101, "failure")}, "logs": {9101: low_rel}},
+            1022: {"jobs": {WINDOWS_JOB: (9102, "failure")}, "logs": {9102: low_rel}},
+            1023: {"jobs": {MACOS_JOB: (9103, "success")}, "logs": {9103: MAIN_GREEN_MACOS}},
+        },
+        {"sha-d1": RELEASE_REGISTRY, "sha-d2": RELEASE_REGISTRY, "sha-m2": MAIN_REGISTRY},
+        release_branches=[],  # the only release line was retired before the window
+    )
+    process, state_dir = run_harvest(tmp_path, bin_path, env)
+    assert process.returncode == 0
+    assert "2 out-of-population run(s) ignored" in process.stdout
+    keys = (state_dir / "samples.jsonl").read_text()
+    assert "1021" not in keys and "1022" not in keys  # retired runs are not harvested at all
+    assert "1023:1:macOS ARM64:ctest" in keys
+    assert (state_dir / "events.jsonl").read_text().strip() == ""  # retired lows never pair
+
+
+def test_branch_discovery_failure_defers_release_signals_and_recovery_fires(tmp_path):
+    # A failed branch read is NOT "all retired": release evidence is still
+    # collected (fail-open), but release-line signals are deferred
+    # (fail-closed) with a named warning while main stays unaffected. When
+    # discovery recovers, the deferred signal fires — evidence first
+    # collected under unknown coverage is not lost.
+    low_rel = RELEASE_RED
+    low_main = MAIN_GREEN_MACOS.replace("537.7", "600.0").replace("1.018", "1.000")  # h=-7.14
+    runs = [
+        make_run(1031, 1, "release/4.7.7", "2026-11-20T00:00:00Z", "sha-r1", conclusion="failure"),
+        make_run(1032, 2, "release/4.7.7", "2026-11-21T00:00:00Z", "sha-r2", conclusion="failure"),
+        make_run(1033, 3, "main", "2026-11-20T06:00:00Z", "sha-a1"),
+        make_run(1034, 4, "main", "2026-11-21T06:00:00Z", "sha-a2"),
+    ]
+    bin_path, env = setup_fake_gh(
+        tmp_path, runs,
+        {
+            1031: {"jobs": {WINDOWS_JOB: (9101, "failure")}, "logs": {9101: low_rel}},
+            1032: {"jobs": {WINDOWS_JOB: (9102, "failure")}, "logs": {9102: low_rel}},
+            1033: {"jobs": {MACOS_JOB: (9103, "success")}, "logs": {9103: low_main}},
+            1034: {"jobs": {MACOS_JOB: (9104, "success")}, "logs": {9104: low_main}},
+        },
+        {"sha-r1": RELEASE_REGISTRY, "sha-r2": RELEASE_REGISTRY,
+         "sha-a1": MAIN_REGISTRY, "sha-a2": MAIN_REGISTRY},
+        release_branches=None,  # the branches endpoint is unreadable this harvest
+    )
+    first, state_dir = run_harvest(tmp_path, bin_path, env)
+    assert first.returncode == 0
+    assert "release branch discovery failed" in first.stdout  # the named warning
+    assert "deferred" in first.stdout  # the summary says deferred, not healthy
+    samples = {json.loads(line)["key"]
+               for line in (state_dir / "samples.jsonl").read_text().splitlines() if line}
+    assert "1031:1:Windows MSVC x86_64:ctest" in samples  # fail-open: evidence still collected
+    notices = [l for l in first.stdout.splitlines() if l.startswith("::notice::")]
+    assert len(notices) == 1 and "main/macOS ARM64/ctest" in notices[0]  # main unaffected
+    events = [json.loads(line) for line in (state_dir / "events.jsonl").read_text().splitlines() if line]
+    assert {event["line"] for event in events} == {"main"}  # release deferred, nothing fired
+
+    # Discovery recovers: the deferred release signal fires on the next walk.
+    serve(tmp_path / "fakegh", "repos/O/R/branches?per_page=100&page=1",
+          json.dumps([{"name": "release/4.7.7"}]))
+    second, state_dir = run_harvest(tmp_path, bin_path, env)
+    assert second.returncode == 0
+    notices = [l for l in second.stdout.splitlines() if l.startswith("::notice::")]
+    assert len(notices) == 2  # main active + the deferred release signal
+    assert any("release:release/4.7.7" in line for line in notices)
+    events = [json.loads(line) for line in (state_dir / "events.jsonl").read_text().splitlines() if line]
+    assert {event["line"] for event in events} == {"main", "release"}
+
+
 def test_in_progress_run_between_lows_fences_and_upgrades_on_completion(tmp_path):
     # A run discovered while still in progress must appear in the timeline the
     # moment it is skipped — pending-only identity would leave the lows around
@@ -1109,6 +1253,105 @@ def test_pending_reresolution_is_bounded_and_backlogged_runs_fence(tmp_path):
     assert len(fenced) >= 1  # un-collected pending runs are fenced, not silent holes
 
 
+def test_failed_pending_reresolve_consumes_quota_and_new_runs_still_harvest(tmp_path):
+    # 30 out-of-window pending entries whose identity queries ALL fail with a
+    # transient 403, plus two fresh fully-readable runs inside the listing
+    # window: the identity cap must count FAILURES too (the batch stops at
+    # 25 attempts), and the budget that remains must reach the new runs'
+    # evidence — the failure path may not starve collection.
+    pending_runs = [make_run(940 + i, 940 + i, "main", f"2026-11-18T00:00:{i:02d}Z", f"sha-p{i}")
+                    for i in range(30)]
+    new_runs = [
+        make_run(971, 2154, "main", "2026-11-22T00:00:00Z", "sha-n1"),
+        make_run(972, 2155, "main", "2026-11-22T06:00:00Z", "sha-n2"),
+    ]
+    healthy = MAIN_GREEN_MACOS.replace("537.7", "480.0").replace("1.018", "1.000")  # h=14.29
+    bin_path, env = setup_fake_gh(
+        tmp_path, new_runs,
+        {
+            971: {"jobs": {MACOS_JOB: (9901, "success")}, "logs": {9901: MAIN_GREEN_MACOS}},
+            972: {"jobs": {MACOS_JOB: (9902, "success")}, "logs": {9902: healthy}},
+        },
+        {"sha-n1": MAIN_REGISTRY, "sha-n2": MAIN_REGISTRY},
+    )
+    for run in pending_runs:
+        key = norm_path(f"repos/O/R/actions/runs/{run['id']}")
+        (tmp_path / "fakegh" / (key + ".txt.forbidden")).touch()
+    # The listing window starts at the cursor; the 30 pending runs predate it,
+    # so every one of their identities must come from the bounded re-resolve.
+    serve(tmp_path / "fakegh", "repos/O/R/actions/workflows/ci.yml/runs?event=push&per_page=100&page=1",
+          json.dumps({"total_count": len(new_runs), "workflow_runs": new_runs}))
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    (state_dir / "samples.jsonl").write_text("")
+    (state_dir / "events.jsonl").write_text("")
+    (state_dir / "state.json").write_text(json.dumps({
+        "schema": 1, "config": None,
+        "cursor": {"run_id": 970, "created_at": "2026-11-21T00:00:00Z", "run_number": 970},
+        "pending": [{"run_id": r["id"], "created_at": r["created_at"], "run_number": r["id"], "branch": "main"}
+                    for r in pending_runs],
+    }))
+    process, state_dir = run_harvest(tmp_path, bin_path, env, extra_args=("--max-api-calls", "40"))
+    assert process.returncode == 0
+    requested = (tmp_path / "requests.log").read_text().splitlines()
+    identity = [call for call in requested if re.search(r"/actions/runs/\d+$", call)]
+    assert len(identity) <= tracker.MAX_PENDING_RERESOLVE_PER_HARVEST  # failures consume the cap too
+    samples = {json.loads(line)["key"] for line in (state_dir / "samples.jsonl").read_text().splitlines() if line}
+    assert "971:1:macOS ARM64:ctest" in samples and "972:1:macOS ARM64:ctest" in samples  # evidence progressed
+    assert (state_dir / "events.jsonl").read_text().strip() == ""  # single lows, nothing pairs
+
+
+def test_pending_reresolve_rotates_so_a_readable_backlog_run_progresses(tmp_path):
+    # 25 front pending entries fail identity re-resolve (retryable 403) and
+    # stay pending; the 26th entry is fully readable. A fixed oldest-first
+    # batch would leave it un-queried forever; the rotation stamp must hand
+    # it the identity query on the NEXT harvest, upgrading it from a fence
+    # into real evidence.
+    failing = [make_run(940 + i, 940 + i, "main", f"2026-11-18T00:00:{i:02d}Z", f"sha-p{i}")
+               for i in range(25)]
+    readable = make_run(966, 966, "main", "2026-11-19T00:00:00Z", "sha-ok")
+    bin_path, env = setup_fake_gh(
+        tmp_path, [readable],
+        {966: {"jobs": {MACOS_JOB: (9966, "success")}, "logs": {9966: MAIN_GREEN_MACOS}}},
+        {"sha-ok": MAIN_REGISTRY},
+    )
+    for run in failing:
+        key = norm_path(f"repos/O/R/actions/runs/{run['id']}")
+        (tmp_path / "fakegh" / (key + ".txt.forbidden")).touch()
+    serve(tmp_path / "fakegh", "repos/O/R/actions/workflows/ci.yml/runs?event=push&per_page=100&page=1",
+          json.dumps({"total_count": 0, "workflow_runs": []}))
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    (state_dir / "samples.jsonl").write_text("")
+    (state_dir / "events.jsonl").write_text("")
+    pending_all = failing + [readable]
+    (state_dir / "state.json").write_text(json.dumps({
+        "schema": 1, "config": None,
+        "cursor": {"run_id": 967, "created_at": "2026-11-19T06:00:00Z", "run_number": 967},
+        "pending": [{"run_id": r["id"], "created_at": r["created_at"], "run_number": r["id"], "branch": "main"}
+                    for r in pending_all],
+    }))
+
+    first, state_dir = run_harvest(tmp_path, bin_path, env)
+    assert first.returncode == 0
+    requested = (tmp_path / "requests.log").read_text()
+    assert "/actions/runs/966" not in requested  # the cap spent itself on the front failures
+    samples = {json.loads(line)["key"] for line in (state_dir / "samples.jsonl").read_text().splitlines() if line}
+    assert "966:1::" in samples  # fenced, not silent
+
+    second, state_dir = run_harvest(tmp_path, bin_path, env)
+    assert second.returncode == 0
+    requested = (tmp_path / "requests.log").read_text()
+    assert "/actions/runs/966" in requested  # the rotation reached the readable entry
+    assert "/actions/jobs/9966/logs" in requested  # and its evidence was collected
+    samples = {json.loads(line)["key"]: json.loads(line)
+               for line in (state_dir / "samples.jsonl").read_text().splitlines() if line}
+    assert samples["966:1:macOS ARM64:ctest"]["type"] == "sample"  # fence upgraded to evidence
+    assert "966:1::" not in samples  # the stale fence retired
+    state = json.loads((state_dir / "state.json").read_text())
+    assert 966 not in {entry["run_id"] for entry in state["pending"]}  # collected, no longer owed
+
+
 def test_partial_published_state_fails_loudly(tmp_path):
     bare = tmp_path / "partial.git"
     subprocess.run(["git", "init", "-q", "--bare", str(bare)], check=True)
@@ -1242,9 +1485,9 @@ def test_budget_death_mid_run_is_pinned_pending_and_upgraded_next_harvest(tmp_pa
     }
     registries = {"sha-a": MAIN_REGISTRY, "sha-b": MAIN_REGISTRY, "sha-c": MAIN_REGISTRY}
     bin_path, env = setup_fake_gh(tmp_path, runs, jobs_and_logs, registries)
-    # Calls: listing 1 + run 871 (registry/jobs/log) 3 + run 872 registry 1
-    # + jobs 1 + log REFUSED -> api-budget-exhausted; run 873 never starts.
-    first, state_dir = run_harvest(tmp_path, bin_path, env, extra_args=("--max-api-calls", "6"))
+    # Calls: release-branch discovery 1 + listing 1 + run 871 (registry/jobs/log) 3
+    # + run 872 registry 1 + jobs 1 + log REFUSED -> api-budget-exhausted; run 873 never starts.
+    first, state_dir = run_harvest(tmp_path, bin_path, env, extra_args=("--max-api-calls", "7"))
     assert first.returncode == 0
     samples = {json.loads(line)["key"]: json.loads(line)
                for line in (state_dir / "samples.jsonl").read_text().splitlines() if line}
