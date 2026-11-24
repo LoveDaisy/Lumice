@@ -18464,32 +18464,23 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
     };
   }
 
-  // The cone verdict keeps the right press off the roll gesture. The preview's right drag rolls
-  // the camera only when the arbiter says kCamera: with the marker under the cursor (kMarkerDrag)
-  // or the point pick armed (kPickClick) a right press belongs to that verdict, and when the
-  // verdict flips back to kCamera MID-press the spent press stays spent. The same arc is driven
-  // three times — under the marker, armed, then fresh — and only the fresh one rolls, which is
-  // what keeps the two "nothing happened" legs from passing on a preview that cannot roll at all.
+  // The Angular Distance pick keeps the right press off the roll gesture. (Adapted driver — the
+  // ported source case drove the Analyze cone verdict: marker hover and the analysis panel's
+  // Point pick, both of which main has since moved onto the Analyze workspace's panorama, where
+  // no roll gesture exists to arbitrate. The lock face the Render preview actually carries is
+  // the Overlay's Angular Distance pick — `gestures_locked` through the same arm of the
+  // predicate — and its right-click cancel latches the press to the right button, the spelling
+  // the shared ApplyAngularDistPickGesture carries. The arc is driven twice: under the armed
+  // pick (cancelled and latched, nothing rolls) and fresh (the same points roll), which is what
+  // keeps the "nothing happened" leg from passing on a preview that cannot roll at all.)
   {
-    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "the_cone_verdict_keeps_the_right_press_off_the_roll");
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "the_angular_pick_keeps_the_right_press_off_the_roll");
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ScopedServerGuard guard;
       IM_CHECK(BringUpHaloScene(ctx, /*infinite=*/false));
-      OpenWindow(ctx);
-      ctx->SetRef(kWindowRef);
-      ctx->ItemClick("Point");
-      ctx->SetRef("");
-      ctx->Yield(1);
-      IM_CHECK(gui::g_state.analysis.cone_center_valid);  // the default centre
       gui::g_state.renderer.roll = 0.0f;
       const float az_before = gui::g_state.renderer.azimuth;
       const float el_before = gui::g_state.renderer.elevation;
-      ctx->Yield(2);
-      const std::optional<ImVec2> marker = MarkerScreenPos(ctx);
-      IM_CHECK(marker.has_value());
-      // The analysis window out of the way of the marker and the arc below (its top-left to the
-      // bottom-left corner, over the left panel), so the marker hover is real.
-      ctx->WindowMove(kWindowRef, ImVec2(0.0f, 640.0f));
       ctx->Yield(2);
 
       // The preview's centre and a polar walker, in window points — the same screen-space
@@ -18503,44 +18494,29 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
         return ImVec2(centre.x + r * std::cos(rad), centre.y + r * std::sin(rad));
       };
 
-      // Leg 1 — press ON the marker (the hand says the hover is real), then off it and around
-      // the arc: the verdict became kCamera mid-press, and the spent press still rolls nothing.
-      ctx->MouseMoveToPos(*marker);
+      // Leg 1 — the Overlay's Angular Distance pick armed through its own fold and Pick button
+      // (the same arming path the Render suite drives): the right press is the pick's cancel,
+      // and the cancel latches the press to the right button, so the frames of travel before
+      // the release roll nothing.
+      gui::g_state.angular_dist_section_open = true;
+      ctx->Yield(3);
+      ctx->ItemClick("**/###sun_circles_fold");
+      ctx->Yield(3);
+      ctx->ItemClick("**/" ICON_FA_CROSSHAIRS "##pick_circle");
       ctx->Yield(2);
-      IM_CHECK_EQ(ImGui::GetMouseCursor(), ImGuiMouseCursor_Hand);
-      ctx->MouseDown(ImGuiMouseButton_Right);
-      ctx->Yield(2);
-      IM_CHECK(!gui::g_state.analysis.cone_marker_dragging);  // right press is not a marker grab
+      IM_CHECK(gui::g_state.angular_dist_picker.armed);
       ctx->MouseMoveToPos(polar(160.0f, 20.0f));
       ctx->Yield(2);
+      ctx->MouseDown(ImGuiMouseButton_Right);
+      ctx->Yield(2);
+      IM_CHECK(!gui::g_state.angular_dist_picker.armed);  // the right press cancelled the pick
       ctx->MouseMoveToPos(polar(160.0f, 65.0f));
       ctx->Yield(2);
       ctx->MouseUp(ImGuiMouseButton_Right);
       ctx->Yield(2);
       IM_CHECK_EQ(gui::g_state.renderer.roll, 0.0f);
 
-      // Leg 2 — the point pick armed: the right press neither rolls nor consumes the pick (the
-      // pick's cancel is Esc), so the armed click keeps owning presses until the user is out.
-      ctx->SetRef(kWindowRef);
-      ctx->ItemClick(kPickButton);
-      ctx->SetRef("");
-      ctx->Yield(2);
-      IM_CHECK(gui::g_state.analysis.pick_armed);
-      ctx->MouseMoveToPos(polar(160.0f, 20.0f));
-      ctx->Yield(2);
-      ctx->MouseDown(ImGuiMouseButton_Right);
-      ctx->Yield(2);
-      ctx->MouseMoveToPos(polar(160.0f, 65.0f));
-      ctx->Yield(2);
-      ctx->MouseUp(ImGuiMouseButton_Right);
-      ctx->Yield(2);
-      IM_CHECK(gui::g_state.analysis.pick_armed);  // the press did not touch the pick
-      IM_CHECK_EQ(gui::g_state.renderer.roll, 0.0f);
-      ctx->KeyPress(ImGuiKey_Escape);
-      ctx->Yield(2);
-      IM_CHECK(!gui::g_state.analysis.pick_armed);
-
-      // Leg 3 — same preview, same points, no verdict in the way: the fresh press rolls.
+      // Leg 2 — same preview, same points, no lock: the fresh press rolls.
       ctx->MouseMoveToPos(polar(160.0f, 20.0f));
       ctx->Yield(1);
       ctx->MouseDown(ImGuiMouseButton_Right);
