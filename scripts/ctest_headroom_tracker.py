@@ -1234,12 +1234,17 @@ def merge_into_state_dir(state_dir: Path, theirs: Path) -> None:
     A `pending` key surviving in either side's state.json belongs to the
     removed re-resolution subsystem of an older schema; it is dropped, not
     unioned. That subsystem's own ledger rows (`run-pending` backlog fences,
-    `run-not-found` identity records) are likewise cleared from the unioned
-    ledger — statements about a removed mechanism, not evidence — and no
-    identity is carried across harvests (v1 boundary).
+    `run-not-found` identity records) are likewise dropped — from each side's
+    input BEFORE the merge, not from the union afterwards: precedence is
+    upgrade-only, so a residue row (a non-retryable gap) would win a same-key
+    contest against a live retryable fence and then be deleted with the fence
+    it replaced. Residue is not evidence and never enters the adjudication,
+    and no identity is carried across harvests (v1 boundary).
     """
-    samples = merge_records(load_jsonl(state_dir / "samples.jsonl"), load_jsonl(theirs / "samples.jsonl"))
-    samples = drop_legacy_removed_reason_rows(samples)
+    samples = merge_records(
+        drop_legacy_removed_reason_rows(load_jsonl(state_dir / "samples.jsonl")),
+        drop_legacy_removed_reason_rows(load_jsonl(theirs / "samples.jsonl")),
+    )
     samples = drop_superseded_line_wide_gaps(samples)
     write_jsonl(state_dir / "samples.jsonl", samples)
     events = merge_records(

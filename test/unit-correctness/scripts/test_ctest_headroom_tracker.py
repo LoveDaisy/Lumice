@@ -230,14 +230,15 @@ def make_sample(run_id, seconds, raw, budget, *, line="main", job=MACOS_JOB, cre
     )
 
 
-def make_gap(run_id, *, line="main", job=MACOS_JOB, created, config=CFG, reason="reading: no-machine-factor-reading"):
+def make_gap(run_id, *, line="main", job=MACOS_JOB, created, config=CFG,
+             reason="reading: no-machine-factor-reading", phase="ctest"):
     run = {
         "id": run_id, "run_number": run_id,
         "head_branch": "main" if line == "main" else "release/4.7.7",
         "html_url": f"https://example.test/run/{run_id}",
         "head_sha": f"sha-{run_id}", "created_at": created,
     }
-    return tracker.gap_record(run=run, line=line, job=job, phase="ctest", reason=reason, config_id=config)
+    return tracker.gap_record(run=run, line=line, job=job, phase=phase, reason=reason, config_id=config)
 
 
 def walk(records, threshold=6.0, streak=2, config=CFG):
@@ -1264,6 +1265,42 @@ def test_state_merge_clears_legacy_removed_reason_rows_from_both_sides(tmp_path)
     assert state["cursor"]["run_id"] == 3
 
 
+def test_state_merge_legacy_row_cannot_erase_a_live_fence_on_the_same_key(tmp_path):
+    # A published ledger written by pre-shrink code carries `run-pending`
+    # residue on a key our side fences with a live `run-in-progress` gap.
+    # Dropping the residue AFTER merge_records let it win the same-key
+    # contest first (non-retryable gap, precedence 1, beats a retryable
+    # fence, precedence 0) and then deleted the winner — the fence itself —
+    # so low/gap/low recomputed as low/low and fired a pseudo event. The
+    # residue is not evidence: it is dropped from each side BEFORE the
+    # adjudication and never competes.
+    ours = tmp_path / "ours"
+    theirs = tmp_path / "theirs"
+    ours.mkdir()
+    theirs.mkdir()
+    tracker.write_jsonl(ours / "samples.jsonl", [
+        make_sample(1, 560.0, 1.0, 560.0, created="2026-11-20T00:00:00Z"),  # low
+        make_gap(2, created="2026-11-21T00:00:00Z", job="", phase="", reason="run-in-progress"),
+        make_sample(3, 560.0, 1.0, 560.0, created="2026-11-22T00:00:00Z"),  # low
+    ])
+    tracker.write_jsonl(theirs / "samples.jsonl", [
+        make_gap(2, created="2026-11-21T00:00:00Z", job="", phase="", reason="run-pending"),  # same key
+    ])
+    (ours / "state.json").write_text(json.dumps({
+        "config": {"config_id": CFG}, "cursor": {"run_id": 3, "created_at": "2026-11-22T00:00:00Z"},
+    }))
+    (theirs / "state.json").write_text(json.dumps({
+        "config": {"config_id": CFG}, "cursor": {"run_id": 1, "created_at": "2026-11-20T00:00:00Z"},
+    }))
+    tracker.merge_into_state_dir(ours, theirs)
+    merged = [json.loads(line) for line in (ours / "samples.jsonl").read_text().splitlines() if line]
+    assert not [record for record in merged if record.get("reason") in ("run-pending", "run-not-found")]
+    assert [record for record in merged if record["run_id"] == 2 and record.get("reason") == "run-in-progress"]
+    # the consequence the defect existed for: the fence still breaks the pairing
+    result = walk(merged)
+    assert result["fired"] == [] and result["streak"] == 1
+
+
 def test_legacy_run_pending_fence_row_is_cleared_and_the_run_recollected(tmp_path):
     # A ledger written by the pre-shrink code carries the removed subsystem's
     # budget-backlog fence: reason run-pending, job "", line-wide key. After
@@ -1739,6 +1776,47 @@ def test_publish_merges_a_remote_that_advanced_after_bootstrap(tmp_path):
     keys = {json.loads(line)["key"] for line in published.splitlines() if line}
     assert "999:1:macOS ARM64:ctest" in keys  # the concurrent side's record survived a legal fast-forward
     assert "101:1:macOS ARM64:ctest" in keys
+
+
+def test_publish_rebuild_survives_a_legacy_row_on_a_live_fence_key(tmp_path):
+    # The publish-side face of the same-key collision: the remote ledger was
+    # written by pre-shrink code and still carries `run-pending` residue on
+    # the key our harvest fences with `run-in-progress` (run 2 is still in
+    # progress when this harvest runs). Publish merges the fetched headroom/
+    # into the local state and rebuilds summary + events from the union —
+    # the residue must never enter that adjudication, or the fence vanishes
+    # and the two low samples pair into a pseudo event that gets published.
+    bare, seed = make_bare_remote(tmp_path)
+    tracker.write_jsonl(seed / "headroom" / "samples.jsonl", [
+        make_sample(1, 560.0, 1.0, 560.0, created="2026-11-20T00:00:00Z"),  # low
+        make_gap(2, created="2026-11-21T00:00:00Z", job="", phase="", reason="run-pending"),
+        make_sample(3, 560.0, 1.0, 560.0, created="2026-11-22T00:00:00Z"),  # low
+    ])
+    subprocess.run(["git", "-C", str(seed), "add", "-A"], check=True)
+    subprocess.run(["git", "-C", str(seed), "commit", "-q", "-m", "legacy residue"], check=True)
+    subprocess.run(["git", "-C", str(seed), "push", "-q", str(bare), "main:gh-pages"], check=True)
+
+    runs = [
+        make_run(1, 3001, "main", "2026-11-20T00:00:00Z", "sha-1"),
+        make_run(2, 3002, "main", "2026-11-21T00:00:00Z", "sha-2", conclusion=None),  # in progress → live fence
+        make_run(3, 3003, "main", "2026-11-22T00:00:00Z", "sha-3"),
+    ]
+    jobs_and_logs = {
+        1: {"jobs": {MACOS_JOB: (7001, "success")}, "logs": {7001: MAIN_GREEN_MACOS}},
+        3: {"jobs": {MACOS_JOB: (7003, "success")}, "logs": {7003: MAIN_GREEN_MACOS}},
+    }
+    bin_path, env = setup_fake_gh(tmp_path, runs, jobs_and_logs, {"sha-1": MAIN_REGISTRY, "sha-3": MAIN_REGISTRY})
+    process, state_dir = run_harvest(tmp_path, bin_path, env, publish=True, publish_remote=str(bare))
+    assert process.returncode == 0, process.stdout + process.stderr
+    assert "published to gh-pages:headroom/" in process.stdout
+
+    published = read_remote_file(bare, "refs/heads/gh-pages:headroom/samples.jsonl")
+    records = [json.loads(line) for line in published.splitlines() if line]
+    assert not [record for record in records if record.get("reason") in ("run-pending", "run-not-found")]
+    assert [record for record in records if record["run_id"] == 2 and record.get("reason") == "run-in-progress"]
+    # the rebuilt snapshot describes a ledger whose fence broke the pairing
+    assert read_remote_file(bare, "refs/heads/gh-pages:headroom/events.jsonl").strip() == ""
+    assert "ACTIVE" not in read_remote_file(bare, "refs/heads/gh-pages:headroom/summary.md")
 
 
 # --- the workflow wiring contract ------------------------------------------------------
