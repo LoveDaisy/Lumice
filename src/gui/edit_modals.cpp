@@ -1971,7 +1971,16 @@ static ImVec4 ValidationFrameBgColor(LUMICE_RaypathValidationState state) {
 static int FirstFaceTheCrystalLacks(const char* row_text, const LUMICE_CrystalParam& crystal, int symmetry) {
   for (const auto& factor : ParseSummandText(row_text)) {
     for (int face : FactorFaceNumbers(factor)) {
-      if (LUMICE_CouldFilterMatchFace(&crystal, face, symmetry) == 0) {
+      // A number outside the hexagonal grammar's face domain (basal 1-2, prism 3-8, cone
+      // 13-18/23-28 — the same domain core's band lookup assumes) names a face NO crystal can
+      // have. The engine's CouldFilterMatchFace reads the number through the D6h element
+      // algebra, whose band lookup is an internal invariant — it aborts rather than answer — so
+      // the caller owes it a legal face, and the answer here is the face itself, without the
+      // call. (The raypath-arithmetic engine this note used to ask predates that algebra and
+      // multiplied any number through; the aborting band lookup is why the guard is needed.)
+      const bool legal = face == 1 || face == 2 || (face >= 3 && face <= 8) || (face >= 13 && face <= 18) ||
+                         (face >= 23 && face <= 28);
+      if (!legal || LUMICE_CouldFilterMatchFace(&crystal, face, symmetry) == 0) {
         return face;
       }
     }
