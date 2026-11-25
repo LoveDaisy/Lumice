@@ -861,13 +861,17 @@ void RegisterPreviewViewportTests(ImGuiTestEngine* engine) {
     };
   }
 
-  // Globe: the drag writes the STORED value (the slider's own semantics under Globe — kept for a
-  // lens that uses roll) while the PUBLISHED view roll stays 0. The published half reads the
-  // frame's actual view projection — what the shader was drawn with — not a re-run of
-  // EffectiveRollForLens, which would agree with a write-side bug by construction.
+  // Globe: the press is refused, the same way the lens greys the Roll slider — the field's
+  // shared registry gate closes it, admission never happens, and the write site is structurally
+  // unreachable (white-box: the same "rejected at entry, not erased afterwards" shape the
+  // full-sky case above pins). The stored roll starts NON-zero on purpose: the one thing the
+  // refusal must guarantee is that the gesture cannot move it, and a zero start could also pass
+  // on a write-then-reset bug. The published half reads the frame's actual view projection — the
+  // struct the deferred render hands to BuildViewMatrix, filled per-frame through
+  // EffectiveRollForLens (preview_renderer.hpp) — so it is what the shader was drawn with, not a
+  // re-run of the helper, which would agree with a write-side bug by construction.
   {
-    ImGuiTest* t = IM_REGISTER_TEST(engine, "preview_viewport",
-                                    "a_globe_right_drag_keeps_the_stored_value_and_publishes_zero_roll");
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "preview_viewport", "a_globe_right_drag_is_refused_like_its_roll_slider");
     t->GuiFunc = UploadSynthTexture;
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
@@ -875,14 +879,25 @@ void RegisterPreviewViewportTests(ImGuiTestEngine* engine) {
       ctx->Yield(4);
       IM_CHECK(gui::g_preview.HasTexture());
       SeedPose(gui::kLensTypeGlobe, 60.0f, 5.0f, 3.0f);
+      gui::g_state.renderer.roll = 25.0f;  // non-zero stored value: the drag must not touch it
       ctx->Yield(2);
+      IM_CHECK_EQ(gui::g_preview_vp.params.view_proj.roll, 0.0f);  // published flat before the press
 
       const ImVec2 c = PreviewCentre(ctx);
-      RollDrag(ctx, PolarPt(c, 150.0f, 20.0f), PolarPt(c, 150.0f, 65.0f));
-      const float sweep =
-          SweepDeg(AngleAroundCentre(c, PolarPt(c, 150.0f, 20.0f)), AngleAroundCentre(c, PolarPt(c, 150.0f, 65.0f)));
-      IM_CHECK_LT(std::fabs(gui::g_state.renderer.roll - sweep), kRollTolDeg);  // stored, like the slider
-      IM_CHECK_EQ(gui::g_preview_vp.params.view_proj.roll, 0.0f);               // published view, flat
+      ctx->MouseMoveToPos(PolarPt(c, 150.0f, 20.0f));
+      ctx->Yield(1);
+      ctx->MouseDown(ImGuiMouseButton_Right);
+      ctx->Yield(1);
+      ctx->MouseMoveToPos(PolarPt(c, 150.0f, 65.0f));
+      ctx->Yield(2);
+      // Mid-hold, with the sweep delivered: the stored value is exactly what it was and the
+      // published view is flat — the press never became a roll that anything cleaned up.
+      IM_CHECK_EQ(gui::g_state.renderer.roll, 25.0f);
+      IM_CHECK_EQ(gui::g_preview_vp.params.view_proj.roll, 0.0f);
+      ctx->MouseUp(ImGuiMouseButton_Right);
+      ctx->Yield(2);
+      IM_CHECK_EQ(gui::g_state.renderer.roll, 25.0f);
+      IM_CHECK_EQ(gui::g_preview_vp.params.view_proj.roll, 0.0f);
       IM_CHECK_EQ(gui::g_state.renderer.azimuth, 5.0f);
       IM_CHECK_EQ(gui::g_state.renderer.elevation, 3.0f);
     };
