@@ -207,8 +207,10 @@ TEST(QueryControl, PollStageTableCoversItsSitesAndLeavesUnknownIdsUnnamed) {
     EXPECT_EQ(StageOfSite(row.site), row.stage);
     EXPECT_EQ(FacesOfSite(row.site), row.faces);
   }
-  // The ids outside the table stay unnamed — including a fresh token's -1 and the range gaps.
-  for (const int absent : { -1, 6, 15, 28, 31, 99 }) {
+  // The ids outside the table stay unnamed — including a fresh token's -1 and the range gaps
+  // (6 is the family-curve recovery's site since the curves joined the shared stop; 7..15 are
+  // the analytic range's remaining gaps).
+  for (const int absent : { -1, 7, 15, 28, 31, 99 }) {
     EXPECT_EQ(StageOfSite(absent), PollStage::kNone) << "site " << absent << " must stay unnamed";
     EXPECT_EQ(FacesOfSite(absent), 0u);
   }
