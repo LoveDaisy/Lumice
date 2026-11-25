@@ -530,6 +530,38 @@ bool InnerEdgeSelectionActive(const GuiState& state);
 // writer of the selection fields.
 void SelectInnerEdgeObject(GuiState& state);
 
+// ---- The family curve selection (task arc-recovery-engine) ------------------------------------------
+
+// WHAT a curve hit was: the pick carries the event's own identity, never a bare point index —
+// a chain point reads the line's nearest endpoint, a point-image run reads the collapsed
+// marker's segment, a cusp candidate reads the tick's event. The kinds' witnesses render from
+// the same adopted document's facts (no re-read, no recompute).
+enum class FamilyCurvePickKind { kPoint, kPointImage, kCusp };
+struct FamilyCurvePick {
+  int curve_index = -1;
+  FamilyCurvePickKind kind = FamilyCurvePickKind::kPoint;
+  int point_index = -1;    // kPoint: the order position the line's nearer end sits at
+  int segment_index = -1;  // kPointImage: the collapsed run
+  int cusp_index = -1;     // kCusp: the located candidate
+  float dist_sq = 0.0f;    // squared points, the pick's own tolerance scale
+};
+
+// The selection's liveness: the same adopted-identity binding as the inner-edge selection (the
+// document handle + the intent id; a class switch, a new generation or a lost document reads
+// false; a window close/open and a camera change keep it). Selection changes never touch a
+// query; this predicate is the only way anything reads it.
+bool FamilyCurveSelectionActive(const GuiState& state);
+// Commits the selection against the CURRENT adopted survey identity: the curve, the picked
+// event's identity, and every curve that shared the click (the overlapping-source cycle the
+// readout's switcher walks). Display-session writes only — no query, no sky point, no camera.
+// The one writer of the selection fields.
+void SelectFamilyCurve(GuiState& state, const FamilyCurvePick& pick, std::vector<int> sources);
+// Steps the overlapping-source cycle (the readout's ‹ › buttons): slot wraps within the
+// committed sources; a selection without a cycle is untouched. Display-session write only.
+void CycleFamilyCurveSource(GuiState& state, int step);
+// Drops the selection (the readout's Clear). Display-session write only.
+void ClearFamilyCurveSelection(GuiState& state);
+
 // The Raypath view window's body — formerly the depth band's map cell (755.4 moved the whole
 // capability into the window in one piece). Draws the D3 split (contract §4.2): the LEFT
 // region (the raster, its gestures and the query's state line, under the region's own name

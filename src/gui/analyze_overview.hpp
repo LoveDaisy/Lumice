@@ -410,6 +410,9 @@ struct SurveyOverlayFacts {
       int form = 0;  // LUMICE_PATH_CURVE_SEGMENT_FORM_*
       double image_alt_deg = 0.0;
       double image_az_deg = 0.0;
+      // The point-image run's measured (midpoint-refined) sky diameter — the verification's
+      // own reading, the tooltip's "collapses to one image" evidence line.
+      double image_diameter_deg = 0.0;
     };
     std::vector<Segment> segments;
     struct Cusp {

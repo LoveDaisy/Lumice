@@ -540,6 +540,60 @@ void SelectInnerEdgeObject(GuiState& state) {
   s.inner_edge_id = s.survey.intent_id;
 }
 
+// ---- The family curve selection (task arc-recovery-engine) -------------------------------------------
+
+bool FamilyCurveSelectionActive(const GuiState& state) {
+  const auto& s = state.analysis;
+  // The inner-edge binding verbatim: the adopted document handle it was made under, still the
+  // survey's adopted result, still its current intent id.
+  return s.family_curve_selected && !s.family_curve_document.expired() &&
+         s.family_curve_document.lock() == s.survey.adopted_result && s.family_curve_id == s.survey.intent_id;
+}
+
+void SelectFamilyCurve(GuiState& state, const FamilyCurvePick& pick, std::vector<int> sources) {
+  auto& s = state.analysis;
+  s.family_curve_selected = true;
+  s.family_curve_document = s.survey.adopted_result;
+  s.family_curve_id = s.survey.intent_id;
+  s.family_curve_index = pick.curve_index;
+  s.family_curve_pick_kind = static_cast<int>(pick.kind);
+  s.family_curve_point_index = pick.point_index;
+  s.family_curve_segment_index = pick.segment_index;
+  s.family_curve_cusp_index = pick.cusp_index;
+  s.family_curve_sources = std::move(sources);
+  s.family_curve_source_slot = 0;  // the committed curve is the nearest hit's — slot zero
+}
+
+void CycleFamilyCurveSource(GuiState& state, int step) {
+  auto& s = state.analysis;
+  if (s.family_curve_sources.empty()) {
+    return;
+  }
+  const int n = static_cast<int>(s.family_curve_sources.size());
+  s.family_curve_source_slot = ((s.family_curve_source_slot + step) % n + n) % n;
+  s.family_curve_index = s.family_curve_sources[static_cast<size_t>(s.family_curve_source_slot)];
+  // The switched source was not the clicked one: its witness resets to the curve's own first
+  // point (a legal preimage of THAT curve — never the clicked event's, which belongs to another
+  // source). The user refines on the map if they want a specific event of it.
+  s.family_curve_pick_kind = static_cast<int>(FamilyCurvePickKind::kPoint);
+  s.family_curve_point_index = 0;
+  s.family_curve_segment_index = -1;
+  s.family_curve_cusp_index = -1;
+}
+
+void ClearFamilyCurveSelection(GuiState& state) {
+  auto& s = state.analysis;
+  s.family_curve_selected = false;
+  s.family_curve_document.reset();
+  s.family_curve_index = -1;
+  s.family_curve_pick_kind = 0;
+  s.family_curve_point_index = -1;
+  s.family_curve_segment_index = -1;
+  s.family_curve_cusp_index = -1;
+  s.family_curve_sources.clear();
+  s.family_curve_source_slot = 0;
+}
+
 float PointSegmentDistanceSq(float px, float py, float ax, float ay, float bx, float by) {
   const float dx = bx - ax;
   const float dy = by - ay;
@@ -1217,6 +1271,16 @@ struct SurveyOverlayCache {
 };
 SurveyOverlayCache g_survey_overlay_cache;
 
+// One submitted curve ink's click surface (task arc-recovery-engine; frame-transient like the
+// reference arcs' strokes — never stored): the pick identity it would commit and the screen
+// segment it submitted (a == b for the markers' point surfaces). The stationary-release test
+// reads the frame's surfaces at the press position; ink nothing covered cannot be picked.
+struct FamilyCurveHitSurface {
+  FamilyCurvePick pick;
+  ImVec2 a;
+  ImVec2 b;
+};
+
 // The one refresh per frame path (idempotent): a stale identity rebuilds BOTH pure reads — the
 // overview model and the layer facts — once, from the immutable document. The popup's empty-state
 // notes and the arcs read this same entry, so the facts exist even on a frame whose master gate
@@ -1240,16 +1304,10 @@ const SurveyOverlayCache& RefreshSurveyOverlayCache(const SurveyQuerySession& su
   return cache;
 }
 
-// The family curve pick's tooltip (task arc-recovery-engine): the theoretical witness of the
-// hovered curve — its member, level, the nearest point's parameter preimage, and the posture
-// witness (the Euler pose the engine recomputes from exactly these parameters). Nothing here
-// re-asks the engine: the facts carry the preimage, the recomputation is the caller's if a
-// downstream host wants the full matrix.
-void RenderFamilyCurveTooltip(const SurveyOverlayFacts::FamilyCurveFact& curve, int point_index) {
-  if (!ImGui::BeginTooltip()) {
-    return;
-  }
-  ImGui::TextUnformatted("Family curve");
+// The family curve pick's identity header (task arc-recovery-engine): the curve's kind words
+// and its literal member/level — the 820 ruling's theoretical caliber, never an actual-measure
+// interpretation.
+void RenderFamilyCurveHeader(const SurveyOverlayFacts::FamilyCurveFact& curve) {
   const char* kind = curve.kind == LUMICE_PATH_CURVE_KIND_REGULAR_TRACK ? "regular track" : "fold arc";
   std::string member;
   for (size_t i = 0; i < curve.member.size(); ++i) {
@@ -1259,13 +1317,65 @@ void RenderFamilyCurveTooltip(const SurveyOverlayFacts::FamilyCurveFact& curve, 
     member += std::to_string(curve.member[static_cast<size_t>(i)]);
   }
   ImGui::Text("%s · level %d · member %s", kind, curve.level, member.c_str());
-  if (point_index >= 0 && static_cast<size_t>(point_index) < curve.points.size()) {
-    const SurveyOverlayFacts::FamilyCurveFact::Point& p = curve.points[static_cast<size_t>(point_index)];
-    ImGui::TextDisabled("params %.3f° %.3f° · alt %.3f° az %.3f°", p.params_deg[0], p.params_deg[1], p.alt_deg,
-                        p.az_deg);
-    ImGui::TextDisabled("pose (recomputable from the params):");
-    for (int r = 0; r < 3; ++r) {
-      ImGui::TextDisabled("  %+.6f %+.6f %+.6f", p.pose[r * 3], p.pose[r * 3 + 1], p.pose[r * 3 + 2]);
+}
+
+// One witness line pair: the parameter preimage, the sky position, and the pose (the engine's
+// own rows — recomputable from exactly these parameters, the plan's witness contract).
+void RenderFamilyCurvePoseWitness(const double params_deg[2], const double pose[9], double alt_deg, double az_deg) {
+  ImGui::TextDisabled("params %.3f° %.3f° · alt %.3f° az %.3f°", params_deg[0], params_deg[1], alt_deg, az_deg);
+  ImGui::TextDisabled("pose (recomputable from the params):");
+  for (int r = 0; r < 3; ++r) {
+    ImGui::TextDisabled("  %+.6f %+.6f %+.6f", pose[r * 3], pose[r * 3 + 1], pose[r * 3 + 2]);
+  }
+}
+
+// The family curve pick's tooltip (task arc-recovery-engine): the hovered event's own witness,
+// per kind — a chain point reads the line's nearest endpoint, a point-image run reads the
+// collapsed marker's segment (the run's constant image, its measured diameter, and one legal
+// preimage of the run), a cusp candidate reads the located event's own refined pose (never the
+// neighbouring crossing's). Nothing here re-asks the engine.
+void RenderFamilyCurveTooltip(const SurveyOverlayFacts::FamilyCurveFact& curve, const FamilyCurvePick& pick) {
+  if (!ImGui::BeginTooltip()) {
+    return;
+  }
+  switch (pick.kind) {
+    case FamilyCurvePickKind::kPoint: {
+      ImGui::TextUnformatted("Family curve");
+      RenderFamilyCurveHeader(curve);
+      if (pick.point_index >= 0 && pick.point_index < static_cast<int>(curve.points.size())) {
+        const SurveyOverlayFacts::FamilyCurveFact::Point& p = curve.points[static_cast<size_t>(pick.point_index)];
+        RenderFamilyCurvePoseWitness(p.params_deg, p.pose, p.alt_deg, p.az_deg);
+      }
+      break;
+    }
+    case FamilyCurvePickKind::kPointImage: {
+      ImGui::TextUnformatted("Point image");
+      RenderFamilyCurveHeader(curve);
+      if (pick.segment_index >= 0 && pick.segment_index < static_cast<int>(curve.segments.size())) {
+        const SurveyOverlayFacts::FamilyCurveFact::Segment& s = curve.segments[static_cast<size_t>(pick.segment_index)];
+        ImGui::TextDisabled("this run of the branch collapses to one image");
+        ImGui::TextDisabled("constant image alt %.3f° az %.3f° · measured diameter %.2e°", s.image_alt_deg,
+                            s.image_az_deg, s.image_diameter_deg);
+        // A legal preimage of the run (its first point): the constant image is the run's mean —
+        // the pose witness comes from a real locus point, not from the mean.
+        if (s.first >= 0 && s.first < static_cast<int>(curve.points.size())) {
+          const SurveyOverlayFacts::FamilyCurveFact::Point& p = curve.points[static_cast<size_t>(s.first)];
+          ImGui::TextDisabled("witness preimage (the run's first locus point):");
+          RenderFamilyCurvePoseWitness(p.params_deg, p.pose, p.alt_deg, p.az_deg);
+        }
+      }
+      break;
+    }
+    case FamilyCurvePickKind::kCusp: {
+      ImGui::TextUnformatted("Cusp candidate");
+      RenderFamilyCurveHeader(curve);
+      if (pick.cusp_index >= 0 && pick.cusp_index < static_cast<int>(curve.cusps.size())) {
+        const SurveyOverlayFacts::FamilyCurveFact::Cusp& c = curve.cusps[static_cast<size_t>(pick.cusp_index)];
+        ImGui::TextDisabled("located transversality failure — a candidate, not a certified cusp");
+        ImGui::TextDisabled("|dJ(v)| residual bound %.2e", c.djv_residual);
+        RenderFamilyCurvePoseWitness(c.params_deg, c.pose, c.alt_deg, c.az_deg);
+      }
+      break;
     }
   }
   ImGui::EndTooltip();
@@ -1273,7 +1383,8 @@ void RenderFamilyCurveTooltip(const SurveyOverlayFacts::FamilyCurveFact& curve, 
 
 void DrawSurveyOverlays(ImDrawList* dl, GuiState& state, const MapCanvasProjection& view, const ImVec2& pic_min,
                         float pic_px, OverlayLegendState* legend, const SurveyLayerGates& gates,
-                        int selected_edge_object_index, std::vector<ReferenceArcStroke>* stroke_sink) {
+                        int selected_edge_object_index, std::vector<ReferenceArcStroke>* stroke_sink,
+                        std::vector<FamilyCurveHitSurface>* curve_hit_sink) {
   SurveyQuerySession& survey = state.analysis.survey;
   if (survey.adopted_result == nullptr) {
     return;
@@ -1319,103 +1430,160 @@ void DrawSurveyOverlays(ImDrawList* dl, GuiState& state, const MapCanvasProjecti
   }
   DrawReferenceArcs(dl, facts, arcs);
   // The family arm's ordered curves (task arc-recovery-engine): the drawable critical arcs and
-  // regular tracks. Run by run — an arc or unknown band submits its polyline (the chain's links
-  // justify the line; the unknown band's uncertainty is about image form, not existence), a
-  // point-image run collapses to one marker at its verified constant image, a cusp candidate is
-  // a bounded tick on its arc. The seam rule is display-level: a submitted line breaks when
-  // either endpoint leaves the view or the two projections jump more than a view radius (the
-  // physical wrap's own evidence) — never bridged. The pick channel is the hover: the nearest
-  // submitted segment within tolerance names the curve and its nearest point's theoretical
-  // witness (member, parameters, pose) — one tooltip per frame, beside the markers'.
+  // regular tracks. The DRAW unit is the curve's verified adjacency, not the image-form runs:
+  // a fold chain draws every consecutive ordered pair (each is a cell-justified link — the
+  // chain's order IS the link sequence) plus the closing pair when closed; only a link whose
+  // both ends sit inside point-image runs draws nothing (the run IS its marker), and a regular
+  // track keeps its run-by-run lines (the runs are validity segments — real gaps). A cusp
+  // candidate is a bounded tick on its arc. The seam rule is display-level, per link: a
+  // submitted line breaks when either endpoint leaves the view or the two projections jump more
+  // than a view radius (the physical wrap's own evidence) — never bridged. The pick channel is
+  // the hover (the nearest submitted ink's own event witness — point, point-image run or cusp),
+  // and every submitted ink records its click surface for the stationary-click selection.
   int family_curve_entries = 0;
   // The hover state is filled during the draw and consumed after the markers' tooltip: the
   // map window must actually be hovered (a popup or another window over the picture swallows
   // the hover — otherwise the curve tooltip would eat the next click), and the marker tooltip
   // owns the pointer whenever a marker is under it (one tooltip per frame).
   const SurveyOverlayFacts::FamilyCurveFact* curve_hovered = nullptr;
-  int curve_hovered_point = -1;
+  FamilyCurvePick curve_hovered_pick;
   float curve_hovered_dist = 1e30f;
   if (gates.curves.graphics) {
     // The ink draws whenever the group is on; only the PICK records against the pointer, and
     // only while the map window is actually hovered (a popup or another window over the
-    // picture must not spawn a curve tooltip — it would eat the next click).
+    // picture must not spawn a curve tooltip — it would eat the next click). The click
+    // surfaces record whenever the ink submits — the stationary-release test reads them from
+    // the frame that was on screen when the press landed.
     const bool pointer_pickable = ImGui::IsWindowHovered();
     float hovered_dist = 1e30f;
     const ImVec2 mouse = ImGui::GetIO().MousePos;
-    for (const SurveyOverlayFacts::FamilyCurveFact& curve : facts.family_curves) {
+    auto consider_hover = [&](const FamilyCurvePick& pick, float d) {
+      if (pointer_pickable && d < hovered_dist) {
+        hovered_dist = d;
+        curve_hovered = &facts.family_curves[static_cast<size_t>(pick.curve_index)];
+        curve_hovered_pick = pick;
+      }
+    };
+    auto submit_surface = [&](const FamilyCurvePick& pick, const ImVec2& a, const ImVec2& b) {
+      if (curve_hit_sink != nullptr) {
+        curve_hit_sink->push_back({ pick, a, b });
+      }
+    };
+    for (size_t ci = 0; ci < facts.family_curves.size(); ++ci) {
+      const SurveyOverlayFacts::FamilyCurveFact& curve = facts.family_curves[ci];
+      const int curve_index = static_cast<int>(ci);
       bool drew_any = false;
-      for (const SurveyOverlayFacts::FamilyCurveFact::Segment& segment : curve.segments) {
-        if (segment.form == LUMICE_PATH_CURVE_SEGMENT_FORM_POINT_IMAGE) {
-          // The collapsed run: one marker at its verified constant image.
-          double pos[3];
-          SkyPosition(segment.image_alt_deg, segment.image_az_deg, pos);
-          double x = 0.0;
-          double y = 0.0;
-          if (!ProjectToRect(view, pos, pic_min, pic_px, &x, &y)) {
-            continue;
-          }
-          const float cx = static_cast<float>(x);
-          const float cy = static_cast<float>(y);
-          dl->AddCircleFilled(ImVec2(cx, cy), UiPx(4.0f), kFamilyPointInk);
-          dl->AddCircle(ImVec2(cx, cy), UiPx(4.0f), kFamilyArcInk, 0, UiPx(1.2f));
-          drew_any = true;
-          const float dx = mouse.x - cx;
-          const float dy = mouse.y - cy;
-          const float d = dx * dx + dy * dy;
-          if (pointer_pickable && d < hovered_dist) {
-            hovered_dist = d;
-            curve_hovered = &curve;
-            curve_hovered_point = -1;  // the marker's own witness: the segment's constant image
-          }
+      // The point-image markers first (one per collapsed run, at its verified constant image).
+      for (size_t si = 0; si < curve.segments.size(); ++si) {
+        const SurveyOverlayFacts::FamilyCurveFact::Segment& segment = curve.segments[si];
+        if (segment.form != LUMICE_PATH_CURVE_SEGMENT_FORM_POINT_IMAGE) {
           continue;
         }
-        // The polyline: consecutive points in the run; the seam breaks a line instead of
-        // bridging (a jump beyond a view radius is the wrap's own evidence).
-        bool have_prev = false;
-        double px = 0.0;
-        double py = 0.0;
-        int prev_index = -1;
-        for (int i = segment.first; i <= segment.last; ++i) {
-          const SurveyOverlayFacts::FamilyCurveFact::Point& p = curve.points[static_cast<size_t>(i)];
-          double pos[3];
-          SkyPosition(p.alt_deg, p.az_deg, pos);
-          double x = 0.0;
-          double y = 0.0;
-          const bool ok = ProjectToRect(view, pos, pic_min, pic_px, &x, &y);
-          if (ok) {
-            const float cx = static_cast<float>(x);
-            const float cy = static_cast<float>(y);
-            if (have_prev) {
-              const float dx = cx - static_cast<float>(px);
-              const float dy = cy - static_cast<float>(py);
-              if (dx * dx + dy * dy < pic_px * pic_px) {
-                dl->AddLine(ImVec2(static_cast<float>(px), static_cast<float>(py)), ImVec2(cx, cy), kFamilyArcInk,
-                            UiPx(1.4f));
-                drew_any = true;
-                // The hover distance to this submitted segment (the stationary-click test's own
-                // geometry, at the hover tolerance).
-                const float d =
-                    PointSegmentDistanceSq(mouse.x, mouse.y, static_cast<float>(px), static_cast<float>(py), cx, cy);
-                if (pointer_pickable && d < hovered_dist) {
-                  hovered_dist = d;
-                  curve_hovered = &curve;
-                  curve_hovered_point = i;
-                }
-              }
-            }
-            px = x;
-            py = y;
-            have_prev = true;
-            prev_index = i;
-          } else {
-            have_prev = false;
-            prev_index = -1;
+        double pos[3];
+        SkyPosition(segment.image_alt_deg, segment.image_az_deg, pos);
+        double x = 0.0;
+        double y = 0.0;
+        if (!ProjectToRect(view, pos, pic_min, pic_px, &x, &y)) {
+          continue;
+        }
+        const ImVec2 center(static_cast<float>(x), static_cast<float>(y));
+        dl->AddCircleFilled(center, UiPx(4.0f), kFamilyPointInk);
+        dl->AddCircle(center, UiPx(4.0f), kFamilyArcInk, 0, UiPx(1.2f));
+        drew_any = true;
+        FamilyCurvePick pick;
+        pick.curve_index = curve_index;
+        pick.kind = FamilyCurvePickKind::kPointImage;
+        pick.segment_index = static_cast<int>(si);
+        submit_surface(pick, center, center);
+        const float dx = mouse.x - center.x;
+        const float dy = mouse.y - center.y;
+        consider_hover(pick, dx * dx + dy * dy);
+      }
+      const bool is_track = curve.kind == LUMICE_PATH_CURVE_KIND_REGULAR_TRACK;
+      // Which order positions sit inside a point-image run (fold chains): the run's marker
+      // owns the line there — a link with both ends inside draws nothing, a transition link
+      // (collapsed end to extended end) draws to the collapsed end's own locus point.
+      std::vector<char> collapsed(curve.points.size(), 0);
+      for (const SurveyOverlayFacts::FamilyCurveFact::Segment& segment : curve.segments) {
+        if (segment.form == LUMICE_PATH_CURVE_SEGMENT_FORM_POINT_IMAGE) {
+          for (int i = segment.first; i <= segment.last && i < static_cast<int>(collapsed.size()); ++i) {
+            collapsed[static_cast<size_t>(i)] = 1;
           }
         }
-        (void)prev_index;
+      }
+      // The line submitter (the seam rule per submitted pair; the hover picks the nearer
+      // endpoint's witness).
+      const auto draw_pair = [&](int a_index, int b_index) -> bool {
+        const int n = static_cast<int>(curve.points.size());
+        if (a_index < 0 || b_index < 0 || a_index >= n || b_index >= n) {
+          return false;
+        }
+        const SurveyOverlayFacts::FamilyCurveFact::Point& pa = curve.points[static_cast<size_t>(a_index)];
+        const SurveyOverlayFacts::FamilyCurveFact::Point& pb = curve.points[static_cast<size_t>(b_index)];
+        double pos[3];
+        double ax = 0.0;
+        double ay = 0.0;
+        double bx = 0.0;
+        double by = 0.0;
+        SkyPosition(pa.alt_deg, pa.az_deg, pos);
+        const bool a_ok = ProjectToRect(view, pos, pic_min, pic_px, &ax, &ay);
+        SkyPosition(pb.alt_deg, pb.az_deg, pos);
+        const bool b_ok = ProjectToRect(view, pos, pic_min, pic_px, &bx, &by);
+        if (!a_ok || !b_ok) {
+          return false;  // an endpoint off the view: the link breaks, never bridges
+        }
+        const float dx = static_cast<float>(bx) - static_cast<float>(ax);
+        const float dy = static_cast<float>(by) - static_cast<float>(ay);
+        if (dx * dx + dy * dy >= pic_px * pic_px) {
+          return false;  // the wrap's own evidence: the seam breaks the line
+        }
+        const ImVec2 a(static_cast<float>(ax), static_cast<float>(ay));
+        const ImVec2 b(static_cast<float>(bx), static_cast<float>(by));
+        dl->AddLine(a, b, kFamilyArcInk, UiPx(1.4f));
+        FamilyCurvePick pick;
+        pick.curve_index = curve_index;
+        pick.kind = FamilyCurvePickKind::kPoint;
+        const float da = (mouse.x - a.x) * (mouse.x - a.x) + (mouse.y - a.y) * (mouse.y - a.y);
+        const float db = (mouse.x - b.x) * (mouse.x - b.x) + (mouse.y - b.y) * (mouse.y - b.y);
+        pick.point_index = da <= db ? a_index : b_index;
+        submit_surface(pick, a, b);
+        consider_hover(pick, PointSegmentDistanceSq(mouse.x, mouse.y, a.x, a.y, b.x, b.y));
+        return true;
+      };
+      if (is_track) {
+        // The regular track: run by run — the runs are the validity segmentation, the real
+        // gaps between them stay unbridged.
+        for (const SurveyOverlayFacts::FamilyCurveFact::Segment& segment : curve.segments) {
+          for (int i = segment.first; i < segment.last; ++i) {
+            if (draw_pair(i, i + 1)) {
+              drew_any = true;
+            }
+          }
+        }
+      } else {
+        // The fold chain: every consecutive ordered pair is a verified link (the chain's order
+        // IS the link sequence — form boundaries are not topology breaks), and a closed chain
+        // adds the closing pair through its justifying cell.
+        const int n = static_cast<int>(curve.points.size());
+        for (int i = 0; i + 1 < n; ++i) {
+          if (collapsed[static_cast<size_t>(i)] && collapsed[static_cast<size_t>(i + 1)]) {
+            continue;  // the run's interior: the marker owns it
+          }
+          if (draw_pair(i, i + 1)) {
+            drew_any = true;
+          }
+        }
+        if (curve.closed && n >= 3) {
+          if (!(collapsed[static_cast<size_t>(n - 1)] && collapsed[0])) {
+            if (draw_pair(n - 1, 0)) {
+              drew_any = true;
+            }
+          }
+        }
       }
       // The cusp candidates: bounded ticks on their arcs (a candidate, never a certified cusp).
-      for (const SurveyOverlayFacts::FamilyCurveFact::Cusp& cusp : curve.cusps) {
+      for (size_t ei = 0; ei < curve.cusps.size(); ++ei) {
+        const SurveyOverlayFacts::FamilyCurveFact::Cusp& cusp = curve.cusps[ei];
         double pos[3];
         SkyPosition(cusp.alt_deg, cusp.az_deg, pos);
         double x = 0.0;
@@ -1423,18 +1591,17 @@ void DrawSurveyOverlays(ImDrawList* dl, GuiState& state, const MapCanvasProjecti
         if (!ProjectToRect(view, pos, pic_min, pic_px, &x, &y)) {
           continue;
         }
-        const float cx = static_cast<float>(x);
-        const float cy = static_cast<float>(y);
-        dl->AddCircle(ImVec2(cx, cy), UiPx(2.5f), kFamilyCuspInk, 0, UiPx(1.6f));
+        const ImVec2 center(static_cast<float>(x), static_cast<float>(y));
+        dl->AddCircle(center, UiPx(2.5f), kFamilyCuspInk, 0, UiPx(1.6f));
         drew_any = true;
-        const float dx = mouse.x - cx;
-        const float dy = mouse.y - cy;
-        const float d = dx * dx + dy * dy;
-        if (pointer_pickable && d < hovered_dist) {
-          hovered_dist = d;
-          curve_hovered = &curve;
-          curve_hovered_point = cusp.order_index;
-        }
+        FamilyCurvePick pick;
+        pick.curve_index = curve_index;
+        pick.kind = FamilyCurvePickKind::kCusp;
+        pick.cusp_index = static_cast<int>(ei);
+        submit_surface(pick, center, center);
+        const float dx = mouse.x - center.x;
+        const float dy = mouse.y - center.y;
+        consider_hover(pick, dx * dx + dy * dy);
       }
       if (drew_any) {
         family_curve_entries += 1;
@@ -1642,7 +1809,7 @@ void DrawSurveyOverlays(ImDrawList* dl, GuiState& state, const MapCanvasProjecti
   // tooltip per frame). The tolerance is the pick's own: a 7pt radius around the submitted
   // line.
   if (hits.empty() && curve_hovered != nullptr && curve_hovered_dist <= UiPx(7.0f) * UiPx(7.0f)) {
-    RenderFamilyCurveTooltip(*curve_hovered, curve_hovered_point);
+    RenderFamilyCurveTooltip(*curve_hovered, curve_hovered_pick);
   }
   // The chromatic group's gate wraps BOTH red-blue ink sources — the dispersion pair and the
   // verdict anchor draw together or not at all (a half-open chromatic group would leave one
@@ -2863,6 +3030,9 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   // click surfaces (consumed by the stationary-release test below; frame-transient, never
   // stored). The cache read is idempotent and already warm — no rebuild, no re-read.
   std::vector<ReferenceArcStroke> arc_strokes;
+  // The curve inks' click surfaces (task arc-recovery-engine): filled by the overlay pass, read
+  // by the stationary-release selection — frame-transient, never stored.
+  std::vector<FamilyCurveHitSurface> curve_hit_surfaces;
   int selected_edge_object_index = -1;
   if (InnerEdgeSelectionActive(state)) {
     const SurveyOverlayCache& sel_cache =
@@ -2872,7 +3042,8 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
     }
   }
   if (overlays) {
-    DrawSurveyOverlays(dl, state, view, pic_min, pic_px, &legend, gates, selected_edge_object_index, &arc_strokes);
+    DrawSurveyOverlays(dl, state, view, pic_min, pic_px, &legend, gates, selected_edge_object_index, &arc_strokes,
+                       &curve_hit_surfaces);
   }
 
   float marker_px = -1.0f;
@@ -2967,9 +3138,52 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
     if (press_owner == static_cast<int>(Owner::kCamera) && !dragged && !explicit_pick) {
       const SurveyOverlayCache& hit_cache =
           RefreshSurveyOverlayCache(state.analysis.survey, state.analysis.FrozenPointSunPremise());
-      if (hit_cache.model.valid && hit_cache.model.inner_edge.qualified) {
+      const ImVec2 press_pos = io.MouseClickedPos[ImGuiMouseButton_Left];
+      // The curve inks first (task arc-recovery-engine): one click, one selection — a click
+      // that lands on drawn curve ink commits THAT curve's pick (the nearest surface within
+      // the pick tolerance; every curve sharing the click joins the overlap cycle) and never
+      // reaches the inner-edge strokes below. A miss commits nothing, and an existing
+      // selection is not cleared.
+      const float curve_tolerance_sq = UiPx(7.0f) * UiPx(7.0f);
+      const FamilyCurveHitSurface* best_surface = nullptr;
+      float best_dist = curve_tolerance_sq;
+      std::vector<std::pair<int, float>> source_dists;
+      for (const FamilyCurveHitSurface& surface : curve_hit_surfaces) {
+        const bool point_surface = surface.a.x == surface.b.x && surface.a.y == surface.b.y;
+        const float d = point_surface ? (press_pos.x - surface.a.x) * (press_pos.x - surface.a.x) +
+                                            (press_pos.y - surface.a.y) * (press_pos.y - surface.a.y) :
+                                        PointSegmentDistanceSq(press_pos.x, press_pos.y, surface.a.x, surface.a.y,
+                                                               surface.b.x, surface.b.y);
+        if (d > curve_tolerance_sq) {
+          continue;
+        }
+        bool known = false;
+        for (auto& entry : source_dists) {
+          if (entry.first == surface.pick.curve_index) {
+            entry.second = std::min(entry.second, d);
+            known = true;
+            break;
+          }
+        }
+        if (!known) {
+          source_dists.push_back({ surface.pick.curve_index, d });
+        }
+        if (d < best_dist) {
+          best_dist = d;
+          best_surface = &surface;
+        }
+      }
+      if (best_surface != nullptr) {
+        std::sort(source_dists.begin(), source_dists.end(),
+                  [](const auto& lhs, const auto& rhs) { return lhs.second < rhs.second; });
+        std::vector<int> sources;
+        sources.reserve(source_dists.size());
+        for (const auto& entry : source_dists) {
+          sources.push_back(entry.first);
+        }
+        SelectFamilyCurve(state, best_surface->pick, std::move(sources));
+      } else if (hit_cache.model.valid && hit_cache.model.inner_edge.qualified) {
         const float tolerance_sq = UiPx(6.0f) * UiPx(6.0f);
-        const ImVec2 press_pos = io.MouseClickedPos[ImGuiMouseButton_Left];
         for (const ReferenceArcStroke& stroke : arc_strokes) {
           // The C01 stroke by its coincidence association — the shared stroke is the object's
           // while either owner's gate shows it (the plan's pickable rule); hiding an owner
@@ -3288,6 +3502,123 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
     ImGui::TextWrapped("Set a sky point above.");
   }
   ImGui::PopStyleColor();
+
+  // The family curve selection's readout (task arc-recovery-engine): the picked curve's own
+  // theoretical witness — the 820 ruling's caliber split (the arc's literal member, the
+  // reference λ/ideal frozen family, the recomputable pose; never an actual-measure
+  // interpretation). The overlap cycle walks every curve that shared the click; "Set sky point
+  // at this image" hands the witness's own sky position to the existing point flow (the
+  // fixed-member explanation and Pose & Trace answer at the same sky position — a separate
+  // caliber, asked beside this one, not over it). Renders only while the selection is live
+  // (identity-bound); no selection, no space.
+  if (FamilyCurveSelectionActive(state)) {
+    const SurveyOverlayCache& sel_cache =
+        RefreshSurveyOverlayCache(state.analysis.survey, state.analysis.FrozenPointSunPremise());
+    const int curve_index = state.analysis.family_curve_index;
+    if (sel_cache.model.valid && curve_index >= 0 &&
+        curve_index < static_cast<int>(sel_cache.facts.family_curves.size())) {
+      const SurveyOverlayFacts::FamilyCurveFact& curve =
+          sel_cache.facts.family_curves[static_cast<size_t>(curve_index)];
+      ImGui::Separator();
+      ImGui::TextUnformatted("Family curve selection");
+      const int source_count = static_cast<int>(state.analysis.family_curve_sources.size());
+      if (source_count > 1) {
+        if (ImGui::SmallButton("<##curve_source")) {
+          CycleFamilyCurveSource(state, -1);
+        }
+        ImGui::SameLine();
+        if (ImGui::SmallButton(">##curve_source")) {
+          CycleFamilyCurveSource(state, 1);
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled("source %d/%d at this position", state.analysis.family_curve_source_slot + 1, source_count);
+        if (ImGui::IsItemHovered()) {
+          SetWrappedTooltip("Several curves share this position — switch the selection between them.");
+        }
+      }
+      RenderFamilyCurveHeader(curve);
+      if (sel_cache.model.scope_available) {
+        ImGui::TextDisabled("reference λ %.1f nm · the ideal frozen family's own critical arc",
+                            sel_cache.model.wavelength_nm);
+      }
+      // The picked event's own witness (the cycle reset reads the switched curve's first point).
+      FamilyCurvePick pick;
+      pick.curve_index = curve_index;
+      pick.kind = static_cast<FamilyCurvePickKind>(state.analysis.family_curve_pick_kind);
+      pick.point_index = state.analysis.family_curve_point_index;
+      pick.segment_index = state.analysis.family_curve_segment_index;
+      pick.cusp_index = state.analysis.family_curve_cusp_index;
+      double w_params[2] = { 0.0, 0.0 };
+      double w_pose[9] = {};
+      double w_alt = 0.0;
+      double w_az = 0.0;
+      bool have_witness = false;
+      switch (pick.kind) {
+        case FamilyCurvePickKind::kPoint:
+          if (pick.point_index >= 0 && pick.point_index < static_cast<int>(curve.points.size())) {
+            const SurveyOverlayFacts::FamilyCurveFact::Point& p = curve.points[static_cast<size_t>(pick.point_index)];
+            std::copy(p.params_deg, p.params_deg + 2, w_params);
+            std::copy(p.pose, p.pose + 9, w_pose);
+            w_alt = p.alt_deg;
+            w_az = p.az_deg;
+            have_witness = true;
+          }
+          break;
+        case FamilyCurvePickKind::kPointImage:
+          if (pick.segment_index >= 0 && pick.segment_index < static_cast<int>(curve.segments.size())) {
+            const SurveyOverlayFacts::FamilyCurveFact::Segment& s =
+                curve.segments[static_cast<size_t>(pick.segment_index)];
+            ImGui::TextDisabled("point image: this run of the branch collapses to one image");
+            ImGui::TextDisabled("constant image alt %.3f° az %.3f° · measured diameter %.2e°", s.image_alt_deg,
+                                s.image_az_deg, s.image_diameter_deg);
+            if (s.first >= 0 && s.first < static_cast<int>(curve.points.size())) {
+              const SurveyOverlayFacts::FamilyCurveFact::Point& p =
+                  curve.points[static_cast<size_t>(s.first)];  // a legal preimage of the run
+              std::copy(p.params_deg, p.params_deg + 2, w_params);
+              std::copy(p.pose, p.pose + 9, w_pose);
+              w_alt = p.alt_deg;
+              w_az = p.az_deg;
+              have_witness = true;
+            }
+          }
+          break;
+        case FamilyCurvePickKind::kCusp:
+          if (pick.cusp_index >= 0 && pick.cusp_index < static_cast<int>(curve.cusps.size())) {
+            const SurveyOverlayFacts::FamilyCurveFact::Cusp& c = curve.cusps[static_cast<size_t>(pick.cusp_index)];
+            ImGui::TextDisabled("cusp candidate (not certified) · |dJ(v)| residual bound %.2e", c.djv_residual);
+            std::copy(c.params_deg, c.params_deg + 2, w_params);
+            std::copy(c.pose, c.pose + 9, w_pose);
+            w_alt = c.alt_deg;
+            w_az = c.az_deg;
+            have_witness = true;
+          }
+          break;
+      }
+      if (have_witness) {
+        RenderFamilyCurvePoseWitness(w_params, w_pose, w_alt, w_az);
+        if (ImGui::SmallButton("Set sky point at this image###curve_pick")) {
+          float dir[3];
+          AltAzToDir(static_cast<float>(w_alt), static_cast<float>(w_az), dir);
+          state.analysis.sky_point.valid = true;
+          state.analysis.sky_point.from_map_pick = false;
+          state.analysis.sky_point.dir[0] = dir[0];
+          state.analysis.sky_point.dir[1] = dir[1];
+          state.analysis.sky_point.dir[2] = dir[2];
+        }
+        if (ImGui::IsItemHovered()) {
+          SetWrappedTooltip(
+              "Asks the existing point flow at this image position — the fixed-member explanation "
+              "and Pose & Trace answer there (a separate caliber from this theoretical witness).");
+        }
+        ImGui::SameLine();
+      }
+      if (ImGui::SmallButton("Clear##curve_pick")) {
+        ClearFamilyCurveSelection(state);
+      }
+    } else {
+      ClearFamilyCurveSelection(state);  // the facts cannot resolve it: nothing to show
+    }
+  }
 
   ImGui::BeginChild("##MapReport", RemainingReportSize());
   // The class answer (contract §16.2): the adopted survey document, drawn by the

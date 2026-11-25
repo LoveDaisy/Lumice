@@ -763,6 +763,7 @@ SurveyOverlayFacts BuildSurveyOverlayFacts(const LUMICE_PathSurvey& result) {
           row.form = segment.form;
           row.image_alt_deg = segment.image_altitude_deg;
           row.image_az_deg = segment.image_azimuth_deg;
+          row.image_diameter_deg = segment.image_diameter_deg;
           fact.segments.push_back(row);
         }
         for (size_t e = 0; e < curve.cusp_count; ++e) {
