@@ -1328,10 +1328,18 @@ void DrawSurveyOverlays(ImDrawList* dl, GuiState& state, const MapCanvasProjecti
   // submitted segment within tolerance names the curve and its nearest point's theoretical
   // witness (member, parameters, pose) — one tooltip per frame, beside the markers'.
   int family_curve_entries = 0;
+  // The hover state is filled during the draw and consumed after the markers' tooltip: the
+  // map window must actually be hovered (a popup or another window over the picture swallows
+  // the hover — otherwise the curve tooltip would eat the next click), and the marker tooltip
+  // owns the pointer whenever a marker is under it (one tooltip per frame).
+  const SurveyOverlayFacts::FamilyCurveFact* curve_hovered = nullptr;
+  int curve_hovered_point = -1;
+  float curve_hovered_dist = 1e30f;
   if (gates.curves.graphics) {
-    const float curve_hit_tol = UiPx(7.0f);
-    const SurveyOverlayFacts::FamilyCurveFact* hovered = nullptr;
-    int hovered_point = -1;
+    // The ink draws whenever the group is on; only the PICK records against the pointer, and
+    // only while the map window is actually hovered (a popup or another window over the
+    // picture must not spawn a curve tooltip — it would eat the next click).
+    const bool pointer_pickable = ImGui::IsWindowHovered();
     float hovered_dist = 1e30f;
     const ImVec2 mouse = ImGui::GetIO().MousePos;
     for (const SurveyOverlayFacts::FamilyCurveFact& curve : facts.family_curves) {
@@ -1354,10 +1362,10 @@ void DrawSurveyOverlays(ImDrawList* dl, GuiState& state, const MapCanvasProjecti
           const float dx = mouse.x - cx;
           const float dy = mouse.y - cy;
           const float d = dx * dx + dy * dy;
-          if (d < hovered_dist) {
+          if (pointer_pickable && d < hovered_dist) {
             hovered_dist = d;
-            hovered = &curve;
-            hovered_point = -1;  // the marker's own witness: the segment's constant image
+            curve_hovered = &curve;
+            curve_hovered_point = -1;  // the marker's own witness: the segment's constant image
           }
           continue;
         }
@@ -1388,10 +1396,10 @@ void DrawSurveyOverlays(ImDrawList* dl, GuiState& state, const MapCanvasProjecti
                 // geometry, at the hover tolerance).
                 const float d =
                     PointSegmentDistanceSq(mouse.x, mouse.y, static_cast<float>(px), static_cast<float>(py), cx, cy);
-                if (d < hovered_dist) {
+                if (pointer_pickable && d < hovered_dist) {
                   hovered_dist = d;
-                  hovered = &curve;
-                  hovered_point = i;
+                  curve_hovered = &curve;
+                  curve_hovered_point = i;
                 }
               }
             }
@@ -1422,24 +1430,21 @@ void DrawSurveyOverlays(ImDrawList* dl, GuiState& state, const MapCanvasProjecti
         const float dx = mouse.x - cx;
         const float dy = mouse.y - cy;
         const float d = dx * dx + dy * dy;
-        if (d < hovered_dist) {
+        if (pointer_pickable && d < hovered_dist) {
           hovered_dist = d;
-          hovered = &curve;
-          hovered_point = cusp.order_index;
+          curve_hovered = &curve;
+          curve_hovered_point = cusp.order_index;
         }
       }
       if (drew_any) {
         family_curve_entries += 1;
       }
     }
-    // The pick: the nearest curve's witness under the pointer, within the tolerance.
-    if (hovered != nullptr && hovered_dist < curve_hit_tol * curve_hit_tol) {
-      RenderFamilyCurveTooltip(*hovered, hovered_point);
-    }
     if (legend != nullptr && family_curve_entries > 0) {
       legend->family_curves = true;
       legend->family_curve_count = family_curve_entries;
     }
+    curve_hovered_dist = hovered_dist;
   }
   // Positional objects: the survey's own located conclusions, drawn where the document puts
   // them — one marker per object, styled by kind and claim state; the frame's hits collect for
@@ -1632,6 +1637,13 @@ void DrawSurveyOverlays(ImDrawList* dl, GuiState& state, const MapCanvasProjecti
     }
   }
   RenderSurveyObjectTooltip(hits, record_noun);
+  // The family curve pick: the nearest submitted segment's witness under the pointer —
+  // rendered only when no marker is under the pointer (the marker tooltip owns it then; one
+  // tooltip per frame). The tolerance is the pick's own: a 7pt radius around the submitted
+  // line.
+  if (hits.empty() && curve_hovered != nullptr && curve_hovered_dist <= UiPx(7.0f) * UiPx(7.0f)) {
+    RenderFamilyCurveTooltip(*curve_hovered, curve_hovered_point);
+  }
   // The chromatic group's gate wraps BOTH red-blue ink sources — the dispersion pair and the
   // verdict anchor draw together or not at all (a half-open chromatic group would leave one
   // semantic colour claiming the other's absence). The neutral layers above are untouched by it;
