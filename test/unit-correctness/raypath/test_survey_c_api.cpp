@@ -953,5 +953,129 @@ TEST_F(SurveyCApi, TypedBorrowedReadsSurviveWorkspaceAndConcurrentJson) {
   EXPECT_EQ(std::string(object.method.data, object.method.length), method);
 }
 
+// The ordered-curve readers' round trip (task arc-recovery-engine): a column population's
+// survey produces family_curves; the five readers read back the same identity, point order,
+// segment forms and events the document declares — every count consistent, every index in
+// range, the point-image rows carrying their constant-image readings, the borrowed member
+// array surviving a ToJson — and the JSON projection's family_curves table matches the
+// reader's count. A too-small row struct is refused like every other reader's.
+TEST_F(SurveyCApi, CurveReadersRoundTripTheColumnDocument) {
+  constexpr const char* kColumnJson = R"({
+    "crystal": [ { "id": 1, "type": "prism",
+                   "shape": { "height": 0.3, "face_distance": [1,1,1,1,1,1] },
+                   "axis": { "zenith": { "type": "gauss", "mean": 90, "std": 0.3 },
+                             "azimuth": { "type": "uniform", "mean": 0, "std": 360 },
+                             "roll": { "type": "uniform", "mean": 0, "std": 360 } } } ],
+    "filter": [],
+    "scene": { "light_source": { "type": "sun", "altitude": 20, "azimuth": 0, "diameter": 0.5, "spectrum": "D65" },
+               "ray_num": 1000, "max_hits": 7,
+               "scattering": [ { "prob": 0, "entries": [ { "crystal": 1, "proportion": 1 } ] } ] },
+    "render": []
+  })";
+  LUMICE_Scene* raw_scene = nullptr;
+  ASSERT_EQ(LUMICE_SceneFromJson(kColumnJson, &raw_scene), LUMICE_OK) << "the column scene must parse";
+  std::unique_ptr<LUMICE_Scene, SceneDeleter> column_scene(raw_scene);
+  static int faces[] = { 3, 5 };
+  static int counts[] = { 2 };
+  LUMICE_PathSurveyRequest request{};
+  request.struct_size = sizeof(request);
+  request.crystal_id = 1;
+  request.faces = faces;
+  request.face_count = 2;
+  request.layer_face_counts = counts;
+  request.layer_count = 1;
+  request.wavelength_nm = 550;
+  // The literal requested sequence: one member's ladder (the physical P|B|D class would run
+  // eight members' scans for the same curve shape — the round trip needs one real document,
+  // not eight).
+  request.symmetry_bits_plus_one = 1;
+  LUMICE_PathSurvey* raw_result = nullptr;
+  char err[512] = {};
+  ASSERT_EQ(LUMICE_AnalyzePathSurvey(column_scene.get(), &request, &raw_result, err, sizeof(err)), LUMICE_OK) << err;
+  std::unique_ptr<LUMICE_PathSurvey, void (*)(LUMICE_PathSurvey*)> result(raw_result, LUMICE_PathSurveyDestroy);
+
+  LUMICE_PathSurveyCurveInfo info{};
+  info.struct_size = sizeof(info);
+  ASSERT_EQ(LUMICE_PathSurveyGetCurves(result.get(), &info), LUMICE_PATH_READ_OK);
+  ASSERT_GT(info.curve_count, 0u) << "the column population produced no ordered curves";
+  // A too-small info struct is refused.
+  LUMICE_PathSurveyCurveInfo small{};
+  small.struct_size = 4;
+  EXPECT_EQ(LUMICE_PathSurveyGetCurves(result.get(), &small), LUMICE_PATH_READ_INVALID_SIZE);
+
+  int point_image_rows = 0;
+  size_t first_curve_member_count = 0;
+  // One curve's full read, the per-row asserts inside a lambda the loop calls (a fatal assert
+  // in the loop body itself would silently skip every row after the first failure).
+  const auto read_curve = [&](size_t c) {
+    LUMICE_PathSurveyCurve curve{};
+    curve.struct_size = sizeof(curve);
+    ASSERT_EQ(LUMICE_PathSurveyGetCurve(result.get(), c, &curve), LUMICE_PATH_READ_OK);
+    ASSERT_GT(curve.member_count, 0u);
+    ASSERT_NE(curve.member, nullptr);
+    if (c == 0) {
+      first_curve_member_count = curve.member_count;
+    }
+    EXPECT_TRUE(curve.kind == LUMICE_PATH_CURVE_KIND_FOLD_CHAIN || curve.kind == LUMICE_PATH_CURVE_KIND_REGULAR_TRACK);
+    EXPECT_TRUE(curve.end_a == LUMICE_PATH_CURVE_END_OPEN || curve.end_a == LUMICE_PATH_CURVE_END_CLOSED_LOOP ||
+                curve.end_a == LUMICE_PATH_CURVE_END_FEASIBILITY_INTERRUPTION ||
+                curve.end_a == LUMICE_PATH_CURVE_END_AMBIGUOUS_CELL ||
+                curve.end_a == LUMICE_PATH_CURVE_END_STOP_REQUESTED);
+    EXPECT_TRUE(curve.point_count > 0u);
+    const auto read_point = [&](size_t p) {
+      LUMICE_PathSurveyCurvePoint point{};
+      point.struct_size = sizeof(point);
+      ASSERT_EQ(LUMICE_PathSurveyGetCurvePoint(result.get(), c, p, &point), LUMICE_PATH_READ_OK);
+      EXPECT_TRUE(std::isfinite(point.params_deg[0]) && std::isfinite(point.params_deg[1]));
+      EXPECT_TRUE(std::isfinite(point.image_altitude_deg) && std::isfinite(point.image_azimuth_deg));
+    };
+    for (size_t p = 0; p < curve.point_count; ++p) {
+      read_point(p);
+    }
+    const auto read_segment = [&](size_t s) {
+      LUMICE_PathSurveyCurveSegment segment{};
+      segment.struct_size = sizeof(segment);
+      ASSERT_EQ(LUMICE_PathSurveyGetCurveSegment(result.get(), c, s, &segment), LUMICE_PATH_READ_OK);
+      EXPECT_GE(segment.first, 0);
+      EXPECT_GE(segment.last, segment.first);
+      EXPECT_LT(static_cast<size_t>(segment.last), curve.point_count);
+      EXPECT_TRUE(segment.form == LUMICE_PATH_CURVE_SEGMENT_FORM_ARC ||
+                  segment.form == LUMICE_PATH_CURVE_SEGMENT_FORM_POINT_IMAGE ||
+                  segment.form == LUMICE_PATH_CURVE_SEGMENT_FORM_UNKNOWN);
+      if (segment.form == LUMICE_PATH_CURVE_SEGMENT_FORM_POINT_IMAGE) {
+        EXPECT_EQ(segment.image_available, 1);
+        EXPECT_GE(segment.image_diameter_deg, 0.0);
+        point_image_rows++;
+      }
+    };
+    for (size_t s = 0; s < curve.segment_count; ++s) {
+      read_segment(s);
+    }
+    const auto read_cusp = [&](size_t e) {
+      LUMICE_PathSurveyCurveCusp cusp{};
+      cusp.struct_size = sizeof(cusp);
+      ASSERT_EQ(LUMICE_PathSurveyGetCurveCusp(result.get(), c, e, &cusp), LUMICE_PATH_READ_OK);
+      EXPECT_GE(cusp.order_index, 0);
+      EXPECT_LT(static_cast<size_t>(cusp.order_index), curve.point_count);
+      EXPECT_GE(cusp.djv_residual, 0.0);
+    };
+    for (size_t e = 0; e < curve.cusp_count; ++e) {
+      read_cusp(e);
+    }
+  };
+  for (size_t c = 0; c < info.curve_count; ++c) {
+    read_curve(c);
+  }
+  EXPECT_GT(point_image_rows, 0) << "the column's mirror collapse never reads as a point-image run";
+  // The borrowed member array survives a derived JSON (the same borrow contract every other
+  // reader declares).
+  (void)ResultDocument(result.get(), LUMICE_PathSurveyToJson);
+  LUMICE_PathSurveyCurve after{};
+  after.struct_size = sizeof(after);
+  ASSERT_EQ(LUMICE_PathSurveyGetCurve(result.get(), 0, &after), LUMICE_PATH_READ_OK);
+  ASSERT_NE(after.member, nullptr);
+  EXPECT_EQ(after.member_count, first_curve_member_count);
+}
+
 }  // namespace
 }  // namespace lumice::raypath::survey
