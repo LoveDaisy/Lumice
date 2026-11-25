@@ -2335,8 +2335,9 @@ bool RenderDisplayModeControl() {
 // Revert, or a lens switch, never resumes: the reset cancelled it, and only a fresh press
 // re-admits.
 struct RollDragGesture {
-  // The press is alive: admitted on the press frame and not yet ended by release, Alt, a full-sky
-  // lens, an arbitration lock, a lens switch, or a document reset. Once ended, the SAME press can
+  // The press is alive: admitted on the press frame and not yet ended by release, Alt, a lens
+  // whose roll gate is closed (full-sky or Globe — the Roll slider's own disabled set), an
+  // arbitration lock, a lens switch, or a document reset. Once ended, the SAME press can
   // never resume — only a new press re-admits.
   bool active = false;
   // Whether `ref_*` holds a valid direction to measure against. False on admission (the first
@@ -2961,18 +2962,24 @@ void RenderPreviewPanel(GLFWwindow* window, float window_width, float window_hei
       //
       // Admission is the press frame only, and ownership is for the whole press: a right press
       // that did not start here (off the preview, over the display-mode control, under Alt, while
-      // an armed pick or a non-camera cone verdict held the click, on a full-sky lens) can never
-      // take over mid-press once its edge is spent. The same three gates the left branches carry
-      // (!bg_modifier — Alt states the photo's intent, and the photo has no rotate; !full_sky —
-      // the entry rejects rather than writing into the per-frame zeroing; !gestures_locked) end
+      // an armed pick or a non-camera cone verdict held the click, on a lens whose roll gate is
+      // closed) can never take over mid-press once its edge is spent. The gates (!bg_modifier —
+      // Alt states the photo's intent, and the photo has no rotate; the roll field's own registry
+      // gate read through ConstraintFor below — the SAME constraint the Roll slider is disabled
+      // by, so a lens refuses the press exactly where it greys the slider; !gestures_locked) end
       // an in-flight drag outright, instead of pausing it, so an unlocked lock cannot inherit a
       // press that began under it — and so does a lens switch (the snapshot below) or a document
-      // reset (ResetFrontendState's hook). Leaving the interaction face, by contrast, only
+      // reset (ResetFrontendState's hook). That lens gate is deliberately wider than the plain
+      // !full_sky the left orbit and the wheel keep: Globe orbits and zooms, but its published
+      // roll is pinned to 0, so the entry rejects rather than writing into a value the picture
+      // would never show — the write site below is unreachable under any lens the field's gate
+      // disables, not erased after the fact. Leaving the interaction face, by contrast, only
       // PAUSES: the reference is dropped and the first sample back re-establishes it, so no
       // off-screen travel is ever back-computed. Like every gesture above, none of this touches
       // Look At — roll is a T-view framing value (gui-state-governance): no UnlockLookAt, no
       // dirty, no epoch, no re-sim.
-      const bool roll_admissible = !gestures_locked && !bg_modifier && !full_sky;
+      const FieldEditorConstraint roll_c = ConstraintFor("renderer.roll", g_state);
+      const bool roll_admissible = !gestures_locked && !bg_modifier && roll_c.enabled;
       if (!g_roll_drag.active && roll_admissible && is_hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
         // The press frame. Ownership decided here, once, from this frame's locks and modifiers;
         // the lens is recorded so a later switch ends the press. Admission FALLS THROUGH to the
