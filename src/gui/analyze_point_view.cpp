@@ -1330,8 +1330,9 @@ void RenderPointCurveRangeControl(PointCurveRangeMode* mode) {
            "Left axis (A/a², T, K, product): log window floor, decades below the largest "
            "positive value —\nFit %d, Full %d.\n"
            "The ρ arm draws on its own independent right log axis spanning exactly its finite "
-           "values; switching Fit/Full never changes ρ's absolute values or its axis, and "
-           "heights on the two axes do not compare.",
+           "values; switching Fit/Full never changes ρ's absolute values or its axis. Heights "
+           "on the two axes do not compare, and two arms' curves crossing does not mean equal "
+           "factors.",
            CurveRangeDecades(PointCurveRangeMode::kFit), CurveRangeDecades(PointCurveRangeMode::kFull));
 }
 
@@ -3544,24 +3545,20 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
     // J7's constant: the caliber is DECLARED, never inferred — on plate-family scenes the axis
     // density (the `rho` field, and the product and the integral with it) reads identically zero
     // in this convention, while the other arms stay informative per their own flags (audit §4).
-    DisabledWrappedText(
-        "angle-Lebesgue · arclength axis in rad · two independent log axes — heights do not compare "
-        "across the left/right pair");
+    DisabledWrappedText("angle-Lebesgue · rad · two independent log axes");
     RegisterPointTextItem("##curve_caliber");
     // The adoption's opening fact, the document's own words (AC3's honesty): which branch the
     // interpretive pose named at the adoption boundary — or the named absence, never a
-    // fabricated "healthy branch". One line per document; manual switches after adoption are
-    // the user's and are not reported here.
+    // fabricated "healthy branch". One compact line per document (the semantics ride the
+    // Fit/Full info icon and the state-governance doc); manual switches after adoption are the
+    // user's and are not reported here.
     if (view.interpretive_available) {
-      char interp[192];
-      std::snprintf(interp, sizeof(interp),
-                    "opened at the interpretive pose: component %d, sample %d (largest ordinary log density among "
-                    "the recovered valid points)",
+      char interp[128];
+      std::snprintf(interp, sizeof(interp), "opened at the interpretive pose: component %d, sample %d",
                     view.interpretive_component + 1, view.interpretive_valid_position + 1);
       DisabledWrappedText("%s", interp);
     } else {
-      DisabledWrappedText(
-          "no ordinary-density interpretive pose in this document — opened at the first browsable branch");
+      DisabledWrappedText("no interpretive pose in this document — opened at the first browsable branch");
     }
     RegisterPointTextItem("##curve_interpretive");
 

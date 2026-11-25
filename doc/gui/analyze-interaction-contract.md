@@ -1102,7 +1102,8 @@ mesh/GL 显示错误也送同一底栏，不靠状态相关高度挤画布。成
 包括线性 payload 下溢为 0 的深尾），`-inf`＝离支撑/Dirac 切片的「无普通密度」（具名不画、
 不宣称物理无光），`+inf`＝发散（具名断线），NaN/reader 失败＝具名不可用；tooltip/读数从同一
 log 事实格式化绝对科学计数（尾数+指数），有限深尾不再显示为 0。曲线伴读承载分量身份、
-弧长/积分回显及 incomplete、口径（angle-Lebesgue · arclength rad · 两轴独立不可比高）、
+弧长/积分回显及 incomplete、口径（`angle-Lebesgue · rad · two independent log axes`——不可比高、
+不得以相交点推导因子相等的完整语义归曲线 Fit/Full 共享 info icon）、
 **采纳开局事实**（「opened at the interpretive pose: component C, sample S」或其具名缺失——
 见 gui-state-governance.md 的采纳段）、图例和 partial 限定；当前姿态因素归右下，其 ρ 行读
 同一 density reader（线性 0 带有限 log 时拼写绝对密度并注明下溢，不与曲线臂矛盾）。
