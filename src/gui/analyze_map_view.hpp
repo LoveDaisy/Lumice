@@ -552,12 +552,15 @@ struct FamilyCurvePick {
 // query; this predicate is the only way anything reads it.
 bool FamilyCurveSelectionActive(const GuiState& state);
 // Commits the selection against the CURRENT adopted survey identity: the curve, the picked
-// event's identity, and every curve that shared the click (the overlapping-source cycle the
-// readout's switcher walks). Display-session writes only — no query, no sky point, no camera.
-// The one writer of the selection fields.
-void SelectFamilyCurve(GuiState& state, const FamilyCurvePick& pick, std::vector<int> sources);
+// event's identity, and every curve that shared the click WITH ITS OWN PICK at that position
+// (the overlapping-source cycle restores the clicked curve's own event, never a rewritten
+// default — the plan's same-pick-position multi-source contract). Display-session writes
+// only — no query, no sky point, no camera. The one writer of the selection fields.
+void SelectFamilyCurve(GuiState& state, const FamilyCurvePick& pick, std::vector<FamilyCurvePick> sources);
 // Steps the overlapping-source cycle (the readout's ‹ › buttons): slot wraps within the
-// committed sources; a selection without a cycle is untouched. Display-session write only.
+// committed sources and the selection adopts THAT source's own pick — the clicked position
+// and event identity stay the clicked ones. A selection without a cycle is untouched.
+// Display-session write only.
 void CycleFamilyCurveSource(GuiState& state, int step);
 // Drops the selection (the readout's Clear). Display-session write only.
 void ClearFamilyCurveSelection(GuiState& state);

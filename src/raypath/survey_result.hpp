@@ -288,6 +288,23 @@ class SurveyResult : public FrozenValue<SurveyData> {
           throw std::invalid_argument("a survey family curve event references a point outside the curve");
         }
       }
+      // The verified adjacency (fold chains only): a link count matching the declared
+      // topology (open: points - 1; closed: points, the last closing back onto the front),
+      // every cell reference a legal grid corner pair. A track carries no links (its
+      // adjacency is the parameter order within validity runs, not cell-justified).
+      if (curve.kind == FamilyCurveKind::kFoldChain) {
+        const size_t expected_links = curve.points.size() - (curve.closed ? 0u : 1u);
+        if (curve.links.size() != expected_links) {
+          throw std::invalid_argument("a survey family chain's link count does not match its topology");
+        }
+        for (const FamilyCurveLink& link : curve.links) {
+          if (link.cell_i0 < 0 || link.cell_i1 < 0) {
+            throw std::invalid_argument("a survey family chain link names a negative cell corner");
+          }
+        }
+      } else if (!curve.links.empty()) {
+        throw std::invalid_argument("a survey regular track carries fold-chain links");
+      }
     }
     for (const SurveyProbe& probe : data.probes) {
       const EvidenceState state = probe.State();

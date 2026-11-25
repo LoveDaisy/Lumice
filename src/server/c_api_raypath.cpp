@@ -3690,6 +3690,7 @@ LUMICE_PathReadStatus LUMICE_PathSurveyGetCurve(const LUMICE_PathSurvey* result,
     }
   }
   out->point_count = value.points.size();
+  out->link_count = value.links.size();
   out->segment_count = value.segments.size();
   out->cusp_count = value.cusps.size();
   out->closed = value.closed ? 1 : 0;
@@ -3757,6 +3758,31 @@ LUMICE_PathReadStatus LUMICE_PathSurveyGetCurvePoint(const LUMICE_PathSurvey* re
   out->sigma2 = point.sigma2;
   out->alignment = point.alignment;
   out->djv = point.djv;
+  out->edge_dim = point.edge_dim;
+  out->edge_i0 = point.edge_i0;
+  out->edge_i1 = point.edge_i1;
+  out->edge_t = point.edge_t;
+  out->from_cliff_probe = point.from_cliff_probe ? 1 : 0;
+  return LUMICE_PATH_READ_OK;
+}
+
+LUMICE_PathReadStatus LUMICE_PathSurveyGetCurveLink(const LUMICE_PathSurvey* result, size_t curve, size_t index,
+                                                    LUMICE_PathSurveyCurveLink* out) {
+  if (const auto status = BeginRead(result, out); status != LUMICE_PATH_READ_OK) {
+    return status;
+  }
+  const auto& curves = result->result.Data().family_curves;
+  if (curve >= curves.size()) {
+    return LUMICE_PATH_READ_INVALID_INDEX;
+  }
+  const auto& links = curves[curve].links;
+  if (index >= links.size()) {
+    return LUMICE_PATH_READ_INVALID_INDEX;
+  }
+  const auto& link = links[index];
+  out->cell_i0 = link.cell_i0;
+  out->cell_i1 = link.cell_i1;
+  out->through_subdivision = link.through_subdivision ? 1 : 0;
   return LUMICE_PATH_READ_OK;
 }
 
@@ -3791,6 +3817,7 @@ LUMICE_PathReadStatus LUMICE_PathSurveyGetCurveSegment(const LUMICE_PathSurvey* 
   out->image_altitude_deg = segment.image_altitude_deg;
   out->image_azimuth_deg = segment.image_azimuth_deg;
   out->image_diameter_deg = segment.image_diameter_deg;
+  out->image_bound_deg = segment.image_bound_deg;
   return LUMICE_PATH_READ_OK;
 }
 

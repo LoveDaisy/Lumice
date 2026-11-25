@@ -2602,23 +2602,38 @@ TEST(AnalyzeMapView, FamilyCurveSelectionBindsToTheAdoptedIdentityAndCycles) {
   pick.curve_index = 2;
   pick.kind = FamilyCurvePickKind::kCusp;
   pick.cusp_index = 0;
-  SelectFamilyCurve(state, pick, { 2, 5, 9 });
+  // The overlapping sources carry THEIR OWN picks at the clicked position (different curves,
+  // different hit points — the clicked position must survive the cycle).
+  FamilyCurvePick p5;
+  p5.curve_index = 5;
+  p5.kind = FamilyCurvePickKind::kPoint;
+  p5.point_index = 17;
+  FamilyCurvePick p9;
+  p9.curve_index = 9;
+  p9.kind = FamilyCurvePickKind::kPointImage;
+  p9.segment_index = 3;
+  SelectFamilyCurve(state, pick, { pick, p5, p9 });
   EXPECT_TRUE(FamilyCurveSelectionActive(state));
   EXPECT_EQ(state.analysis.family_curve_index, 2);
   EXPECT_EQ(state.analysis.family_curve_source_slot, 0);
 
-  // The overlap cycle: forward, wrap, backward — each step re-points the selection at the
-  // cycle's own curve and resets the witness to that curve's first point.
+  // The overlap cycle: each step adopts THAT source's own pick — the clicked event identity
+  // and sky position survive the switch (the review: a rewritten first point would jump the
+  // witness to wherever the other curve starts).
   CycleFamilyCurveSource(state, 1);
   EXPECT_EQ(state.analysis.family_curve_index, 5);
   EXPECT_EQ(state.analysis.family_curve_source_slot, 1);
   EXPECT_EQ(state.analysis.family_curve_pick_kind, static_cast<int>(FamilyCurvePickKind::kPoint));
-  EXPECT_EQ(state.analysis.family_curve_point_index, 0);
+  EXPECT_EQ(state.analysis.family_curve_point_index, 17);
   CycleFamilyCurveSource(state, 1);
   EXPECT_EQ(state.analysis.family_curve_index, 9);
+  EXPECT_EQ(state.analysis.family_curve_pick_kind, static_cast<int>(FamilyCurvePickKind::kPointImage));
+  EXPECT_EQ(state.analysis.family_curve_segment_index, 3);
   CycleFamilyCurveSource(state, 1);
   EXPECT_EQ(state.analysis.family_curve_index, 2);  // wrapped
   EXPECT_EQ(state.analysis.family_curve_source_slot, 0);
+  EXPECT_EQ(state.analysis.family_curve_pick_kind, static_cast<int>(FamilyCurvePickKind::kCusp));
+  EXPECT_EQ(state.analysis.family_curve_cusp_index, 0);
   CycleFamilyCurveSource(state, -1);
   EXPECT_EQ(state.analysis.family_curve_index, 9);
   EXPECT_TRUE(FamilyCurveSelectionActive(state));
@@ -2632,18 +2647,18 @@ TEST(AnalyzeMapView, FamilyCurveSelectionBindsToTheAdoptedIdentityAndCycles) {
   EXPECT_FALSE(FamilyCurveSelectionActive(state));
 
   // A lost document kills it too.
-  SelectFamilyCurve(state, pick, { 2 });
+  SelectFamilyCurve(state, pick, { pick });
   EXPECT_TRUE(FamilyCurveSelectionActive(state));
   state.analysis.survey.adopted_result = nullptr;
   EXPECT_FALSE(FamilyCurveSelectionActive(state));
 
   // The explicit Clear.
   state.analysis.survey.adopted_result = adopted;
-  SelectFamilyCurve(state, pick, { 3 });
+  SelectFamilyCurve(state, pick, { pick });
   EXPECT_TRUE(FamilyCurveSelectionActive(state));
   ClearFamilyCurveSelection(state);
   EXPECT_FALSE(FamilyCurveSelectionActive(state));
-  EXPECT_TRUE(state.analysis.family_curve_sources.empty());
+  EXPECT_TRUE(state.analysis.family_curve_source_picks.empty());
 }
 
 }  // namespace lumice::gui

@@ -1005,6 +1005,7 @@ TEST_F(SurveyCApi, CurveReadersRoundTripTheColumnDocument) {
 
   int point_image_rows = 0;
   size_t first_curve_member_count = 0;
+  int edge_dim_of_first = -2;
   // One curve's full read, the per-row asserts inside a lambda the loop calls (a fatal assert
   // in the loop body itself would silently skip every row after the first failure).
   const auto read_curve = [&](size_t c) {
@@ -1015,6 +1016,11 @@ TEST_F(SurveyCApi, CurveReadersRoundTripTheColumnDocument) {
     ASSERT_NE(curve.member, nullptr);
     if (c == 0) {
       first_curve_member_count = curve.member_count;
+      LUMICE_PathSurveyCurvePoint p0{};
+      p0.struct_size = sizeof(p0);
+      if (LUMICE_PathSurveyGetCurvePoint(result.get(), 0, 0, &p0) == LUMICE_PATH_READ_OK) {
+        edge_dim_of_first = p0.edge_dim;
+      }
     }
     EXPECT_TRUE(curve.kind == LUMICE_PATH_CURVE_KIND_FOLD_CHAIN || curve.kind == LUMICE_PATH_CURVE_KIND_REGULAR_TRACK);
     EXPECT_TRUE(curve.end_a == LUMICE_PATH_CURVE_END_OPEN || curve.end_a == LUMICE_PATH_CURVE_END_CLOSED_LOOP ||
@@ -1067,6 +1073,41 @@ TEST_F(SurveyCApi, CurveReadersRoundTripTheColumnDocument) {
     read_curve(c);
   }
   EXPECT_GT(point_image_rows, 0) << "the column's mirror collapse never reads as a point-image run";
+  // The evidence-fidelity contract (the review's Major: the adjacency source must survive the
+  // freeze): every fold chain's link count matches its declared topology, a link row reads
+  // back with a legal cell corner pair, the points carry their grid-edge sources, and the
+  // JSON projection carries the same link table and edge fields.
+  {
+    LUMICE_PathSurveyCurve first{};
+    first.struct_size = sizeof(first);
+    ASSERT_EQ(LUMICE_PathSurveyGetCurve(result.get(), 0, &first), LUMICE_PATH_READ_OK);
+    if (first.kind == LUMICE_PATH_CURVE_KIND_FOLD_CHAIN) {
+      const size_t expected_links = first.point_count - (first.closed != 0 ? 0u : 1u);
+      EXPECT_EQ(first.link_count, expected_links);
+      LUMICE_PathSurveyCurveLink link{};
+      link.struct_size = sizeof(link);
+      ASSERT_EQ(LUMICE_PathSurveyGetCurveLink(result.get(), 0, 0, &link), LUMICE_PATH_READ_OK);
+      EXPECT_GE(link.cell_i0, 0);
+      EXPECT_GE(link.cell_i1, 0);
+      LUMICE_PathSurveyCurvePoint edge_point{};
+      edge_point.struct_size = sizeof(edge_point);
+      ASSERT_EQ(LUMICE_PathSurveyGetCurvePoint(result.get(), 0, 0, &edge_point), LUMICE_PATH_READ_OK);
+      EXPECT_GE(edge_point.edge_dim, -1);
+      EXPECT_LE(edge_point.edge_dim, 1);
+    } else {
+      EXPECT_EQ(first.link_count, 0u) << "a track carries no fold-chain links";
+      LUMICE_PathSurveyCurveLink no_link{};
+      no_link.struct_size = sizeof(no_link);
+      EXPECT_EQ(LUMICE_PathSurveyGetCurveLink(result.get(), 0, 0, &no_link), LUMICE_PATH_READ_INVALID_INDEX);
+    }
+    const auto document = ResultDocument(result.get(), LUMICE_PathSurveyToJson);
+    ASSERT_TRUE(document.contains("family_curves"));
+    const auto& curve_json = document["family_curves"][0];
+    ASSERT_TRUE(curve_json.contains("links"));
+    EXPECT_EQ(curve_json["links"].size(), first.link_count);
+    ASSERT_TRUE(curve_json["points"][0].contains("edge_dim"));
+    EXPECT_EQ(curve_json["points"][0]["edge_dim"].get<int>(), edge_dim_of_first);
+  }
   // The borrowed member array survives a derived JSON (the same borrow contract every other
   // reader declares).
   (void)ResultDocument(result.get(), LUMICE_PathSurveyToJson);

@@ -356,7 +356,25 @@ std::vector<survey::FamilyCurveRecord> CurvesOfRank(const analytic::RestrictedFa
       point.sigma2 = p.sigma2;
       point.alignment = p.alignment;
       point.djv = p.djv;
+      // The crossing's own grid-edge source: the adjacency evidence the chain walker used,
+      // kept past the freeze boundary (the review's fidelity contract — the analytic
+      // temporaries die here, the facts ride the typed record).
+      point.edge_dim = p.edge_dim;
+      point.edge_i0 = p.edge_i0;
+      point.edge_i1 = p.edge_i1;
+      point.edge_t = p.edge_t;
+      point.from_cliff_probe = p.from_cliff_probe;
       record.points.push_back(point);
+    }
+    // The verified adjacency, link by link: points[i] to points[i + 1] for i < links.size(),
+    // and for a closed chain the last entry closes points.back() onto points.front().
+    record.links.reserve(chain.links.size());
+    for (const analytic::FoldChainLink& link : chain.links) {
+      survey::FamilyCurveLink out;
+      out.cell_i0 = link.cell_i0;
+      out.cell_i1 = link.cell_i1;
+      out.through_subdivision = link.through_subdivision;
+      record.links.push_back(out);
     }
     for (const analytic::FoldSegmentRecord& segment : chain.segments) {
       survey::FamilyCurveSegment out;
@@ -366,6 +384,7 @@ std::vector<survey::FamilyCurveRecord> CurvesOfRank(const analytic::RestrictedFa
       out.image_altitude_deg = segment.image_alt_deg;
       out.image_azimuth_deg = segment.image_az_deg;
       out.image_diameter_deg = segment.image_diameter_deg;
+      out.image_bound_deg = segment.image_bound_deg;
       record.segments.push_back(out);
     }
     for (const analytic::FoldCuspCandidate& cusp : chain.cusps) {

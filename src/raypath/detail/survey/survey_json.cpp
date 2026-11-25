@@ -174,14 +174,28 @@ Json FamilyCurveJson(const FamilyCurveRecord& curve) {
     for (const double value : point.pose) {
       pose.push_back(Num(value));
     }
-    points.push_back({ { "params_deg", { Num(point.params_deg[0]), Num(point.params_deg[1]) } },
-                       { "pose", std::move(pose) },
-                       { "image_altitude_deg", Num(point.image_altitude_deg) },
-                       { "image_azimuth_deg", Num(point.image_azimuth_deg) },
-                       { "sigma1", Num(point.sigma1) },
-                       { "sigma2", Num(point.sigma2) },
-                       { "alignment", Num(point.alignment) },
-                       { "djv", Num(point.djv) } });
+    Json point_entry = { { "params_deg", { Num(point.params_deg[0]), Num(point.params_deg[1]) } },
+                         { "pose", std::move(pose) },
+                         { "image_altitude_deg", Num(point.image_altitude_deg) },
+                         { "image_azimuth_deg", Num(point.image_azimuth_deg) },
+                         { "sigma1", Num(point.sigma1) },
+                         { "sigma2", Num(point.sigma2) },
+                         { "alignment", Num(point.alignment) },
+                         { "djv", Num(point.djv) } };
+    // The crossing's grid-edge source (fold chains; -1 on a track point and a subdivision's
+    // interior refinement point): the adjacency evidence the frozen curve keeps.
+    point_entry["edge_dim"] = point.edge_dim;
+    point_entry["edge_i0"] = point.edge_i0;
+    point_entry["edge_i1"] = point.edge_i1;
+    point_entry["edge_t"] = Num(point.edge_t);
+    point_entry["from_cliff_probe"] = point.from_cliff_probe;
+    points.push_back(std::move(point_entry));
+  }
+  Json links = Json::array();
+  for (const FamilyCurveLink& link : curve.links) {
+    links.push_back({ { "cell_i0", link.cell_i0 },
+                      { "cell_i1", link.cell_i1 },
+                      { "through_subdivision", link.through_subdivision } });
   }
   Json segments = Json::array();
   for (const FamilyCurveSegment& segment : curve.segments) {
@@ -193,6 +207,8 @@ Json FamilyCurveJson(const FamilyCurveRecord& curve) {
       entry["image_azimuth_deg"] = Num(segment.image_azimuth_deg);
       entry["image_diameter_deg"] = Num(segment.image_diameter_deg);
     }
+    // The verification's own resolution statement (every decided run; -1 = never decided).
+    entry["image_bound_deg"] = Num(segment.image_bound_deg);
     segments.push_back(std::move(entry));
   }
   Json cusps = Json::array();
@@ -212,6 +228,7 @@ Json FamilyCurveJson(const FamilyCurveRecord& curve) {
                  { "member", std::move(member) },
                  { "level", curve.level },
                  { "points", std::move(points) },
+                 { "links", std::move(links) },
                  { "segments", std::move(segments) },
                  { "cusps", std::move(cusps) },
                  { "closed", curve.closed },

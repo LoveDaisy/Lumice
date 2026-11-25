@@ -104,6 +104,22 @@ struct FamilyCurvePoint {
   double sigma2 = 0.0;      // fold chains only; a track keeps 0
   double alignment = -1.0;  // the classification's read (negative = unclassified)
   double djv = 0.0;         // dJ(v) at the point (fold chains only)
+  // The crossing's grid-edge source (fold chains only; a track and a subdivision's interior
+  // refinement point keep -1/-1/-1/0): which dimension varies along the locating edge, the
+  // edge's first vertex (canonical cell indices), and the root's 0..1 position along one
+  // spacing. The evidence the ordered-arc contract requires the frozen curve to keep — the
+  // chain walker's adjacency was justified FROM these.
+  int edge_dim = -1;
+  int edge_i0 = -1;
+  int edge_i1 = -1;
+  double edge_t = 0.0;
+  bool from_cliff_probe = false;
+};
+
+struct FamilyCurveLink {
+  int cell_i0 = 0;  // the justifying cell's lower corner (grid indices, canonical order)
+  int cell_i1 = 0;
+  bool through_subdivision = false;
 };
 
 struct FamilyCurveSegment {
@@ -114,6 +130,9 @@ struct FamilyCurveSegment {
   double image_altitude_deg = 0.0;
   double image_azimuth_deg = 0.0;
   double image_diameter_deg = 0.0;
+  // The verification's own derived position bound in degrees (the classification's resolution
+  // statement, every decided run; -1 = the run's evidence never decided).
+  double image_bound_deg = -1.0;
 };
 
 struct FamilyCurveEvent {
@@ -130,6 +149,10 @@ struct FamilyCurveRecord {
   std::vector<int> member;
   int level = 0;  // the ladder level the scan ran at
   std::vector<FamilyCurvePoint> points;
+  // The verified adjacency (fold chains only, empty on a track): one entry per link in chain
+  // order — points[i] to points[i + 1] for i < size, and for a closed chain one more linking
+  // points.back() to points.front(). Every drawn adjacency answers to exactly one entry.
+  std::vector<FamilyCurveLink> links;
   std::vector<FamilyCurveSegment> segments;  // image-form runs partitioning the points
   std::vector<FamilyCurveEvent> cusps;       // fold chains only
   bool closed = false;

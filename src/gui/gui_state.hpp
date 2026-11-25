@@ -2000,7 +2000,11 @@ struct GuiState {
     int family_curve_point_index = -1;
     int family_curve_segment_index = -1;
     int family_curve_cusp_index = -1;
-    std::vector<int> family_curve_sources;
+    // Every curve that shared the commit click, each with ITS OWN pick at that position (the
+    // event the click hit on that curve — never a rewritten default): the overlap cycle walks
+    // these picks, so switching sources keeps the clicked sky position and event identity
+    // (the plan's same-pick-position multi-source contract).
+    std::vector<FamilyCurvePick> family_curve_source_picks;
     int family_curve_source_slot = 0;
     // The map canvas's press provenance, snapshotted while a press is held: the workspace frame
     // entry resets map_press_owner to kNone on every release frame BEFORE the map region renders,
