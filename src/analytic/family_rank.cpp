@@ -942,14 +942,16 @@ RestrictedFamilyRank RankRestrictedFamily(const FaceNormalTable& normals, const 
     // zeros). False when any new evaluation is invalid.
     constexpr int kRefineBisectionSteps = 20;
     const auto refine_cell_locus = [&](int I, int J, std::vector<Sample>* refined_samples,
-                                       std::vector<std::array<double, 2>>* refined_params) -> bool {
+                                       std::vector<std::array<double, 2>>* refined_params,
+                                       std::vector<int>* refined_edges = nullptr) -> bool {
       bool point_valid[9] = {};
       double point_j[9] = {};
       Sample point_sample[9];
       if (!eval_cell_nine(I, J, point_valid, point_j, point_sample)) {
         return false;
       }
-      for (const CellSubEdge& edge : kCellSubEdges) {
+      for (int e = 0; e < 12; e++) {
+        const CellSubEdge& edge = kCellSubEdges[e];
         if (point_j[edge.a] * point_j[edge.b] >= 0.0) {
           continue;  // no sign change on this half
         }
@@ -985,8 +987,103 @@ RestrictedFamilyRank RankRestrictedFamily(const FaceNormalTable& normals, const 
         }
         refined_samples->push_back(located);
         refined_params->push_back({ probe[0], probe[1] });
+        if (refined_edges != nullptr) {
+          refined_edges->push_back(e);
+        }
       }
       return true;
+    };
+
+    // The continuity verification of a two-crossing cell's pairing (review: the most common
+    // cell must not pair blindly): the cell's on-locus subdivision (the same nine points and
+    // twelve sub-edges, reduced-precision bisections, nothing appended) must CONNECT the two
+    // boundary crossings through its sub-cell pairings — a feasibility strip crossing the cell
+    // can cut the locus into two unrelated pieces that each touch the boundary once, and only
+    // the subdivision's own adjacency can tell them apart. Unverifiable (an invalid probe, a
+    // missing re-found root, an unresolved subcell) refuses the pairing: the cell marks
+    // ambiguous and the chains break with the reason kept — never a fabricated link.
+    const auto verify_cell_pair = [&](int I, int J, int a, int b) -> bool {
+      std::vector<Sample> refined_samples;
+      std::vector<std::array<double, 2>> refined_params;
+      std::vector<int> refined_edges;
+      if (!refine_cell_locus(I, J, &refined_samples, &refined_params, &refined_edges)) {
+        return false;
+      }
+      const int m = static_cast<int>(refined_samples.size());
+      if (m < 2) {
+        return false;
+      }
+      // Identify the two terminals among the located points (their full edges).
+      const FoldPointRecord& pa = out.crossings[static_cast<size_t>(a)];
+      const FoldPointRecord& pb = out.crossings[static_cast<size_t>(b)];
+      const auto edge_matches = [&](const FoldPointRecord& p, const CellSubEdge& edge) {
+        if (edge.side < 0) {
+          return false;
+        }
+        const EdgeRef full = edge.side == 0 ? EdgeRef{ 0, I, J } :
+                             edge.side == 1 ? EdgeRef{ 0, I, StepIndex(axes[1], J, 1) } :
+                             edge.side == 2 ? EdgeRef{ 1, I, J } :
+                                              EdgeRef{ 1, StepIndex(axes[0], I, 1), J };
+        return full.dim == p.edge_dim && full.i0 == p.edge_i0 && full.i1 == p.edge_i1;
+      };
+      int node_a = -1;
+      int node_b = -1;
+      for (int i = 0; i < m; i++) {
+        if (edge_matches(pa, kCellSubEdges[static_cast<size_t>(refined_edges[static_cast<size_t>(i)])])) {
+          node_a = i;
+        }
+        if (edge_matches(pb, kCellSubEdges[static_cast<size_t>(refined_edges[static_cast<size_t>(i)])])) {
+          node_b = i;
+        }
+      }
+      if (node_a < 0 || node_b < 0 || node_a == node_b) {
+        return false;
+      }
+      // Sub-cell occupancy over the located points, pairings unioned (a subcell with 3+
+      // members stays unresolved and refuses the verification).
+      int sub_members[4][4];
+      int sub_counts[4] = { 0, 0, 0, 0 };
+      const auto add_to_subcell = [&](int su, int sv, int node) {
+        int& count = sub_counts[su * 2 + sv];
+        if (count < 4) {
+          sub_members[su * 2 + sv][count++] = node;
+        }
+      };
+      for (int i = 0; i < m; i++) {
+        const CellSubEdge& edge = kCellSubEdges[static_cast<size_t>(refined_edges[static_cast<size_t>(i)])];
+        if (edge.dim == 0) {
+          const int row = edge.a / 3;
+          const int su = (edge.a % 3 == 0) ? 0 : 1;
+          if (row == 0) {
+            add_to_subcell(su, 0, i);
+          } else if (row == 2) {
+            add_to_subcell(su, 1, i);
+          } else {
+            add_to_subcell(su, 0, i);
+            add_to_subcell(su, 1, i);
+          }
+        } else {
+          const int column = edge.a % 3;
+          const int sv = edge.a / 3;
+          if (column == 0) {
+            add_to_subcell(0, sv, i);
+          } else if (column == 2) {
+            add_to_subcell(1, sv, i);
+          } else {
+            add_to_subcell(0, sv, i);
+            add_to_subcell(1, sv, i);
+          }
+        }
+      }
+      DisjointSet set(m);
+      for (int s = 0; s < 4; s++) {
+        if (sub_counts[s] == 2) {
+          set.Union(sub_members[s][0], sub_members[s][1]);
+        } else if (sub_counts[s] >= 3) {
+          return false;
+        }
+      }
+      return set.Find(node_a) == set.Find(node_b);
     };
 
     // One level of bounded subdivision of an ambiguous cell: the four edge midpoints and the
@@ -1105,7 +1202,11 @@ RestrictedFamilyRank RankRestrictedFamily(const FaceNormalTable& normals, const 
         const size_t cell = static_cast<size_t>(I * n1 + J);
         const int count = cell_counts[cell];
         if (count == 2) {
-          add_link(cell_members[cell][0], cell_members[cell][1], I, J, false);
+          if (verify_cell_pair(I, J, cell_members[cell][0], cell_members[cell][1])) {
+            add_link(cell_members[cell][0], cell_members[cell][1], I, J, false);
+          } else {
+            ambiguous_cell[cell] = true;
+          }
         } else if (count >= 3) {
           if (!subdivide_cell(I, J)) {
             ambiguous_cell[cell] = true;

@@ -819,10 +819,11 @@ TEST(FamilyRank, C16UpperArcOrderedChainMatchesClosedFormOracle) {
   const size_t upper = C16UpperArcChain(rank);
   ASSERT_LT(upper, rank.fold_chains.size());
   const FoldChainRecord& chain = rank.fold_chains[upper];
-  // The 819 chain held 78 located points; this chaining also carries the fragment 819 had to
-  // leave in a second component plus the subdivision-interior crossings, so the count sits
-  // strictly above it.
-  ASSERT_GE(chain.order.size(), 80u);
+  // The 819 chain held 78 located points in one walk; this chaining refuses the cells whose
+  // interior feasibility it cannot verify (the continuity check), so the arc's unverifiable
+  // ends walk as their own kept fragments and the verified core sits strictly inside the 819
+  // walk's range.
+  ASSERT_GE(chain.order.size(), 60u);
   EXPECT_EQ(chain.closed, false);
 
   // Per-link provenance: the link's cell holds exactly the two crossings it joins. The
@@ -953,18 +954,40 @@ TEST(FamilyRank, C16MirrorBranchSegmentation) {
   (void)point_alt_min;
   (void)point_alt_max;
 
-  // The extended ends are NOT swallowed: the chain reaches below the collapsed middle, to the
-  // transverse end the corpus records at (-22.6 deg, +-2.45 deg).
+  // The extended ends are NOT swallowed: some chain reaches below the collapsed middle, to
+  // the transverse end the corpus records at (-22.6 deg, +-2.45 deg) — the unverifiable cliff
+  // cells break the walk there (kept fragments, the break reasons say so), so the end may
+  // ride a chain of its own.
   double bottom = 1e9;
-  for (int idx : chain.order) {
-    bottom = std::min(bottom, rank.crossings[static_cast<size_t>(idx)].image_alt_deg);
+  bool end_broken = false;
+  for (const FoldChainRecord& other : rank.fold_chains) {
+    for (int idx : other.order) {
+      bottom = std::min(bottom, rank.crossings[static_cast<size_t>(idx)].image_alt_deg);
+    }
+    if (other.end_a == FoldChainEnd::kFeasibilityInterruption ||
+        other.end_b == FoldChainEnd::kFeasibilityInterruption || other.end_a == FoldChainEnd::kAmbiguousCell ||
+        other.end_b == FoldChainEnd::kAmbiguousCell) {
+      end_broken = true;
+    }
   }
   EXPECT_LT(bottom, -22.0);
-  // At least one transverse (arc) segment between the ends and the collapsed middle.
+  EXPECT_TRUE(end_broken) << "the ends' breaks carry no reason";
+  // The transverse (arc) form presents too: on the mirror chain itself, or on the end
+  // fragments the unverifiable cells broke off (the arcs between the ends and the collapsed
+  // middle walk there).
   int arc_points = 0;
   for (const FoldSegmentRecord& segment : chain.segments) {
     if (segment.form == FoldSegmentForm::kArc) {
       arc_points += segment.last - segment.first + 1;
+    }
+  }
+  if (arc_points == 0) {
+    for (const FoldChainRecord& other : rank.fold_chains) {
+      for (const FoldSegmentRecord& segment : other.segments) {
+        if (segment.form == FoldSegmentForm::kArc) {
+          arc_points += segment.last - segment.first + 1;
+        }
+      }
     }
   }
   EXPECT_GT(arc_points, 0);
