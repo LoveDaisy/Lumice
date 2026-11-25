@@ -573,5 +573,567 @@ TEST(FamilyRank, AzimuthChartIsTheOrbitCircle) {
 }
 
 
+// ---- the ordered-arc layer (task arc-recovery-engine) ----------------------------------------------
+//
+// The C16 column scene at the 819 exploration's own product calibre: sun 20 deg at azimuth 0,
+// faces {3, 5}, the spin chart with zenith frozen at 90 deg and azimuth + roll free, grid 128,
+// and n(550) at the ENGINE's full precision — 1.3110129100622272, the value the corpus probes
+// ran at. This is deliberately NOT the kN550 constant above (1.3110129170742788, a different
+// physical input with its own recorded value): the corpus's n-sensitivity finding pins the
+// scene identity to the exact digits, so the two constants stay separate and each cites its
+// own source. The closed-form oracle is the corpus check report's column_folds
+// (scratchpad-raypath-corpus-check-2026-10-12 C16/brightness-001 sky-loci-v3.json), quoted as
+// altitude/azimuth pairs; the 819 median measured against it was 0.2014 deg (its own sampling
+// noise floor), the apex the corpus documents independently at 41.916 deg.
+
+constexpr double kC16N = 1.3110129100622272;  // n(550) engine full precision (the corpus probes')
+
+RestrictedFamilySpec C16SpinChart() {
+  RestrictedFamilySpec spec;
+  spec.zenith.mode = FamilyDimensionMode::kFixed;
+  spec.zenith.center_deg = 90.0;
+  spec.azimuth.mode = FamilyDimensionMode::kFree;
+  spec.roll.mode = FamilyDimensionMode::kFree;
+  return spec;
+}
+
+// The closed-form column folds: 264 oracle points (altitude, azimuth) in degrees.
+struct C16OraclePoint {
+  double alt;
+  double az;
+};
+constexpr C16OraclePoint kC16ColumnFolds[264] = {
+  { 42.05543299214284, 2.6322050980094023 },        { 42.055432992165024, -2.632205098232862 },
+  { 42.29168583052347, 4.585441543608077 },         { 42.29168583051655, -4.585441543557413 },
+  { 42.500981387710375, 6.071834762329312 },        { 42.50098138784292, -6.071834763261638 },
+  { 42.68336238420953, 7.381732155028808 },         { 42.68336238421445, -7.381732155065313 },
+  { 42.838892368005205, 8.597870529472141 },        { 42.83889236793757, -8.597870528908983 },
+  { 42.96765774207498, 9.75631432083857 },          { 42.96765774211229, -9.756314321206164 },
+  { 43.069769440400194, 10.875860721932126 },       { 43.069769440433696, -10.875860722348659 },
+  { 43.145364246993005, 11.967287591026622 },       { 43.1453642469999, -11.967287591146036 },
+  { 43.19460575898348, 13.037105988154401 },        { 43.19460575899045, -13.037105988358496 },
+  { 43.217684995509195, 14.089341306234001 },       { 43.217684995511014, -14.089341306419955 },
+  { 43.21482065940722, 15.126475679838983 },        { 43.21482065940287, -15.126475680124209 },
+  { 43.18625906335183, 16.149988605902035 },        { 43.18625906334122, -16.149988606162985 },
+  { 43.13227373555481, 17.160687274991904 },        { 43.13227373554676, -17.16068727511328 },
+  { 43.05316472443966, 18.158918969605473 },        { 43.05316472445721, -18.15891896941526 },
+  { 42.94925762592685, 19.14471347706268 },         { 42.94925762590483, -19.144713477248214 },
+  { 42.82090235879479, 20.117881974023298 },        { 42.820902358860586, -20.11788197357054 },
+  { 42.668471718155, 21.078087680790237 },          { 42.668471718156084, -21.07808768078396 },
+  { 42.49235973658736, 22.02489754326474 },         { 42.49235973677817, -22.024897542309855 },
+  { 42.29297988690713, 22.95782071490817 },         { 42.29297988698452, -22.957820714568445 },
+  { 42.070763155333005, 23.876337598459404 },       { 42.07076315536516, -23.876337598334 },
+  { 41.82615602231876, 24.77992191035574 },         { 41.82615602228524, -24.779921910473135 },
+  { 41.559618376890384, 25.66805749858365 },        { 41.5596183769573, -25.66805749837123 },
+  { 41.27162139821347, 26.540251094903162 },        { 41.27162139814177, -26.54025109511069 },
+  { 40.962645429021855, 27.396041880965672 },       { 40.96264542904523, -27.396041880903656 },
+  { 40.633177868727735, 28.235008504186034 },       { 40.63317786862791, -28.235008504430166 },
+  { 40.283711105103, 29.056774045668266 },          { 40.28371110497741, -29.056774045952505 },
+  { 39.914740507367945, 29.861009315584383 },       { 39.91474050745359, -29.86100931540447 },
+  { 39.52676249516832, 30.647434790363878 },        { 39.52676249540535, -30.6474347899001 },
+  { 39.12027269665274, 31.415821443790477 },        { 39.12027269688079, -31.415821443373847 },
+  { 38.69576420622518, 32.165990681145125 },        { 38.69576420621801, -32.16599068115743 },
+  { 38.253725948567336, 32.897813554675906 },       { 38.253725948508404, -32.89781355477041 },
+  { 37.79464115679931, 33.611209405635506 },        { 37.7946411567979, -33.61120940563762 },
+  { 37.318985962299145, 34.30614406997275 },        { 37.318985962437, -34.306144069777375 },
+  { 36.82722809866704, 34.982627753232315 },        { 36.82722809871385, -34.98262775316982 },
+  { 36.31982571783032, 35.64071266965433 },         { 36.31982571792885, -35.6407126695302 },
+  { 35.79722631499149, 36.28049052619185 },         { 35.797226315180396, -36.280490525967096 },
+  { 35.25986575595346, 36.90208992222307 },         { 35.2598657558918, -36.90208992229242 },
+  { 34.70816740008345, 37.50567372339909 },         { 34.7081674002115, -37.50567372326283 },
+  { 34.1425413147768, 38.09143645500564 },          { 34.142541314578295, -38.09143645520572 },
+  { 33.5633835680727, 38.65960176147255 },          { 33.56338356811836, -38.659601761428966 },
+  { 32.97107559607791, 39.2104199595496 },          { 32.97107559606081, -39.2104199595651 },
+  { 32.365983630857166, 39.74416571774189 },        { 32.36598363079991, -39.7441657177911 },
+  { 31.7484581821435, 40.26113588066737 },          { 31.748458182182215, -40.26113588063579 },
+  { 31.118833563043303, 40.76164745588733 },        { 31.118833563033494, -40.76164745589494 },
+  { 30.47742744452342, 41.24603578078294 },         { 30.477427444478717, -41.24603578081586 },
+  { 29.824540437940755, 41.71465287223193 },        { 29.824540437848988, -41.71465287229614 },
+  { 29.16045568204028, 42.16786597743777 },         { 29.160455682178355, -42.167865977345876 },
+  { 28.485438434539326, 42.606056323704905 },       { 28.48543843438039, -42.60605632380554 },
+  { 27.79973564949116, 43.0296180781208 },          { 27.799735649532607, -43.02961807809583 },
+  { 27.10357553393625, 43.438957518278805 },        { 27.103575533891625, -43.43895751830442 },
+  { 26.397167066092127, 43.83449242229968 },        { 26.397167065969974, -43.834492422366445 },
+  { 25.68069946648073, 44.216651680556346 },        { 25.680699466624116, -44.21665168048171 },
+  { 24.95434160451187, 44.58587513748622 },         { 24.9543416046455, -44.58587513741992 },
+  { 24.21824132898859, 44.942613669375305 },        { 24.218241328845235, -44.942613669443155 },
+  { 23.47252470178266, 45.28732951034232 },         { 23.472524701845927, -45.287329510313754 },
+  { 22.71729511816268, 45.62049683816131 },         { 22.717295118204603, -45.62049683814325 },
+  { 17.988787985769548, 47.405323670683146 },       { 17.988787986123196, -47.405323670565906 },
+  { 17.167700217042896, 47.672193557665345 },       { 17.167700217248626, -47.67219355759978 },
+  { 16.336948265449465, 47.93191199211513 },        { 16.33694826559144, -47.93191199207157 },
+  { -20.00000238376456, 2.433541013969883e-07 },    { -20.000002383799718, -2.433576866628239e-07 },
+  { -20.000004697701808, 7.385447969035524e-07 },   { -20.000004697813743, -7.385623906705464e-07 },
+  { -20.000006190298894, 1.2342287420004776e-06 },  { -20.000006190437517, -1.2342563783996424e-06 },
+  { -20.000007173010857, 1.924501843862164e-06 },   { -20.000007173123677, -1.9245321167935754e-06 },
+  { -20.000006905510176, 2.0616081250261323e-06 },  { -20.00000690614063, -2.0617963402362394e-06 },
+  { -20.00000629746845, 2.0591839752356316e-06 },   { -20.000006297800514, -2.059292544287818e-06 },
+  { -20.00000451471901, 1.7148322360104315e-06 },   { -20.000004514699473, -1.7148248161769527e-06 },
+  { -19.999999962985754, -1.9104770052702695e-08 }, { -19.999999962540308, 1.9334707553681688e-08 },
+  { -19.99999961874794, -2.0441350385920467e-07 },  { -19.999999619196753, 2.0417290762694625e-07 },
+  { -19.999999229301327, -4.4233698414040714e-07 }, { -19.99999922941011, 4.4227455235567406e-07 },
+  { -19.999999148531007, -5.03796342290528e-07 },   { -19.9999991489041, 5.035756272574104e-07 },
+  { -19.999999129007616, -5.441522977327196e-07 },  { -19.999999130003733, 5.4352995591537e-07 },
+  { -19.999999165357053, -5.342033917774922e-07 },  { -19.999999165718013, 5.339723939031843e-07 },
+  { -19.999999278268422, -4.821131996518099e-07 },  { -19.99999927807, 4.822457596814335e-07 },
+  { -19.999999344673945, -4.460221943321997e-07 },  { -19.999999344684188, 4.460152205636681e-07 },
+  { -19.999999410517248, -4.0808933964180833e-07 }, { -19.99999941133566, 4.0752277656456244e-07 },
+  { -19.999999474004447, -3.697684516459775e-07 },  { -19.99999947458286, 3.693618225002262e-07 },
+  { -19.99999953219279, -3.3340560372522665e-07 },  { -6.771881647804677, -2.572467715718248 },
+  { -6.771881645491292, 2.5724677152159763 },       { -19.999999532689138, 3.3305185660667845e-07 },
+  { -19.999999589009693, -2.9648581332569135e-07 }, { -9.92025197760872, -2.994180623657458 },
+  { -9.92025198009778, 2.9941806237827286 },        { -19.999999588086744, 2.971516370217158e-07 },
+  { -19.999999636859062, -2.647484108788311e-07 },  { -12.05029370692019, -2.9727829098290903 },
+  { -12.05029370449662, 2.9727829100056486 },       { -19.99999963603018, 2.653527262291243e-07 },
+  { -19.99999968062586, -2.3494845284528178e-07 },  { -13.747835528149418, -2.757074686241777 },
+  { -13.747835528560689, 2.7570746861663338 },      { -19.9999996828052, 2.3334524492696577e-07 },
+  { -19.99999972375241, -2.0474940546595655e-07 },  { -15.188189972923377, -2.418589668585718 },
+  { -15.18818997194902, 2.418589668866813 },        { -19.999999723803786, 2.0471134247759255e-07 },
+  { -19.999999756989794, -1.8119349638983053e-07 }, { -16.452036927412387, -1.9903059761377708 },
+  { -16.452036919571682, 1.9903059792038915 },      { -19.99999975736567, 1.809132369370643e-07 },
+  { -19.999999790352543, -1.5701791531937093e-07 }, { -17.584249294699724, -1.4908623012030284 },
+  { -17.584249294741753, 1.490862301182331 },       { -19.99999979024473, 1.5709862804933236e-07 },
+  { -19.99999982292153, -1.330202391173424e-07 },   { -18.612701572928188, -0.9321139580132325 },
+  { -18.612701585303714, 0.9321139506449768 },      { -19.99999980874428, 1.4367011945149945e-07 },
+  { -21.236136346461425, 1.0287324089089345 },      { -19.999999874937725, -9.394601474817279e-08 },
+  { -19.999999873709292, 9.486879326002007e-08 },   { -21.236136352262942, -1.028732414225418 },
+  { -21.989729225997984, 1.7617332383318365 },      { -19.99999989444316, -7.905802655140268e-08 },
+  { -19.999999896351806, 7.762854017978052e-08 },   { -21.989729223775154, -1.7617332360398514 },
+  { -19.9999999023692, -7.279557986791649e-08 },    { -19.999999904238706, 7.14016666343996e-08 },
+  { -19.999999917104464, -6.144057293745615e-08 },  { -19.99999991812399, 6.068494306193597e-08 },
+  { -23.968968064676474, 4.1574255535314935 },      { -19.999999925246183, -5.499286218464626e-08 },
+  { -19.99999992737279, 5.342841814170254e-08 },    { -23.96896806173003, -4.1574255493669865 },
+  { -24.546665035879847, 5.014749056080823 },       { -19.999999937136533, -4.5830703962991026e-08 },
+  { -19.999999937933545, 4.524965626819604e-08 },   { -24.54666503660984, -5.014749057218152 },
+  { -25.087601890775453, 5.89871225213838 },        { -19.999999942424807, -4.1534390256994036e-08 },
+  { -19.999999943536746, 4.073222037547306e-08 },   { -25.08760188956257, -5.898712250059445 },
+  { -19.999999951135447, -3.482570198181628e-08 },  { -19.99999994946053, 3.601942407214402e-08 },
+  { -19.99999995773643, -2.9710795993125717e-08 },  { -19.999999957745374, 2.9704501938018173e-08 },
+  { -19.999999961154696, -2.6891982902065873e-08 }, { -19.999999962411582, 2.602187206945504e-08 },
+  { -19.999999967498816, -2.2120673053352324e-08 }, { -19.999999967127675, 2.237326704818883e-08 },
+  { -19.99999996892928, -2.075510507495544e-08 },   { -19.99999997023738, 1.988130136506455e-08 },
+  { -19.999999973443654, -1.7380118697957093e-08 }, { -19.999999973960517, 1.7041878884870487e-08 },
+  { -19.999999976979446, -1.4734044238071144e-08 }, { -19.999999977132916, 1.4635832629951243e-08 },
+  { -19.99999997966451, -1.27046176200799e-08 },    { -19.999999979976312, 1.2509799676485199e-08 },
+  { -19.999999982274716, -1.0787981515779456e-08 }, { -19.999999982762958, 1.0490852411875879e-08 },
+  { -19.999999983954492, -9.493792013180253e-09 },  { -19.99999998396271, 9.48892704242233e-09 },
+  { -19.999999986329676, -7.845984581183776e-09 },  { -19.99999998580967, 8.144452545476367e-09 },
+  { -19.99999998780077, -6.775847012308972e-09 },   { -19.999999987896445, 6.722709798877054e-09 },
+  { -19.99999998896972, -5.914031070314838e-09 },   { -19.999999988853364, 5.976426454219441e-09 },
+  { -19.999999990907984, -4.692804963738143e-09 },  { -19.999999989996272, 5.163403198764513e-09 },
+  { -19.999999991870858, -4.027054729226151e-09 },  { -19.999999992288718, 3.820079864049763e-09 },
+  { -19.99999999304792, -3.29443307027878e-09 },    { -19.99999999267205, 3.472556733847181e-09 },
+  { -19.99999999374483, -2.8248573100664643e-09 },  { -19.99999999359022, 2.894692222745048e-09 },
+  { -19.99999999479251, -2.2316346095924044e-09 },  { -19.999999994705686, 2.268844391051125e-09 },
+  { -19.999999994979984, -2.0313085071767237e-09 }, { -19.999999995496502, 1.8223194547669546e-09 },
+  { -19.99999999659609, -1.2929021465513854e-09 },  { -19.999999996073804, 1.491285583906795e-09 },
+  { -19.999999996389832, -1.277994904392498e-09 },  { -19.99999999666648, 1.1800637059656174e-09 },
+  { -19.999999997999954, -6.539808950537774e-10 },  { -19.9999999979285, 6.773525770044916e-10 },
+  { -19.99999999739612, -7.773750437866758e-10 },   { -19.999999997313516, 8.020382700905415e-10 },
+  { -19.99999999820828, -4.807140390803879e-10 },   { -19.999999998825718, 3.1505891053335375e-10 },
+  { -19.999999998361954, -3.8595017392798225e-10 }, { -19.999999998954785, 2.4627011900458547e-10 },
+  { -19.999999998617596, -2.75626353792922e-10 },   { -19.9999999988787, 2.2356557883566493e-10 },
+  { -19.99999999873681, -1.9858780418404436e-10 },  { -19.999999998670624, 2.0899737224936216e-10 },
+  { -19.999999999233548, -7.824389403411217e-11 },  { -19.9999999992345, 7.81484460490902e-11 },
+};
+
+// The image sky direction (unit) of an alt/az pair, and the angular distance of two of them.
+void C16SkyDir(double alt_deg, double az_deg, double s[3]) {
+  const double alt = alt_deg * kPi / 180.0;
+  const double az = az_deg * kPi / 180.0;
+  s[0] = std::cos(alt) * std::cos(az);
+  s[1] = std::cos(alt) * std::sin(az);
+  s[2] = std::sin(alt);
+}
+
+double C16SkyAngleDeg(const double a[3], const double b[3]) {
+  const double cross[3] = { a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0] };
+  const double norm = std::sqrt(cross[0] * cross[0] + cross[1] * cross[1] + cross[2] * cross[2]);
+  const double dot = a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+  return Deg(std::atan2(norm, dot));
+}
+
+// Nearest-oracle great-circle distance (degrees) of one chain point.
+double C16OracleDistanceDeg(const RestrictedFamilyRank& rank, int crossing_index) {
+  const FoldPointRecord& p = rank.crossings[static_cast<size_t>(crossing_index)];
+  double dir[3];
+  C16SkyDir(p.image_alt_deg, p.image_az_deg, dir);
+  double best = 1e9;
+  for (const C16OraclePoint& o : kC16ColumnFolds) {
+    double od[3];
+    C16SkyDir(o.alt, o.az, od);
+    best = std::min(best, C16SkyAngleDeg(dir, od));
+  }
+  return best;
+}
+
+// The chain whose image reaches the highest altitude (the upper tangent arc's identification).
+size_t C16UpperArcChain(const RestrictedFamilyRank& rank) {
+  size_t best = rank.fold_chains.size();
+  double best_apex = -1e9;
+  for (size_t c = 0; c < rank.fold_chains.size(); c++) {
+    double apex = -1e9;
+    for (int idx : rank.fold_chains[c].order) {
+      apex = std::max(apex, rank.crossings[static_cast<size_t>(idx)].image_alt_deg);
+    }
+    if (apex > best_apex) {
+      best_apex = apex;
+      best = c;
+    }
+  }
+  return best;
+}
+
+// AC1: the upper arc recovers as an ordered chain, every drawn adjacency carries the cell that
+// justifies it (the test re-derives the per-cell occupancy from the crossings' edge references
+// — an independent restatement of the adjacency contract, not a read of the chain builder's
+// state), the chain hugs the closed-form oracle at the 819 level, and its points walk smoothly.
+TEST(FamilyRank, C16UpperArcOrderedChainMatchesClosedFormOracle) {
+  Fixture f;
+  int slots[2];
+  const int faces[2] = { 3, 5 };
+  f.Resolve(faces, 2, slots);
+  double sun[3];
+  SunAt(20.0, 0.0, sun);
+  const RestrictedFamilyRank rank = RankRestrictedFamily(f.normals, slots, 2, C16SpinChart(), sun, kC16N, 128);
+  ASSERT_EQ(rank.status, FamilyRankStatus::kOk);
+  // The base scan reproduces the 819 exploration exactly: 222 crossings on grid edges, 11
+  // sampling-connectivity components (the union-find compatibility read). The returned table
+  // additionally carries the cliff-probe recoveries (from_cliff_probe) and any subdivision's
+  // interior crossings (edge_dim < 0) — the grid-edge non-cliff subset is the 819 reproduction.
+  ASSERT_EQ(rank.fold_components.size(), 11u);
+  int grid_edge_originals = 0;
+  for (const FoldPointRecord& p : rank.crossings) {
+    if (p.edge_dim >= 0 && !p.from_cliff_probe) {
+      grid_edge_originals++;
+    }
+  }
+  ASSERT_EQ(grid_edge_originals, 222);
+  // The ordered layer on top: chains cover every crossing exactly once.
+  size_t chained = 0;
+  for (const FoldChainRecord& chain : rank.fold_chains) {
+    chained += chain.order.size();
+  }
+  EXPECT_EQ(chained, rank.crossings.size());
+
+  const size_t upper = C16UpperArcChain(rank);
+  ASSERT_LT(upper, rank.fold_chains.size());
+  const FoldChainRecord& chain = rank.fold_chains[upper];
+  // The 819 chain held 78 located points; this chaining also carries the fragment 819 had to
+  // leave in a second component plus the subdivision-interior crossings, so the count sits
+  // strictly above it.
+  ASSERT_GE(chain.order.size(), 80u);
+  EXPECT_EQ(chain.closed, false);
+
+  // Per-link provenance: the link's cell holds exactly the two crossings it joins. The
+  // occupancy is re-derived here from the edge references (one crossing per edge; a cell's
+  // boundary holds up to four).
+  const int dim0_cells = 128;  // azimuth (periodic): cells == samples
+  int link_bounds_ok = 0;
+  for (const FoldChainLink& link : chain.links) {
+    link_bounds_ok +=
+        static_cast<int>(link.cell_i0 >= 0 && link.cell_i0 < dim0_cells && link.cell_i1 >= 0 && link.cell_i1 < 128);
+  }
+  ASSERT_EQ(link_bounds_ok, static_cast<int>(chain.links.size()));
+  for (size_t l = 0; l < chain.links.size(); l++) {
+    const int a = chain.order[l];
+    const int b = chain.order[(l + 1) % chain.order.size()];
+    const FoldChainLink& link = chain.links[l];
+    // Cell (I, J) spans [I, I+1] x [J, J+1]; a boundary crossing's edge must be one of the
+    // cell's four. A subdivision link may also join interior-refined crossings (edge fields
+    // -1): those are the subdivision's own children of exactly this cell.
+    const auto edge_touches_cell = [&](int crossing) {
+      const FoldPointRecord& p = rank.crossings[static_cast<size_t>(crossing)];
+      if (p.edge_dim < 0) {
+        return link.through_subdivision;
+      }
+      const int down1 = (p.edge_i1 + 127) % 128;
+      const int down0 = (p.edge_i0 + 127) % 128;
+      if (p.edge_dim == 0) {
+        return p.edge_i0 == link.cell_i0 && (p.edge_i1 == link.cell_i1 || down1 == link.cell_i1);
+      }
+      return p.edge_i1 == link.cell_i1 && (p.edge_i0 == link.cell_i0 || down0 == link.cell_i0);
+    };
+    if (link.through_subdivision) {
+      EXPECT_TRUE(edge_touches_cell(a) || edge_touches_cell(b))
+          << "subdivision link " << l << " touches its cell through neither crossing";
+    } else {
+      EXPECT_TRUE(edge_touches_cell(a)) << "link " << l << " crossing a off its cell";
+      EXPECT_TRUE(edge_touches_cell(b)) << "link " << l << " crossing b off its cell";
+    }
+  }
+
+  // Oracle median at the 819 level: the median nearest-oracle distance of the chain's
+  // grid-edge crossings stays inside the oracle's own sampling noise floor (~0.2 deg; the 819
+  // run measured 0.2014 over its 78-point subset — this chaining is a strict superset of that
+  // partial walk, so the pin is the level, not the subset's exact digits).
+  std::vector<double> distances;
+  for (int idx : chain.order) {
+    distances.push_back(C16OracleDistanceDeg(rank, idx));
+  }
+  std::sort(distances.begin(), distances.end());
+  const double median = distances[distances.size() / 2];
+  EXPECT_LT(median, 0.25) << "upper-arc oracle median " << median;
+
+  // Smoothness: a mis-ordered chain jumps across the sky; the ordered one steps at the grid's
+  // own scale (819 measured a 0.8 deg median step here).
+  std::vector<double> steps;
+  const FoldPointRecord* prev = nullptr;
+  for (int idx : chain.order) {
+    const FoldPointRecord& p = rank.crossings[static_cast<size_t>(idx)];
+    if (prev != nullptr) {
+      double a[3];
+      double b[3];
+      C16SkyDir(prev->image_alt_deg, prev->image_az_deg, a);
+      C16SkyDir(p.image_alt_deg, p.image_az_deg, b);
+      steps.push_back(C16SkyAngleDeg(a, b));
+    }
+    prev = &p;
+  }
+  std::sort(steps.begin(), steps.end());
+  EXPECT_LT(steps[steps.size() / 2], 3.0);
+}
+
+// AC3: the mirror branch presents per segment — the collapsed middle verifies as a point
+// image at the geometric mirror identity (-sun altitude, azimuth 0), the extended ends stay
+// non-point segments, and the transition zones (where dJ(v) sinks below its resolution) stay
+// unknown — no cusp markers in numerically unresolvable regions.
+TEST(FamilyRank, C16MirrorBranchSegmentation) {
+  Fixture f;
+  int slots[2];
+  const int faces[2] = { 3, 5 };
+  f.Resolve(faces, 2, slots);
+  double sun[3];
+  SunAt(20.0, 0.0, sun);
+  const RestrictedFamilyRank rank = RankRestrictedFamily(f.normals, slots, 2, C16SpinChart(), sun, kC16N, 128);
+  ASSERT_EQ(rank.status, FamilyRankStatus::kOk);
+
+  // The mirror chain: the longest chain carrying a point-image segment.
+  size_t mirror = rank.fold_chains.size();
+  size_t mirror_points = 0;
+  for (size_t c = 0; c < rank.fold_chains.size(); c++) {
+    for (const FoldSegmentRecord& segment : rank.fold_chains[c].segments) {
+      if (segment.form == FoldSegmentForm::kPointImage && segment.last - segment.first + 1 > 40) {
+        if (segment.last - segment.first + 1 > static_cast<int>(mirror_points)) {
+          mirror_points = static_cast<size_t>(segment.last - segment.first + 1);
+          mirror = c;
+        }
+      }
+    }
+  }
+  ASSERT_LT(mirror, rank.fold_chains.size()) << "no extended point-image run found";
+  const FoldChainRecord& chain = rank.fold_chains[mirror];
+  ASSERT_GE(chain.order.size(), 70u);
+
+  // The collapsed middle sits at the geometric mirror identity (-sun altitude, azimuth 0) —
+  // the horizontal-plane reflection's own constant, an independent witness.
+  int point_points = 0;
+  double point_alt_min = 1e9;
+  double point_alt_max = -1e9;
+  bool has_point = false;
+  for (const FoldSegmentRecord& segment : chain.segments) {
+    if (segment.form != FoldSegmentForm::kPointImage) {
+      continue;
+    }
+    has_point = true;
+    EXPECT_LE(segment.image_diameter_deg, kFoldPointImageFloorDeg);
+    EXPECT_NEAR(segment.image_alt_deg, -20.0, 0.01);
+    EXPECT_NEAR(segment.image_az_deg, 0.0, 0.01);
+    point_alt_min = std::min(point_alt_min, segment.image_alt_deg);
+    point_alt_max = std::max(point_alt_max, segment.image_alt_deg);
+    for (int p = segment.first; p <= segment.last; p++) {
+      point_points++;
+      const FoldPointRecord& point = rank.crossings[static_cast<size_t>(chain.order[static_cast<size_t>(p)])];
+      // The recorded per-point reads carry the segment's own evidence.
+      EXPECT_GE(point.alignment, 1.0 - kFoldPointImageLocatorSlack);
+    }
+  }
+  EXPECT_TRUE(has_point);
+  EXPECT_GT(point_points, 40);
+  (void)point_alt_min;
+  (void)point_alt_max;
+
+  // The extended ends are NOT swallowed: the chain reaches below the collapsed middle, to the
+  // transverse end the corpus records at (-22.6 deg, +-2.45 deg).
+  double bottom = 1e9;
+  for (int idx : chain.order) {
+    bottom = std::min(bottom, rank.crossings[static_cast<size_t>(idx)].image_alt_deg);
+  }
+  EXPECT_LT(bottom, -22.0);
+  // At least one transverse (arc) segment between the ends and the collapsed middle.
+  int arc_points = 0;
+  for (const FoldSegmentRecord& segment : chain.segments) {
+    if (segment.form == FoldSegmentForm::kArc) {
+      arc_points += segment.last - segment.first + 1;
+    }
+  }
+  EXPECT_GT(arc_points, 0);
+
+  // No cusp markers: the transition zones' dJ(v) sits below its own resolution — an unresolved
+  // degenerate region, not locatable cusps (the resolution gate at work).
+  EXPECT_EQ(chain.cusps.size(), 0u);
+}
+
+// The two-point fragments whose whole image collapses onto the mirror point: a whole-branch
+// point form exists beside the mixed branch's segmented one.
+TEST(FamilyRank, C16WholeBranchPointImageExists) {
+  Fixture f;
+  int slots[2];
+  const int faces[2] = { 3, 5 };
+  f.Resolve(faces, 2, slots);
+  double sun[3];
+  SunAt(20.0, 0.0, sun);
+  const RestrictedFamilyRank rank = RankRestrictedFamily(f.normals, slots, 2, C16SpinChart(), sun, kC16N, 128);
+  ASSERT_EQ(rank.status, FamilyRankStatus::kOk);
+  int whole_point_chains = 0;
+  for (const FoldChainRecord& chain : rank.fold_chains) {
+    if (chain.segments.size() != 1 || chain.segments.front().form != FoldSegmentForm::kPointImage) {
+      continue;
+    }
+    whole_point_chains++;
+    const FoldSegmentRecord& segment = chain.segments.front();
+    EXPECT_NEAR(segment.image_alt_deg, -20.0, 0.01);
+    EXPECT_NEAR(segment.image_az_deg, 0.0, 0.01);
+  }
+  EXPECT_GE(whole_point_chains, 1);
+}
+
+// AC2's positive leg: the upper arc is an ordinary fold — dJ(v) resolvably nonzero along its
+// arc positions, the recorded resolution bounds far below the reads, and no cusp candidates.
+TEST(FamilyRank, C16OrdinaryFoldTransversality) {
+  Fixture f;
+  int slots[2];
+  const int faces[2] = { 3, 5 };
+  f.Resolve(faces, 2, slots);
+  double sun[3];
+  SunAt(20.0, 0.0, sun);
+  const RestrictedFamilyRank rank = RankRestrictedFamily(f.normals, slots, 2, C16SpinChart(), sun, kC16N, 128);
+  ASSERT_EQ(rank.status, FamilyRankStatus::kOk);
+  const size_t upper = C16UpperArcChain(rank);
+  ASSERT_LT(upper, rank.fold_chains.size());
+  const FoldChainRecord& chain = rank.fold_chains[upper];
+  EXPECT_EQ(chain.cusps.size(), 0u);
+  int checked = 0;
+  int transverse = 0;
+  for (const FoldSegmentRecord& segment : chain.segments) {
+    if (segment.form != FoldSegmentForm::kArc) {
+      continue;
+    }
+    for (int p = segment.first; p <= segment.last; p++) {
+      const FoldPointRecord& point = rank.crossings[static_cast<size_t>(chain.order[static_cast<size_t>(p)])];
+      if (point.alignment < 0.0) {
+        continue;
+      }
+      checked++;
+      // dJ(v) resolvably nonzero: the ordinary fold's own criterion. The resolution bound is
+      // the located point's own |J| — at the rare validity-cliff artifact (a sign jump across
+      // an infeasible strip inside one edge, bisected like a crossing) |J| stays large and the
+      // bound honestly says so; the transversality claim here absorbs that.
+      if (std::fabs(point.djv) > point.djv_resolution) {
+        transverse++;
+      }
+    }
+  }
+  EXPECT_GT(checked, 50);
+  EXPECT_EQ(transverse, checked) << "an ordinary-fold arc position lost its transversality";
+}
+
+// The cliff probes recover the feasibility-cliff loci the both-valid-edges rule loses, and the
+// recovered crossings land on the closed-form oracle's folds.
+TEST(FamilyRank, C16CliffProbeRecoversTheTail) {
+  Fixture f;
+  int slots[2];
+  const int faces[2] = { 3, 5 };
+  f.Resolve(faces, 2, slots);
+  double sun[3];
+  SunAt(20.0, 0.0, sun);
+  const RestrictedFamilyRank rank = RankRestrictedFamily(f.normals, slots, 2, C16SpinChart(), sun, kC16N, 128);
+  ASSERT_EQ(rank.status, FamilyRankStatus::kOk);
+  EXPECT_GT(rank.cliff_probed_edges, 100);
+  EXPECT_GT(rank.cliff_unresolved_edges, 0);  // the probes hit the invalid region somewhere — declared data
+  int recovered = 0;
+  int recovered_on_oracle = 0;
+  for (size_t c = 0; c < rank.crossings.size(); c++) {
+    if (!rank.crossings[c].from_cliff_probe) {
+      continue;
+    }
+    recovered++;
+    if (C16OracleDistanceDeg(rank, static_cast<int>(c)) < 0.3) {
+      recovered_on_oracle++;
+    }
+  }
+  EXPECT_GT(recovered, 10);
+  EXPECT_GT(recovered_on_oracle, 0) << "no recovered crossing landed on a closed-form fold";
+}
+
+// AC1's one-dimensional leg: the Parry circle records as the ordered, validity-segmented track
+// — every sample in parameter order, one run over the whole circle, closed through the seam,
+// and no fold machinery on the one-dimensional family.
+TEST(FamilyRank, ParryTrackOrderedAndClosed) {
+  Fixture f;
+  int slots[2];
+  const int faces[2] = { 3, 5 };
+  f.Resolve(faces, 2, slots);
+  double sun[3];
+  SunAt(20.0, 0.0, sun);
+  const RestrictedFamilyRank rank = RankRestrictedFamily(f.normals, slots, 2, ParryCircle(), sun, kN550, 128);
+  ASSERT_EQ(rank.status, FamilyRankStatus::kOk);
+  EXPECT_TRUE(rank.fold_chains.empty());
+  EXPECT_TRUE(rank.crossings.empty());
+  ASSERT_EQ(rank.track.points.size(), 128u);
+  // Segments partition exactly the valid runs: every in-segment point valid, every
+  // out-of-segment point invalid, and `closed` says the seam ends both valid (sun 20 has
+  // validity gaps on this circle, so the runs' count is data, not a pin).
+  std::vector<char> in_segment(static_cast<size_t>(128), 0);
+  int valid_total = 0;
+  int segment_bounds_ok = 0;
+  for (const FamilyTrackSegment& segment : rank.track.segments) {
+    segment_bounds_ok += static_cast<int>(segment.first >= 0 && segment.last >= segment.first && segment.last < 128);
+  }
+  ASSERT_EQ(segment_bounds_ok, static_cast<int>(rank.track.segments.size()));
+  for (const FamilyTrackSegment& segment : rank.track.segments) {
+    for (int i = segment.first; i <= segment.last; i++) {
+      EXPECT_TRUE(rank.track.points[static_cast<size_t>(i)].valid);
+      in_segment[static_cast<size_t>(i)] = 1;
+      valid_total++;
+    }
+  }
+  for (int i = 0; i < 128; i++) {
+    EXPECT_EQ(in_segment[static_cast<size_t>(i)], rank.track.points[static_cast<size_t>(i)].valid ? 1 : 0);
+  }
+  // The existing Parry tests' own bar (grid/3): sun 20 leaves this circle mostly infeasible.
+  EXPECT_GT(valid_total, 128 / 3) << "the Parry circle lost most of its track";
+  EXPECT_EQ(rank.track.closed, rank.track.points.front().valid && rank.track.points.back().valid);
+  // The ordered walk: consecutive images WITHIN a run step at the circle's own scale (a run
+  // boundary jumps by the gap's own size and is not compared).
+  double max_step = 0.0;
+  for (const FamilyTrackSegment& segment : rank.track.segments) {
+    for (int i = segment.first + 1; i <= segment.last; i++) {
+      double a[3];
+      double b[3];
+      C16SkyDir(rank.track.points[static_cast<size_t>(i - 1)].image_alt_deg,
+                rank.track.points[static_cast<size_t>(i - 1)].image_az_deg, a);
+      C16SkyDir(rank.track.points[static_cast<size_t>(i)].image_alt_deg,
+                rank.track.points[static_cast<size_t>(i)].image_az_deg, b);
+      max_step = std::max(max_step, C16SkyAngleDeg(a, b));
+    }
+  }
+  EXPECT_LT(max_step, 10.0) << "a within-run image step jumped (mis-order would jump ~180)";
+  // The seam-closure step: a closed track's last and first images are one step apart.
+  if (rank.track.closed) {
+    double first_dir[3];
+    double last_dir[3];
+    C16SkyDir(rank.track.points.front().image_alt_deg, rank.track.points.front().image_az_deg, first_dir);
+    C16SkyDir(rank.track.points.back().image_alt_deg, rank.track.points.back().image_az_deg, last_dir);
+    EXPECT_LT(C16SkyAngleDeg(first_dir, last_dir), 10.0);
+  }
+  double first_dir[3];
+  C16SkyDir(rank.track.points.front().image_alt_deg, rank.track.points.front().image_az_deg, first_dir);
+  double last_dir[3];
+  C16SkyDir(rank.track.points.back().image_alt_deg, rank.track.points.back().image_az_deg, last_dir);
+  EXPECT_LT(C16SkyAngleDeg(first_dir, last_dir), 5.0);
+}
+
+
 }  // namespace
 }  // namespace lumice::analytic
