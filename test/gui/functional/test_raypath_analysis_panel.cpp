@@ -2864,12 +2864,12 @@ bool PointMassArmIsHonestAndForcesNoFiber(ImGuiTestContext* ctx) {
     IM_CHECK_RETV(marker_before > 0, false);
     ctx->ItemClick("**/Layers##map_layers");
     ctx->Yield(2);
-    ctx->ItemClick("**/Point images");
+    ctx->ItemClick("**/##ov_points_graphics");
     ctx->Yield(3);
     IM_CHECK_RETV(MapWindowIndexCountForColour(gui::kPointMassColour) == 0, false);
     IM_CHECK_RETV(!gui::LastMapOverlayLegend().point_image, false);
     IM_CHECK_RETV(CaptureWindowFrameText(ctx, "Raypath view").find("Point image at") != std::string::npos, false);
-    ctx->ItemClick("**/Point images");
+    ctx->ItemClick("**/##ov_points_graphics");
     ctx->Yield(3);
     IM_CHECK_RETV(MapWindowIndexCountForColour(gui::kPointMassColour) == marker_before, false);
     ctx->ItemClick("**/Layers##map_layers");
@@ -3152,13 +3152,13 @@ bool VerdictAnchorHoverAndToggleOnTheMap(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(reach_drew, false);
   ctx->ItemClick("**/Layers##map_layers");
   ctx->Yield(2);
-  ctx->ItemClick("**/Red-blue shift");
+  ctx->ItemClick("**/##ov_chromatic_graphics");
   ctx->Yield(3);
   IM_CHECK_RETV(MapWindowIndexCountForColour(gui::kChromaticColourBlue) == 0, false);
   IM_CHECK_RETV(MapWindowIndexCountForColour(gui::kSurveyArcInk) == arc_ink_with_chromatic, false);
   IM_CHECK_RETV(!gui::LastMapOverlayLegend().verdict_anchor, false);
   IM_CHECK_RETV(gui::LastMapOverlayLegend().reach_bounds, false);
-  ctx->ItemClick("**/Red-blue shift");
+  ctx->ItemClick("**/##ov_chromatic_graphics");
   ctx->Yield(3);
   IM_CHECK_RETV(MapWindowIndexCountForColour(gui::kChromaticColourBlue) > 0, false);
   IM_CHECK_RETV(gui::LastMapOverlayLegend().verdict_anchor, false);
@@ -6827,20 +6827,41 @@ bool SupportEdgeLayersShareOneStrokeAndGateIndependently(ImGuiTestContext* ctx) 
   ctx->Yield(2);
   ctx->ItemClick("**/Layers##map_layers");
   ctx->Yield(2);
-  IM_CHECK_RETV(ctx->ItemInfo("**/Support range", ImGuiTestOpFlags_NoError).ID != 0, false);
-  IM_CHECK_RETV(ctx->ItemInfo("**/Sharp edges", ImGuiTestOpFlags_NoError).ID != 0, false);
-  IM_CHECK_RETV(ctx->ItemInfo("**/Red-blue shift", ImGuiTestOpFlags_NoError).ID != 0, false);
-  IM_CHECK_RETV(ctx->ItemInfo("**/Reflection turns", ImGuiTestOpFlags_NoError).ID != 0, false);
+  // The rows' addressable things are the theme boxes now (hidden IDs — the visible names live
+  // in the table's text column, which carries no item ID); the frame text below carries the
+  // readable-name half of the same statement.
+  IM_CHECK_RETV(ctx->ItemInfo("**/##ov_reach_graphics", ImGuiTestOpFlags_NoError).ID != 0, false);
+  IM_CHECK_RETV(ctx->ItemInfo("**/##ov_edge_graphics", ImGuiTestOpFlags_NoError).ID != 0, false);
+  IM_CHECK_RETV(ctx->ItemInfo("**/##ov_chromatic_graphics", ImGuiTestOpFlags_NoError).ID != 0, false);
+  IM_CHECK_RETV(ctx->ItemInfo("**/##ov_tir_graphics", ImGuiTestOpFlags_NoError).ID != 0, false);
   // The caustic representatives' row is the sixth group (the pile declutter's own switch): it
   // exists in every data state — with no document it names the absence like the others, and a
   // round trip edits the preference without touching any query (the popup's own premise).
-  IM_CHECK_RETV(ctx->ItemInfo("**/Caustic representatives", ImGuiTestOpFlags_NoError).ID != 0, false);
-  ctx->ItemClick("**/Caustic representatives");
+  IM_CHECK_RETV(ctx->ItemInfo("**/##ov_caustic_graphics", ImGuiTestOpFlags_NoError).ID != 0, false);
+  ctx->ItemClick("**/##ov_caustic_graphics");
   ctx->Yield(2);
-  ctx->ItemClick("**/Caustic representatives");
+  ctx->ItemClick("**/##ov_caustic_graphics");
   ctx->Yield(2);
   const std::string popup_text = CaptureMapFrameText(ctx);
   IM_CHECK_RETV(popup_text.find("no document") != std::string::npos, false);
+  // The table's visible semantics in this same no-data frame (the layers task's AC1/AC2 face):
+  // the two column headers stand as readable text, every group name and the three point-kind
+  // sub-rows render as their own rows, and the region-shading row names its absence on the row
+  // instead of leaving it to hover. Text carries the readable half here (a text item registers
+  // no ID); the switches' addressable IDs and the named physical legs below carry the rest.
+  IM_CHECK_RETV(popup_text.find("Graphics") != std::string::npos, false);
+  IM_CHECK_RETV(popup_text.find("Labels") != std::string::npos, false);
+  IM_CHECK_RETV(popup_text.find("Support range") != std::string::npos, false);
+  IM_CHECK_RETV(popup_text.find("Point images") != std::string::npos, false);
+  IM_CHECK_RETV(popup_text.find("source image") != std::string::npos, false);
+  IM_CHECK_RETV(popup_text.find("regular image") != std::string::npos, false);
+  IM_CHECK_RETV(popup_text.find("family collapse") != std::string::npos, false);
+  IM_CHECK_RETV(popup_text.find("Region shading") != std::string::npos, false);
+  IM_CHECK_RETV(popup_text.find("unavailable: no regional-flux payload") != std::string::npos, false);
+  IM_CHECK_RETV(ctx->ItemInfo("**/##ov_points_k_src", ImGuiTestOpFlags_NoError).ID != 0, false);
+  IM_CHECK_RETV(ctx->ItemInfo("**/##ov_points_k_reg", ImGuiTestOpFlags_NoError).ID != 0, false);
+  IM_CHECK_RETV(ctx->ItemInfo("**/##ov_points_k_col", ImGuiTestOpFlags_NoError).ID != 0, false);
+  IM_CHECK_RETV(ctx->ItemInfo("**/##layer_region", ImGuiTestOpFlags_NoError).ID != 0, false);
   ctx->PopupCloseAll();
   ctx->WindowClose("//Raypath view");
   ctx->Yield(2);
@@ -6920,7 +6941,7 @@ bool SupportEdgeLayersShareOneStrokeAndGateIndependently(ImGuiTestContext* ctx) 
   // keeps the reach name and drops both edge names.
   ctx->ItemClick("**/Layers##map_layers");
   ctx->Yield(2);
-  ctx->ItemClick("**/Sharp edges");
+  ctx->ItemClick("**/##ov_edge_graphics");
   ctx->Yield(3);
   IM_CHECK_RETV(MapWindowGeometryIndexCountForColour(gui::kSurveyArcInk) == geo_shared, false);
   {
@@ -6928,7 +6949,7 @@ bool SupportEdgeLayersShareOneStrokeAndGateIndependently(ImGuiTestContext* ctx) 
     IM_CHECK_RETV(legend.reach_bounds && !legend.edge_arcs && !legend.edge_shared, false);
   }
   // Edge back on: the same ink count and the sharing named again.
-  ctx->ItemClick("**/Sharp edges");
+  ctx->ItemClick("**/##ov_edge_graphics");
   ctx->Yield(3);
   IM_CHECK_RETV(MapWindowGeometryIndexCountForColour(gui::kSurveyArcInk) == geo_shared, false);
   {
@@ -6936,7 +6957,7 @@ bool SupportEdgeLayersShareOneStrokeAndGateIndependently(ImGuiTestContext* ctx) 
     IM_CHECK_RETV(legend.edge_arcs && legend.edge_shared, false);
   }
   // Reach off: the edge alone — exactly half the shared frame's ink (its own stroke, no bounds).
-  ctx->ItemClick("**/Support range");
+  ctx->ItemClick("**/##ov_reach_graphics");
   ctx->Yield(3);
   const int geo_edge_only = MapWindowGeometryIndexCountForColour(gui::kSurveyArcInk);
   IM_CHECK_RETV(geo_edge_only > 0 && geo_edge_only * 2 == geo_shared, false);
@@ -6945,7 +6966,7 @@ bool SupportEdgeLayersShareOneStrokeAndGateIndependently(ImGuiTestContext* ctx) 
     IM_CHECK_RETV(!legend.reach_bounds && legend.edge_arcs && !legend.edge_shared, false);
   }
   // Reach back on: the shared frame restored.
-  ctx->ItemClick("**/Support range");
+  ctx->ItemClick("**/##ov_reach_graphics");
   ctx->Yield(3);
   IM_CHECK_RETV(MapWindowGeometryIndexCountForColour(gui::kSurveyArcInk) == geo_shared, false);
   // The labels split (one real click): the reach labels box flips. Hiding labels removes the
@@ -6974,9 +6995,9 @@ bool SupportEdgeLayersShareOneStrokeAndGateIndependently(ImGuiTestContext* ctx) 
   ctx->ItemClick("**/Layers##map_layers");
   ctx->Yield(2);
   const size_t kinds_before = gui::LastMapOverlayLegend().object_kinds.size();
-  IM_CHECK_RETV(ctx->ItemInfo("**/Point images", ImGuiTestOpFlags_NoError).ID != 0, false);
-  IM_CHECK_RETV(ctx->ItemInfo("**/Reflection turns", ImGuiTestOpFlags_NoError).ID != 0, false);
-  ctx->ItemClick("**/Point images");
+  IM_CHECK_RETV(ctx->ItemInfo("**/##ov_points_graphics", ImGuiTestOpFlags_NoError).ID != 0, false);
+  IM_CHECK_RETV(ctx->ItemInfo("**/##ov_tir_graphics", ImGuiTestOpFlags_NoError).ID != 0, false);
+  ctx->ItemClick("**/##ov_points_graphics");
   ctx->Yield(3);
   IM_CHECK_RETV(MapWindowGeometryIndexCountForColour(gui::kSurveyArcInk) == geo_shared, false);
   {
@@ -6990,7 +7011,7 @@ bool SupportEdgeLayersShareOneStrokeAndGateIndependently(ImGuiTestContext* ctx) 
       ctx->LogInfo("[support edge] no positioned markers on this document; the points row names its empty state");
     }
   }
-  ctx->ItemClick("**/Point images");
+  ctx->ItemClick("**/##ov_points_graphics");
   ctx->Yield(3);
   IM_CHECK_RETV(gui::LastMapOverlayLegend().object_kinds.size() == kinds_before, false);
   // AC5's master gate: switching Overlays OFF removes every analysis layer — arcs, markers,
@@ -7027,10 +7048,10 @@ bool SupportEdgeLayersShareOneStrokeAndGateIndependently(ImGuiTestContext* ctx) 
   // changes), and the master-on restore below proves the groups' choices survived.
   ctx->ItemClick("**/Layers##map_layers");
   ctx->Yield(2);
-  ctx->ItemClick("**/Sharp edges");
+  ctx->ItemClick("**/##ov_edge_graphics");
   ctx->Yield(2);
   IM_CHECK_RETV(MapWindowIndexCountForColour(gui::kSurveyArcInk) == 0, false);
-  ctx->ItemClick("**/Sharp edges");
+  ctx->ItemClick("**/##ov_edge_graphics");
   ctx->Yield(2);
   ctx->PopupCloseAll();
   ctx->Yield(2);
@@ -7056,7 +7077,7 @@ bool SupportEdgeLayersShareOneStrokeAndGateIndependently(ImGuiTestContext* ctx) 
   const auto chromatic_toggle_reaches = [&](const char* what) -> bool {
     ctx->ItemClick("**/Layers##map_layers");
     ctx->Yield(2);
-    const ImGuiID chromatic = ctx->ItemInfo("**/Red-blue shift", ImGuiTestOpFlags_NoError).ID;
+    const ImGuiID chromatic = ctx->ItemInfo("**/##ov_chromatic_graphics", ImGuiTestOpFlags_NoError).ID;
     if (chromatic == 0) {
       ctx->LogError("[layer popup] %s: the chromatic box did not submit", what);
       return false;
@@ -7148,11 +7169,11 @@ bool SupportEdgeLayersShareOneStrokeAndGateIndependently(ImGuiTestContext* ctx) 
     IM_CHECK_RETV(MapWindowIndexCountForColour(IM_COL32(255, 231, 168, 255)) == marker_gold, false);
     // The kind sub-box: off removes exactly this kind's markers (here: all of them — the
     // document's one positioned kind), the legend entry leaves with them.
-    ctx->ItemClick("**/source image");
+    ctx->ItemClick("**/##ov_points_k_src");
     ctx->Yield(3);
     IM_CHECK_RETV(MapWindowIndexCountForColour(IM_COL32(255, 231, 168, 255)) == 0, false);
     IM_CHECK_RETV(gui::LastMapOverlayLegend().object_kinds.empty(), false);
-    ctx->ItemClick("**/source image");
+    ctx->ItemClick("**/##ov_points_k_src");
     ctx->Yield(3);
     IM_CHECK_RETV(MapWindowIndexCountForColour(IM_COL32(255, 231, 168, 255)) == marker_gold, false);
     IM_CHECK_RETV(gui::LastMapOverlayLegend().object_kinds.size() == 1, false);
@@ -7458,11 +7479,11 @@ bool InnerEdgeObjectSelectsFromTextAndArc(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(geo_before_hide > 0, false);
   ctx->ItemClick("**/Layers##map_layers");
   ctx->Yield(2);
-  ctx->ItemClick("**/Sharp edges");
+  ctx->ItemClick("**/##ov_edge_graphics");
   ctx->Yield(3);
   IM_CHECK_RETV(MapWindowGeometryIndexCountForColour(gui::kSurveyArcInk) == geo_before_hide, false);
   IM_CHECK_RETV(gui::InnerEdgeSelectionActive(gui::g_state), false);
-  ctx->ItemClick("**/Support range");
+  ctx->ItemClick("**/##ov_reach_graphics");
   ctx->Yield(3);
   IM_CHECK_RETV(MapWindowGeometryIndexCountForColour(gui::kSurveyArcInk) == 0, false);
   ctx->PopupCloseAll();
@@ -7489,9 +7510,9 @@ bool InnerEdgeObjectSelectsFromTextAndArc(ImGuiTestContext* ctx) {
   }
   ctx->ItemClick("**/Layers##map_layers");
   ctx->Yield(2);
-  ctx->ItemClick("**/Sharp edges");
+  ctx->ItemClick("**/##ov_edge_graphics");
   ctx->Yield(2);
-  ctx->ItemClick("**/Support range");
+  ctx->ItemClick("**/##ov_reach_graphics");
   ctx->Yield(3);
   ctx->PopupCloseAll();
   ctx->Yield(2);
