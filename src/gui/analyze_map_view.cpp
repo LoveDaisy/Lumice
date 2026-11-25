@@ -2413,7 +2413,14 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   }
   const float name_col = name_w + layer_st.IndentSpacing + layer_st.CellPadding.x * 2.0f;
   const float demand_w = name_col + graphics_w + labels_w + layer_st.WindowPadding.x * 2.0f;
-  const float layer_max_w = std::max(demand_w, layer_vp->Size.x - layer_st.WindowPadding.x * 2.0f);
+  // Two INDEPENDENT quantities, per the plan's "width from the full column demand and the
+  // workspace's upper bound": the cap derives from the viewport alone and must never be lifted
+  // by the content's own demand — a cap raised to fit the content left the labels column
+  // clipped past the visible edge on a viewport narrower than the popup (the table has no
+  // horizontal scroll to recover it). Past the cap the popup narrows, the name column — the
+  // only stretching one — absorbs the shrink by wrapping, and the fixed switch columns keep
+  // their budget.
+  const float layer_max_w = std::max(graphics_w + labels_w, layer_vp->Size.x - layer_st.WindowPadding.x * 2.0f);
   // The height cap reserves one scrollbar: past it the TABLE scrolls, and its scrollbar must
   // not push the popup's own total past the work rect. The viewport's usable rect is Pos..Pos+Size
   // (ImGuiViewport carries no WorkRect — the main window's menu/chrome live outside the viewport).
