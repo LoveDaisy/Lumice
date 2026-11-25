@@ -2353,8 +2353,10 @@ TEST_F(ReferenceArcDraw, SharedStrokeLabelObeysEachOwnerLabelsSwitch) {
   }
 }
 
-// The points group's per-kind gates (AC4): the THREE positioned image kinds switch
-// independently inside the group, every other kind follows the parent gate alone — the
+// The points group's per-kind gates (AC4) and the caustic representatives' own group (the pile
+// declutter's AC1): the THREE positioned image kinds switch independently inside the points
+// group, the positioned caustic rows read their OWN group's gate (the Point images parent
+// neither shows nor buries them), and every other kind follows the points parent alone — the
 // exhaustive mapping on synthetic rows, the same predicate the draw loop, the hit collection
 // and the legend consume. The regular/collapse pair IS the controlled co-location witness's
 // switching half: each gate hides exactly its own kind and never the other's.
@@ -2368,13 +2370,15 @@ TEST(AnalyzeMapView, PointMarkerVisibleMapsEachKindToItsOwnGate) {
   const SurveyObjectRow source = row_of("source image");
   const SurveyObjectRow regular = row_of("regular image");
   const SurveyObjectRow collapse = row_of("family collapse");
-  const SurveyObjectRow support = row_of("support set");  // a non-image kind with a position
+  const SurveyObjectRow support = row_of("support set");   // a non-image kind with a position
+  const SurveyObjectRow caustic = row_of("caustic edge");  // the family arm's positioned representative
 
   SurveyLayerGates gates;  // everything on: every positioned row is visible
   EXPECT_TRUE(PointMarkerVisible(source, gates));
   EXPECT_TRUE(PointMarkerVisible(regular, gates));
   EXPECT_TRUE(PointMarkerVisible(collapse, gates));
   EXPECT_TRUE(PointMarkerVisible(support, gates));
+  EXPECT_TRUE(PointMarkerVisible(caustic, gates));
 
   // Each kind's gate hides exactly its own kind.
   gates.points_kinds.regular_image = false;
@@ -2389,13 +2393,86 @@ TEST(AnalyzeMapView, PointMarkerVisibleMapsEachKindToItsOwnGate) {
   EXPECT_FALSE(PointMarkerVisible(source, gates));
   EXPECT_TRUE(PointMarkerVisible(support, gates)) << "kinds outside the sub-gate vocabulary follow the parent alone";
 
-  // The parent graphics gate removes them all, whatever the sub-gates say.
+  // The caustic group's gate hides exactly the caustic rows and never the points rows (the
+  // image sub-gates above are restored first — their own section proved them).
+  gates.points_kinds = SurveyPointKindGates{};
+  gates.caustic.graphics = false;
+  EXPECT_FALSE(PointMarkerVisible(caustic, gates)) << "the pile's own group gate";
+  EXPECT_TRUE(PointMarkerVisible(regular, gates)) << "the caustic gate never touches the points rows";
+  EXPECT_TRUE(PointMarkerVisible(support, gates));
+  gates.caustic.graphics = true;
+
+  // AC1's independence, both directions: the Point images parent off leaves the caustic group
+  // in charge, and the reverse.
+  gates.points.graphics = false;
+  EXPECT_FALSE(PointMarkerVisible(source, gates));
+  EXPECT_FALSE(PointMarkerVisible(regular, gates));
+  EXPECT_FALSE(PointMarkerVisible(collapse, gates));
+  EXPECT_FALSE(PointMarkerVisible(support, gates));
+  EXPECT_TRUE(PointMarkerVisible(caustic, gates))
+      << "Point images off must not bury the caustic representatives — they are a sibling group";
+  gates.points.graphics = true;
+  gates.caustic.graphics = false;
+  EXPECT_TRUE(PointMarkerVisible(regular, gates)) << "caustic off leaves the images untouched";
+
+  // The parent graphics gate removes the points rows, whatever the sub-gates say; the caustic
+  // group's own gate stays the caustic rows' only group-level judgement.
+  gates.caustic.graphics = true;
   gates.points_kinds = SurveyPointKindGates{};  // all sub-gates back on
   gates.points.graphics = false;
   EXPECT_FALSE(PointMarkerVisible(source, gates));
   EXPECT_FALSE(PointMarkerVisible(regular, gates));
   EXPECT_FALSE(PointMarkerVisible(collapse, gates));
   EXPECT_FALSE(PointMarkerVisible(support, gates));
+  EXPECT_TRUE(PointMarkerVisible(caustic, gates));
+}
+
+// The caustic pile's clustering rule (AC2's display grouping): complete linkage on the frame's
+// screen points — the diameter stays bounded so a chain of mutually distant representatives can
+// never fold into one spanning cluster; greedy in row order, deterministic; the grouping
+// conserves every row (a fold is a display fact, never a drop).
+TEST(AnalyzeMapView, OverlayScreenClustersStayDiameterBoundedAndConserveRows) {
+  const auto pts = [](std::initializer_list<std::pair<float, float>> list) {
+    std::vector<OverlayScreenPoint> out;
+    for (const auto& p : list) {
+      out.push_back(OverlayScreenPoint{ p.first, p.second });
+    }
+    return out;
+  };
+  const float r = 6.0f;
+  std::vector<std::vector<size_t>> clusters;
+  // Empty input: no clusters, nothing to draw.
+  GroupOverlayScreenClusters({}, r, &clusters);
+  EXPECT_TRUE(clusters.empty());
+  // Two coincident centres — the mirror fixed point's pile shape: one cluster of two.
+  GroupOverlayScreenClusters(pts({ { 0.0f, 0.0f }, { 0.0f, 0.0f } }), r, &clusters);
+  ASSERT_EQ(clusters.size(), 1u);
+  EXPECT_EQ(clusters[0].size(), 2u);
+  // The threshold's two sides: just inside folds, just outside stays two markers.
+  GroupOverlayScreenClusters(pts({ { 0.0f, 0.0f }, { r, 0.0f } }), r, &clusters);
+  ASSERT_EQ(clusters.size(), 1u);
+  GroupOverlayScreenClusters(pts({ { 0.0f, 0.0f }, { r * 1.01f, 0.0f } }), r, &clusters);
+  ASSERT_EQ(clusters.size(), 2u);
+  // The chain anti-case: a-b and b-c within r, a-c beyond — complete linkage keeps the far pair
+  // apart, so the chain never becomes one spanning cluster (a single seed rule would).
+  GroupOverlayScreenClusters(pts({ { 0.0f, 0.0f }, { r, 0.0f }, { 2.0f * r, 0.0f } }), r, &clusters);
+  ASSERT_EQ(clusters.size(), 2u);
+  EXPECT_EQ(clusters[0].size(), 2u);
+  EXPECT_EQ(clusters[1].size(), 1u);
+  // Conservation: every input row lands in exactly one cluster, whatever the grouping.
+  GroupOverlayScreenClusters(
+      pts({ { 0.0f, 0.0f }, { 1.0f, 1.0f }, { 2.0f, 2.0f }, { 50.0f, 50.0f }, { 51.0f, 50.0f } }), r, &clusters);
+  size_t total = 0;
+  for (const auto& c : clusters) {
+    total += c.size();
+  }
+  EXPECT_EQ(total, 5u);
+  // Determinism: the same input twice gives the same grouping (same camera, same scale).
+  const auto input = pts({ { 0.0f, 0.0f }, { 3.0f, 0.0f }, { 3.0f, 3.0f }, { 40.0f, 0.0f }, { 43.0f, 0.0f } });
+  std::vector<std::vector<size_t>> again;
+  GroupOverlayScreenClusters(input, r, &clusters);
+  GroupOverlayScreenClusters(input, r, &again);
+  EXPECT_EQ(clusters, again);
 }
 
 // The stationary-click selection's distance test (817.2): the point-to-segment distance in

@@ -1001,11 +1001,16 @@ void DrawMapReadoutLabels(ImDrawList* dl, const std::vector<MapReadoutLabel>& la
 // The marker vocabulary: a shape and a colour per kind (the engine's six kinds plus the
 // fallback), solid for a concluded claim (certified/finite) and outline-only otherwise — the
 // refused/unevaluated rows must not read as answered.
-// The ONE points-row visibility rule (the header's contract): the parent graphics gate, and for
-// the three positioned image kinds their own sub-gate. The draw loop, the hit collection and the
-// legend all read the row through this predicate — hidden kinds draw no marker, join no hover
-// group and earn no legend entry from the very same check.
+// The ONE points-row visibility rule (the header's contract): the positioned caustic rows read
+// their OWN group's gate — the Point images parent neither shows nor buries them (the pile's
+// declutter switch must not ride the images' parent) — and the points group's rows take the
+// parent gate plus the three positioned image kinds' sub-gates. The draw loop, the hit
+// collection and the legend all read the row through this predicate — hidden kinds draw no
+// marker, join no hover group and earn no legend entry from the very same check.
 bool PointMarkerVisible(const SurveyObjectRow& row, const SurveyLayerGates& gates) {
+  if (row.kind_name == "caustic edge") {
+    return gates.caustic.graphics;
+  }
   if (!gates.points.graphics) {
     return false;
   }
@@ -1080,14 +1085,55 @@ void GroupOverlayHits(const std::vector<const SurveyObjectRow*>& hits, std::vect
   }
 }
 
-void RenderSurveyObjectTooltip(const std::vector<const SurveyObjectRow*>& hits) {
+void GroupOverlayScreenClusters(const std::vector<OverlayScreenPoint>& points, float radius,
+                                std::vector<std::vector<size_t>>* clusters) {
+  clusters->clear();
+  const size_t n = points.size();
+  std::vector<bool> assigned(n, false);
+  const float r2 = radius * radius;
+  for (size_t i = 0; i < n; ++i) {
+    if (assigned[i]) {
+      continue;
+    }
+    assigned[i] = true;
+    clusters->emplace_back(1, i);  // the seed: the cluster's anchor (a real representative)
+    std::vector<size_t>& cluster = clusters->back();
+    // Complete-linkage growth in input order: a candidate joins only when it lies within the
+    // radius of EVERY current member. The diameter stays bounded, so a chain of far-apart
+    // representatives can never fold into one spanning cluster — the anti-case the transitive
+    // closure would fail.
+    for (size_t j = i + 1; j < n; ++j) {
+      if (assigned[j]) {
+        continue;
+      }
+      bool fits = true;
+      for (const size_t m : cluster) {
+        const float dx = points[j].x - points[m].x;
+        const float dy = points[j].y - points[m].y;
+        if (dx * dx + dy * dy > r2) {
+          fits = false;
+          break;
+        }
+      }
+      if (fits) {
+        assigned[j] = true;
+        cluster.push_back(j);
+      }
+    }
+  }
+}
+
+// The display grouping's hover: `record_noun` names what the count line counts — the plain
+// rows keep "object", a caustic pile's members are "representative record"s (the cluster's
+// ×N reads the same count; the noun is the map's display vocabulary, not an engine claim).
+void RenderSurveyObjectTooltip(const std::vector<const SurveyObjectRow*>& hits, const char* record_noun) {
   if (hits.empty() || !ImGui::BeginTooltip()) {
     return;
   }
   const SurveyObjectRow& first = *hits.front();
   ImGui::TextUnformatted("Survey objects");
-  ImGui::TextDisabled("alt %.2f° az %.2f° · %zu object%s", first.position_altitude_deg, first.position_azimuth_deg,
-                      hits.size(), hits.size() == 1 ? "" : "s");
+  ImGui::TextDisabled("alt %.2f° az %.2f° · %zu %s%s", first.position_altitude_deg, first.position_azimuth_deg,
+                      hits.size(), record_noun, hits.size() == 1 ? "" : "s");
   std::vector<OverlayHitGroup> groups;
   GroupOverlayHits(hits, &groups);
   for (const OverlayHitGroup& group : groups) {
@@ -1121,6 +1167,19 @@ void RenderSurveyObjectTooltip(const std::vector<const SurveyObjectRow*>& hits) 
 }
 
 namespace {
+
+// The map's display vocabulary for a positioned caustic row (the two-arm kind-name split): the
+// row's stored kind stays "caustic edge" — the engine's one wire kind, shared with the T1 arm's
+// deviation-axis reference card — while the marker THIS map draws for it is a family
+// representative. The standing words (the short label and the legend's entry) say what the ink
+// is; the hover reads the raw row back. One mapping, two consumers; "Sharp edges" keeps the T1
+// curves' own name, and the T1 card itself never draws a marker (it carries no sky position).
+const char* OverlayKindDisplayName(const std::string& kind_name) {
+  if (kind_name == "caustic edge") {
+    return "caustic representative";
+  }
+  return kind_name.c_str();
+}
 
 struct SurveyOverlayCache {
   std::weak_ptr<const LUMICE_PathSurvey> source;
@@ -1208,20 +1267,8 @@ void DrawSurveyOverlays(ImDrawList* dl, GuiState& state, const MapCanvasProjecti
   // tooltip collects (a hidden object does not answer the pointer).
   std::vector<const SurveyObjectRow*> hits;
   const float marker_r = UiPx(6.0f);
-  for (const SurveyObjectRow& row : model.objects) {
-    if (!PointMarkerVisible(row, gates) || !row.position_available) {
-      continue;
-    }
-    double pos[3];
-    SkyPosition(row.position_altitude_deg, row.position_azimuth_deg, pos);
-    double x = 0.0;
-    double y = 0.0;
-    if (!ProjectToRect(view, pos, pic_min, pic_px, &x, &y)) {
-      continue;
-    }
-    const float cx = static_cast<float>(x);
-    const float cy = static_cast<float>(y);
-    const OverlayMarkerStyle style = OverlayMarkerStyleFor(row.kind_name, row.state);
+  // One shape vocabulary for both passes below (the per-row loop and the caustic cluster pass).
+  const auto draw_overlay_marker = [&](const OverlayMarkerStyle& style, float cx, float cy) {
     const ImVec2 pts[4] = { ImVec2(cx, cy - marker_r), ImVec2(cx + marker_r, cy), ImVec2(cx, cy + marker_r),
                             ImVec2(cx - marker_r, cy) };
     switch (style.shape) {
@@ -1264,6 +1311,32 @@ void DrawSurveyOverlays(ImDrawList* dl, GuiState& state, const MapCanvasProjecti
         }
         break;
     }
+  };
+  // The positioned caustic rows collect for the cluster pass below — the pile at a mirror
+  // fixed point is dozens of rows the eye cannot separate, so the frame submits ONE marker per
+  // indistinguishable pile plus an ×N count. The rows themselves are untouched: the grouping is
+  // this frame's display derivation over the already-read-back rows (no query, no document
+  // write, nothing cached across frames). Non-caustic rows keep the one-marker-per-row pass.
+  std::vector<std::pair<const SurveyObjectRow*, OverlayScreenPoint>> caustic_points;
+  for (const SurveyObjectRow& row : model.objects) {
+    if (!PointMarkerVisible(row, gates) || !row.position_available) {
+      continue;
+    }
+    double pos[3];
+    SkyPosition(row.position_altitude_deg, row.position_azimuth_deg, pos);
+    double x = 0.0;
+    double y = 0.0;
+    if (!ProjectToRect(view, pos, pic_min, pic_px, &x, &y)) {
+      continue;
+    }
+    const float cx = static_cast<float>(x);
+    const float cy = static_cast<float>(y);
+    if (row.kind_name == "caustic edge") {
+      caustic_points.push_back({ &row, OverlayScreenPoint{ cx, cy } });
+      continue;
+    }
+    const OverlayMarkerStyle style = OverlayMarkerStyleFor(row.kind_name, row.state);
+    draw_overlay_marker(style, cx, cy);
     if (legend != nullptr) {
       bool known = false;
       for (const std::string& k : legend->object_kinds) {
@@ -1287,10 +1360,82 @@ void DrawSurveyOverlays(ImDrawList* dl, GuiState& state, const MapCanvasProjecti
       hits.push_back(&row);
     }
   }
+  // The caustic representatives' cluster pass: the ONE grouping feeds marker, count badge,
+  // label, legend and hover alike. The anchor is a real representative's projected point (the
+  // seed row's own position — never an average, so no new sky point is invented, and a ±180°
+  // view edge's two visible copies of one site stay two markers). A pile whose members are not
+  // all concluded keeps the conservative outline; the count never reads as confidence.
+  if (!caustic_points.empty()) {
+    std::vector<OverlayScreenPoint> pts;
+    pts.reserve(caustic_points.size());
+    for (const auto& entry : caustic_points) {
+      pts.push_back(entry.second);
+    }
+    std::vector<std::vector<size_t>> clusters;
+    GroupOverlayScreenClusters(pts, marker_r, &clusters);
+    for (const std::vector<size_t>& cluster : clusters) {
+      const SurveyObjectRow& anchor = *caustic_points[cluster.front()].first;
+      const OverlayScreenPoint at = caustic_points[cluster.front()].second;
+      bool all_concluded = true;
+      for (const size_t m : cluster) {
+        const int s = caustic_points[m].first->state;
+        all_concluded = all_concluded && (s == LUMICE_PATH_STATE_CERTIFIED || s == LUMICE_PATH_STATE_FINITE);
+      }
+      OverlayMarkerStyle style = OverlayMarkerStyleFor(anchor.kind_name, anchor.state);
+      style.filled = all_concluded;
+      draw_overlay_marker(style, at.x, at.y);
+      if (legend != nullptr) {
+        bool known = false;
+        for (const std::string& k : legend->object_kinds) {
+          if (k == anchor.kind_name) {
+            known = true;
+            break;
+          }
+        }
+        if (!known) {
+          legend->object_kinds.push_back(anchor.kind_name);
+        }
+      }
+      if (gates.caustic.labels) {
+        const ImVec2 label_pos(at.x + marker_r + UiPx(3.0f), at.y - ImGui::GetTextLineHeight() * 0.5f);
+        dl->AddText(label_pos, ImGui::GetColorU32(ImGuiCol_TextDisabled), OverlayKindDisplayName(anchor.kind_name));
+      }
+      if (cluster.size() > 1) {
+        // The pile's count: part of the composite marker (the labels bit does not touch it —
+        // hiding the standing names must not hide how many rows the pile folds).
+        char badge[16];
+        std::snprintf(badge, sizeof(badge), "×%zu", cluster.size());
+        const ImVec2 ts = ImGui::CalcTextSize(badge);
+        const ImVec2 bmin(at.x - ts.x * 0.5f, at.y + marker_r + UiPx(1.0f));
+        dl->AddRectFilled(bmin, ImVec2(bmin.x + ts.x, bmin.y + ts.y), kReadoutBackingInk);
+        dl->AddText(bmin, ImGui::GetColorU32(ImGuiCol_Text), badge);
+      }
+      if (ImGui::IsMouseHoveringRect(ImVec2(at.x - marker_r, at.y - marker_r),
+                                     ImVec2(at.x + marker_r, at.y + marker_r))) {
+        for (const size_t m : cluster) {
+          hits.push_back(caustic_points[m].first);
+        }
+      }
+    }
+  }
   // ONE tooltip per frame for everything under the pointer: the position header, then one line
   // per observation key (identical keys fold into an ×N count — a display grouping of the
-  // model's rows; nothing drops, different sources stay separate).
-  RenderSurveyObjectTooltip(hits);
+  // model's rows; nothing drops, different sources stay separate). A caustic pile's hover says
+  // what its count counts: representative records, not engine-merged objects.
+  const char* record_noun = "object";
+  if (!hits.empty()) {
+    bool all_caustic = true;
+    for (const SurveyObjectRow* row : hits) {
+      if (row->kind_name != "caustic edge") {
+        all_caustic = false;
+        break;
+      }
+    }
+    if (all_caustic) {
+      record_noun = "representative record";
+    }
+  }
+  RenderSurveyObjectTooltip(hits, record_noun);
   // The chromatic group's gate wraps BOTH red-blue ink sources — the dispersion pair and the
   // verdict anchor draw together or not at all (a half-open chromatic group would leave one
   // semantic colour claiming the other's absence). The neutral layers above are untouched by it;
@@ -2130,7 +2275,7 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   // header row, and the canvas keeps the line the old header had (the checkbox ~90 pt + the
   // button ~50 pt fit the narrowest map column the floors can produce).
   ImGui::SameLine();
-  // The five layer groups' session switches, beside the master gate (the layer plan's control
+  // The six layer groups' session switches, beside the master gate (the layer plan's control
   // face): each row's two boxes are the Render habit's graphics/labels split — one group, one
   // graphics box and one labels box, one storage key pair per group. Storage keys ride the
   // master gate's own T-session lifetime: class switches, adopted results and window close/open
@@ -2143,19 +2288,17 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
     SurveyLayerGate* gate;
     ImGuiID graphics_key;  // resolved ONCE, in THIS child's ID scope — the popup's writes below
     ImGuiID labels_key;    // reuse these very IDs (ImGui::GetID inside a popup hashes in the
-  } key_pairs[5];          // popup's own scope, which would fork the keys: the read here and the
+  } key_pairs[6];          // popup's own scope, which would fork the keys: the read here and the
                            // write there would never meet)
   SurveyLayerGates gates;
   {
     const struct {
       const char* base;
       SurveyLayerGate* gate;
-    } named[5] = { { "ov_reach", &gates.reach },
-                   { "ov_edge", &gates.edge },
-                   { "ov_points", &gates.points },
-                   { "ov_chromatic", &gates.chromatic },
-                   { "ov_tir", &gates.tir } };
-    for (int i = 0; i < 5; ++i) {
+    } named[6] = { { "ov_reach", &gates.reach },         { "ov_edge", &gates.edge },
+                   { "ov_points", &gates.points },       { "ov_caustic", &gates.caustic },
+                   { "ov_chromatic", &gates.chromatic }, { "ov_tir", &gates.tir } };
+    for (int i = 0; i < 6; ++i) {
       key_pairs[i].base = named[i].base;
       key_pairs[i].gate = named[i].gate;
       const std::string labels_key = std::string(named[i].base) + "_l";
@@ -2191,11 +2334,14 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   }
   InfoIcon("map_overlays_help",
            "The survey's reference layers: support-range bounds, sharp edges, positioned object "
-           "markers, the red-blue dispersion pair with its colour-verdict anchor, and visible "
-           "internal-reflection turns. Hover Profile edge, Profile peak or Peak–edge separation "
-           "in the class answer to locate the reading on its reference profile (not an all-sky "
-           "peak). Overlays must be on for these temporary markers. Sun, horizon and your sky "
-           "point stay visible.");
+           "markers, caustic representatives, the red-blue dispersion pair with its colour-verdict "
+           "anchor, and visible internal-reflection turns. The caustic markers are the family "
+           "representatives' own sky positions (the map folds a screen-level pile into one marker "
+           "plus a count); the sharp-edge curves are deviation-axis references — a different "
+           "reading despite the engine's shared kind name. Hover Profile edge, Profile peak or "
+           "Peak–edge separation in the class answer to locate the reading on its reference "
+           "profile (not an all-sky peak). Overlays must be on for these temporary markers. Sun, "
+           "horizon and your sky point stay visible.");
   // The layer popup opens in EVERY data state and with the master gate off (the entry's own
   // premise): with no adopted document the rows name the absence instead of disabling themselves,
   // and the switches stay editable — the preferences are display state, not query state.
@@ -2222,18 +2368,27 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
       }
     }
     const char* points_absence = model.valid ? (points_available ? nullptr : "no positioned objects") : no_document;
+    bool caustic_available = false;
+    for (const SurveyObjectRow& row : model.objects) {
+      if (row.position_available && row.kind_name == "caustic edge") {
+        caustic_available = true;
+        break;
+      }
+    }
+    const char* caustic_absence = model.valid ? (caustic_available ? nullptr : "no positioned caustic") : no_document;
     const bool chromatic_available =
         (model.dispersion.available && model.dispersion.min_row_available) ||
         (model.diagnose.available && model.diagnose.position_available && model.diagnose.visible != 0);
     const char* chromatic_absence =
         model.valid ? (chromatic_available ? nullptr : "no chromatic positions") : no_document;
     const char* tir_absence = model.valid ? (facts.tir_turns.empty() ? "no visible turns" : nullptr) : no_document;
-    const LayerRow rows[5] = {
+    const LayerRow rows[6] = {
       { "Support range", key_pairs[0], "##ov_reach_labels", reach_absence },
       { "Sharp edges", key_pairs[1], "##ov_edge_labels", edge_absence },
       { "Point images", key_pairs[2], "##ov_points_labels", points_absence },
-      { "Red-blue shift", key_pairs[3], "##ov_chromatic_labels", chromatic_absence },
-      { "Reflection turns", key_pairs[4], "##ov_tir_labels", tir_absence },
+      { "Caustic representatives", key_pairs[3], "##ov_caustic_labels", caustic_absence },
+      { "Red-blue shift", key_pairs[4], "##ov_chromatic_labels", chromatic_absence },
+      { "Reflection turns", key_pairs[5], "##ov_tir_labels", tir_absence },
     };
     for (const LayerRow& row : rows) {
       // The storage keys are the REGION-scope IDs precomputed at the entry read — the popup's
@@ -2994,7 +3149,9 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
             }
           },
           ImGui::GetFrameHeight(), 0.0f, 0.0f);
-      ImGui::TextWrapped("%s", kind.c_str());
+      // The legend's words use the map's display vocabulary (the caustic marker's entry says
+      // what the ink is); the icon reads the raw kind's shape, the same mapping the label uses.
+      ImGui::TextWrapped("%s", OverlayKindDisplayName(kind));
     }
     // The three arc layers' entries: one ink, named by owner (the layers differ by name, never by
     // hue — the map's colour vocabulary stays one semantics one entry). The full-range form drew

@@ -202,11 +202,22 @@ draws nothing; **incomplete coverage** draws a dashed circle. The legend only li
 actually drawn.
 
 **Layer groups.** The **Layers** button beside Overlays opens the per-group switches — Support
-range, Sharp edges, Point images, Red-blue shift, Reflection turns — each with its own graphics
-and labels box (hiding labels never hides ink; hiding ink removes its labels with it). Point
-images carries three per-kind boxes — source image, regular image, family collapse — so images
-that happen to overlap on screen stay separately switchable; each marker's standing short name
-is that group's label, and the hover tooltip remains the details channel. The switches only
+range, Sharp edges, Point images, Caustic representatives, Red-blue shift, Reflection turns —
+each with its own graphics and labels box (hiding labels never hides ink; hiding ink removes
+its labels with it). Point images carries three per-kind boxes — source image, regular image,
+family collapse — so images that happen to overlap on screen stay separately switchable; each
+marker's standing short name is that group's label, and the hover tooltip remains the details
+channel. The caustic representatives are their own group, independent of the Point images
+switch: they are the family survey's positioned fold representatives, drawn as orange
+triangles. Where dozens of them pile onto one sky position — a mirror fixed point — the map
+folds the indistinguishable pile into one marker with a small **×N** count (the pile's
+remaining sources stay readable in the hover: one line per distinct observation, nothing
+dropped); truly separate representatives still draw separately, and markers at the two visible
+edges of a full-sky map are two copies of one sky site, not two sites. The map's words for this
+group are "caustic representative"; the sharp-edge curves are a different reading — deviation
+positions on the reference axis — despite the engine's shared kind name, and a single marker
+is one representative's position, not a restored arc, cusp or brightness peak. The switches
+only
 filter what is already computed: nothing is recalculated, and your choices survive class
 switches and closing the window for this session. The support-range bounds and sharp edges
 draw as angular-distance reference arcs at the survey's own wavelength — boundaries of where the

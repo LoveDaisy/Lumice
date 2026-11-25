@@ -281,10 +281,16 @@ chromatic pair**（min-deviation 行的两个波长与间距）。文档未产�
 绘制；切换类或重新分析即换身份并清除选择。整个流程不重算、不发查询。
 
 **图层组开关。** Overlays 旁的 **Layers** 按钮打开逐组开关——Support range / Sharp edges /
-Point images / Red-blue shift / Reflection turns——每组各有图形与标签两个框（藏标签不藏墨迹，
-关墨迹连同其标签一起撤）。Point images 组内另有三个逐类框（source image / regular image /
-family collapse），屏上碰巧重叠的像各自独立开关；标记旁的常驻短名是该组的标签，悬停详情不属
-标签门。开关只过滤已算好的结果：不重算、不发请求，本会话内随切类与关开
+Point images / Caustic representatives / Red-blue shift / Reflection turns——每组各有图形与标签
+两个框（藏标签不藏墨迹，关墨迹连同其标签一起撤）。Point images 组内另有三个逐类框（source
+image / regular image / family collapse），屏上碰巧重叠的像各自独立开关；标记旁的常驻短名是该组
+的标签，悬停详情不属标签门。Caustic representatives 是独立的第六组，不随 Point images 开关消失：
+它是 family survey 有天空位置的折叠代表（橙色三角）。几十个代表叠在同一天点（镜像不动点）时，
+地图把不可分辨的叠点折成一个 marker 加小号 **×N** 计数（被折的来源在悬停中全部可读：每种观测
+一行，不丢内容）；真正分开的代表仍各自画出；全天空图两边缘各有一个可见副本是同一天点的两次
+投影，不是两个天点。本组在地图上的用词是 "caustic representative"；锐边曲线是另一种读数——
+参考轴上的偏折位置——尽管引擎里同名。单个 marker 是一个代表的位置，不是恢复出的弧、cusp 或
+亮度峰。开关只过滤已算好的结果：不重算、不发请求，本会话内随切类与关开
 窗口保留。support 区间界与锐边按 survey 自身参考波长画成角距参照弧——这是「类在哪里能亮」的
 边界，不是发光圈；覆盖整个 0–180° 时用一行文字代替满天空圈。edge 卡声明与 support 界重合时
 两组共用一条笔画，图例并列两个名字。内反射转折把可见 TIR 特征在色散对两波长上的代表角距画成

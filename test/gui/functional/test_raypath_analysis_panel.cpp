@@ -6831,6 +6831,14 @@ bool SupportEdgeLayersShareOneStrokeAndGateIndependently(ImGuiTestContext* ctx) 
   IM_CHECK_RETV(ctx->ItemInfo("**/Sharp edges", ImGuiTestOpFlags_NoError).ID != 0, false);
   IM_CHECK_RETV(ctx->ItemInfo("**/Red-blue shift", ImGuiTestOpFlags_NoError).ID != 0, false);
   IM_CHECK_RETV(ctx->ItemInfo("**/Reflection turns", ImGuiTestOpFlags_NoError).ID != 0, false);
+  // The caustic representatives' row is the sixth group (the pile declutter's own switch): it
+  // exists in every data state — with no document it names the absence like the others, and a
+  // round trip edits the preference without touching any query (the popup's own premise).
+  IM_CHECK_RETV(ctx->ItemInfo("**/Caustic representatives", ImGuiTestOpFlags_NoError).ID != 0, false);
+  ctx->ItemClick("**/Caustic representatives");
+  ctx->Yield(2);
+  ctx->ItemClick("**/Caustic representatives");
+  ctx->Yield(2);
   const std::string popup_text = CaptureMapFrameText(ctx);
   IM_CHECK_RETV(popup_text.find("no document") != std::string::npos, false);
   ctx->PopupCloseAll();
