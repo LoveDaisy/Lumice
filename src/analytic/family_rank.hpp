@@ -148,6 +148,15 @@ constexpr double kFoldCuspOnLocusDistanceDeg = 1e-3;
 // diameter verification (the floor above, midpoint-refined) is the arbiter, so a generous
 // locator costs a wasted verification on a slow arc, never a false point claim.
 constexpr double kFoldPointImageLocatorSlack = 0.05;
+// The tangency read's instrument floor (the alignment deficit's absolute uncertainty at a
+// bisected crossing): the kernel direction is reconstructed from a located read whose own
+// J residual tilts it, and the measured floor at this calibre sits at ~1e-10 (the C16 mirror
+// identity zone's deepest deficit). A deficit under max(sigma2/sigma1, this floor) cannot be
+// distinguished from exact tangency; a deficit above it is a resolvably non-constant image —
+// whatever its measured span (the near-degenerate counterexample's ~7e-6 deficit sits four
+// orders above). The constant-image SEGMENT is the strict-tangency sub-run this gate cuts
+// out of a candidate run, not the whole locator run.
+constexpr double kFoldTangencyRounding = 1e-9;
 
 // ---- the pose chart and the sky read --------------------------------------------------------------
 //
@@ -392,6 +401,12 @@ struct FoldSegmentRecord {
   double image_alt_deg = 0.0;
   double image_az_deg = 0.0;
   double image_diameter_deg = 0.0;
+  // The verification's own resolution statement (all decided runs): the run's derived
+  // position bound in degrees — twice the worst image offset sigma1 x (|J| / |grad J|, in the
+  // degree frame) over the run's points and its on-locus refined midpoints, plus the
+  // unit-sphere rounding scale. A consumer reads a kPointImage claim as "constant within
+  // this bound"; -1 when the run's evidence never decided (kUnknown).
+  double image_bound_deg = -1.0;
 };
 
 // One cusp candidate: a located transversality failure on the critical branch — the dJ(v)

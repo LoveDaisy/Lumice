@@ -912,28 +912,31 @@ TEST(FamilyRank, C16MirrorBranchSegmentation) {
   const RestrictedFamilyRank rank = RankRestrictedFamily(f.normals, slots, 2, C16SpinChart(), sun, kC16N, 128);
   ASSERT_EQ(rank.status, FamilyRankStatus::kOk);
 
-  // The mirror chain: the longest chain carrying a point-image segment.
+  // The mirror chain: the longest chain carrying a point-image segment. The strict-tangency
+  // contract (the tangency read's own instrument floor, the review's unit-corrected gate)
+  // segments the branch as the plan's own fact statement describes: the collapsed MIDDLE (the
+  // identity zone, where the deficit reads at the instrument's floor) is the point-image
+  // segment; the drifting ends (deficit 1e-4..7.8e-4 — resolvably misaligned) stay arcs. The
+  // old whole-run expectation (>40 points) embodied the curvature-swamped gate's over-claim.
   size_t mirror = rank.fold_chains.size();
   size_t mirror_points = 0;
   for (size_t c = 0; c < rank.fold_chains.size(); c++) {
     for (const FoldSegmentRecord& segment : rank.fold_chains[c].segments) {
-      if (segment.form == FoldSegmentForm::kPointImage && segment.last - segment.first + 1 > 40) {
-        if (segment.last - segment.first + 1 > static_cast<int>(mirror_points)) {
-          mirror_points = static_cast<size_t>(segment.last - segment.first + 1);
-          mirror = c;
-        }
+      if (segment.form == FoldSegmentForm::kPointImage && segment.last - segment.first + 1 > mirror_points) {
+        mirror_points = static_cast<size_t>(segment.last - segment.first + 1);
+        mirror = c;
       }
     }
   }
-  ASSERT_LT(mirror, rank.fold_chains.size()) << "no extended point-image run found";
+  ASSERT_LT(mirror, rank.fold_chains.size()) << "no point-image segment found";
   const FoldChainRecord& chain = rank.fold_chains[mirror];
   ASSERT_GE(chain.order.size(), 70u);
+  // A point-image claim carries a nonzero parameter extension (>= 2 crossings).
+  EXPECT_GE(mirror_points, 2u);
 
-  // The collapsed middle sits at the geometric mirror identity (-sun altitude, azimuth 0) —
+  // The collapsed segment sits at the geometric mirror identity (-sun altitude, azimuth 0) —
   // the horizontal-plane reflection's own constant, an independent witness.
   int point_points = 0;
-  double point_alt_min = 1e9;
-  double point_alt_max = -1e9;
   bool has_point = false;
   for (const FoldSegmentRecord& segment : chain.segments) {
     if (segment.form != FoldSegmentForm::kPointImage) {
@@ -941,10 +944,10 @@ TEST(FamilyRank, C16MirrorBranchSegmentation) {
     }
     has_point = true;
     EXPECT_LE(segment.image_diameter_deg, kFoldPointImageFloorDeg);
+    // The segment's own resolution statement (the verification's bound) rides the record.
+    EXPECT_GE(segment.image_bound_deg, 0.0);
     EXPECT_NEAR(segment.image_alt_deg, -20.0, 0.01);
     EXPECT_NEAR(segment.image_az_deg, 0.0, 0.01);
-    point_alt_min = std::min(point_alt_min, segment.image_alt_deg);
-    point_alt_max = std::max(point_alt_max, segment.image_alt_deg);
     for (int p = segment.first; p <= segment.last; p++) {
       point_points++;
       const FoldPointRecord& point = rank.crossings[static_cast<size_t>(chain.order[static_cast<size_t>(p)])];
@@ -953,9 +956,7 @@ TEST(FamilyRank, C16MirrorBranchSegmentation) {
     }
   }
   EXPECT_TRUE(has_point);
-  EXPECT_GT(point_points, 40);
-  (void)point_alt_min;
-  (void)point_alt_max;
+  EXPECT_GE(point_points, 2);
 
   // The extended ends are NOT swallowed: some chain reaches below the collapsed middle, to
   // the transverse end the corpus records at (-22.6 deg, +-2.45 deg) — the unverifiable cliff
@@ -975,9 +976,9 @@ TEST(FamilyRank, C16MirrorBranchSegmentation) {
   }
   EXPECT_LT(bottom, -22.0);
   EXPECT_TRUE(end_broken) << "the ends' breaks carry no reason";
-  // The transverse (arc) form presents too: on the mirror chain itself, or on the end
-  // fragments the unverifiable cells broke off (the arcs between the ends and the collapsed
-  // middle walk there).
+  // The ends are resolvably misaligned on the mirror chain itself (deficit 1e-4..7.8e-4
+  // against a ~1e-9 instrument floor): they read as arcs there, or ride the end fragments the
+  // unverifiable cells broke off.
   int arc_points = 0;
   for (const FoldSegmentRecord& segment : chain.segments) {
     if (segment.form == FoldSegmentForm::kArc) {
@@ -995,9 +996,21 @@ TEST(FamilyRank, C16MirrorBranchSegmentation) {
   }
   EXPECT_GT(arc_points, 0);
 
-  // No cusp markers: the transition zones' dJ(v) sits below its own resolution — an unresolved
-  // degenerate region, not locatable cusps (the resolution gate at work).
-  EXPECT_EQ(chain.cusps.size(), 0u);
+  // Every published cusp candidate sits on an arc position (the classification's own order:
+  // a point-image segment never doubles as a cusp set).
+  for (const FoldCuspCandidate& cusp : chain.cusps) {
+    const FoldSegmentRecord* home = nullptr;
+    for (const FoldSegmentRecord& segment : chain.segments) {
+      if (cusp.order_index >= segment.first && cusp.order_index <= segment.last) {
+        home = &segment;
+      }
+    }
+    if (home == nullptr) {
+      ADD_FAILURE() << "a cusp outside every segment (order " << cusp.order_index << ")";
+      continue;  // this row's verdict is in; the other rows still drive
+    }
+    EXPECT_EQ(home->form, FoldSegmentForm::kArc) << "a cusp published on a non-arc segment";
+  }
 }
 
 // The two-point fragments whose whole image collapses onto the mirror point: a whole-branch
@@ -1155,6 +1168,51 @@ TEST(FamilyRank, LowitzSheetOrderedChainsIncludeThePolarBranches) {
   }
   EXPECT_GE(polar_chains, 1) << "the near-sun branches are gone";
   EXPECT_EQ(provenance_ok, links_total) << "a direct link lacks its cell provenance";
+}
+
+// The review's near-degenerate counterexample: the spin chart with zenith fixed 89.9999 (one
+// hundred-thousandth of a degree off the mirror identity). Its long aligned run's measured sky
+// span (~3.6e-4 deg) sits UNDER the declared floor — the old fixed-diameter arbiter swallowed
+// it into a point image — but its kernel deficits (~7e-6, resolvably nonzero image velocity)
+// sit four orders above the tangency instrument floor: resolvably moving, an arc, never a
+// point image. The zenith-90 mirror beside it is the geometry-identity positive.
+TEST(FamilyRank, NearDegenerateSmallArcStaysAnArc) {
+  Fixture f;
+  int slots[2];
+  const int faces[2] = { 3, 5 };
+  f.Resolve(faces, 2, slots);
+  RestrictedFamilySpec spec;
+  spec.zenith.mode = FamilyDimensionMode::kFixed;
+  spec.zenith.center_deg = 89.9999;
+  spec.azimuth.mode = FamilyDimensionMode::kFree;
+  spec.roll.mode = FamilyDimensionMode::kFree;
+  double sun[3];
+  SunAt(20.0, 0.0, sun);
+  const RestrictedFamilyRank rank = RankRestrictedFamily(f.normals, slots, 2, spec, sun, kC16N, 128);
+  ASSERT_EQ(rank.status, FamilyRankStatus::kOk);
+  int point_positions = 0;
+  int aligned_positions = 0;
+  for (const FoldChainRecord& chain : rank.fold_chains) {
+    for (const FoldSegmentRecord& segment : chain.segments) {
+      if (segment.form == FoldSegmentForm::kPointImage) {
+        point_positions += segment.last - segment.first + 1;
+      }
+    }
+    for (int idx : chain.order) {
+      if (rank.crossings[static_cast<size_t>(idx)].alignment >= 1.0 - kFoldPointImageLocatorSlack) {
+        aligned_positions++;
+      }
+    }
+  }
+  // The locator still sees the near-identity alignments (the input is 4e-5 deg from the
+  // mirror); the tangency resolution gate refuses the run wholesale — the old 70-point
+  // collapse is gone. What remains is the genuinely-unresolvable island (a few positions
+  // whose deficits sit at the instrument floor: their own image velocity is below its own
+  // resolution, the honest point-image candidate the plan's criterion admits), a strict
+  // minority of the aligned run.
+  EXPECT_GT(aligned_positions, 20) << "the counterexample lost its aligned run";
+  EXPECT_LT(point_positions, 10) << "a resolvably moving near-degenerate arc collapsed wholesale to a point image";
+  EXPECT_LT(point_positions, aligned_positions / 2) << "the unresolvable island dominates the aligned run";
 }
 
 // AC1's one-dimensional leg: the Parry circle records as the ordered, validity-segmented track
