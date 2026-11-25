@@ -839,7 +839,8 @@ void RegisterPreviewViewportTests(ImGuiTestEngine* engine) {
   // Full-sky: the entry rejects the press rather than writing into a value the per-frame
   // invariant would zero — the pose stays at the canonical zero AND the press never became a
   // roll that got cleaned up afterwards. (Which of those two held is white-box: admission
-  // carries `!full_sky`, so the write site is unreachable, not merely erased.)
+  // carries the roll field's shared registry gate — the same ConstraintFor("renderer.roll")
+  // result that greys the slider — so the write site is unreachable, not merely erased.)
   {
     ImGuiTest* t =
         IM_REGISTER_TEST(engine, "preview_viewport", "a_full_sky_lens_ignores_the_right_drag_it_still_accepts");
