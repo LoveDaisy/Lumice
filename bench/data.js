@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795634562966,
+  "lastUpdate": 1795634565803,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9620,50 +9620,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "4f5f873d869a4e582eaad4d8fef0dcfcf48e1efe",
-          "message": "Merge pull request #519 from LoveDaisy/chore/test-tu-cost-gate\n\nfeat(ci): test-TU cost declaration gate — fifth diff-scoped checker",
-          "timestamp": "2026-10-19T18:39:25+08:00",
-          "tree_id": "8ae83eaccc75164a1d8908cf61bbcecc506e8da4",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/4f5f873d869a4e582eaad4d8fef0dcfcf48e1efe"
-        },
-        "date": 1792406534339,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 89.6,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 100,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 99,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 94.8,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "943184db19db97281bc7d892e26c1e0a4a459c76",
           "message": "Merge pull request #520 from LoveDaisy/chore/release-4.7.4\n\nchore(release): cut 4.7.4",
           "timestamp": "2026-10-19T19:23:08+08:00",
@@ -14003,6 +13959,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 94.8,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "ab73dccde5f9f36162d9599e10b674ec95e2a17a",
+          "message": "Merge pull request #653 from LoveDaisy/feat/policy-gate-timebomb-fixture\n\ntest(scripts): decouple tracker policy-gate fixtures from the wall clock",
+          "timestamp": "2026-11-26T03:04:35+08:00",
+          "tree_id": "4a8e9b71faed5f6dd968776cdd6079439ec02f62",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/ab73dccde5f9f36162d9599e10b674ec95e2a17a"
+        },
+        "date": 1795634565151,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 90.9,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 99.6,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 98.4,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 92.5,
             "unit": "%"
           }
         ]
