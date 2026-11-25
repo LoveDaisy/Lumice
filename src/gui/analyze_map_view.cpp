@@ -2471,22 +2471,36 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
     // The layer table: one record per row, the name column the ONLY stretching one (the Render
     // overlay table's rule — the switches state the width they need, the names get the rest),
     // the two switch columns headed in visible text so a box's meaning is readable on the frame
-    // and not a hover discovery. ScrollY keeps the header row frozen whenever the ten content
-    // rows outgrow the cap above; RowBg separates the sub-rows from their parent the way the
-    // indent alone cannot at a glance.
+    // and not a hover discovery. ScrollY keeps the header row frozen whenever the content
+    // outgrows the cap above; RowBg separates the sub-rows from their parent the way the indent
+    // alone cannot at a glance.
     constexpr ImGuiTableFlags kLayerTableFlags =
         ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY;
     const float row_pitch = std::max(ImGui::GetTextLineHeightWithSpacing(), ImGui::GetFrameHeight());
     const float header_h = ImGui::GetFrameHeight() + layer_st.CellPadding.y * 2.0f;
-    const float rows_h = row_pitch * 10.0f;  // 6 groups + 3 point kinds + region shading
+    // The height the table actually needs, counted from THIS frame's rows: a group row rides
+    // TWO text lines when it carries an absence (the note wraps under the name), the three kind
+    // sub-rows ride one each, and the region-shading row rides its name plus its readable
+    // reason. Estimating a fixed row count instead would shrink the table below its content
+    // whenever documents are missing — the rows would scroll under a popup that had room for
+    // them all (the frame-text capture caught exactly that on the no-document state).
+    int text_lines = 0;
+    for (const LayerRow& row : rows) {
+      text_lines += 1 + (row.absence != nullptr ? 1 : 0);
+    }
+    text_lines += 3 + 2;  // the three kind sub-rows; region shading = name + reason
     // The popup's total is this table plus the window padding both ends; the constraint above
     // caps that total, so the table's own cap is the total minus the padding it rides in.
     const float table_cap = std::max(header_h, layer_max_h - layer_st.WindowPadding.y * 2.0f);
-    const float table_h = std::min(header_h + rows_h, table_cap);
+    const float table_h = std::min(header_h + static_cast<float>(text_lines) * row_pitch, table_cap);
     if (ImGui::BeginTable("##layer_table", 3, kLayerTableFlags, ImVec2(ImGui::GetContentRegionAvail().x, table_h))) {
       ImGui::TableSetupColumn("##layer_name", ImGuiTableColumnFlags_WidthStretch);
       ImGui::TableSetupColumn("Graphics", ImGuiTableColumnFlags_WidthFixed, graphics_w);
       ImGui::TableSetupColumn("Labels", ImGuiTableColumnFlags_WidthFixed, labels_w);
+      // ScrollY alone does NOT freeze the header: the freeze count is set only by
+      // TableSetupScrollFreeze (ImGui's FreezeRowsRequest defaults to 0), and the popup-rect
+      // capture caught the header scrolled away before this line existed.
+      ImGui::TableSetupScrollFreeze(0, 1);
       ImGui::TableHeadersRow();
       // One row per record. The storage keys are the REGION-scope IDs precomputed at the entry
       // read — the popup's own GetID would hash in the popup's scope and fork the keys (the bug
