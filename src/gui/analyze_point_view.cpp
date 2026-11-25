@@ -1173,6 +1173,26 @@ double CurveRhoDisplayHi(const PointCurveRhoAxisRange& range) {
   return range.hi_log10 == range.lo_log10 ? range.hi_log10 + 0.5 : range.hi_log10;
 }
 
+std::optional<float> PointCurveRhoGutterLabelPy(float desired_py, float title_bottom_py, float line_h,
+                                                const std::vector<float>& other_pys) {
+  const float half_line = line_h * 0.5f;
+  // Exact touch is not overlap: a label whose top edge sits exactly on the title's bottom edge
+  // keeps its own row.
+  if (!(desired_py - half_line < title_bottom_py)) {
+    return desired_py;  // clear of the title band — the label keeps its py, siblings have no say
+  }
+  // The sink slot: one full line below the title row's bottom edge. Taken at the label's own
+  // line height → the text yields its place entirely (the tick mark stays); nothing is squeezed
+  // over an existing label.
+  const float slot = title_bottom_py + line_h;
+  for (const float other : other_pys) {
+    if (std::abs(other - slot) < line_h) {
+      return std::nullopt;
+    }
+  }
+  return slot;
+}
+
 bool PointCurveClipSegment(double x0, double value0, double x1, double value1, const PointCurveAxisRange& range,
                            PointCurveSegment* out) {
   if (!out || !range.valid || !(range.lo > 0.0) || range.hi < range.lo || !std::isfinite(range.hi) || !(value0 > 0.0) ||
@@ -1321,21 +1341,24 @@ void DrawPointCurveRhoAxis(ImDrawList* dl, const PointCurveRhoAxisRange& visible
   if (!visible.valid || plot_max.y <= plot_min.y) {
     return;
   }
-  // The right gutter's one-word attribution rides its gutter top — drawn HERE (the gutter's
-  // one owner) so the fallback's top boundary label can yield to it deterministically.
-  // plot_min.y - 6 == canvas_min.y + pad_t - 6, the region's old title row.
-  dl->AddText(ImVec2(plot_max.x + UiPx(6.0f), plot_min.y - UiPx(6.0f)), ImGui::GetColorU32(ImGuiCol_TextDisabled), "ρ");
   const double lo = visible.lo_log10;
   const double hi = visible.hi_log10;
   const float plot_h = plot_max.y - plot_min.y;
   const float line_h = ImGui::GetTextLineHeight();
   const int label_step = PointCurveRhoLogLabelStep(lo, hi, plot_h, line_h);
-  bool have_labelled_major = false;
   const auto log10_to_py = [&](double log10_value) {
     return plot_max.y - static_cast<float>(CurveRhoLogY(log10_value, visible) * plot_h);
   };
   const bool minors_fit =
       label_step == 1 && plot_h / std::max(1.0, CurveRhoDisplayHi(visible) - CurveRhoDisplayLo(visible)) >= UiPx(12.0f);
+  // The gutter's texts, top of the axis first: each labelled major's centered py, or — when no
+  // labelled major lands — the boundary fallback's hi/lo pair (the window's own edges become
+  // the axis's labels, §3.2).
+  struct RhoGutterText {
+    std::string label;
+    float py;
+  };
+  std::vector<RhoGutterText> texts;
   for (const PointCurveRhoTick& tick :
        PointCurveRhoLogTicks(CurveRhoDisplayLo(visible), CurveRhoDisplayHi(visible), label_step, minors_fit)) {
     const bool labelled = tick.major && tick.exponent % label_step == 0;
@@ -1343,33 +1366,57 @@ void DrawPointCurveRhoAxis(ImDrawList* dl, const PointCurveRhoAxisRange& visible
       continue;  // an unlabelled decade would only crowd the plot at this density
     }
     const double log10_value = static_cast<double>(tick.exponent) + std::log10(tick.mantissa);
-    const float py = log10_to_py(log10_value);
     if (tick.major) {
-      have_labelled_major = true;
       // Right-edge tick mark, not a gridline: the left axis owns the reference lattice; two
-      // overlaid full-width lattices would read as one wrong one.
+      // overlaid full-width lattices would read as one wrong one. The mark stays even when the
+      // text below yields its place away — the position reference is the mark's own.
+      const float py = log10_to_py(log10_value);
       dl->AddLine(ImVec2(plot_max.x, py), ImVec2(plot_max.x + UiPx(3.0f), py), IM_COL32(60, 64, 72, 110), 1.0f);
-      const std::string lab = PointCurveRhoTickLabel(tick);
-      dl->AddText(ImVec2(plot_max.x + UiPx(6.0f), py - ImGui::CalcTextSize(lab.c_str()).y * 0.5f),
-                  ImGui::GetColorU32(ImGuiCol_TextDisabled), lab.c_str());
+      texts.push_back({ PointCurveRhoTickLabel(tick), py });
     } else if (minors_fit) {
+      const float py = log10_to_py(log10_value);
       dl->AddLine(ImVec2(plot_max.x, py), ImVec2(plot_max.x + UiPx(3.0f), py), IM_COL32(90, 94, 102, 140), 1.0f);
     }
   }
-  // The boundary labels when no labelled major lands (a narrow band strictly between decades):
-  // the window's own bounds become the right axis's labels.
-  if (!have_labelled_major) {
-    const auto boundary_lab = [&](double log10_value, float py) {
-      const std::string lab = PointCurveRhoValueText(log10_value);
-      dl->AddText(ImVec2(plot_max.x + UiPx(6.0f), py - ImGui::CalcTextSize(lab.c_str()).y * 0.5f),
-                  ImGui::GetColorU32(ImGuiCol_TextDisabled), lab.c_str());
-    };
-    // One full line below the slot-top ρ title: the two texts share x, so a plain top-edge
-    // placement would print them on top of each other (review round 3's overprint).
-    boundary_lab(hi, plot_min.y + UiPx(9.0f) + line_h);
+  if (texts.empty()) {
+    texts.push_back({ PointCurveRhoValueText(hi), plot_min.y });
     if (plot_h >= line_h * 2.0f) {
-      boundary_lab(lo, plot_max.y);
+      texts.push_back({ PointCurveRhoValueText(lo), plot_max.y });
     }
+  }
+  // The slot-top ρ attribution rides the gutter top — drawn HERE (the gutter's one owner).
+  // plot_min.y - 6 == canvas_min.y + pad_t - 6, the region's old title row.
+  const float title_top = plot_min.y - UiPx(6.0f);
+  const float title_bottom = title_top + line_h;
+  dl->AddText(ImVec2(plot_max.x + UiPx(6.0f), title_top), ImGui::GetColorU32(ImGuiCol_TextDisabled), "ρ");
+  // ONE yield decision for the whole gutter. The texts arrive in tick order — py DESCENDING as
+  // exponents ascend — so the topmost candidate is the min-py element, and only it can ever ride
+  // the title's band: the stride's ≥ 1.5-line-height gaps keep every other label below the ride
+  // threshold. Rounds 3/4 patched the rule per branch and each missed one; it now has the single
+  // owner above and no branch copies.
+  size_t top_index = 0;
+  for (size_t i = 1; i < texts.size(); ++i) {
+    if (texts[i].py < texts[top_index].py) {
+      top_index = i;
+    }
+  }
+  std::vector<float> unmoved_pys;
+  unmoved_pys.reserve(texts.size() - 1);
+  for (size_t i = 0; i < texts.size(); ++i) {
+    if (i != top_index) {
+      unmoved_pys.push_back(texts[i].py);
+    }
+  }
+  const std::optional<float> top_py =
+      PointCurveRhoGutterLabelPy(texts[top_index].py, title_bottom, line_h, unmoved_pys);
+  for (size_t i = 0; i < texts.size(); ++i) {
+    if (i == top_index && !top_py.has_value()) {
+      continue;  // the sink line was taken: this text yields its place entirely, the tick stays
+    }
+    const float py = i == top_index ? *top_py : texts[i].py;
+    const ImVec2 ts = ImGui::CalcTextSize(texts[i].label.c_str());
+    dl->AddText(ImVec2(plot_max.x + UiPx(6.0f), py - ts.y * 0.5f), ImGui::GetColorU32(ImGuiCol_TextDisabled),
+                texts[i].label.c_str());
   }
 }
 

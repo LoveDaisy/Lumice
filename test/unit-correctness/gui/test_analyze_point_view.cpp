@@ -936,6 +936,24 @@ TEST(AnalyzePointView, RhoTicksLabelsAndValueTextGoBeyondDoubleRange) {
   EXPECT_GE(PointCurveLogLabelStep(1.1287457567142152e-213, 1.6273993240820983, 200.0f, 15.0f), 20);
 }
 
+TEST(AnalyzePointView, RhoGutterLabelPyIsTheSlotTopTitlesOneYieldRule) {
+  // Clear of the title band: the label keeps its own py — siblings have no say in it.
+  EXPECT_EQ(PointCurveRhoGutterLabelPy(60.0f, 9.0f, 15.0f, {}), 60.0f);
+  // A rider sinks one full line below the title row's bottom edge (9 + 15).
+  EXPECT_EQ(PointCurveRhoGutterLabelPy(4.0f, 9.0f, 15.0f, {}), 24.0f);
+  EXPECT_EQ(PointCurveRhoGutterLabelPy(-7.0f, 9.0f, 15.0f, {}), 24.0f);
+  // Exact touch is not overlap: the label's top edge exactly on the title's bottom edge stays.
+  EXPECT_EQ(PointCurveRhoGutterLabelPy(16.5f, 9.0f, 15.0f, {}), 16.5f);
+  // The sink line taken by an unyielding label (within one line height of the slot): the
+  // rider's text is skipped outright — nothing is squeezed over an existing label.
+  EXPECT_FALSE(PointCurveRhoGutterLabelPy(4.0f, 9.0f, 15.0f, { 24.0f }).has_value());
+  EXPECT_FALSE(PointCurveRhoGutterLabelPy(0.0f, 9.0f, 15.0f, { 35.0f }).has_value());
+  // A neighbour beyond one line height leaves the sink line free.
+  EXPECT_EQ(PointCurveRhoGutterLabelPy(0.0f, 9.0f, 15.0f, { 45.0f }), 24.0f);
+  // Degenerate line height: nothing rides anything, the input passes through untouched.
+  EXPECT_EQ(PointCurveRhoGutterLabelPy(60.0f, 9.0f, 0.0f, {}), 60.0f);
+}
+
 TEST(AnalyzePointView, RhoClipSegmentsInLog10Space) {
   // Window [-10, 0] decades; a segment from -20 (below) to -5 (inside) enters at y=0.
   const PointCurveRhoAxisRange window{ true, -10.0, 0.0 };

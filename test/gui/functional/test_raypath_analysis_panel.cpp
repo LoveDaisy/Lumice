@@ -17390,6 +17390,7 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
     static gui::PointContributionCurve model;
     static gui::PointCurveRangeMode mode = gui::PointCurveRangeMode::kFit;
     static bool draw = false, auto_range = false, scroll_test = false, short_plot = false;
+    static float fixed_rho_lo = -1.0f, fixed_rho_hi = 1.0f;  // the fixed window when !auto_range
     static ImRect plot;
     t->GuiFunc = [](ImGuiTestContext*) {
       if (!draw)
@@ -17406,8 +17407,9 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       dl->AddRectFilled(plot.Min, plot.Max, IM_COL32(16, 18, 22, 255));
       const gui::PointCurveAxisRange range =
           auto_range ? gui::PointCurveAxisFit(model, mode) : gui::PointCurveAxisRange{ true, .1, 10 };
-      const gui::PointCurveRhoAxisRange rho_range =
-          auto_range ? gui::PointCurveRhoAxisFit(model) : gui::PointCurveRhoAxisRange{ true, -1.0, 1.0 };
+      const gui::PointCurveRhoAxisRange rho_range = auto_range ?
+                                                        gui::PointCurveRhoAxisFit(model) :
+                                                        gui::PointCurveRhoAxisRange{ true, fixed_rho_lo, fixed_rho_hi };
       gui::DrawPointCurveLogAxis(dl, range, plot.Min, plot.Max);
       gui::DrawPointCurveRhoAxis(dl, rho_range, plot.Min, plot.Max);
       gui::DrawPointCurveSeed(dl, model, plot.Min, plot.Max);
@@ -17631,6 +17633,60 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
           tail_bottom = std::max(tail_bottom, v.pos.y);
         }
       IM_CHECK(tail_top >= plot.Min.y - 1.0f && tail_bottom <= plot.Max.y + 1.0f);
+      // ---- The slot-top ρ title's yield rule, at glyph level and in both variants. The band
+      // view above merges stacked texts into one band, which is exactly how the old overprint
+      // hid: two right-gutter texts share the same x origin, so any two glyph quads overlapping
+      // in BOTH axes are an overprint — the geometric criterion, not a band count.
+      const auto no_right_glyph_overprint = [&] {
+        std::vector<ImRect> glyphs;
+        const auto& vertices = w->DrawList->VtxBuffer;
+        const ImU32 color = ImGui::GetColorU32(ImGuiCol_TextDisabled);
+        for (int i = 0; i + 3 < vertices.Size;) {
+          if (vertices[i].col != color) {
+            ++i;
+            continue;
+          }
+          ImRect r(vertices[i].pos, vertices[i].pos);
+          for (int k = 1; k < 4; ++k)
+            r.Add(vertices[i + k].pos);
+          i += 4;
+          if (r.Min.x > plot.Max.x && r.Min.y >= plot.Min.y - ImGui::GetTextLineHeight() &&
+              r.Max.y <= plot.Max.y + ImGui::GetTextLineHeight())
+            glyphs.push_back(r);
+        }
+        for (size_t a = 0; a < glyphs.size(); ++a)
+          for (size_t b = a + 1; b < glyphs.size(); ++b)
+            IM_CHECK(glyphs[a].Min.x + 2.0f >= glyphs[b].Max.x || glyphs[b].Min.x + 2.0f >= glyphs[a].Max.x ||
+                     glyphs[a].Min.y + 2.0f >= glyphs[b].Max.y || glyphs[b].Min.y + 2.0f >= glyphs[a].Max.y);
+      };
+      no_right_glyph_overprint();  // this auto tail's top label rode the title pre-fix: skipped now, tick stays
+      // Variant 1 — the labelled major: hi just above the stride grid puts the top label inside
+      // the title's row. Pre-fix the two texts overprinted every frame (bands merged into one —
+      // the red state the band count pins below).
+      auto_range = false;
+      fixed_rho_lo = 0.05f;
+      fixed_rho_hi = 1.05f;
+      ctx->Yield(3);
+      {
+        const std::vector<ImRect> bands = right_bands();
+        IM_CHECK(bands.size() == 2);  // the ρ title + the yielded 1e1 (1e0 sits below the window)
+        const float title_bottom = plot.Min.y - gui::UiPx(6) + ImGui::GetTextLineHeight();
+        IM_CHECK(bands[1].Min.y > title_bottom);  // sunk a full line below the title's row
+      }
+      no_right_glyph_overprint();
+      // Variant 2 — the fallback: a band strictly between adjacent integers lands no labelled
+      // major, so the boundary labels stand in; the hi one flows through the same yield rule.
+      fixed_rho_lo = 0.2f;
+      fixed_rho_hi = 0.9f;
+      ctx->Yield(3);
+      {
+        const std::vector<ImRect> bands = right_bands();
+        IM_CHECK(bands.size() == 3);  // the ρ title + hi + lo boundary labels
+      }
+      no_right_glyph_overprint();
+      fixed_rho_lo = -1.0f;
+      fixed_rho_hi = 1.0f;
+      auto_range = true;
       // The pair's associated help icon: a real hover draws the tooltip (the two-tier rule's
       // Fit/Full carrier) and the capture is the plan's representative-evidence shot for it.
       ctx->MouseMoveToPos(ctx->ItemInfo("**/" ICON_FA_CIRCLE_INFO "##curve_range_help").RectFull.GetCenter());

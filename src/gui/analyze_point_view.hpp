@@ -31,6 +31,7 @@
 //   * Unavailable quantities (jacobian, integral) display as named unavailable states — never a
 //     zero, never a normalization that hides the gap (AC3).
 
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -377,6 +378,16 @@ std::string PointCurveRhoTickLabel(const PointCurveRhoTick& tick);
 // value): "3.24e-89". The tooltip/readout spelling that keeps a finite deep tail from
 // displaying as a linear "0".
 std::string PointCurveRhoValueText(double log10_rho);
+
+// The right gutter's ONE vertical placement for its labels — the slot-top ρ title's yield rule
+// with a single owner. `desired_py` is the label's natural centered py, `title_bottom_py` the
+// title row's bottom edge, `other_pys` the desired pys of the labels that will not move. A
+// label whose centered box would enter the title's band sinks one full line below that row;
+// when an unyielding label already occupies that line the text is skipped outright (its tick
+// mark stays — nothing is squeezed over an existing label). Returns the final center py, or
+// nullopt for "draw no text".
+std::optional<float> PointCurveRhoGutterLabelPy(float desired_py, float title_bottom_py, float line_h,
+                                                const std::vector<float>& other_pys);
 
 // The exponent stride between LABELLED decade majors so labels cannot overlap: a real fiber
 // can span hundreds of decades (live: 1e-213 .. 1.6), and labelling every decade on a ~200 px
