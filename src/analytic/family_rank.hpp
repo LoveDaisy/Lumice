@@ -54,6 +54,17 @@
 //     kFoldBisectionSteps; the crossings are grouped into connected components at grid
 //     resolution. Collapse components (class-0 samples, four-connected on the grid) are recorded
 //     with a representative each.
+//   * The ordered-arc layer over the same scan (no second evaluation of the grid): every
+//     crossing keeps its grid-edge reference; an edge with one invalid endpoint gains a midpoint
+//     probe (a legal sign bracket inside recovers a crossing; an invalid midpoint records a
+//     feasibility interruption); crossings chain through the cells that hold exactly two of
+//     them (a 3+ cell subdivides once; an unresolved subcell breaks the chain with the reason
+//     kept) — the ordered, per-link-justified `fold_chains`. A second pass classifies each
+//     chain into image-form segments (arc / verified point-image / unknown) from the exact
+//     second-order read of the SAME chain (Jet2 through the one templated optical chain — no
+//     finite differences) and locates cusp candidates as sign-change zeros of dJ(v) on arc
+//     segments only. A one-dimensional family records its scan as the ordered, validity-segmented
+//     `track` instead — no fold machinery runs there.
 //   * A pole chart degeneration is DATA, not an error: at zenith 0 the (azimuth, roll) chart
 //     tangents are the same physical spin generator, the per-point sigma2 is structurally ~0 and
 //     the family correctly reports a lower rank (the C10 spin chart reports its collapse or
@@ -103,6 +114,27 @@ constexpr int kFamilyMaxGridPerDimension = 1024;
 // (fiber_continuation.hpp kClosureCrossingBisectionSteps): 52 halvings take the bracket far
 // below double resolution for every legal spacing.
 constexpr int kFoldBisectionSteps = 52;
+// The point-image verification floor (degrees of sky): a run classifies kPointImage only when
+// its whole midpoint-refined sky diameter stays under it. Declared, not derived from any
+// display quantity (no GUI pixel, no survival floor, no oracle sampling spacing enters it): the
+// fold's located points sit off the exact critical locus by |J|/|grad J| ~ 1e-8 rad (the
+// bisection's own residual through the image map's sigma1), so a true constant image measures
+// ~1e-7 deg or better, while the planned near-degenerate counterexample arcs carry >= 1e-2 deg
+// — the floor sits four orders above the true-point reading and below every intended arc.
+constexpr double kFoldPointImageFloorDeg = 1e-3;
+// The arc margin over the floor: a verified-failed candidate run whose refined sky diameter
+// exceeds floor x this reads as a resolvably moving image (an arc); a diameter inside
+// (floor, floor x margin) is the band the evidence cannot decide (kUnknown).
+constexpr double kFoldPointImageArcMargin = 4.0;
+// The point-image verification's on-locus refinement budget: at most this many gaps of a
+// candidate run get their shared cell's subdivision (five evaluations plus reduced-precision
+// bisections each) sampled into the diameter measure, evenly spaced along the run.
+constexpr int kFoldRunRefineGaps = 16;
+// The point-image LOCATOR's alignment slack: a chain point joins a candidate run when
+// alignment >= 1 - this. Deliberately generous — the locator only proposes candidates; the
+// diameter verification (the floor above, midpoint-refined) is the arbiter, so a generous
+// locator costs a wasted verification on a slow arc, never a false point claim.
+constexpr double kFoldPointImageLocatorSlack = 0.05;
 
 // ---- the pose chart and the sky read --------------------------------------------------------------
 //
@@ -172,6 +204,40 @@ struct RestrictedFamilySpec {
 // free center exactly 0), else a sentence naming the offending field — PoseDensityError's shape.
 const char* FamilySpecError(const RestrictedFamilySpec& spec);
 
+// One point of a one-dimensional family's ordered track (free_count == 1): the scan's own
+// sample in parameter order — the SAME evaluation the rank scan already ran, recorded instead of
+// dropped. No second optical judgement: the point is EvaluateSample's outgoing at its parameter.
+// An invalid sample (the chain gates' verdict) keeps its place with valid == false and no
+// direction — the track's segmentation counts on every grid position being present.
+struct FamilyTrackPoint {
+  double param_deg = 0.0;
+  double pose[9] = {};
+  double outgoing[3] = {};
+  double image_alt_deg = 0.0;
+  double image_az_deg = 0.0;
+  double sigma1 = 0.0;
+  bool valid = false;
+};
+
+// One maximal run of consecutive VALID track points (indices into FamilyTrackRecord::points,
+// inclusive). The runs are the track's validity segmentation: between two runs lies an invalid
+// gap (the chain gates' verdicts), and the track draws run by run — no line across a gap.
+struct FamilyTrackSegment {
+  int first = 0;
+  int last = 0;
+};
+
+// The one-dimensional family's ordered track (free_count == 1 only; empty otherwise). The
+// parameters run in the axis's own order (a periodic midpoint grid's order is the orbit
+// parameter's, so the wrap sits between the last point and the first — `closed` records that
+// the first and last points are grid-adjacent through the seam and both valid, the drawable
+// loop's own evidence; no extra point is fabricated to close it).
+struct FamilyTrackRecord {
+  std::vector<FamilyTrackPoint> points;
+  std::vector<FamilyTrackSegment> segments;
+  bool closed = false;
+};
+
 // Every refusal is data, not an error code.
 enum class FamilyRankStatus {
   kOk,
@@ -199,6 +265,20 @@ const char* FamilyRankStatusName(FamilyRankStatus status);
 // equator, azimuth atan2(y, x) of the image direction — sky_direction.hpp's world convention),
 // the singular values there, and the orientation Jacobian's residual value after the bisection
 // (0 to bracket resolution; |it| equals sigma1 * sigma2 by Lagrange, a consistency read).
+//
+// The edge reference is the ordered-arc work's addition (task arc-recovery-engine): the grid
+// edge the crossing was located on, `(dim, i0, i1)` naming the edge's first vertex and `t` its
+// 0..1 position along one spacing — the identity the chain walker needs (two crossings are
+// adjacent exactly when a common grid cell holds exactly them). A crossing recovered by the
+// cliff-edge midpoint probe (an edge with one invalid endpoint) says so in `from_cliff_probe`;
+// its edge reference is the same grid edge. The classification reads (filled when the chain
+// pass runs; negative `alignment` = not classified) hang on the same record: `alignment` is
+// |tau_hat . v_hat| — the cosine between the chain's local parameter tangent and the kernel
+// direction of the restricted Jacobian, 1 when the critical tangent sits inside the kernel
+// (the image-velocity-zero reading a point-image run is verified from) — and `djv` is dJ(v),
+// the fold transversality read (gradient of the signed Jacobian along the kernel direction;
+// its sign is meaningful only against a continuously oriented kernel along the chain, which is
+// how the chain pass computes it), with `djv_resolution` the point's own numeric bound.
 struct FoldPointRecord {
   double params_deg[2] = { 0.0, 0.0 };  // [dim0, dim1] in FamilyDimension order below
   double pose[9] = {};
@@ -208,6 +288,14 @@ struct FoldPointRecord {
   double sigma1 = 0.0;
   double sigma2 = 0.0;
   double signed_jacobian = 0.0;
+  int edge_dim = -1;  // 0 or 1: which free dimension varies along the locating edge
+  int edge_i0 = -1;
+  int edge_i1 = -1;
+  double edge_t = 0.0;
+  bool from_cliff_probe = false;
+  double alignment = -1.0;
+  double djv = 0.0;
+  double djv_resolution = 0.0;
 };
 
 // One connected component of the fold locus, at grid resolution (crossings on edges of a common
@@ -230,6 +318,95 @@ struct CollapseRecord {
   double image_az_deg = 0.0;
   double sigma1 = 0.0;
   int sample_count = 0;
+};
+
+// ---- the ordered fold chain (the drawable critical arc) ---------------------------------------------
+//
+// The chain is the ordered-arc work's answer to what the union-find component only coarsens: an
+// adjacency-ordered crossing sequence, each link carrying the grid cell that justifies it. The
+// declared adjacency is UNCHANGED in kind (two crossings are adjacent exactly when one grid
+// cell's boundary holds exactly the two of them); what is new is that the pairing is per cell —
+// a cell holding three or four crossings pairs nothing (one level of bounded subdivision runs
+// first; a subcell still holding 3+ crossings breaks the chain there) — so a drawn adjacency
+// always has a named cell behind it, never a sky-distance guess.
+
+// Why a chain ends (or breaks) at an end point. Data, never an error: a broken chain publishes
+// its surviving fragments with the reason attached, per the ordered-arc contract (no silent
+// bridging, no fabricated closure).
+enum class FoldChainEnd {
+  kOpen,                     // a degree-1 end: no cell continuation beyond it (the locus just stops there at
+                             // this resolution)
+  kClosedLoop,               // the chain closes onto its own first point through a justifying cell (adjacency
+                             // evidence, never endpoint proximity)
+  kFeasibilityInterruption,  // the cliff-edge midpoint probe found the invalid region: the valid
+                             // region ends at this point (the probe's own mechanical verdict)
+  kAmbiguousCell,            // a cell with 3+ crossings survived bounded subdivision unresolved;
+                             // the fragments on both sides are kept, nothing pairs arbitrarily
+};
+const char* FoldChainEndName(FoldChainEnd end);
+
+// One link of the chain: which cell joins the two crossings it sits between, and whether that
+// cell paired them directly or through the one-level subdivision. `cell_i0` / `cell_i1` are the
+// cell's lower corner (grid indices, canonical dimension order; a periodic wrap wraps here too).
+struct FoldChainLink {
+  int cell_i0 = 0;
+  int cell_i1 = 0;
+  bool through_subdivision = false;
+};
+
+// One maximal run of the chain's image form. `first` / `last` are INCLUSIVE indices into the
+// chain's order[] (a partition of the chain: every order position belongs to exactly one
+// segment; segments with no classification evidence at all come out as kUnknown — the honest
+// third form, never silently folded into an arc or a point).
+enum class FoldSegmentForm {
+  kArc,         // the image moves along the segment (the resolvably nonzero image-velocity runs)
+  kPointImage,  // verified constant image: alignment near 1 along the run AND the run's whole
+                // sky diameter (midpoint-refined) inside the declared floor
+  kUnknown,     // the numeric evidence cannot decide (alignment in the unresolved band, or a
+                // diameter the evidence cannot separate from the floor)
+};
+const char* FoldSegmentFormName(FoldSegmentForm form);
+
+struct FoldSegmentRecord {
+  int first = 0;  // inclusive index into the owning chain's order[]
+  int last = 0;   // inclusive
+  FoldSegmentForm form = FoldSegmentForm::kArc;
+  // kPointImage only: the run's constant image (the run's mean sky position) and its measured
+  // sky diameter after midpoint refinement (the verification's own reading, not an assumption).
+  double image_alt_deg = 0.0;
+  double image_az_deg = 0.0;
+  double image_diameter_deg = 0.0;
+};
+
+// One cusp candidate: a located sign-change zero of dJ(v) along an arc segment (the fold
+// transversality failing at a locatable position). The evidence level is the plan's own
+// "candidate" bar: dJ(v) = 0 says the normal-fold criterion FAILS there; it does not by itself
+// certify a generic cusp, and the record says so through its name. `order_index` is the chain
+// order position the candidate sits at (the bisection ran between that point and its successor;
+// the recorded point is the refined location).
+struct FoldCuspCandidate {
+  int order_index = 0;
+  double params_deg[2] = { 0.0, 0.0 };
+  double pose[9] = {};
+  double image_alt_deg = 0.0;
+  double image_az_deg = 0.0;
+  double djv_residual = 0.0;  // |dJ(v)| at the located point (a residual bound, not a zero claim)
+};
+
+// One ordered fold chain: crossing indices in chain order (indices into RestrictedFamilyRank's
+// crossings), each interior step justified by a link, both ends carrying their end reasons. A
+// closed loop's `order` does not repeat the first point; `closed` says the last links to the
+// first through `links.back()` (links.size() == order.size() then). Segments partition the
+// order positions into image-form runs; cusp candidates sit only on arc segments (a point-image
+// run never doubles as a fold or cusp set — the classification's own order).
+struct FoldChainRecord {
+  bool closed = false;
+  std::vector<int> order;
+  std::vector<FoldChainLink> links;
+  FoldChainEnd end_a = FoldChainEnd::kOpen;  // at order.front()
+  FoldChainEnd end_b = FoldChainEnd::kOpen;  // at order.back()
+  std::vector<FoldSegmentRecord> segments;
+  std::vector<FoldCuspCandidate> cusps;
 };
 
 // One point evaluation of the same semantics — the probe primitive the survival filter (the
@@ -280,6 +457,20 @@ struct RestrictedFamilyRank {
   std::vector<FoldPointRecord> crossings;
   std::vector<FoldComponentRecord> fold_components;
   std::vector<CollapseRecord> collapse_components;
+  // The ordered chains over `crossings` (two-dimensional families): the drawable critical arcs.
+  // The union-find `fold_components` above stays exactly what it was (the coarse sampling
+  // connectivity, byte-compat readers); the chains are the finer per-cell-paired vocabulary the
+  // ordered-arc contract consumes. A component may hold several chains (an unresolved ambiguity
+  // breaks one locus into kept fragments) — the chains, not the components, are what draws.
+  std::vector<FoldChainRecord> fold_chains;
+  // The cliff-edge midpoint probe's honesty counters: how many one-valid-endpoint edges were
+  // probed, and how many of those probes hit the invalid region (no crossing recovered, the
+  // interval stays unresolved — declared data, like invalid_samples).
+  int cliff_probed_edges = 0;
+  int cliff_unresolved_edges = 0;
+  // The one-dimensional family's ordered track (free_count == 1 only; the same scan's samples
+  // recorded in parameter order, validity-segmented).
+  FamilyTrackRecord track;
 };
 
 // The rank + critical structure of `slots` on the family `spec`, under the sun `sun_hat` (points
