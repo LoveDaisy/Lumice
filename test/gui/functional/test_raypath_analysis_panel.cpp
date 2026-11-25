@@ -163,6 +163,26 @@ const char* const kFullyRandomJson = R"({
               "resolution": [64, 64], "view": {"elevation": 42}}]
 })";
 
+// The owner's 2026-11-25 deep-tail acceptance scene (the sun-20° column probe, C16's gauss
+// column shape): a regular hexagonal column (h=1.0, face_distance 1×6) with zenith gauss
+// 90°±1°, uniform azimuth and roll, the sun at 20°/0°. At the (−17°,−178°) sky point the
+// column's dual-branch chains resolve TWO arc branches each — a healthy one (ρ ~ 0.5-0.6) and
+// a deep tail (ρ ~ 1e-62 at the fibre's start, underflowing further along it; the owner's
+// original 4-2-6-8 probe measured 0.509 / 5.4e-89) — the dual-branch input the rho deep-tail
+// repair is accountable to.
+const char* const kDeepTailColumnJson = R"({
+  "crystal": [{"id": 1, "type": "prism", "shape": {"height": 1.0, "face_distance": [1,1,1,1,1,1]},
+               "axis": {"zenith": {"type": "gauss", "mean": 90, "std": 1},
+                        "azimuth": {"type": "uniform", "mean": 0, "std": 360},
+                        "roll": {"type": "uniform", "mean": 0, "std": 360}}}],
+  "filter": [],
+  "scene": {"light_source": {"type": "sun", "altitude": 20, "azimuth": 0, "spectrum": "D65"},
+            "ray_num": 1000000, "max_hits": 7,
+            "scattering": [{"prob": 0, "entries": [{"crystal": 1, "proportion": 1}]}]},
+  "render": [{"id": 1, "lens": {"type": "linear", "fov": 60},
+              "resolution": [64, 64], "view": {"elevation": 42}}]
+})";
+
 // Plate + column in two scattering layers, ms_prob 0.3: the scene whose chains cross layers, so
 // its list carries multi-layer rows — the ones whose `display` holds the " -> " joiner. Mirrors
 // test/e2e/configs/raypath_analysis_pc_two_layer.json (the e2e layer reads the file; gui_test
@@ -581,7 +601,8 @@ double ParseWaitElapsed(const std::string& line) {
 // for the GPU backend the way the Settings box does: DoRun reconstructs the server for it
 // (Metal here; where no device is available ResolveGpuBackend falls back to CPU, as in
 // test_color_window.cpp's GPU case), so the CPU server created below is only ever the seed.
-bool BringUpScene(ImGuiTestContext* ctx, const char* scene_json, bool infinite, bool gpu) {
+bool BringUpScene(ImGuiTestContext* ctx, const char* scene_json, bool infinite, bool gpu,
+                  float ray_num_millions = 0.1f) {
   ResetTestState();
   gui::g_server = LUMICE_CreateServer();
   IM_CHECK_RETV(gui::g_server != nullptr, false);
@@ -590,7 +611,9 @@ bool BringUpScene(ImGuiTestContext* ctx, const char* scene_json, bool infinite, 
   IM_CHECK_RETV(gui::DeserializeFromJson(scene_json, gui::g_state), false);
   gui::g_state.renderer.sim_resolution_index = 0;
   gui::g_state.sim.infinite = infinite;
-  gui::g_state.sim.ray_num_millions = 0.1f;
+  // The suite default renders at 0.1M rays for speed; a scene whose acceptance input needs the
+  // discovery to see its own weak chains passes its real ray count (the deep-tail column).
+  gui::g_state.sim.ray_num_millions = ray_num_millions;
   gui::g_state.use_gpu_backend = gpu;
   ctx->Yield(2);
   gui::DoRun(/*user_initiated=*/true);
@@ -3571,7 +3594,7 @@ bool AnalyzeFullChainOneSession(ImGuiTestContext* ctx) {
     IM_CHECK_RETV(LUMICE_PathPointGetSample(point.adopted_result.get(), 0, static_cast<size_t>(stored), &sample) ==
                       LUMICE_PATH_READ_OK,
                   false);
-    const std::vector<std::string> factors = gui::PointFactorLines(sample, info.faces, info.face_count);
+    const std::vector<std::string> factors = gui::PointFactorLines(sample, nullptr, info.faces, info.face_count);
     IM_CHECK_RETV(!factors.empty(), false);
     ctx->LogInfo("[v1 chain] point alt %.2f az %.2f dev %.2f, lambda %.1f, %d component(s), %d valid samples",
                  info.target_altitude_deg, info.target_azimuth_deg, info.target_deviation_deg, info.wavelength_nm,
@@ -11816,7 +11839,41 @@ bool PoseCurveRegionDrawsAndMovesTheSharedCursor(ImGuiTestContext* ctx) {
           ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCompleted; },
           60),
       false);
-  const int valid_count = gui::PointValidSampleCount(*gui::g_state.analysis.point.adopted_result, 0);
+  // The adopted cursor is the document's own interpretive answer (AC3), read independently here:
+  // the view's component/sample equal the v4.64 reader's pose mapped into the valid-position
+  // domain — or the reader named nothing and the baseline cursor stands (the identity holds
+  // either way; the unit layer carries the non-trivial mapping witness).
+  const int adopted_component = gui::g_state.analysis.point_view.component_index;
+  {
+    LUMICE_PathPointInterpretive interp{};
+    interp.struct_size = sizeof(interp);
+    IM_CHECK_RETV(LUMICE_PathPointGetInterpretivePose(gui::g_state.analysis.point.adopted_result.get(), &interp) ==
+                      LUMICE_PATH_READ_OK,
+                  false);
+    const std::vector<int> named_valid =
+        interp.available != 0 && interp.component_index >= 0 ?
+            gui::CollectValidSampleIndices(*gui::g_state.analysis.point.adopted_result, interp.component_index) :
+            std::vector<int>{};
+    gui::PointViewInterpretiveCursor expected;
+    expected.adopt = interp.available != 0 && interp.component_index >= 0 && interp.point_index >= 0;
+    if (expected.adopt) {
+      expected.component = interp.component_index;
+      auto it = std::find(named_valid.begin(), named_valid.end(), interp.point_index);
+      if (it == named_valid.end()) {
+        expected.adopt = false;
+      } else {
+        expected.valid_position = static_cast<int>(it - named_valid.begin());
+      }
+    }
+    IM_CHECK_RETV(gui::g_state.analysis.point_view.interpretive_available == expected.adopt, false);
+    if (expected.adopt) {
+      IM_CHECK_RETV(adopted_component == expected.component, false);
+      IM_CHECK_RETV(gui::g_state.analysis.point_view.sample_index == expected.valid_position, false);
+    }
+    ctx->LogInfo("[pose curve] interpretive adoption: component %d sample %d (available %d)", adopted_component,
+                 gui::g_state.analysis.point_view.sample_index, static_cast<int>(interp.available));
+  }
+  const int valid_count = gui::PointValidSampleCount(*gui::g_state.analysis.point.adopted_result, adopted_component);
   IM_CHECK_RETV(valid_count > 3, false);
   gui::g_state.analyze_pose_view_open = true;
   PinPoseViewOnScreen(ctx);
@@ -11832,12 +11889,35 @@ bool PoseCurveRegionDrawsAndMovesTheSharedCursor(ImGuiTestContext* ctx) {
   {
     const std::string text = CaptureWindowFrameText(ctx, "Pose & trace");
     bool all_symbols = true;
-    for (const char* symbol : { "ρ", "A/a²", "T", "K", "ρ·A/a²·T·K" }) {
+    for (const char* symbol : { "ρ", "A/a²", "T", "K", "ρ·A/a²·T·K", "· right axis" }) {
+      if (text.find(symbol) == std::string::npos) {
+        ctx->LogError("[pose curve] legend symbol missing from frame text: '%s'", symbol);
+      }
       all_symbols = all_symbols && text.find(symbol) != std::string::npos;
     }
     IM_CHECK_RETV(all_symbols, false);
+    // The dual-axis honesty lines ride the companion: the independence caliber and the
+    // adoption's opening fact (the interpretive pose or its named absence — one of the two).
+    IM_CHECK_RETV(text.find("two independent log axes") != std::string::npos, false);
+    IM_CHECK_RETV(text.find("opened at the interpretive pose") != std::string::npos ||
+                      text.find("no interpretive pose in this document") != std::string::npos,
+                  false);
     IM_CHECK_RETV(CheckMapTextGlyphs(ctx, "curve legend", text), false);
     IM_CHECK_RETV(text.find("hover:") == std::string::npos, false);
+    // The rho arm's ink exists on the real renderer (AC1's production leg): the blue series is
+    // submitted inside the canvas when the adopted branch carries a finite density anywhere.
+    gui::PointContributionCurve ink_model;
+    IM_CHECK_RETV(
+        gui::BuildPointContributionCurve(*gui::g_state.analysis.point.adopted_result, adopted_component, &ink_model),
+        false);
+    bool any_finite_rho = false;
+    for (const auto& p : ink_model.points)
+      any_finite_rho = any_finite_rho || p.rho_kind == gui::PointCurveValueKind::kPositive;
+    bool rho_ink = false;
+    for (const auto& v : curve->DrawList->VtxBuffer)
+      if (v.col == gui::kPointCurveArmColors[0] && canvas.RectFull.Contains(v.pos))
+        rho_ink = true;
+    IM_CHECK_RETV(rho_ink == any_finite_rho, false);
   }
   IM_CHECK_RETV(SaveWindowPng(ctx, "//Pose & trace", GuiTestTempPath("pose_curve_region_default.png").string()), false);
 
@@ -11935,7 +12015,9 @@ bool PoseCurveRegionDrawsAndMovesTheSharedCursor(ImGuiTestContext* ctx) {
     ctx->Yield(3);
     IM_CHECK_RETV(hover_vertices() >= 4, false);
     gui::PointContributionCurve model;
-    IM_CHECK_RETV(gui::BuildPointContributionCurve(*gui::g_state.analysis.point.adopted_result, 0, &model), false);
+    IM_CHECK_RETV(
+        gui::BuildPointContributionCurve(*gui::g_state.analysis.point.adopted_result, adopted_component, &model),
+        false);
     const double mouse_x = (ImGui::GetIO().MousePos.x - plot.Min.x) / plot.GetWidth() * model.points.back().x_rad;
     int nearest = -1;
     double distance = DBL_MAX;
@@ -11960,17 +12042,33 @@ bool PoseCurveRegionDrawsAndMovesTheSharedCursor(ImGuiTestContext* ctx) {
     // AddLine offsets its input by +0.5px; AA changes width, not the centre.
     IM_CHECK_RETV(std::abs((line_left + line_right) * .5f - (expected_x + .5f)) < .1f, false);
     // A hover circle adds a radius beyond the 2px curve stroke at the same C-reader sample.
+    // Arms 1-4 predict through the LEFT axis; the rho dot predicts through its OWN right axis.
     const auto axis = gui::PointCurveAxisFit(model);
-    const double vals[] = { p.rho, p.area, p.transmission, p.k_carea, p.product };
+    const auto rho_axis = gui::PointCurveRhoAxisFit(model);
+    const double vals[] = { 0.0, p.area, p.transmission, p.k_carea, p.product };
     const gui::PointCurveValueKind kinds[] = { p.rho_kind, p.area_kind, p.transmission_kind, p.k_kind, p.product_kind };
     bool dots_ok = true;
     int visible_dots = 0;
     for (int arm = 0; arm < 5; ++arm) {
-      if (kinds[arm] != gui::PointCurveValueKind::kPositive || vals[arm] < axis.lo || vals[arm] > axis.hi)
+      if (kinds[arm] != gui::PointCurveValueKind::kPositive)
         continue;
+      float py = -1.0f;
+      if (arm == 0) {
+        if (!rho_axis.valid)
+          continue;
+        // Hand-derived mapping (the oracle discipline): the display span widens a constant
+        // branch by half a decade each way — the production helper's own definition, spelled
+        // here from the axis's fields, never called back.
+        const double disp_lo = rho_axis.hi_log10 == rho_axis.lo_log10 ? rho_axis.lo_log10 - 0.5 : rho_axis.lo_log10;
+        const double disp_hi = rho_axis.hi_log10 == rho_axis.lo_log10 ? rho_axis.hi_log10 + 0.5 : rho_axis.hi_log10;
+        py = plot.Max.y - float((p.log10_rho - disp_lo) / (disp_hi - disp_lo) * plot.GetHeight());
+      } else {
+        if (vals[arm] < axis.lo || vals[arm] > axis.hi)
+          continue;
+        py = plot.Max.y - float((std::log10(vals[arm]) - std::log10(axis.lo)) /
+                                (std::log10(axis.hi) - std::log10(axis.lo)) * plot.GetHeight());
+      }
       ++visible_dots;
-      const float py = plot.Max.y - float((std::log10(vals[arm]) - std::log10(axis.lo)) /
-                                          (std::log10(axis.hi) - std::log10(axis.lo)) * plot.GetHeight());
       int circle_vertices = 0;
       for (const auto& v : curve->DrawList->VtxBuffer) {
         if (v.col == gui::kPointCurveArmColors[arm] && std::abs(v.pos.x - expected_x) <= gui::UiPx(4) &&
@@ -12004,7 +12102,9 @@ bool PoseCurveRegionDrawsAndMovesTheSharedCursor(ImGuiTestContext* ctx) {
   gui::PointViewState& curve_view = gui::g_state.analysis.point_view;
   const int cursor_before_wheel = curve_view.sample_index;
   gui::PointContributionCurve axis_model;
-  IM_CHECK_RETV(gui::BuildPointContributionCurve(*gui::g_state.analysis.point.adopted_result, 0, &axis_model), false);
+  IM_CHECK_RETV(
+      gui::BuildPointContributionCurve(*gui::g_state.analysis.point.adopted_result, adopted_component, &axis_model),
+      false);
   const auto fit_axis = gui::PointCurveAxisFit(axis_model);
   const double span_before = std::log10(fit_axis.hi) - std::log10(fit_axis.lo);
   const float scroll_before = curve->Scroll.y;
@@ -12031,7 +12131,9 @@ bool PoseCurveRegionDrawsAndMovesTheSharedCursor(ImGuiTestContext* ctx) {
     }
     IM_CHECK_RETV(product_top < FLT_MAX && plot_top < plot_bottom, false);
     gui::PointContributionCurve model;
-    IM_CHECK_RETV(gui::BuildPointContributionCurve(*gui::g_state.analysis.point.adopted_result, 0, &model), false);
+    IM_CHECK_RETV(
+        gui::BuildPointContributionCurve(*gui::g_state.analysis.point.adopted_result, adopted_component, &model),
+        false);
     double product_max = 0.0;
     for (const gui::PointCurvePoint& point : model.points) {
       if (point.product_kind == gui::PointCurveValueKind::kPositive) {
@@ -12082,13 +12184,13 @@ bool PoseCurveRegionDrawsAndMovesTheSharedCursor(ImGuiTestContext* ctx) {
   // The ray face follows the moved cursor (the trace re-keys to the clicked sample).
   IM_CHECK_RETV(DriveUntil(
                     ctx,
-                    [clicked] {
+                    [clicked, adopted_component] {
                       const gui::RayTraceSession& t = gui::g_state.analysis.trace;
                       if (!t.adopted_result || !t.intent_valid) {
                         return false;
                       }
-                      const int stored =
-                          gui::PointValidSampleIndexAt(*gui::g_state.analysis.point.adopted_result, 0, clicked);
+                      const int stored = gui::PointValidSampleIndexAt(*gui::g_state.analysis.point.adopted_result,
+                                                                      adopted_component, clicked);
                       return t.key.sample == stored;
                     },
                     30),
@@ -12379,11 +12481,28 @@ bool PoseCurveModesHaveSessionLifetime(ImGuiTestContext* ctx) {
   const auto intent = gui::g_state.analysis.point.intent_id;
   const bool dirty = gui::g_state.dirty;
   view.playing = true;
+  // The rho arm's rows before the switch: the Fit/Full knob governs the LEFT window only — the
+  // right axis's ink must not move (the independent-domain contract, on the real renderer).
+  ImGuiWindow* lifetime_curve = PoseRegionWindow("##AnalyzePoseCurve");
+  IM_CHECK_RETV(lifetime_curve != nullptr, false);
+  const auto rho_rows = [&] {
+    std::vector<float> ys;
+    for (const auto& v : lifetime_curve->DrawList->VtxBuffer)
+      if (v.col == gui::kPointCurveArmColors[0])
+        ys.push_back(v.pos.y);
+    std::sort(ys.begin(), ys.end());
+    return ys;
+  };
+  const std::vector<float> rho_rows_before = rho_rows();
   ctx->ItemClick("**/Full##curve_range");
   ctx->Yield(2);
   IM_CHECK_RETV(view.curve_range_mode == gui::PointCurveRangeMode::kFull && view.playing, false);
   IM_CHECK_RETV(gui::g_state.analysis.point.key == key && gui::g_state.analysis.point.intent_id == intent, false);
   IM_CHECK_RETV(gui::g_state.dirty == dirty, false);
+  const std::vector<float> rho_rows_after = rho_rows();
+  IM_CHECK_RETV(rho_rows_after.size() == rho_rows_before.size(), false);
+  for (size_t r = 0; r < rho_rows_after.size() && r < rho_rows_before.size(); ++r)
+    IM_CHECK_RETV(std::abs(rho_rows_after[r] - rho_rows_before[r]) < 1.0f, false);
   view.playing = false;
   gui::g_state.analyze_pose_view_open = false;
   ctx->Yield(2);
@@ -12408,11 +12527,243 @@ bool PoseCurveModesHaveSessionLifetime(ImGuiTestContext* ctx) {
           60),
       false);
   IM_CHECK_RETV(view.curve_range_mode == gui::PointCurveRangeMode::kFit, false);
+  // The SECOND adoption re-records the interpretive fact as the new document's own: the cursor
+  // equals the fresh document's interpretive answer (or the named absence stands).
+  {
+    LUMICE_PathPointInterpretive interp{};
+    interp.struct_size = sizeof(interp);
+    IM_CHECK_RETV(LUMICE_PathPointGetInterpretivePose(gui::g_state.analysis.point.adopted_result.get(), &interp) ==
+                      LUMICE_PATH_READ_OK,
+                  false);
+    IM_CHECK_RETV(view.interpretive_available == (interp.available != 0), false);
+    if (interp.available != 0) {
+      IM_CHECK_RETV(view.component_index == interp.component_index, false);
+      const std::vector<int> named_valid =
+          gui::CollectValidSampleIndices(*gui::g_state.analysis.point.adopted_result, interp.component_index);
+      const auto it = std::find(named_valid.begin(), named_valid.end(), interp.point_index);
+      IM_CHECK_RETV(it != named_valid.end(), false);
+      IM_CHECK_RETV(view.sample_index == static_cast<int>(it - named_valid.begin()), false);
+    }
+  }
   gui::g_state.analyze_pose_view_open = false;
   ctx->Yield(2);
   return true;
 }
 
+// The owner's 2026-11-25 deep-tail acceptance, on the owner's own scene input (the sun-20°
+// column probe): the sun-20° cone at (−17°,−178°) carries dual-branch chains — a healthy arm
+// and a deep tail whose linear rho underflows to 0 along the fibre — and the GUI cone list's
+// top literal (3-1-5-7, the probe-verified dual-branch shape) drives the terminal AC legs on
+// the REAL document: the adoption opens at the interpretive pose; each branch is browsed
+// through the real component control; both rho arms draw on the independent right axis with
+// decade labels inside the window; a hover on the deep tail spells its absolute density
+// (never a linear 0). The branch order is MEASURED, not assumed — the healthy and deep-tail
+// arms are identified by their own rho spans.
+bool PoseCurveDeepTailDualBranchesOnTheColumnScene(ImGuiTestContext* ctx) {
+  ScopedServerGuard guard;
+  // The scene's own 1M-ray count: the whole-sky list does not carry the dual-branch literals
+  // at the suite's 0.1M speed default (measured: 639 rows, none of the 4-2-6-8 family).
+  IM_CHECK_RETV(BringUpScene(ctx, kDeepTailColumnJson, /*infinite=*/false, /*gpu=*/false, /*ray_num_millions=*/1.0f),
+                false);
+  OpenWindow(ctx);
+  // The owner's own discovery input (verification.md's probe): the CONE ROI centred on the
+  // sky point — under it the dual-branch family ranks at the top of the list. The centre/
+  // radius writes are the pick's own state bytes (the panorama at the default lens cannot
+  // reach (−17°,−178°) to click); the Analyze run itself is the real button.
+  {
+    auto& analysis = gui::g_state.analysis;
+    analysis.roi_mode = LUMICE_RAYPATH_ROI_CONE;
+    // The pick's own byte convention (PickAnalysisConeCenter): the unprojected POSITION vector
+    // of the sky point itself — AltAzToDir's product, not the travel direction the sky-point
+    // intent carries (writing the negated vector aims the cone at the antipode; measured red).
+    float centre[3] = { 0.0f, 0.0f, 0.0f };
+    lumice::AltAzToDir(-17.0, -178.0, centre);
+    analysis.cone_center_valid = true;
+    analysis.cone_center_is_default = false;
+    for (int k = 0; k < 3; ++k) {
+      analysis.cone_center_dir[k] = centre[k];
+    }
+    analysis.cone_radius_deg = 8.0f;
+    ctx->SetRef(PanoramaRegionRef());
+    ctx->ItemClick(kAnalyzeButton);
+    ctx->SetRef("");
+    IM_CHECK_RETV(gui::g_state.analysis.started, false);
+  }
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      return !gui::g_state.analysis_run_in_progress &&
+                             gui::g_state.analysis_result.payload != nullptr &&
+                             !gui::g_state.analysis_result.payload->entries.empty();
+                    },
+                    120),
+                false);
+  {
+    const auto& result = gui::g_state.analysis_result;
+    IM_CHECK_RETV(result.payload->roi_mode == LUMICE_RAYPATH_ROI_CONE, false);
+    // The cone run's shape, for the run log: the requested centre (the pick's own convention)
+    // and the head rows — enough to name a wrong-cone run or a list-shape change on sight.
+    float echo_alt = 0.0f;
+    float echo_az = 0.0f;
+    lumice::DirToAltAz(gui::g_state.analysis.cone_center_dir, &echo_alt, &echo_az);
+    ctx->LogInfo("[deep tail] cone centre (alt %.2f, az %.2f), request radius %.1f deg, rings %d", echo_alt, echo_az,
+                 result.payload->cone_radius_rad * 57.29577951308232, result.payload->cone_ring_count);
+    int logged = 0;
+    for (const int idx : result.display_order) {
+      if (logged++ >= 5) {
+        break;
+      }
+      ctx->LogInfo("[deep tail]   '%s' energy %.2f", result.payload->entries[static_cast<size_t>(idx)].display,
+                   result.display_energy[static_cast<size_t>(idx)]);
+    }
+  }
+  // The owner's literal 4-2-6-8 is NOT selectable through the GUI's analysis list on this
+  // scene (measured, 2026-11-25): the GUI's CONE analysis result carries ~100 rows with no
+  // 4-x-x-8-family chain at all, while the CLI `analyze` on the same build/scene/cone records
+  // 1114 rows with 4-2-6-8 at rank 22 (1.2%) — a pre-existing engine-path difference outside
+  // this consumer task's fence, escalated with evidence. The dual-branch acceptance drives
+  // 3-1-5-7 instead — the GUI list's own top row, verified by the CLI point probe to carry
+  // the SAME two-branch shape at this point (healthy rho ~ 0.58, deep tail ~ 1.3e-62).
+  IM_CHECK_RETV(SelectRowByDisplay(ctx, "3-1-5-7") != std::nullopt, false);
+  gui::g_state.analyze_pose_view_open = true;
+  PinPoseViewOnScreen(ctx);
+  SetSkyPointTarget(-17.0, -178.0);
+  IM_CHECK_RETV(
+      DriveUntil(
+          ctx, [] { return gui::PointQueryStateFor(gui::g_state.analysis.point) == gui::PointQueryState::kCompleted; },
+          120),
+      false);
+  ctx->Yield(2);
+  auto& view = gui::g_state.analysis.point_view;
+  LUMICE_PathPointInfo info{};
+  info.struct_size = sizeof(info);
+  IM_CHECK_RETV(LUMICE_PathPointGetInfo(gui::g_state.analysis.point.adopted_result.get(), &info) == LUMICE_PATH_READ_OK,
+                false);
+  IM_CHECK_RETV(info.outcome == LUMICE_PATH_POINT_DISCOVERED && info.component_count >= 2, false);
+  ctx->LogInfo("[deep tail] %d component(s) at (-17,-178) on the literal 3-1-5-7",
+               static_cast<int>(info.component_count));
+  // AC3's terminal leg: the adoption opened at the interpretive pose of THIS document.
+  {
+    LUMICE_PathPointInterpretive interp{};
+    interp.struct_size = sizeof(interp);
+    IM_CHECK_RETV(LUMICE_PathPointGetInterpretivePose(gui::g_state.analysis.point.adopted_result.get(), &interp) ==
+                      LUMICE_PATH_READ_OK,
+                  false);
+    IM_CHECK_RETV(interp.available != 0, false);
+    IM_CHECK_RETV(view.interpretive_available, false);
+    IM_CHECK_RETV(view.component_index == interp.component_index, false);
+    const std::vector<int> named_valid =
+        gui::CollectValidSampleIndices(*gui::g_state.analysis.point.adopted_result, interp.component_index);
+    const auto it = std::find(named_valid.begin(), named_valid.end(), interp.point_index);
+    IM_CHECK_RETV(it != named_valid.end() && view.sample_index == static_cast<int>(it - named_valid.begin()), false);
+    ctx->LogInfo("[deep tail] opened at component %d, sample %d (log density %.2f)", interp.component_index + 1,
+                 view.sample_index + 1, interp.log_density);
+  }
+  // AC2's terminal leg: browse BOTH branches through the real component control; per branch the
+  // rho arm must submit ink on its own axis and the right gutter must carry strided decade
+  // labels that stay inside the window. The deep tail is identified by its own span.
+  ImGuiWindow* pose_curve = PoseRegionWindow("##AnalyzePoseCurve");
+  IM_CHECK_RETV(pose_curve != nullptr, false);
+  std::vector<gui::PointComponentRow> rows;
+  IM_CHECK_RETV(gui::PointComponentRows(*gui::g_state.analysis.point.adopted_result, &rows) >= 2, false);
+  bool saw_healthy = false;
+  bool saw_deep_tail = false;
+  // One branch's browse-and-pin, a lambda the loop calls per row (the loop-fatal-assert rule:
+  // one branch's early failure must not silently skip the other's evidence).
+  const auto browse_branch = [&](int branch) -> bool {
+    // The component switch, through the real control's OWN write discipline — the combo's
+    // callback writes component_index + resets the sample cursor and stops playback; this
+    // drives those exact writes and lets the real frames re-render (the popup's generic
+    // ImGui click mechanics proved engine-ref-fragile on this host; the widget is ImGui's
+    // own Combo, not the code under test — the write path and the per-branch renderer are).
+    view.component_index = branch;
+    view.sample_index = 0;
+    view.playing = false;
+    ctx->Yield(3);
+    IM_CHECK_RETV(view.component_index == branch, false);
+    gui::PointContributionCurve curve;
+    IM_CHECK_RETV(gui::BuildPointContributionCurve(*gui::g_state.analysis.point.adopted_result, branch, &curve), false);
+    const gui::PointCurveRhoAxisRange rho_axis = gui::PointCurveRhoAxisFit(curve);
+    IM_CHECK_RETV(rho_axis.valid, false);
+    // The branch's own character, measured: a healthy branch reaches near-unit densities; a
+    // deep tail sits far below any linear-friendly decade. At least one of each must exist.
+    if (rho_axis.hi_log10 > -1.0) {
+      saw_healthy = true;
+    }
+    if (rho_axis.lo_log10 < -20.0) {
+      saw_deep_tail = true;
+    }
+    // The rho arm's ink inside the canvas.
+    const ImGuiTestItemInfo canvas = ctx->ItemInfo("**/##pose_curve_canvas", ImGuiTestOpFlags_NoError);
+    IM_CHECK_RETV(canvas.ID != 0, false);
+    ImRect plot(ImVec2(FLT_MAX, FLT_MAX), ImVec2(-FLT_MAX, -FLT_MAX));
+    bool rho_ink = false;
+    for (const auto& v : pose_curve->DrawList->VtxBuffer) {
+      if (v.col == gui::kPointCurveArmColors[0] && canvas.RectFull.Contains(v.pos))
+        rho_ink = true;
+      if (v.col == gui::kPointCurvePlotBorderColor && canvas.RectFull.Contains(v.pos))
+        plot.Add(v.pos);
+    }
+    IM_CHECK_RETV(plot.Min.x < plot.Max.x && plot.Min.y < plot.Max.y, false);
+    IM_CHECK_RETV(rho_ink, false);
+    // The right gutter's strided labels: present, bounded in count (never one per decade), and
+    // inside the window.
+    std::vector<ImRect> glyphs, bands;
+    const auto& vertices = pose_curve->DrawList->VtxBuffer;
+    const ImU32 muted = ImGui::GetColorU32(ImGuiCol_TextDisabled);
+    for (int i = 0; i + 3 < vertices.Size;) {
+      if (vertices[i].col != muted) {
+        ++i;
+        continue;
+      }
+      ImRect r(vertices[i].pos, vertices[i].pos);
+      for (int k = 1; k < 4; ++k)
+        r.Add(vertices[i + k].pos);
+      i += 4;
+      if (r.Min.x > plot.Max.x && r.Min.y >= canvas.RectFull.Min.y && r.Max.y <= canvas.RectFull.Max.y)
+        glyphs.push_back(r);
+    }
+    std::sort(glyphs.begin(), glyphs.end(), [](const ImRect& a, const ImRect& b) { return a.Min.y < b.Min.y; });
+    for (const auto& r : glyphs) {
+      if (bands.empty() || r.Min.y > bands.back().Max.y)
+        bands.push_back(r);
+      else
+        bands.back().Add(r);
+    }
+    const float decades = rho_axis.hi_log10 - rho_axis.lo_log10;
+    IM_CHECK_RETV(!bands.empty() && static_cast<float>(bands.size()) <= std::max(2.0f, decades / 8.0f) + 2.0f, false);
+    const float window_right = pose_curve->Pos.x + pose_curve->Size.x;
+    for (const ImRect& b : bands)
+      IM_CHECK_RETV(b.Max.x <= window_right + 1.0f, false);
+    ctx->LogInfo("[deep tail] branch %d: rho decades [%.1f, %.1f], %d right labels", branch + 1, rho_axis.lo_log10,
+                 rho_axis.hi_log10, static_cast<int>(bands.size()));
+    IM_CHECK_RETV(
+        SaveWindowPng(ctx, "//Pose & trace",
+                      GuiTestTempPath("pose_curve_deep_tail_branch" + std::to_string(branch + 1) + ".png").string()),
+        false);
+    return true;
+  };
+  for (int branch = 0; branch < 2; ++branch) {
+    if (!browse_branch(branch)) {
+      return false;  // the lambda's own IM_CHECK named the failure
+    }
+  }
+  IM_CHECK_RETV(saw_healthy, false);
+  IM_CHECK_RETV(saw_deep_tail, false);
+  // AC1's terminal read: hovering the CURRENT branch's plot spells the absolute log-fact
+  // density (a "e<exp> (log axis)" readout) — never a bare linear 0 for the deep tail.
+  ctx->SetRef("");
+  const ImGuiTestItemInfo canvas = ctx->ItemInfo("**/##pose_curve_canvas", ImGuiTestOpFlags_NoError);
+  IM_CHECK_RETV(canvas.ID != 0, false);
+  ctx->MouseMoveToPos(canvas.RectFull.GetCenter());
+  ctx->Yield(3);
+  const std::string hovered = CaptureFrameText(ctx);
+  IM_CHECK_RETV(hovered.find("(log axis)") != std::string::npos, false);
+  IM_CHECK_RETV(hovered.find("e-") != std::string::npos || hovered.find("e+") != std::string::npos, false);
+  ctx->MouseMoveToPos(ImVec2(2, 2));
+  ctx->Yield(2);
+  return true;
+}
 // ⑧ — the multi-window real mouse chain: Raypath view, the pose window and the Entry Edit modal
 // are open in the same frame, and a real mouse action in each writes its own state — the map
 // pick sets the sky point, the pose D5 drag writes its ratio, the modal's edit writes its field.
@@ -16731,6 +17082,14 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
     t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(PoseCurveModesHaveSessionLifetime(ctx)); };
   }
 
+  // The owner's deep-tail acceptance scene: the dual-branch terminal AC legs on the real
+  // dual-branch document at (−17°,−178°) (the GUI cone list's top literal 3-1-5-7).
+  {
+    ImGuiTest* t =
+        IM_REGISTER_TEST(engine, "raypath_analysis", "pose_curve_deep_tail_dual_branches_on_the_column_scene");
+    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(PoseCurveDeepTailDualBranchesOnTheColumnScene(ctx)); };
+  }
+
   {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "pose_curve_report_quotas_track_content");
     t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(PoseCurveReportQuotasTrackContent(ctx)); };
@@ -17022,7 +17381,7 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       if (!draw)
         return;
       ImGui::SetNextWindowPos(ImVec2(40, 80), ImGuiCond_Always);
-      ImGui::SetNextWindowSize(ImVec2(700, 400), ImGuiCond_Always);
+      ImGui::SetNextWindowSize(ImVec2(880, 400), ImGuiCond_Always);
       ImGui::Begin("Curve draw fixture", nullptr, ImGuiWindowFlags_NoSavedSettings);
       gui::RenderPointCurveRangeControl(&mode);
       const ImVec2 origin = ImGui::GetCursorScreenPos();
@@ -17033,9 +17392,13 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       dl->AddRectFilled(plot.Min, plot.Max, IM_COL32(16, 18, 22, 255));
       const gui::PointCurveAxisRange range =
           auto_range ? gui::PointCurveAxisFit(model, mode) : gui::PointCurveAxisRange{ true, .1, 10 };
+      const gui::PointCurveRhoAxisRange rho_range =
+          auto_range ? gui::PointCurveRhoAxisFit(model) : gui::PointCurveRhoAxisRange{ true, -1.0, 1.0 };
       gui::DrawPointCurveLogAxis(dl, range, plot.Min, plot.Max);
+      gui::DrawPointCurveRhoAxis(dl, rho_range, plot.Min, plot.Max);
       gui::DrawPointCurveSeed(dl, model, plot.Min, plot.Max);
       gui::DrawPointCurveArms(dl, model, range, plot.Min, plot.Max);
+      gui::DrawPointCurveRhoArm(dl, model, rho_range, plot.Min, plot.Max);
       if (scroll_test)
         ImGui::Dummy(ImVec2(1, 600));
       ImGui::End();
@@ -17052,11 +17415,16 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       for (int i = 0; i < 7; ++i)
         model.points[i].x_rad = i;
       using K = gui::PointCurveValueKind;
+      // The rho arm's log facts: -2 and +3 decades draw exactly where the old shared-axis legs
+      // expected them (the fixed window is [-1, 1] decades, so both clip to the frame).
       model.points[0].rho = .01;
+      model.points[0].log10_rho = -2;
+      model.points[0].rho_kind = K::kPositive;
       model.points[1].rho = 1000;
+      model.points[1].log10_rho = 3;
+      model.points[1].rho_kind = K::kPositive;
       model.points[0].area = 1000;
       model.points[1].area = .01;
-      model.points[0].rho_kind = model.points[1].rho_kind = K::kPositive;
       model.points[0].area_kind = model.points[1].area_kind = K::kPositive;
       model.points[0].transmission = 100;
       model.points[1].transmission = 1000;
@@ -17104,14 +17472,39 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       // Change to a wide union. An isolated product at 1e-6 is invisible in Fit and visible in Full.
       model.points[0].rho = 1;
       model.points[1].rho = 1e-12;
-      model.points[0].area_kind = model.points[1].area_kind = K::kUnavailable;
+      // The rho arm rides the mode switch on its OWN axis: 0 and -12 decades — the values move
+      // neither with Fit nor Full (asserted below through the submitted ink).
+      model.points[0].log10_rho = 0;
+      model.points[1].log10_rho = -12;
+      // The LEFT union is four-arm-only now: the wide window this leg exercises comes from the
+      // AREA arm spanning [1e-12, 1] — under the old shared-union contract the rho arm itself
+      // widened the window, which is exactly the coupling this task removed.
+      model.points[0].area = 1;
+      model.points[1].area = 1e-12;
+      model.points[0].area_kind = model.points[1].area_kind = K::kPositive;
       model.points[0].transmission_kind = model.points[1].transmission_kind = K::kUnavailable;
       model.points[3].k_kind = K::kUnavailable;
       model.points[5].product = 1e-6;
       auto_range = true;
       ctx->Yield(3);
+      // Fit's floor is max(min positive, hi x 1e-5) over the four arms: hi=1, so the window is
+      // [1e-5, 1] and the isolated product at 1e-6 sits below it — invisible in Fit.
       IM_CHECK(!has_arm(4));
+      // The rho arm's own fit spans [0, -12] decades with no mode input: its line is visible
+      // where the left window's Full/Full floors have no say.
+      IM_CHECK(has_arm(0));
       const ImRect before = ctx->ItemInfo("**/##fixture_plot").RectFull;
+      // The rho ink's rows before the switch: the mode must not move them (independent axis).
+      const auto rho_rows = [&] {
+        std::vector<float> ys;
+        for (const auto& v : w->DrawList->VtxBuffer)
+          if (v.col == gui::kPointCurveArmColors[0])
+            ys.push_back(v.pos.y);
+        std::sort(ys.begin(), ys.end());
+        return ys;
+      };
+      const std::vector<float> rho_rows_fit = rho_rows();
+      IM_CHECK(!rho_rows_fit.empty());
       ctx->ItemClick("**/Full##curve_range");
       ctx->Yield(2);
       IM_CHECK(mode == gui::PointCurveRangeMode::kFull);
@@ -17119,6 +17512,11 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       // Full's floor is max(min positive, hi x 10^-14); this sample's min positive is 1e-12, so
       // the window is [-12,0] and log(1e-6) sits at 6/12 = 0.5 of the plot height.
       IM_CHECK(ink_at(4, 5, .5));
+      // The rho arm's ink did not move: same decade values, same right axis, same rows.
+      const std::vector<float> rho_rows_full = rho_rows();
+      IM_CHECK_EQ(rho_rows_full.size(), rho_rows_fit.size());
+      for (size_t r = 0; r < rho_rows_full.size() && r < rho_rows_fit.size(); ++r)
+        IM_CHECK(std::abs(rho_rows_full[r] - rho_rows_fit[r]) < 1.0f);
       ctx->MouseMoveToPos(ImVec2(2, 2));
       ctx->Yield(2);  // keep the control tooltip from covering the axis being inspected
       const auto label_bands = [&] {
@@ -17167,6 +17565,58 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
       ctx->ItemClick("**/Fit##curve_range");
       ctx->Yield(2);
       IM_CHECK(!has_arm(4));
+      // ---- The deep tail leg (AC1/AC2's extreme face): the rho arm at a 1e-2000-scale tail —
+      // exponents no linear double can carry — still submits its line on its own axis and the
+      // right gutter labels spell the extreme exponents, without pow-formed values anywhere.
+      model.points[0].log10_rho = -2000;
+      model.points[1].log10_rho = -1990;
+      model.points[0].area_kind = model.points[1].area_kind = K::kUnavailable;
+      model.points[0].transmission_kind = model.points[1].transmission_kind = K::kUnavailable;
+      model.points[5].product_kind = K::kUnavailable;
+      ctx->Yield(3);
+      IM_CHECK(has_arm(0));  // the tail's own line, not a clipped-away arm
+      IM_CHECK(!has_arm(4));
+      const auto right_bands = [&] {
+        std::vector<ImRect> glyphs, bands;
+        const auto& vertices = w->DrawList->VtxBuffer;
+        const ImU32 color = ImGui::GetColorU32(ImGuiCol_TextDisabled);
+        for (int i = 0; i + 3 < vertices.Size;) {
+          if (vertices[i].col != color) {
+            ++i;
+            continue;
+          }
+          ImRect r(vertices[i].pos, vertices[i].pos);
+          for (int k = 1; k < 4; ++k)
+            r.Add(vertices[i + k].pos);
+          i += 4;
+          if (r.Min.x > plot.Max.x && r.Min.y >= plot.Min.y - ImGui::GetTextLineHeight() &&
+              r.Max.y <= plot.Max.y + ImGui::GetTextLineHeight())
+            glyphs.push_back(r);
+        }
+        std::sort(glyphs.begin(), glyphs.end(), [](const ImRect& a, const ImRect& b) { return a.Min.y < b.Min.y; });
+        for (const auto& r : glyphs) {
+          if (bands.empty() || r.Min.y > bands.back().Max.y)
+            bands.push_back(r);
+          else
+            bands.back().Add(r);
+        }
+        return bands;
+      };
+      const std::vector<ImRect> tail_bands = right_bands();
+      IM_CHECK(tail_bands.size() >= 2);                 // strided decade labels across the tail span
+      const float window_right = w->Pos.x + w->Size.x;  // the fixture window's own right edge
+      for (const ImRect& b : tail_bands)
+        IM_CHECK(b.Max.x <= window_right + 1.0f);  // every label stays inside its gutter
+      IM_CHECK(
+          SaveWindowPng(ctx, "//Curve draw fixture", GuiTestTempPath("curve_rho_deep_tail_right_axis.png").string()));
+      // The tail line's rows sit between the labelled extremes, inside the plot.
+      float tail_top = FLT_MAX, tail_bottom = -FLT_MAX;
+      for (const auto& v : w->DrawList->VtxBuffer)
+        if (v.col == gui::kPointCurveArmColors[0] && v.pos.x >= plot.Min.x && v.pos.x <= plot.Max.x) {
+          tail_top = std::min(tail_top, v.pos.y);
+          tail_bottom = std::max(tail_bottom, v.pos.y);
+        }
+      IM_CHECK(tail_top >= plot.Min.y - 1.0f && tail_bottom <= plot.Max.y + 1.0f);
       // The pair's associated help icon: a real hover draws the tooltip (the two-tier rule's
       // Fit/Full carrier) and the capture is the plan's representative-evidence shot for it.
       ctx->MouseMoveToPos(ctx->ItemInfo("**/" ICON_FA_CIRCLE_INFO "##curve_range_help").RectFull.GetCenter());
