@@ -254,6 +254,23 @@ const char* const kThreeLayerLongChainJson = R"({
 // The plate scene (the family-arm face's own): a basal plate with a uniform azimuth axis — its
 // arc rows route to the restricted plate family, whose survey walks the freezing ladder and runs
 // the probe on the representative (the profile rows' home arm).
+// The column population (task arc-recovery-engine's layer case): the C16-shaped prism at
+// zenith gauss 90 +- 0.3 — the freeze ladder's spin-chart level carries the fold arcs AND the
+// deeper level's azimuth circle (the Parry-shaped track), one document, both drawable faces.
+// Mirrors the C round-trip test's scene (test_survey_c_api.cpp) at the GUI's render shape.
+const char* const kColumnPopulationJson = R"({
+  "crystal": [{"id": 1, "type": "prism", "shape": {"height": 0.3, "face_distance": [1,1,1,1,1,1]},
+               "axis": {"zenith": {"type": "gauss", "mean": 90, "std": 0.3},
+                        "azimuth": {"type": "uniform", "mean": 0, "std": 360},
+                        "roll": {"type": "uniform", "mean": 0, "std": 360}}}],
+  "filter": [],
+  "scene": {"light_source": {"type": "sun", "altitude": 20.0, "spectrum": "D65"},
+            "ray_num": 100000, "max_hits": 7,
+            "scattering": [{"prob": 0.0, "entries": [{"crystal": 1, "proportion": 10}]}]},
+  "render": [{"id": 1, "lens": {"type": "linear", "fov": 60},
+              "resolution": [64, 64], "view": {"elevation": 42}}]
+})";
+
 const char* const kPlateJson = R"({
   "crystal": [ { "id": 1, "type": "prism",
                  "shape": { "height": 0.3, "face_distance": [1,1,1,1,1,1] },
@@ -2914,6 +2931,140 @@ std::string CaptureFrameText(ImGuiTestContext* ctx);
 std::string CaptureWindowFrameText(ImGuiTestContext* ctx, const char* window_name);
 std::string CaptureMapFrameText(ImGuiTestContext* ctx);
 bool CheckRealMapReadability(ImGuiTestContext* ctx, const gui::SurveyOverviewModel& model);
+// The family curve layer's real-input face (task arc-recovery-engine): a real column survey's
+// curves draw their ink under the Fold arcs gate, a real stationary click on the map commits
+// the result-bound selection (the readout names the picked curve's own member/witness), the
+// gate clears the ink, and a new class's survey invalidates the selection. The AC5 display
+// comparisons the plan lists per scene (the widening pair, the Lowitz cross-member negative,
+// the orientation presets) stay open items — this case pins the mechanism face on the real
+// column document; the pick record rides the log + the saved PNG.
+int CountFamilyCurveArcVertices() {
+  const ImGuiWindow* region = MapRegionWindow();
+  if (region == nullptr) {
+    return -1;
+  }
+  // kFamilyArcInk = IM_COL32(255, 176, 92, 235), the fold-arc ink's own literal (the colour
+  // constant lives in the .cpp; the literal is the probe's contract — a re-spelled ink fails
+  // this count and the pin is audible). The overlay ink rides the map region child's own
+  // draw list — the same list the readout-patch checker scans.
+  const ImU32 kArcInk = IM_COL32(255, 176, 92, 235);
+  int count = 0;
+  for (int i = 0; i < region->DrawList->VtxBuffer.Size; ++i) {
+    if (region->DrawList->VtxBuffer[i].col == kArcInk) {
+      ++count;
+    }
+  }
+  return count;
+}
+
+bool FamilyCurveLayerDrawsPicksAndSurvivesReplacement(ImGuiTestContext* ctx) {
+  ScopedServerGuard guard;
+  IM_CHECK_RETV(BringUpScene(ctx, kColumnPopulationJson, /*infinite=*/false, /*gpu=*/false), false);
+  OpenWindow(ctx);
+  IM_CHECK_RETV(RunWholeSkyAnalysisToCompletion(ctx, nullptr), false);
+  SetListRef(ctx);
+  ctx->ItemClick("**/3-5");
+  ctx->SetRef("");
+  IM_CHECK_RETV(DriveUntil(
+                    ctx,
+                    [] {
+                      return gui::SurveyOverviewStateFor(gui::g_state.analysis.survey) ==
+                             gui::SurveyOverviewState::kCompleted;
+                    },
+                    90),
+                false);
+  const gui::SurveyOverlayFacts facts = gui::BuildSurveyOverlayFacts(*gui::g_state.analysis.survey.adopted_result);
+  IM_CHECK_RETV(!facts.family_curves.empty(), false);
+  bool have_chain = false;
+  bool have_track = false;
+  for (const auto& curve : facts.family_curves) {
+    if (curve.kind == LUMICE_PATH_CURVE_KIND_FOLD_CHAIN) {
+      have_chain = true;
+    }
+    if (curve.kind == LUMICE_PATH_CURVE_KIND_REGULAR_TRACK) {
+      have_track = true;
+    }
+  }
+  IM_CHECK_RETV(have_chain, false);
+  ctx->LogInfo("[curve layer] %zu curves (chain=%d track=%d)", facts.family_curves.size(), have_chain ? 1 : 0,
+               have_track ? 1 : 0);
+
+  // The layer's ink, with the gate's own control proven: the Fold arcs checkbox toggles the
+  // arc ink off and back on (whichever state the process started in, exactly one of the two
+  // frames carries it — the gate drives the ink, nothing else does).
+  ctx->ItemClick("**/Raypath view###main_raypath_open");
+  ctx->Yield(2);
+  int ink_on = -1;
+  int ink_off = -1;
+  {
+    ctx->ItemClick("**/Layers##map_layers");
+    ctx->Yield(2);
+    ctx->ItemClick("**/Fold arcs");
+    ctx->Yield(3);
+    ink_off = CountFamilyCurveArcVertices();
+    ctx->ItemClick("**/Fold arcs");
+    ctx->Yield(3);
+    ink_on = CountFamilyCurveArcVertices();
+    ctx->PopupCloseAll();
+    ctx->Yield(2);
+  }
+  IM_CHECK_RETV(ink_on > 0, false);
+  IM_CHECK_RETV(ink_off == 0, false);
+  ctx->LogInfo("[curve layer] arc ink on=%d off=%d vertices", ink_on, ink_off);
+
+  // The real stationary pick: plain camera presses across a bounded canvas sweep until the
+  // selection commits (each press is the real input path — the release-time hit test against
+  // the frame's submitted surfaces).
+  const ImRect canvas = ctx->ItemInfo("**/##map_canvas").RectFull;
+  IM_CHECK_RETV(canvas.Min.x < canvas.Max.x && canvas.Min.y < canvas.Max.y, false);
+  bool selected = gui::FamilyCurveSelectionActive(gui::g_state);
+  ctx->SetRef("//Raypath view");
+  for (int gy = 1; gy <= 5 && !selected; ++gy) {
+    for (int gx = 1; gx <= 5 && !selected; ++gx) {
+      const float fx = canvas.Min.x + (canvas.Max.x - canvas.Min.x) * (0.17f * static_cast<float>(gx));
+      const float fy = canvas.Min.y + (canvas.Max.y - canvas.Min.y) * (0.17f * static_cast<float>(gy));
+      ctx->MouseMoveToPos(ImVec2(fx, fy));
+      ctx->MouseClick(ImGuiMouseButton_Left);
+      ctx->Yield(2);
+      selected = gui::FamilyCurveSelectionActive(gui::g_state);
+    }
+  }
+  ctx->SetRef("");
+  IM_CHECK_RETV(selected, false);
+  const int picked_curve = gui::g_state.analysis.family_curve_index;
+  const int picked_kind = gui::g_state.analysis.family_curve_pick_kind;
+  const int picked_point = gui::g_state.analysis.family_curve_point_index;
+  ctx->LogInfo("[curve pick] curve=%d kind=%d point=%d (sources %zu)", picked_curve, picked_kind, picked_point,
+               gui::g_state.analysis.family_curve_source_picks.size());
+  // The readout names the picked curve's own witness (the theoretical caliber: member, params,
+  // pose) — the frame's own submitted text, not a second rendering of what the test expects.
+  const std::string report_text = CaptureMapFrameText(ctx);
+  IM_CHECK_RETV(report_text.find("Family curve selection") != std::string::npos, false);
+  IM_CHECK_RETV(report_text.find("member") != std::string::npos, false);
+  IM_CHECK_RETV(report_text.find("params") != std::string::npos, false);
+  IM_CHECK_RETV(SaveWindowPng(ctx, "//Raypath view", GuiTestTempPath("family_curve_pick.png").string()), false);
+
+  // A new class's survey invalidates the selection (the adopted-identity binding).
+  SetListRef(ctx);
+  const bool switched = SelectRowByDisplay(ctx, "1-2") != std::nullopt;
+  ctx->SetRef("");
+  if (switched) {
+    IM_CHECK_RETV(DriveUntil(
+                      ctx,
+                      [] {
+                        return gui::SurveyOverviewStateFor(gui::g_state.analysis.survey) !=
+                               gui::SurveyOverviewState::kCompleted;
+                      },
+                      10),
+                  false);
+    IM_CHECK_RETV(!gui::FamilyCurveSelectionActive(gui::g_state), false);
+    ctx->LogInfo("[curve pick] the switched class's survey killed the selection");
+  } else {
+    ctx->LogInfo("[curve pick] no 1-2 row in this document; the replacement leg is vacuous here");
+  }
+  return true;
+}
+
 bool SurveyOverviewShowsDispersionAndProfile(ImGuiTestContext* ctx) {
   ScopedServerGuard guard;
   IM_CHECK_RETV(BringUpScene(ctx, kFullyRandomJson, /*infinite=*/false, /*gpu=*/false), false);
@@ -20410,6 +20561,13 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
   {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "survey_overview_shows_dispersion_and_profile");
     t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(SurveyOverviewShowsDispersionAndProfile(ctx)); };
+  }
+  // The family curve layer's real-input case (task arc-recovery-engine): real column survey,
+  // real stationary picks, the gate's ink control, and the replacement invalidation.
+  {
+    ImGuiTest* t =
+        IM_REGISTER_TEST(engine, "raypath_analysis", "family_curve_layer_draws_picks_and_survives_replacement");
+    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(FamilyCurveLayerDrawsPicksAndSurvivesReplacement(ctx)); };
   }
   {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "map_readability_controlled_frames");
