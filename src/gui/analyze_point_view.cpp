@@ -72,6 +72,10 @@ const char* ExecutionText(int execution) {
 
 constexpr int kMaxRenderComponents = 64;
 
+// ln(10): the one conversion between the density reader's natural-log facts and the rho arm's
+// decade coordinates — a coordinate/annotation transform, never exp'd back into a value.
+constexpr double kLn10 = 2.30258509299404568402;
+
 // Register a passive text item's COMPLETE layout bounds without a second layout or hit target.
 // Text has no ID; the test engine otherwise sees only emitted glyphs (and misses clipped tails).
 void RegisterPointTextItem(const char* label) {
@@ -114,8 +118,83 @@ void ResetPointViewStateForNewAdoption(PointViewState* view) {
   view->playing = false;
   view->last_play_step_s = 0.0;
   view->curve_range_mode = PointCurveRangeMode::kFit;
+  view->interpretive_available = false;
+  view->interpretive_component = -1;
+  view->interpretive_stored_index = -1;
+  view->interpretive_valid_position = -1;
+  view->interpretive_log_density = 0.0;
   // The toggles and the camera survive: they are the user's display preferences for THIS
-  // session, not per-document state.
+  // session, not per-document state. The interpretive fact is per-document (reset above);
+  // the pump re-records it at the adoption boundary when the reader names one.
+}
+
+PointCurveValueKind PointCurveRhoClassify(bool density_read_ok, double log_rho) {
+  if (!density_read_ok || std::isnan(log_rho)) {
+    // The reader did not offer a verified density fact here — named unavailable, never drawn.
+    return PointCurveValueKind::kUnavailable;
+  }
+  if (std::isinf(log_rho) && log_rho < 0.0) {
+    // The public contract's -inf: off the support, or a Dirac slot's slice — "no ordinary
+    // density" at this pose. Named, never drawn as finite, never a darkness claim.
+    return PointCurveValueKind::kOffSupport;
+  }
+  if (std::isinf(log_rho)) {
+    // A declared endpoint's divergence: not an ordinary finite point — named, the finite
+    // polyline breaks there.
+    return PointCurveValueKind::kDivergent;
+  }
+  // Any finite log — zero, negative, or a deep tail the linear rho underflowed away from —
+  // is drawable positive density.
+  return PointCurveValueKind::kPositive;
+}
+
+// ---- The adoption cursor ----------------------------------------------------------------------------
+
+PointViewInterpretiveCursor PointViewInterpretiveCursorFor(const LUMICE_PathPointInterpretive& interpretive,
+                                                           int component_count,
+                                                           const std::vector<int>& valid_positions) {
+  PointViewInterpretiveCursor cursor;
+  if (interpretive.available == 0 || interpretive.component_index < 0 ||
+      interpretive.component_index >= component_count || interpretive.point_index < 0) {
+    return cursor;  // no ordinary-density pose named, or the name points outside this document
+  }
+  for (size_t v = 0; v < valid_positions.size(); ++v) {
+    if (valid_positions[v] == interpretive.point_index) {
+      cursor.adopt = true;
+      cursor.component = interpretive.component_index;
+      cursor.valid_position = static_cast<int>(v);
+      return cursor;
+    }
+  }
+  return cursor;  // the named stored index is not a valid sample: the baseline cursor stands
+}
+
+void AdoptPointViewInterpretivePose(const LUMICE_SinglePathResult& result, PointViewState* view) {
+  LUMICE_PathPointInterpretive interpretive{};
+  interpretive.struct_size = sizeof(interpretive);
+  if (LUMICE_PathPointGetInterpretivePose(&result, &interpretive) != LUMICE_PATH_READ_OK) {
+    return;  // the reset's baseline cursor and the named no-interpretive state stand
+  }
+  LUMICE_PathPointInfo info{};
+  info.struct_size = sizeof(info);
+  const bool info_ok =
+      LUMICE_PathPointGetInfo(&result, &info) == LUMICE_PATH_READ_OK && info.outcome == LUMICE_PATH_POINT_DISCOVERED;
+  const int component_count = info_ok ? static_cast<int>(info.component_count) : 0;
+  std::vector<int> valid;
+  if (interpretive.component_index >= 0 && interpretive.component_index < component_count) {
+    valid = CollectValidSampleIndices(result, interpretive.component_index);
+  }
+  const PointViewInterpretiveCursor cursor = PointViewInterpretiveCursorFor(interpretive, component_count, valid);
+  if (!cursor.adopt) {
+    return;  // named-but-unmappable: the honest no-interpretive state, never a fabricated branch
+  }
+  view->component_index = cursor.component;
+  view->sample_index = cursor.valid_position;
+  view->interpretive_available = true;
+  view->interpretive_component = interpretive.component_index;
+  view->interpretive_stored_index = interpretive.point_index;
+  view->interpretive_valid_position = cursor.valid_position;
+  view->interpretive_log_density = interpretive.log_density;
 }
 
 bool AdvancePointPlayback(PointViewState* view, int valid_count, double now_s) {
@@ -271,7 +350,7 @@ std::vector<int> CollectValidSampleIndices(const LUMICE_SinglePathResult& result
 // for a quantity the engine did not produce). The per-contact rows below are T's optical
 // premises, the per-face fold's rows; PointFactorLines is the one concatenation (the tests'
 // consumer — the production readers take the halves directly).
-std::vector<std::string> PointFactorHeadLines(const LUMICE_PathPointSample& sample) {
+std::vector<std::string> PointFactorHeadLines(const LUMICE_PathPointSample& sample, const double* log_rho) {
   std::vector<std::string> lines;
   char buf[192];
   // Orientation: the pose's own angle words, the degeneracy named (R4 — a spin-degenerate pose
@@ -279,11 +358,33 @@ std::vector<std::string> PointFactorHeadLines(const LUMICE_PathPointSample& samp
   std::snprintf(buf, sizeof(buf), "pose: zenith %.2f°, azimuth %.2f°, roll %.2f°%s", sample.zenith_deg,
                 sample.azimuth_deg, sample.roll_deg, sample.angles_degenerate != 0 ? " (degenerate)" : "");
   lines.emplace_back(buf);
-  if (std::isfinite(sample.rho)) {
+  // The density line, one honest story per state pair: the linear payload stays verbatim where
+  // it carries the value; a linear 0 with a finite log fact spells the absolute density and
+  // names the underflow (the "drawn ρ arm / ρ=0 readout" contradiction this task retires); the
+  // contract's -inf/+inf keep their own words. Null log fact (the reader did not answer) keeps
+  // the linear-only spelling.
+  const bool linear_finite = std::isfinite(sample.rho);
+  if (!linear_finite) {
+    lines.emplace_back("axis density: unavailable (singular declared measure)");
+  } else if (log_rho == nullptr) {
+    std::snprintf(buf, sizeof(buf), "axis density = %.6g rad^-3", sample.rho);
+    lines.emplace_back(buf);
+  } else if (std::isnan(*log_rho)) {
+    std::snprintf(buf, sizeof(buf), "axis density = %.6g rad^-3 (the log fact did not verify here)", sample.rho);
+    lines.emplace_back(buf);
+  } else if (std::isinf(*log_rho) && *log_rho < 0.0) {
+    lines.emplace_back("axis density: no ordinary density here (linear payload 0 — off support or a Dirac slice)");
+  } else if (std::isinf(*log_rho)) {
+    lines.emplace_back("axis density: divergent at this pose (linear payload reads 0)");
+  } else if (sample.rho != 0.0) {
     std::snprintf(buf, sizeof(buf), "axis density = %.6g rad^-3", sample.rho);
     lines.emplace_back(buf);
   } else {
-    lines.emplace_back("axis density: unavailable (singular declared measure)");
+    std::snprintf(buf, sizeof(buf),
+                  "axis density = %s rad^-3 (log fact; the linear payload reads 0 — below its "
+                  "underflow, the ρ curve arm reads this log)",
+                  PointCurveRhoValueText(*log_rho / kLn10).c_str());
+    lines.emplace_back(buf);
   }
   std::snprintf(buf, sizeof(buf), "A_P = %.6g, A/a^2 = %.6g", sample.entry_measure, sample.entry_measure_a2);
   lines.emplace_back(buf);
@@ -395,8 +496,9 @@ std::vector<std::string> PointFactorInterfaceLines(const LUMICE_PathPointSample&
   return lines;
 }
 
-std::vector<std::string> PointFactorLines(const LUMICE_PathPointSample& sample, const int* faces, size_t face_count) {
-  std::vector<std::string> lines = PointFactorHeadLines(sample);
+std::vector<std::string> PointFactorLines(const LUMICE_PathPointSample& sample, const double* log_rho, const int* faces,
+                                          size_t face_count) {
+  std::vector<std::string> lines = PointFactorHeadLines(sample, log_rho);
   for (std::string& line : PointFactorInterfaceLines(sample, faces, face_count)) {
     lines.push_back(std::move(line));
   }
@@ -749,6 +851,8 @@ bool BuildPointContributionCurve(const LUMICE_SinglePathResult& result, int comp
   out->valid_positions.reserve(n);
   LUMICE_PathPointSample sample{};
   sample.struct_size = sizeof(sample);
+  LUMICE_PathPointDensity density{};
+  density.struct_size = sizeof(density);
   for (size_t i = 0; i < n; ++i) {
     PointCurvePoint& p = out->points[i];
     if (LUMICE_PathPointGetSample(&result, static_cast<size_t>(component), i, &sample) != LUMICE_PATH_READ_OK) {
@@ -761,7 +865,15 @@ bool BuildPointContributionCurve(const LUMICE_SinglePathResult& result, int comp
     p.transmission = sample.total_transmission;
     p.k_carea = sample.k_carea;
     p.product = sample.factor_product;
-    p.rho_kind = PointCurveClassify(sample.rho, /*gated=*/true);  // rho is produced unconditionally
+    // The rho arm reads the v4.64 density reader's log facts — the linear rho stays the
+    // engine's payload for the product-identity facts, never the arm's drawable coordinate.
+    // A failed read leaves the whole rho arm unavailable (the reset struct's NaN is not data).
+    const bool density_read_ok =
+        LUMICE_PathPointGetSampleDensity(&result, static_cast<size_t>(component), i, &density) == LUMICE_PATH_READ_OK;
+    p.rho_kind = PointCurveRhoClassify(density_read_ok, density.log_rho);
+    if (p.rho_kind == PointCurveValueKind::kPositive) {
+      p.log10_rho = density.log_rho / kLn10;
+    }
     p.area_kind = PointCurveClassify(sample.entry_measure_a2, p.valid);
     p.transmission_kind = PointCurveClassify(sample.total_transmission, p.valid);
     p.k_kind = PointCurveClassify(sample.k_carea, p.jacobian_available);
@@ -799,12 +911,16 @@ int PointCurveValidPositionNearX(const PointContributionCurve& curve, double x_r
 }
 
 PointCurveAxisRange PointCurveAxisFit(const PointContributionCurve& curve, PointCurveRangeMode mode) {
+  // The LEFT window's union: the four linear arms only. The rho arm owns the independent right
+  // axis — an extreme deep tail must neither shrink the four arms' window nor be squeezed by
+  // them (the fixed replacement for the shared-axis clipping defect this task repairs).
   double lo = std::numeric_limits<double>::max();
   double hi = 0.0;
   for (const PointCurvePoint& point : curve.points) {
-    for (const CurveArm& arm : kCurveArmFields) {
-      const double value = point.*arm.value;
-      if (point.*arm.kind == PointCurveValueKind::kPositive && value > 0.0 && std::isfinite(value)) {
+    for (size_t arm = 1; arm < std::size(kCurveArmFields); ++arm) {
+      const CurveArm& field = kCurveArmFields[arm];
+      const double value = point.*field.value;
+      if (point.*field.kind == PointCurveValueKind::kPositive && value > 0.0 && std::isfinite(value)) {
         lo = std::min(lo, value);
         hi = std::max(hi, value);
       }
@@ -815,6 +931,31 @@ PointCurveAxisRange PointCurveAxisFit(const PointContributionCurve& curve, Point
   }
   const double floor_ratio = std::pow(10.0, -CurveRangeDecades(mode));
   return { true, std::max(lo, hi * floor_ratio), hi };
+}
+
+PointCurveRhoAxisRange PointCurveRhoAxisFit(const PointContributionCurve& curve) {
+  // The exact span of the finite log10 densities — no decade floor: the deep tail IS the
+  // domain this axis exists to show. `hi == lo` stays valid (a constant branch draws honestly
+  // inside a widened display span); anything non-finite in the bounds answers absent.
+  double lo = 0.0;
+  double hi = 0.0;
+  bool any = false;
+  for (const PointCurvePoint& point : curve.points) {
+    if (point.rho_kind != PointCurveValueKind::kPositive) {
+      continue;
+    }
+    if (!any || point.log10_rho < lo) {
+      lo = point.log10_rho;
+    }
+    if (!any || point.log10_rho > hi) {
+      hi = point.log10_rho;
+    }
+    any = true;
+  }
+  if (!any || !std::isfinite(lo) || !std::isfinite(hi)) {
+    return {};
+  }
+  return { true, lo, hi };
 }
 
 std::vector<PointCurveLogTick> PointCurveLogTicks(double lo, double hi) {
@@ -849,10 +990,69 @@ int PointCurveLogLabelStep(double lo, double hi, float plot_h_px, float line_h_p
   if (!(lo > 0.0) || !(hi > 0.0) || hi <= lo) {
     return 1;
   }
-  const int decades = std::max(1, static_cast<int>(std::ceil(std::log10(hi) - std::log10(lo))));
+  return PointCurveRhoLogLabelStep(std::log10(lo), std::log10(hi), plot_h_px, line_h_px);
+}
+
+int PointCurveRhoLogLabelStep(double lo_log10, double hi_log10, float plot_h_px, float line_h_px) {
+  if (!std::isfinite(lo_log10) || !std::isfinite(hi_log10) || hi_log10 <= lo_log10) {
+    return 1;
+  }
+  const int decades = std::max(1, static_cast<int>(std::ceil(hi_log10 - lo_log10)));
   const float usable_line = std::max(1.0f, line_h_px * 1.5f);
   const int max_labels = std::max(1, static_cast<int>(std::floor(plot_h_px / usable_line)));
   return std::max(1, static_cast<int>(std::ceil(static_cast<double>(decades) / static_cast<double>(max_labels))));
+}
+
+std::vector<PointCurveRhoTick> PointCurveRhoLogTicks(double lo_log10, double hi_log10) {
+  std::vector<PointCurveRhoTick> ticks;
+  if (!std::isfinite(lo_log10) || !std::isfinite(hi_log10) || lo_log10 > hi_log10) {
+    return ticks;
+  }
+  // A degenerate band widens to one decade: a constant branch draws INSIDE a range, not on an
+  // edge. The widening is display-only — the range's own values never move.
+  double lo = lo_log10;
+  double hi = hi_log10;
+  if (hi == lo) {
+    lo -= 0.5;
+    hi += 0.5;
+  }
+  const int first_exp = static_cast<int>(std::floor(lo));
+  const int last_exp = static_cast<int>(std::ceil(hi));
+  for (int e = first_exp; e <= last_exp; ++e) {
+    for (const double mantissa : { 1.0, 2.0, 5.0 }) {
+      const double log10_value = static_cast<double>(e) + std::log10(mantissa);
+      if (log10_value < lo || log10_value > hi) {
+        continue;
+      }
+      ticks.push_back(PointCurveRhoTick{ e, mantissa, mantissa == 1.0 });
+    }
+  }
+  return ticks;
+}
+
+std::string PointCurveRhoTickLabel(const PointCurveRhoTick& tick) {
+  char buf[24];
+  if (tick.mantissa == 1.0) {
+    std::snprintf(buf, sizeof(buf), "1e%d", tick.exponent);
+  } else {
+    std::snprintf(buf, sizeof(buf), "%.0fe%d", tick.mantissa, tick.exponent);
+  }
+  return buf;
+}
+
+std::string PointCurveRhoValueText(double log10_rho) {
+  if (!std::isfinite(log10_rho)) {
+    return "n/a";
+  }
+  // The decade decomposition: exponent = floor(log10), mantissa = 10^fraction in [1,10). The
+  // pow runs on the FRACTION only — bounded, no underflow, no overflow — so a 1e-2000 tail
+  // spells out exactly.
+  const double floor_decade = std::floor(log10_rho);
+  const int exponent = static_cast<int>(floor_decade);
+  const double mantissa = std::pow(10.0, log10_rho - floor_decade);
+  char buf[32];
+  std::snprintf(buf, sizeof(buf), "%.2fe%d", mantissa, exponent);
+  return buf;
 }
 
 std::vector<PointCurveRun> PointCurvePositiveRuns(const PointCurveValueKind* kinds, size_t count) {
@@ -889,6 +1089,25 @@ double CurveLogY(double value, const PointCurveAxisRange& range) {
   const double span = CurveLogDistance(range.hi, range.lo);
   return CurveLogDistance(value, range.lo) / (span > 0.0 ? span : 1.0);
 }
+
+// The rho arm's display span: a constant branch (hi == lo) widens by half a decade each way —
+// display only, the range's own values never move. ONE definition: the axis face's ticks and
+// the arm face's markers map through the same span, so a constant branch's line and labels
+// cannot drift apart.
+double CurveRhoDisplayLo(const PointCurveRhoAxisRange& range) {
+  return range.hi_log10 == range.lo_log10 ? range.lo_log10 - 0.5 : range.lo_log10;
+}
+
+double CurveRhoDisplayHi(const PointCurveRhoAxisRange& range) {
+  return range.hi_log10 == range.lo_log10 ? range.hi_log10 + 0.5 : range.hi_log10;
+}
+
+double CurveRhoLogY(double log10_value, const PointCurveRhoAxisRange& range) {
+  const double lo = CurveRhoDisplayLo(range);
+  const double hi = CurveRhoDisplayHi(range);
+  const double span = hi - lo;
+  return (log10_value - lo) / (span > 0.0 ? span : 1.0);
+}
 }  // namespace
 
 bool PointCurveClipSegment(double x0, double value0, double x1, double value1, const PointCurveAxisRange& range,
@@ -899,6 +1118,43 @@ bool PointCurveClipSegment(double x0, double value0, double x1, double value1, c
   }
   const double y0 = CurveLogY(value0, range);
   const double y1 = CurveLogY(value1, range);
+  if ((y0 < 0.0 && y1 < 0.0) || (y0 > 1.0 && y1 > 1.0)) {
+    return false;
+  }
+  double enter = 0.0, leave = 1.0;
+  const double dy = y1 - y0;
+  if (dy != 0.0) {
+    const double at_bottom = -y0 / dy;
+    const double at_top = (1.0 - y0) / dy;
+    enter = std::max(enter, std::min(at_bottom, at_top));
+    leave = std::min(leave, std::max(at_bottom, at_top));
+  }
+  if (enter > leave) {
+    return false;
+  }
+  const double clipped_y0 = enter > 0.0 ? (dy > 0.0 ? 0.0 : 1.0) : std::clamp(y0, 0.0, 1.0);
+  const double clipped_y1 = leave < 1.0 ? (dy > 0.0 ? 1.0 : 0.0) : std::clamp(y1, 0.0, 1.0);
+  *out = { x0 + (x1 - x0) * enter, clipped_y0, x0 + (x1 - x0) * leave, clipped_y1 };
+  return true;
+}
+
+bool PointCurveRhoClipSegment(double x0, double log10_0, double x1, double log10_1, const PointCurveRhoAxisRange& range,
+                              PointCurveSegment* out) {
+  if (!out || !range.valid || !std::isfinite(range.lo_log10) || !std::isfinite(range.hi_log10) ||
+      range.hi_log10 < range.lo_log10 || !std::isfinite(log10_0) || !std::isfinite(log10_1) || !std::isfinite(x0) ||
+      !std::isfinite(x1)) {
+    return false;
+  }
+  // Plain linear clipping in (x, log10) space — the coordinates ARE the logs, so the mapping
+  // is a ratio of finite differences with no cancellation trap. The display span is the SAME
+  // widened span the axis and arm faces map through (a constant branch's flat line and its
+  // axis labels cannot disagree about where the value sits).
+  const double disp_lo = CurveRhoDisplayLo(range);
+  const double disp_hi = CurveRhoDisplayHi(range);
+  const double span = disp_hi - disp_lo;
+  const auto to_y = [&](double log10_value) { return (log10_value - disp_lo) / (span > 0.0 ? span : 1.0); };
+  const double y0 = to_y(log10_0);
+  const double y1 = to_y(log10_1);
   if ((y0 < 0.0 && y1 < 0.0) || (y0 > 1.0 && y1 > 1.0)) {
     return false;
   }
@@ -932,7 +1188,9 @@ void DrawPointCurveArms(ImDrawList* dl, const PointContributionCurve& curve, con
   };
   dl->PushClipRect(plot_min, plot_max, true);
   std::vector<PointCurveValueKind> kinds(curve.points.size());
-  for (size_t arm = 0; arm < std::size(kCurveArmFields); ++arm) {
+  // Arm 0 (rho) draws on the independent right axis through DrawPointCurveRhoArm — this face
+  // is the four linear arms' left-axis face only.
+  for (size_t arm = 1; arm < std::size(kCurveArmFields); ++arm) {
     const auto field = kCurveArmFields[arm];
     for (size_t i = 0; i < curve.points.size(); ++i) {
       kinds[i] = curve.points[i].*field.kind;
@@ -960,6 +1218,91 @@ void DrawPointCurveArms(ImDrawList* dl, const PointContributionCurve& curve, con
   dl->PopClipRect();
 }
 
+void DrawPointCurveRhoArm(ImDrawList* dl, const PointContributionCurve& curve, const PointCurveRhoAxisRange& range,
+                          const ImVec2& plot_min, const ImVec2& plot_max) {
+  if (!range.valid || curve.points.empty() || !(curve.points.back().x_rad > 0.0) || plot_max.x <= plot_min.x ||
+      plot_max.y <= plot_min.y) {
+    return;
+  }
+  const double x_hi = curve.points.back().x_rad;
+  const auto pixel = [&](double x, double y) {
+    return ImVec2(plot_min.x + static_cast<float>((x / x_hi) * (plot_max.x - plot_min.x)),
+                  plot_max.y - static_cast<float>(y * (plot_max.y - plot_min.y)));
+  };
+  dl->PushClipRect(plot_min, plot_max, true);
+  std::vector<PointCurveValueKind> kinds(curve.points.size());
+  for (size_t i = 0; i < curve.points.size(); ++i) {
+    kinds[i] = curve.points[i].rho_kind;
+  }
+  for (const auto& run : PointCurvePositiveRuns(kinds.data(), kinds.size())) {
+    if (run.end - run.begin == 1) {
+      const size_t i = static_cast<size_t>(run.begin);
+      dl->AddCircleFilled(pixel(curve.points[i].x_rad, CurveRhoLogY(curve.points[i].log10_rho, range)), UiPx(2.5f),
+                          kPointCurveArmColors[0]);
+    } else {
+      for (int i = run.begin + 1; i < run.end; ++i) {
+        const auto& a = curve.points[static_cast<size_t>(i - 1)];
+        const auto& b = curve.points[static_cast<size_t>(i)];
+        PointCurveSegment segment{};
+        if (PointCurveRhoClipSegment(a.x_rad, a.log10_rho, b.x_rad, b.log10_rho, range, &segment)) {
+          dl->AddLine(pixel(segment.x0, segment.y0), pixel(segment.x1, segment.y1), kPointCurveArmColors[0], 1.5f);
+        }
+      }
+    }
+  }
+  dl->PopClipRect();
+}
+
+void DrawPointCurveRhoAxis(ImDrawList* dl, const PointCurveRhoAxisRange& visible, const ImVec2& plot_min,
+                           const ImVec2& plot_max) {
+  if (!visible.valid || plot_max.y <= plot_min.y) {
+    return;
+  }
+  const double lo = visible.lo_log10;
+  const double hi = visible.hi_log10;
+  const float plot_h = plot_max.y - plot_min.y;
+  const float line_h = ImGui::GetTextLineHeight();
+  const int label_step = PointCurveRhoLogLabelStep(lo, hi, plot_h, line_h);
+  bool have_labelled_major = false;
+  const auto log10_to_py = [&](double log10_value) {
+    return plot_max.y - static_cast<float>(CurveRhoLogY(log10_value, visible) * plot_h);
+  };
+  const bool minors_fit =
+      label_step == 1 && plot_h / std::max(1.0, CurveRhoDisplayHi(visible) - CurveRhoDisplayLo(visible)) >= UiPx(12.0f);
+  for (const PointCurveRhoTick& tick : PointCurveRhoLogTicks(lo, hi)) {
+    const bool labelled = tick.major && tick.exponent % label_step == 0;
+    if (tick.major && !labelled) {
+      continue;  // an unlabelled decade would only crowd the plot at this density
+    }
+    const double log10_value = static_cast<double>(tick.exponent) + std::log10(tick.mantissa);
+    const float py = log10_to_py(log10_value);
+    if (tick.major) {
+      have_labelled_major = true;
+      // Right-edge tick mark, not a gridline: the left axis owns the reference lattice; two
+      // overlaid full-width lattices would read as one wrong one.
+      dl->AddLine(ImVec2(plot_max.x, py), ImVec2(plot_max.x + UiPx(3.0f), py), IM_COL32(60, 64, 72, 110), 1.0f);
+      const std::string lab = PointCurveRhoTickLabel(tick);
+      dl->AddText(ImVec2(plot_max.x + UiPx(6.0f), py - ImGui::CalcTextSize(lab.c_str()).y * 0.5f),
+                  ImGui::GetColorU32(ImGuiCol_TextDisabled), lab.c_str());
+    } else if (minors_fit) {
+      dl->AddLine(ImVec2(plot_max.x, py), ImVec2(plot_max.x + UiPx(3.0f), py), IM_COL32(90, 94, 102, 140), 1.0f);
+    }
+  }
+  // The boundary labels when no labelled major lands (a narrow band strictly between decades):
+  // the window's own bounds become the right axis's labels.
+  if (!have_labelled_major) {
+    const auto boundary_lab = [&](double log10_value, float py) {
+      const std::string lab = PointCurveRhoValueText(log10_value);
+      dl->AddText(ImVec2(plot_max.x + UiPx(6.0f), py - ImGui::CalcTextSize(lab.c_str()).y * 0.5f),
+                  ImGui::GetColorU32(ImGuiCol_TextDisabled), lab.c_str());
+    };
+    boundary_lab(hi, plot_min.y);
+    if (plot_h >= line_h * 2.0f) {
+      boundary_lab(lo, plot_max.y);
+    }
+  }
+}
+
 void RenderPointCurveRangeControl(PointCurveRangeMode* mode) {
   const float cell_w =
       std::max(ImGui::CalcTextSize("Fit").x, ImGui::CalcTextSize("Full").x) + 2.0f * ImGui::GetStyle().FramePadding.x;
@@ -980,8 +1323,15 @@ void RenderPointCurveRangeControl(PointCurveRangeMode* mode) {
     }
   }
   // The two-tier rule: the pair's shared concept rides one associated info icon instead of the
-  // buttons' hover (doc/gui/gui-visual-language.md); the floors stay the policy values.
-  InfoIcon("curve_range_help", "Log-axis floor, decades below the largest positive value:\nFit %d, Full %d.",
+  // buttons' hover (doc/gui/gui-visual-language.md); the floors stay the policy values. The
+  // rho arm's independence rides the same icon — it is the pair's other half of the story
+  // (which knob governs which axis).
+  InfoIcon("curve_range_help",
+           "Left axis (A/a², T, K, product): log window floor, decades below the largest "
+           "positive value —\nFit %d, Full %d.\n"
+           "The ρ arm draws on its own independent right log axis spanning exactly its finite "
+           "values; switching Fit/Full never changes ρ's absolute values or its axis, and "
+           "heights on the two axes do not compare.",
            CurveRangeDecades(PointCurveRangeMode::kFit), CurveRangeDecades(PointCurveRangeMode::kFull));
 }
 
@@ -1646,6 +1996,10 @@ void PumpPointQuery(GuiState& state, SurveyExecutor& executor, double now_s) {
       point.adopted_error = finished->ok ? std::string() : std::move(finished->error);
       if (adoption_changed) {
         ResetPointViewStateForNewAdoption(&view);
+        // The v4.64 interpretive pose names the document's own opening branch/sample (the
+        // recovered point with the greatest ordinary log density). Applied ONCE here, at the
+        // adoption boundary — never per frame, never against a user's manual write.
+        AdoptPointViewInterpretivePose(*point.adopted_result, &view);
       }
     }
   }
@@ -3190,18 +3544,41 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
     // J7's constant: the caliber is DECLARED, never inferred — on plate-family scenes the axis
     // density (the `rho` field, and the product and the integral with it) reads identically zero
     // in this convention, while the other arms stay informative per their own flags (audit §4).
-    DisabledWrappedText("angle-Lebesgue · arclength axis in rad");
+    DisabledWrappedText(
+        "angle-Lebesgue · arclength axis in rad · two independent log axes — heights do not compare "
+        "across the left/right pair");
     RegisterPointTextItem("##curve_caliber");
+    // The adoption's opening fact, the document's own words (AC3's honesty): which branch the
+    // interpretive pose named at the adoption boundary — or the named absence, never a
+    // fabricated "healthy branch". One line per document; manual switches after adoption are
+    // the user's and are not reported here.
+    if (view.interpretive_available) {
+      char interp[192];
+      std::snprintf(interp, sizeof(interp),
+                    "opened at the interpretive pose: component %d, sample %d (largest ordinary log density among "
+                    "the recovered valid points)",
+                    view.interpretive_component + 1, view.interpretive_valid_position + 1);
+      DisabledWrappedText("%s", interp);
+    } else {
+      DisabledWrappedText(
+          "no ordinary-density interpretive pose in this document — opened at the first browsable branch");
+    }
+    RegisterPointTextItem("##curve_interpretive");
 
     // ---- The legend: one swatch + short symbol per arm, the units in the factor readouts' own
-    // vocabulary; an arm with no positive value names the fact (J4's legend naming). SameLine is
-    // a judgment (the 3D legend's rule): an entry wraps below when it no longer fits. ----
+    // vocabulary; an arm with no drawable value names the fact (J4's legend naming — now over
+    // the rho arm's own states too). The rho entry carries its axis attribution (the right log
+    // axis) IN the label — heights on the two axes do not compare, and the attribution is the
+    // constant guard against misreading a crossing as factor equality. SameLine is a judgment
+    // (the 3D legend's rule): an entry wraps below when it no longer fits. ----
     const ImU32* const arm_colors = kPointCurveArmColors;  // the one palette (the tests read it too)
     const char* arm_labels[kCurveArms] = { "ρ", "A/a²", "T", "K", "ρ·A/a²·T·K" };
     const auto value_of = [&](int arm, size_t i) -> double { return curve.points[i].*kCurveArmFields[arm].value; };
     const auto kind_of = [&](int arm, size_t i) { return curve.points[i].*kCurveArmFields[arm].kind; };
     int positive_seen[kCurveArms] = { 0, 0, 0, 0, 0 };
     int zero_seen[kCurveArms] = { 0, 0, 0, 0, 0 };
+    int off_support_seen = 0;
+    int divergent_seen = 0;
     for (size_t i = 0; i < n; ++i) {
       for (int arm = 0; arm < kCurveArms; ++arm) {
         if (kind_of(arm, i) == PointCurveValueKind::kPositive) {
@@ -3209,6 +3586,11 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
         } else if (kind_of(arm, i) == PointCurveValueKind::kExactZero) {
           ++zero_seen[arm];
         }
+      }
+      if (curve.points[i].rho_kind == PointCurveValueKind::kOffSupport) {
+        ++off_support_seen;
+      } else if (curve.points[i].rho_kind == PointCurveValueKind::kDivergent) {
+        ++divergent_seen;
       }
     }
     {
@@ -3219,7 +3601,22 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
       const float region_max_x = ImGui::GetWindowPos().x + ImGui::GetContentRegionMax().x;
       for (int arm = 0; arm < kCurveArms; ++arm) {
         std::string label = arm_labels[arm];
-        if (positive_seen[arm] == 0) {
+        if (arm == 0) {
+          // The rho arm's own vocabulary: axis attribution always, then the named state when
+          // nothing finite draws (the "plain ρ label but no line" shape is retired).
+          label += " · right axis";
+          if (positive_seen[arm] == 0) {
+            if (off_support_seen == static_cast<int>(n)) {
+              label += " (no ordinary density)";
+            } else if (off_support_seen > 0) {
+              label += " (no ordinary density at some poses)";
+            } else if (divergent_seen > 0) {
+              label += " (divergent)";
+            } else {
+              label += " (unavailable)";
+            }
+          }
+        } else if (positive_seen[arm] == 0) {
           label += zero_seen[arm] > 0 ? " (0 throughout)" : " (unavailable)";
         }
         const float text_w = ImGui::CalcTextSize(label.c_str()).x;
@@ -3241,9 +3638,25 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
     }
 
     // ---- The readout's words: one arm's value at its honest state — the number, "0" for the
-    // exact zero, "n/a" for unavailable. The curve holds the engine's number; this only spells it.
+    // exact zero, "n/a" for unavailable; the rho arm spells the LOG fact's absolute density
+    // (a deep tail never displays as a linear "0"), and its non-finite states keep the
+    // contract's own words. The curve holds the engine's fact; this only spells it. ----
     const auto arm_readout = [&](int arm, size_t i) -> std::string {
       const PointCurveValueKind kind = kind_of(arm, i);
+      if (arm == 0) {
+        switch (kind) {
+          case PointCurveValueKind::kPositive:
+            return PointCurveRhoValueText(curve.points[i].log10_rho) + std::string(" (log axis)");
+          case PointCurveValueKind::kOffSupport:
+            return "no ordinary density";
+          case PointCurveValueKind::kDivergent:
+            return "divergent";
+          case PointCurveValueKind::kExactZero:
+            return "0";  // defensive: a finite log is never an exact zero
+          case PointCurveValueKind::kUnavailable:
+            return "n/a";
+        }
+      }
       if (kind == PointCurveValueKind::kUnavailable) {
         return "n/a";
       }
@@ -3283,12 +3696,17 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
       const bool canvas_hovered = graph_hovered;
       const bool canvas_active = graph_active;
       const double x_hi = n > 0 ? curve.points[n - 1].x_rad : 0.0;
+      // Two independent axes: the left window governs the four linear arms (Fit/Full), the
+      // right axis is the rho arm's own finite-log span (no mode input). Either may be absent.
       const PointCurveAxisRange visible = PointCurveAxisFit(curve, view.curve_range_mode);
+      const PointCurveRhoAxisRange rho_visible = PointCurveRhoAxisFit(curve);
       const float line_h = ImGui::GetTextLineHeight();
       const float summary_wrap = std::max(1.0f, avail.x - UiPx(12.0f));
       const double v_min = visible.lo;
       const double v_max = visible.hi;
       const bool have_range = visible.valid && x_hi > 0.0;
+      const bool have_rho_range = rho_visible.valid && x_hi > 0.0;
+      const bool have_any_range = have_range || have_rho_range;
       const float pad_b = UiPx(5.0f) + line_h;
       const float rough_plot_h = std::max(1.0f, canvas_h - UiPx(10.0f) - pad_b);
       const float real_plot_h = canvas_h - UiPx(10.0f) - pad_b;
@@ -3319,7 +3737,29 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
         }
       }
       const float pad_l = std::max(UiPx(34.0f), widest_lab + UiPx(10.0f));  // decade labels live left of the plot
-      const float pad_r = UiPx(10.0f);
+      // The right gutter hosts the rho axis's own labels — measured from the actual strings the
+      // right face will submit (labelled majors, or the boundary fallback when no major lands),
+      // never a fixed guess: a deep tail's exponents are wider than any decade label.
+      float widest_rho = 0.0f;
+      if (have_rho_range) {
+        const int rho_step =
+            PointCurveRhoLogLabelStep(rho_visible.lo_log10, rho_visible.hi_log10, rough_plot_h, line_h);
+        bool rho_labelled = false;
+        for (const PointCurveRhoTick& tick : PointCurveRhoLogTicks(rho_visible.lo_log10, rho_visible.hi_log10)) {
+          if (!tick.major || tick.exponent % rho_step != 0) {
+            continue;
+          }
+          rho_labelled = true;
+          widest_rho = std::max(widest_rho, ImGui::CalcTextSize(PointCurveRhoTickLabel(tick).c_str()).x);
+        }
+        if (!rho_labelled) {
+          for (const double boundary : { rho_visible.lo_log10, rho_visible.hi_log10 }) {
+            widest_rho = std::max(widest_rho, ImGui::CalcTextSize(PointCurveRhoValueText(boundary).c_str()).x);
+          }
+        }
+      }
+      const float pad_r =
+          (have_rho_range ? UiPx(10.0f) : 0.0f) + widest_rho + (have_rho_range ? UiPx(8.0f) : UiPx(10.0f));
       const float pad_t = UiPx(10.0f);  // the seed mark rides above the plot
       // Only the X labels remain below the plot; the seed and rad unit sit above.
       const ImVec2 plot_min(canvas_min.x + pad_l, canvas_min.y + pad_t);
@@ -3338,8 +3778,18 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
       dl->AddRectFilled(canvas_min, canvas_max, IM_COL32(16, 18, 22, 255));
       dl->AddRect(canvas_min, canvas_max, IM_COL32(70, 74, 82, 160));
       const auto v_to_py = [&](double v) { return plot_max.y - static_cast<float>(CurveLogY(v, visible) * plot_h); };
+      const auto rho_to_py = [&](double log10_value) {
+        return plot_max.y - static_cast<float>(CurveRhoLogY(log10_value, rho_visible) * plot_h);
+      };
       if (plot_fits && have_range) {
         DrawPointCurveLogAxis(dl, visible, plot_min, plot_max);
+      }
+      if (plot_fits && have_rho_range) {
+        DrawPointCurveRhoAxis(dl, rho_visible, plot_min, plot_max);
+        // The right axis's one-word attribution rides its gutter top — the legend carries the
+        // full sentence, the plot edge carries the reminder of which gutter reads ρ.
+        dl->AddText(ImVec2(plot_max.x + UiPx(6.0f), canvas_min.y + UiPx(4.0f)),
+                    ImGui::GetColorU32(ImGuiCol_TextDisabled), "ρ");
       }
       // X labels own their row regardless of the data range.
       const auto x_label = [&](float x, float y, const char* text) {
@@ -3365,9 +3815,10 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
                     ImGui::GetColorU32(ImGuiCol_TextDisabled), unit);
       }
 
-      if (plot_fits && have_range) {
+      if (plot_fits && have_any_range) {
         DrawPointCurveSeed(dl, curve, plot_min, plot_max);
         DrawPointCurveArms(dl, curve, visible, plot_min, plot_max);
+        DrawPointCurveRhoArm(dl, curve, rho_visible, plot_min, plot_max);
         // The cursor: the CURRENT sample's arclength — the same selection the slider, the globe
         // marker and the 3D trace follow (AC4's one selection).
         const int cursor_stored = PointCurveStoredAt(curve, std::clamp(view.sample_index, 0, valid_count - 1));
@@ -3376,8 +3827,8 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
           dl->AddLine(ImVec2(cpx, plot_min.y), ImVec2(cpx, plot_max.y), ImGui::ColorConvertFloat4ToU32(AccentColor()),
                       1.5f);
         }
-      } else if (!have_range) {
-        const char* note = "no positive value on this component — the log axis has no range";
+      } else if (!have_any_range) {
+        const char* note = "no drawable value on this component — the log axes have no range";
         const ImVec2 ts = ImGui::CalcTextSize(note);
         dl->AddText(ImVec2(canvas_min.x + (avail.x - ts.x) * 0.5f, canvas_min.y + (canvas_h - ts.y) * 0.5f),
                     ImGui::GetColorU32(ImGuiCol_TextDisabled), note);
@@ -3399,7 +3850,7 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
       // and the factors follow — the D7 floor's contract is that the canvas answers a click at
       // its 40pt real-slice floor, where the plot ink cannot exist but the selection still can.
       if (x_hi > 0.0) {
-        if (plot_fits && have_range && canvas_hovered && ImGui::GetIO().MousePos.x >= plot_min.x &&
+        if (plot_fits && have_any_range && canvas_hovered && ImGui::GetIO().MousePos.x >= plot_min.x &&
             ImGui::GetIO().MousePos.x <= plot_max.x && ImGui::GetIO().MousePos.y >= plot_min.y &&
             ImGui::GetIO().MousePos.y <= plot_max.y) {
           hover_position = PointCurveValidPositionNearX(curve, x_at_px(ImGui::GetIO().MousePos.x));
@@ -3427,11 +3878,16 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
         dl->PushClipRect(plot_min, plot_max, true);
         dl->AddLine(ImVec2(px, plot_min.y), ImVec2(px, plot_max.y), ImGui::GetColorU32(ImGuiCol_TextDisabled, 0.55f),
                     1.0f);
-        for (int arm = 0; arm < kCurveArms; ++arm) {
+        for (int arm = 1; arm < kCurveArms; ++arm) {
           const double v = value_of(arm, stored);
           if (kind_of(arm, stored) == PointCurveValueKind::kPositive && v >= v_min && v <= v_max) {
             dl->AddCircleFilled(ImVec2(px, v_to_py(v)), UiPx(3.5f), arm_colors[arm]);
           }
+        }
+        // The rho dot maps through its own axis — a finite deep tail shows its hover dot at
+        // its own height, whatever the left window is doing.
+        if (kind_of(0, stored) == PointCurveValueKind::kPositive) {
+          dl->AddCircleFilled(ImVec2(px, rho_to_py(curve.points[stored].log10_rho)), UiPx(3.5f), arm_colors[0]);
         }
         dl->PopClipRect();
         ImGui::SetTooltip("%s\nLeft click or drag to select a pose.", sample_readout(hover_position).c_str());
@@ -3649,8 +4105,20 @@ void RenderPoseFactorsRegion(GuiState& state, const ImVec2& size) {
     }
     if (FoldOpen(kPoseFactorsLabel, "pose_factors")) {
       // The pose's own factor strings: orientation, rho, A, T, J/K and the product — the
-      // physical evidence the loss answer summarizes, still one selection bound.
-      for (const std::string& line_text : PointFactorHeadLines(current->sample)) {
+      // physical evidence the loss answer summarizes, still one selection bound. The rho line
+      // reads the density reader's own fact for THIS stored sample — a linear 0 that carries a
+      // finite log spells the absolute density instead of contradicting the drawn arm.
+      double log_rho = 0.0;
+      LUMICE_PathPointDensity density{};
+      density.struct_size = sizeof(density);
+      const bool density_read =
+          LUMICE_PathPointGetSampleDensity(point.adopted_result.get(), static_cast<size_t>(current->component),
+                                           static_cast<size_t>(current->stored), &density) == LUMICE_PATH_READ_OK;
+      if (density_read) {
+        log_rho = density.log_rho;
+      }
+      const double* log_rho_ptr = density_read ? &log_rho : nullptr;
+      for (const std::string& line_text : PointFactorHeadLines(current->sample, log_rho_ptr)) {
         ImGui::Bullet();
         ImGui::TextWrapped("%s", line_text.c_str());
       }

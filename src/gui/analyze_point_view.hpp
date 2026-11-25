@@ -125,7 +125,12 @@ std::vector<int> CollectValidSampleIndices(const LUMICE_SinglePathResult& result
 // pins the per-state spellings, the functional chain asserts the engine-facing read) — the
 // halves and the concatenation cannot drift apart because the concatenation IS their
 // composition.
-std::vector<std::string> PointFactorHeadLines(const LUMICE_PathPointSample& sample);
+// `log_rho` is the density reader's own fact for the SAME sample (the caller read
+// LUMICE_PathPointGetSampleDensity at the sample's component/stored index): non-null makes the
+// rho line log-aware — a linear 0 that carries a finite log spells the absolute density and
+// names the underflow instead of contradicting the curve's drawn arm; -inf/+inf keep the
+// contract's own words. Null (the reader did not answer) keeps the linear-only spelling.
+std::vector<std::string> PointFactorHeadLines(const LUMICE_PathPointSample& sample, const double* log_rho);
 
 // One contact's event role along the chain (the point_result per-facet semantics: T at the
 // entry and exit, R at the internal faces, a one-face path a single external R). Derived from
@@ -141,7 +146,8 @@ PointFaceRole PointFaceRoleFor(size_t contact, size_t interface_count);
 // conditional denominator. Pure; the unit layer pins the spellings.
 std::vector<std::string> PointFactorInterfaceLines(const LUMICE_PathPointSample& sample, const int* faces,
                                                    size_t face_count);
-std::vector<std::string> PointFactorLines(const LUMICE_PathPointSample& sample, const int* faces, size_t face_count);
+std::vector<std::string> PointFactorLines(const LUMICE_PathPointSample& sample, const double* log_rho, const int* faces,
+                                          size_t face_count);
 
 // The identity/echo lines (AC1): the result's OWN Info read back — target labels + deviation,
 // member faces, crystal id, wavelength + its source, refractive index, sample tier and budget
@@ -166,6 +172,34 @@ std::string PointMassFooterLine(const LUMICE_PathPointInfo& info, const LUMICE_P
 // the footer and the map's reuse branch): the sun-direction fact has one implementation.
 bool PointMassAtSunDirection(const LUMICE_PathPointInfo& info, const LUMICE_PathPointMass& mass);
 
+// ---- The adoption cursor (the interpretive-pose initialization, applied once per document) ---------
+
+// The component/sample cursor the document's interpretive pose implies (v4.64's
+// `LUMICE_PathPointGetInterpretivePose` facts over the pure mapping): the recovered branch
+// point with the greatest closed-form log density among the recovered VALID points, expressed
+// in the view's own cursor domain — the named component plus the named stored index converted
+// to its valid-position. `adopt` false answers the baseline (the reader offered no ordinary-
+// density pose, named an out-of-range component, or named a stored index that is not a valid
+// sample): the caller keeps the 0/0 browse cursor and says so — it never fabricates a
+// "healthy branch". Pure; the unit layer pins the mapping (invalid prefixes, out-of-set
+// indices), the adoption test pins the engine wiring.
+struct PointViewInterpretiveCursor {
+  bool adopt = false;
+  int component = -1;
+  int valid_position = -1;
+};
+PointViewInterpretiveCursor PointViewInterpretiveCursorFor(const LUMICE_PathPointInterpretive& interpretive,
+                                                           int component_count,
+                                                           const std::vector<int>& valid_positions);
+
+// Applies the interpretive cursor to a freshly reset view: reads the document through the
+// interpretive reader and, when it names a recovered valid point, adopts that component and
+// valid-position cursor, recording the fact for the companion's honest line. An unavailable
+// reader answer leaves the baseline cursor and records the named no-interpretive-pose state.
+// Called at the adoption boundary ONLY — never per frame, never against a user's manual
+// branch/sample write.
+void AdoptPointViewInterpretivePose(const LUMICE_SinglePathResult& result, PointViewState* view);
+
 // ---- The contribution curve (the Pose & trace window's D5 lower region, 756) ------------------------
 // The multi-factor curve along ONE component's real SO(3) arclength — rho, A/a^2, T, K and their
 // product read verbatim from the adopted document's per-pose payload (the audit's verdict:
@@ -177,25 +211,48 @@ bool PointMassAtSunDirection(const LUMICE_PathPointInfo& info, const LUMICE_Path
 // through), and the angle-Lebesgue caliber is declared, not inferred: on plate-family scenes
 // rho — and with it the product and the integral — read identically zero (a legal declared
 // zero, not absence), while the other arms stay informative per their own flags.
+//
+// The rho arm draws from the v4.64 density reader's log facts (`LUMICE_PathPointGetSampleDensity`),
+// not from the linear `rho` field: a deep tail keeps its finite log where the linear value
+// underflows to 0, so the arm's drawable coordinate is the density's own log. Its axis is the
+// plot's independent right log axis spanning exactly the component's finite logs — Fit/Full
+// govern only the left window of the other four arms.
 
 // One arm's honest state at one point: a finite positive value (drawn on the log axis), an
 // exact zero the engine itself produced (a plate's declared-measure rho, a legal zero-area
 // endpoint — named in the legend/tooltip, never mapped onto log), or unavailable (the
 // gate flag clear, or the value is not drawable: non-finite, negative) — a gap, never a zero.
-enum class PointCurveValueKind { kUnavailable, kExactZero, kPositive };
+// The rho arm's log facts extend the vocabulary with the density reader's own states:
+// `kOffSupport` carries log_rho = -inf (the public contract's "no ordinary density" — off the
+// support or a Dirac slot's slice; named, never drawn as a finite value, never a darkness
+// claim) and `kDivergent` carries +inf (a declared endpoint's divergence — named, the finite
+// polyline breaks there). Only the four linear arms ever answer kExactZero; a finite log_rho
+// of any sign is drawable rho (kPositive), including where the linear rho underflowed to 0.
+enum class PointCurveValueKind { kUnavailable, kExactZero, kPositive, kOffSupport, kDivergent };
 
-// One arm's classification: `gated` carries the arm's own availability predicate (rho: always
-// produced; A/a^2 and T: `valid`; K: `jacobian_available`; product: both — audit §3's matrix).
-// Behind a true gate the value decides positive/zero; a non-finite or negative value is
-// physically impossible here and names unavailable instead of drawing.
+// One arm's classification: `gated` carries the arm's own availability predicate (A/a^2 and T:
+// `valid`; K: `jacobian_available`; product: both — audit §3's matrix). Behind a true gate the
+// value decides positive/zero; a non-finite or negative value is physically impossible here and
+// names unavailable instead of drawing.
 PointCurveValueKind PointCurveClassify(double value, bool gated);
 
+// The rho arm's classification from the density reader's own words: a failed read or a NaN
+// log_rho is named unavailable (the reader did not offer a verified fact here); -inf is the
+// contract's off-support/Dirac "no ordinary density"; +inf the declared divergence; any finite
+// log — zero, negative, or a deep tail — is drawable positive density.
+PointCurveValueKind PointCurveRhoClassify(bool density_read_ok, double log_rho);
+
 // One stored point of the curve: its axis position plus the five arms, each with its own
-// three-state classification, and the point's own gate flags (the renderer's gap/cursor
-// bookkeeping).
+// classification, and the point's own gate flags (the renderer's gap/cursor bookkeeping).
+// The rho arm's fields are the density reader's log facts: `log10_rho` is the drawable
+// coordinate (the reader's natural log converted to decades once — a coordinate/annotation
+// transform, never exp'd back), meaningful iff `rho_kind == kPositive`; the linear `rho` stays
+// the engine's own payload for the product-identity facts (the curve holds it verbatim; the
+// rho arm's drawing and readouts never consume it).
 struct PointCurvePoint {
   double x_rad = 0.0;  // SO(3) arclength from the component's own zero (audit §5.1's construction)
   double rho = 0.0;
+  double log10_rho = 0.0;     // drawable rho coordinate: log10 of the density, finite iff kPositive
   double area = 0.0;          // A/a^2
   double transmission = 0.0;  // T (total)
   double k_carea = 0.0;       // K = 1/(J+eps)
@@ -253,8 +310,11 @@ inline constexpr ImU32 kPointCurveArmColors[] = {
   kPointCurveProductColor,
 };
 
-// Mode-to-visible-window fit: finite positive union, exact endpoints, a 5-decade (Fit) or
-// 8-decade (Full) floor. Single values retain a one-decade display span, without changing the data.
+// Mode-to-visible-window fit for the LEFT axis: the four linear arms' finite positive union
+// (rho is NOT in this union — it owns the right axis below), exact endpoints, a 5-decade (Fit)
+// or 14-decade (Full) floor. Single values retain a one-decade display span, without changing
+// the data. Absent (valid=false) when the component carries no drawable four-arm value — the
+// rho arm then still draws alone.
 struct PointCurveAxisRange {
   bool valid = false;
   double lo = 0.0;
@@ -262,6 +322,19 @@ struct PointCurveAxisRange {
 };
 PointCurveAxisRange PointCurveAxisFit(const PointContributionCurve& curve,
                                       PointCurveRangeMode mode = PointCurveRangeMode::kFit);
+
+// The rho arm's independent right axis: the exact span of the component's finite log10 densities
+// — no decade cap, the full deep tail is the domain (a 213-decade live fiber fits by
+// construction). Values are decades, not densities: a 1e-2000 tail is -2000 here, so the axis
+// arithmetic stays far inside double's linear range and ticks never pow back. `hi == lo`
+// (a constant branch) stays valid — the renderer widens the display span honestly without
+// touching the data. Absent when no point carries a finite log density.
+struct PointCurveRhoAxisRange {
+  bool valid = false;
+  double lo_log10 = 0.0;
+  double hi_log10 = 0.0;
+};
+PointCurveRhoAxisRange PointCurveRhoAxisFit(const PointContributionCurve& curve);
 
 // One log-axis tick: a decade boundary (major) or its 2x/5x sub-multiple (minor).
 struct PointCurveLogTick {
@@ -273,11 +346,35 @@ struct PointCurveLogTick {
 // still draws inside a range rather than on an edge; nothing positive to span answers empty.
 std::vector<PointCurveLogTick> PointCurveLogTicks(double lo, double hi);
 
+// One right-axis tick as (mantissa, exponent) — value = mantissa * 10^exponent, NEVER formed
+// through pow: a deep tail's exponents exceed double's linear range, and the tick's whole
+// point is to stay representable where the value is not. Majors at every decade inside
+// [lo_log10, hi_log10], minors at the 2x/5x multiples. A degenerate band widens to one decade
+// (a constant branch still draws inside a range); nothing finite to span answers empty.
+struct PointCurveRhoTick {
+  int exponent = 0;
+  double mantissa = 1.0;  // 1, 2 or 5
+  bool major = false;
+};
+std::vector<PointCurveRhoTick> PointCurveRhoLogTicks(double lo_log10, double hi_log10);
+// The tick's axis label — mantissa digit and exponent spelled directly ("2e-2007"): the
+// exponent range makes %.0e of a formed value impossible by construction.
+std::string PointCurveRhoTickLabel(const PointCurveRhoTick& tick);
+
+// The absolute density text for one finite log10 fact, mantissa + exponent recovered from the
+// decade decomposition (a coordinate/annotation transform of the log — never an exp of the
+// value): "3.24e-89". The tooltip/readout spelling that keeps a finite deep tail from
+// displaying as a linear "0".
+std::string PointCurveRhoValueText(double log10_rho);
+
 // The exponent stride between LABELLED decade majors so labels cannot overlap: a real fiber
 // can span hundreds of decades (live: 1e-213 .. 1.6), and labelling every decade on a ~200 px
 // plot draws hundreds of overlapping texts. Returns 1 when every decade can carry a label;
 // above that, only every Nth exponent is labelled and the rest stay unlabelled.
 int PointCurveLogLabelStep(double lo, double hi, float plot_h_px, float line_h_px);
+// The right axis's stride over decade bounds given directly (the rho axis's lo/hi ARE decades —
+// a 2000-decade tail never forms the values the left-axis overload would log again).
+int PointCurveRhoLogLabelStep(double lo_log10, double hi_log10, float plot_h_px, float line_h_px);
 
 // One run of consecutive stored indices whose arm value is a usable positive: half-open
 // [begin, end) over the stored points. Gaps (unavailable or exact-zero points) break runs and
@@ -295,11 +392,27 @@ struct PointCurveSegment {
 };
 bool PointCurveClipSegment(double x0, double value0, double x1, double value1, const PointCurveAxisRange& range,
                            PointCurveSegment* out);
+// The rho arm's clip in arclength/log10 space — plain linear clipping of decade coordinates (no
+// log-ratio cancellation concerns; the values ARE the logs). Same normalized-y contract.
+bool PointCurveRhoClipSegment(double x0, double log10_0, double x1, double log10_1, const PointCurveRhoAxisRange& range,
+                              PointCurveSegment* out);
 // Shared production drawing face: clip segments, not samples; zero/unavailable break runs.
+// Draws the FOUR linear arms (area, T, K, product) against the left range — the rho arm is the
+// separate face below (one arm, one axis, one face; no second test-only rho path).
 void DrawPointCurveArms(ImDrawList* draw_list, const PointContributionCurve& curve, const PointCurveAxisRange& range,
                         const ImVec2& plot_min, const ImVec2& plot_max);
+// The rho arm's drawing face: finite log10 densities against the independent right range,
+// clipped in log space; isolated finite points stay visible as markers; off-support/divergent/
+// unavailable points break runs and are never bridged.
+void DrawPointCurveRhoArm(ImDrawList* draw_list, const PointContributionCurve& curve,
+                          const PointCurveRhoAxisRange& range, const ImVec2& plot_min, const ImVec2& plot_max);
 // The production axis/seed drawing faces are shared with controlled real-frame fixtures.
 void DrawPointCurveLogAxis(ImDrawList* draw_list, const PointCurveAxisRange& range, const ImVec2& plot_min,
+                           const ImVec2& plot_max);
+// The right axis's edge ticks and labels: majors as right-edge tick marks with decade labels in
+// the right gutter (no full-width gridlines — the left axis owns the reference lattice and two
+// overlaid lattices would read as one wrong one). Shared with the controlled real-frame fixture.
+void DrawPointCurveRhoAxis(ImDrawList* draw_list, const PointCurveRhoAxisRange& range, const ImVec2& plot_min,
                            const ImVec2& plot_max);
 void DrawPointCurveSeed(ImDrawList* draw_list, const PointContributionCurve& curve, const ImVec2& plot_min,
                         const ImVec2& plot_max);
