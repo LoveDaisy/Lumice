@@ -770,17 +770,22 @@ dispersion 双圈与 verdict 锚定同走线同措辞）；②弧 = 带方位向
 - **虚线弱化（画出）**：`coverage_complete=0` 且 verdict 带位——有限计算进视觉语法而非缺席；
   文字层同名限定行（"Coverage incomplete — …"）与虚线形态同源。owner 可推翻（缺席派读法）。
 
-**常驻管理（2026-11-22 图层组修订，演进自 2026-11-18 形态）**：Raypath view 图侧保留 **Overlays**
-总门（默认开，沿用窗口 storage 寿命），旁置随时可开的 **Layers** 弹出控制区：五个图层组——
-Support range（support 区间界的角距参照弧）/ Sharp edges（edge 卡的角距位置）/ Point images
-（有位对象标记）/ Red-blue shift（dispersion 双圈 + 合格 verdict 锚，默认开）/ Reflection turns
-（可见 `internal_<n>_tir_discriminant` 特征的双代表角距，中性墨）——每组一对开关（图形/标签），
-沿 Render 逐项图形/标签分开的习惯；键随总门同一 T-session 窗口 storage 寿命，换类、采纳结果与
-关开窗口保留，新进程回出厂全开。Point images 组内另有三个逐类子开关（source image / regular
-image / family collapse，AC4 的常规像与折叠对象独立显隐；标记旁的常驻短名是该组标签框的消费
-端，hover 详情是交互细节不属标签门），其余种类随父门。区域着色子项单列且禁用（无区域通量
-载荷，诚实缺席）。所有开关是纯显示路径：只过滤既有事实并重投影/重绘，不重算、不发请求、不进
-`.lmc`/导出/user defaults。
+**常驻管理（2026-11-26 图层表格修订，演进自 2026-11-22 图层组形态）**：Raypath view 图侧保留 **Overlays**
+总门（默认开，沿用窗口 storage 寿命），旁置随时可开的 **Layers** 弹出控制区：一行一记录的三列
+表格（Name | Graphics | Labels，列头是可见文字，行名＋列头共同唯一确定每个框的含义，不依赖
+逐框 hover 识义），承载六个图层组——Support range（support 区间界的角距参照弧）/ Sharp edges
+（edge 卡的角距位置）/ Point images（有位对象标记，其三个逐类子行 source image / regular
+image / family collapse 紧随父行、只占 Graphics 列，Labels 格以「—」表示随父组标签门；标记旁
+的常驻短名仍是该组标签框的消费端，hover 详情是交互细节不属标签门）/
+Caustic representatives（折叠代表的标记，独立于 Point images 的第六组，`×N` 计数是复合
+marker 不随 labels 位撤）/ Red-blue shift（dispersion 双圈 + 合格 verdict 锚，默认开）/
+Reflection turns（可见 `internal_<n>_tir_discriminant` 特征的双代表角距，中性墨）——每组一对
+开关（图形/标签），沿 Render 逐项图形/标签分开的习惯；键随总门同一 T-session 窗口 storage 寿命，
+换类、采纳结果与关开窗口保留，新进程回出厂全开。组的缺席说明（无文档/无该类载荷）换行放在
+该组行名下的弱化文字里，属同一记录；区域着色行单列且禁用，禁用理由（无区域通量载荷）同样行上
+可读。弹出区宽度按活字体的内容需求取值，高度按本帧实际行（缺席行多占一行）计，超出宿主
+viewport 可用矩形时表格纵滚且列头行冻结；宽度从不从地图列宽硬减。所有开关是纯显示路径：只过滤
+既有事实并重投影/重绘，不重算、不发请求、不进 `.lmc`/导出/user defaults。
 总关撤掉全部分析墨迹（弧、标记、色散、verdict、标签、profile 临时设备），保留太阳/天顶/地平线
 与用户 sky point；再开恢复原分组选项而非全量重置。关任一组标签只撤读数不撤墨迹；关图形墨迹与
 标签一起撤（无注解对象）。

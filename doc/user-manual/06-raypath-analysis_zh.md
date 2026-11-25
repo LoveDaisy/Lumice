@@ -280,11 +280,13 @@ chromatic pair**（min-deviation 行的两个波长与间距）。文档未产�
 ）；Alt 单击仍是设天空点。隐藏弧所在图层组即藏线且不可点击，选择在右栏保留，入口注明地图不再
 绘制；切换类或重新分析即换身份并清除选择。整个流程不重算、不发查询。
 
-**图层组开关。** Overlays 旁的 **Layers** 按钮打开逐组开关——Support range / Sharp edges /
-Point images / Caustic representatives / Red-blue shift / Reflection turns——每组各有图形与标签
-两个框（藏标签不藏墨迹，关墨迹连同其标签一起撤）。Point images 组内另有三个逐类框（source
-image / regular image / family collapse），屏上碰巧重叠的像各自独立开关；标记旁的常驻短名是该组
-的标签，悬停详情不属标签门。Caustic representatives 是独立的第六组，不随 Point images 开关消失：
+**图层组开关。** Overlays 旁的 **Layers** 按钮打开一张小表格——列头 **Graphics** 与 **Labels**
+之下每组一行，覆盖 Support range / Sharp edges / Point images / Caustic representatives /
+Red-blue shift / Reflection turns，每组各有图形与标签两个框（藏标签不藏墨迹，关墨迹连同其标签
+一起撤）。当前文档画不出某组时，说明文字直接写在该组行上（如 "no document"）；Region shading
+行保持禁用，禁用原因同样写在行上。Point images 组名下紧跟三个子行（source image / regular
+image / family collapse），屏上碰巧重叠的像各自独立开关；子行只控制各自的 marker，标签随父组
+框，标记旁的常驻短名是该组的标签，悬停详情不属标签门。Caustic representatives 是独立的第六组，不随 Point images 开关消失：
 它是 family survey 有天空位置的折叠代表（橙色三角）。几十个代表叠在同一天点（镜像不动点）时，
 地图把不可分辨的叠点折成一个 marker 加小号 **×N** 计数（被折的来源在悬停中全部可读：每种观测
 一行，不丢内容）；真正分开的代表仍各自画出；全天空图两边缘各有一个可见副本是同一天点的两次

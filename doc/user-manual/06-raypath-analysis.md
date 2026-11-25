@@ -201,13 +201,16 @@ verdict that names itself **not visible**, has no position, or is not a supporte
 draws nothing; **incomplete coverage** draws a dashed circle. The legend only lists anchors
 actually drawn.
 
-**Layer groups.** The **Layers** button beside Overlays opens the per-group switches — Support
-range, Sharp edges, Point images, Caustic representatives, Red-blue shift, Reflection turns —
-each with its own graphics and labels box (hiding labels never hides ink; hiding ink removes
-its labels with it). Point images carries three per-kind boxes — source image, regular image,
-family collapse — so images that happen to overlap on screen stay separately switchable; each
-marker's standing short name is that group's label, and the hover tooltip remains the details
-channel. The caustic representatives are their own group, independent of the Point images
+**Layer groups.** The **Layers** button beside Overlays opens a small table — one row per layer
+group under the column headers **Graphics** and **Labels** — for Support range, Sharp edges,
+Point images, Caustic representatives, Red-blue shift and Reflection turns, each with its own
+graphics and labels box (hiding labels never hides ink; hiding ink removes its labels with it).
+A group that has nothing to draw on the current document says so right on its row (for example
+"no document"), and the Region shading row stays disabled with its reason readable on the row.
+Point images carries three sub-rows of its own — source image, regular image, family collapse —
+so images that happen to overlap on screen stay separately switchable; they switch markers
+only, following the group's labels box, and each marker's standing short name is that group's
+label, with the hover tooltip remaining the details channel. The caustic representatives are their own group, independent of the Point images
 switch: they are the family survey's positioned fold representatives, drawn as orange
 triangles. Where dozens of them pile onto one sky position — a mirror fixed point — the map
 folds the indistinguishable pile into one marker with a small **×N** count (the pile's
