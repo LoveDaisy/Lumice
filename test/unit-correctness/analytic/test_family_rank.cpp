@@ -1066,6 +1066,71 @@ TEST(FamilyRank, C16CliffProbeRecoversTheTail) {
   EXPECT_GT(recovered_on_oracle, 0) << "no recovered crossing landed on a closed-form fold";
 }
 
+// AC1's Lowitz leg: the sheet recovers multiple ordered chains — the corpus witness's main
+// fold AND the near-sun branches the 819 exploration found at the zenith extremes (LI-arbitrated
+// real folds, kept, not chart-boundary deletions). The chain machinery runs unmodified on a
+// {zenith, azimuth} family; every chain's links carry their cell provenance like the C16 ones.
+TEST(FamilyRank, LowitzSheetOrderedChainsIncludeThePolarBranches) {
+  Fixture f;
+  int slots[2];
+  const int faces[2] = { 3, 5 };
+  f.Resolve(faces, 2, slots);
+  double sun[3];
+  SunAt(15.0, 0.0, sun);
+  const RestrictedFamilyRank rank = RankRestrictedFamily(f.normals, slots, 2, LowitzFoldSheet(), sun, kN131, 128);
+  ASSERT_EQ(rank.status, FamilyRankStatus::kOk);
+  ASSERT_GE(rank.fold_chains.size(), 3u) << "the sheet's main fold and near-sun branches";
+  int polar_chains = 0;
+  int provenance_ok = 0;
+  int links_total = 0;
+  for (const FoldChainRecord& chain : rank.fold_chains) {
+    if (chain.order.size() < 2) {
+      continue;
+    }
+    // A near-sun (polar) branch: its chain's crossings sit at zenith below 34 or above 146
+    // degrees — the 819 exploration's LI-arbitrated real folds the witness segment alone misses.
+    double zen_min = 1e9;
+    double zen_max = -1e9;
+    for (int idx : chain.order) {
+      const FoldPointRecord& p = rank.crossings[static_cast<size_t>(idx)];
+      zen_min = std::min(zen_min, p.params_deg[0]);
+      zen_max = std::max(zen_max, p.params_deg[0]);
+    }
+    if (zen_min <= 5.0 || zen_max >= 175.0) {
+      polar_chains++;
+    }
+    // Per-link provenance, same contract as the C16 chains: a direct link's two crossings sit
+    // on the link's cell boundary (subdivision links carry their cell by construction and are
+    // not re-derived here).
+    for (size_t l = 0; l + 1 < chain.order.size(); ++l) {
+      if (chain.links[l].through_subdivision) {
+        continue;
+      }
+      links_total++;
+      const FoldPointRecord& a = rank.crossings[static_cast<size_t>(chain.order[l])];
+      const FoldPointRecord& b = rank.crossings[static_cast<size_t>(chain.order[l + 1])];
+      const auto on_cell = [&](const FoldPointRecord& p) {
+        if (p.edge_dim < 0) {
+          return false;
+        }
+        // The Lowitz sheet's free dimensions are zenith (0..180, inclusive) and azimuth
+        // (periodic): cell (I, J) spans [I, I+1] x [J, J+1] in sample indices.
+        const int I = chain.links[l].cell_i0;
+        const int J = chain.links[l].cell_i1;
+        if (p.edge_dim == 0) {
+          return p.edge_i0 == I && (p.edge_i1 == J || p.edge_i1 == (J + 1) % 128);
+        }
+        return p.edge_i1 == J && (p.edge_i0 == I || p.edge_i0 == I + 1);
+      };
+      if (on_cell(a) && on_cell(b)) {
+        provenance_ok++;
+      }
+    }
+  }
+  EXPECT_GE(polar_chains, 1) << "the near-sun branches are gone";
+  EXPECT_EQ(provenance_ok, links_total) << "a direct link lacks its cell provenance";
+}
+
 // AC1's one-dimensional leg: the Parry circle records as the ordered, validity-segmented track
 // — every sample in parameter order, one run over the whole circle, closed through the seam,
 // and no fold machinery on the one-dimensional family.
