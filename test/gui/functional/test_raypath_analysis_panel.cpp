@@ -13997,11 +13997,17 @@ bool SunGridRealReaderLayoutAndSelection(ImGuiTestContext* ctx) {
   std::vector<gui::PointComponentRow> components;
   gui::PointComponentRows(*document, &components);
   IM_CHECK_RETV(components.size() > 1, false);
+  // The adoption opens at the document's interpretive pose (2026-11-25) — the switch test is
+  // relative: whatever component the document opened at, one Down moves the combo one step
+  // (wrapping), and the cursor follows the combo's own write.
+  const int before_component = gui::g_state.analysis.point_view.component_index;
   ctx->ItemClick(PoseRegionWindow("##AnalyzeSunGlobe")->GetID("##globe_component"));
   ctx->KeyPress(ImGuiKey_DownArrow);
   ctx->KeyPress(ImGuiKey_Enter);
   ctx->Yield(3);
-  IM_CHECK_RETV(gui::g_state.analysis.point_view.component_index == 1, false);
+  IM_CHECK_RETV(gui::g_state.analysis.point_view.component_index ==
+                    ((before_component + 1) % static_cast<int>(components.size())),
+                false);
   IM_CHECK_RETV(check(), false);
   const float default_globe_ratio = gui::g_state.analyze_pose_view_globe_ratio;
   {
@@ -14638,12 +14644,17 @@ bool SunGlobeViewModeHasTheGlobeSurvivalSet(ImGuiTestContext* ctx) {
     ctx->MouseMoveToPos(ImVec2(2.0f, 2.0f));
     ctx->Yield(2);
   }
-  // A component switch keeps it.
+  // A component switch keeps it. The adoption opens at the document's interpretive pose
+  // (2026-11-25), so the switch is relative: one Down from wherever the document opened moves
+  // the combo one step (wrapping) and the cursor follows the combo's own write.
+  std::vector<gui::PointComponentRow> survival_rows;
+  IM_CHECK_RETV(gui::PointComponentRows(*gui::g_state.analysis.point.adopted_result, &survival_rows) > 1, false);
+  const int before_component = view.component_index;
   ctx->ItemClick(PoseRegionWindow("##AnalyzeSunGlobe")->GetID("##globe_component"));
   ctx->KeyPress(ImGuiKey_DownArrow);
   ctx->KeyPress(ImGuiKey_Enter);
   ctx->Yield(3);
-  IM_CHECK_RETV(view.component_index == 1, false);
+  IM_CHECK_RETV(view.component_index == ((before_component + 1) % static_cast<int>(survival_rows.size())), false);
   IM_CHECK_RETV(view.sun_globe_view_mode == gui::SunGlobeViewMode::kFit, false);
   // A sample move keeps it. The slider and the curve control resolve through their region
   // windows' own IDs — the path search from the pose window ref proved flaky right after a
