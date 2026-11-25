@@ -367,6 +367,14 @@ struct OverlayScreenPoint {
 void GroupOverlayScreenClusters(const std::vector<OverlayScreenPoint>& points, float radius,
                                 std::vector<std::vector<size_t>>* clusters);
 
+// The cluster's one evidence rule (AC2's "aggregation must not upgrade evidence"): a pile may
+// draw solid only when EVERY member's claim concluded — certified or finite; any refused or
+// unevaluated source keeps the whole pile on the conservative outline, and the count never
+// reads as confidence. Empty input is vacuously true by the all-of's own semantics, and the
+// clustering above never produces an empty group; the unit layer pins both the mixed-evidence
+// refusals and the concluded pile.
+bool OverlayClusterAllConcluded(const std::vector<int>& states);
+
 // The reference arcs' caller-side geometry and gates — the same mirror discipline as
 // VerdictAnchorInput's projection quintet (a new MapCanvasProjection field must be added to BOTH
 // sides or the rebuilt view silently defaults).

@@ -1001,6 +1001,11 @@ void DrawMapReadoutLabels(ImDrawList* dl, const std::vector<MapReadoutLabel>& la
 // The marker vocabulary: a shape and a colour per kind (the engine's six kinds plus the
 // fallback), solid for a concluded claim (certified/finite) and outline-only otherwise — the
 // refused/unevaluated rows must not read as answered.
+// The engine kind name this file's caustic logic compares against — ONE spelling here: the
+// visibility predicate, the cluster collection, the style table, the popup's absence read and
+// the display-vocabulary mapping all test the same wire string, so a rename touches one line.
+constexpr char kCausticEdgeKindName[] = "caustic edge";
+
 // The ONE points-row visibility rule (the header's contract): the positioned caustic rows read
 // their OWN group's gate — the Point images parent neither shows nor buries them (the pile's
 // declutter switch must not ride the images' parent) — and the points group's rows take the
@@ -1008,7 +1013,12 @@ void DrawMapReadoutLabels(ImDrawList* dl, const std::vector<MapReadoutLabel>& la
 // collection and the legend all read the row through this predicate — hidden kinds draw no
 // marker, join no hover group and earn no legend entry from the very same check.
 bool PointMarkerVisible(const SurveyObjectRow& row, const SurveyLayerGates& gates) {
-  if (row.kind_name == "caustic edge") {
+  if (row.kind_name == kCausticEdgeKindName) {
+    // Positioned rows only: the T1 arm's same-kind card carries a deviation-axis position and
+    // never a sky position (survey_t1 assembles SetEdge without SetPosition, so has_position
+    // stays false), and this draw path skips !position_available rows before the predicate —
+    // the T1 reference keeps its Sharp edges route. Should the engine ever give that card a
+    // sky position, THIS branch is what would silently re-route it into this group's switch.
     return gates.caustic.graphics;
   }
   if (!gates.points.graphics) {
@@ -1038,7 +1048,7 @@ OverlayMarkerStyle OverlayMarkerStyleFor(const std::string& kind_name, int state
   } else if (kind_name == "support set") {
     s.shape = OverlayMarkerShape::kSquare;
     s.colour = IM_COL32(140, 196, 255, 255);
-  } else if (kind_name == "caustic edge") {
+  } else if (kind_name == kCausticEdgeKindName) {
     s.shape = OverlayMarkerShape::kTriangle;
     s.colour = IM_COL32(255, 176, 92, 255);
   } else if (kind_name == "bright domain") {
@@ -1083,6 +1093,15 @@ void GroupOverlayHits(const std::vector<const SurveyObjectRow*>& hits, std::vect
       out->push_back(OverlayHitGroup{ hit, 1 });
     }
   }
+}
+
+bool OverlayClusterAllConcluded(const std::vector<int>& states) {
+  for (const int s : states) {
+    if (s != LUMICE_PATH_STATE_CERTIFIED && s != LUMICE_PATH_STATE_FINITE) {
+      return false;
+    }
+  }
+  return true;
 }
 
 void GroupOverlayScreenClusters(const std::vector<OverlayScreenPoint>& points, float radius,
@@ -1175,7 +1194,7 @@ namespace {
 // is; the hover reads the raw row back. One mapping, two consumers; "Sharp edges" keeps the T1
 // curves' own name, and the T1 card itself never draws a marker (it carries no sky position).
 const char* OverlayKindDisplayName(const std::string& kind_name) {
-  if (kind_name == "caustic edge") {
+  if (kind_name == kCausticEdgeKindName) {
     return "caustic representative";
   }
   return kind_name.c_str();
@@ -1318,6 +1337,23 @@ void DrawSurveyOverlays(ImDrawList* dl, GuiState& state, const MapCanvasProjecti
   // this frame's display derivation over the already-read-back rows (no query, no document
   // write, nothing cached across frames). Non-caustic rows keep the one-marker-per-row pass.
   std::vector<std::pair<const SurveyObjectRow*, OverlayScreenPoint>> caustic_points;
+  // The legend's one note-kind rule, shared by both passes (a legend describes the drawn
+  // picture; each drawn marker's kind earns at most one first-draw-order entry).
+  const auto legend_note_kind = [&](const std::string& kind) {
+    if (legend == nullptr) {
+      return;
+    }
+    bool known = false;
+    for (const std::string& k : legend->object_kinds) {
+      if (k == kind) {
+        known = true;
+        break;
+      }
+    }
+    if (!known) {
+      legend->object_kinds.push_back(kind);
+    }
+  };
   for (const SurveyObjectRow& row : model.objects) {
     if (!PointMarkerVisible(row, gates) || !row.position_available) {
       continue;
@@ -1331,24 +1367,13 @@ void DrawSurveyOverlays(ImDrawList* dl, GuiState& state, const MapCanvasProjecti
     }
     const float cx = static_cast<float>(x);
     const float cy = static_cast<float>(y);
-    if (row.kind_name == "caustic edge") {
+    if (row.kind_name == kCausticEdgeKindName) {
       caustic_points.push_back({ &row, OverlayScreenPoint{ cx, cy } });
       continue;
     }
     const OverlayMarkerStyle style = OverlayMarkerStyleFor(row.kind_name, row.state);
     draw_overlay_marker(style, cx, cy);
-    if (legend != nullptr) {
-      bool known = false;
-      for (const std::string& k : legend->object_kinds) {
-        if (k == row.kind_name) {
-          known = true;
-          break;
-        }
-      }
-      if (!known) {
-        legend->object_kinds.push_back(row.kind_name);
-      }
-    }
+    legend_note_kind(row.kind_name);
     if (gates.points.labels) {
       // The labels box's own consumer: the kind's short standing name beside its marker (the
       // plan's 辨识所需短名 — the recognisable-structure face). Hiding labels keeps the marker
@@ -1376,26 +1401,15 @@ void DrawSurveyOverlays(ImDrawList* dl, GuiState& state, const MapCanvasProjecti
     for (const std::vector<size_t>& cluster : clusters) {
       const SurveyObjectRow& anchor = *caustic_points[cluster.front()].first;
       const OverlayScreenPoint at = caustic_points[cluster.front()].second;
-      bool all_concluded = true;
+      std::vector<int> states;
+      states.reserve(cluster.size());
       for (const size_t m : cluster) {
-        const int s = caustic_points[m].first->state;
-        all_concluded = all_concluded && (s == LUMICE_PATH_STATE_CERTIFIED || s == LUMICE_PATH_STATE_FINITE);
+        states.push_back(caustic_points[m].first->state);
       }
       OverlayMarkerStyle style = OverlayMarkerStyleFor(anchor.kind_name, anchor.state);
-      style.filled = all_concluded;
+      style.filled = OverlayClusterAllConcluded(states);
       draw_overlay_marker(style, at.x, at.y);
-      if (legend != nullptr) {
-        bool known = false;
-        for (const std::string& k : legend->object_kinds) {
-          if (k == anchor.kind_name) {
-            known = true;
-            break;
-          }
-        }
-        if (!known) {
-          legend->object_kinds.push_back(anchor.kind_name);
-        }
-      }
+      legend_note_kind(anchor.kind_name);
       if (gates.caustic.labels) {
         const ImVec2 label_pos(at.x + marker_r + UiPx(3.0f), at.y - ImGui::GetTextLineHeight() * 0.5f);
         dl->AddText(label_pos, ImGui::GetColorU32(ImGuiCol_TextDisabled), OverlayKindDisplayName(anchor.kind_name));
@@ -1426,7 +1440,7 @@ void DrawSurveyOverlays(ImDrawList* dl, GuiState& state, const MapCanvasProjecti
   if (!hits.empty()) {
     bool all_caustic = true;
     for (const SurveyObjectRow* row : hits) {
-      if (row->kind_name != "caustic edge") {
+      if (row->kind_name != kCausticEdgeKindName) {
         all_caustic = false;
         break;
       }
@@ -2370,7 +2384,7 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
     const char* points_absence = model.valid ? (points_available ? nullptr : "no positioned objects") : no_document;
     bool caustic_available = false;
     for (const SurveyObjectRow& row : model.objects) {
-      if (row.position_available && row.kind_name == "caustic edge") {
+      if (row.position_available && row.kind_name == kCausticEdgeKindName) {
         caustic_available = true;
         break;
       }

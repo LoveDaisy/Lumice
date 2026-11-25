@@ -2475,6 +2475,28 @@ TEST(AnalyzeMapView, OverlayScreenClustersStayDiameterBoundedAndConserveRows) {
   EXPECT_EQ(clusters, again);
 }
 
+// The cluster's evidence rule (AC2's "aggregation must not upgrade evidence"): a pile draws
+// solid only when EVERY member concluded; one refused or unevaluated source keeps the whole
+// pile on the conservative outline — the mixed pile is exactly the shape a real document can
+// produce (per-member fold representatives with per-row states), and drawing it solid would
+// read undecided sources as answered.
+TEST(AnalyzeMapView, OverlayClusterAllConcludedRefusesAnyUnconcludedMember) {
+  const int certified = LUMICE_PATH_STATE_CERTIFIED;
+  const int finite = LUMICE_PATH_STATE_FINITE;
+  const int refused = LUMICE_PATH_STATE_REFUSED;
+  const int unevaluated = LUMICE_PATH_STATE_UNEVALUATED;
+  // The real PBD pile's shape: every representative concluded → solid.
+  EXPECT_TRUE(OverlayClusterAllConcluded({ finite, finite, certified }));
+  EXPECT_TRUE(OverlayClusterAllConcluded({ certified }));
+  // One unconcluded member anywhere flips the whole pile to the conservative outline.
+  EXPECT_FALSE(OverlayClusterAllConcluded({ finite, refused, finite }));
+  EXPECT_FALSE(OverlayClusterAllConcluded({ certified, unevaluated }));
+  EXPECT_FALSE(OverlayClusterAllConcluded({ refused }));
+  // Empty input: vacuously true by the all-of's semantics; the clustering never produces an
+  // empty group (each cluster carries its seed), so the draw path never observes this shape.
+  EXPECT_TRUE(OverlayClusterAllConcluded({}));
+}
+
 // The stationary-click selection's distance test (817.2): the point-to-segment distance in
 // points and the stroke's hit predicate — the geometry the map's release frame tests against.
 // The stroke records only submitted segments, so the ideal circle's uncovered parts are not
