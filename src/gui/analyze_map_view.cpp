@@ -1016,9 +1016,10 @@ bool PointMarkerVisible(const SurveyObjectRow& row, const SurveyLayerGates& gate
   if (row.kind_name == kCausticEdgeKindName) {
     // Positioned rows only: the T1 arm's same-kind card carries a deviation-axis position and
     // never a sky position (survey_t1 assembles SetEdge without SetPosition, so has_position
-    // stays false), and this draw path skips !position_available rows before the predicate —
-    // the T1 reference keeps its Sharp edges route. Should the engine ever give that card a
-    // sky position, THIS branch is what would silently re-route it into this group's switch.
+    // stays false). The draw loop answers THIS predicate first and skips !position_available
+    // rows right after, so the unpositioned T1 card draws nothing either way and its Sharp
+    // edges route stands. Should the engine ever give that card a sky position, THIS branch is
+    // what would silently re-route it into this group's switch.
     return gates.caustic.graphics;
   }
   if (!gates.points.graphics) {
