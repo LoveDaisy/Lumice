@@ -2287,7 +2287,7 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   ImGuiStorage* storage = ImGui::GetStateStorage();
   const ImGuiID overlay_key = ImGui::GetID("overlays");
   bool overlays = storage->GetBool(overlay_key, true);
-  if (ImGui::Checkbox("Overlays##map", &overlays)) {
+  if (Checkbox("Overlays##map", &overlays)) {
     storage->SetBool(overlay_key, overlays);
   }
   // The Layers entry joins the checkbox's line: the master gate and the group face are one
@@ -2303,23 +2303,38 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   // off switch: with it off no preference is disabled or forgotten, the groups stay editable
   // and simply draw nothing.
   struct LayerKeyPair {
-    const char* base;  // "ov_<group>": the graphics key; + "_l": the labels key
+    const char* base;          // "ov_<group>": the graphics key; + "_l": the labels key
+    const char* display_name;  // the table row's visible name — ONE copy, consumed by the row
+                               // and by the popup's width demand below
     SurveyLayerGate* gate;
-    ImGuiID graphics_key;  // resolved ONCE, in THIS child's ID scope — the popup's writes below
-    ImGuiID labels_key;    // reuse these very IDs (ImGui::GetID inside a popup hashes in the
-  } key_pairs[6];          // popup's own scope, which would fork the keys: the read here and the
-                           // write there would never meet)
+    const char* graphics_label;  // "##<base>_graphics": the table box's hidden item label
+    const char* labels_label;    // "##<base>_labels": ditto, for the labels box
+    ImGuiID graphics_key;        // resolved ONCE, in THIS child's ID scope — the popup's writes
+    ImGuiID labels_key;          // below reuse these very IDs (ImGui::GetID inside a popup hashes
+  } key_pairs[6];                // in the popup's own scope, which would fork the keys: the read
+                                 // here and the write there would never meet)
   SurveyLayerGates gates;
   {
     const struct {
       const char* base;
+      const char* display_name;
       SurveyLayerGate* gate;
-    } named[6] = { { "ov_reach", &gates.reach },         { "ov_edge", &gates.edge },
-                   { "ov_points", &gates.points },       { "ov_caustic", &gates.caustic },
-                   { "ov_chromatic", &gates.chromatic }, { "ov_tir", &gates.tir } };
+      const char* graphics_label;
+      const char* labels_label;
+    } named[6] = {
+      { "ov_reach", "Support range", &gates.reach, "##ov_reach_graphics", "##ov_reach_labels" },
+      { "ov_edge", "Sharp edges", &gates.edge, "##ov_edge_graphics", "##ov_edge_labels" },
+      { "ov_points", "Point images", &gates.points, "##ov_points_graphics", "##ov_points_labels" },
+      { "ov_caustic", "Caustic representatives", &gates.caustic, "##ov_caustic_graphics", "##ov_caustic_labels" },
+      { "ov_chromatic", "Red-blue shift", &gates.chromatic, "##ov_chromatic_graphics", "##ov_chromatic_labels" },
+      { "ov_tir", "Reflection turns", &gates.tir, "##ov_tir_graphics", "##ov_tir_labels" }
+    };
     for (int i = 0; i < 6; ++i) {
       key_pairs[i].base = named[i].base;
+      key_pairs[i].display_name = named[i].display_name;
       key_pairs[i].gate = named[i].gate;
+      key_pairs[i].graphics_label = named[i].graphics_label;
+      key_pairs[i].labels_label = named[i].labels_label;
       const std::string labels_key = std::string(named[i].base) + "_l";
       key_pairs[i].graphics_key = ImGui::GetID(named[i].base);
       key_pairs[i].labels_key = ImGui::GetID(labels_key.c_str());
@@ -2335,10 +2350,14 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
     const char* key;
     bool* value;
     const char* label;
+    const char* item_id;  // the sub-row's graphics box's label (a hidden id: the Name column
+                          // carries the visible text, the Render-table habit)
     ImGuiID id;
-  } point_kind_keys[3] = { { "ov_points_k_src", &gates.points_kinds.source_image, "source image", 0 },
-                           { "ov_points_k_reg", &gates.points_kinds.regular_image, "regular image", 0 },
-                           { "ov_points_k_col", &gates.points_kinds.family_collapse, "family collapse", 0 } };
+  } point_kind_keys[3] = {
+    { "ov_points_k_src", &gates.points_kinds.source_image, "source image", "##ov_points_k_src", 0 },
+    { "ov_points_k_reg", &gates.points_kinds.regular_image, "regular image", "##ov_points_k_reg", 0 },
+    { "ov_points_k_col", &gates.points_kinds.family_collapse, "family collapse", "##ov_points_k_col", 0 }
+  };
   for (PointKindKey& k : point_kind_keys) {
     k.id = ImGui::GetID(k.key);
     *k.value = storage->GetBool(k.id, true);
@@ -2364,6 +2383,47 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
   // The layer popup opens in EVERY data state and with the master gate off (the entry's own
   // premise): with no adopted document the rows name the absence instead of disabling themselves,
   // and the switches stay editable — the preferences are display state, not query state.
+  //
+  // The popup's size is stated, not whatever auto-fit lands on: the table's outer size has to be
+  // an explicit number or an auto-resize window would lock onto whatever its first frame's
+  // content-region report was (the table would size to the popup's then-current avail and the
+  // two would pin each other). Width runs from the LIVE font's demand — the longest row name plus
+  // the two fixed switch columns — so the popup is exactly as wide as its content at any scale;
+  // height takes the ten content rows and yields to the host viewport's work rect when the two
+  // disagree, at which point the table scrolls (its header row frozen) instead of the popup
+  // growing past what is visible. Widths and heights are all clamped against the viewport that
+  // hosts THIS window — a detached map's monitor — never against the map column, which the plan
+  // forbids as a width source.
+  //
+  // Only the SetNext* calls sit under the IsPopupOpen gate: they write data the NEXT Begin
+  // consumes — while the popup is closed that next Begin would be some unrelated window, and
+  // the constraints would land on it. The demand arithmetic above them is pure style queries.
+  const char* region_shading_name = "Region shading";
+  const ImGuiViewport* layer_vp = ImGui::GetWindowViewport();
+  const ImGuiStyle& layer_st = ImGui::GetStyle();
+  const float check_w = ImGui::GetFrameHeight();
+  const float graphics_w = std::max(check_w, ImGui::CalcTextSize("Graphics").x + layer_st.CellPadding.x * 2.0f);
+  const float labels_w = std::max(check_w, ImGui::CalcTextSize("Labels").x + layer_st.CellPadding.x * 2.0f);
+  float name_w = ImGui::CalcTextSize(region_shading_name).x;
+  for (const LayerKeyPair& k : key_pairs) {
+    name_w = std::max(name_w, ImGui::CalcTextSize(k.display_name).x);
+  }
+  for (const PointKindKey& k : point_kind_keys) {
+    name_w = std::max(name_w, ImGui::CalcTextSize(k.label).x);
+  }
+  const float name_col = name_w + layer_st.IndentSpacing + layer_st.CellPadding.x * 2.0f;
+  const float demand_w = name_col + graphics_w + labels_w + layer_st.WindowPadding.x * 2.0f;
+  const float layer_max_w = std::max(demand_w, layer_vp->Size.x - layer_st.WindowPadding.x * 2.0f);
+  // The height cap reserves one scrollbar: past it the TABLE scrolls, and its scrollbar must
+  // not push the popup's own total past the work rect. The viewport's usable rect is Pos..Pos+Size
+  // (ImGuiViewport carries no WorkRect — the main window's menu/chrome live outside the viewport).
+  const float layer_max_h =
+      std::max(check_w * 3.0f, layer_vp->Size.y - layer_st.WindowPadding.y * 2.0f - layer_st.ScrollbarSize);
+  if (ImGui::IsPopupOpen("map_layer_switches")) {
+    ImGui::SetNextWindowSizeConstraints(ImVec2(0.0f, 0.0f), ImVec2(layer_max_w, layer_max_h));
+    ImGui::SetNextWindowSize(
+        ImVec2(std::min(demand_w, layer_max_w), 0.0f));  // height stays auto-fit under the constraints
+  }
   if (ImGui::BeginPopup("map_layer_switches")) {
     const SurveyOverlayCache& cache =
         RefreshSurveyOverlayCache(state.analysis.survey, state.analysis.FrozenPointSunPremise());
@@ -2371,9 +2431,8 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
     const SurveyOverlayFacts& facts = cache.facts;
     struct LayerRow {
       const char* name;
-      LayerKeyPair key;            // the region-scope storage IDs and the live gate
-      const char* labels_item_id;  // the labels box's own label (its item ID inside the popup)
-      const char* absence;         // why this group cannot draw on THIS document; nullptr = has payload
+      LayerKeyPair key;     // the region-scope storage IDs, the live gate, and the boxes' labels
+      const char* absence;  // why this group cannot draw on THIS document; nullptr = has payload
     };
     const char* no_document = model.valid ? nullptr : "no document";
     const char* reach_absence =
@@ -2402,66 +2461,117 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
         model.valid ? (chromatic_available ? nullptr : "no chromatic positions") : no_document;
     const char* tir_absence = model.valid ? (facts.tir_turns.empty() ? "no visible turns" : nullptr) : no_document;
     const LayerRow rows[6] = {
-      { "Support range", key_pairs[0], "##ov_reach_labels", reach_absence },
-      { "Sharp edges", key_pairs[1], "##ov_edge_labels", edge_absence },
-      { "Point images", key_pairs[2], "##ov_points_labels", points_absence },
-      { "Caustic representatives", key_pairs[3], "##ov_caustic_labels", caustic_absence },
-      { "Red-blue shift", key_pairs[4], "##ov_chromatic_labels", chromatic_absence },
-      { "Reflection turns", key_pairs[5], "##ov_tir_labels", tir_absence },
+      { key_pairs[0].display_name, key_pairs[0], reach_absence },
+      { key_pairs[1].display_name, key_pairs[1], edge_absence },
+      { key_pairs[2].display_name, key_pairs[2], points_absence },
+      { key_pairs[3].display_name, key_pairs[3], caustic_absence },
+      { key_pairs[4].display_name, key_pairs[4], chromatic_absence },
+      { key_pairs[5].display_name, key_pairs[5], tir_absence },
     };
-    for (const LayerRow& row : rows) {
-      // The storage keys are the REGION-scope IDs precomputed at the entry read — the popup's
-      // own GetID would hash in the popup's scope and fork the keys (the bug this structure
-      // exists to prevent). The checkbox item IDs come from their labels alone.
-      bool g = row.key.gate->graphics;
-      if (ImGui::Checkbox(row.name, &g)) {
-        row.key.gate->graphics = g;
-        storage->SetBool(row.key.graphics_key, g);
+    // The layer table: one record per row, the name column the ONLY stretching one (the Render
+    // overlay table's rule — the switches state the width they need, the names get the rest),
+    // the two switch columns headed in visible text so a box's meaning is readable on the frame
+    // and not a hover discovery. ScrollY keeps the header row frozen whenever the ten content
+    // rows outgrow the cap above; RowBg separates the sub-rows from their parent the way the
+    // indent alone cannot at a glance.
+    constexpr ImGuiTableFlags kLayerTableFlags =
+        ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY;
+    const float row_pitch = std::max(ImGui::GetTextLineHeightWithSpacing(), ImGui::GetFrameHeight());
+    const float header_h = ImGui::GetFrameHeight() + layer_st.CellPadding.y * 2.0f;
+    const float rows_h = row_pitch * 10.0f;  // 6 groups + 3 point kinds + region shading
+    // The popup's total is this table plus the window padding both ends; the constraint above
+    // caps that total, so the table's own cap is the total minus the padding it rides in.
+    const float table_cap = std::max(header_h, layer_max_h - layer_st.WindowPadding.y * 2.0f);
+    const float table_h = std::min(header_h + rows_h, table_cap);
+    if (ImGui::BeginTable("##layer_table", 3, kLayerTableFlags, ImVec2(ImGui::GetContentRegionAvail().x, table_h))) {
+      ImGui::TableSetupColumn("##layer_name", ImGuiTableColumnFlags_WidthStretch);
+      ImGui::TableSetupColumn("Graphics", ImGuiTableColumnFlags_WidthFixed, graphics_w);
+      ImGui::TableSetupColumn("Labels", ImGuiTableColumnFlags_WidthFixed, labels_w);
+      ImGui::TableHeadersRow();
+      // One row per record. The storage keys are the REGION-scope IDs precomputed at the entry
+      // read — the popup's own GetID would hash in the popup's scope and fork the keys (the bug
+      // this structure exists to prevent); the boxes' item IDs come from their "##" labels alone.
+      const auto switches_cell = [&](LayerKeyPair key) {
+        ImGui::TableSetColumnIndex(1);
+        bool g = key.gate->graphics;
+        if (Checkbox(key.graphics_label, &g)) {
+          key.gate->graphics = g;
+          storage->SetBool(key.graphics_key, g);
+        }
+        if (ImGui::IsItemHovered()) {
+          SetWrappedTooltip("Draw this group's ink.");
+        }
+        ImGui::TableSetColumnIndex(2);
+        bool l = key.gate->labels;
+        if (Checkbox(key.labels_label, &l)) {
+          key.gate->labels = l;
+          storage->SetBool(key.labels_key, l);
+        }
+        if (ImGui::IsItemHovered()) {
+          SetWrappedTooltip("Show this group's readout labels. Hiding labels never hides the ink.");
+        }
+      };
+      const auto name_cell = [&](const char* name, const char* absence, bool indented) {
+        ImGui::TableSetColumnIndex(0);
+        if (indented) {
+          ImGui::SetCursorPosX(ImGui::GetCursorPosX() + layer_st.IndentSpacing);
+        }
+        ImGui::TextWrapped("%s", name);
+        if (absence != nullptr) {
+          // The absence rides the SAME record, wrapped under the name — not a SameLine sibling
+          // the eye has to chase across the switch columns.
+          DisabledWrappedText("%s", absence);
+        }
+      };
+      const auto no_labels_cell = [] {
+        // The em dash reads as "rides the parent gate, no labels key of its own" — a non-item
+        // placeholder, and the one hover that explains it stays per-cell, not per-row noise.
+        ImGui::TableSetColumnIndex(2);
+        ImGui::TextDisabled("—");
+        if (ImGui::IsItemHovered()) {
+          SetWrappedTooltip("Labels follow the parent group's box — kinds have no labels key of their own.");
+        }
+      };
+      for (const LayerRow& row : rows) {
+        ImGui::TableNextRow();
+        name_cell(row.name, row.absence, /*indented=*/false);
+        switches_cell(row.key);
+        // The point kinds' sub-rows follow their parent immediately: three graphics-only
+        // switches, one indent step, the dash in the labels column (hidden kinds draw no
+        // marker, join no hover group and earn no legend entry — one predicate on the draw
+        // side sees to all three).
+        if (row.key.gate == &gates.points) {
+          for (const PointKindKey& k : point_kind_keys) {
+            ImGui::TableNextRow();
+            name_cell(k.label, /*absence=*/nullptr, /*indented=*/true);
+            ImGui::TableSetColumnIndex(1);
+            bool v = *k.value;
+            if (Checkbox(k.item_id, &v)) {
+              *k.value = v;
+              storage->SetBool(k.id, v);
+            }
+            if (ImGui::IsItemHovered()) {
+              SetWrappedTooltip("Show this kind's markers within Point images.");
+            }
+            no_labels_cell();
+          }
+        }
       }
-      if (ImGui::IsItemHovered()) {
-        SetWrappedTooltip("Draw this group's ink.");
+      // The region-shading row: a separate switch by design (the plan's 正交 rule), and an
+      // honest absence today — no regional-flux payload exists, so the switch stands disabled
+      // with that reason READABLE on the row (the hover only adds the angular-distance caveat).
+      ImGui::TableNextRow();
+      name_cell(region_shading_name, "unavailable: no regional-flux payload", /*indented=*/false);
+      ImGui::TableSetColumnIndex(1);
+      ImGui::BeginDisabled();
+      bool region_shading = false;
+      Checkbox("##layer_region", &region_shading);
+      ImGui::EndDisabled();
+      if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+        SetWrappedTooltip("The turn references above are angular-distance references, not an area claim.");
       }
-      bool l = row.key.gate->labels;
-      ImGui::SameLine();
-      if (ImGui::Checkbox(row.labels_item_id, &l)) {
-        row.key.gate->labels = l;
-        storage->SetBool(row.key.labels_key, l);
-      }
-      if (ImGui::IsItemHovered()) {
-        SetWrappedTooltip("Show this group's readout labels. Hiding labels never hides the ink.");
-      }
-      if (row.absence != nullptr) {
-        ImGui::SameLine();
-        ImGui::TextDisabled("%s", row.absence);
-      }
-    }
-    // The points group's kind sub-rows, indented one step under the group: each positioned image
-    // kind its own graphics box (labels ride the group's box — the standing names and the hover
-    // details are the group's text channels). Hidden kinds draw no marker, join no hover group
-    // and earn no legend entry — one predicate on the draw side sees to all three.
-    ImGui::Indent();
-    for (const PointKindKey& k : point_kind_keys) {
-      bool v = *k.value;
-      if (ImGui::Checkbox(k.label, &v)) {
-        *k.value = v;
-        storage->SetBool(k.id, v);
-      }
-      if (ImGui::IsItemHovered()) {
-        SetWrappedTooltip("Show this kind's markers within Point images.");
-      }
-    }
-    ImGui::Unindent();
-    // The region-shading sub-item: a separate switch by design (the plan's 正交 rule), and an
-    // honest absence today — no regional-flux payload exists, so the switch stands disabled
-    // rather than pretending a toggle with no consumer.
-    ImGui::BeginDisabled();
-    bool region_shading = false;
-    ImGui::Checkbox("Region shading##layer_region", &region_shading);
-    ImGui::EndDisabled();
-    if (ImGui::IsItemHovered()) {
-      SetWrappedTooltip(
-          "Unavailable: no regional-flux payload exists yet. The turn references "
-          "above are angular-distance references, not an area claim.");
+      no_labels_cell();
+      ImGui::EndTable();
     }
     ImGui::EndPopup();
   }
