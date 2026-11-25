@@ -853,7 +853,7 @@ TEST(AnalyzePointView, RhoClassifyReadsTheDensityReaderStates) {
 TEST(AnalyzePointView, RhoTicksLabelsAndValueTextGoBeyondDoubleRange) {
   // A 1e-2049 tail: the ticks are (mantissa, exponent) pairs — formed values would be
   // impossible, so the label spells the exponent directly.
-  const std::vector<PointCurveRhoTick> ticks = PointCurveRhoLogTicks(-2050.0, -2047.0);
+  const std::vector<PointCurveRhoTick> ticks = PointCurveRhoLogTicks(-2050.0, -2047.0, 1, true);
   ASSERT_FALSE(ticks.empty());
   for (size_t i = 0; i < ticks.size(); ++i) {
     EXPECT_TRUE(ticks[i].exponent <= -2047 && ticks[i].exponent >= -2051);
@@ -869,7 +869,7 @@ TEST(AnalyzePointView, RhoTicksLabelsAndValueTextGoBeyondDoubleRange) {
   EXPECT_TRUE(ticks.front().major);  // the decade boundary leads
   EXPECT_EQ(PointCurveRhoTickLabel(ticks.front()), "1e-2050");
   // The mantissa ticks spell their digit.
-  const std::vector<PointCurveRhoTick> five = PointCurveRhoLogTicks(2.69, 2.71);  // 5e2 = log10 2.699
+  const std::vector<PointCurveRhoTick> five = PointCurveRhoLogTicks(2.69, 2.71, 1, true);  // 5e2 = log10 2.699
   bool saw_five = false;
   for (const PointCurveRhoTick& t : five) {
     if (t.mantissa == 5.0) {
@@ -882,27 +882,42 @@ TEST(AnalyzePointView, RhoTicksLabelsAndValueTextGoBeyondDoubleRange) {
   // ticks never widen on their own; the constant branch's range maps through it.
   const PointCurveRhoAxisRange constant_band{ true, -89.0, -89.0 };
   const std::vector<PointCurveRhoTick> one =
-      PointCurveRhoLogTicks(CurveRhoDisplayLo(constant_band), CurveRhoDisplayHi(constant_band));
+      PointCurveRhoLogTicks(CurveRhoDisplayLo(constant_band), CurveRhoDisplayHi(constant_band), 1, true);
   ASSERT_GE(one.size(), 2U);
   {
     const double lo_tick = static_cast<double>(one.front().exponent) + std::log10(one.front().mantissa);
     const double hi_tick = static_cast<double>(one.back().exponent) + std::log10(one.back().mantissa);
     EXPECT_GE(lo_tick, -89.5);
     EXPECT_LE(hi_tick, -88.5);
-    EXPECT_FALSE(PointCurveRhoLogTicks(-89.0, -89.0).empty());  // the raw band still carries its own tick
+    EXPECT_FALSE(PointCurveRhoLogTicks(-89.0, -89.0, 1, true).empty());  // the raw band still carries its own tick
   }
   // Beyond ~1e6 decades the axis is not spellable: the same absent/n-a family as the
   // non-finite guards (the int-cast UB the review's extreme-magnitude leg closed).
   EXPECT_EQ(PointCurveRhoValueText(2e6), "n/a");
   EXPECT_EQ(PointCurveRhoValueText(-2e6), "n/a");
-  EXPECT_TRUE(PointCurveRhoLogTicks(-2e6, 2e6).empty());
+  EXPECT_TRUE(PointCurveRhoLogTicks(-2e6, 2e6, 1, true).empty());
   // A mantissa within rounding distance of the next decade carries up (9.997 prints as
   // "10.00e-90" without the normalization — the same value misread).
   EXPECT_EQ(PointCurveRhoValueText(std::log10(9.9977e-90)), "1.00e-89");
   EXPECT_EQ(PointCurveRhoValueText(-89.0001), "1.00e-89");
+  // The loop follows the LABELLED decades, never the raw span (plan §3.2's loop half): a
+  // 100k-decade span at a stride of 10000 visits 11 majors and, without minors, nothing else;
+  // the same span at stride 1 with minors stays the dense 1/2/5 lattice.
+  const std::vector<PointCurveRhoTick> strided = PointCurveRhoLogTicks(0.0, 100000.0, 10000, false);
+  ASSERT_EQ(strided.size(), 11U);
+  EXPECT_EQ(strided.front().exponent, 0);
+  EXPECT_EQ(strided.back().exponent, 100000);
+  for (const PointCurveRhoTick& t : strided) {
+    EXPECT_TRUE(t.major);
+    EXPECT_EQ(t.mantissa, 1.0);
+  }
+  // The label stride itself stays in int's domain for any legal span (the double-through-divide
+  // computation; a clamp beyond the tick guard's domain is carried for form only).
+  EXPECT_EQ(PointCurveRhoLogLabelStep(0.0, 2e9, 200.0f, 15.0f), 1000000);
+  EXPECT_EQ(PointCurveRhoLogLabelStep(-2000.0, 0.0, 200.0f, 15.0f), 250);  // ceil(2000 / floor(200/22.5))
   // Nothing finite to span answers empty.
-  EXPECT_TRUE(PointCurveRhoLogTicks(0.0, std::numeric_limits<double>::infinity()).empty());
-  EXPECT_TRUE(PointCurveRhoLogTicks(std::numeric_limits<double>::quiet_NaN(), 1.0).empty());
+  EXPECT_TRUE(PointCurveRhoLogTicks(0.0, std::numeric_limits<double>::infinity(), 1, true).empty());
+  EXPECT_TRUE(PointCurveRhoLogTicks(std::numeric_limits<double>::quiet_NaN(), 1.0, 1, true).empty());
   // The absolute value text: mantissa from the decade fraction, exponent direct — a 1e-2000
   // tail spells out exactly, and the annotation transform never exps the whole value.
   EXPECT_EQ(PointCurveRhoValueText(-2000.0), "1.00e-2000");

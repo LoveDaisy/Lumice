@@ -348,17 +348,20 @@ std::vector<PointCurveLogTick> PointCurveLogTicks(double lo, double hi);
 
 // One right-axis tick as (mantissa, exponent) — value = mantissa * 10^exponent, NEVER formed
 // through pow: a deep tail's exponents exceed double's linear range, and the tick's whole
-// point is to stay representable where the value is not. Majors at every decade inside
-// [lo_log10, hi_log10], minors at the 2x/5x multiples. The span is the CALLER's display span
-// (CurveRhoDisplayLo/Hi) — a constant branch's widening lives in that one definition, not
-// here; nothing drawable to span (non-finite, out of order, exponents beyond ~1e6 decades)
-// answers empty.
+// point is to stay representable where the value is not. Labelled majors walk the stride grid
+// (`label_step`) inside the span; 2x/5x minors ride a labelled major's decade and are
+// generated only when `want_minors` stands (the caller's per-height density check). The span
+// is the CALLER's display span (CurveRhoDisplayLo/Hi) — a constant branch's widening lives in
+// that one definition, not here; the loop visits the LABELLED decades, never the raw span
+// (plan §3.2: a deep tail must not fill the loop), and nothing drawable to span (non-finite,
+// out of order, exponents beyond ~1e6 decades, stride < 1) answers empty.
 struct PointCurveRhoTick {
   int exponent = 0;
   double mantissa = 1.0;  // 1, 2 or 5
   bool major = false;
 };
-std::vector<PointCurveRhoTick> PointCurveRhoLogTicks(double lo_log10, double hi_log10);
+std::vector<PointCurveRhoTick> PointCurveRhoLogTicks(double lo_log10, double hi_log10, int label_step,
+                                                     bool want_minors);
 
 // The rho axis's DISPLAY span: a constant branch (hi == lo) widens by half a decade each way
 // so the branch draws INSIDE a range — display only, the range's own values never move. The

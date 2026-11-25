@@ -1009,33 +1009,78 @@ int PointCurveRhoLogLabelStep(double lo_log10, double hi_log10, float plot_h_px,
   if (!std::isfinite(lo_log10) || !std::isfinite(hi_log10) || hi_log10 <= lo_log10) {
     return 1;
   }
-  const int decades = std::max(1, static_cast<int>(std::ceil(hi_log10 - lo_log10)));
+  // The decade count stays in DOUBLE through the divide: an unbounded axis's span may exceed
+  // int's domain (a legal sigma ~1e-4 deg reaches ~2e9 decades), and casting it before the
+  // stride division was float->int UB (review round 2). The stride clamps to the tick guard's
+  // own domain — beyond it no tick exists to label, the value is carried for form only.
+  const double decades = std::ceil(hi_log10 - lo_log10);
   const float usable_line = std::max(1.0f, line_h_px * 1.5f);
   const int max_labels = std::max(1, static_cast<int>(std::floor(plot_h_px / usable_line)));
-  return std::max(1, static_cast<int>(std::ceil(static_cast<double>(decades) / static_cast<double>(max_labels))));
+  double stride = std::ceil(decades / static_cast<double>(max_labels));
+  if (stride > 1e6) {
+    stride = 1e6;
+  }
+  return std::max(1, static_cast<int>(stride));
 }
 
-std::vector<PointCurveRhoTick> PointCurveRhoLogTicks(double lo_log10, double hi_log10) {
+std::vector<PointCurveRhoTick> PointCurveRhoLogTicks(double lo_log10, double hi_log10, int label_step,
+                                                     bool want_minors) {
   std::vector<PointCurveRhoTick> ticks;
   // Finite, ordered, and within the exponent range a labelled decade can carry (int's domain
   // with a wide margin): beyond it the axis is undrawable, the same "absent" family as the
   // fit's non-finite guard. The CONSTANT-BRANCH widening lives in ONE place — the display
   // span (CurveRhoDisplayLo/Hi); callers map ticks through that span, never a second copy.
   if (!std::isfinite(lo_log10) || !std::isfinite(hi_log10) || lo_log10 > hi_log10 || std::abs(lo_log10) > 1e6 ||
-      std::abs(hi_log10) > 1e6) {
+      std::abs(hi_log10) > 1e6 || label_step < 1) {
     return ticks;
   }
   const double lo = lo_log10;
   const double hi = hi_log10;
-  const int first_exp = static_cast<int>(std::floor(lo));
-  const int last_exp = static_cast<int>(std::ceil(hi));
-  for (int e = first_exp; e <= last_exp; ++e) {
-    for (const double mantissa : { 1.0, 2.0, 5.0 }) {
-      const double log10_value = static_cast<double>(e) + std::log10(mantissa);
-      if (log10_value < lo || log10_value > hi) {
-        continue;
+  // The generation never walks the RAW decade span when it can be vast (plan §3.2's loop
+  // half): without minors the walk follows the caller's label stride — a 1e6-decade span at a
+  // stride of ~8e4 visits ~13 majors. The dense 1/2/5 walk runs only under `want_minors`,
+  // whose caller-side density check (minors_fit: at least ~12px per decade) bounds the span
+  // to a few dozen decades by construction — there it keeps the boundary minors whose own
+  // decade major sits just outside the band.
+  const auto on_label_grid = [label_step](int exponent) {
+    const int m = exponent % label_step;
+    return m == 0;
+  };
+  if (want_minors) {
+    const int first_decade = static_cast<int>(std::floor(lo));
+    const int last_decade = static_cast<int>(std::ceil(hi));
+    for (int e = first_decade; e <= last_decade; ++e) {
+      const double major_log10 = static_cast<double>(e);
+      // The major needs its own value inside the band; the minors only need THEIRS — the
+      // boundary decades (5e2 at log 2.699 inside a band starting at 2.69) carry minors whose
+      // major sits just outside.
+      if (major_log10 >= lo && major_log10 <= hi && on_label_grid(e)) {
+        ticks.push_back(PointCurveRhoTick{ e, 1.0, true });
       }
-      ticks.push_back(PointCurveRhoTick{ e, mantissa, mantissa == 1.0 });
+      for (const double mantissa : { 2.0, 5.0 }) {
+        const double minor_log10 = major_log10 + std::log10(mantissa);
+        if (minor_log10 >= lo && minor_log10 <= hi) {
+          ticks.push_back(PointCurveRhoTick{ e, mantissa, false });
+        }
+      }
+    }
+  } else {
+    int e = static_cast<int>(std::ceil(lo));
+    if (e < 0 && (e % label_step) != 0) {
+      e -= label_step + (e % label_step);  // step down to the stride grid from below
+    } else if (e > 0 && (e % label_step) != 0) {
+      e += label_step - (e % label_step);
+    }
+    const int last_exp = static_cast<int>(std::ceil(hi));
+    for (; e <= last_exp; e += label_step) {
+      const double major_log10 = static_cast<double>(e);
+      if (major_log10 < lo) {
+        continue;  // the stride grid may start a step inside from the ceil'd lower edge
+      }
+      if (major_log10 > hi) {
+        break;
+      }
+      ticks.push_back(PointCurveRhoTick{ e, 1.0, true });
     }
   }
   return ticks;
@@ -1287,7 +1332,8 @@ void DrawPointCurveRhoAxis(ImDrawList* dl, const PointCurveRhoAxisRange& visible
   };
   const bool minors_fit =
       label_step == 1 && plot_h / std::max(1.0, CurveRhoDisplayHi(visible) - CurveRhoDisplayLo(visible)) >= UiPx(12.0f);
-  for (const PointCurveRhoTick& tick : PointCurveRhoLogTicks(CurveRhoDisplayLo(visible), CurveRhoDisplayHi(visible))) {
+  for (const PointCurveRhoTick& tick :
+       PointCurveRhoLogTicks(CurveRhoDisplayLo(visible), CurveRhoDisplayHi(visible), label_step, minors_fit)) {
     const bool labelled = tick.major && tick.exponent % label_step == 0;
     if (tick.major && !labelled) {
       continue;  // an unlabelled decade would only crowd the plot at this density
@@ -3764,7 +3810,7 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
             PointCurveRhoLogLabelStep(rho_visible.lo_log10, rho_visible.hi_log10, rough_plot_h, line_h);
         bool rho_labelled = false;
         for (const PointCurveRhoTick& tick :
-             PointCurveRhoLogTicks(CurveRhoDisplayLo(rho_visible), CurveRhoDisplayHi(rho_visible))) {
+             PointCurveRhoLogTicks(CurveRhoDisplayLo(rho_visible), CurveRhoDisplayHi(rho_visible), rho_step, false)) {
           if (!tick.major || tick.exponent % rho_step != 0) {
             continue;
           }
