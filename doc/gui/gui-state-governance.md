@@ -52,16 +52,28 @@ verdict 常驻墨迹；没有 verdict-only 会话开关。profile hover 是逐�
 T-session 瞬态，Overlays 关闭只阻止其地图墨迹，不阻止行反馈。标签避让/紧凑读回与 sky point 暗底笔
 纯属本帧显示，不写选点、样本、播放或查询，不进配置/快照/用户默认值；sky point 仍不受 Overlays 控制。
 
-**图层组开关（2026-11-22 图层组修订）**：Overlays 总门之外新增五组会话开关（Support range /
-Sharp edges / Point images / Red-blue shift / Reflection turns），每组一对 graphics/labels 键
-（`ov_<group>` / `ov_<group>_l`；Point images 组另有逐类子键 `ov_points_k_src/_reg/_col`），
-与总门同一窗口 `ImGuiStorage` 寿命（T-session 显示偏好：随
-换类、采纳结果、窗口关开保留，新进程回出厂全开），不进 `.lmc`、导出、`ConfigSnapshot`、user
-defaults，不产生 dirty 或查询。storage 键 ID 在地图子窗口的 ID 作用域一次性解析并供弹出区
+**图层组开关（2026-11-22 图层组修订；2026-11-25 第六组）**：Overlays 总门之外的会话开关共六组
+（Support range / Sharp edges / Point images / Caustic representatives / Red-blue shift /
+Reflection turns），每组一对 graphics/labels 键（`ov_<group>` / `ov_<group>_l`；Point images 组
+另有逐类子键 `ov_points_k_src/_reg/_col`），与总门同一窗口 `ImGuiStorage` 寿命（T-session 显示
+偏好：随换类、采纳结果、窗口关开保留，新进程回出厂全开），不进 `.lmc`、导出、`ConfigSnapshot`、
+user defaults，不产生 dirty 或查询。storage 键 ID 在地图子窗口的 ID 作用域一次性解析并供弹出区
 复用（popup 内 `GetID` 会落入 popup 作用域造成同语义双键分叉——写读永不相遇，此为已验证坑）。
-五组开关是纯显示路径：只过滤 overlay cache 已读回的显示事实（`SurveyOverlayFacts`，按采纳身份
+六组开关是纯显示路径：只过滤 overlay cache 已读回的显示事实（`SurveyOverlayFacts`，按采纳身份
 重建一次，非每帧/每次开关重建），不触发 survey/map 重算。区域着色子项单列禁用（无载荷，非
 开关状态，不占 storage）。
+
+**Caustic representatives 组与呈现聚合（2026-11-25）**：positioned caustic 行（family 臂折叠
+代表，`position_available=true` 的 `caustic_edge` 行）从 Point images 组独立为第六组（
+`ov_caustic` / `ov_caustic_l`）——挂点像父门会让 Point images 开关埋掉 caustic 层，故为 Point
+images 的同级行；T1 臂的同名卡不带天位，走 Sharp edges 弧路径，不受本组开关控制。GUI 显示词汇
+把该组 marker 称 `caustic representative`（短标签与图例经单一映射；hover 与对象列表保留原始
+`caustic edge` kind 词——引擎 wire kind 不拆）。地图绘制按本帧屏幕坐标聚合不可分辨的中心点
+（`GroupOverlayScreenClusters`，完整联结：簇内任意两点距离 ≤ 6 设计像素，链式传递闭包不会合并
+成跨弧大簇；确定性：同输入同相机同尺度同分组），每簇提交一个 marker + `×N` 计数（N>1 时；
+badge 属复合 marker，不受 labels 位控制），锚在簇内真实代表行的投影点（非平均坐标，±180° 视图
+两边缘的可见副本各自成簇）。混合 concluded/refused 来源的簇用保守轮廓形态；聚合是显示派生：
+不写文档、不触发查询、不跨帧缓存，簇成员全部来自当帧已读回行。
 
 **内缘对象选择（2026-11-22，817.2）**：`RaypathAnalysisSession` 新增 C01 一等内缘对象的会话选择
 （`inner_edge_selected` + `inner_edge_document`（weak，不钉住被替换文档的内存）+ `inner_edge_id` +

@@ -375,7 +375,7 @@ void RegisterViewDisplayControlTests(ImGuiTestEngine* engine) {
       ImGui::Begin("Survey tooltip host");
       ImGui::Button("Located object", ImVec2(gui::UiPx(180.0f), gui::UiPx(60.0f)));
       if (ImGui::IsItemHovered()) {
-        gui::RenderSurveyObjectTooltip({ &row, &row });
+        gui::RenderSurveyObjectTooltip({ &row, &row }, "object");
       }
       ImGui::End();
     };

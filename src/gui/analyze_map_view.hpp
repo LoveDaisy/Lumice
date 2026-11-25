@@ -186,8 +186,10 @@ struct OverlayHitGroup {
 };
 void GroupOverlayHits(const std::vector<const SurveyObjectRow*>& hits, std::vector<OverlayHitGroup>* out);
 
-// The grouped hover presentation, independent of marker projection and hit collection.
-void RenderSurveyObjectTooltip(const std::vector<const SurveyObjectRow*>& hits);
+// The grouped hover presentation, independent of marker projection and hit collection. The
+// noun names what the count line counts ("object" for the plain rows; a caustic pile's hover
+// says "representative record" — the same count the pile's ×N badge shows).
+void RenderSurveyObjectTooltip(const std::vector<const SurveyObjectRow*>& hits, const char* record_noun);
 
 // What the frame actually drew — the legend's one input (a legend describes the drawn picture,
 // so a category absent from this frame draws no entry). The overlay/anchor draws fill it; the
@@ -317,8 +319,9 @@ struct SurveyLayerGate {
 };
 // The points group's per-kind sub-gates (AC4): the positioned image kinds keep independent
 // visibility inside the group — regular and collapsed images are separate names that stay
-// separately switchable, whatever happens to overlap on screen. Any other positioned kind (the
-// vocabulary's fallback) follows the parent gate alone.
+// separately switchable, whatever happens to overlap on screen. The positioned caustic rows are
+// NOT in this group: they are the sixth layer group's own payload (the member below). Any other
+// positioned kind follows the parent gate alone.
 struct SurveyPointKindGates {
   bool source_image = true;
   bool regular_image = true;
@@ -326,20 +329,51 @@ struct SurveyPointKindGates {
 };
 struct SurveyLayerGates {
   SurveyLayerGate reach;   // support-range bounds
-  SurveyLayerGate edge;    // sharp-edge positions
+  SurveyLayerGate edge;    // sharp-edge positions (the deviation-axis reference arcs)
   SurveyLayerGate points;  // positioned object markers (labels gate the markers' short
                            // standing labels; the hover tooltip is the group's detail channel)
   SurveyPointKindGates points_kinds;
+  SurveyLayerGate caustic;    // the positioned caustic representatives — a sixth group, NOT a
+                              // points sub-gate: the pile's declutter switch must not ride the
+                              // Point images parent (its own graphics/labels pair; hiding the
+                              // images keeps the representatives on view and the reverse)
   SurveyLayerGate chromatic;  // the red-blue group: the dispersion pair and the verdict anchor
   SurveyLayerGate tir;        // internal-reflection turn references
 };
 
 // The ONE points-row visibility rule (the draw loop, the hit collection and the legend read it
-// through this single predicate — no second kind table): the parent graphics gate, and for the
-// three positioned image kinds their own sub-gate. Surfaced so the unit layer holds the mapping
-// exhaustively and the real family documents' rows at the composition tier.
+// through this single predicate — no second kind table): the positioned caustic rows through
+// their OWN group's gate (a points sub-gate would let the Point images switch bury the caustic
+// layer), and the points group's rows through the parent gate plus the three positioned image
+// kinds' sub-gates. Surfaced so the unit layer holds the mapping exhaustively and the real
+// family documents' rows at the composition tier.
 struct SurveyObjectRow;
 bool PointMarkerVisible(const SurveyObjectRow& row, const SurveyLayerGates& gates);
+
+// A frame-projected screen point of one positioned caustic row — the clustering input's plain
+// shape (this header stays off imgui.h).
+struct OverlayScreenPoint {
+  float x = 0.0f;
+  float y = 0.0f;
+};
+// The caustic pile's ONE clustering rule (the display declutter's AC2): complete linkage on the
+// frame's screen points — a cluster is a set every pair of whose members lies within `radius`
+// points of each other, so a chain of mutually distant representatives can never fold into one
+// spanning cluster. Greedy in input order (the model's own row order), deterministic for a
+// given input, radius, camera and scale. Display-only: the caller passes already-projected
+// visible points and draws one marker per returned group, anchored at the group's first (seed)
+// point — a real representative's own position, never an average, so no new sky point is
+// invented and the seam's two visible copies stay two markers.
+void GroupOverlayScreenClusters(const std::vector<OverlayScreenPoint>& points, float radius,
+                                std::vector<std::vector<size_t>>* clusters);
+
+// The cluster's one evidence rule (AC2's "aggregation must not upgrade evidence"): a pile may
+// draw solid only when EVERY member's claim concluded — certified or finite; any refused or
+// unevaluated source keeps the whole pile on the conservative outline, and the count never
+// reads as confidence. Empty input is vacuously true by the all-of's own semantics, and the
+// clustering above never produces an empty group; the unit layer pins both the mixed-evidence
+// refusals and the concluded pile.
+bool OverlayClusterAllConcluded(const std::vector<int>& states);
 
 // The reference arcs' caller-side geometry and gates — the same mirror discipline as
 // VerdictAnchorInput's projection quintet (a new MapCanvasProjection field must be added to BOTH
