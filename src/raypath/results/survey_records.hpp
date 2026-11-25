@@ -9,6 +9,7 @@
 #include <variant>
 #include <vector>
 
+#include "analytic/family_rank.hpp"
 #include "analytic/quantity_types.hpp"
 #include "raypath/domain/claim.hpp"
 #include "raypath/domain/evidence.hpp"
@@ -82,6 +83,59 @@ struct FamilyRoutingBlock {
   // two readers). Absent when the partition succeeded; a block-level reader need not walk
   // objects to learn it.
   std::optional<std::string> level0_refusal_mode;
+};
+
+// The family arm's ordered-curve payloads (task arc-recovery-engine): the drawable critical
+// arcs / regular tracks with their image-form segmentation and events. A curve lives in the
+// document-level `family_curves` table once (SurveyData) and is referenced by the object card
+// its survival produced (FamilyOriginPayload::curve_index). The vocabulary is the kernel's own
+// (analytic FoldSegmentForm / FoldChainEnd — no re-spelling): a fold chain carries the
+// image-form segments and the cusp candidates the classification located; a regular track (a
+// one-dimensional family's ordered scan) carries validity runs only, its points compacted to
+// the valid samples in parameter order.
+enum class FamilyCurveKind { kFoldChain, kRegularTrack };
+
+struct FamilyCurvePoint {
+  double params_deg[2] = { 0.0, 0.0 };  // canonical free-dimension order (a track uses [0])
+  double pose[9] = {};
+  double image_altitude_deg = 0.0;
+  double image_azimuth_deg = 0.0;
+  double sigma1 = 0.0;
+  double sigma2 = 0.0;      // fold chains only; a track keeps 0
+  double alignment = -1.0;  // the classification's read (negative = unclassified)
+  double djv = 0.0;         // dJ(v) at the point (fold chains only)
+};
+
+struct FamilyCurveSegment {
+  int first = 0;  // inclusive, into the owning curve's points
+  int last = 0;   // inclusive
+  analytic::FoldSegmentForm form = analytic::FoldSegmentForm::kArc;
+  // kPointImage only: the verified constant image and its measured diameter.
+  double image_altitude_deg = 0.0;
+  double image_azimuth_deg = 0.0;
+  double image_diameter_deg = 0.0;
+};
+
+struct FamilyCurveEvent {
+  int order_index = 0;  // the chain position the candidate sits before
+  double params_deg[2] = { 0.0, 0.0 };
+  double pose[9] = {};
+  double image_altitude_deg = 0.0;
+  double image_azimuth_deg = 0.0;
+  double djv_residual = 0.0;
+};
+
+struct FamilyCurveRecord {
+  FamilyCurveKind kind = FamilyCurveKind::kFoldChain;
+  std::vector<int> member;
+  int level = 0;  // the ladder level the scan ran at
+  std::vector<FamilyCurvePoint> points;
+  std::vector<FamilyCurveSegment> segments;  // image-form runs partitioning the points
+  std::vector<FamilyCurveEvent> cusps;       // fold chains only
+  bool closed = false;
+  analytic::FoldChainEnd end_a = analytic::FoldChainEnd::kOpen;  // at points.front() (fold chains)
+  analytic::FoldChainEnd end_b = analytic::FoldChainEnd::kOpen;  // at points.back()
+  double grid_spacing_deg[2] = { 0.0, 0.0 };                     // the scan's resolution declaration
 };
 
 // One object card. For the v1 source_image: `members` are the class members the card collapses
@@ -180,6 +234,10 @@ struct SurveyObject {
   struct FamilyOriginPayload {
     int sample_count = 0;
     int crossing_count = 0;
+    // The ordered-curve payload: the index into SurveyData::family_curves of the curve this
+    // card's survival produced. Negative = the card predates the curve payloads (or the object
+    // kind carries no curve) — the legacy representative-marker presentation applies.
+    int curve_index = -1;
   };
 
   std::optional<BandPayload> band;

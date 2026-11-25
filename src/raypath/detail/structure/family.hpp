@@ -48,6 +48,12 @@ struct FamilyStructureResult {
   std::string refusal_mode;
   std::vector<structure::FamilyLadderLevel> ladder;
   std::vector<structure::FamilySurvivor> survivors;
+  // The ordered-curve payloads the scans produced (task arc-recovery-engine): one record per
+  // fold chain / regular track, in build order; the survivors reference their own by
+  // FamilySurvivor::curve_index. The curves are the scan's geometry facts — a killed candidate
+  // never references one, but an unreferenced entry is still declared data (the ladder's own
+  // killed-record discipline).
+  std::vector<survey::FamilyCurveRecord> curves;
   std::vector<survey::WarmSeed> seeds;
   bool rank_ran = false;
   std::array<double, 9> single_pose{};

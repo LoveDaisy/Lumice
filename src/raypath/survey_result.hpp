@@ -55,6 +55,14 @@ struct SurveyData {
   // outside-domain refusal carry no family_routing key at all.
   std::optional<FamilyRoutingBlock> family_routing;
 
+  // The family arm's ordered-curve payloads (the drawable critical arcs / regular tracks),
+  // mounted once per document and referenced by the object cards through
+  // FamilyOriginPayload::curve_index. Present only on a family-arm document whose scans
+  // produced chains or tracks; the curves are the scan's own geometry facts, so a stop-cut
+  // card set leaves unreferenced entries here (declared data, like the ladder's killed
+  // candidates).
+  std::vector<FamilyCurveRecord> family_curves;
+
   // The warm index (the --warm contract's survey side): always filled by the assembly — the
   // seeds the arms held (empty when none), the scope/producer receipts and the config
   // fingerprint. A reader treats a missing or incomplete key on the wire as the documented
@@ -234,9 +242,50 @@ class SurveyResult : public FrozenValue<SurveyData> {
           static_cast<size_t>(bright->probe_index) >= data.probes.size()) {
         throw std::invalid_argument("a survey bright domain references a probe outside the result");
       }
+      if (object.family_origin.has_value() && object.family_origin->curve_index >= 0) {
+        if (static_cast<size_t>(object.family_origin->curve_index) >= data.family_curves.size()) {
+          throw std::invalid_argument("a survey object references a curve outside the result");
+        }
+      }
       for (const std::vector<int>& member : object.members) {
         if (std::find(data.members.begin(), data.members.end(), member) == data.members.end()) {
           throw std::invalid_argument("a survey object references a member outside the class");
+        }
+      }
+    }
+    for (const FamilyCurveRecord& curve : data.family_curves) {
+      if (curve.points.empty()) {
+        throw std::invalid_argument("a survey family curve carries no points");
+      }
+      if (std::find(data.members.begin(), data.members.end(), curve.member) == data.members.end()) {
+        throw std::invalid_argument("a survey family curve references a member outside the class");
+      }
+      // The segments reference points in range and partition them: every point belongs to
+      // exactly one segment, in ascending order (the fold chain's image-form runs; a track's
+      // validity runs).
+      std::vector<char> covered(curve.points.size(), 0);
+      int expected_first = 0;
+      for (const FamilyCurveSegment& segment : curve.segments) {
+        if (segment.first < 0 || segment.last < segment.first ||
+            static_cast<size_t>(segment.last) >= curve.points.size()) {
+          throw std::invalid_argument("a survey family curve segment references points outside the curve");
+        }
+        if (segment.first != expected_first) {
+          throw std::invalid_argument("a survey family curve's segments do not partition its points");
+        }
+        for (int i = segment.first; i <= segment.last; i++) {
+          covered[static_cast<size_t>(i)] = 1;
+        }
+        expected_first = segment.last + 1;
+      }
+      for (char flag : covered) {
+        if (!flag) {
+          throw std::invalid_argument("a survey family curve's segments do not partition its points");
+        }
+      }
+      for (const FamilyCurveEvent& event : curve.cusps) {
+        if (event.order_index < 0 || static_cast<size_t>(event.order_index) >= curve.points.size()) {
+          throw std::invalid_argument("a survey family curve event references a point outside the curve");
         }
       }
     }

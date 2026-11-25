@@ -309,6 +309,10 @@ struct FamilyCandidate {
   double scale_deg = 0.0;
   int sample_count = 0;
   int crossing_count = 0;
+  // The ordered-curve payload: this candidate's curve's index into the structure result's
+  // curve table (negative = none — collapse points and the two-dimensional bright domain
+  // carry no curve).
+  int curve_index = -1;
   std::vector<BlurAnchor> anchors;
   // The pose the rank record actually held (collapse components and fold representatives carry
   // one): retained for the document's warm_index under the candidate's leg name. Killed
@@ -318,10 +322,114 @@ struct FamilyCandidate {
   const char* pose_source = "";
 };
 
+// The ordered-curve records of one rank scan (task arc-recovery-engine): one record per fold
+// chain (points = the chain's crossings in chain order, segments = the image-form runs, cusps,
+// the end reasons and the closed flag verbatim) plus, on a one-dimensional family, the
+// validity-run track with its points compacted to the valid samples. The `level` and `member`
+// are the scan's own; `spacing` is the scan's resolution declaration.
+std::vector<survey::FamilyCurveRecord> CurvesOfRank(const analytic::RestrictedFamilyRank& rank,
+                                                    const std::vector<int>& member, int level,
+                                                    const double spacing_deg[2]) {
+  std::vector<survey::FamilyCurveRecord> curves;
+  for (const analytic::FoldChainRecord& chain : rank.fold_chains) {
+    survey::FamilyCurveRecord record;
+    record.kind = survey::FamilyCurveKind::kFoldChain;
+    record.member = member;
+    record.level = level;
+    record.closed = chain.closed;
+    record.end_a = chain.end_a;
+    record.end_b = chain.end_b;
+    record.grid_spacing_deg[0] = spacing_deg[0];
+    record.grid_spacing_deg[1] = spacing_deg[1];
+    record.points.reserve(chain.order.size());
+    for (int idx : chain.order) {
+      const analytic::FoldPointRecord& p = rank.crossings[static_cast<size_t>(idx)];
+      survey::FamilyCurvePoint point;
+      point.params_deg[0] = p.params_deg[0];
+      point.params_deg[1] = p.params_deg[1];
+      for (int c = 0; c < 9; c++) {
+        point.pose[c] = p.pose[c];
+      }
+      point.image_altitude_deg = p.image_alt_deg;
+      point.image_azimuth_deg = p.image_az_deg;
+      point.sigma1 = p.sigma1;
+      point.sigma2 = p.sigma2;
+      point.alignment = p.alignment;
+      point.djv = p.djv;
+      record.points.push_back(point);
+    }
+    for (const analytic::FoldSegmentRecord& segment : chain.segments) {
+      survey::FamilyCurveSegment out;
+      out.first = segment.first;
+      out.last = segment.last;
+      out.form = segment.form;
+      out.image_altitude_deg = segment.image_alt_deg;
+      out.image_azimuth_deg = segment.image_az_deg;
+      out.image_diameter_deg = segment.image_diameter_deg;
+      record.segments.push_back(out);
+    }
+    for (const analytic::FoldCuspCandidate& cusp : chain.cusps) {
+      survey::FamilyCurveEvent out;
+      out.order_index = cusp.order_index;
+      out.params_deg[0] = cusp.params_deg[0];
+      out.params_deg[1] = cusp.params_deg[1];
+      for (int c = 0; c < 9; c++) {
+        out.pose[c] = cusp.pose[c];
+      }
+      out.image_altitude_deg = cusp.image_alt_deg;
+      out.image_azimuth_deg = cusp.image_az_deg;
+      out.djv_residual = cusp.djv_residual;
+      record.cusps.push_back(out);
+    }
+    curves.push_back(std::move(record));
+  }
+  if (rank.free_count == 1 && !rank.track.points.empty()) {
+    // The track: valid points compacted in parameter order, the validity runs re-indexed onto
+    // the compacted sequence.
+    survey::FamilyCurveRecord record;
+    record.kind = survey::FamilyCurveKind::kRegularTrack;
+    record.member = member;
+    record.level = level;
+    record.closed = rank.track.closed;
+    record.grid_spacing_deg[0] = spacing_deg[0];
+    std::vector<int> compacted(static_cast<size_t>(rank.track.points.size()), -1);
+    for (size_t i = 0; i < rank.track.points.size(); i++) {
+      const analytic::FamilyTrackPoint& p = rank.track.points[i];
+      if (!p.valid) {
+        continue;
+      }
+      survey::FamilyCurvePoint point;
+      point.params_deg[0] = p.param_deg;
+      for (int c = 0; c < 9; c++) {
+        point.pose[c] = p.pose[c];
+      }
+      point.image_altitude_deg = p.image_alt_deg;
+      point.image_azimuth_deg = p.image_az_deg;
+      point.sigma1 = p.sigma1;
+      compacted[i] = static_cast<int>(record.points.size());
+      record.points.push_back(point);
+    }
+    for (const analytic::FamilyTrackSegment& segment : rank.track.segments) {
+      survey::FamilyCurveSegment out;
+      out.form = analytic::FoldSegmentForm::kArc;
+      out.first = compacted[static_cast<size_t>(segment.first)];
+      out.last = compacted[static_cast<size_t>(segment.last)];
+      if (out.first < 0 || out.last < out.first) {
+        continue;  // cannot happen (a run's endpoints are valid by construction); kept honest
+      }
+      record.segments.push_back(out);
+    }
+    if (!record.points.empty()) {
+      curves.push_back(std::move(record));
+    }
+  }
+  return curves;
+}
+
 std::vector<FamilyCandidate> CandidatesOf(const analytic::FaceNormalTable& table, const int* slots, int slot_count,
                                           const analytic::RestrictedFamilySpec& spec,
                                           const analytic::RestrictedFamilyRank& rank, const double sun_hat[3],
-                                          double refractive_index) {
+                                          double refractive_index, int curve_base, int track_curve_index) {
   std::vector<FamilyCandidate> out;
   for (const analytic::CollapseRecord& collapse : rank.collapse_components) {
     FamilyCandidate candidate;
@@ -343,29 +451,52 @@ std::vector<FamilyCandidate> CandidatesOf(const analytic::FaceNormalTable& table
   }
   if (rank.free_count == 2 && rank.generic_rank == 2) {
     // The fold locus is a rank-2 family's rank-drop CURVE; on a generic-rank-1 chart (the pole
-    // degeneracy) the rank-drop set is the whole domain and the sign-flip scan is noise.
-    for (const analytic::FoldComponentRecord& component : rank.fold_components) {
-      if (component.first_crossing < 0 || component.representative < 0 ||
-          component.first_crossing + component.crossing_count > static_cast<int>(rank.crossings.size())) {
+    // degeneracy) the rank-drop set is the whole domain and the sign-flip scan is noise. One
+    // candidate per ORDERED CHAIN (the drawable object — task arc-recovery-engine): the
+    // representative is the chain's smallest-sigma2 crossing (the component rule's per-chain
+    // form), the blur anchors sample the chain itself at the declared anchor budget, and the
+    // candidate references its curve in the document-level table.
+    int chain_position = 0;
+    for (const analytic::FoldChainRecord& chain : rank.fold_chains) {
+      if (chain.order.empty()) {
+        chain_position++;
         continue;
       }
-      const analytic::FoldPointRecord& representative = rank.crossings[static_cast<size_t>(component.representative)];
+      int representative = chain.order.front();
+      for (int idx : chain.order) {
+        if (rank.crossings[static_cast<size_t>(idx)].sigma2 <
+            rank.crossings[static_cast<size_t>(representative)].sigma2) {
+          representative = idx;
+        }
+      }
+      const analytic::FoldPointRecord& rep = rank.crossings[static_cast<size_t>(representative)];
       FamilyCandidate candidate;
       candidate.kind = FamilyImageKind::kCausticEdge;
       candidate.has_position = true;
-      candidate.position_alt_deg = representative.image_alt_deg;
-      candidate.position_az_deg = representative.image_az_deg;
-      candidate.crossing_count = component.crossing_count;
+      candidate.position_alt_deg = rep.image_alt_deg;
+      candidate.position_az_deg = rep.image_az_deg;
+      candidate.crossing_count = static_cast<int>(chain.order.size());
       candidate.scale_deg = kSurvivalSpotFloorDeg;  // the cross-section floor, never the arc's length
-      BlurAnchor anchor;
-      AnchorOfOutgoing(representative.params_deg, representative.outgoing, &anchor);
-      candidate.anchors.push_back(anchor);
+      candidate.curve_index = curve_base + chain_position;
+      // The chain's own points are the blur anchors: evenly spaced over the chain order at the
+      // declared anchor budget (a longer chain strides; a short one takes every point).
+      const int chain_points = static_cast<int>(chain.order.size());
+      const int anchor_count = std::min(chain_points, kFamilyExtentProbeCount);
+      for (int a = 0; a < anchor_count; a++) {
+        const int idx =
+            chain.order[static_cast<size_t>(anchor_count == 1 ? 0 : (a * (chain_points - 1)) / (anchor_count - 1))];
+        const analytic::FoldPointRecord& p = rank.crossings[static_cast<size_t>(idx)];
+        BlurAnchor anchor;
+        AnchorOfOutgoing(p.params_deg, p.outgoing, &anchor);
+        candidate.anchors.push_back(anchor);
+      }
       candidate.has_pose = true;
       for (int k = 0; k < 9; k++) {
-        candidate.pose[k] = representative.pose[k];
+        candidate.pose[k] = rep.pose[k];
       }
       candidate.pose_source = "family_fold_anchor";
       out.push_back(std::move(candidate));
+      chain_position++;
     }
   }
   if (rank.generic_rank == 1 || rank.generic_rank == 2) {
@@ -382,6 +513,11 @@ std::vector<FamilyCandidate> CandidatesOf(const analytic::FaceNormalTable& table
       // The one-dimensional track is curve-like: the floor, not its arc's extent — only the
       // two-dimensional domain's anchors measure an extent.
       candidate.scale_deg = rank.generic_rank == 1 ? kSurvivalSpotFloorDeg : ExtentDeg(candidate.anchors);
+    }
+    // The one-dimensional family's ordered track curve rides the regular-image card (task
+    // arc-recovery-engine); the two-dimensional bright domain carries no curve.
+    if (rank.generic_rank == 1 && track_curve_index >= 0) {
+      candidate.curve_index = track_curve_index;
     }
     out.push_back(std::move(candidate));
   }
@@ -422,6 +558,7 @@ FamilySurvivor SurvivingFact(const std::vector<int>& member, const FamilyCandida
   fact.clamped = blur.clamped;
   fact.sample_count = candidate.sample_count;
   fact.crossing_count = candidate.crossing_count;
+  fact.curve_index = candidate.curve_index;
   return fact;
 }
 
@@ -591,8 +728,24 @@ FamilyStructureResult EvaluateFamilyStructure(const FamilyStructureInput& input,
           level.grid_spacing_deg[1] = rank.grid_spacing_deg[1];
           coverage_recorded = true;
         }
-        for (FamilyCandidate& candidate : CandidatesOf(*input.table, slots.data(), static_cast<int>(slots.size()), spec,
-                                                       rank, sun_hat, input.refractive_index)) {
+        // This member's ordered curves join the result table first; the candidates reference
+        // them by the base index (the fold chains in chain order, then the one-dimensional
+        // family's track, if any).
+        const int curve_base = static_cast<int>(result.curves.size());
+        std::vector<survey::FamilyCurveRecord> member_curves = CurvesOfRank(rank, member, k, rank.grid_spacing_deg);
+        result.curves.insert(result.curves.end(), member_curves.begin(), member_curves.end());
+        int track_curve_index = -1;
+        if (rank.free_count == 1) {
+          for (int c = static_cast<int>(member_curves.size()) - 1; c >= curve_base; c--) {
+            if (result.curves[static_cast<size_t>(c)].kind == survey::FamilyCurveKind::kRegularTrack) {
+              track_curve_index = c;
+              break;
+            }
+          }
+        }
+        for (FamilyCandidate& candidate :
+             CandidatesOf(*input.table, slots.data(), static_cast<int>(slots.size()), spec, rank, sun_hat,
+                          input.refractive_index, curve_base, track_curve_index)) {
           level.objects_proposed += 1;
           if (!candidate.viable) {
             level.objects_killed += 1;

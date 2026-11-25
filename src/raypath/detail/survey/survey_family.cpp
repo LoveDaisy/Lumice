@@ -44,7 +44,7 @@ SurveyObject FamilyCardOf(const structure::FamilySurvivor& fact, double waveleng
   band.scale_deg = fact.scale_deg;
   band.clamped = fact.clamped;
   card.band = std::move(band);
-  card.family_origin = SurveyObject::FamilyOriginPayload{ fact.sample_count, fact.crossing_count };
+  card.family_origin = SurveyObject::FamilyOriginPayload{ fact.sample_count, fact.crossing_count, fact.curve_index };
   if (fact.has_domain) {
     SurveyObject::BrightDomainPayload domain;
     domain.domain_lower_deg = fact.domain_lower_deg;
@@ -170,6 +170,9 @@ FamilyArmOutcome AssembleFamilyRouting(const FamilyArmInput& input, SurveyData* 
     return { false, structure.refusal_mode };
   }
   block.ladder = std::move(structure.ladder);
+  // The ordered curves mount once (the cards reference them by index); a stop-cut card set
+  // leaves unreferenced entries, the ladder's own killed-record discipline.
+  out->family_curves = std::move(structure.curves);
   for (const structure::FamilySurvivor& fact : structure.survivors) {
     if (input.stop != nullptr) {
       if (input.stop->token != nullptr) {

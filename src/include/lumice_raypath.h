@@ -2083,6 +2083,77 @@ typedef struct LUMICE_PathFamilyOrigin {
   int band_clamped;
 } LUMICE_PathFamilyOrigin;
 
+// The family arm's ordered-curve payloads (ADDED v4.66, a pure append — no existing struct
+// grew): the drawable critical arcs / regular tracks the family routing's scans produced, the
+// typed value's `family_curves` table read out one entry at a time. A curve is referenced by
+// its object card through `object_index` (the card whose family origin named it; -1 = no card
+// references it — a stop-cut card set leaves the scan's geometry facts unreferenced, declared
+// data). Segment forms and chain ends mirror the kernel's vocabulary by value; numeric payload
+// availability follows the survey's own rule (availability flags, never defaulted zeros).
+#define LUMICE_PATH_CURVE_KIND_FOLD_CHAIN 0
+#define LUMICE_PATH_CURVE_KIND_REGULAR_TRACK 1
+#define LUMICE_PATH_CURVE_SEGMENT_FORM_ARC 0
+#define LUMICE_PATH_CURVE_SEGMENT_FORM_POINT_IMAGE 1
+#define LUMICE_PATH_CURVE_SEGMENT_FORM_UNKNOWN 2
+#define LUMICE_PATH_CURVE_END_OPEN 0
+#define LUMICE_PATH_CURVE_END_CLOSED_LOOP 1
+#define LUMICE_PATH_CURVE_END_FEASIBILITY_INTERRUPTION 2
+#define LUMICE_PATH_CURVE_END_AMBIGUOUS_CELL 3
+
+typedef struct LUMICE_PathSurveyCurveInfo {
+  size_t struct_size;
+  size_t curve_count;
+} LUMICE_PathSurveyCurveInfo;
+
+typedef struct LUMICE_PathSurveyCurve {
+  size_t struct_size;
+  int kind;  // LUMICE_PATH_CURVE_KIND_*
+  size_t member_count;
+  const int* member;  // borrowed from the result handle until its Destroy
+  int level;          // the ladder level the scan ran at
+  int object_index;   // the referencing object card, or -1
+  size_t point_count;
+  size_t segment_count;
+  size_t cusp_count;
+  int closed;
+  int end_a;                   // LUMICE_PATH_CURVE_END_* at points.front() (fold chains)
+  int end_b;                   // LUMICE_PATH_CURVE_END_* at points.back()
+  double grid_spacing_deg[2];  // the scan's resolution declaration
+} LUMICE_PathSurveyCurve;
+
+typedef struct LUMICE_PathSurveyCurvePoint {
+  size_t struct_size;
+  double params_deg[2];  // canonical free-dimension order (a track uses [0])
+  double pose[9];
+  double image_altitude_deg;
+  double image_azimuth_deg;
+  double sigma1;
+  double sigma2;     // fold chains only; a track keeps 0
+  double alignment;  // negative = unclassified
+  double djv;        // dJ(v) at the point (fold chains only)
+} LUMICE_PathSurveyCurvePoint;
+
+typedef struct LUMICE_PathSurveyCurveSegment {
+  size_t struct_size;
+  int first;            // inclusive, into the owning curve's points
+  int last;             // inclusive
+  int form;             // LUMICE_PATH_CURVE_SEGMENT_FORM_*
+  int image_available;  // 1 = the kPointImage readings below are present
+  double image_altitude_deg;
+  double image_azimuth_deg;
+  double image_diameter_deg;
+} LUMICE_PathSurveyCurveSegment;
+
+typedef struct LUMICE_PathSurveyCurveCusp {
+  size_t struct_size;
+  int order_index;  // the chain position the candidate sits before
+  double params_deg[2];
+  double pose[9];
+  double image_altitude_deg;
+  double image_azimuth_deg;
+  double djv_residual;  // |dJ(v)| at the located point (a residual bound, not a zero claim)
+} LUMICE_PathSurveyCurveCusp;
+
 typedef struct LUMICE_PathSurveySupport {
   size_t struct_size;
   unsigned symmetry_bits;
@@ -2147,6 +2218,20 @@ LUMICE_API LUMICE_PathReadStatus LUMICE_PathSurveyGetObjectBandVerdict(const LUM
                                                                        size_t index, LUMICE_PathBandVerdict* out);
 LUMICE_API LUMICE_PathReadStatus LUMICE_PathSurveyGetFamilyOrigin(const LUMICE_PathSurvey* result, size_t object,
                                                                   LUMICE_PathFamilyOrigin* out);
+// The ordered-curve readers (ADDED v4.66, a pure append). `GetCurves` reports the table
+// length; `GetCurve` one curve's identity and counts (member/pose/point arrays are borrowed
+// from the result handle until its Destroy); `GetCurvePoint` / `GetCurveSegment` /
+// `GetCurveCusp` read one row each by index.
+LUMICE_API LUMICE_PathReadStatus LUMICE_PathSurveyGetCurves(const LUMICE_PathSurvey* result,
+                                                            LUMICE_PathSurveyCurveInfo* out);
+LUMICE_API LUMICE_PathReadStatus LUMICE_PathSurveyGetCurve(const LUMICE_PathSurvey* result, size_t curve,
+                                                           LUMICE_PathSurveyCurve* out);
+LUMICE_API LUMICE_PathReadStatus LUMICE_PathSurveyGetCurvePoint(const LUMICE_PathSurvey* result, size_t curve,
+                                                                size_t index, LUMICE_PathSurveyCurvePoint* out);
+LUMICE_API LUMICE_PathReadStatus LUMICE_PathSurveyGetCurveSegment(const LUMICE_PathSurvey* result, size_t curve,
+                                                                  size_t index, LUMICE_PathSurveyCurveSegment* out);
+LUMICE_API LUMICE_PathReadStatus LUMICE_PathSurveyGetCurveCusp(const LUMICE_PathSurvey* result, size_t curve,
+                                                               size_t index, LUMICE_PathSurveyCurveCusp* out);
 LUMICE_API LUMICE_PathReadStatus LUMICE_PathSurveyGetSupport(const LUMICE_PathSurvey* result, size_t object,
                                                              LUMICE_PathSurveySupport* out);
 LUMICE_API LUMICE_PathReadStatus LUMICE_PathSurveyGetSupportEndpoint(const LUMICE_PathSurvey* result, size_t object,
