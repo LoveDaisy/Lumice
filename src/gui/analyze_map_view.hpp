@@ -224,6 +224,8 @@ struct OverlayLegendState {
   bool edge_shared = false;            // the drawn edge arc is one stroke shared with a support bound
   bool tir_turns = false;              // any internal-reflection turn pair drew
   int tir_turn_count = 0;              // how many turns drew (one entry per turn pair)
+  bool family_curves = false;          // any family fold arc / track submitted ink
+  int family_curve_count = 0;          // how many curves submitted (one entry counts them)
   // The reference calibers the drawn arcs quote, recorded with the bits so the legend keys can
   // name them: the support/edge bounds read at the survey document's own scope wavelength (a
   // FIXED reference, whatever the map's λ slider shows), the turn pair at the chromatic pair's
@@ -330,6 +332,9 @@ struct SurveyPointKindGates {
 struct SurveyLayerGates {
   SurveyLayerGate reach;   // support-range bounds
   SurveyLayerGate edge;    // sharp-edge positions (the deviation-axis reference arcs)
+  SurveyLayerGate curves;  // the family routing's ordered fold arcs / regular tracks (the
+                           // drawable critical arcs; a card carrying a curve hides its
+                           // aggregate representative marker while this group is on)
   SurveyLayerGate points;  // positioned object markers (labels gate the markers' short
                            // standing labels; the hover tooltip is the group's detail channel)
   SurveyPointKindGates points_kinds;

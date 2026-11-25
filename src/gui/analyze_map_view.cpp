@@ -50,6 +50,13 @@ static_assert(kProfileReadingColour == IM_COL32(244, 114, 182, 255), "the promot
 static_assert(kSurveyArcInk == IM_COL32(200, 205, 215, 215), "the promoted arc ink must equal its literal");
 static_assert(kPointMassColour == IM_COL32(250, 184, 74, 255), "the promoted mass colour must equal its literal");
 
+// The family arcs' inks (task arc-recovery-engine): the fold arc takes the caustic family's own
+// hue (the arc replaces that marker), the point-image run the collapse family's, the cusp
+// candidates a hotter variant of the arc hue — one semantics one entry in the legend.
+constexpr ImU32 kFamilyArcInk = IM_COL32(255, 176, 92, 235);
+constexpr ImU32 kFamilyPointInk = IM_COL32(198, 160, 255, 235);
+constexpr ImU32 kFamilyCuspInk = IM_COL32(255, 120, 80, 235);
+
 OverlayLegendState g_map_legend;
 MapObservationTiming g_map_observation_timing;
 double ObservationClockSeconds() {
@@ -1233,6 +1240,37 @@ const SurveyOverlayCache& RefreshSurveyOverlayCache(const SurveyQuerySession& su
   return cache;
 }
 
+// The family curve pick's tooltip (task arc-recovery-engine): the theoretical witness of the
+// hovered curve — its member, level, the nearest point's parameter preimage, and the posture
+// witness (the Euler pose the engine recomputes from exactly these parameters). Nothing here
+// re-asks the engine: the facts carry the preimage, the recomputation is the caller's if a
+// downstream host wants the full matrix.
+void RenderFamilyCurveTooltip(const SurveyOverlayFacts::FamilyCurveFact& curve, int point_index) {
+  if (!ImGui::BeginTooltip()) {
+    return;
+  }
+  ImGui::TextUnformatted("Family curve");
+  const char* kind = curve.kind == LUMICE_PATH_CURVE_KIND_REGULAR_TRACK ? "regular track" : "fold arc";
+  std::string member;
+  for (size_t i = 0; i < curve.member.size(); ++i) {
+    if (i > 0) {
+      member += "-";
+    }
+    member += std::to_string(curve.member[static_cast<size_t>(i)]);
+  }
+  ImGui::Text("%s · level %d · member %s", kind, curve.level, member.c_str());
+  if (point_index >= 0 && static_cast<size_t>(point_index) < curve.points.size()) {
+    const SurveyOverlayFacts::FamilyCurveFact::Point& p = curve.points[static_cast<size_t>(point_index)];
+    ImGui::TextDisabled("params %.3f° %.3f° · alt %.3f° az %.3f°", p.params_deg[0], p.params_deg[1], p.alt_deg,
+                        p.az_deg);
+    ImGui::TextDisabled("pose (recomputable from the params):");
+    for (int r = 0; r < 3; ++r) {
+      ImGui::TextDisabled("  %+.6f %+.6f %+.6f", p.pose[r * 3], p.pose[r * 3 + 1], p.pose[r * 3 + 2]);
+    }
+  }
+  ImGui::EndTooltip();
+}
+
 void DrawSurveyOverlays(ImDrawList* dl, GuiState& state, const MapCanvasProjection& view, const ImVec2& pic_min,
                         float pic_px, OverlayLegendState* legend, const SurveyLayerGates& gates,
                         int selected_edge_object_index, std::vector<ReferenceArcStroke>* stroke_sink) {
@@ -1280,6 +1318,129 @@ void DrawSurveyOverlays(ImDrawList* dl, GuiState& state, const MapCanvasProjecti
     arcs.tir_lambda_text = model.dispersion.red_label + "/" + model.dispersion.blue_label;
   }
   DrawReferenceArcs(dl, facts, arcs);
+  // The family arm's ordered curves (task arc-recovery-engine): the drawable critical arcs and
+  // regular tracks. Run by run — an arc or unknown band submits its polyline (the chain's links
+  // justify the line; the unknown band's uncertainty is about image form, not existence), a
+  // point-image run collapses to one marker at its verified constant image, a cusp candidate is
+  // a bounded tick on its arc. The seam rule is display-level: a submitted line breaks when
+  // either endpoint leaves the view or the two projections jump more than a view radius (the
+  // physical wrap's own evidence) — never bridged. The pick channel is the hover: the nearest
+  // submitted segment within tolerance names the curve and its nearest point's theoretical
+  // witness (member, parameters, pose) — one tooltip per frame, beside the markers'.
+  int family_curve_entries = 0;
+  if (gates.curves.graphics) {
+    const float curve_hit_tol = UiPx(7.0f);
+    const SurveyOverlayFacts::FamilyCurveFact* hovered = nullptr;
+    int hovered_point = -1;
+    float hovered_dist = 1e30f;
+    const ImVec2 mouse = ImGui::GetIO().MousePos;
+    for (const SurveyOverlayFacts::FamilyCurveFact& curve : facts.family_curves) {
+      bool drew_any = false;
+      for (const SurveyOverlayFacts::FamilyCurveFact::Segment& segment : curve.segments) {
+        if (segment.form == LUMICE_PATH_CURVE_SEGMENT_FORM_POINT_IMAGE) {
+          // The collapsed run: one marker at its verified constant image.
+          double pos[3];
+          SkyPosition(segment.image_alt_deg, segment.image_az_deg, pos);
+          double x = 0.0;
+          double y = 0.0;
+          if (!ProjectToRect(view, pos, pic_min, pic_px, &x, &y)) {
+            continue;
+          }
+          const float cx = static_cast<float>(x);
+          const float cy = static_cast<float>(y);
+          dl->AddCircleFilled(ImVec2(cx, cy), UiPx(4.0f), kFamilyPointInk);
+          dl->AddCircle(ImVec2(cx, cy), UiPx(4.0f), kFamilyArcInk, 0, UiPx(1.2f));
+          drew_any = true;
+          const float dx = mouse.x - cx;
+          const float dy = mouse.y - cy;
+          const float d = dx * dx + dy * dy;
+          if (d < hovered_dist) {
+            hovered_dist = d;
+            hovered = &curve;
+            hovered_point = -1;  // the marker's own witness: the segment's constant image
+          }
+          continue;
+        }
+        // The polyline: consecutive points in the run; the seam breaks a line instead of
+        // bridging (a jump beyond a view radius is the wrap's own evidence).
+        bool have_prev = false;
+        double px = 0.0;
+        double py = 0.0;
+        int prev_index = -1;
+        for (int i = segment.first; i <= segment.last; ++i) {
+          const SurveyOverlayFacts::FamilyCurveFact::Point& p = curve.points[static_cast<size_t>(i)];
+          double pos[3];
+          SkyPosition(p.alt_deg, p.az_deg, pos);
+          double x = 0.0;
+          double y = 0.0;
+          const bool ok = ProjectToRect(view, pos, pic_min, pic_px, &x, &y);
+          if (ok) {
+            const float cx = static_cast<float>(x);
+            const float cy = static_cast<float>(y);
+            if (have_prev) {
+              const float dx = cx - static_cast<float>(px);
+              const float dy = cy - static_cast<float>(py);
+              if (dx * dx + dy * dy < pic_px * pic_px) {
+                dl->AddLine(ImVec2(static_cast<float>(px), static_cast<float>(py)), ImVec2(cx, cy), kFamilyArcInk,
+                            UiPx(1.4f));
+                drew_any = true;
+                // The hover distance to this submitted segment (the stationary-click test's own
+                // geometry, at the hover tolerance).
+                const float d =
+                    PointSegmentDistanceSq(mouse.x, mouse.y, static_cast<float>(px), static_cast<float>(py), cx, cy);
+                if (d < hovered_dist) {
+                  hovered_dist = d;
+                  hovered = &curve;
+                  hovered_point = i;
+                }
+              }
+            }
+            px = x;
+            py = y;
+            have_prev = true;
+            prev_index = i;
+          } else {
+            have_prev = false;
+            prev_index = -1;
+          }
+        }
+        (void)prev_index;
+      }
+      // The cusp candidates: bounded ticks on their arcs (a candidate, never a certified cusp).
+      for (const SurveyOverlayFacts::FamilyCurveFact::Cusp& cusp : curve.cusps) {
+        double pos[3];
+        SkyPosition(cusp.alt_deg, cusp.az_deg, pos);
+        double x = 0.0;
+        double y = 0.0;
+        if (!ProjectToRect(view, pos, pic_min, pic_px, &x, &y)) {
+          continue;
+        }
+        const float cx = static_cast<float>(x);
+        const float cy = static_cast<float>(y);
+        dl->AddCircle(ImVec2(cx, cy), UiPx(2.5f), kFamilyCuspInk, 0, UiPx(1.6f));
+        drew_any = true;
+        const float dx = mouse.x - cx;
+        const float dy = mouse.y - cy;
+        const float d = dx * dx + dy * dy;
+        if (d < hovered_dist) {
+          hovered_dist = d;
+          hovered = &curve;
+          hovered_point = cusp.order_index;
+        }
+      }
+      if (drew_any) {
+        family_curve_entries += 1;
+      }
+    }
+    // The pick: the nearest curve's witness under the pointer, within the tolerance.
+    if (hovered != nullptr && hovered_dist < curve_hit_tol * curve_hit_tol) {
+      RenderFamilyCurveTooltip(*hovered, hovered_point);
+    }
+    if (legend != nullptr && family_curve_entries > 0) {
+      legend->family_curves = true;
+      legend->family_curve_count = family_curve_entries;
+    }
+  }
   // Positional objects: the survey's own located conclusions, drawn where the document puts
   // them — one marker per object, styled by kind and claim state; the frame's hits collect for
   // ONE organized tooltip (every object under the pointer, grouped by the observation key),
@@ -1358,6 +1519,22 @@ void DrawSurveyOverlays(ImDrawList* dl, GuiState& state, const MapCanvasProjecti
   for (const SurveyObjectRow& row : model.objects) {
     if (!PointMarkerVisible(row, gates) || !row.position_available) {
       continue;
+    }
+    // The ordered curves supersede their cards' aggregate representative markers (the same
+    // semantic drawn twice): a card carrying a curve stays hidden while the curves group is on;
+    // turning the group off returns the marker — the card's own fact is never dropped from the
+    // document or the tooltip.
+    if (gates.curves.graphics && row.object_index >= 0) {
+      bool superseded = false;
+      for (const SurveyOverlayFacts::FamilyCurveFact& curve : facts.family_curves) {
+        if (curve.object_index == row.object_index) {
+          superseded = true;
+          break;
+        }
+      }
+      if (superseded) {
+        continue;
+      }
     }
     double pos[3];
     SkyPosition(row.position_altitude_deg, row.position_azimuth_deg, pos);
@@ -2311,7 +2488,7 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
     const char* labels_label;    // "##<base>_labels": ditto, for the labels box
     ImGuiID graphics_key;        // resolved ONCE, in THIS child's ID scope — the popup's writes
     ImGuiID labels_key;          // below reuse these very IDs (ImGui::GetID inside a popup hashes
-  } key_pairs[6];                // in the popup's own scope, which would fork the keys: the read
+  } key_pairs[7];                // in the popup's own scope, which would fork the keys: the read
                                  // here and the write there would never meet)
   SurveyLayerGates gates;
   {
@@ -2319,17 +2496,18 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
       const char* base;
       const char* display_name;
       SurveyLayerGate* gate;
-      const char* graphics_label;
-      const char* labels_label;
-    } named[6] = {
+    const char* graphics_label;
+    const char* labels_label;
+    } named[7] = {
       { "ov_reach", "Support range", &gates.reach, "##ov_reach_graphics", "##ov_reach_labels" },
       { "ov_edge", "Sharp edges", &gates.edge, "##ov_edge_graphics", "##ov_edge_labels" },
+      { "ov_curves", "Fold arcs", &gates.curves, "##ov_curves_graphics", "##ov_curves_labels" },
       { "ov_points", "Point images", &gates.points, "##ov_points_graphics", "##ov_points_labels" },
       { "ov_caustic", "Caustic representatives", &gates.caustic, "##ov_caustic_graphics", "##ov_caustic_labels" },
       { "ov_chromatic", "Red-blue shift", &gates.chromatic, "##ov_chromatic_graphics", "##ov_chromatic_labels" },
       { "ov_tir", "Reflection turns", &gates.tir, "##ov_tir_graphics", "##ov_tir_labels" }
     };
-    for (int i = 0; i < 6; ++i) {
+    for (int i = 0; i < 7; ++i) {
       key_pairs[i].base = named[i].base;
       key_pairs[i].display_name = named[i].display_name;
       key_pairs[i].gate = named[i].gate;
@@ -2467,13 +2645,16 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
     const char* chromatic_absence =
         model.valid ? (chromatic_available ? nullptr : "no chromatic positions") : no_document;
     const char* tir_absence = model.valid ? (facts.tir_turns.empty() ? "no visible turns" : nullptr) : no_document;
-    const LayerRow rows[6] = {
+    const char* curves_absence =
+        model.valid ? (facts.family_curves.empty() ? "no family curves" : nullptr) : no_document;
+    const LayerRow rows[7] = {
       { key_pairs[0].display_name, key_pairs[0], reach_absence },
       { key_pairs[1].display_name, key_pairs[1], edge_absence },
-      { key_pairs[2].display_name, key_pairs[2], points_absence },
-      { key_pairs[3].display_name, key_pairs[3], caustic_absence },
-      { key_pairs[4].display_name, key_pairs[4], chromatic_absence },
-      { key_pairs[5].display_name, key_pairs[5], tir_absence },
+      { key_pairs[2].display_name, key_pairs[2], curves_absence },
+      { key_pairs[3].display_name, key_pairs[3], points_absence },
+      { key_pairs[4].display_name, key_pairs[4], caustic_absence },
+      { key_pairs[5].display_name, key_pairs[5], chromatic_absence },
+      { key_pairs[6].display_name, key_pairs[6], tir_absence },
     };
     // The layer table: one record per row, the name column the ONLY stretching one (the Render
     // overlay table's rule — the switches state the width they need, the names get the rest),
@@ -3340,6 +3521,19 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
       ImGui::TextWrapped("internal-reflection turns — %d turn pair%s · chromatic pair %s", legend.tir_turn_count,
                          legend.tir_turn_count == 1 ? "" : "s",
                          legend.tir_lambda_text.empty() ? "wavelength unknown" : legend.tir_lambda_text.c_str());
+    }
+    if (legend.family_curves) {
+      ImGui::Bullet();
+      // The curve's own icon: a short line in the arc's hue (the marker-family colour the arc
+      // carries forward), not the neutral arc ring the reference layers share.
+      DrawLegendIconSlot(
+          [legend_dl = ImGui::GetWindowDrawList(), p = ImGui::GetCursorScreenPos()]() {
+            const ImVec2 c(p.x + ImGui::GetFrameHeight() * 0.5f - UiPx(3.0f), p.y + ImGui::GetTextLineHeight() * 0.5f);
+            legend_dl->AddLine(ImVec2(c.x - UiPx(4.0f), c.y), ImVec2(c.x + UiPx(4.0f), c.y), kFamilyArcInk, UiPx(1.4f));
+          },
+          ImGui::GetFrameHeight(), 0.0f, 0.0f);
+      ImGui::TextWrapped("family fold arcs — %d curve%s · hover for member & pose", legend.family_curve_count,
+                         legend.family_curve_count == 1 ? "" : "s");
     }
     if (legend.dispersion_red || legend.dispersion_blue) {
       ImGui::Bullet();

@@ -728,17 +728,19 @@ FamilyStructureResult EvaluateFamilyStructure(const FamilyStructureInput& input,
           level.grid_spacing_deg[1] = rank.grid_spacing_deg[1];
           coverage_recorded = true;
         }
-        // This member's ordered curves join the result table first; the candidates reference
-        // them by the base index (the fold chains in chain order, then the one-dimensional
-        // family's track, if any).
+        // This member's ordered curves are built per member and mounted ONLY when a surviving
+        // candidate references them: a killed candidate keeps its position in the level's killed
+        // records (the ladder's own discipline), and a scene whose fold candidates all die — a
+        // wide plate's blur kills — mounts no curve table at all instead of carrying the scan's
+        // whole geometry into the document unreferenced.
         const int curve_base = static_cast<int>(result.curves.size());
         std::vector<survey::FamilyCurveRecord> member_curves = CurvesOfRank(rank, member, k, rank.grid_spacing_deg);
-        result.curves.insert(result.curves.end(), member_curves.begin(), member_curves.end());
+        std::vector<int> temp_to_final(member_curves.size(), -1);
         int track_curve_index = -1;
         if (rank.free_count == 1) {
-          for (int c = static_cast<int>(member_curves.size()) - 1; c >= curve_base; c--) {
-            if (result.curves[static_cast<size_t>(c)].kind == survey::FamilyCurveKind::kRegularTrack) {
-              track_curve_index = c;
+          for (size_t c = 0; c < member_curves.size(); c++) {
+            if (member_curves[c].kind == survey::FamilyCurveKind::kRegularTrack) {
+              track_curve_index = curve_base + static_cast<int>(c);
               break;
             }
           }
@@ -757,6 +759,16 @@ FamilyStructureResult EvaluateFamilyStructure(const FamilyStructureInput& input,
                           candidate.anchors, sun_hat, input.refractive_index, candidate.scale_deg);
           if (blur.blur_deg <= candidate.scale_deg) {
             FamilySurvivor fact = SurvivingFact(member, candidate, blur, k);
+            // Mount the survivor's own curve (once per member curve): the card's reference is
+            // the document's only curve pointer, so the table stays exactly the referenced set.
+            if (candidate.curve_index >= curve_base) {
+              const int local = candidate.curve_index - curve_base;
+              if (temp_to_final[static_cast<size_t>(local)] < 0) {
+                temp_to_final[static_cast<size_t>(local)] = static_cast<int>(result.curves.size());
+                result.curves.push_back(member_curves[static_cast<size_t>(local)]);
+              }
+              fact.curve_index = temp_to_final[static_cast<size_t>(local)];
+            }
             if (fact.kind == FamilyImageKind::kBrightDomain && support.ok && !support.intervals.empty()) {
               fact.has_domain = true;
               fact.domain_lower_deg = support.intervals.front().lower * kRadToDeg;
