@@ -452,14 +452,15 @@ struct PointViewState {
   float orbit_zoom = 1.0f;  // 1 = the fit-to-content default
   PointCurveRangeMode curve_range_mode = PointCurveRangeMode::kFit;
   // The adopted document's interpretive pose (v4.64 reader), recorded once at the adoption
-  // boundary: the component/sample the document OPENED at, and whether the reader named one at
-  // all (`interpretive_available` false = no ordinary-density pose — the honest companion line,
-  // never a fabricated healthy branch). Display facts only; the cursor is NOT re-applied after
-  // the adoption frame — the user's manual branch/sample writes win from then on. Reset with
-  // the rest of the per-document state.
+  // boundary: the component/sample the document OPENED at, whether the reader named one at
+  // all (`interpretive_available` false = no ordinary-density pose — the honest companion
+  // line, never a fabricated healthy branch), and the named pose's own log density — the
+  // companion line's absolute magnitude (the fact the reader named, displayed verbatim).
+  // Display facts only; the cursor is NOT re-applied after the adoption frame — the user's
+  // manual branch/sample writes win from then on. Reset with the rest of the per-document
+  // state. The stored→valid mapping itself lives in the adoption's pure function, not here.
   bool interpretive_available = false;
   int interpretive_component = -1;        // the reader's component index (valid iff available)
-  int interpretive_stored_index = -1;     // the reader's stored point index (valid iff available)
   int interpretive_valid_position = -1;   // the cursor position the adoption applied (valid iff available)
   double interpretive_log_density = 0.0;  // the reader's log density (meaningful iff available)
   SunGlobeViewMode sun_globe_view_mode = SunGlobeViewMode::kFull;  // the u-globe's view: fixed

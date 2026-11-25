@@ -120,7 +120,6 @@ void ResetPointViewStateForNewAdoption(PointViewState* view) {
   view->curve_range_mode = PointCurveRangeMode::kFit;
   view->interpretive_available = false;
   view->interpretive_component = -1;
-  view->interpretive_stored_index = -1;
   view->interpretive_valid_position = -1;
   view->interpretive_log_density = 0.0;
   // The toggles and the camera survive: they are the user's display preferences for THIS
@@ -192,7 +191,6 @@ void AdoptPointViewInterpretivePose(const LUMICE_SinglePathResult& result, Point
   view->sample_index = cursor.valid_position;
   view->interpretive_available = true;
   view->interpretive_component = interpretive.component_index;
-  view->interpretive_stored_index = interpretive.point_index;
   view->interpretive_valid_position = cursor.valid_position;
   view->interpretive_log_density = interpretive.log_density;
 }
@@ -373,9 +371,23 @@ std::vector<std::string> PointFactorHeadLines(const LUMICE_PathPointSample& samp
     std::snprintf(buf, sizeof(buf), "axis density = %.6g rad^-3 (the log fact did not verify here)", sample.rho);
     lines.emplace_back(buf);
   } else if (std::isinf(*log_rho) && *log_rho < 0.0) {
-    lines.emplace_back("axis density: no ordinary density here (linear payload 0 — off support or a Dirac slice)");
+    // The linear payload's own value is READ, not asserted: the parenthetical spells 0 only
+    // when the payload actually is 0 (a desynchronized engine side must not be papered over).
+    if (sample.rho == 0.0) {
+      lines.emplace_back("axis density: no ordinary density here (linear payload 0 — off support or a Dirac slice)");
+    } else {
+      std::snprintf(buf, sizeof(buf), "axis density: no ordinary density here (the linear payload reads %.6g)",
+                    sample.rho);
+      lines.emplace_back(buf);
+    }
   } else if (std::isinf(*log_rho)) {
-    lines.emplace_back("axis density: divergent at this pose (linear payload reads 0)");
+    if (sample.rho == 0.0) {
+      lines.emplace_back("axis density: divergent at this pose (linear payload reads 0)");
+    } else {
+      std::snprintf(buf, sizeof(buf), "axis density: divergent at this pose (the linear payload reads %.6g)",
+                    sample.rho);
+      lines.emplace_back(buf);
+    }
   } else if (sample.rho != 0.0) {
     std::snprintf(buf, sizeof(buf), "axis density = %.6g rad^-3", sample.rho);
     lines.emplace_back(buf);
@@ -1005,17 +1017,16 @@ int PointCurveRhoLogLabelStep(double lo_log10, double hi_log10, float plot_h_px,
 
 std::vector<PointCurveRhoTick> PointCurveRhoLogTicks(double lo_log10, double hi_log10) {
   std::vector<PointCurveRhoTick> ticks;
-  if (!std::isfinite(lo_log10) || !std::isfinite(hi_log10) || lo_log10 > hi_log10) {
+  // Finite, ordered, and within the exponent range a labelled decade can carry (int's domain
+  // with a wide margin): beyond it the axis is undrawable, the same "absent" family as the
+  // fit's non-finite guard. The CONSTANT-BRANCH widening lives in ONE place — the display
+  // span (CurveRhoDisplayLo/Hi); callers map ticks through that span, never a second copy.
+  if (!std::isfinite(lo_log10) || !std::isfinite(hi_log10) || lo_log10 > hi_log10 || std::abs(lo_log10) > 1e6 ||
+      std::abs(hi_log10) > 1e6) {
     return ticks;
   }
-  // A degenerate band widens to one decade: a constant branch draws INSIDE a range, not on an
-  // edge. The widening is display-only — the range's own values never move.
-  double lo = lo_log10;
-  double hi = hi_log10;
-  if (hi == lo) {
-    lo -= 0.5;
-    hi += 0.5;
-  }
+  const double lo = lo_log10;
+  const double hi = hi_log10;
   const int first_exp = static_cast<int>(std::floor(lo));
   const int last_exp = static_cast<int>(std::ceil(hi));
   for (int e = first_exp; e <= last_exp; ++e) {
@@ -1041,15 +1052,22 @@ std::string PointCurveRhoTickLabel(const PointCurveRhoTick& tick) {
 }
 
 std::string PointCurveRhoValueText(double log10_rho) {
-  if (!std::isfinite(log10_rho)) {
+  // Finite and within int's decade domain with a wide margin — beyond it the magnitude is not
+  // spellable here, the same "n/a" family as the ticks' undrawable guard.
+  if (!std::isfinite(log10_rho) || std::abs(log10_rho) > 1e6) {
     return "n/a";
   }
   // The decade decomposition: exponent = floor(log10), mantissa = 10^fraction in [1,10). The
   // pow runs on the FRACTION only — bounded, no underflow, no overflow — so a 1e-2000 tail
-  // spells out exactly.
-  const double floor_decade = std::floor(log10_rho);
+  // spells out exactly. A fraction within rounding distance of the next decade carries the
+  // mantissa up with it (9.997 prints as 10.00 without this — the same value misread).
+  double floor_decade = std::floor(log10_rho);
+  double mantissa = std::pow(10.0, log10_rho - floor_decade);
+  if (mantissa >= 9.995) {
+    mantissa /= 10.0;
+    floor_decade += 1.0;
+  }
   const int exponent = static_cast<int>(floor_decade);
-  const double mantissa = std::pow(10.0, log10_rho - floor_decade);
   char buf[32];
   std::snprintf(buf, sizeof(buf), "%.2fe%d", mantissa, exponent);
   return buf;
@@ -1090,18 +1108,6 @@ double CurveLogY(double value, const PointCurveAxisRange& range) {
   return CurveLogDistance(value, range.lo) / (span > 0.0 ? span : 1.0);
 }
 
-// The rho arm's display span: a constant branch (hi == lo) widens by half a decade each way —
-// display only, the range's own values never move. ONE definition: the axis face's ticks and
-// the arm face's markers map through the same span, so a constant branch's line and labels
-// cannot drift apart.
-double CurveRhoDisplayLo(const PointCurveRhoAxisRange& range) {
-  return range.hi_log10 == range.lo_log10 ? range.lo_log10 - 0.5 : range.lo_log10;
-}
-
-double CurveRhoDisplayHi(const PointCurveRhoAxisRange& range) {
-  return range.hi_log10 == range.lo_log10 ? range.hi_log10 + 0.5 : range.hi_log10;
-}
-
 double CurveRhoLogY(double log10_value, const PointCurveRhoAxisRange& range) {
   const double lo = CurveRhoDisplayLo(range);
   const double hi = CurveRhoDisplayHi(range);
@@ -1109,6 +1115,18 @@ double CurveRhoLogY(double log10_value, const PointCurveRhoAxisRange& range) {
   return (log10_value - lo) / (span > 0.0 ? span : 1.0);
 }
 }  // namespace
+
+// The rho arm's display span: a constant branch (hi == lo) widens by half a decade each way —
+// display only, the range's own values never move. THE one definition (review round 1): the
+// ticks, the axis labels and the arm's line/markers all map through this span — the widening
+// rule has no second copy to drift against.
+double CurveRhoDisplayLo(const PointCurveRhoAxisRange& range) {
+  return range.hi_log10 == range.lo_log10 ? range.lo_log10 - 0.5 : range.lo_log10;
+}
+
+double CurveRhoDisplayHi(const PointCurveRhoAxisRange& range) {
+  return range.hi_log10 == range.lo_log10 ? range.hi_log10 + 0.5 : range.hi_log10;
+}
 
 bool PointCurveClipSegment(double x0, double value0, double x1, double value1, const PointCurveAxisRange& range,
                            PointCurveSegment* out) {
@@ -1269,7 +1287,7 @@ void DrawPointCurveRhoAxis(ImDrawList* dl, const PointCurveRhoAxisRange& visible
   };
   const bool minors_fit =
       label_step == 1 && plot_h / std::max(1.0, CurveRhoDisplayHi(visible) - CurveRhoDisplayLo(visible)) >= UiPx(12.0f);
-  for (const PointCurveRhoTick& tick : PointCurveRhoLogTicks(lo, hi)) {
+  for (const PointCurveRhoTick& tick : PointCurveRhoLogTicks(CurveRhoDisplayLo(visible), CurveRhoDisplayHi(visible))) {
     const bool labelled = tick.major && tick.exponent % label_step == 0;
     if (tick.major && !labelled) {
       continue;  // an unlabelled decade would only crowd the plot at this density
@@ -3554,8 +3572,11 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
     // user's and are not reported here.
     if (view.interpretive_available) {
       char interp[128];
-      std::snprintf(interp, sizeof(interp), "opened at the interpretive pose: component %d, sample %d",
-                    view.interpretive_component + 1, view.interpretive_valid_position + 1);
+      // The named pose's own density magnitude rides the line — the fact the interpretive
+      // reader named, spelled absolute from the log (a deep-tail pose reads its true scale).
+      std::snprintf(interp, sizeof(interp), "interpretive pose: component %d, sample %d, ρ ~ %s",
+                    view.interpretive_component + 1, view.interpretive_valid_position + 1,
+                    PointCurveRhoValueText(view.interpretive_log_density / kLn10).c_str());
       DisabledWrappedText("%s", interp);
     } else {
       DisabledWrappedText("no interpretive pose in this document — opened at the first browsable branch");
@@ -3742,7 +3763,8 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
         const int rho_step =
             PointCurveRhoLogLabelStep(rho_visible.lo_log10, rho_visible.hi_log10, rough_plot_h, line_h);
         bool rho_labelled = false;
-        for (const PointCurveRhoTick& tick : PointCurveRhoLogTicks(rho_visible.lo_log10, rho_visible.hi_log10)) {
+        for (const PointCurveRhoTick& tick :
+             PointCurveRhoLogTicks(CurveRhoDisplayLo(rho_visible), CurveRhoDisplayHi(rho_visible))) {
           if (!tick.major || tick.exponent % rho_step != 0) {
             continue;
           }

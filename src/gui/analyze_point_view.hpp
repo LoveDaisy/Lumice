@@ -349,14 +349,22 @@ std::vector<PointCurveLogTick> PointCurveLogTicks(double lo, double hi);
 // One right-axis tick as (mantissa, exponent) — value = mantissa * 10^exponent, NEVER formed
 // through pow: a deep tail's exponents exceed double's linear range, and the tick's whole
 // point is to stay representable where the value is not. Majors at every decade inside
-// [lo_log10, hi_log10], minors at the 2x/5x multiples. A degenerate band widens to one decade
-// (a constant branch still draws inside a range); nothing finite to span answers empty.
+// [lo_log10, hi_log10], minors at the 2x/5x multiples. The span is the CALLER's display span
+// (CurveRhoDisplayLo/Hi) — a constant branch's widening lives in that one definition, not
+// here; nothing drawable to span (non-finite, out of order, exponents beyond ~1e6 decades)
+// answers empty.
 struct PointCurveRhoTick {
   int exponent = 0;
   double mantissa = 1.0;  // 1, 2 or 5
   bool major = false;
 };
 std::vector<PointCurveRhoTick> PointCurveRhoLogTicks(double lo_log10, double hi_log10);
+
+// The rho axis's DISPLAY span: a constant branch (hi == lo) widens by half a decade each way
+// so the branch draws INSIDE a range — display only, the range's own values never move. The
+// one widening definition: ticks, axis labels and the arm's line/markers all map through it.
+double CurveRhoDisplayLo(const PointCurveRhoAxisRange& range);
+double CurveRhoDisplayHi(const PointCurveRhoAxisRange& range);
 // The tick's axis label — mantissa digit and exponent spelled directly ("2e-2007"): the
 // exponent range makes %.0e of a formed value impossible by construction.
 std::string PointCurveRhoTickLabel(const PointCurveRhoTick& tick);

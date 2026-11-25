@@ -11899,7 +11899,7 @@ bool PoseCurveRegionDrawsAndMovesTheSharedCursor(ImGuiTestContext* ctx) {
     // The dual-axis honesty lines ride the companion: the independence caliber and the
     // adoption's opening fact (the interpretive pose or its named absence — one of the two).
     IM_CHECK_RETV(text.find("two independent log axes") != std::string::npos, false);
-    IM_CHECK_RETV(text.find("opened at the interpretive pose") != std::string::npos ||
+    IM_CHECK_RETV(text.find("interpretive pose: component") != std::string::npos ||
                       text.find("no interpretive pose in this document") != std::string::npos,
                   false);
     IM_CHECK_RETV(CheckMapTextGlyphs(ctx, "curve legend", text), false);
@@ -12624,6 +12624,9 @@ bool PoseCurveDeepTailDualBranchesOnTheColumnScene(ImGuiTestContext* ctx) {
   // this consumer task's fence, escalated with evidence. The dual-branch acceptance drives
   // 3-1-5-7 instead — the GUI list's own top row, verified by the CLI point probe to carry
   // the SAME two-branch shape at this point (healthy rho ~ 0.58, deep tail ~ 1.3e-62).
+  // A literal pick is red-sensitive to list-shape drift by design (the row disappears -> the
+  // case goes red): the shape itself is backed by the measured saw_healthy/saw_deep_tail
+  // spans below, so a mere reorder keeps the acceptance green through that path.
   IM_CHECK_RETV(SelectRowByDisplay(ctx, "3-1-5-7") != std::nullopt, false);
   gui::g_state.analyze_pose_view_open = true;
   PinPoseViewOnScreen(ctx);

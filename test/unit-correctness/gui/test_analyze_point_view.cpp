@@ -162,7 +162,6 @@ TEST(AnalyzePointView, PointViewStateDefaultsPinTheFactorySession) {
   EXPECT_FALSE(view.playing);
   EXPECT_FALSE(view.interpretive_available);
   EXPECT_EQ(view.interpretive_component, -1);
-  EXPECT_EQ(view.interpretive_stored_index, -1);
   EXPECT_EQ(view.interpretive_valid_position, -1);
 }
 
@@ -879,9 +878,28 @@ TEST(AnalyzePointView, RhoTicksLabelsAndValueTextGoBeyondDoubleRange) {
     }
   }
   EXPECT_TRUE(saw_five);
-  // A degenerate band widens to one decade — a constant branch still has ticks to sit inside.
-  const std::vector<PointCurveRhoTick> one = PointCurveRhoLogTicks(-89.0, -89.0);
+  // A degenerate band widens to one decade through the ONE display-span definition — the
+  // ticks never widen on their own; the constant branch's range maps through it.
+  const PointCurveRhoAxisRange constant_band{ true, -89.0, -89.0 };
+  const std::vector<PointCurveRhoTick> one =
+      PointCurveRhoLogTicks(CurveRhoDisplayLo(constant_band), CurveRhoDisplayHi(constant_band));
   ASSERT_GE(one.size(), 2U);
+  {
+    const double lo_tick = static_cast<double>(one.front().exponent) + std::log10(one.front().mantissa);
+    const double hi_tick = static_cast<double>(one.back().exponent) + std::log10(one.back().mantissa);
+    EXPECT_GE(lo_tick, -89.5);
+    EXPECT_LE(hi_tick, -88.5);
+    EXPECT_FALSE(PointCurveRhoLogTicks(-89.0, -89.0).empty());  // the raw band still carries its own tick
+  }
+  // Beyond ~1e6 decades the axis is not spellable: the same absent/n-a family as the
+  // non-finite guards (the int-cast UB the review's extreme-magnitude leg closed).
+  EXPECT_EQ(PointCurveRhoValueText(2e6), "n/a");
+  EXPECT_EQ(PointCurveRhoValueText(-2e6), "n/a");
+  EXPECT_TRUE(PointCurveRhoLogTicks(-2e6, 2e6).empty());
+  // A mantissa within rounding distance of the next decade carries up (9.997 prints as
+  // "10.00e-90" without the normalization — the same value misread).
+  EXPECT_EQ(PointCurveRhoValueText(std::log10(9.9977e-90)), "1.00e-89");
+  EXPECT_EQ(PointCurveRhoValueText(-89.0001), "1.00e-89");
   // Nothing finite to span answers empty.
   EXPECT_TRUE(PointCurveRhoLogTicks(0.0, std::numeric_limits<double>::infinity()).empty());
   EXPECT_TRUE(PointCurveRhoLogTicks(std::numeric_limits<double>::quiet_NaN(), 1.0).empty());
@@ -968,7 +986,6 @@ TEST(AnalyzePointView, CurveModeResetsOnAdoptionButKeepsTheCamera) {
   view.orbit_zoom = 2.0f;
   view.interpretive_available = true;
   view.interpretive_component = 1;
-  view.interpretive_stored_index = 7;
   view.interpretive_valid_position = 3;
   ResetPointViewStateForNewAdoption(&view);
   EXPECT_EQ(view.curve_range_mode, PointCurveRangeMode::kFit);
@@ -977,7 +994,6 @@ TEST(AnalyzePointView, CurveModeResetsOnAdoptionButKeepsTheCamera) {
   // recorded fact goes with it (the pump re-records it when the new document names one).
   EXPECT_FALSE(view.interpretive_available);
   EXPECT_EQ(view.interpretive_component, -1);
-  EXPECT_EQ(view.interpretive_stored_index, -1);
   EXPECT_EQ(view.interpretive_valid_position, -1);
 }
 
@@ -1564,8 +1580,11 @@ TEST(AnalyzePointView, PointPumpAdoptsEchoesAndMovesHonestly) {
       EXPECT_EQ(view.component_index, expected.component);
       EXPECT_EQ(view.sample_index, expected.valid_position);
       EXPECT_EQ(view.interpretive_component, interpretive.component_index);
-      EXPECT_EQ(view.interpretive_stored_index, interpretive.point_index);
       EXPECT_EQ(view.interpretive_valid_position, expected.valid_position);
+      // The stored index is DERIVED back through the view's own mapping — no stored copy of
+      // it exists (the adoption's pure function consumed it; review round 1's orphan ruling).
+      EXPECT_EQ(PointValidSampleIndexAt(*state.analysis.point.adopted_result, view.component_index, view.sample_index),
+                interpretive.point_index);
       EXPECT_EQ(view.interpretive_log_density, interpretive.log_density);
     } else {
       EXPECT_EQ(view.component_index, 0);

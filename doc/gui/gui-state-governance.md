@@ -40,13 +40,15 @@ Render/Analyze 的纯文字双格是 T-session 工作区选择：当前格实填
 切档只裁左轴四臂窗口；ρ 臂的右轴域由当前分支的有限 log 密度派生，任何档位/交互不改它。
 
 **新点采纳的解释姿态开局（2026-11-25）**：`PointViewState` 记录每文档一次的解释姿态事实
-（`interpretive_available/_component/_stored_index/_valid_position/_log_density`）。采纳边界
+（`interpretive_available/_component/_valid_position/_log_density` 四字段）。采纳边界
 （`PumpPointQuery` 的 drain 分支）在既有重置之后读一次 `LUMICE_PathPointGetInterpretivePose`：
 available 且索引落在该 component 的有效样本集内时，游标开在该 component 的该 valid-position
-（stored→valid 换算纯函数 `PointViewInterpretiveCursorFor`）；reader 不可用、索引越界或非有效
-样本时保留 0/0 浏览基线，伴读行具名「本次没有普通密度解释姿态」，不伪造健康支。**只在采纳帧
-初始化**——此后手动分支/样本写入不被逐帧抢回；关开窗口不重读；死亡分支（选择/天空点失效）随
-重置清零。五个字段是纯显示事实，不进查询键、快照、配置或默认值，不 dirty、不发查询。
+（stored→valid 换算纯函数 `PointViewInterpretiveCursorFor`——stored 索引被换算消费，不落视图
+字段）；reader 不可用、索引越界或非有效样本时保留 0/0 浏览基线，伴读行具名「本次没有普通密度
+解释姿态」，不伪造健康支。伴读开局行消费 component/valid_position 与 log_density 的绝对量级
+（同行的 ρ 拼写即解释姿态自己的密度）。**只在采纳帧初始化**——此后手动分支/样本写入不被逐帧
+抢回；关开窗口不重读；死亡分支（选择/天空点失效）随重置清零。四字段是纯显示事实，不进查询键、
+快照、配置或默认值，不 dirty、不发查询。
 
 **u-globe 的 Fit/Full** 是与曲线档同词汇、不同寿命的独立 T-session 显示属性
 （`PointViewState::sun_globe_view_mode`，2026-11-17 反馈片）：Full（默认）以固定晶体系基投影
