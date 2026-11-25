@@ -705,10 +705,20 @@ FamilyStructureResult EvaluateFamilyStructure(const FamilyStructureInput& input,
       size_t member_index = 0;
       bool coverage_recorded = false;
       for (const std::vector<int>& member : *input.members) {
+        // The recovery joins the query's stop (the same one the card assembly polls): a member
+        // scan the stop cut publishes its completed fragments, and no further member starts.
+        if (input.stop != nullptr) {
+          if (input.stop->token != nullptr) {
+            input.stop->token->NotePoll(analytic::kPollFamilyCurve);
+          }
+          if (input.stop->Stopped()) {
+            break;
+          }
+        }
         const std::vector<int>& slots = member_slots[member_index++];
         const analytic::RestrictedFamilyRank rank =
             analytic::RankRestrictedFamily(*input.table, slots.data(), static_cast<int>(slots.size()), spec, sun_hat,
-                                           input.refractive_index, kFamilyLadderGrid);
+                                           input.refractive_index, kFamilyLadderGrid, input.stop);
         if (rank.status != analytic::FamilyRankStatus::kOk) {
           // The gate guarantees this cannot happen (azimuth free, one or two free dimensions,
           // the declared grid); it is recorded as data rather than guessed into a structure.

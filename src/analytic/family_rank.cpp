@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <vector>
 
+#include "analytic/discovery.hpp"
 #include "analytic/jet.hpp"
 #include "analytic/jet2.hpp"
 #include "analytic/path_chain.hpp"
@@ -449,6 +450,8 @@ const char* FoldChainEndName(FoldChainEnd end) {
       return "feasibility_interruption";
     case FoldChainEnd::kAmbiguousCell:
       return "ambiguous_cell";
+    case FoldChainEnd::kStopRequested:
+      return "stop_requested";
   }
   return "unknown";
 }
@@ -516,7 +519,7 @@ FamilyPointRecord EvaluateFamilyPoint(const FaceNormalTable& normals, const int*
 
 RestrictedFamilyRank RankRestrictedFamily(const FaceNormalTable& normals, const int* slots, int slot_count,
                                           const RestrictedFamilySpec& spec, const double sun_hat[3],
-                                          double refractive_index, int grid) {
+                                          double refractive_index, int grid, const DiscoveryStop* stop) {
   RestrictedFamilyRank out;
   out.grid = grid;
   int free_count = 0;
@@ -528,6 +531,24 @@ RestrictedFamilyRank RankRestrictedFamily(const FaceNormalTable& normals, const 
     out.status = FamilyRankStatus::kRefusedGridOutOfBounds;
     return out;
   }
+  // The query's cooperative stop (the shared-budget contract: the recovery work joins the same
+  // stop, no second budget): polled at the bounded work-unit boundaries only — a scan row, an
+  // edge batch, a cell pairing, a chain walk, a classification read — never inside the
+  // numerics. A poll ticks kPollFamilyCurve (the liveness evidence) and returns true when the
+  // query wants out; every true marks the result.
+  const auto stopped = [&]() {
+    if (stop == nullptr) {
+      return false;
+    }
+    if (stop->token != nullptr) {
+      stop->token->NotePoll(kPollFamilyCurve);
+    }
+    if (stop->Stopped()) {
+      out.stop_requested = true;
+      return true;
+    }
+    return false;
+  };
 
   GridAxis axes[2];
   FreeAxes(spec, grid, axes, &out.free_count);
@@ -542,6 +563,9 @@ RestrictedFamilyRank RankRestrictedFamily(const FaceNormalTable& normals, const 
   // The product scan.
   std::vector<Sample> samples(static_cast<size_t>(out.samples));
   for (int i0 = 0; i0 < n0; i0++) {
+    if (stopped()) {
+      break;  // the rows past the cut were never evaluated: the counters below read what ran
+    }
     for (int i1 = 0; i1 < n1; i1++) {
       const double params[2] = { axes[0].ValueDeg(i0), axes[1].ValueDeg(i1) };
       EvaluateSample(normals, slots, slot_count, sun_hat, refractive_index, out.free_count, axes, spec, params,
@@ -737,6 +761,9 @@ RestrictedFamilyRank RankRestrictedFamily(const FaceNormalTable& normals, const 
     };
 
     for (int i0 = 0; i0 < dim0_edges; i0++) {
+      if (stopped()) {
+        break;  // the edges past the cut were never located: the chains read the located ones
+      }
       for (int i1 = 0; i1 < n1; i1++) {
         const EdgeRef edge = { 0, i0, i1 };
         const int crossing = locate_crossing(edge);
@@ -746,6 +773,9 @@ RestrictedFamilyRank RankRestrictedFamily(const FaceNormalTable& normals, const 
       }
     }
     for (int i0 = 0; i0 < n0; i0++) {
+      if (stopped()) {
+        break;
+      }
       for (int i1 = 0; i1 < n1; i1++) {
         const EdgeRef edge = { 1, i0, i1 };
         const int crossing = locate_crossing(edge);
@@ -811,11 +841,17 @@ RestrictedFamilyRank RankRestrictedFamily(const FaceNormalTable& normals, const 
 
     // ---- the cliff probes: the feasibility-cliff loci the both-valid-edges rule loses --------
     for (int i0 = 0; i0 < dim0_edges; i0++) {
+      if (stopped()) {
+        break;  // the un-probed edges stay unprobed: the counters read what ran
+      }
       for (int i1 = 0; i1 < n1; i1++) {
         probe_cliff_edge(EdgeRef{ 0, i0, i1 });
       }
     }
     for (int i0 = 0; i0 < n0; i0++) {
+      if (stopped()) {
+        break;
+      }
       for (int i1 = 0; i1 < n1; i1++) {
         probe_cliff_edge(EdgeRef{ 1, i0, i1 });
       }
@@ -1194,10 +1230,17 @@ RestrictedFamilyRank RankRestrictedFamily(const FaceNormalTable& normals, const 
       return true;
     };
 
-    for (int I = 0; I < dim0_cells; I++) {
+    bool pairing_cut = false;
+    for (int I = 0; I < dim0_cells && !pairing_cut; I++) {
       for (int J = 0; J < n1; J++) {
         if (!cell_exists(I, J)) {
           continue;
+        }
+        // The pairing is the recovery's dominant new work (the verification's nine points and
+        // reduced bisections, the subdivision's): one poll per cell, the bounded unit boundary.
+        if (stopped()) {
+          pairing_cut = true;  // the cells past the cut stay unpaired: the walk reads the paired ones
+          break;
         }
         const size_t cell = static_cast<size_t>(I * n1 + J);
         const int count = cell_counts[cell];
@@ -1237,6 +1280,9 @@ RestrictedFamilyRank RankRestrictedFamily(const FaceNormalTable& normals, const 
       std::vector<double> djv(static_cast<size_t>(n), 0.0);
       std::vector<char> read_ok(static_cast<size_t>(n), 0);
       for (int k = 0; k < n; k++) {
+        if (stopped()) {
+          break;  // the positions past the cut keep their place unclassified (kUnknown below)
+        }
         FoldJet2Read& read = reads[static_cast<size_t>(k)];
         FoldPointRecord& point = out.crossings[static_cast<size_t>(chain->order[static_cast<size_t>(k)])];
         if (!EvaluateSampleJet2(normals, slots, slot_count, sun_hat, refractive_index, axes, spec, point.params_deg,
@@ -1374,6 +1420,11 @@ RestrictedFamilyRank RankRestrictedFamily(const FaceNormalTable& normals, const 
         std::vector<Sample> refined_samples;
         std::vector<std::array<double, 2>> refined_params;
         for (int g = 0; g < refine_gaps && mids_ok; g++) {
+          // A cut refinement is an unfinished verification: the run's verdict stays kUnknown.
+          if (stopped()) {
+            mids_ok = false;
+            break;
+          }
           const int k = refine_gaps == 1 ? run.first : run.first + g * (run.last - run.first) / (refine_gaps - 1);
           if (k >= run.last) {
             continue;
@@ -1614,6 +1665,11 @@ RestrictedFamilyRank RankRestrictedFamily(const FaceNormalTable& normals, const 
             if (!read_ok[static_cast<size_t>(p)] || !read_ok[static_cast<size_t>(p + 1)]) {
               continue;
             }
+            // A located search is a bounded unit of its own (a 52-step Jet2 bisection): the
+            // shared stop gates each attempt, an unfinished one publishes nothing.
+            if (stopped()) {
+              break;
+            }
             // The sign change is only meaningful between two RESOLVABLE reads: a |dJ(v)| below
             // its own resolution is an unresolved degenerate region (the mirror branch's
             // transition zone), never a locatable cusp — no marker is generated there.
@@ -1695,23 +1751,33 @@ RestrictedFamilyRank RankRestrictedFamily(const FaceNormalTable& normals, const 
       if (out.crossings[static_cast<size_t>(c)].from_cliff_probe) {
         return FoldChainEnd::kFeasibilityInterruption;
       }
-      return FoldChainEnd::kOpen;
+      // An uncut scan earns kOpen (the locus genuinely stops at this resolution); a scan the
+      // stop cut never earned that claim — the grid beyond the cut was never looked at.
+      return out.stop_requested ? FoldChainEnd::kStopRequested : FoldChainEnd::kOpen;
     };
 
     // The walk: open chains from degree-1 crossings (smallest index first), then closed loops
     // from the remaining degree-2 crossings, then isolated crossings as single-point chains.
     // Deterministic: crossing indices are scan order and every iteration runs in index order.
+    // The shared stop gates each chain start (no chain begins after a cut) and each walk step
+    // (a cut walk publishes the chain it holds, its walking end kStopRequested — the adjacency
+    // beyond was never examined), and stops the pass.
     const int total_crossings = static_cast<int>(out.crossings.size());
     adjacency.resize(static_cast<size_t>(total_crossings));
     std::vector<bool> visited(static_cast<size_t>(total_crossings), false);
-    for (int start = 0; start < total_crossings; start++) {
+    bool walk_pass_cut = false;
+    for (int start = 0; start < total_crossings && !walk_pass_cut; start++) {
       if (visited[static_cast<size_t>(start)] || adjacency[static_cast<size_t>(start)].size() != 1) {
         continue;
+      }
+      if (stopped()) {
+        break;  // no chain starts after the cut
       }
       FoldChainRecord chain;
       chain.closed = false;
       int current = start;
       int prev = -1;
+      bool step_cut = false;
       while (true) {
         visited[static_cast<size_t>(current)] = true;
         chain.order.push_back(current);
@@ -1731,15 +1797,23 @@ RestrictedFamilyRank RankRestrictedFamily(const FaceNormalTable& normals, const 
         chain.links.push_back(next_link);
         prev = current;
         current = next;
+        if (stopped()) {
+          step_cut = true;
+          break;
+        }
       }
       chain.end_a = end_reason_at(chain.order.front());
-      chain.end_b = end_reason_at(chain.order.back());
+      chain.end_b = step_cut ? FoldChainEnd::kStopRequested : end_reason_at(chain.order.back());
       classify_chain(&chain);
       out.fold_chains.push_back(std::move(chain));
+      walk_pass_cut = step_cut;
     }
     for (int start = 0; start < total_crossings; start++) {
-      if (visited[static_cast<size_t>(start)]) {
+      if (walk_pass_cut || visited[static_cast<size_t>(start)]) {
         continue;
+      }
+      if (stopped()) {
+        break;  // no chain starts after the cut
       }
       if (adjacency[static_cast<size_t>(start)].empty()) {
         visited[static_cast<size_t>(start)] = true;
@@ -1756,6 +1830,7 @@ RestrictedFamilyRank RankRestrictedFamily(const FaceNormalTable& normals, const 
       int current = start;
       int prev = -1;
       bool closed = false;
+      bool step_cut = false;
       FoldChainLink closing_link;
       while (true) {
         visited[static_cast<size_t>(current)] = true;
@@ -1783,6 +1858,10 @@ RestrictedFamilyRank RankRestrictedFamily(const FaceNormalTable& normals, const 
         chain.links.push_back(next_link);
         prev = current;
         current = next;
+        if (stopped()) {
+          step_cut = true;
+          break;
+        }
       }
       chain.closed = closed;
       if (closed) {
@@ -1791,10 +1870,11 @@ RestrictedFamilyRank RankRestrictedFamily(const FaceNormalTable& normals, const 
         chain.end_b = FoldChainEnd::kClosedLoop;
       } else {
         chain.end_a = end_reason_at(chain.order.front());
-        chain.end_b = end_reason_at(chain.order.back());
+        chain.end_b = step_cut ? FoldChainEnd::kStopRequested : end_reason_at(chain.order.back());
       }
       classify_chain(&chain);
       out.fold_chains.push_back(std::move(chain));
+      walk_pass_cut = step_cut;
     }
   }
 

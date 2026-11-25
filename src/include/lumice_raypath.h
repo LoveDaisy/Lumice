@@ -2099,6 +2099,7 @@ typedef struct LUMICE_PathFamilyOrigin {
 #define LUMICE_PATH_CURVE_END_CLOSED_LOOP 1
 #define LUMICE_PATH_CURVE_END_FEASIBILITY_INTERRUPTION 2
 #define LUMICE_PATH_CURVE_END_AMBIGUOUS_CELL 3
+#define LUMICE_PATH_CURVE_END_STOP_REQUESTED 4
 
 typedef struct LUMICE_PathSurveyCurveInfo {
   size_t struct_size;

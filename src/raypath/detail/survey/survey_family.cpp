@@ -164,6 +164,9 @@ FamilyArmOutcome AssembleFamilyRouting(const FamilyArmInput& input, SurveyData* 
   structure_input.single_pose = input.single_pose;
   structure_input.refractive_index = input.refractive_index;
   std::copy(input.incident, input.incident + 3, structure_input.incident);
+  // The rank scans' recovery joins the query's stop (plan §3.1's shared budget): a cancel during
+  // the scans stops them, the completed fragments publish, and the curve ends say where.
+  structure_input.stop = input.stop;
   structure::FamilyStructureResult structure = structure::EvaluateFamilyStructure(structure_input, support);
   if (!structure.refusal_mode.empty()) {
     AppendCornerWitnessStop(input, corner_witness_stopped, out);

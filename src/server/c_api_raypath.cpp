@@ -3703,6 +3703,9 @@ LUMICE_PathReadStatus LUMICE_PathSurveyGetCurve(const LUMICE_PathSurvey* result,
     case an::FoldChainEnd::kAmbiguousCell:
       out->end_a = LUMICE_PATH_CURVE_END_AMBIGUOUS_CELL;
       break;
+    case an::FoldChainEnd::kStopRequested:
+      out->end_a = LUMICE_PATH_CURVE_END_STOP_REQUESTED;
+      break;
     default:
       out->end_a = LUMICE_PATH_CURVE_END_OPEN;
       break;
@@ -3716,6 +3719,9 @@ LUMICE_PathReadStatus LUMICE_PathSurveyGetCurve(const LUMICE_PathSurvey* result,
       break;
     case an::FoldChainEnd::kAmbiguousCell:
       out->end_b = LUMICE_PATH_CURVE_END_AMBIGUOUS_CELL;
+      break;
+    case an::FoldChainEnd::kStopRequested:
+      out->end_b = LUMICE_PATH_CURVE_END_STOP_REQUESTED;
       break;
     default:
       out->end_b = LUMICE_PATH_CURVE_END_OPEN;

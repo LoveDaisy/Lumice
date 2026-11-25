@@ -43,6 +43,10 @@ struct FamilyStructureInput {
   bool single_pose = false;
   double incident[3] = { 0.0, 0.0, -1.0 };
   double refractive_index = 0.0;
+  // The query's cooperative stop (nullptr = unbounded): the rank scans' recovery work joins the
+  // same stop — polled per member scan, the scan's own bounded units inside — so a cancel during
+  // the recovery stops the recovery, not just the card assembly past it.
+  const analytic::DiscoveryStop* stop = nullptr;
 };
 struct FamilyStructureResult {
   std::string refusal_mode;

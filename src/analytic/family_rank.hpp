@@ -100,6 +100,8 @@
 
 namespace lumice::analytic {
 
+struct DiscoveryStop;
+
 // The rank-class singular-value bar (sigma >= this counts as nonzero): the continuation layer's
 // singular_value_tolerance calibre. A pinned family's collapsed rows sit at ~1e-15 (exact
 // cancellation to rounding), a generic image's at O(0.1), so the bar separates them by many
@@ -344,6 +346,9 @@ enum class FoldChainEnd {
                              // region ends at this point (the probe's own mechanical verdict)
   kAmbiguousCell,            // a cell with 3+ crossings survived bounded subdivision unresolved;
                              // the fragments on both sides are kept, nothing pairs arbitrarily
+  kStopRequested,            // the query's cooperative stop cut the work at this end: the locus may
+                             // continue beyond it, but the walk stopped looking here (the shared
+                             // budget's own verdict, not the locus's geometry)
 };
 const char* FoldChainEndName(FoldChainEnd end);
 
@@ -475,6 +480,11 @@ struct RestrictedFamilyRank {
   // interval stays unresolved — declared data, like invalid_samples).
   int cliff_probed_edges = 0;
   int cliff_unresolved_edges = 0;
+  // The query's cooperative stop was observed at a work-unit boundary: the result carries what
+  // the units that ran completed (chains cut mid-walk end kStopRequested; chain positions the
+  // classification never read stay kUnknown), and the caller's own stop object names the reason.
+  // False means every declared work unit ran to its own end.
+  bool stop_requested = false;
   // The one-dimensional family's ordered track (free_count == 1 only; the same scan's samples
   // recorded in parameter order, validity-segmented).
   FamilyTrackRecord track;
@@ -484,10 +494,13 @@ struct RestrictedFamilyRank {
 // AT the sun, dp_contour's convention; the incident propagation is -sun_hat) at
 // `refractive_index`. `grid` is the per-free-dimension sample count: a periodic midpoint grid
 // (2 pi (i + 0.5) / grid, the orbit producer's) for azimuth and roll, an inclusive uniform grid
-// over [0, 180] for zenith. Deterministic; no allocation beyond the result's vectors.
+// over [0, 180] for zenith. Deterministic; no allocation beyond the result's vectors. `stop` is
+// the query's optional cooperative stop (nullptr = unbounded): polled at the bounded work-unit
+// boundaries only (never inside the numerics); on a stop the result carries the completed units,
+// `stop_requested` says the cut happened, and the walk-cut chains end kStopRequested.
 RestrictedFamilyRank RankRestrictedFamily(const FaceNormalTable& normals, const int* slots, int slot_count,
                                           const RestrictedFamilySpec& spec, const double sun_hat[3],
-                                          double refractive_index, int grid);
+                                          double refractive_index, int grid, const DiscoveryStop* stop = nullptr);
 
 }  // namespace lumice::analytic
 
