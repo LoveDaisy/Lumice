@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdio>
 #include <vector>
 
 #include "analytic/jet.hpp"
@@ -711,22 +712,27 @@ RestrictedFamilyRank RankRestrictedFamily(const FaceNormalTable& normals, const 
       if (mid.signed_jacobian * valid_end.signed_jacobian >= 0.0) {
         return;  // no bracket toward this neighbour: nothing located, nothing claimed
       }
-      // The sub-bracket runs from the valid endpoint to the midpoint; the record's edge_t is
-      // the root's absolute position along the full edge.
+      // The sub-bracket always runs FROM the valid endpoint (bisect_edge's sign convention
+      // compares probes against the bracket's lo end — the invalid midpoint must never sit
+      // there): when the valid endpoint is the edge's second vertex the bracket is the
+      // reversed [hi -> mid], and the root's full-edge position mirrors the bracket-relative
+      // one.
       double t = 0.0;
       Sample located;
       double lo_params[2];
       double hi_params[2];
       for (int k = 0; k < 2; k++) {
-        lo_params[k] = a_valid ? base[k] : mid_params[k];
-        hi_params[k] = a_valid ? mid_params[k] : hi[k];
+        lo_params[k] = a_valid ? base[k] : hi[k];
+        hi_params[k] = a_valid ? mid_params[k] : mid_params[k];
       }
       if (!bisect_edge(lo_params, hi_params, valid_end.signed_jacobian, &t, &located)) {
         out.cliff_unresolved_edges++;
         return;
       }
-      const double t_abs = a_valid ? 0.5 * t : 0.5 + 0.5 * t;
-      const int crossing = record_crossing(edge, true, lo_params, hi_params, t_abs, located);
+      const double t_abs = a_valid ? 0.5 * t : 1.0 - 0.5 * t;
+      // The record interpolates on the FULL edge frame (base -> hi) at the root's absolute
+      // position; the reversed bracket only steered the bisection's sign convention.
+      const int crossing = record_crossing(edge, true, base, hi, t_abs, located);
       edge_crossing[static_cast<size_t>(edge_key(edge))] = crossing;
     };
 
@@ -1136,6 +1142,15 @@ RestrictedFamilyRank RankRestrictedFamily(const FaceNormalTable& normals, const 
                                 &read)) {
           continue;
         }
+        // The local rank-1 qualification (issue: transversality must gate, not just record): a
+        // read qualifies as a fold point only with sigma1 above the module's own rank bar AND
+        // the singular ratio under the declared located-fold bar — a real crossing bisects to
+        // sigma2/sigma1 in the 1e-16..1e-6 band, while a validity cliff's sign jump lands
+        // orders above (its "crossing" is a discontinuity, not a fold). Unqualified points
+        // keep their chain place with unclassified reads; no cusp logic consumes them.
+        if (read.sigma1 < kFamilyRankSigmaTolerance || read.sigma2 > read.sigma1 * kFoldLocalRankRatio) {
+          continue;
+        }
         double v[2];
         if (!KernelDirection(read.rows, read.outgoing, v)) {
           continue;  // rank ~ 0 at this point: no fold read, the position stays unclassified
@@ -1246,6 +1261,8 @@ RestrictedFamilyRank RankRestrictedFamily(const FaceNormalTable& normals, const 
           dirs.push_back(dir);
         }
         bool mids_ok = true;
+        double align_deficit = 0.0;
+        double tangent_resolution = 0.0;
         // The on-locus refinement ("加密一致性"): the parameter chord's midpoint is NOT on the
         // branch (both chord endpoints are J zeros), so the finer sampling takes the shared
         // link cell's on-locus subdivision — its interior sub-crossings sit on the branch — at
@@ -1253,14 +1270,16 @@ RestrictedFamilyRank RankRestrictedFamily(const FaceNormalTable& normals, const 
         // the diameter measure and re-reads its alignment against the gap's chord direction.
         int gap_count = run.last - run.first;
         const int refine_gaps = std::min(gap_count, kFoldRunRefineGaps);
+        std::vector<Sample> refined_samples;
+        std::vector<std::array<double, 2>> refined_params;
         for (int g = 0; g < refine_gaps && mids_ok; g++) {
           const int k = refine_gaps == 1 ? run.first : run.first + g * (run.last - run.first) / (refine_gaps - 1);
           if (k >= run.last) {
             continue;
           }
           const FoldChainLink& link = chain->links[static_cast<size_t>(k)];
-          std::vector<Sample> refined_samples;
-          std::vector<std::array<double, 2>> refined_params;
+          refined_samples.clear();
+          refined_params.clear();
           if (!refine_cell_locus(link.cell_i0, link.cell_i1, &refined_samples, &refined_params)) {
             mids_ok = false;
             break;
@@ -1281,6 +1300,9 @@ RestrictedFamilyRank RankRestrictedFamily(const FaceNormalTable& normals, const 
               break;
             }
             const double refined_align = std::fabs((tau[0] / tau_norm) * v[0] + (tau[1] / tau_norm) * v[1]);
+            align_deficit = std::max(align_deficit, 1.0 - refined_align);
+            tangent_resolution =
+                std::max(tangent_resolution, refined_samples[r].sigma2 / std::max(refined_samples[r].sigma1, 1e-300));
             if (refined_align < 1.0 - kFoldPointImageLocatorSlack) {
               mids_ok = false;
               break;
@@ -1298,10 +1320,82 @@ RestrictedFamilyRank RankRestrictedFamily(const FaceNormalTable& normals, const 
               diameter = std::max(diameter, SkyAngleDeg(dirs[i].data(), dirs[j].data()));
             }
           }
-          if (diameter <= kFoldPointImageFloorDeg) {
+          // The classification is the plan's geometric criterion with its own resolution
+          // statement, plus the declared collapse cap: (a) the tangency — the chain tangent
+          // sits inside the mapping kernel — must hold along the run within the tangent's own
+          // numeric resolution, derived per run from the chords' direction change (the
+          // sampling error a straight-tangent read carries) and the kernel's conditioning
+          // (sigma2/sigma1); (b) the measured sky diameter stays under the declared collapse
+          // cap (kFoldPointImageFloorDeg — the mirror branch measures ~1e-6 deg, the planned
+          // near-degenerate counterexample arcs >= 1e-2 deg). The segment reports both the
+          // measured diameter and the derived position bound (twice the worst image offset
+          // sigma1 x |J| / |grad J| plus the unit-sphere rounding scale) — the resolution
+          // upper bound the plan asks the finite classification to carry.
+          for (int k = run.first; k <= run.last; k++) {
+            const FoldJet2Read& r = reads[static_cast<size_t>(k)];
+            align_deficit = std::max(align_deficit, 1.0 - align[static_cast<size_t>(k)]);
+            tangent_resolution = std::max(tangent_resolution, r.sigma2 / std::max(r.sigma1, 1e-300));
+            // The sampling term: the direction change between this point's in and out chords
+            // (the curvature a straight-tangent read cannot see).
+            if (k > run.first && k < run.last) {
+              const FoldPointRecord& pp = out.crossings[static_cast<size_t>(chain->order[static_cast<size_t>(k - 1)])];
+              const FoldPointRecord& pc = out.crossings[static_cast<size_t>(chain->order[static_cast<size_t>(k)])];
+              const FoldPointRecord& pn = out.crossings[static_cast<size_t>(chain->order[static_cast<size_t>(k + 1)])];
+              double tin[2];
+              double tout[2];
+              ChainTangent(axes, pp.params_deg, pc.params_deg, tin);
+              ChainTangent(axes, pc.params_deg, pn.params_deg, tout);
+              const double dot = std::max(-1.0, std::min(1.0, tin[0] * tout[0] + tin[1] * tout[1]));
+              tangent_resolution = std::max(tangent_resolution, std::acos(dot));
+            }
+          }
+          double derived_bound = 0.0;
+          double grad_min = 0.0;
+          bool have_grad = false;
+          for (int k = run.first; k <= run.last; k++) {
+            const FoldJet2Read& r = reads[static_cast<size_t>(k)];
+            const double g =
+                std::sqrt(r.grad_jacobian[0] * r.grad_jacobian[0] + r.grad_jacobian[1] * r.grad_jacobian[1]);
+            if (!have_grad || g < grad_min) {
+              grad_min = g;
+              have_grad = true;
+            }
+          }
+          std::vector<double> offs(static_cast<size_t>(n), 0.0);
+          for (int k = run.first; k <= run.last; k++) {
+            const FoldJet2Read& r = reads[static_cast<size_t>(k)];
+            offs[static_cast<size_t>(k)] = grad_min > 0.0 ? std::fabs(r.signed_jacobian) / grad_min : 0.0;
+            derived_bound = std::max(derived_bound, 2.0 * r.sigma1 * offs[static_cast<size_t>(k)]);
+          }
+          for (const Sample& r : refined_samples) {
+            const double off = grad_min > 0.0 ? std::fabs(r.signed_jacobian) / grad_min : 0.0;
+            derived_bound = std::max(derived_bound, 2.0 * r.sigma1 * off);
+          }
+          derived_bound += 1e-12;
+          // The positioning floor (a two-point run has no curvature probe at all): the
+          // endpoints' own location uncertainty over the chord length bounds how straight the
+          // tangent read can claim to be.
+          for (int k = run.first; k < run.last; k++) {
+            const FoldPointRecord& pp = out.crossings[static_cast<size_t>(chain->order[static_cast<size_t>(k)])];
+            const FoldPointRecord& pn = out.crossings[static_cast<size_t>(chain->order[static_cast<size_t>(k + 1)])];
+            double d[2];
+            ChainTangent(axes, pp.params_deg, pn.params_deg, d);
+            const double chord = std::sqrt(d[0] * d[0] + d[1] * d[1]);
+            if (chord > 0.0) {
+              tangent_resolution = std::max(tangent_resolution,
+                                            (offs[static_cast<size_t>(k)] + offs[static_cast<size_t>(k + 1)]) / chord);
+            }
+          }
+          if (derived_bound > kFoldPointImageFloorDeg) {
+            verdict = FoldSegmentForm::kUnknown;  // the run's own evidence cannot ground a point claim
+          } else if (align_deficit <= tangent_resolution && diameter <= kFoldPointImageFloorDeg) {
             verdict = FoldSegmentForm::kPointImage;
-          } else if (diameter > kFoldPointImageArcMargin * kFoldPointImageFloorDeg) {
+          } else if (diameter > kFoldPointImageFloorDeg) {
             verdict = FoldSegmentForm::kArc;
+          } else {
+            // Under the cap but the tangency read is not resolvable enough to ground the
+            // criterion: the honest third form.
+            verdict = FoldSegmentForm::kUnknown;
           }
         }
         for (int k = run.first; k <= run.last; k++) {
@@ -1355,11 +1449,36 @@ RestrictedFamilyRank RankRestrictedFamily(const FaceNormalTable& normals, const 
           return false;
         }
         const double t = 0.5 * (t_lo + t_hi);
-        const double probe[2] = { lo[0] + t * (hi[0] - lo[0]), lo[1] + t * (hi[1] - lo[1]) };
+        double probe[2] = { lo[0] + t * (hi[0] - lo[0]), lo[1] + t * (hi[1] - lo[1]) };
         FoldJet2Read read;
         double v[2];
         if (!EvaluateSampleJet2(normals, slots, slot_count, sun_hat, refractive_index, axes, spec, probe, &read) ||
             !KernelDirection(read.rows, read.outgoing, v)) {
+          return false;
+        }
+        // The chord zero is generally OFF the critical branch (both chord endpoints are J
+        // zeros; the chord's interior is not), so the candidate's position is PROJECTED back
+        // onto the locus before anything publishes: one Newton step on the defining constraint
+        // J = 0, along the gradient the same Jet2 read carries (the exact dJ/dparam). The
+        // step lands quadratically close for the smooth J the chain produces.
+        const double g_norm_sq =
+            read.grad_jacobian[0] * read.grad_jacobian[0] + read.grad_jacobian[1] * read.grad_jacobian[1];
+        if (g_norm_sq > 0.0) {
+          const double step = read.signed_jacobian / g_norm_sq;
+          probe[0] -= step * read.grad_jacobian[0];
+          probe[1] -= step * read.grad_jacobian[1];
+          if (!EvaluateSampleJet2(normals, slots, slot_count, sun_hat, refractive_index, axes, spec, probe, &read) ||
+              !KernelDirection(read.rows, read.outgoing, v)) {
+            return false;
+          }
+        }
+        // Publish gates, all at the projected point: the local rank-1 qualification (the
+        // projected position must BE a fold point — a generic full-rank position is refused,
+        // never published as a candidate) and the transversality genuinely unresolvable there
+        // (a residual above the read's own resolution means the chord zero was an artifact of
+        // an ordinary fold's neighbourhood — no event). The kernel direction keeps the chain's
+        // orientation so the residual's sign convention is the chain's.
+        if (read.sigma1 < kFamilyRankSigmaTolerance || read.sigma2 > read.sigma1 * kFoldLocalRankRatio) {
           return false;
         }
         if (v[0] * reference[0] + v[1] * reference[1] < 0.0) {
@@ -1367,6 +1486,9 @@ RestrictedFamilyRank RankRestrictedFamily(const FaceNormalTable& normals, const 
           v[1] = -v[1];
         }
         const double d = read.grad_jacobian[0] * v[0] + read.grad_jacobian[1] * v[1];
+        if (std::fabs(d) > DjvResolution(read)) {
+          return false;
+        }
         FoldCuspCandidate located;
         located.order_index = ka;
         for (int k = 0; k < 2; k++) {

@@ -114,22 +114,24 @@ constexpr int kFamilyMaxGridPerDimension = 1024;
 // (fiber_continuation.hpp kClosureCrossingBisectionSteps): 52 halvings take the bracket far
 // below double resolution for every legal spacing.
 constexpr int kFoldBisectionSteps = 52;
-// The point-image verification floor (degrees of sky): a run classifies kPointImage only when
-// its whole midpoint-refined sky diameter stays under it. Declared, not derived from any
-// display quantity (no GUI pixel, no survival floor, no oracle sampling spacing enters it): the
-// fold's located points sit off the exact critical locus by |J|/|grad J| ~ 1e-8 rad (the
-// bisection's own residual through the image map's sigma1), so a true constant image measures
-// ~1e-7 deg or better, while the planned near-degenerate counterexample arcs carry >= 1e-2 deg
-// — the floor sits four orders above the true-point reading and below every intended arc.
+// The point-image claim's derived-bound cap (degrees of sky): the verification derives each
+// candidate run's own constant-image bound from its reads (twice the worst image offset
+// sigma1 x |J| / |grad J| over the run's points, plus the unit-sphere rounding scale) and
+// classifies kPointImage when the measured sky diameter stays under that bound. This cap is
+// the derivation's sanity ceiling, not the arbiter: an honest bound over located reads sits
+// orders below it, and a bound past it means the run's evidence is too coarse for any point
+// claim (the run reads kUnknown). Declared, not derived from any display quantity.
 constexpr double kFoldPointImageFloorDeg = 1e-3;
-// The arc margin over the floor: a verified-failed candidate run whose refined sky diameter
-// exceeds floor x this reads as a resolvably moving image (an arc); a diameter inside
-// (floor, floor x margin) is the band the evidence cannot decide (kUnknown).
-constexpr double kFoldPointImageArcMargin = 4.0;
 // The point-image verification's on-locus refinement budget: at most this many gaps of a
 // candidate run get their shared cell's subdivision (five evaluations plus reduced-precision
 // bisections each) sampled into the diameter measure, evenly spaced along the run.
 constexpr int kFoldRunRefineGaps = 16;
+// The located fold's local rank-1 bar (the classification's qualification gate): a chain point
+// reads as a fold only with sigma1 above kFamilyRankSigmaTolerance and sigma2/sigma1 under
+// this. Real crossings bisect to ratios in the 1e-16..1e-6 band; a validity cliff's sign jump
+// (which the edge scan bisects like a crossing) lands orders above — the bar separates the
+// two with orders of margin on both sides.
+constexpr double kFoldLocalRankRatio = 1e-4;
 // The point-image LOCATOR's alignment slack: a chain point joins a candidate run when
 // alignment >= 1 - this. Deliberately generous — the locator only proposes candidates; the
 // diameter verification (the floor above, midpoint-refined) is the arbiter, so a generous
@@ -378,19 +380,24 @@ struct FoldSegmentRecord {
   double image_diameter_deg = 0.0;
 };
 
-// One cusp candidate: a located sign-change zero of dJ(v) along an arc segment (the fold
-// transversality failing at a locatable position). The evidence level is the plan's own
-// "candidate" bar: dJ(v) = 0 says the normal-fold criterion FAILS there; it does not by itself
-// certify a generic cusp, and the record says so through its name. `order_index` is the chain
-// order position the candidate sits at (the bisection ran between that point and its successor;
-// the recorded point is the refined location).
+// One cusp candidate: a located transversality failure on the critical branch — the dJ(v)
+// sign change between two chain points is first bisected on the parameter chord, then the
+// chord zero is PROJECTED onto the locus (one Newton step on the constraint J = 0 along the
+// same Jet2 read's gradient), and the event publishes at the projected point only if it
+// passes the local rank-1 qualification and its |dJ(v)| sits under its own resolution (an
+// ordinary fold neighbourhood projects to a resolvable dJ(v) and publishes nothing). The
+// evidence level is the plan's own "candidate" bar: the failure of the normal-fold criterion
+// at a locatable on-branch position does not by itself certify a generic cusp, and the record
+// says so through its name. `order_index` is the chain order position the candidate sits at
+// (the bisection ran between that point and its successor).
 struct FoldCuspCandidate {
   int order_index = 0;
   double params_deg[2] = { 0.0, 0.0 };
   double pose[9] = {};
   double image_alt_deg = 0.0;
   double image_az_deg = 0.0;
-  double djv_residual = 0.0;  // |dJ(v)| at the located point (a residual bound, not a zero claim)
+  double djv_residual = 0.0;  // |dJ(v)| at the projected point (under the read's resolution —
+                              // a bound, never a zero claim)
 };
 
 // One ordered fold chain: crossing indices in chain order (indices into RestrictedFamilyRank's
