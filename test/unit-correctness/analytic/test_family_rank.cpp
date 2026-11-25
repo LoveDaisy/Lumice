@@ -21,10 +21,13 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <string>
+#include <thread>
 #include <vector>
 
+#include "analytic/discovery.hpp"
 #include "analytic/dp_contour.hpp"
 #include "analytic/dp_focus.hpp"
 #include "analytic/family_rank.hpp"
@@ -1220,6 +1223,161 @@ TEST(FamilyRank, ParryTrackOrderedAndClosed) {
   double last_dir[3];
   C16SkyDir(rank.track.points.back().image_alt_deg, rank.track.points.back().image_az_deg, last_dir);
   EXPECT_LT(C16SkyAngleDeg(first_dir, last_dir), 5.0);
+}
+
+// The review probe's scenario (3→5, zenith fixed 60, azimuth + roll free, sun 45, the same n and
+// grid): the chord-zero locator once published a "cusp candidate" at a plain full-rank position
+// (|J| ~ 1.3e-3, sigma2/sigma1 ~ 1e-3 — orders above the fold bar). The projection-and-gates fix
+// must leave this input with ZERO candidates: the publish path refuses any event not on the
+// rank-1 critical set, so a full-rank chord zero never becomes a marker.
+TEST(FamilyRank, ReviewProbeScenarioPublishesNoOffLocusCusp) {
+  Fixture f;
+  int slots[2];
+  const int faces[2] = { 3, 5 };
+  f.Resolve(faces, 2, slots);
+  RestrictedFamilySpec spec;
+  spec.zenith.mode = FamilyDimensionMode::kFixed;
+  spec.zenith.center_deg = 60.0;
+  spec.azimuth.mode = FamilyDimensionMode::kFree;
+  spec.roll.mode = FamilyDimensionMode::kFree;
+  double sun[3];
+  SunAt(45.0, 0.0, sun);
+  const RestrictedFamilyRank rank = RankRestrictedFamily(f.normals, slots, 2, spec, sun, kC16N, 128);
+  ASSERT_EQ(rank.status, FamilyRankStatus::kOk);
+  int cusp_total = 0;
+  for (const FoldChainRecord& chain : rank.fold_chains) {
+    cusp_total += static_cast<int>(chain.cusps.size());
+  }
+  EXPECT_EQ(cusp_total, 0) << "a chord-zero artifact published as a cusp candidate again";
+}
+
+// The publish contract, independently re-checked: every cusp candidate this module publishes
+// (across the C16 spin chart and the Lowitz sheet — the two scenarios this file's own scans
+// produce events on) IS a point of the rank-1 critical set when EvaluateFamilyPoint re-evaluates
+// the event's OWN parameters outside the chain pass: valid, the singular ratio under the fold
+// bar, the Jacobian residual three orders below the old artifact's, and the published sky
+// position the independent read's own (the direction dot, wrap-free).
+TEST(FamilyRank, PublishedCuspEventsSitOnTheLocus) {
+  Fixture f;
+  int slots[2];
+  const int faces[2] = { 3, 5 };
+  f.Resolve(faces, 2, slots);
+  struct Scenario {
+    RestrictedFamilySpec spec;
+    double sun[3];
+    double n;
+  };
+  std::vector<Scenario> scenarios(2);
+  scenarios[0].spec = C16SpinChart();
+  SunAt(20.0, 0.0, scenarios[0].sun);
+  scenarios[0].n = kC16N;
+  scenarios[1].spec = LowitzFoldSheet();
+  SunAt(15.0, 0.0, scenarios[1].sun);
+  scenarios[1].n = kN550;
+  int events = 0;
+  for (const Scenario& scenario : scenarios) {
+    const RestrictedFamilyRank rank =
+        RankRestrictedFamily(f.normals, slots, 2, scenario.spec, scenario.sun, scenario.n, 128);
+    if (rank.status != FamilyRankStatus::kOk) {
+      ADD_FAILURE() << "the scan refused: " << FamilyRankStatusName(rank.status);
+      continue;  // this scenario's verdict is in; the other still drives
+    }
+    for (const FoldChainRecord& chain : rank.fold_chains) {
+      for (const FoldCuspCandidate& cusp : chain.cusps) {
+        events++;
+        const FamilyPointRecord read =
+            EvaluateFamilyPoint(f.normals, slots, 2, scenario.spec, scenario.sun, scenario.n, cusp.params_deg);
+        if (!read.valid) {
+          ADD_FAILURE() << "a published event's own parameters are not even evaluable";
+          continue;  // this row's verdict is in; the other rows still drive
+        }
+        EXPECT_LE(read.sigma2, read.sigma1 * kFoldLocalRankRatio)
+            << "the published event is not a rank-1 point (sigma ratio " << read.sigma2 / std::max(read.sigma1, 1e-300)
+            << ")";
+        EXPECT_LT(std::fabs(read.signed_jacobian), 1e-6)
+            << "the published event sits off the locus (|J| " << std::fabs(read.signed_jacobian)
+            << "; the projection's own convergence bar is " << kFoldCuspProjectionResidual << ")";
+        // The published sky position is the independent read's own (angle between the unit
+        // directions — no atan2 wrap in the comparison).
+        double published[3];
+        C16SkyDir(cusp.image_alt_deg, cusp.image_az_deg, published);
+        double dot = 0.0;
+        for (int k = 0; k < 3; k++) {
+          dot += published[k] * -read.outgoing[k];
+        }
+        const double angle = Deg(std::acos(std::max(-1.0, std::min(1.0, dot))));
+        EXPECT_LT(angle, 1e-4) << "the published sky position drifted off the event's own read";
+      }
+    }
+  }
+  EXPECT_GT(events, 0) << "the scenario lost every real candidate — the gates now refuse everything";
+}
+
+// The recovery joins the query's cooperative stop (the handshake pattern: the canceller waits
+// for the poll counter to move — proof the scan entered — then cancels; no sleeps, no pre-armed
+// flags). The cut run publishes what completed under stop_requested, a cut walk's chain ends
+// kStopRequested and never closed, and fewer chains stand than the uncut scan builds (no chain
+// started after the cut).
+TEST(FamilyRank, StopRequestCutsTheRecoveryAndDeclaresIt) {
+  Fixture f;
+  int slots[2];
+  const int faces[2] = { 3, 5 };
+  f.Resolve(faces, 2, slots);
+  double sun[3];
+  SunAt(20.0, 0.0, sun);
+  // The uncut reference: the chains the full scan builds on this input.
+  const RestrictedFamilyRank whole = RankRestrictedFamily(f.normals, slots, 2, C16SpinChart(), sun, kC16N, 128);
+  ASSERT_EQ(whole.status, FamilyRankStatus::kOk);
+
+  StopToken token;
+  DiscoveryStop stop;
+  stop.token = &token;
+  std::atomic<bool> cancelled{ false };
+  std::thread canceller([&] {
+    while (token.PollCount(kPollFamilyCurve) == 0 && !cancelled.load()) {
+    }
+    token.RequestCancel();
+  });
+  const RestrictedFamilyRank rank = RankRestrictedFamily(f.normals, slots, 2, C16SpinChart(), sun, kC16N, 128, &stop);
+  cancelled.store(true);
+  canceller.join();
+  EXPECT_TRUE(rank.stop_requested) << "the stop never observed";
+  EXPECT_GT(token.PollCount(kPollFamilyCurve), 0) << "the recovery's poll site never moved";
+  EXPECT_LE(static_cast<int>(rank.fold_chains.size()), static_cast<int>(whole.fold_chains.size()))
+      << "chains appeared after the cut";
+  int cut_ends = 0;
+  for (const FoldChainRecord& chain : rank.fold_chains) {
+    cut_ends += static_cast<int>(chain.end_a == FoldChainEnd::kStopRequested) +
+                static_cast<int>(chain.end_b == FoldChainEnd::kStopRequested);
+    EXPECT_FALSE(chain.end_a == FoldChainEnd::kStopRequested && chain.closed);
+    EXPECT_FALSE(chain.end_b == FoldChainEnd::kStopRequested && chain.closed);
+  }
+  EXPECT_GT(cut_ends + (static_cast<int>(rank.fold_chains.size()) < static_cast<int>(whole.fold_chains.size()) ? 1 : 0),
+            0)
+      << "the cut left no trace: no kStopRequested end and the full chain set published";
+  EXPECT_STREQ(FoldChainEndName(FoldChainEnd::kStopRequested), "stop_requested");
+}
+
+// A stop already standing at entry: the very first poll cuts the scan, nothing downstream runs,
+// and the empty result still says why (stop_requested with no crossings, no chains, no track).
+TEST(FamilyRank, StopStandingAtEntryRunsNothing) {
+  Fixture f;
+  int slots[2];
+  const int faces[2] = { 3, 5 };
+  f.Resolve(faces, 2, slots);
+  double sun[3];
+  SunAt(20.0, 0.0, sun);
+  StopToken token;
+  token.RequestCancel();
+  DiscoveryStop stop;
+  stop.token = &token;
+  const RestrictedFamilyRank rank = RankRestrictedFamily(f.normals, slots, 2, C16SpinChart(), sun, kC16N, 128, &stop);
+  ASSERT_EQ(rank.status, FamilyRankStatus::kOk);
+  EXPECT_TRUE(rank.stop_requested);
+  EXPECT_EQ(rank.valid_samples, 0);
+  EXPECT_TRUE(rank.crossings.empty());
+  EXPECT_TRUE(rank.fold_chains.empty());
+  EXPECT_GT(token.PollCount(kPollFamilyCurve), 0) << "the first poll site never moved";
 }
 
 

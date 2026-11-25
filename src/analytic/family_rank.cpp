@@ -1610,19 +1610,29 @@ RestrictedFamilyRank RankRestrictedFamily(const FaceNormalTable& normals, const 
         }
         // The chord zero is generally OFF the critical branch (both chord endpoints are J
         // zeros; the chord's interior is not), so the candidate's position is PROJECTED back
-        // onto the locus before anything publishes: one Newton step on the defining constraint
-        // J = 0, along the gradient the same Jet2 read carries (the exact dJ/dparam). The
-        // step lands quadratically close for the smooth J the chain produces.
-        const double g_norm_sq =
-            read.grad_jacobian[0] * read.grad_jacobian[0] + read.grad_jacobian[1] * read.grad_jacobian[1];
-        if (g_norm_sq > 0.0) {
-          const double step = read.signed_jacobian / g_norm_sq;
-          probe[0] -= step * read.grad_jacobian[0];
-          probe[1] -= step * read.grad_jacobian[1];
+        // onto the locus before anything publishes: Newton iterations on the defining
+        // constraint J = 0, along the gradient the same Jet2 read carries (the exact dJ/dparam).
+        // One step from a half-spacing-scale offset lands NEAR the locus, not on it — the
+        // iteration runs to kFoldCuspProjectionResidual and a projection that will not converge
+        // refuses the event (the interval stays unknown, never a published off-locus candidate).
+        bool converged = std::fabs(read.signed_jacobian) <= kFoldCuspProjectionResidual;
+        for (int step = 0; step < 4 && !converged; step++) {
+          const double g_norm_sq =
+              read.grad_jacobian[0] * read.grad_jacobian[0] + read.grad_jacobian[1] * read.grad_jacobian[1];
+          if (!(g_norm_sq > 0.0)) {
+            break;  // no gradient: the projection cannot move
+          }
+          const double newton = read.signed_jacobian / g_norm_sq;
+          probe[0] -= newton * read.grad_jacobian[0];
+          probe[1] -= newton * read.grad_jacobian[1];
           if (!EvaluateSampleJet2(normals, slots, slot_count, sun_hat, refractive_index, axes, spec, probe, &read) ||
               !KernelDirection(read.rows, read.outgoing, v)) {
             return false;
           }
+          converged = std::fabs(read.signed_jacobian) <= kFoldCuspProjectionResidual;
+        }
+        if (!converged) {
+          return false;
         }
         // Publish gates, all at the projected point: the local rank-1 qualification (the
         // projected position must BE a fold point — a generic full-rank position is refused,

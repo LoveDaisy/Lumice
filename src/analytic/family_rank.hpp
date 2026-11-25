@@ -134,6 +134,12 @@ constexpr int kFoldRunRefineGaps = 16;
 // (which the edge scan bisects like a crossing) lands orders above — the bar separates the
 // two with orders of margin on both sides.
 constexpr double kFoldLocalRankRatio = 1e-4;
+// The cusp projection's convergence bar (the J = 0 Newton iteration's own residual): a chord
+// zero sits up to half a spacing off the locus, so one step lands near, not on it — the
+// projection iterates to this bar (the bisected crossings' own residual scale, orders above
+// their ~1e-15 rounding) and a candidate publishes only ON the locus; a projection that will
+// not converge refuses the event (the interval stays unknown).
+constexpr double kFoldCuspProjectionResidual = 1e-9;
 // The point-image LOCATOR's alignment slack: a chain point joins a candidate run when
 // alignment >= 1 - this. Deliberately generous — the locator only proposes candidates; the
 // diameter verification (the floor above, midpoint-refined) is the arbiter, so a generous
@@ -387,8 +393,9 @@ struct FoldSegmentRecord {
 
 // One cusp candidate: a located transversality failure on the critical branch — the dJ(v)
 // sign change between two chain points is first bisected on the parameter chord, then the
-// chord zero is PROJECTED onto the locus (one Newton step on the constraint J = 0 along the
-// same Jet2 read's gradient), and the event publishes at the projected point only if it
+// chord zero is PROJECTED onto the locus (Newton iterations on the constraint J = 0 along the
+// same Jet2 read's gradient, run to kFoldCuspProjectionResidual — the event publishes ON the
+// locus or not at all), and the event publishes at the projected point only if it
 // passes the local rank-1 qualification and its |dJ(v)| sits under its own resolution (an
 // ordinary fold neighbourhood projects to a resolvable dJ(v) and publishes nothing). The
 // evidence level is the plan's own "candidate" bar: the failure of the normal-fold criterion
