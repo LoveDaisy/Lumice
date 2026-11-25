@@ -4,6 +4,7 @@
 #include <array>
 #include <cmath>
 #include <cstdio>
+#include <limits>
 #include <vector>
 
 #include "analytic/discovery.hpp"
@@ -1611,12 +1612,20 @@ RestrictedFamilyRank RankRestrictedFamily(const FaceNormalTable& normals, const 
         // The chord zero is generally OFF the critical branch (both chord endpoints are J
         // zeros; the chord's interior is not), so the candidate's position is PROJECTED back
         // onto the locus before anything publishes: Newton iterations on the defining
-        // constraint J = 0, along the gradient the same Jet2 read carries (the exact dJ/dparam).
-        // One step from a half-spacing-scale offset lands NEAR the locus, not on it — the
-        // iteration runs to kFoldCuspProjectionResidual and a projection that will not converge
-        // refuses the event (the interval stays unknown, never a published off-locus candidate).
-        bool converged = std::fabs(read.signed_jacobian) <= kFoldCuspProjectionResidual;
-        for (int step = 0; step < 4 && !converged; step++) {
+        // constraint J = 0, along the gradient the same Jet2 read carries (the exact dJ/dparam)
+        // — best effort, since near the image-form transitions J's own curvature can stall the
+        // walk. The publish gate is the first-order DISTANCE from the locus, |J| / |grad J| —
+        // the quantity the on-locus claim rests on (an absolute |J| bar would misjudge events
+        // whose gradient scale differs) — under kFoldCuspOnLocusDistanceDeg, the module's own
+        // finest declared geometric scale. A position the bar refuses stays unknown: never a
+        // published off-locus candidate (the review's chord-zero artifact measured 1.35e-3 deg
+        // out, full-rank — this bar and the rank gate both refuse it).
+        const auto off_locus_distance = [&read]() {
+          const double g_norm =
+              std::sqrt(read.grad_jacobian[0] * read.grad_jacobian[0] + read.grad_jacobian[1] * read.grad_jacobian[1]);
+          return g_norm > 0.0 ? std::fabs(read.signed_jacobian) / g_norm : std::numeric_limits<double>::infinity();
+        };
+        for (int step = 0; step < 4 && off_locus_distance() > kFoldCuspOnLocusDistanceDeg; step++) {
           const double g_norm_sq =
               read.grad_jacobian[0] * read.grad_jacobian[0] + read.grad_jacobian[1] * read.grad_jacobian[1];
           if (!(g_norm_sq > 0.0)) {
@@ -1629,9 +1638,8 @@ RestrictedFamilyRank RankRestrictedFamily(const FaceNormalTable& normals, const 
               !KernelDirection(read.rows, read.outgoing, v)) {
             return false;
           }
-          converged = std::fabs(read.signed_jacobian) <= kFoldCuspProjectionResidual;
         }
-        if (!converged) {
+        if (off_locus_distance() > kFoldCuspOnLocusDistanceDeg) {
           return false;
         }
         // Publish gates, all at the projected point: the local rank-1 qualification (the

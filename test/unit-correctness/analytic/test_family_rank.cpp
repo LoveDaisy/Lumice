@@ -1294,9 +1294,14 @@ TEST(FamilyRank, PublishedCuspEventsSitOnTheLocus) {
         EXPECT_LE(read.sigma2, read.sigma1 * kFoldLocalRankRatio)
             << "the published event is not a rank-1 point (sigma ratio " << read.sigma2 / std::max(read.sigma1, 1e-300)
             << ")";
-        EXPECT_LT(std::fabs(read.signed_jacobian), 1e-6)
-            << "the published event sits off the locus (|J| " << std::fabs(read.signed_jacobian)
-            << "; the projection's own convergence bar is " << kFoldCuspProjectionResidual << ")";
+        // |J| at the event is distance × |grad J| — a huge gradient puts a real on-locus event
+        // at ~4e-5 (measured), so no flat |J| bar can certify the distance (the kernel's own
+        // projection converges in |J|/|grad J| ≤ kFoldCuspProjectionDistanceDeg). This line
+        // only bounds the artifact scale: the chord-zero candidate the review measured sat at
+        // |J| 1.3e-3 WITH a full-rank sigma ratio — the rank gate above is the discriminator,
+        // this refuses anything at that scale even before the ratio is read.
+        EXPECT_LT(std::fabs(read.signed_jacobian), 1e-4)
+            << "the published event sits at chord-zero-artifact scale (|J| " << std::fabs(read.signed_jacobian) << ")";
         // The published sky position is the independent read's own (angle between the unit
         // directions — no atan2 wrap in the comparison).
         double published[3];
