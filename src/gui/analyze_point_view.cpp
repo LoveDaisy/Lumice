@@ -1321,6 +1321,10 @@ void DrawPointCurveRhoAxis(ImDrawList* dl, const PointCurveRhoAxisRange& visible
   if (!visible.valid || plot_max.y <= plot_min.y) {
     return;
   }
+  // The right gutter's one-word attribution rides its gutter top — drawn HERE (the gutter's
+  // one owner) so the fallback's top boundary label can yield to it deterministically.
+  // plot_min.y - 6 == canvas_min.y + pad_t - 6, the region's old title row.
+  dl->AddText(ImVec2(plot_max.x + UiPx(6.0f), plot_min.y - UiPx(6.0f)), ImGui::GetColorU32(ImGuiCol_TextDisabled), "ρ");
   const double lo = visible.lo_log10;
   const double hi = visible.hi_log10;
   const float plot_h = plot_max.y - plot_min.y;
@@ -1360,7 +1364,9 @@ void DrawPointCurveRhoAxis(ImDrawList* dl, const PointCurveRhoAxisRange& visible
       dl->AddText(ImVec2(plot_max.x + UiPx(6.0f), py - ImGui::CalcTextSize(lab.c_str()).y * 0.5f),
                   ImGui::GetColorU32(ImGuiCol_TextDisabled), lab.c_str());
     };
-    boundary_lab(hi, plot_min.y);
+    // One full line below the slot-top ρ title: the two texts share x, so a plain top-edge
+    // placement would print them on top of each other (review round 3's overprint).
+    boundary_lab(hi, plot_min.y + UiPx(9.0f) + line_h);
     if (plot_h >= line_h * 2.0f) {
       boundary_lab(lo, plot_max.y);
     }
@@ -3850,12 +3856,8 @@ void RenderPoseCurveRegion(GuiState& state, const ImVec2& size) {
         DrawPointCurveLogAxis(dl, visible, plot_min, plot_max);
       }
       if (plot_fits && have_rho_range) {
-        DrawPointCurveRhoAxis(dl, rho_visible, plot_min, plot_max);
-        // The right axis's one-word attribution rides its gutter top — the legend carries the
-        // full sentence, the plot edge carries the reminder of which gutter reads ρ.
-        dl->AddText(ImVec2(plot_max.x + UiPx(6.0f), canvas_min.y + UiPx(4.0f)),
-                    ImGui::GetColorU32(ImGuiCol_TextDisabled), "ρ");
-      }
+        DrawPointCurveRhoAxis(dl, rho_visible, plot_min, plot_max);  // the gutter's one owner:
+      }  // it draws the slot-top ρ attribution itself
       // X labels own their row regardless of the data range.
       const auto x_label = [&](float x, float y, const char* text) {
         dl->AddText(ImVec2(x, y), ImGui::GetColorU32(ImGuiCol_TextDisabled), text);
