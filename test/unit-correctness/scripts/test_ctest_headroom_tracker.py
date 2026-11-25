@@ -40,6 +40,8 @@ WORKFLOW_PATH = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 #   release clamp run 45146282519 / job 137596258809 (Windows MSVC x86_64) — the
 #     warning is printed AFTER the notice; raw factor 0.726 clamped to 0.800
 #   release red  run 45309154293 / job 138160253218 (Windows MSVC x86_64)
+# The leading timestamps are captured log text: the parser strips them and no
+# assertion reads them, so they are inert against the wall clock.
 
 MAIN_GREEN_MACOS = (
     "2026-11-23T02:30:37.2006990Z ##[notice]phase budget 'ctest' for job 'macOS ARM64': "
@@ -611,13 +613,41 @@ def setup_fake_gh(
     return bin_path, env
 
 
+# The synthetic wall clock handed to every harvest subprocess (see
+# HARVEST_BOOTSTRAP below): fixed forever, never read from the machine
+# running the test. It sits strictly between run 881 (2026-11-20) and run
+# 882 (2026-11-25) so the production config-change marker fences the era
+# exactly where the threshold-change scenario needs it, and after every
+# fixture run date in the no-new-run scenarios (the newest is run 103,
+# 2026-11-22). Fixture run dates and this moment form a closed ordering;
+# no assertion compares any of them to the real clock.
+SYNTHETIC_NOW = "2026-11-23T12:00:00Z"
+
+# The bootstrap that runs the REAL production entry point inside the
+# harvest subprocess, with exactly one test-side patch: `utc_now_iso` is
+# pinned to SYNTHETIC_NOW, so the calendar input that fences config-change
+# eras (and the audit-only harvested_at / fired_at stamps) is synthetic
+# instead of the executing machine's clock. Every call site resolves that
+# function through module globals at call time, so the patch intercepts
+# all of them; argument parsing, the harvest pipeline, stdout/stderr and
+# the exit code propagate exactly as when the script is run directly.
+HARVEST_BOOTSTRAP = (
+    "import sys\n"
+    f"sys.path.insert(0, {str(SCRIPTS)!r})\n"
+    "import ctest_headroom_tracker as tracker\n"
+    f"tracker.utc_now_iso = lambda: {SYNTHETIC_NOW!r}\n"
+    "sys.exit(tracker.main())\n"
+)
+
+
 def run_harvest(tmp_path: Path, bin_path: Path, env: dict, *, extra_args=(), publish_remote=None, publish=False):
     state_dir = tmp_path / "state"
     repo_root = tmp_path / "repo-root"
     repo_root.mkdir(exist_ok=True)
     subprocess.run(["git", "init", "-q", str(repo_root)], check=True)
     args = [
-        sys.executable, str(SCRIPTS / "ctest_headroom_tracker.py"), "harvest",
+        sys.executable, "-c", HARVEST_BOOTSTRAP,
+        "harvest",
         "--repo", "O/R",
         "--state-dir", str(state_dir),
         "--repo-root", str(repo_root),
@@ -1593,6 +1623,18 @@ def test_threshold_change_then_new_runs_fire_under_the_new_identity(tmp_path):
     assert events[0]["config_id"] == tracker.config_identity(6.0, 2)
     assert events[0]["threshold_pct"] == 6.0
     assert events[0]["first_run"]["id"] == 882  # the change reset the streak; era starts at 882
+
+    # Wall-clock independence witness, read back from production's own ledger
+    # write: the era boundary this harvest fenced carries the synthetic change
+    # moment handed to the subprocess (see HARVEST_BOOTSTRAP), not the
+    # executing machine's clock — and the closed ordering the event assertion
+    # rests on is 881 < change < 882 < 883, determined by fixture data alone.
+    ledger = [json.loads(line) for line in (state_dir / "samples.jsonl").read_text().splitlines() if line]
+    markers = [record for record in ledger if record.get("type") == "config-change"]
+    assert len(markers) == 1 and markers[0]["run_created_at"] == SYNTHETIC_NOW
+    created = {record["run_id"]: record["run_created_at"] for record in ledger
+               if record.get("type") == "sample" and record["line"] == "main" and record["job"] == MACOS_JOB}
+    assert created[881] < SYNTHETIC_NOW < created[882] < created[883]  # ISO strings sort chronologically
 
 
 # --- publish chain --------------------------------------------------------------------
