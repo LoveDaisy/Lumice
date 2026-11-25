@@ -1416,11 +1416,15 @@ void DrawSurveyOverlays(ImDrawList* dl, GuiState& state, const MapCanvasProjecti
       }
       if (cluster.size() > 1) {
         // The pile's count: part of the composite marker (the labels bit does not touch it —
-        // hiding the standing names must not hide how many rows the pile folds).
+        // hiding the standing names must not hide how many rows the pile folds). A pile on the
+        // canvas's own edge meridian — the mirror fixed points sit at ±180° — shifts its badge
+        // inside the canvas instead of letting the canvas cut it; the marker itself stays at
+        // the representative's true position.
         char badge[16];
         std::snprintf(badge, sizeof(badge), "×%zu", cluster.size());
         const ImVec2 ts = ImGui::CalcTextSize(badge);
-        const ImVec2 bmin(at.x - ts.x * 0.5f, at.y + marker_r + UiPx(1.0f));
+        ImVec2 bmin(at.x - ts.x * 0.5f, at.y + marker_r + UiPx(1.0f));
+        bmin.x = std::clamp(bmin.x, pic_min.x + UiPx(1.0f), pic_min.x + pic_px - ts.x - UiPx(1.0f));
         dl->AddRectFilled(bmin, ImVec2(bmin.x + ts.x, bmin.y + ts.y), kReadoutBackingInk);
         dl->AddText(bmin, ImGui::GetColorU32(ImGuiCol_Text), badge);
       }
