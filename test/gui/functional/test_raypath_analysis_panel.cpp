@@ -3167,10 +3167,10 @@ bool FamilyCurveLayerDrawsPicksAndSurvivesReplacement(ImGuiTestContext* ctx) {
   {
     ctx->ItemClick("**/Layers##map_layers");
     ctx->Yield(2);
-    ctx->ItemClick("**/Fold arcs");
+    ctx->ItemClick("**/##ov_curves_graphics");
     ctx->Yield(3);
     ink_off = CountFamilyCurveArcVertices();
-    ctx->ItemClick("**/Fold arcs");
+    ctx->ItemClick("**/##ov_curves_graphics");
     ctx->Yield(3);
     ink_on = CountFamilyCurveArcVertices();
     ctx->PopupCloseAll();
