@@ -349,6 +349,7 @@ const char* const kParryPopulationJson = R"({
               "resolution": [64, 64], "view": {"elevation": 42}}]
 })";
 
+
 const char* const kLowitzPopulationJson = R"({
   "crystal": [{"id": 1, "type": "prism", "shape": {"height": 0.3, "face_distance": [1,1,1,1,1,1]},
                "axis": {"zenith": {"type": "gauss", "mean": 20, "std": 20},
@@ -3253,9 +3254,11 @@ bool RunCurveSurveyLeg(ImGuiTestContext* ctx, const char* scene_json, const char
   ctx->LogInfo("[ac5 leg] survey terminal state %d",
                static_cast<int>(gui::SurveyOverviewStateFor(gui::g_state.analysis.survey)));
   if (gui::g_state.analysis.survey.adopted_result == nullptr) {
+    ctx->LogError("[ac5 leg] survey terminal but no adopted result");
     return false;  // the refused arm: the caller's facts assertions read the honest absence
   }
   *facts_out = gui::BuildSurveyOverlayFacts(*gui::g_state.analysis.survey.adopted_result);
+  ctx->LogInfo("[ac5 leg] facts curves=%zu", facts_out->family_curves.size());
   // The map display runs its OWN query lifecycle: a superseded query keeps the PREVIOUS
   // document's map on show while it waits — captures made before this document's own map
   // answered would compare two renders of one stale image (the round-three run's identical
@@ -3403,6 +3406,16 @@ void Ac5SkyDir(double alt_deg, double az_deg, double s[3]) {
   s[2] = std::sin(alt);
 }
 
+double Ac5PointDistanceDeg(const gui::SurveyOverlayFacts::FamilyCurveFact::Point& p,
+                           const gui::SurveyOverlayFacts::FamilyCurveFact::Point& q) {
+  double x[3];
+  double y[3];
+  Ac5SkyDir(p.alt_deg, p.az_deg, x);
+  Ac5SkyDir(q.alt_deg, q.az_deg, y);
+  const double dot = std::max(-1.0, std::min(1.0, x[0] * y[0] + x[1] * y[1] + x[2] * y[2]));
+  return std::acos(dot) * (180.0 / 3.14159265358979323846);
+}
+
 // Point-to-great-circle-SEGMENT angular distance (degrees): the point projected onto the
 // segment's great circle when the foot sits inside the segment, the nearer endpoint otherwise.
 // The curve distance below is built on this — point-to-POINT nearest-neighbour is bounded from
@@ -3467,8 +3480,16 @@ double Ac5CurvePairDistanceDeg(const gui::SurveyOverlayFacts::FamilyCurveFact& a
     double worst = 0.0;
     for (const auto& p : from.points) {
       double best = 1e300;
-      for (size_t s = 0; s + 1 < to.points.size(); ++s) {
-        best = std::min(best, Ac5PointToSegmentDistanceDeg(p, to.points[s], to.points[s + 1]));
+      if (to.points.size() == 1) {
+        // A singleton target has no segments: the point distance IS the distance — a
+        // singleton must read zero against itself like any other curve (the review's
+        // identity-audit catch: the segment-only loop left it at 1e300, reading a verbatim
+        // singleton as "new geometry" against its own source set).
+        best = Ac5PointDistanceDeg(p, to.points[0]);
+      } else {
+        for (size_t s = 0; s + 1 < to.points.size(); ++s) {
+          best = std::min(best, Ac5PointToSegmentDistanceDeg(p, to.points[s], to.points[s + 1]));
+        }
       }
       worst = std::max(worst, best);
     }
@@ -3493,13 +3514,17 @@ int Ac5CountGeometryTwins(const gui::SurveyOverlayFacts& a, const gui::SurveyOve
   return twins;
 }
 
-// How many of `b`'s curves read NO geometric twin in `a` — drawable geometry the `a`
-// orientation cannot produce. The reshaping movement witness: pure deletion NEVER satisfies it
-// (a subset's every curve keeps its source as a verbatim twin), so the composition's
-// new-geometry gate is what separates "curves were removed" from "the arcs' geometry moved".
+// How many of `b`'s DRAWABLE curves (multi-point — a single-point unknown shard draws no arc)
+// read NO geometric twin in `a`: drawable geometry the `a` orientation cannot produce. The
+// reshaping movement witness. Pure deletion NEVER satisfies it (a subset's every curve keeps
+// its source as a verbatim twin), and neither does in-place re-segmentation (each piece's
+// points sit on the original's segments).
 int Ac5CountNewGeometryCurves(const gui::SurveyOverlayFacts& a, const gui::SurveyOverlayFacts& b, double epsilon_deg) {
   int fresh = 0;
   for (const auto& cb : b.family_curves) {
+    if (cb.points.size() < 2) {
+      continue;  // a single point draws no arc and witnesses no movement
+    }
     bool twinned = false;
     for (const auto& ca : a.family_curves) {
       if (ca.member == cb.member && Ac5CurvePairDistanceDeg(ca, cb) < epsilon_deg) {
@@ -3616,18 +3641,22 @@ bool FamilyCurveAc5WidenReshapeScenes(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(SaveWindowPng(ctx, "//Raypath view", GuiTestTempPath("ac5_widen_wide.png").string()), false);
   const Ac5BandStats wide_band = MeasureCanvasBand(wide_rgb, wide_w, wide_h);
 
-  // The widening pair's geometry face, per curve (the review: a min-over-pairs existence
-  // answer is not "the arcs hold"): every narrow arc that has a same-member counterpart in the
-  // wide document must carry the same geometry. Measured at the 0.05 epsilon the synthetic
-  // control calibrates: the held arcs read ~0, a moved arc orders above.
+  // The widening pair's geometry face (the review: a min-over-pairs existence answer is not
+  // "the arcs hold"). The comparison is survival-robust BY BIMODALITY: the wide population's
+  // survival filter consumes the MC analysis, so WHICH branches survive differs run to run —
+  // a narrow arc's own wide twin is either present (the pair reads EXACT, ~0: same ideal
+  // family, same grid, same lambda) or absent (its nearest surviving same-member branch is a
+  // different arc, orders away). Geometry drift would show as the middle band, so the gate
+  // pins the band EMPTY, the best pair exact, and many exact pairs alive on both sides.
   int widen_held = 0;
   int widen_candidates = 0;
+  int widen_intermediate = 0;
   double widen_best = 1e300;
   for (const auto& ca : narrow.family_curves) {
     double best = 1e300;
     for (const auto& cb : wide.family_curves) {
-      if (ca.member != cb.member) {
-        continue;
+      if (ca.member != cb.member || cb.points.size() < 2) {
+        continue;  // the counterpart must be a drawable arc
       }
       best = std::min(best, Ac5CurvePairDistanceDeg(ca, cb));
     }
@@ -3636,15 +3665,20 @@ bool FamilyCurveAc5WidenReshapeScenes(ImGuiTestContext* ctx) {
       widen_best = std::min(widen_best, best);
       if (best < 0.05) {
         widen_held++;
+      } else if (best < 0.5) {
+        widen_intermediate++;
       }
     }
   }
   IM_CHECK_RETV(widen_candidates > 0, false);
   ctx->LogInfo(
-      "[ac5 widening] curves narrow=%zu wide=%zu arcs with a same-member counterpart=%d held within "
-      "0.05=%d (best %.5f deg)",
-      narrow.family_curves.size(), wide.family_curves.size(), widen_candidates, widen_held, widen_best);
-  IM_CHECK_RETV(widen_held * 20 >= widen_candidates * 19, false);
+      "[ac5 widening] curves narrow=%zu wide=%zu drawable same-member counterparts=%d held exact=%d intermediate "
+      "band=%d (best %.5f deg)",
+      narrow.family_curves.size(), wide.family_curves.size(), widen_candidates, widen_held, widen_intermediate,
+      widen_best);
+  IM_CHECK_RETV(widen_best < 0.005, false);
+  IM_CHECK_RETV(widen_intermediate == 0, false);
+  IM_CHECK_RETV(widen_held >= 80, false);
   ctx->LogInfo("[ac5 widening] band narrow peak=%.1f above-half=%d/%d; wide peak=%.1f above-half=%d/%d",
                narrow_band.peak, narrow_band.above_half, narrow_band.pixels, wide_band.peak, wide_band.above_half,
                wide_band.pixels);
@@ -3685,29 +3719,87 @@ bool FamilyCurveAc5WidenReshapeScenes(ImGuiTestContext* ctx) {
     }
     ctx->LogInfo("[ac5 reshape] kinds column chains=%d tracks=%d; parry chains=%d tracks=%d", narrow_chains,
                  narrow_tracks, parry_chains, parry_tracks);
-    // The pure-deletion control, wired into the acceptance composition (the review's own
-    // construction): a parry set that is a verbatim SUBSET of the narrow set reads zero new
-    // geometry — the same predicate the movement gate consumes refuses it, so "delete most
-    // curves, move nothing" can never read as reshaping here.
+    // The instrument's identity controls, wired into the acceptance predicates (the round-
+    // three review's audits): a set reads zero new geometry against ITSELF — singletons
+    // included (the segment-only distance left a verbatim singleton reading 1e300, i.e.
+    // "fresh" against its own source set); a verbatim SUBSET reads zero; an in-place SPLIT
+    // (one curve re-cut into two pieces at the same positions) reads zero. Deletion,
+    // re-segmentation and representation can never masquerade as movement.
     {
       gui::SurveyOverlayFacts subset_sim;
       subset_sim.family_curves = { narrow.family_curves[0], narrow.family_curves[1], narrow.family_curves[2],
                                    narrow.family_curves[3] };
       gui::SurveyOverlayFacts kept_sim;
       kept_sim.family_curves = { narrow.family_curves[1] };  // one verbatim survivor
+      IM_CHECK_RETV(Ac5CountNewGeometryCurves(subset_sim, subset_sim, 0.05) == 0, false);
       IM_CHECK_RETV(Ac5CountNewGeometryCurves(subset_sim, kept_sim, 0.05) == 0, false);
+      const auto& original = narrow.family_curves[2];
+      const size_t half = original.points.size() / 2;
+      gui::SurveyOverlayFacts::FamilyCurveFact front_piece = original;
+      front_piece.points.resize(half);
+      gui::SurveyOverlayFacts::FamilyCurveFact back_piece = original;
+      back_piece.points.erase(back_piece.points.begin(), back_piece.points.begin() + static_cast<long>(half - 1));
+      gui::SurveyOverlayFacts split_sim;
+      split_sim.family_curves = { front_piece, back_piece };
+      IM_CHECK_RETV(Ac5CountNewGeometryCurves(subset_sim, split_sim, 0.05) == 0, false);
     }
-    // The movement gate: the Parry orientation's own drawable geometry includes curves no
-    // column curve matches — loci derived from the roll pin, absent from the roll-uniform
-    // orientation's answer.
+    // The measured column/Parry-0 relationship, reported as-is (the review's own recompute):
+    // every Parry fold chain twins a column curve — an identical geometric subset; the
+    // orientation's own NEW drawable face is the two 1-D tracks (a kind the roll-uniform
+    // column does not emit, loci derived from the roll pin). The movement witness reads on
+    // drawable curves only — the single-point unknown shards draw no arc and witness nothing.
     const int parry_fresh = Ac5CountNewGeometryCurves(narrow, parry, 0.05);
-    ctx->LogInfo("[ac5 reshape] Parry curves with no column twin=%d of %zu (new geometry)", parry_fresh,
-                 parry.family_curves.size());
+    int parry_singletons = 0;
+    for (const auto& c : parry.family_curves) {
+      if (c.points.size() < 2) {
+        parry_singletons++;
+      }
+    }
+    ctx->LogInfo(
+        "[ac5 reshape] Parry drawable curves with no column twin=%d; single-point shards=%d (not drawable, "
+        "not counted)",
+        parry_fresh, parry_singletons);
     IM_CHECK_RETV(parry_fresh > 0, false);
     IM_CHECK_RETV(narrow_tracks == 0 && parry_tracks >= 1, false);
+    // The two tracks carry the orientation's own fingerprint (the round-three review's
+    // offered path — verify the visible tracks' geometry AND reference relation directly,
+    // not the bare absence of a twin or the bare presence of a kind): their witnesses' poses
+    // decompose onto the population's own pins. The pose convention's third row reads
+    // zenith = acos(M22) and roll = atan2(-M21, M20) at sin(zenith) > 0; the Parry
+    // population's declared densities pin zenith ~90 +-0.3 and roll ~0 +-0.3, so the drawn
+    // tracks' own poses must sit at those pins — geometry DERIVED from the orientation, which
+    // the roll-uniform column cannot emit as pinned tracks.
+    {
+      int tracks_checked = 0;
+      int track_points_checked = 0;
+      bool witnesses_on_pins = true;
+      for (const auto& curve : parry.family_curves) {
+        if (curve.kind != LUMICE_PATH_CURVE_KIND_REGULAR_TRACK || curve.points.size() < 2) {
+          continue;
+        }
+        tracks_checked++;
+        const size_t step = std::max<size_t>(1, curve.points.size() / 6);
+        for (size_t i = 0; i < curve.points.size(); i += step) {
+          const auto& pose = curve.points[i].pose;
+          const double zenith = std::acos(std::max(-1.0, std::min(1.0, pose[8]))) * (180.0 / 3.14159265358979323846);
+          const double roll = std::atan2(-pose[7], pose[6]) * (180.0 / 3.14159265358979323846);
+          if (std::fabs(zenith - 90.0) > 2.0 || std::fabs(roll) > 2.0) {
+            witnesses_on_pins = false;
+            ctx->LogError("[ac5 reshape] a track witness off the population's pins: zenith %.3f roll %.3f", zenith,
+                          roll);
+          }
+          track_points_checked++;
+        }
+      }
+      IM_CHECK_RETV(tracks_checked >= 1, false);
+      IM_CHECK_RETV(track_points_checked >= 2, false);
+      IM_CHECK_RETV(witnesses_on_pins, false);
+      ctx->LogInfo("[ac5 reshape] track witnesses: %d track(s), %d poses decompose onto zenith~90 roll~0",
+                   tracks_checked, track_points_checked);
+    }
     const int reshape_twins = Ac5CountGeometryTwins(narrow, parry, 0.05);
     ctx->LogInfo("[ac5 reshape] column arcs with a Parry twin=%d of %zu", reshape_twins, narrow.family_curves.size());
-    IM_CHECK_RETV(reshape_twins > 0, false);  // the shared roll-0 slices
+    IM_CHECK_RETV(reshape_twins > 0, false);  // the shared slices
     IM_CHECK_RETV(reshape_twins * 2 < static_cast<int>(narrow.family_curves.size()), false);
     // The flagship arcs (longest point list of each set) — each reads no twin in the other
     // set within the epsilon the widening pair calibrates.
@@ -3742,6 +3834,7 @@ bool FamilyCurveAc5WidenReshapeScenes(ImGuiTestContext* ctx) {
     IM_CHECK_RETV(narrow_long_best > 0.5, false);
     IM_CHECK_RETV(parry_long_best < 0.5, false);  // the shared roll-0 identity, kept exactly
   }
+
   return true;
 }
 
