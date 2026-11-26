@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795686117774,
+  "lastUpdate": 1795686120044,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9620,50 +9620,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "6997a5a16a019e98c1819cb1b23b8a6c42f5fc33",
-          "message": "Merge pull request #523 from LoveDaisy/feat/raypath-survey-c17-c06-c09\n\nfeat(survey): C17/C06/C09 wiring — witness, dual-mechanism chroma, support set (task-714)",
-          "timestamp": "2026-10-20T06:23:22+08:00",
-          "tree_id": "aa3e3ba9cc15c5e4714f8d861ef924a19ad59994",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/6997a5a16a019e98c1819cb1b23b8a6c42f5fc33"
-        },
-        "date": 1792448823097,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 83.5,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 99.9,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 98.7,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 92.9,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "d36f13688d6b3d03758b35e63d5a5936f8558fac",
           "message": "Merge pull request #524 from LoveDaisy/chore/fullsky-bound-comment\n\nchore(test): rewrite the full-sky identity pin's tolerance comment to the real mechanism",
           "timestamp": "2026-10-20T10:17:44+08:00",
@@ -14003,6 +13959,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 94.9,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "6f2d696ad1743bef647f6647b1b87f3bdb7e276d",
+          "message": "Merge pull request #658 from LoveDaisy/feat/parry-survey-nonterminal-hang\n\ntest(gui): single-source the survey partial-budget note (Parry survey hang verdict)",
+          "timestamp": "2026-11-26T17:24:07+08:00",
+          "tree_id": "5db2995bb95caa5a58cf49210337423e630afc4d",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/6f2d696ad1743bef647f6647b1b87f3bdb7e276d"
+        },
+        "date": 1795686119487,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 109.2,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 99.9,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 97.5,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 97.5,
             "unit": "%"
           }
         ]
