@@ -1507,15 +1507,21 @@ void DrawSurveyOverlays(ImDrawList* dl, GuiState& state, const MapCanvasProjecti
         consider_hover(pick, dx * dx + dy * dy);
       }
       const bool is_track = curve.kind == LUMICE_PATH_CURVE_KIND_REGULAR_TRACK;
-      // Which order positions sit inside a point-image run (fold chains): the run's marker
-      // owns the line there — a link with both ends inside draws nothing, a transition link
-      // (collapsed end to extended end) draws to the collapsed end's own locus point.
-      std::vector<char> collapsed(curve.points.size(), 0);
-      for (const SurveyOverlayFacts::FamilyCurveFact::Segment& segment : curve.segments) {
-        if (segment.form == LUMICE_PATH_CURVE_SEGMENT_FORM_POINT_IMAGE) {
-          for (int i = segment.first; i <= segment.last && i < static_cast<int>(collapsed.size()); ++i) {
-            collapsed[static_cast<size_t>(i)] = 1;
+      // Which order position sits in WHICH point-image segment (fold chains): the run's marker
+      // owns its own interior links. Two ADJACENT windows are distinct segments with distinct
+      // constants (each verified on its own evidence) — their junction link carries the
+      // chain's own cell adjacency and keeps its line and pick surface; only a link whose both
+      // ends sit in the SAME verified segment is replaced by that segment's marker.
+      std::vector<int> collapsed_segment(curve.points.size(), -1);
+      {
+        int segment_id = 0;
+        for (const SurveyOverlayFacts::FamilyCurveFact::Segment& segment : curve.segments) {
+          if (segment.form == LUMICE_PATH_CURVE_SEGMENT_FORM_POINT_IMAGE) {
+            for (int i = segment.first; i <= segment.last && i < static_cast<int>(collapsed_segment.size()); ++i) {
+              collapsed_segment[static_cast<size_t>(i)] = segment_id;
+            }
           }
+          segment_id++;
         }
       }
       // The line submitter (the seam rule per submitted pair; the hover picks the nearer
@@ -1533,16 +1539,22 @@ void DrawSurveyOverlays(ImDrawList* dl, GuiState& state, const MapCanvasProjecti
         double bx = 0.0;
         double by = 0.0;
         SkyPosition(pa.alt_deg, pa.az_deg, pos);
+        const double travel_a[3] = { -pos[0], -pos[1], -pos[2] };  // the projection's own input
         const bool a_ok = ProjectToRect(view, pos, pic_min, pic_px, &ax, &ay);
         SkyPosition(pb.alt_deg, pb.az_deg, pos);
+        const double travel_b[3] = { -pos[0], -pos[1], -pos[2] };
         const bool b_ok = ProjectToRect(view, pos, pic_min, pic_px, &bx, &by);
         if (!a_ok || !b_ok) {
           return false;  // an endpoint off the view: the link breaks, never bridges
         }
-        const float dx = static_cast<float>(bx) - static_cast<float>(ax);
-        const float dy = static_cast<float>(by) - static_cast<float>(ay);
-        if (dx * dx + dy * dy >= pic_px * pic_px) {
-          return false;  // the wrap's own evidence: the seam breaks the line
+        // The projection-continuity authority (the same predicate the iso-delta walk and the
+        // profile device consume — the review: not a screen-distance surrogate): a dual-fisheye
+        // disc switch, the rectangular ±π seam straddle and a pole passage between the samples
+        // are the projection's own breaks, and the chord between such a pair is not the path —
+        // no ink and no pick surface. A jump under one canvas width clears none of these: the
+        // cross-disc jumps measured ~0.7 canvas widths, the seam straddle ~0.99.
+        if (!ProjectionContinuous(view.camera.lens_type, travel_a[2], travel_b[2], travel_a, travel_b)) {
+          return false;
         }
         const ImVec2 a(static_cast<float>(ax), static_cast<float>(ay));
         const ImVec2 b(static_cast<float>(bx), static_cast<float>(by));
@@ -1579,18 +1591,21 @@ void DrawSurveyOverlays(ImDrawList* dl, GuiState& state, const MapCanvasProjecti
       } else {
         // The fold chain: every consecutive ordered pair is a verified link (the chain's order
         // IS the link sequence — form boundaries are not topology breaks), and a closed chain
-        // adds the closing pair through its justifying cell.
+        // adds the closing pair through its justifying cell. A link inside ONE point-image
+        // segment is the marker's; the junction between two adjacent segments is a real link.
         const int n = static_cast<int>(curve.points.size());
         for (int i = 0; i + 1 < n; ++i) {
-          if (collapsed[static_cast<size_t>(i)] && collapsed[static_cast<size_t>(i + 1)]) {
-            continue;  // the run's interior: the marker owns it
+          if (collapsed_segment[static_cast<size_t>(i)] >= 0 &&
+              collapsed_segment[static_cast<size_t>(i)] == collapsed_segment[static_cast<size_t>(i + 1)]) {
+            continue;  // one verified segment's interior: the marker owns it
           }
           if (draw_pair(i, i + 1)) {
             drew_any = true;
           }
         }
         if (curve.closed && n >= 3) {
-          if (!(collapsed[static_cast<size_t>(n - 1)] && collapsed[0])) {
+          if (!(collapsed_segment[static_cast<size_t>(n - 1)] >= 0 &&
+                collapsed_segment[static_cast<size_t>(n - 1)] == collapsed_segment[0])) {
             if (draw_pair(n - 1, 0)) {
               drew_any = true;
             }

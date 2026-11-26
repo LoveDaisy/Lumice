@@ -305,6 +305,37 @@ const char* const kColumnWideJson = R"({
               "resolution": [64, 64], "view": {"elevation": 42}}]
 })";
 
+// The projection-seam exposure pair (the review's counterexample scenes): the same fold-bearing
+// column population under the rectangular full-sky lens (the ±π seam straddles map-adjacent
+// longitudes, a chord ~0.99 canvas widths) and under the dual fisheye (a disc switch, ~0.7
+// widths). Each adds one wall-clock survey — the pair prices the seam contract's own
+// proposition, the drawing gate the review found bypassed.
+const char* const kColumnPopulationRectJson = R"({
+  "crystal": [{"id": 1, "type": "prism", "shape": {"height": 0.3, "face_distance": [1,1,1,1,1,1]},
+               "axis": {"zenith": {"type": "gauss", "mean": 90, "std": 0.3},
+                        "azimuth": {"type": "uniform", "mean": 0, "std": 360},
+                        "roll": {"type": "uniform", "mean": 0, "std": 360}}}],
+  "filter": [],
+  "scene": {"light_source": {"type": "sun", "altitude": 20.0, "spectrum": "D65"},
+            "ray_num": 100000, "max_hits": 7,
+            "scattering": [{"prob": 0.0, "entries": [{"crystal": 1, "proportion": 10}]}]},
+  "render": [{"id": 1, "lens": {"type": "rectangular", "fov": 360.0},
+              "resolution": [64, 64], "view": {"elevation": 42}}]
+})";
+
+const char* const kColumnPopulationDualFisheyeJson = R"({
+  "crystal": [{"id": 1, "type": "prism", "shape": {"height": 0.3, "face_distance": [1,1,1,1,1,1]},
+               "axis": {"zenith": {"type": "gauss", "mean": 90, "std": 0.3},
+                        "azimuth": {"type": "uniform", "mean": 0, "std": 360},
+                        "roll": {"type": "uniform", "mean": 0, "std": 360}}}],
+  "filter": [],
+  "scene": {"light_source": {"type": "sun", "altitude": 20.0, "spectrum": "D65"},
+            "ray_num": 100000, "max_hits": 7,
+            "scattering": [{"prob": 0.0, "entries": [{"crystal": 1, "proportion": 10}]}]},
+  "render": [{"id": 1, "lens": {"type": "dual_fisheye_equal_area", "fov": 180.0},
+              "resolution": [64, 64], "view": {"elevation": 42}}]
+})";
+
 const char* const kParryPopulationJson = R"({
   "crystal": [{"id": 1, "type": "prism", "shape": {"height": 0.3, "face_distance": [1,1,1,1,1,1]},
                "axis": {"zenith": {"type": "gauss", "mean": 90, "std": 0.3},
@@ -3017,6 +3048,40 @@ int CountFamilyCurveArcVertices() {
   return count;
 }
 
+// The family ink's longest WITHIN-LINE edge: the draw list's index buffer walked as triangles —
+// an edge whose both endpoints carry the family ink belongs to one submitted line (indices are
+// line-local), so a projection break's chord (the rectangular seam straddle ~0.99 canvas widths,
+// a dual-fisheye disc switch ~0.7) reads directly, and legitimate projected steps at the grid's
+// own scale sit two orders under it. Line boundaries never enter the measure (they are not
+// triangle edges).
+bool FamilyArcInkMaxLineEdgePx(double* max_edge_out) {
+  const ImGuiWindow* region = MapRegionWindow();
+  if (region == nullptr) {
+    return false;
+  }
+  const ImU32 kArcInk = IM_COL32(255, 176, 92, 235);
+  const ImDrawIdx* idx = region->DrawList->IdxBuffer.Data;
+  const int idx_count = region->DrawList->IdxBuffer.Size;
+  const ImDrawVert* vtx = region->DrawList->VtxBuffer.Data;
+  double max_edge = 0.0;
+  for (int i = 0; i + 2 < idx_count; i += 3) {
+    const ImDrawVert& va = vtx[idx[i]];
+    const ImDrawVert& vb = vtx[idx[i + 1]];
+    const ImDrawVert& vc = vtx[idx[i + 2]];
+    if (va.col != kArcInk || vb.col != kArcInk || vc.col != kArcInk) {
+      continue;
+    }
+    const ImDrawVert* tri[3] = { &va, &vb, &vc };
+    for (int e = 0; e < 3; ++e) {
+      const float dx = tri[e]->pos.x - tri[(e + 1) % 3]->pos.x;
+      const float dy = tri[e]->pos.y - tri[(e + 1) % 3]->pos.y;
+      max_edge = std::max(max_edge, static_cast<double>(std::sqrt(dx * dx + dy * dy)));
+    }
+  }
+  *max_edge_out = max_edge;
+  return true;
+}
+
 bool FamilyCurveLayerDrawsPicksAndSurvivesReplacement(ImGuiTestContext* ctx) {
   ScopedServerGuard guard;
   IM_CHECK_RETV(BringUpScene(ctx, kColumnPopulationJson, /*infinite=*/false, /*gpu=*/false), false);
@@ -3327,63 +3392,105 @@ Ac5BandStats MeasureCanvasBand(const std::vector<unsigned char>& rgb, int w, int
   return stats;
 }
 
-// Two curve facts' pointwise sky shift in degrees (over the shorter point list — the pairing
-// sites the same route across documents, whose points correspond).
-double Ac5CurveMaxShiftDeg(const gui::SurveyOverlayFacts::FamilyCurveFact& a,
-                           const gui::SurveyOverlayFacts::FamilyCurveFact& b) {
-  const size_t n = std::min(a.points.size(), b.points.size());
-  double max_shift = 0.0;
-  for (size_t i = 0; i < n; ++i) {
-    const double dalt = a.points[static_cast<size_t>(i)].alt_deg - b.points[static_cast<size_t>(i)].alt_deg;
-    const double daz = a.points[static_cast<size_t>(i)].az_deg - b.points[static_cast<size_t>(i)].az_deg;
-    max_shift = std::max(max_shift, std::sqrt(dalt * dalt + daz * daz));
-  }
-  return max_shift;
+// The local alt/az direction (any consistent convention serves — the metric compares these
+// directions with each other only).
+void Ac5SkyDir(double alt_deg, double az_deg, double s[3]) {
+  const double kPiD = 3.14159265358979323846;
+  const double alt = alt_deg * kPiD / 180.0;
+  const double az = az_deg * kPiD / 180.0;
+  s[0] = std::cos(alt) * std::cos(az);
+  s[1] = std::cos(alt) * std::sin(az);
+  s[2] = std::sin(alt);
 }
 
-// The member-aligned pair reading: over both curve tables' same-member pairs, the smallest
-// pointwise max-shift — the widening pair's "the arcs hold their geometry" at the pairing the
-// survival filter leaves, never at table slot 0 (a count difference shifts the slots).
-double Ac5BestSameMemberShiftDeg(const gui::SurveyOverlayFacts& a, const gui::SurveyOverlayFacts& b, int* pairs_out) {
-  double best = 1e300;
-  int pairs = 0;
-  for (const auto& ca : a.family_curves) {
-    for (const auto& cb : b.family_curves) {
-      if (ca.member != cb.member) {
-        continue;
-      }
-      pairs++;
-      best = std::min(best, Ac5CurveMaxShiftDeg(ca, cb));
+// Point-to-great-circle-SEGMENT angular distance (degrees): the point projected onto the
+// segment's great circle when the foot sits inside the segment, the nearer endpoint otherwise.
+// The curve distance below is built on this — point-to-POINT nearest-neighbour is bounded from
+// below by the other curve's own sample spacing, so a resampled same-geometry arc would read
+// as motion (the synthetic control caught exactly that).
+double Ac5PointToSegmentDistanceDeg(const gui::SurveyOverlayFacts::FamilyCurveFact::Point& p,
+                                    const gui::SurveyOverlayFacts::FamilyCurveFact::Point& q1,
+                                    const gui::SurveyOverlayFacts::FamilyCurveFact::Point& q2) {
+  double a[3];
+  double b[3];
+  double x[3];
+  Ac5SkyDir(p.alt_deg, p.az_deg, x);
+  Ac5SkyDir(q1.alt_deg, q1.az_deg, a);
+  Ac5SkyDir(q2.alt_deg, q2.az_deg, b);
+  double n[3] = { a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0] };
+  const double n_norm = std::sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
+  if (!(n_norm > 0.0)) {
+    // The segment's endpoints coincide: the endpoint distance is the segment distance.
+    const double d0 = std::acos(std::max(-1.0, std::min(1.0, x[0] * a[0] + x[1] * a[1] + x[2] * a[2])));
+    return d0 * (180.0 / 3.14159265358979323846);
+  }
+  for (int k = 0; k < 3; ++k) {
+    n[static_cast<size_t>(k)] /= n_norm;
+  }
+  // The foot on the great circle, in the segment's span: t = projection onto (b - a) direction.
+  double ab[3] = { b[0] - a[0], b[1] - a[1], b[2] - a[2] };
+  double ax[3] = { x[0] - a[0], x[1] - a[1], x[2] - a[2] };
+  const double t = (ab[0] * ax[0] + ab[1] * ax[1] + ab[2] * ax[2]) / (ab[0] * ab[0] + ab[1] * ab[1] + ab[2] * ab[2]);
+  if (t < 0.0) {
+    const double d0 = std::acos(std::max(-1.0, std::min(1.0, x[0] * a[0] + x[1] * a[1] + x[2] * a[2])));
+    return d0 * (180.0 / 3.14159265358979323846);
+  }
+  if (t > 1.0) {
+    const double d1 = std::acos(std::max(-1.0, std::min(1.0, x[0] * b[0] + x[1] * b[1] + x[2] * b[2])));
+    return d1 * (180.0 / 3.14159265358979323846);
+  }
+  // Inside the span: the chord foot, renormalized on the sphere.
+  double f[3] = { a[0] + t * ab[0], a[1] + t * ab[1], a[2] + t * ab[2] };
+  const double f_norm = std::sqrt(f[0] * f[0] + f[1] * f[1] + f[2] * f[2]);
+  if (!(f_norm > 0.0)) {
+    return 0.0;
+  }
+  for (int k = 0; k < 3; ++k) {
+    f[static_cast<size_t>(k)] /= f_norm;
+  }
+  const double dot = std::max(-1.0, std::min(1.0, x[0] * f[0] + x[1] * f[1] + x[2] * f[2]));
+  return std::acos(dot) * (180.0 / 3.14159265358979323846);
+}
+
+// Two curve facts' sky-curve distance in degrees: the SYMMETRIC point-to-segment distance
+// (every point of `a` to the nearest SEGMENT of `b`, every point of `b` to the nearest segment
+// of `a`). Insensitive to sampling density and segment deletion by construction — the same
+// arc sampled 10 or 37 ways reads ~0 (the foot lands on the other's segments), a different arc
+// reads its own separation.
+double Ac5CurvePairDistanceDeg(const gui::SurveyOverlayFacts::FamilyCurveFact& a,
+                               const gui::SurveyOverlayFacts::FamilyCurveFact& b) {
+  auto nearest_segment = [](const gui::SurveyOverlayFacts::FamilyCurveFact& from,
+                            const gui::SurveyOverlayFacts::FamilyCurveFact& to) {
+    if (to.points.empty() || from.points.empty()) {
+      return 1e300;
     }
-  }
-  *pairs_out = pairs;
-  return pairs > 0 ? best : 1e300;
+    double worst = 0.0;
+    for (const auto& p : from.points) {
+      double best = 1e300;
+      for (size_t s = 0; s + 1 < to.points.size(); ++s) {
+        best = std::min(best, Ac5PointToSegmentDistanceDeg(p, to.points[s], to.points[s + 1]));
+      }
+      worst = std::max(worst, best);
+    }
+    return worst;
+  };
+  return std::max(nearest_segment(a, b), nearest_segment(b, a));
 }
 
-// The population-reshaping reading: per curve of `a`, whether some same-member curve of `b`
-// carries the SAME geometry. The widening pair measures 0.00000 at its twin pairs, so a true
-// twin sits far under the epsilon and a different arc sits orders above — the counted twins
-// are the geometry answer a table-count difference could never give.
-struct Ac5GeometryTwins {
-  int twins_a = 0;  // curves of `a` with a same-member geometric twin in `b`
-  int pairs = 0;    // same-member pairs examined
-};
-Ac5GeometryTwins Ac5CountGeometryTwins(const gui::SurveyOverlayFacts& a, const gui::SurveyOverlayFacts& b,
-                                       double epsilon_deg) {
-  Ac5GeometryTwins counts;
+// The per-curve twin reading: how many of `a`'s curves find a same-member curve of `b` within
+// `epsilon_deg` of the SAME geometry (symmetric distance). The widening pair's twins measure
+// ~0; a different arc reads its own separation.
+int Ac5CountGeometryTwins(const gui::SurveyOverlayFacts& a, const gui::SurveyOverlayFacts& b, double epsilon_deg) {
+  int twins = 0;
   for (const auto& ca : a.family_curves) {
     for (const auto& cb : b.family_curves) {
-      if (ca.member != cb.member) {
-        continue;
-      }
-      counts.pairs++;
-      if (Ac5CurveMaxShiftDeg(ca, cb) < epsilon_deg) {
-        counts.twins_a++;
+      if (ca.member == cb.member && Ac5CurvePairDistanceDeg(ca, cb) < epsilon_deg) {
+        twins++;
         break;
       }
     }
   }
-  return counts;
+  return twins;
 }
 
 // AC5 leg 1 — the true PBD 3-1-5 route on the probe-column sun-20 identity: curves present,
@@ -3422,6 +3529,42 @@ bool FamilyCurveAc5WidenReshapeScenes(ImGuiTestContext* ctx) {
   ScopedServerGuard guard;
   ScopedAc5WatchdogLease watchdog(ctx);
 
+  // The instrument's own negative controls (the review's demand — the judging metric is tested
+  // before it judges): (a) the SAME geometry resampled 10-vs-37 ways reads ~0 — sampling and
+  // segment deletion never masquerade as motion; (b) two arcs sharing one endpoint but running
+  // to different skies read far apart — a shared fragment never masquerades as a twin; (c) one
+  // static pair plus everything else drifting cannot survive the per-curve fraction gates
+  // below (a min-over-pairs existence answer was the round-one failure this replaces).
+  {
+    gui::SurveyOverlayFacts::FamilyCurveFact dense;
+    gui::SurveyOverlayFacts::FamilyCurveFact sparse;
+    for (int i = 0; i <= 36; ++i) {
+      gui::SurveyOverlayFacts::FamilyCurveFact::Point p;
+      p.alt_deg = 0.0;
+      p.az_deg = -90.0 + 5.0 * i;  // the equator sampled 37 ways
+      dense.points.push_back(p);
+    }
+    for (int i = 0; i <= 18; ++i) {
+      gui::SurveyOverlayFacts::FamilyCurveFact::Point p;
+      p.alt_deg = 0.0;
+      p.az_deg = -90.0 + 10.0 * i;  // the same great circle sampled 19 ways
+      sparse.points.push_back(p);
+    }
+    // The 0.05 bar vs the metric's own chord-foot approximation: the foot's chord
+    // parameterization deviates by ~span²/8 (0.014 deg at a 9.4-degree segment span, 0.0006 at
+    // the real grid-scale spans the comparison consumes) — the control's stress stays inside
+    // the bar on purpose.
+    IM_CHECK_RETV(Ac5CurvePairDistanceDeg(dense, sparse) < 0.05, false);
+    gui::SurveyOverlayFacts::FamilyCurveFact elsewhere;
+    for (int i = 0; i <= 36; ++i) {
+      gui::SurveyOverlayFacts::FamilyCurveFact::Point p;
+      p.alt_deg = -25.0;
+      p.az_deg = -90.0 + 5.0 * i;  // the same span on a parallel 25 degrees away
+      elsewhere.points.push_back(p);
+    }
+    IM_CHECK_RETV(Ac5CurvePairDistanceDeg(dense, elsewhere) > 20.0, false);
+  }
+
   gui::SurveyOverlayFacts narrow;
   IM_CHECK_RETV(RunCurveSurveyLeg(ctx, kColumnPopulationJson, "3-5", &narrow), false);
   OpenWindow(ctx);
@@ -3452,12 +3595,35 @@ bool FamilyCurveAc5WidenReshapeScenes(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(SaveWindowPng(ctx, "//Raypath view", GuiTestTempPath("ac5_widen_wide.png").string()), false);
   const Ac5BandStats wide_band = MeasureCanvasBand(wide_rgb, wide_w, wide_h);
 
-  int widen_pairs = 0;
-  const double widen_shift = Ac5BestSameMemberShiftDeg(narrow, wide, &widen_pairs);
-  IM_CHECK_RETV(widen_pairs > 0, false);
-  IM_CHECK_RETV(widen_shift < 0.05, false);
-  ctx->LogInfo("[ac5 widening] curves narrow=%zu wide=%zu same-member pairs=%d best shift %.5f deg",
-               narrow.family_curves.size(), wide.family_curves.size(), widen_pairs, widen_shift);
+  // The widening pair's geometry face, per curve (the review: a min-over-pairs existence
+  // answer is not "the arcs hold"): every narrow arc that has a same-member counterpart in the
+  // wide document must carry the same geometry. Measured at the 0.05 epsilon the synthetic
+  // control calibrates: the held arcs read ~0, a moved arc orders above.
+  int widen_held = 0;
+  int widen_candidates = 0;
+  double widen_best = 1e300;
+  for (const auto& ca : narrow.family_curves) {
+    double best = 1e300;
+    for (const auto& cb : wide.family_curves) {
+      if (ca.member != cb.member) {
+        continue;
+      }
+      best = std::min(best, Ac5CurvePairDistanceDeg(ca, cb));
+    }
+    if (best < 1e300) {
+      widen_candidates++;
+      widen_best = std::min(widen_best, best);
+      if (best < 0.05) {
+        widen_held++;
+      }
+    }
+  }
+  IM_CHECK_RETV(widen_candidates > 0, false);
+  ctx->LogInfo(
+      "[ac5 widening] curves narrow=%zu wide=%zu arcs with a same-member counterpart=%d held within "
+      "0.05=%d (best %.5f deg)",
+      narrow.family_curves.size(), wide.family_curves.size(), widen_candidates, widen_held, widen_best);
+  IM_CHECK_RETV(widen_held * 20 >= widen_candidates * 19, false);
   ctx->LogInfo("[ac5 widening] band narrow peak=%.1f above-half=%d/%d; wide peak=%.1f above-half=%d/%d",
                narrow_band.peak, narrow_band.above_half, narrow_band.pixels, wide_band.peak, wide_band.above_half,
                wide_band.pixels);
@@ -3473,18 +3639,64 @@ bool FamilyCurveAc5WidenReshapeScenes(ImGuiTestContext* ctx) {
   OpenWindow(ctx);
   ctx->Yield(2);
   IM_CHECK_RETV(SaveWindowPng(ctx, "//Raypath view", GuiTestTempPath("ac5_reshape_parry.png").string()), false);
-  // The arcs MOVE with the orientation — measured as geometry, not as a count: per column arc,
-  // whether the Parry orientation produces a same-member twin (the widening pair's epsilon
-  // covers its 0.00000 twins; a different arc sits orders above). The measured shape: the
-  // roll-0 slices twin exactly (the mirror branch is a roll-0 slice — a real geometric
-  // identity, not a failure to reshape), while most of the column population's drawable arcs
-  // have NO Parry twin — the roll-narrow freeze cannot produce their geometry.
-  const Ac5GeometryTwins reshape_twins = Ac5CountGeometryTwins(narrow, parry, 0.05);
-  ctx->LogInfo("[ac5 reshape] curves column=%zu parry=%zu same-member pairs=%d column arcs with a Parry twin=%d",
-               narrow.family_curves.size(), parry.family_curves.size(), reshape_twins.pairs, reshape_twins.twins_a);
-  IM_CHECK_RETV(reshape_twins.pairs > 0, false);
-  IM_CHECK_RETV(reshape_twins.twins_a > 0, false);
-  IM_CHECK_RETV(reshape_twins.twins_a * 2 < static_cast<int>(narrow.family_curves.size()), false);
+  // The arcs MOVE with the orientation — three independent geometry readings, none of them a
+  // count and none of them satisfiable by deletion or resampling:
+  //   (a) kind composition: the same member's drawable kind mix changes with the population
+  //       (the roll-narrow freeze owns a different face of the family);
+  //   (b) per-curve twins: the fraction of column arcs carrying a Parry geometric twin (the
+  //       roll-0 slices twin for real — a geometric identity, kept); most have none;
+  //   (c) the flagship arcs: the longest curve of each set reads no twin in the other set —
+  //       the branches a user actually sees are different arcs.
+  {
+    int narrow_chains = 0;
+    int narrow_tracks = 0;
+    for (const auto& c : narrow.family_curves) {
+      (c.kind == LUMICE_PATH_CURVE_KIND_REGULAR_TRACK ? narrow_tracks : narrow_chains)++;
+    }
+    int parry_chains = 0;
+    int parry_tracks = 0;
+    for (const auto& c : parry.family_curves) {
+      (c.kind == LUMICE_PATH_CURVE_KIND_REGULAR_TRACK ? parry_tracks : parry_chains)++;
+    }
+    ctx->LogInfo("[ac5 reshape] kinds column chains=%d tracks=%d; parry chains=%d tracks=%d", narrow_chains,
+                 narrow_tracks, parry_chains, parry_tracks);
+    const int reshape_twins = Ac5CountGeometryTwins(narrow, parry, 0.05);
+    ctx->LogInfo("[ac5 reshape] column arcs with a Parry twin=%d of %zu", reshape_twins, narrow.family_curves.size());
+    IM_CHECK_RETV(reshape_twins > 0, false);  // the shared roll-0 slices
+    IM_CHECK_RETV(reshape_twins * 2 < static_cast<int>(narrow.family_curves.size()), false);
+    // The flagship arcs (longest point list of each set) — each reads no twin in the other
+    // set within the epsilon the widening pair calibrates.
+    const auto longest = [](const gui::SurveyOverlayFacts& facts) {
+      const gui::SurveyOverlayFacts::FamilyCurveFact* best = &facts.family_curves.front();
+      for (const auto& c : facts.family_curves) {
+        if (c.points.size() > best->points.size()) {
+          best = &c;
+        }
+      }
+      return best;
+    };
+    // The flagship arcs' measured shape: the Parry population's longest curve IS a shared
+    // roll-0 identity (the mirror slice — nearest column twin 0.000, the geometric identity
+    // the plan's fact statement describes), while the column's own longest arc reads no Parry
+    // counterpart at all (5.7 deg) — the branch a column user actually sees is absent from the
+    // Parry orientation's answer.
+    const auto* narrow_long = longest(narrow);
+    const auto* parry_long = longest(parry);
+    double narrow_long_best = 1e300;
+    for (const auto& cb : parry.family_curves) {
+      narrow_long_best = std::min(narrow_long_best, Ac5CurvePairDistanceDeg(*narrow_long, cb));
+    }
+    double parry_long_best = 1e300;
+    for (const auto& ca : narrow.family_curves) {
+      parry_long_best = std::min(parry_long_best, Ac5CurvePairDistanceDeg(*parry_long, ca));
+    }
+    ctx->LogInfo(
+        "[ac5 reshape] flagship arcs: longest column %zu pts -> nearest Parry %.3f deg; longest Parry %zu pts "
+        "-> nearest column %.3f deg",
+        narrow_long->points.size(), narrow_long_best, parry_long->points.size(), parry_long_best);
+    IM_CHECK_RETV(narrow_long_best > 0.5, false);
+    IM_CHECK_RETV(parry_long_best < 0.5, false);  // the shared roll-0 identity, kept exactly
+  }
   return true;
 }
 
@@ -3522,6 +3734,40 @@ bool FamilyCurveAc5LowitzOwnMemberWitness(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(report_text.find(witness) != std::string::npos, false);
   IM_CHECK_RETV(report_text.find("params") != std::string::npos, false);
   IM_CHECK_RETV(SaveWindowPng(ctx, "//Raypath view", GuiTestTempPath("ac5_lowitz_pick.png").string()), false);
+  return true;
+}
+
+// AC5's projection-seam counterexample (the review's M2/M3): the family curve drawing consumes
+// the projection-continuity authority, so a rectangular ±π seam straddle and a dual-fisheye
+// disc switch submit no ink and no pick surface — the pick surface and the ink ride the same
+// early return in draw_pair, and the ink's own within-line edges are the observable. The
+// counterexample reads that measure on both exposure lenses; a quarter-canvas bound separates
+// the breaks' chords (0.7-0.99 widths, measured by the review's own probes) from every
+// legitimate projected step.
+bool FamilyCurveSeamNeverBridges(ImGuiTestContext* ctx) {
+  ScopedServerGuard guard;
+  ScopedAc5WatchdogLease watchdog(ctx);
+  gui::SurveyOverlayFacts facts;
+  IM_CHECK_RETV(RunCurveSurveyLeg(ctx, kColumnPopulationRectJson, "3-5", &facts), false);
+  OpenWindow(ctx);
+  ctx->Yield(2);
+  IM_CHECK_RETV(CountFamilyCurveArcVertices() > 0, false);
+  double max_edge = 0.0;
+  IM_CHECK_RETV(FamilyArcInkMaxLineEdgePx(&max_edge), false);
+  const ImGuiWindow* region = MapRegionWindow();
+  IM_CHECK_RETV(region != nullptr, false);
+  const double canvas_w = static_cast<double>(region->Rect().GetWidth());
+  ctx->LogInfo("[ac5 seam] rectangular: max within-line ink edge %.1f px of %.0f px canvas", max_edge, canvas_w);
+  IM_CHECK_RETV(max_edge < canvas_w * 0.25, false);
+
+  gui::SurveyOverlayFacts facts_fisheye;
+  IM_CHECK_RETV(RunCurveSurveyLeg(ctx, kColumnPopulationDualFisheyeJson, "3-5", &facts_fisheye), false);
+  OpenWindow(ctx);
+  ctx->Yield(2);
+  IM_CHECK_RETV(CountFamilyCurveArcVertices() > 0, false);
+  IM_CHECK_RETV(FamilyArcInkMaxLineEdgePx(&max_edge), false);
+  ctx->LogInfo("[ac5 seam] dual fisheye: max within-line ink edge %.1f px", max_edge);
+  IM_CHECK_RETV(max_edge < canvas_w * 0.25, false);
   return true;
 }
 
@@ -21043,6 +21289,12 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
   {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "family_curve_ac5_lowitz_own_member_witness");
     t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(FamilyCurveAc5LowitzOwnMemberWitness(ctx)); };
+  }
+  // The projection-seam counterexample: the family drawing's ink carries no chord across the
+  // rectangular ±π seam or a dual-fisheye disc switch.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "family_curve_seam_never_bridges");
+    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(FamilyCurveSeamNeverBridges(ctx)); };
   }
   {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "map_readability_controlled_frames");
