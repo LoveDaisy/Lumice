@@ -3923,20 +3923,22 @@ Ac5ReshapeGates Ac5JudgeReshapeAcceptance(const Ac5ReshapeReference& reference, 
       double image_az_deg = 0.0;
       bool evaluated = false;
       // The family-membership gate (orthogonal to the optical witness): the pose decomposes
-      // onto the declared frozen pins — the Parry population declares zenith gauss 90 +-0.3
-      // and roll gauss 0 +-0.3, so the drawn tracks' own world-frame poses must read
-      // zenith~90/roll~0 (the class expansion's conjugate members carry the same frozen pins —
-      // measured: the 3-7 track's poses read zenith 90 / roll 0 too). A feasible-but-tilted
-      // trajectory (the review's zenith 70 / roll 30 probe) fails here even though the optical
-      // gate passes it.
+      // onto the declared frozen pins — the survey declares the IDEAL frozen family at
+      // zenith 90 / roll 0, so the drawn tracks' own world-frame poses must read exactly
+      // those pins (the class expansion's conjugate members carry the same frozen pins —
+      // measured: the 3-7 track's poses read zenith 90 / roll 0 too). The tolerance covers
+      // ONLY the pose matrix's storage/decomposition numerics (the review, generation 3
+      // round 2: the ideal reference line has no physical neighborhood — a 2-degree band let
+      // an 89/1-degree optically-self-consistent trajectory through, whose sky differs from
+      // the true family by ~1 degree).
       {
         const double pin_zenith =
             std::acos(std::max(-1.0, std::min(1.0, point.pose[8]))) * (180.0 / 3.14159265358979323846);
         const double pin_roll = std::atan2(-point.pose[7], point.pose[6]) * (180.0 / 3.14159265358979323846);
-        on_family = std::fabs(pin_zenith - 90.0) <= 2.0 && std::fabs(pin_roll) <= 2.0;
+        on_family = std::fabs(pin_zenith - 90.0) <= 1e-6 && std::fabs(pin_roll) <= 1e-6;
         if (!on_family && gates.first_family_note[0] == '\0') {
           std::snprintf(gates.first_family_note, sizeof(gates.first_family_note),
-                        "member=(%d,%d) pose reads zenith %.3f roll %.3f — off the declared pins (90, 0)",
+                        "member=(%d,%d) pose reads zenith %.9f roll %.9f — off the declared pins (90, 0)",
                         curve.member.empty() ? -1 : curve.member[0], curve.member.size() > 1 ? curve.member[1] : -1,
                         pin_zenith, pin_roll);
         }
@@ -4350,14 +4352,15 @@ bool FamilyCurveAc5WidenReshapeScenes(ImGuiTestContext* ctx) {
       IM_CHECK_RETV(control.uncovered_curves == 0, false);  // the movement gate fires: nothing moved
       IM_CHECK_RETV(!control.tracks_witnessed, false);      // the optical gate fires: the pose does not own that sky
     }
-    // The round-one review's (generation 3) tilted-family probe: a zenith 70 / roll 30
-    // trajectory that is OPTICALLY self-consistent — every point's image recomputes from its
-    // own pose through the member's own mapping — yet belongs to NO declared frozen family
-    // (the population pins zenith 90 / roll 0). The composite must reject it on the family
-    // gate while the optical gate passes it: the two conditions are orthogonal, both required.
+    // The tilted-family probes: trajectories that are OPTICALLY self-consistent — every
+    // point's image recomputes from its own pose through the member's own mapping — yet do
+    // NOT belong to the declared frozen family. Two legs: the coarse tilt (zenith 70 / roll
+    // 30 — the first-round probe) and the near-boundary tilt (zenith 89 / roll 1 — the
+    // second-round review's own probe, which the old 2-degree neighborhood ACCEPTED even
+    // though its sky sits ~1 degree off the true family). Both must be rejected by the family
+    // gate while the optical gate passes them: the two conditions are orthogonal, both
+    // required.
     {
-      gui::SurveyOverlayFacts tilted_old;
-      tilted_old.family_curves.push_back(Ac5SyntheticEquatorArc(-40.0, -20.0, 2.0, { 3, 5 }));
       const Ac5ReshapeReference tilted_reference = Ac5BuildParryReference();
       IM_CHECK_RETV(tilted_reference.built, false);
       int tilt_slots[2];
@@ -4365,61 +4368,70 @@ bool FamilyCurveAc5WidenReshapeScenes(ImGuiTestContext* ctx) {
       IM_CHECK_RETV(
           analytic::ResolveFaceSequence(tilted_reference.normals, tilt_faces, 2, tilt_slots) == analytic::Status::kOk,
           false);
-      gui::SurveyOverlayFacts tilted_new;
-      gui::SurveyOverlayFacts::FamilyCurveFact tilted_track;
-      tilted_track.kind = LUMICE_PATH_CURVE_KIND_REGULAR_TRACK;
-      tilted_track.member = { 3, 5 };
-      tilted_track.grid_spacing_deg[0] = 2.8125;
-      tilted_track.grid_spacing_deg[1] = 2.8125;
-      analytic::PathOutputs tilt_outputs;
-      std::vector<double> tilt_segments_scratch(3 * 3, 0.0);
-      std::vector<double> tilt_transmittance_scratch(2, 0.0);
-      tilt_outputs.segment_directions = tilt_segments_scratch.data();
-      tilt_outputs.interface_transmittances = tilt_transmittance_scratch.data();
-      int tilted_sampled = 0;
-      // The tilt family's feasible window is narrow at this sun (measured: the low-azimuth
-      // stretch refuses every sample), so the probe sweeps the full circle and keeps whatever
-      // poses the member's own chain admits — the review's own probe found 11 that way.
-      for (double tilt_az = 0.0; tilt_az < 360.0; tilt_az += 10.0) {
-        double tilt_pose[9];
-        analytic::EulerPoseDeg(tilt_az, 70.0, 30.0, tilt_pose);
-        if (!analytic::EvaluatePath(tilted_reference.normals, tilt_slots, 2, tilted_reference.refractive_index,
-                                    tilted_reference.incident, tilt_pose, &tilt_outputs)) {
-          continue;  // an infeasible tilt sample: skipped, the feasible ones carry the probe
+      const auto run_tilt_leg = [&](const char* label, double pin_zenith, double pin_roll, double az_step) {
+        gui::SurveyOverlayFacts tilted_old;
+        tilted_old.family_curves.push_back(Ac5SyntheticEquatorArc(-40.0, -20.0, 2.0, { 3, 5 }));
+        gui::SurveyOverlayFacts tilted_new;
+        gui::SurveyOverlayFacts::FamilyCurveFact tilted_track;
+        tilted_track.kind = LUMICE_PATH_CURVE_KIND_REGULAR_TRACK;
+        tilted_track.member = { 3, 5 };
+        tilted_track.grid_spacing_deg[0] = 2.8125;
+        tilted_track.grid_spacing_deg[1] = 2.8125;
+        analytic::PathOutputs tilt_outputs;
+        std::vector<double> tilt_segments_scratch(3 * 3, 0.0);
+        std::vector<double> tilt_transmittance_scratch(2, 0.0);
+        tilt_outputs.segment_directions = tilt_segments_scratch.data();
+        tilt_outputs.interface_transmittances = tilt_transmittance_scratch.data();
+        int tilted_sampled = 0;
+        // The tilt family's feasible window is narrow at this sun (measured: the low-azimuth
+        // stretch refuses every sample), so the probe sweeps the full circle and keeps
+        // whatever poses the member's own chain admits.
+        for (double tilt_az = 0.0; tilt_az < 360.0; tilt_az += az_step) {
+          double tilt_pose[9];
+          analytic::EulerPoseDeg(tilt_az, pin_zenith, pin_roll, tilt_pose);
+          if (!analytic::EvaluatePath(tilted_reference.normals, tilt_slots, 2, tilted_reference.refractive_index,
+                                      tilted_reference.incident, tilt_pose, &tilt_outputs)) {
+            continue;  // an infeasible tilt sample: skipped, the feasible ones carry the probe
+          }
+          double tilt_alt = 0.0;
+          double tilt_img_az = 0.0;
+          analytic::ImageAltAzDeg(tilt_outputs.outgoing_direction, &tilt_alt, &tilt_img_az);
+          gui::SurveyOverlayFacts::FamilyCurveFact::Point p;
+          p.params_deg[0] = tilt_az;
+          p.params_deg[1] = pin_roll;
+          for (int k = 0; k < 9; ++k) {
+            p.pose[k] = tilt_pose[k];
+          }
+          p.alt_deg = tilt_alt;
+          p.az_deg = tilt_img_az;
+          tilted_track.points.push_back(p);
+          tilted_sampled++;
         }
-        double tilt_alt = 0.0;
-        double tilt_img_az = 0.0;
-        analytic::ImageAltAzDeg(tilt_outputs.outgoing_direction, &tilt_alt, &tilt_img_az);
-        gui::SurveyOverlayFacts::FamilyCurveFact::Point p;
-        p.params_deg[0] = tilt_az;
-        p.params_deg[1] = 30.0;
-        for (int k = 0; k < 9; ++k) {
-          p.pose[k] = tilt_pose[k];
+        IM_CHECK_RETV(tilted_sampled >= 4, false);  // the probe built enough self-consistent samples
+        gui::SurveyOverlayFacts::FamilyCurveFact::Segment tilted_segment;
+        tilted_segment.form = LUMICE_PATH_CURVE_SEGMENT_FORM_ARC;
+        tilted_segment.first = 0;
+        tilted_segment.last = static_cast<int>(tilted_track.points.size()) - 1;
+        tilted_track.segments.push_back(tilted_segment);
+        tilted_new.family_curves.push_back(tilted_track);
+        const Ac5ReshapeGates tilted = Ac5JudgeReshapeAcceptance(tilted_reference, tilted_old, tilted_new, 0.05);
+        ctx->LogInfo(
+            "[ac5 reshape] %s tilt control (%.1f/%.1f): kind=%d uncovered=%d tracks_witnessed=%d (%d pts) "
+            "family_ok=%d -> %s",
+            label, pin_zenith, pin_roll, tilted.kind_ok ? 1 : 0, tilted.uncovered_curves,
+            tilted.tracks_witnessed ? 1 : 0, tilted.track_witness_points, tilted.family_ok ? 1 : 0,
+            tilted.Accepted() ? "ACCEPTED" : "REJECTED");
+        if (!tilted.family_ok && tilted.first_family_note[0] != '\0') {
+          ctx->LogInfo("[ac5 reshape] %s tilt forensics: %s", label, tilted.first_family_note);
         }
-        p.alt_deg = tilt_alt;
-        p.az_deg = tilt_img_az;
-        tilted_track.points.push_back(p);
-        tilted_sampled++;
-      }
-      IM_CHECK_RETV(tilted_sampled >= 4, false);  // the probe built enough self-consistent samples
-      gui::SurveyOverlayFacts::FamilyCurveFact::Segment tilted_segment;
-      tilted_segment.form = LUMICE_PATH_CURVE_SEGMENT_FORM_ARC;
-      tilted_segment.first = 0;
-      tilted_segment.last = static_cast<int>(tilted_track.points.size()) - 1;
-      tilted_track.segments.push_back(tilted_segment);
-      tilted_new.family_curves.push_back(tilted_track);
-      const Ac5ReshapeGates tilted = Ac5JudgeReshapeAcceptance(tilted_reference, tilted_old, tilted_new, 0.05);
-      ctx->LogInfo("[ac5 reshape] tilted control: kind=%d uncovered=%d tracks_witnessed=%d (%d pts) family_ok=%d -> %s",
-                   tilted.kind_ok ? 1 : 0, tilted.uncovered_curves, tilted.tracks_witnessed ? 1 : 0,
-                   tilted.track_witness_points, tilted.family_ok ? 1 : 0, tilted.Accepted() ? "ACCEPTED" : "REJECTED");
-      if (!tilted.family_ok && tilted.first_family_note[0] != '\0') {
-        ctx->LogInfo("[ac5 reshape] tilted control forensics: %s", tilted.first_family_note);
-      }
-      IM_CHECK_RETV(!tilted.Accepted(), false);
-      IM_CHECK_RETV(tilted.kind_ok, false);               // the kind gate passes here too
-      IM_CHECK_RETV(tilted.uncovered_curves > 0, false);  // the tilted sky is new drawable geometry
-      IM_CHECK_RETV(tilted.tracks_witnessed, false);      // the optical gate PASSES it (self-consistent)
-      IM_CHECK_RETV(!tilted.family_ok, false);            // the family gate rejects: off the declared pins
+        IM_CHECK_RETV(!tilted.Accepted(), false);
+        IM_CHECK_RETV(tilted.kind_ok, false);               // the kind gate passes here too
+        IM_CHECK_RETV(tilted.uncovered_curves > 0, false);  // the tilted sky is new drawable geometry
+        IM_CHECK_RETV(tilted.tracks_witnessed, false);      // the optical gate PASSES it (self-consistent)
+        IM_CHECK_RETV(!tilted.family_ok, false);            // the family gate rejects: off the exact pins
+      };
+      run_tilt_leg("coarse", 70.0, 30.0, 10.0);
+      run_tilt_leg("near-boundary", 89.0, 1.0, 2.0);
     }
     // The REAL payload through the same composite: the Parry orientation's own curves.
     const Ac5ReshapeReference reference = Ac5BuildParryReference();

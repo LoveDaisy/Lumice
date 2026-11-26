@@ -1586,16 +1586,25 @@ void DrawSurveyOverlays(ImDrawList* dl, GuiState& state, const MapCanvasProjecti
         }
         const ImVec2 a(static_cast<float>(ax), static_cast<float>(ay));
         const ImVec2 b(static_cast<float>(bx), static_cast<float>(by));
-        // The evidence grade is also the INK: a link touching an unclassified stretch draws
-        // dimmer (same hue, lower alpha) — the kernel's honest downgrade must be visible, not
-        // only worded (the user sees a weaker line where no ordinary-fold verdict exists).
+        // The link's OWN evidence grade (both endpoints read, the weaker wins): a link touching
+        // an unknown stretch is unclassified ink — dimmer (same hue, lower alpha), counted in
+        // the legend, AND riding the pick, so a click on the arc-side half of a mixed link
+        // cannot read as a certified fold arc (the second round's review: the nearest endpoint
+        // serves the pose witness, never the link's grade).
+        const auto end_form = [&](int index) {
+          return point_segment[static_cast<size_t>(index)] >= 0 ?
+                     curve.segments[static_cast<size_t>(point_segment[static_cast<size_t>(index)])].form :
+                     -1;
+        };
+        const int form_a = end_form(a_index);
+        const int form_b = end_form(b_index);
         const bool unknown_ink =
-            (point_segment[static_cast<size_t>(a_index)] >= 0 &&
-             curve.segments[static_cast<size_t>(point_segment[static_cast<size_t>(a_index)])].form ==
-                 LUMICE_PATH_CURVE_SEGMENT_FORM_UNKNOWN) ||
-            (point_segment[static_cast<size_t>(b_index)] >= 0 &&
-             curve.segments[static_cast<size_t>(point_segment[static_cast<size_t>(b_index)])].form ==
-                 LUMICE_PATH_CURVE_SEGMENT_FORM_UNKNOWN);
+            form_a == LUMICE_PATH_CURVE_SEGMENT_FORM_UNKNOWN || form_b == LUMICE_PATH_CURVE_SEGMENT_FORM_UNKNOWN;
+        const int link_grade =
+            unknown_ink ? LUMICE_PATH_CURVE_SEGMENT_FORM_UNKNOWN :
+            (form_a == LUMICE_PATH_CURVE_SEGMENT_FORM_ARC || form_b == LUMICE_PATH_CURVE_SEGMENT_FORM_ARC) ?
+                          LUMICE_PATH_CURVE_SEGMENT_FORM_ARC :
+                          LUMICE_PATH_CURVE_SEGMENT_FORM_POINT_IMAGE;
         dl->AddLine(a, b, unknown_ink ? kFamilyUnknownInk : kFamilyArcInk, UiPx(1.4f));
         FamilyCurvePick pick;
         pick.curve_index = curve_index;
@@ -1603,18 +1612,10 @@ void DrawSurveyOverlays(ImDrawList* dl, GuiState& state, const MapCanvasProjecti
         const float da = (mouse.x - a.x) * (mouse.x - a.x) + (mouse.y - a.y) * (mouse.y - a.y);
         const float db = (mouse.x - b.x) * (mouse.x - b.x) + (mouse.y - b.y) * (mouse.y - b.y);
         pick.point_index = da <= db ? a_index : b_index;
-        // The hit point's own segment form rides the pick (the review: the kernel's evidence
-        // grade must survive into tooltip/readout — an unknown stretch never reads as a
-        // certified fold arc), and the frame's unknown ink is counted for the legend.
-        const int hit_segment = point_segment[static_cast<size_t>(pick.point_index)];
-        pick.segment_form = hit_segment >= 0 ? curve.segments[static_cast<size_t>(hit_segment)].form : -1;
-        const int form_a = point_segment[static_cast<size_t>(a_index)] >= 0 ?
-                               curve.segments[static_cast<size_t>(point_segment[static_cast<size_t>(a_index)])].form :
-                               -1;
-        const int form_b = point_segment[static_cast<size_t>(b_index)] >= 0 ?
-                               curve.segments[static_cast<size_t>(point_segment[static_cast<size_t>(b_index)])].form :
-                               -1;
-        if (form_a == LUMICE_PATH_CURVE_SEGMENT_FORM_UNKNOWN || form_b == LUMICE_PATH_CURVE_SEGMENT_FORM_UNKNOWN) {
+        // The hit LINK's grade rides the pick (the tooltip/readout speak it); the nearer
+        // endpoint's own witness stays the pose witness.
+        pick.segment_form = link_grade;
+        if (unknown_ink) {
           family_curve_unknown_links += 1;
         }
         submit_surface(pick, a, b);
