@@ -1394,8 +1394,12 @@ RestrictedFamilyRank RankRestrictedFamily(const FaceNormalTable& normals, const 
           RotateVector(&chain->order, rotation);
           RotateVector(&chain->links, rotation);
           RotateVector(&reads, rotation);
-          RotateVector(&vhat, rotation);
-          RotateVector(&tauhat, rotation);
+          // The kernel/chain direction arrays are TWO scalars per point ([2k, 2k+1] belongs to
+          // point k): the rotation moves 2*rotation scalars, never `rotation` — an odd rotation
+          // would reassemble each pair from two different points' components and hand the cusp
+          // locator a direction belonging to no read (the review's near-orthogonal reference).
+          RotateVector(&vhat, 2 * rotation);
+          RotateVector(&tauhat, 2 * rotation);
           RotateVector(&align, rotation);
           RotateVector(&djv, rotation);
           RotateVector(&image_speed, rotation);
@@ -1460,7 +1464,15 @@ RestrictedFamilyRank RankRestrictedFamily(const FaceNormalTable& normals, const 
       // inside a verified window or left at arc/unknown by its own evidence.
       std::vector<FoldSegmentForm> form(static_cast<size_t>(n), FoldSegmentForm::kArc);
       for (int k = 0; k < n; k++) {
-        if (!read_ok[static_cast<size_t>(k)]) {
+        // The default arc CLAIMS an ordinary fold — a transversality the position must carry:
+        // an unqualified read says nothing, and a read whose |dJ(v)| sits under its own
+        // resolution cannot distinguish fold from degenerate (the plan's unknown exit; the
+        // review's grid64 mirror endpoints measured |dJ(v)| = 2.8e-15 against a 6.2e-14
+        // resolution and still flowed through the arc path). A point-image window's verdict
+        // overwrites below; a verified window's measured motion can still ground its own arc.
+        if (!read_ok[static_cast<size_t>(k)] ||
+            std::fabs(djv[static_cast<size_t>(k)]) <=
+                out.crossings[static_cast<size_t>(chain->order[static_cast<size_t>(k)])].djv_resolution) {
           form[static_cast<size_t>(k)] = FoldSegmentForm::kUnknown;
         }
       }

@@ -1173,6 +1173,53 @@ TEST(FamilyRank, LowitzSheetOrderedChainsIncludeThePolarBranches) {
   EXPECT_EQ(provenance_ok, links_total) << "a direct link lacks its cell provenance";
 }
 
+// The review's grid64 counterexample: the C16 spin chart at grid 64 — its mirror identity's
+// endpoints carried |dJ(v)| = 2.8e-15 against a 6.2e-14 resolution (two orders under — no
+// ordinary-fold evidence at all, their images the mirror constant) and still published as
+// ordinary arc positions. An arc claim now REQUIRES resolvable transversality at every one of
+// its positions: the default classification cannot lend a fold's evidence to a degenerate
+// region, and only a point-image window's own measured motion grounds an arc through one.
+TEST(FamilyRank, ArcPositionsCarryResolvableTransversality) {
+  Fixture f;
+  int slots[2];
+  const int faces[2] = { 3, 5 };
+  f.Resolve(faces, 2, slots);
+  double sun[3];
+  SunAt(20.0, 0.0, sun);
+  const RestrictedFamilyRank rank = RankRestrictedFamily(f.normals, slots, 2, C16SpinChart(), sun, kC16N, 64);
+  ASSERT_EQ(rank.status, FamilyRankStatus::kOk);
+  int arc_positions = 0;
+  int unknown_positions = 0;
+  for (const FoldChainRecord& chain : rank.fold_chains) {
+    for (const FoldSegmentRecord& segment : chain.segments) {
+      for (int p = segment.first; p <= segment.last; p++) {
+        const FoldPointRecord& point = rank.crossings[static_cast<size_t>(chain.order[static_cast<size_t>(p)])];
+        if (segment.form == FoldSegmentForm::kUnknown) {
+          unknown_positions++;  // the unknown bucket legitimately holds unread positions
+          continue;
+        }
+        if (point.alignment < 0.0) {
+          ADD_FAILURE() << "an unread position inside an arc/point segment";
+          continue;
+        }
+        if (segment.form == FoldSegmentForm::kArc) {
+          arc_positions++;
+          // The ordinary-fold claim's own criterion, at every published arc position.
+          EXPECT_GT(std::fabs(point.djv), point.djv_resolution)
+              << "an arc position without resolvable transversality (|dJ(v)| " << std::scientific << point.djv
+              << " vs resolution " << point.djv_resolution << ")";
+        } else if (segment.form == FoldSegmentForm::kUnknown) {
+          unknown_positions++;
+        }
+      }
+    }
+  }
+  // The negative stays live: the grid64 mirror chain's unresolvable endpoints exist (their
+  // degeneracy is the input's own geometry) and must be classified, not silently defaulted.
+  EXPECT_GT(arc_positions, 0) << "no arc positions at all";
+  EXPECT_GT(unknown_positions, 0) << "the degenerate band vanished instead of reading unknown";
+}
+
 // The review's near-degenerate counterexamples: the spin chart with zenith fixed a
 // hundred-thousandth-scale step off the mirror identity (89.9999, and the round-three
 // neighbours 89.99992 / 89.99995 the length bug survived at). At every one of them the whole
