@@ -3023,6 +3023,10 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
       const ScopedPopups popup_guard(ctx);
+      // The scale scenes grow the shared window (the product leaves an already-grown window alone
+      // when the multiplier returns to 1x); the basis guard restores it at case exit, or the next
+      // case's entry audit counts the leak and fails the whole run.
+      const ScopedWindowBasis basis_guard(ctx);
       gui::SetEditEntryStagedModePreference(true);  // OK/Cancel exist only in Staged
       ctx->Yield(2);
 
