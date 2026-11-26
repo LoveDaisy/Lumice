@@ -686,6 +686,10 @@ TEST(AnalyzeOverviewChain, IdentityDocumentRowSwitchesUnderItsOwnKindGate) {
   const SurveyOverviewModel model = BuildSurveyOverviewModel(*survey, /*point_sun_premise=*/true);
   ASSERT_TRUE(model.valid);
   ASSERT_EQ(model.arm, SurveyArm::kIdentity) << "the rank-0 chain routes to the identity arm on this scene";
+  // The identity arm IS the early stop: its real document triggers the partial-budget note —
+  // the trigger predicate's second arm, held on the real chain beside the deadline leg's.
+  ASSERT_TRUE(model.early_stopped);
+  EXPECT_FALSE(SurveyPartialBudgetNoteFor(model).empty());
   ASSERT_EQ(model.objects.size(), 1u);
   ASSERT_TRUE(model.objects[0].position_available);
   EXPECT_EQ(model.objects[0].kind_name, "source image");
