@@ -1672,7 +1672,14 @@ RestrictedFamilyRank RankRestrictedFamily(const FaceNormalTable& normals, const 
                 break;
               }
               const double span_deg = extent_deg * kDegToRad * max_speed * kRadToDeg;
-              if (span_deg <= pos_bound) {
+              // Rounding slack on the growth edge: gcc/clang and glibc/libm disagree in the
+              // last ulps of this product chain, and a constant-image window sits exactly on
+              // the <= boundary (measured: this test passed on macOS/x86 and failed on
+              // Ubuntu-ARM64 gcc 13, same source). 1e-9 relative is three orders above any
+              // compiler reordering noise and nine orders below the smallest span a
+              // genuinely moving image produces against its own bound — it cannot mask the
+              // units-class or degeneracy errors the reviews built counterexamples for.
+              if (span_deg <= pos_bound * (1.0 + 1e-9)) {
                 best_e = e;  // the longest consistent window so far; keep growing
               } else if (best_e >= 0) {
                 break;  // the window stopped growing; verify the last consistent prefix
