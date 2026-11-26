@@ -793,7 +793,7 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
             first.RectFull.Min.x - ImGui::GetStyle().ItemSpacing.x - ImGui::CalcTextSize("Label:").x * 0.5f,
             first.RectFull.GetCenter().y);
         const std::string caption_capture = std::string("axis-caption-") + scale_tag + ".png";
-        IM_CHECK_RETV(ObserveTooltip(ctx, caption, kText, true, caption_capture.c_str()), false);
+        IM_CHECK_RETV(ObserveTooltip(ctx, caption, kText, caption_capture.c_str()), false);
         const auto chip = [&](const gui::AxisPresetEntry& entry) -> bool {
           const std::string ref = std::string("**/") + entry.label + "##axis_label_chip";
           // The preceding chip's tooltip can cover exactly the descender row.
@@ -832,7 +832,7 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
               clip.GetWidth(), clip.GetHeight(), item.RectFull.Min.x - clip.Min.x, item.RectFull.Min.y - clip.Min.y,
               item.RectFull.GetWidth(), ImMax(0.0f, item.RectFull.Max.x - clip.Max.x));
           const std::string capture = std::string("axis-") + entry.label + "-" + scale_tag + ".png";
-          IM_CHECK_RETV(ObserveTooltip(ctx, item.RectFull.GetCenter(), kText, true, capture.c_str()), false);
+          IM_CHECK_RETV(ObserveTooltip(ctx, item.RectFull.GetCenter(), kText, capture.c_str()), false);
           if (entry.id == gui::AxisPreset::kCustom) {
             IM_CHECK_RETV(gui::GetEditModalBuffers().axis_preset != gui::AxisPreset::kCustom, false);
             // Inset only one scaled pixel: this lies inside the historical five-pixel tail,
