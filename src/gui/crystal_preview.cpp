@@ -617,25 +617,15 @@ void ResetAxisGizmoSnapshot() {
   g_axis_gizmo_snapshot = {};
 }
 
-// The mesh-consumption witness: written by the pane at the Render call site, copied into the
-// snapshot at publish. A separate holder because Render runs before the portrait draws within the
-// same frame; the pair must stay same-frame coherent (both stamped every submitted frame).
-float g_mesh_render_rotation[16]{};
-int g_mesh_render_frame = -1;
-
-void RecordMeshRenderRotation(const float m[16]) {
-  std::memcpy(g_mesh_render_rotation, m, sizeof(g_mesh_render_rotation));
-  g_mesh_render_frame = ImGui::GetFrameCount();
-}
-
 void DrawCrystalAxisGizmo(const AxisGizmoPlan& plan, const AxisDist live_axis[3], const float observation[16],
                           const float body_rotation[16], ImVec2 image_pos, float image_px, ImDrawList* draw_list,
                           float zoom) {
   CrystalAxisGizmoSnapshot snap;
   snap.frame_index = ImGui::GetFrameCount();
   snap.family = plan.family;
-  // The mesh-consumption record is the pane's same-frame write; carry it through untouched.
-  std::memcpy(snap.mesh_render_rotation, g_mesh_render_rotation, sizeof(snap.mesh_render_rotation));
+  // The mesh-consumption record is the renderer's own: what THIS pane's GL pass last consumed
+  // (the pane renders before the portrait draws within the same frame).
+  g_crystal_renderer.LastRenderRotation(nullptr, snap.mesh_render_rotation);
 
   snap.drawn = plan.draw_body_axis || plan.draw_az_ring || plan.small_arrow != AxisGizmoSmallArrow::kNone;
   if (!snap.drawn || draw_list == nullptr || image_px <= 0.0f) {

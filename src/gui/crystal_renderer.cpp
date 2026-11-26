@@ -7,6 +7,7 @@
 #include "gui/gl_common.h"
 #include "gui/gui_constants.hpp"
 #include "gui/gui_logger.hpp"
+#include "imgui.h"
 
 namespace lumice::gui {
 
@@ -381,10 +382,23 @@ void CrystalRenderer::ComputeMvp(const float model_rotation[16], float zoom, int
   }
 }
 
+void CrystalRenderer::LastRenderRotation(int* frame_out, float out[16]) const {
+  if (frame_out != nullptr) {
+    *frame_out = last_render_frame_;
+  }
+  std::memcpy(out, last_render_rotation_, 16 * sizeof(out[0]));
+}
+
 void CrystalRenderer::Render(const float rotation[16], float zoom, CrystalStyle style) {
   if (total_edge_count_ <= 0) {
     return;
   }
+
+  // Mesh-consumption witness: record the rotation THIS call received before
+  // anything else — the frame-attribution tests read what the GL pass actually
+  // consumed, so a call-site argument swap lands in the record it contradicts.
+  std::memcpy(last_render_rotation_, rotation, sizeof(last_render_rotation_));
+  last_render_frame_ = ImGui::GetFrameCount();
 
   // Save state
   GLint prev_fbo = 0;

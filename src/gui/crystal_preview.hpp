@@ -139,10 +139,6 @@ const CrystalAxisGizmoSnapshot& GetLastAxisGizmoSnapshot();
 // Test-isolation reset (gui_test's per-case boundary): a stale "drawn" record must not answer the
 // next case's negative assertions.
 void ResetAxisGizmoSnapshot();
-// The mesh-consumption witness: the pane calls this with the exact argument expression it hands
-// to g_crystal_renderer.Render, so the snapshot's mesh_render_rotation mirrors what the GL pass
-// actually consumed (a swapped Render argument flows into the record the tests check it against).
-void RecordMeshRenderRotation(const float m[16]);
 
 // Draw the family-DOF portrait over the crystal preview image and record the snapshot. `plan` is
 // the ComputeAxisGizmoPlan answer for `live_axis` computed by the caller ONCE for this frame (the
