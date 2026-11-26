@@ -2767,8 +2767,8 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
       const char* base;
       const char* display_name;
       SurveyLayerGate* gate;
-    const char* graphics_label;
-    const char* labels_label;
+      const char* graphics_label;
+      const char* labels_label;
     } named[7] = {
       { "ov_reach", "Support range", &gates.reach, "##ov_reach_graphics", "##ov_reach_labels" },
       { "ov_edge", "Sharp edges", &gates.edge, "##ov_edge_graphics", "##ov_edge_labels" },
