@@ -711,6 +711,84 @@ SurveyOverlayFacts BuildSurveyOverlayFacts(const LUMICE_PathSurvey& result) {
       facts.tir_turns.push_back(std::move(turn));
     }
   }
+  // The family arm's ordered curves (task arc-recovery-engine): the v4.66 readers, one row per
+  // call, all borrowed arrays consumed immediately into plain values. A document without curves
+  // (every non-family arm, an early stop) reads as an empty table — no curves, no fabrication.
+  {
+    LUMICE_PathSurveyCurveInfo curve_info{};
+    curve_info.struct_size = sizeof(curve_info);
+    if (LUMICE_PathSurveyGetCurves(&result, &curve_info) == LUMICE_PATH_READ_OK) {
+      for (size_t c = 0; c < curve_info.curve_count; ++c) {
+        LUMICE_PathSurveyCurve curve{};
+        curve.struct_size = sizeof(curve);
+        if (LUMICE_PathSurveyGetCurve(&result, c, &curve) != LUMICE_PATH_READ_OK) {
+          continue;
+        }
+        SurveyOverlayFacts::FamilyCurveFact fact;
+        fact.curve_index = static_cast<int>(c);
+        fact.object_index = curve.object_index;
+        fact.kind = curve.kind;
+        fact.member.assign(curve.member, curve.member + curve.member_count);
+        fact.level = curve.level;
+        fact.closed = curve.closed != 0;
+        fact.end_a = curve.end_a;
+        fact.end_b = curve.end_b;
+        fact.grid_spacing_deg[0] = curve.grid_spacing_deg[0];
+        fact.grid_spacing_deg[1] = curve.grid_spacing_deg[1];
+        fact.points.resize(curve.point_count);
+        for (size_t p = 0; p < curve.point_count; ++p) {
+          LUMICE_PathSurveyCurvePoint point{};
+          point.struct_size = sizeof(point);
+          if (LUMICE_PathSurveyGetCurvePoint(&result, c, p, &point) != LUMICE_PATH_READ_OK) {
+            continue;  // a partial read leaves the default (out-of-sky) point — the draw skips it
+          }
+          SurveyOverlayFacts::FamilyCurveFact::Point& row = fact.points[p];
+          row.params_deg[0] = point.params_deg[0];
+          row.params_deg[1] = point.params_deg[1];
+          for (int k = 0; k < 9; ++k) {
+            row.pose[k] = point.pose[k];
+          }
+          row.alt_deg = point.image_altitude_deg;
+          row.az_deg = point.image_azimuth_deg;
+        }
+        for (size_t s = 0; s < curve.segment_count; ++s) {
+          LUMICE_PathSurveyCurveSegment segment{};
+          segment.struct_size = sizeof(segment);
+          if (LUMICE_PathSurveyGetCurveSegment(&result, c, s, &segment) != LUMICE_PATH_READ_OK) {
+            continue;
+          }
+          SurveyOverlayFacts::FamilyCurveFact::Segment row;
+          row.first = segment.first;
+          row.last = segment.last;
+          row.form = segment.form;
+          row.image_alt_deg = segment.image_altitude_deg;
+          row.image_az_deg = segment.image_azimuth_deg;
+          row.image_diameter_deg = segment.image_diameter_deg;
+          row.image_bound_deg = segment.image_bound_deg;
+          fact.segments.push_back(row);
+        }
+        for (size_t e = 0; e < curve.cusp_count; ++e) {
+          LUMICE_PathSurveyCurveCusp cusp{};
+          cusp.struct_size = sizeof(cusp);
+          if (LUMICE_PathSurveyGetCurveCusp(&result, c, e, &cusp) != LUMICE_PATH_READ_OK) {
+            continue;
+          }
+          SurveyOverlayFacts::FamilyCurveFact::Cusp row;
+          row.order_index = cusp.order_index;
+          row.params_deg[0] = cusp.params_deg[0];
+          row.params_deg[1] = cusp.params_deg[1];
+          for (int k = 0; k < 9; ++k) {
+            row.pose[k] = cusp.pose[k];
+          }
+          row.alt_deg = cusp.image_altitude_deg;
+          row.az_deg = cusp.image_azimuth_deg;
+          row.djv_residual = cusp.djv_residual;
+          fact.cusps.push_back(row);
+        }
+        facts.family_curves.push_back(std::move(fact));
+      }
+    }
+  }
   return facts;
 }
 
@@ -846,6 +924,7 @@ SurveyOverviewModel BuildSurveyOverviewModel(const LUMICE_PathSurvey& result, bo
       continue;
     }
     SurveyObjectRow row;
+    row.object_index = static_cast<int>(i);
     row.kind_name = SurveyObjectKindName(obj.kind);
     row.state = obj.state;
     row.state_name = SurveyStateName(obj.state);

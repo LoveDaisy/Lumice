@@ -154,9 +154,88 @@ Json ObjectJson(const SurveyObject& object) {
   }
   if (object.family_origin.has_value()) {
     card["family_origin"] = { { "sample_count", object.family_origin->sample_count },
-                              { "crossing_count", object.family_origin->crossing_count } };
+                              { "crossing_count", object.family_origin->crossing_count },
+                              { "curve_index", object.family_origin->curve_index } };
   }
   return card;
+}
+
+// The family arm's ordered-curve table (task arc-recovery-engine): the drawable critical arcs
+// and regular tracks with their image-form segments and events. The vocabulary slugs are the
+// kernel's own name functions (FoldSegmentFormName / FoldChainEndName) — no second spelling.
+Json FamilyCurveJson(const FamilyCurveRecord& curve) {
+  Json member = Json::array();
+  for (const int face : curve.member) {
+    member.push_back(face);
+  }
+  Json points = Json::array();
+  for (const FamilyCurvePoint& point : curve.points) {
+    Json pose = Json::array();
+    for (const double value : point.pose) {
+      pose.push_back(Num(value));
+    }
+    Json point_entry = { { "params_deg", { Num(point.params_deg[0]), Num(point.params_deg[1]) } },
+                         { "pose", std::move(pose) },
+                         { "image_altitude_deg", Num(point.image_altitude_deg) },
+                         { "image_azimuth_deg", Num(point.image_azimuth_deg) },
+                         { "sigma1", Num(point.sigma1) },
+                         { "sigma2", Num(point.sigma2) },
+                         { "alignment", Num(point.alignment) },
+                         { "djv", Num(point.djv) } };
+    // The crossing's grid-edge source (fold chains; -1 on a track point and a subdivision's
+    // interior refinement point): the adjacency evidence the frozen curve keeps.
+    point_entry["edge_dim"] = point.edge_dim;
+    point_entry["edge_i0"] = point.edge_i0;
+    point_entry["edge_i1"] = point.edge_i1;
+    point_entry["edge_t"] = Num(point.edge_t);
+    point_entry["from_cliff_probe"] = point.from_cliff_probe;
+    points.push_back(std::move(point_entry));
+  }
+  Json links = Json::array();
+  for (const FamilyCurveLink& link : curve.links) {
+    links.push_back({ { "cell_i0", link.cell_i0 },
+                      { "cell_i1", link.cell_i1 },
+                      { "through_subdivision", link.through_subdivision } });
+  }
+  Json segments = Json::array();
+  for (const FamilyCurveSegment& segment : curve.segments) {
+    Json entry = { { "first", segment.first },
+                   { "last", segment.last },
+                   { "form", analytic::FoldSegmentFormName(segment.form) } };
+    if (segment.form == analytic::FoldSegmentForm::kPointImage) {
+      entry["image_altitude_deg"] = Num(segment.image_altitude_deg);
+      entry["image_azimuth_deg"] = Num(segment.image_azimuth_deg);
+      entry["image_diameter_deg"] = Num(segment.image_diameter_deg);
+    }
+    // The verification's own resolution statement (every decided run; -1 = never decided).
+    entry["image_bound_deg"] = Num(segment.image_bound_deg);
+    segments.push_back(std::move(entry));
+  }
+  Json cusps = Json::array();
+  for (const FamilyCurveEvent& cusp : curve.cusps) {
+    Json pose = Json::array();
+    for (const double value : cusp.pose) {
+      pose.push_back(Num(value));
+    }
+    cusps.push_back({ { "order_index", cusp.order_index },
+                      { "params_deg", { Num(cusp.params_deg[0]), Num(cusp.params_deg[1]) } },
+                      { "pose", std::move(pose) },
+                      { "image_altitude_deg", Num(cusp.image_altitude_deg) },
+                      { "image_azimuth_deg", Num(cusp.image_azimuth_deg) },
+                      { "djv_residual", Num(cusp.djv_residual) } });
+  }
+  Json entry = { { "kind", curve.kind == FamilyCurveKind::kFoldChain ? "fold_chain" : "regular_track" },
+                 { "member", std::move(member) },
+                 { "level", curve.level },
+                 { "points", std::move(points) },
+                 { "links", std::move(links) },
+                 { "segments", std::move(segments) },
+                 { "cusps", std::move(cusps) },
+                 { "closed", curve.closed },
+                 { "end_a", analytic::FoldChainEndName(curve.end_a) },
+                 { "end_b", analytic::FoldChainEndName(curve.end_b) },
+                 { "grid_spacing_deg", { Num(curve.grid_spacing_deg[0]), Num(curve.grid_spacing_deg[1]) } } };
+  return entry;
 }
 
 Json VerdictJson(const SurveyMemberVerdict& verdict) {
@@ -389,6 +468,15 @@ std::string SurveyResultToJson(const SurveyResult& result, const char* lumice_ve
   // conditional-presence discipline).
   if (document.family_routing.has_value()) {
     doc["family_routing"] = FamilyRoutingJson(*document.family_routing);
+  }
+  // The ordered curves mount beside it (the same arm's document): absent when the arm produced
+  // none, so a legacy reader sees no key rather than an empty table.
+  if (!document.family_curves.empty()) {
+    Json curves = Json::array();
+    for (const FamilyCurveRecord& curve : document.family_curves) {
+      curves.push_back(FamilyCurveJson(curve));
+    }
+    doc["family_curves"] = std::move(curves);
   }
 
   // Probes are a T1-leg product: an early-stop document carries no probes key at all (the

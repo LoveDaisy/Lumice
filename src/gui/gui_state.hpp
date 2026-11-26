@@ -1980,6 +1980,35 @@ struct GuiState {
     // into view. Set by the map region's click path, consumed (cleared) by the interactive
     // host's render — the single reader. Cleared with the session like every field here.
     bool inner_edge_scroll_hint = false;
+    // The family curve selection (task arc-recovery-engine): the picked ordered curve and the
+    // event identity the click named (chain point / point-image run / cusp candidate), bound to
+    // the ADOPTED identity it was made under — the same three-part binding as the inner-edge
+    // selection above, so a class switch, a new generation or a lost document reads inactive
+    // without an explicit clear; a window close/open or a camera change keeps it. `sources` is
+    // every curve that shared the commit click (the overlapping-source cycle the readout's
+    // switcher walks; `source_slot` positions within it), so the user can pick another curve's
+    // witness at the same sky position without re-clicking. The witness facts render from the
+    // adopted document's own curve readers — nothing here snapshots or re-derives them.
+    // Display-session state like every field here: never persisted, writes no query and no sky
+    // point; the map region is the only writer (SelectFamilyCurve / CycleFamilyCurveSource /
+    // ClearFamilyCurveSelection), FamilyCurveSelectionActive the only reader.
+    bool family_curve_selected = false;
+    std::weak_ptr<const LUMICE_PathSurvey> family_curve_document;
+    SurveyQueryId family_curve_id;
+    int family_curve_index = -1;
+    int family_curve_pick_kind = 0;  // FamilyCurvePickKind as int (0 point, 1 point-image, 2 cusp)
+    int family_curve_point_index = -1;
+    int family_curve_segment_index = -1;
+    int family_curve_cusp_index = -1;
+    int family_curve_segment_form = -1;  // the picked point's own segment form (the kernel's
+                                         // evidence grade; the readout names an unknown stretch
+                                         // instead of passing it off as a certified fold arc)
+    // Every curve that shared the commit click, each with ITS OWN pick at that position (the
+    // event the click hit on that curve — never a rewritten default): the overlap cycle walks
+    // these picks, so switching sources keeps the clicked sky position and event identity
+    // (the plan's same-pick-position multi-source contract).
+    std::vector<FamilyCurvePick> family_curve_source_picks;
+    int family_curve_source_slot = 0;
     // The map canvas's press provenance, snapshotted while a press is held: the workspace frame
     // entry resets map_press_owner to kNone on every release frame BEFORE the map region renders,
     // so the release cannot read the owner it needs — this int does. Written by the map region

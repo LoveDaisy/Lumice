@@ -198,6 +198,10 @@ inline constexpr int kPollPoolClusters = 1;   // DiscoverOnPool, per cluster (th
 inline constexpr int kPollWalkSteps = 3;
 inline constexpr int kPollWalkPieces = 4;
 inline constexpr int kPollKinkLattice = 5;  // weight-kink seed scans, every 1024 samples
+// family_rank.hpp's RankRestrictedFamily recovery: one tick per bounded work unit (a scan row,
+// an edge batch, a cell pairing, a chain walk or a classification read). A handshake test waits
+// on this counter before cancelling.
+inline constexpr int kPollFamilyCurve = 6;
 
 // Section 9.5.5 (LI _trace_and_classify): the forward trace with `params`, then — on an arc event —
 // the backward trace with initial_tangent_sign negated; appends a component or an incomplete

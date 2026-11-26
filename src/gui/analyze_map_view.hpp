@@ -224,6 +224,12 @@ struct OverlayLegendState {
   bool edge_shared = false;            // the drawn edge arc is one stroke shared with a support bound
   bool tir_turns = false;              // any internal-reflection turn pair drew
   int tir_turn_count = 0;              // how many turns drew (one entry per turn pair)
+  bool family_curves = false;          // any family fold arc / track submitted ink
+  int family_curve_count = 0;          // how many curves submitted (one entry counts them)
+  int family_curve_unknown_links = 0;  // submitted line links with an unknown-form end — the
+                                       // kernel's unclassified stretches are drawn but must not
+                                       // silently read as certified fold arcs (the legend names
+                                       // them when present)
   // The reference calibers the drawn arcs quote, recorded with the bits so the legend keys can
   // name them: the support/edge bounds read at the survey document's own scope wavelength (a
   // FIXED reference, whatever the map's λ slider shows), the turn pair at the chromatic pair's
@@ -330,6 +336,9 @@ struct SurveyPointKindGates {
 struct SurveyLayerGates {
   SurveyLayerGate reach;   // support-range bounds
   SurveyLayerGate edge;    // sharp-edge positions (the deviation-axis reference arcs)
+  SurveyLayerGate curves;  // the family routing's ordered fold arcs / regular tracks (the
+                           // drawable critical arcs; a card carrying a curve hides its
+                           // aggregate representative marker while this group is on)
   SurveyLayerGate points;  // positioned object markers (labels gate the markers' short
                            // standing labels; the hover tooltip is the group's detail channel)
   SurveyPointKindGates points_kinds;
@@ -524,6 +533,45 @@ bool InnerEdgeSelectionActive(const GuiState& state);
 // object exists): display-session writes only — no query, no sky point, no camera. The one
 // writer of the selection fields.
 void SelectInnerEdgeObject(GuiState& state);
+
+// ---- The family curve selection (task arc-recovery-engine) ------------------------------------------
+
+// WHAT a curve hit was: the pick carries the event's own identity, never a bare point index —
+// a chain point reads the line's nearest endpoint, a point-image run reads the collapsed
+// marker's segment, a cusp candidate reads the tick's event. The kinds' witnesses render from
+// the same adopted document's facts (no re-read, no recompute).
+enum class FamilyCurvePickKind { kPoint, kPointImage, kCusp };
+struct FamilyCurvePick {
+  int curve_index = -1;
+  FamilyCurvePickKind kind = FamilyCurvePickKind::kPoint;
+  int point_index = -1;    // kPoint: the order position the line's nearer end sits at
+  int segment_index = -1;  // kPointImage: the collapsed run
+  int cusp_index = -1;     // kCusp: the located candidate
+  int segment_form = -1;   // kPoint: the hit point's own segment form (LUMICE_PATH_CURVE_SEGMENT_*,
+                           // -1 when the point sits outside any recorded segment) — the kernel's
+                           // evidence grade rides the pick: an unknown stretch must never read as
+                           // a certified fold arc downstream
+  float dist_sq = 0.0f;    // squared points, the pick's own tolerance scale
+};
+
+// The selection's liveness: the same adopted-identity binding as the inner-edge selection (the
+// document handle + the intent id; a class switch, a new generation or a lost document reads
+// false; a window close/open and a camera change keep it). Selection changes never touch a
+// query; this predicate is the only way anything reads it.
+bool FamilyCurveSelectionActive(const GuiState& state);
+// Commits the selection against the CURRENT adopted survey identity: the curve, the picked
+// event's identity, and every curve that shared the click WITH ITS OWN PICK at that position
+// (the overlapping-source cycle restores the clicked curve's own event, never a rewritten
+// default — the plan's same-pick-position multi-source contract). Display-session writes
+// only — no query, no sky point, no camera. The one writer of the selection fields.
+void SelectFamilyCurve(GuiState& state, const FamilyCurvePick& pick, std::vector<FamilyCurvePick> sources);
+// Steps the overlapping-source cycle (the readout's ‹ › buttons): slot wraps within the
+// committed sources and the selection adopts THAT source's own pick — the clicked position
+// and event identity stay the clicked ones. A selection without a cycle is untouched.
+// Display-session write only.
+void CycleFamilyCurveSource(GuiState& state, int step);
+// Drops the selection (the readout's Clear). Display-session write only.
+void ClearFamilyCurveSelection(GuiState& state);
 
 // The Raypath view window's body — formerly the depth band's map cell (755.4 moved the whole
 // capability into the window in one piece). Draws the D3 split (contract §4.2): the LEFT

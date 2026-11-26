@@ -246,6 +246,7 @@ struct SurveyTirView {
 
 // One row of the object-details expander: the card's identity and state verbatim.
 struct SurveyObjectRow {
+  int object_index = -1;  // the card's own index (the curve supersedence reads it)
   std::string kind_name;
   int state = 0;
   std::string state_name;
@@ -381,6 +382,52 @@ struct SurveyOverlayFacts {
     double delta_blue_deg = 0.0;
   };
   std::vector<TirTurn> tir_turns;
+
+  // The family arm's ordered curves (task arc-recovery-engine): the drawable critical arcs /
+  // regular tracks, read once per adopted identity through the v4.66 readers. Pure display
+  // facts — the point rows keep the theoretical preimage (params + pose) so a pick can name the
+  // member and the recomputable posture without re-running any engine query.
+  struct FamilyCurveFact {
+    int curve_index = -1;
+    int object_index = -1;  // the referencing card, -1 = unreferenced (a stop-cut card set)
+    int kind = 0;           // LUMICE_PATH_CURVE_KIND_*
+    std::vector<int> member;
+    int level = 0;
+    bool closed = false;
+    int end_a = 0;  // LUMICE_PATH_CURVE_END_*
+    int end_b = 0;
+    double grid_spacing_deg[2] = { 0.0, 0.0 };
+    struct Point {
+      double params_deg[2] = { 0.0, 0.0 };
+      double pose[9] = {};
+      double alt_deg = 0.0;
+      double az_deg = 0.0;
+    };
+    std::vector<Point> points;
+    struct Segment {
+      int first = 0;
+      int last = 0;
+      int form = 0;  // LUMICE_PATH_CURVE_SEGMENT_FORM_*
+      double image_alt_deg = 0.0;
+      double image_az_deg = 0.0;
+      // The point-image run's measured (midpoint-refined) sky diameter — the verification's
+      // own reading, the tooltip's "collapses to one image" evidence line — and its derived
+      // position bound (the classification's resolution statement; negative = never decided).
+      double image_diameter_deg = 0.0;
+      double image_bound_deg = -1.0;
+    };
+    std::vector<Segment> segments;
+    struct Cusp {
+      int order_index = 0;
+      double params_deg[2] = { 0.0, 0.0 };
+      double pose[9] = {};
+      double alt_deg = 0.0;
+      double az_deg = 0.0;
+      double djv_residual = 0.0;
+    };
+    std::vector<Cusp> cusps;
+  };
+  std::vector<FamilyCurveFact> family_curves;
 };
 
 // The pure half of the map's overlay facts: survey document in, facts out. Reads the support,

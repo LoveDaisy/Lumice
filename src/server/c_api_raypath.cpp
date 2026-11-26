@@ -3653,6 +3653,200 @@ LUMICE_PathReadStatus LUMICE_PathSurveyGetFamilyOrigin(const LUMICE_PathSurvey* 
   return LUMICE_PATH_READ_OK;
 }
 
+// ---- the ordered-curve readers (v4.66, a pure append) ------------------------------------------------
+
+LUMICE_PathReadStatus LUMICE_PathSurveyGetCurves(const LUMICE_PathSurvey* result, LUMICE_PathSurveyCurveInfo* out) {
+  if (const auto status = BeginRead(result, out); status != LUMICE_PATH_READ_OK) {
+    return status;
+  }
+  out->curve_count = result->result.Data().family_curves.size();
+  return LUMICE_PATH_READ_OK;
+}
+
+LUMICE_PathReadStatus LUMICE_PathSurveyGetCurve(const LUMICE_PathSurvey* result, size_t curve,
+                                                LUMICE_PathSurveyCurve* out) {
+  if (const auto status = BeginRead(result, out); status != LUMICE_PATH_READ_OK) {
+    return status;
+  }
+  const auto& curves = result->result.Data().family_curves;
+  if (curve >= curves.size()) {
+    return LUMICE_PATH_READ_INVALID_INDEX;
+  }
+  const auto& value = curves[curve];
+  out->kind = value.kind == srv::FamilyCurveKind::kFoldChain ? LUMICE_PATH_CURVE_KIND_FOLD_CHAIN :
+                                                               LUMICE_PATH_CURVE_KIND_REGULAR_TRACK;
+  out->member_count = value.member.size();
+  out->member = value.member.data();
+  out->level = value.level;
+  // The referencing card: the object whose family origin names this curve (at most one — the
+  // candidates reference their own curve once).
+  out->object_index = -1;
+  const auto& objects = result->result.Data().objects;
+  for (size_t i = 0; i < objects.size(); i++) {
+    if (objects[i].family_origin.has_value() && objects[i].family_origin->curve_index >= 0 &&
+        static_cast<size_t>(objects[i].family_origin->curve_index) == curve) {
+      out->object_index = static_cast<int>(i);
+      break;
+    }
+  }
+  out->point_count = value.points.size();
+  out->link_count = value.links.size();
+  out->segment_count = value.segments.size();
+  out->cusp_count = value.cusps.size();
+  out->closed = value.closed ? 1 : 0;
+  switch (value.end_a) {
+    case an::FoldChainEnd::kClosedLoop:
+      out->end_a = LUMICE_PATH_CURVE_END_CLOSED_LOOP;
+      break;
+    case an::FoldChainEnd::kFeasibilityInterruption:
+      out->end_a = LUMICE_PATH_CURVE_END_FEASIBILITY_INTERRUPTION;
+      break;
+    case an::FoldChainEnd::kAmbiguousCell:
+      out->end_a = LUMICE_PATH_CURVE_END_AMBIGUOUS_CELL;
+      break;
+    case an::FoldChainEnd::kStopRequested:
+      out->end_a = LUMICE_PATH_CURVE_END_STOP_REQUESTED;
+      break;
+    default:
+      out->end_a = LUMICE_PATH_CURVE_END_OPEN;
+      break;
+  }
+  switch (value.end_b) {
+    case an::FoldChainEnd::kClosedLoop:
+      out->end_b = LUMICE_PATH_CURVE_END_CLOSED_LOOP;
+      break;
+    case an::FoldChainEnd::kFeasibilityInterruption:
+      out->end_b = LUMICE_PATH_CURVE_END_FEASIBILITY_INTERRUPTION;
+      break;
+    case an::FoldChainEnd::kAmbiguousCell:
+      out->end_b = LUMICE_PATH_CURVE_END_AMBIGUOUS_CELL;
+      break;
+    case an::FoldChainEnd::kStopRequested:
+      out->end_b = LUMICE_PATH_CURVE_END_STOP_REQUESTED;
+      break;
+    default:
+      out->end_b = LUMICE_PATH_CURVE_END_OPEN;
+      break;
+  }
+  out->grid_spacing_deg[0] = value.grid_spacing_deg[0];
+  out->grid_spacing_deg[1] = value.grid_spacing_deg[1];
+  return LUMICE_PATH_READ_OK;
+}
+
+LUMICE_PathReadStatus LUMICE_PathSurveyGetCurvePoint(const LUMICE_PathSurvey* result, size_t curve, size_t index,
+                                                     LUMICE_PathSurveyCurvePoint* out) {
+  if (const auto status = BeginRead(result, out); status != LUMICE_PATH_READ_OK) {
+    return status;
+  }
+  const auto& curves = result->result.Data().family_curves;
+  if (curve >= curves.size()) {
+    return LUMICE_PATH_READ_INVALID_INDEX;
+  }
+  const auto& points = curves[curve].points;
+  if (index >= points.size()) {
+    return LUMICE_PATH_READ_INVALID_INDEX;
+  }
+  const auto& point = points[index];
+  out->params_deg[0] = point.params_deg[0];
+  out->params_deg[1] = point.params_deg[1];
+  for (int i = 0; i < 9; i++) {
+    out->pose[i] = point.pose[i];
+  }
+  out->image_altitude_deg = point.image_altitude_deg;
+  out->image_azimuth_deg = point.image_azimuth_deg;
+  out->sigma1 = point.sigma1;
+  out->sigma2 = point.sigma2;
+  out->alignment = point.alignment;
+  out->djv = point.djv;
+  out->edge_dim = point.edge_dim;
+  out->edge_i0 = point.edge_i0;
+  out->edge_i1 = point.edge_i1;
+  out->edge_t = point.edge_t;
+  out->from_cliff_probe = point.from_cliff_probe ? 1 : 0;
+  return LUMICE_PATH_READ_OK;
+}
+
+LUMICE_PathReadStatus LUMICE_PathSurveyGetCurveLink(const LUMICE_PathSurvey* result, size_t curve, size_t index,
+                                                    LUMICE_PathSurveyCurveLink* out) {
+  if (const auto status = BeginRead(result, out); status != LUMICE_PATH_READ_OK) {
+    return status;
+  }
+  const auto& curves = result->result.Data().family_curves;
+  if (curve >= curves.size()) {
+    return LUMICE_PATH_READ_INVALID_INDEX;
+  }
+  const auto& links = curves[curve].links;
+  if (index >= links.size()) {
+    return LUMICE_PATH_READ_INVALID_INDEX;
+  }
+  const auto& link = links[index];
+  out->cell_i0 = link.cell_i0;
+  out->cell_i1 = link.cell_i1;
+  out->through_subdivision = link.through_subdivision ? 1 : 0;
+  return LUMICE_PATH_READ_OK;
+}
+
+LUMICE_PathReadStatus LUMICE_PathSurveyGetCurveSegment(const LUMICE_PathSurvey* result, size_t curve, size_t index,
+                                                       LUMICE_PathSurveyCurveSegment* out) {
+  if (const auto status = BeginRead(result, out); status != LUMICE_PATH_READ_OK) {
+    return status;
+  }
+  const auto& curves = result->result.Data().family_curves;
+  if (curve >= curves.size()) {
+    return LUMICE_PATH_READ_INVALID_INDEX;
+  }
+  const auto& segments = curves[curve].segments;
+  if (index >= segments.size()) {
+    return LUMICE_PATH_READ_INVALID_INDEX;
+  }
+  const auto& segment = segments[index];
+  switch (segment.form) {
+    case an::FoldSegmentForm::kPointImage:
+      out->form = LUMICE_PATH_CURVE_SEGMENT_FORM_POINT_IMAGE;
+      break;
+    case an::FoldSegmentForm::kUnknown:
+      out->form = LUMICE_PATH_CURVE_SEGMENT_FORM_UNKNOWN;
+      break;
+    default:
+      out->form = LUMICE_PATH_CURVE_SEGMENT_FORM_ARC;
+      break;
+  }
+  out->first = segment.first;
+  out->last = segment.last;
+  out->image_available = segment.form == an::FoldSegmentForm::kPointImage ? 1 : 0;
+  out->image_altitude_deg = segment.image_altitude_deg;
+  out->image_azimuth_deg = segment.image_azimuth_deg;
+  out->image_diameter_deg = segment.image_diameter_deg;
+  out->image_bound_deg = segment.image_bound_deg;
+  return LUMICE_PATH_READ_OK;
+}
+
+LUMICE_PathReadStatus LUMICE_PathSurveyGetCurveCusp(const LUMICE_PathSurvey* result, size_t curve, size_t index,
+                                                    LUMICE_PathSurveyCurveCusp* out) {
+  if (const auto status = BeginRead(result, out); status != LUMICE_PATH_READ_OK) {
+    return status;
+  }
+  const auto& curves = result->result.Data().family_curves;
+  if (curve >= curves.size()) {
+    return LUMICE_PATH_READ_INVALID_INDEX;
+  }
+  const auto& cusps = curves[curve].cusps;
+  if (index >= cusps.size()) {
+    return LUMICE_PATH_READ_INVALID_INDEX;
+  }
+  const auto& cusp = cusps[index];
+  out->order_index = cusp.order_index;
+  out->params_deg[0] = cusp.params_deg[0];
+  out->params_deg[1] = cusp.params_deg[1];
+  for (int i = 0; i < 9; i++) {
+    out->pose[i] = cusp.pose[i];
+  }
+  out->image_altitude_deg = cusp.image_altitude_deg;
+  out->image_azimuth_deg = cusp.image_azimuth_deg;
+  out->djv_residual = cusp.djv_residual;
+  return LUMICE_PATH_READ_OK;
+}
+
 LUMICE_PathReadStatus LUMICE_PathSurveyGetSupport(const LUMICE_PathSurvey* result, size_t object,
                                                   LUMICE_PathSurveySupport* out) {
   if (const auto status = BeginRead(result, out); status != LUMICE_PATH_READ_OK) {

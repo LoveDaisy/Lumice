@@ -2557,4 +2557,108 @@ TEST(AnalyzeMapView, RequestCarriesTheTickedSymmetryBitsExplicitly) {
   EXPECT_EQ(base, other);
 }
 
+// The family curve selection's session contract (task arc-recovery-engine), driven without a
+// frame: the commitment binds to the ADOPTED survey identity (the document handle + the intent
+// id), stays live across unrelated session writes, dies on a new intent or a lost document,
+// clears explicitly — and the overlap cycle walks the committed sources with wrap, resetting
+// the switched source's witness to its own first point. The real document comes from the same
+// plate survey the C-API tests run (the binding compares live handles, not nulls).
+TEST(AnalyzeMapView, FamilyCurveSelectionBindsToTheAdoptedIdentityAndCycles) {
+  constexpr const char* kPlateJson = R"({
+    "crystal": [ { "id": 1, "type": "prism",
+                   "shape": { "height": 0.3, "face_distance": [1,1,1,1,1,1] },
+                   "axis": { "zenith": { "type": "gauss", "mean": 0, "std": 0.3 },
+                             "azimuth": { "type": "uniform", "mean": 0, "std": 360 },
+                             "roll": { "type": "uniform", "mean": 0, "std": 360 } } } ],
+    "filter": [],
+    "scene": { "light_source": { "type": "sun", "altitude": 20, "azimuth": 0, "diameter": 0.5, "spectrum": "D65" },
+               "ray_num": 1000, "max_hits": 7,
+               "scattering": [ { "prob": 0, "entries": [ { "crystal": 1, "proportion": 1 } ] } ] },
+    "render": []
+  })";
+  LUMICE_Scene* raw_scene = nullptr;
+  ASSERT_EQ(LUMICE_SceneFromJson(kPlateJson, &raw_scene), LUMICE_OK);
+  std::unique_ptr<LUMICE_Scene, SceneDeleter> scene(raw_scene);
+  static int faces[] = { 1, 2 };
+  static int counts[] = { 2 };
+  LUMICE_PathSurveyRequest request{};
+  request.struct_size = sizeof(request);
+  request.crystal_id = 1;
+  request.faces = faces;
+  request.face_count = 2;
+  request.layer_face_counts = counts;
+  request.layer_count = 1;
+  LUMICE_PathSurvey* raw_result = nullptr;
+  char err[256] = {};
+  ASSERT_EQ(LUMICE_AnalyzePathSurvey(scene.get(), &request, &raw_result, err, sizeof(err)), LUMICE_OK) << err;
+  SurveyHandle adopted(raw_result, &LUMICE_PathSurveyDestroy);  // the opaque handle borrows its deleter
+
+  GuiState state;
+  state.analysis.survey.adopted_result = adopted;
+  state.analysis.survey.intent_id = SurveyQueryId{ 7, 1 };
+  EXPECT_FALSE(FamilyCurveSelectionActive(state));
+
+  FamilyCurvePick pick;
+  pick.curve_index = 2;
+  pick.kind = FamilyCurvePickKind::kCusp;
+  pick.cusp_index = 0;
+  // The overlapping sources carry THEIR OWN picks at the clicked position (different curves,
+  // different hit points — the clicked position must survive the cycle).
+  FamilyCurvePick p5;
+  p5.curve_index = 5;
+  p5.kind = FamilyCurvePickKind::kPoint;
+  p5.point_index = 17;
+  FamilyCurvePick p9;
+  p9.curve_index = 9;
+  p9.kind = FamilyCurvePickKind::kPointImage;
+  p9.segment_index = 3;
+  SelectFamilyCurve(state, pick, { pick, p5, p9 });
+  EXPECT_TRUE(FamilyCurveSelectionActive(state));
+  EXPECT_EQ(state.analysis.family_curve_index, 2);
+  EXPECT_EQ(state.analysis.family_curve_source_slot, 0);
+
+  // The overlap cycle: each step adopts THAT source's own pick — the clicked event identity
+  // and sky position survive the switch (the review: a rewritten first point would jump the
+  // witness to wherever the other curve starts).
+  CycleFamilyCurveSource(state, 1);
+  EXPECT_EQ(state.analysis.family_curve_index, 5);
+  EXPECT_EQ(state.analysis.family_curve_source_slot, 1);
+  EXPECT_EQ(state.analysis.family_curve_pick_kind, static_cast<int>(FamilyCurvePickKind::kPoint));
+  EXPECT_EQ(state.analysis.family_curve_point_index, 17);
+  CycleFamilyCurveSource(state, 1);
+  EXPECT_EQ(state.analysis.family_curve_index, 9);
+  EXPECT_EQ(state.analysis.family_curve_pick_kind, static_cast<int>(FamilyCurvePickKind::kPointImage));
+  EXPECT_EQ(state.analysis.family_curve_segment_index, 3);
+  CycleFamilyCurveSource(state, 1);
+  EXPECT_EQ(state.analysis.family_curve_index, 2);  // wrapped
+  EXPECT_EQ(state.analysis.family_curve_source_slot, 0);
+  EXPECT_EQ(state.analysis.family_curve_pick_kind, static_cast<int>(FamilyCurvePickKind::kCusp));
+  EXPECT_EQ(state.analysis.family_curve_cusp_index, 0);
+  CycleFamilyCurveSource(state, -1);
+  EXPECT_EQ(state.analysis.family_curve_index, 9);
+  EXPECT_TRUE(FamilyCurveSelectionActive(state));
+
+  // Unrelated session writes keep it (a camera or a wavelength never re-keys a selection).
+  state.analysis.map_wavelength_nm = 550.0;
+  EXPECT_TRUE(FamilyCurveSelectionActive(state));
+
+  // A new intent kills it without any explicit clear.
+  state.analysis.survey.intent_id = SurveyQueryId{ 7, 2 };
+  EXPECT_FALSE(FamilyCurveSelectionActive(state));
+
+  // A lost document kills it too.
+  SelectFamilyCurve(state, pick, { pick });
+  EXPECT_TRUE(FamilyCurveSelectionActive(state));
+  state.analysis.survey.adopted_result = nullptr;
+  EXPECT_FALSE(FamilyCurveSelectionActive(state));
+
+  // The explicit Clear.
+  state.analysis.survey.adopted_result = adopted;
+  SelectFamilyCurve(state, pick, { pick });
+  EXPECT_TRUE(FamilyCurveSelectionActive(state));
+  ClearFamilyCurveSelection(state);
+  EXPECT_FALSE(FamilyCurveSelectionActive(state));
+  EXPECT_TRUE(state.analysis.family_curve_source_picks.empty());
+}
+
 }  // namespace lumice::gui

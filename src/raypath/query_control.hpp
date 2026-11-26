@@ -104,6 +104,9 @@ inline constexpr int kPollSurveyTirRows = 26;       // survey TIR share leg, the
                                                     // (row rebuild -> batch evaluation -> classification pipeline)
 inline constexpr int kPollSurveyWitnessPhase = 27;  // survey witness leg, the post-lattice phase boundary
                                                     // (argmax + the pose's independent re-evaluation)
+// (analytic's kPollFamilyCurve, site 6 — the family rank scans' recovery work units — maps below
+// with the analytic sites; the site constant lives in family_rank.hpp, this table is the stage
+// curation.)
 
 // ---- The poll-stage curation (the liveness snapshot's vocabulary) --------------------------
 //
@@ -176,6 +179,7 @@ inline constexpr PollSiteInfo kPollSiteTable[] = {
   { kPollSurveyWitnessPhase, PollStage::kWitness, kPollFaceSurvey },
   { analytic::kPollBandLattice, PollStage::kFiberDiscovery, kPollFacePoint },
   { analytic::kPollPoolClusters, PollStage::kFiberDiscovery, kPollFacePoint },
+  { analytic::kPollFamilyCurve, PollStage::kSurveyAssembly, kPollFaceSurvey },
   { analytic::kPollEventsLattice, PollStage::kLatticeScan, kPollFaceSurvey | kPollFaceMap | kPollFaceProbe },
   { analytic::kPollWalkSteps, PollStage::kBoundaryWalk, kPollFaceSurvey | kPollFacePoint | kPollFaceProbe },
   { analytic::kPollWalkPieces, PollStage::kBoundaryWalk, kPollFaceSurvey | kPollFacePoint | kPollFaceProbe },

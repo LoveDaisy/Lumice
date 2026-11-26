@@ -118,6 +118,10 @@ struct FamilySurvivor {
   bool has_domain = false;
   double domain_lower_deg = 0.0;
   double domain_upper_deg = 0.0;
+  // The ordered-curve payload (task arc-recovery-engine): this survivor's curve's index into
+  // the structure result's / document's curve table. Negative = no curve (a collapse point, a
+  // bright domain, or a pre-curve producer) — the legacy representative presentation applies.
+  int curve_index = -1;
 };
 
 }  // namespace lumice::raypath::structure

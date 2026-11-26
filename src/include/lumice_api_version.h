@@ -603,6 +603,13 @@
 // An extent that does not carry the field is never read for it; values outside [0, 8] are
 // refused. The reference map's caliber, lattice and readers are unchanged; no symbols added and
 // existing request prefixes retain their layout and behavior.
-#define LUMICE_API_VERSION 465
+// ADDED (v4.66): the survey's ordered-curve readers, a pure append — the family routing's
+// drawable critical arcs / regular tracks (task arc-recovery-engine). New reader structs
+// LUMICE_PathSurveyCurveInfo / Curve / CurvePoint / CurveSegment / CurveCusp and the entries
+// LUMICE_PathSurveyGetCurves / GetCurve / GetCurvePoint / GetCurveSegment / GetCurveCusp; the
+// JSON projection adds the `family_curves` key and `family_origin.curve_index`. No existing
+// struct grew, no symbol changed, and a document without curves reads exactly as before
+// (absent key, curve_index absent from the wire).
+#define LUMICE_API_VERSION 466
 
 #endif  // LUMICE_API_VERSION_H_

@@ -43,11 +43,21 @@ struct FamilyStructureInput {
   bool single_pose = false;
   double incident[3] = { 0.0, 0.0, -1.0 };
   double refractive_index = 0.0;
+  // The query's cooperative stop (nullptr = unbounded): the rank scans' recovery work joins the
+  // same stop — polled per member scan, the scan's own bounded units inside — so a cancel during
+  // the recovery stops the recovery, not just the card assembly past it.
+  const analytic::DiscoveryStop* stop = nullptr;
 };
 struct FamilyStructureResult {
   std::string refusal_mode;
   std::vector<structure::FamilyLadderLevel> ladder;
   std::vector<structure::FamilySurvivor> survivors;
+  // The ordered-curve payloads the scans produced (task arc-recovery-engine): one record per
+  // fold chain / regular track, in build order; the survivors reference their own by
+  // FamilySurvivor::curve_index. The curves are the scan's geometry facts — a killed candidate
+  // never references one, but an unreferenced entry is still declared data (the ladder's own
+  // killed-record discipline).
+  std::vector<survey::FamilyCurveRecord> curves;
   std::vector<survey::WarmSeed> seeds;
   bool rank_ran = false;
   std::array<double, 9> single_pose{};
