@@ -32,10 +32,11 @@
 #include <vector>
 
 #include "IconsFontAwesome6.h"
-#include "analytic/diagnostic_types.hpp"  // CrystalShape — the in-tree crystal spelling BuildFaceNormals takes
-#include "analytic/family_rank.hpp"  // EvaluateFamilyPoint / ImageAltAzDeg — the track witness's optical recompute
-#include "analytic/path_evaluation.hpp"  // BuildFaceNormals / ResolveFaceSequence — the witness's own crystal
-#include "core/optics.hpp"               // IceRefractiveIndex::Get — the survey arm's own reference n, the one table
+#include "analytic/family_rank.hpp"        // ImageAltAzDeg / EulerPoseDeg — the track witness's sky-frame
+                                           // conversions (header-inline; no link-surface symbol)
+#include "include/lumice_analytic_core.h"  // LUMICE_ANALYTIC_EvaluatePath — the witness's recompute, on the
+                                           // engine's exported analytic surface: gui_test's tests live on the
+                                           // C API the way the GUI does (test/gui/CMakeLists.txt's boundary)
 #include "gui/analysis_panel.hpp"
 #include "gui/analyze_map_renderer.hpp"  // MapCellIndex — the point-image reuse leg's cell lookup
 #include "gui/analyze_map_view.hpp"
@@ -3796,7 +3797,6 @@ int Ac5CountUncoveredCurves(const gui::SurveyOverlayFacts& new_set, const Ac5Dra
   return uncovered;
 }
 
-#ifndef LUMICE_SHARED_DEFINE
 // The declared physical system's own optical reference, built once from the scene's declared
 // identity: the population's crystal (prism h=0.3, fd=1x6), the declared sun (altitude 20,
 // azimuth 0, as the propagation direction EvaluatePath takes) and the survey arm's own
@@ -3818,27 +3818,27 @@ int Ac5CountUncoveredCurves(const gui::SurveyOverlayFacts& new_set, const Ac5Dra
 // recompute onto the new pose's sky, not the drawn one.
 struct Ac5ReshapeReference {
   bool built = false;
-  analytic::FaceNormalTable normals;
-  double incident[3] = {};  // the sun's propagation direction (EvaluatePath's convention)
+  LUMICE_ANALYTIC_Crystal crystal{};  // the declared identity's own spelling on the exported surface
+  double incident[3] = {};            // the sun's propagation direction (EvaluatePath's convention)
   double refractive_index = 0.0;
 };
 Ac5ReshapeReference Ac5BuildParryReference() {
   Ac5ReshapeReference reference;
-  analytic::CrystalShape crystal;
-  crystal.kind = analytic::CrystalShapeKind::kPrism;
-  crystal.height = 0.3;
+  reference.crystal.kind = LUMICE_ANALYTIC_CRYSTAL_PRISM;
+  reference.crystal.height = 0.3;
   for (int i = 0; i < 6; ++i) {
-    crystal.face_distance[i] = 1.0;
-  }
-  if (analytic::BuildFaceNormals(crystal, &reference.normals) != analytic::Status::kOk) {
-    return reference;
+    reference.crystal.face_distance[i] = 1.0;
   }
   double sun[3];
   Ac5SkyDir(20.0, 0.0, sun);
   for (int c = 0; c < 3; ++c) {
     reference.incident[c] = -sun[c];
   }
-  reference.refractive_index = lumice::IceRefractiveIndex::Get(550.0);
+  // The engine's own ice table at 550 nm, pinned to the exact double the table produces
+  // (core/optics.cpp Shellmeier kCoefAvr; probed 2026-11-26). The pin couples the witness to
+  // the table's value on purpose: a table change moves the drawn curves beyond epsilon and
+  // fails here loudly, instead of a parallel table call drifting beside the engine's.
+  reference.refractive_index = 1.3110129100622272;
   reference.built = true;
   return reference;
 }
@@ -3903,20 +3903,7 @@ Ac5ReshapeGates Ac5JudgeReshapeAcceptance(const Ac5ReshapeReference& reference, 
         curve.member.size() > 64) {
       continue;
     }
-    // The curve's own declared member resolves its slots — the witness judges the member the
-    // curve claims (the class expansion's curves carry several members, measured above).
-    int slots[64];
     const int member_count = static_cast<int>(curve.member.size());
-    if (analytic::ResolveFaceSequence(reference.normals, curve.member.data(), member_count, slots) !=
-        analytic::Status::kOk) {
-      all_match = false;  // the curve's own member is unresolvable on this crystal: unwitnessed
-      continue;
-    }
-    analytic::PathOutputs outputs;
-    std::vector<double> segment_scratch(3 * (member_count + 1), 0.0);
-    std::vector<double> transmittance_scratch(member_count, 0.0);
-    outputs.segment_directions = segment_scratch.data();
-    outputs.interface_transmittances = transmittance_scratch.data();
     for (const auto& point : curve.points) {
       bool witnessed = false;
       bool on_family = false;
@@ -3944,10 +3931,14 @@ Ac5ReshapeGates Ac5JudgeReshapeAcceptance(const Ac5ReshapeReference& reference, 
                         pin_zenith, pin_roll);
         }
       }
-      if (analytic::EvaluatePath(reference.normals, slots, member_count, reference.refractive_index, reference.incident,
-                                 point.pose, &outputs)) {
+      LUMICE_ANALYTIC_PathEvaluation eval{};
+      eval.struct_size = sizeof(eval);
+      if (LUMICE_ANALYTIC_EvaluatePath(&reference.crystal, curve.member.data(), member_count,
+                                       reference.refractive_index, reference.incident, point.pose,
+                                       &eval) == LUMICE_ANALYTIC_OK &&
+          eval.valid == 1) {
         evaluated = true;
-        analytic::ImageAltAzDeg(outputs.outgoing_direction, &image_alt_deg, &image_az_deg);
+        analytic::ImageAltAzDeg(eval.outgoing_direction, &image_alt_deg, &image_az_deg);
         gui::SurveyOverlayFacts::FamilyCurveFact::Point drawn;
         gui::SurveyOverlayFacts::FamilyCurveFact::Point recomputed;
         drawn.alt_deg = point.alt_deg;
@@ -4364,11 +4355,7 @@ bool FamilyCurveAc5WidenReshapeScenes(ImGuiTestContext* ctx) {
     {
       const Ac5ReshapeReference tilted_reference = Ac5BuildParryReference();
       IM_CHECK_RETV(tilted_reference.built, false);
-      int tilt_slots[2];
       const int tilt_faces[2] = { 3, 5 };
-      IM_CHECK_RETV(
-          analytic::ResolveFaceSequence(tilted_reference.normals, tilt_faces, 2, tilt_slots) == analytic::Status::kOk,
-          false);
       const auto run_tilt_leg = [&](const char* label, double pin_zenith, double pin_roll, double az_step) {
         gui::SurveyOverlayFacts tilted_old;
         tilted_old.family_curves.push_back(Ac5SyntheticEquatorArc(-40.0, -20.0, 2.0, { 3, 5 }));
@@ -4378,11 +4365,6 @@ bool FamilyCurveAc5WidenReshapeScenes(ImGuiTestContext* ctx) {
         tilted_track.member = { 3, 5 };
         tilted_track.grid_spacing_deg[0] = 2.8125;
         tilted_track.grid_spacing_deg[1] = 2.8125;
-        analytic::PathOutputs tilt_outputs;
-        std::vector<double> tilt_segments_scratch(3 * 3, 0.0);
-        std::vector<double> tilt_transmittance_scratch(2, 0.0);
-        tilt_outputs.segment_directions = tilt_segments_scratch.data();
-        tilt_outputs.interface_transmittances = tilt_transmittance_scratch.data();
         int tilted_sampled = 0;
         // The tilt family's feasible window is narrow at this sun (measured: the low-azimuth
         // stretch refuses every sample), so the probe sweeps the full circle and keeps
@@ -4390,13 +4372,16 @@ bool FamilyCurveAc5WidenReshapeScenes(ImGuiTestContext* ctx) {
         for (double tilt_az = 0.0; tilt_az < 360.0; tilt_az += az_step) {
           double tilt_pose[9];
           analytic::EulerPoseDeg(tilt_az, pin_zenith, pin_roll, tilt_pose);
-          if (!analytic::EvaluatePath(tilted_reference.normals, tilt_slots, 2, tilted_reference.refractive_index,
-                                      tilted_reference.incident, tilt_pose, &tilt_outputs)) {
+          LUMICE_ANALYTIC_PathEvaluation tilt_eval{};
+          tilt_eval.struct_size = sizeof(tilt_eval);
+          if (LUMICE_ANALYTIC_EvaluatePath(&tilted_reference.crystal, tilt_faces, 2, tilted_reference.refractive_index,
+                                           tilted_reference.incident, tilt_pose, &tilt_eval) != LUMICE_ANALYTIC_OK ||
+              tilt_eval.valid != 1) {
             continue;  // an infeasible tilt sample: skipped, the feasible ones carry the probe
           }
           double tilt_alt = 0.0;
           double tilt_img_az = 0.0;
-          analytic::ImageAltAzDeg(tilt_outputs.outgoing_direction, &tilt_alt, &tilt_img_az);
+          analytic::ImageAltAzDeg(tilt_eval.outgoing_direction, &tilt_alt, &tilt_img_az);
           gui::SurveyOverlayFacts::FamilyCurveFact::Point p;
           p.params_deg[0] = tilt_az;
           p.params_deg[1] = pin_roll;
@@ -4489,10 +4474,6 @@ bool FamilyCurveAc5WidenReshapeScenes(ImGuiTestContext* ctx) {
 
   return true;
 }
-#endif  // LUMICE_SHARED_DEFINE: the AC5 witness legs call the static analytic kernel's own
-// C++ symbols (EvaluatePath / ResolveFaceSequence / BuildFaceNormals / IceRefractiveIndex)
-// that the shared engine's export surface deliberately does not carry; the shared gui_test
-// job is compile+link-only, so gating the legs here costs zero executed coverage.
 
 // AC5 leg 4 — the Lowitz sheet: the picked witness's member is the curve's OWN member — the
 // readout renders the picked curve's own member spelling, never another curve's (the
@@ -22078,9 +22059,7 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
   }
   {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "family_curve_ac5_widen_reshape_scenes");
-#ifndef LUMICE_SHARED_DEFINE
     t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(FamilyCurveAc5WidenReshapeScenes(ctx)); };
-#endif
   }
   {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "family_curve_ac5_lowitz_own_member_witness");
