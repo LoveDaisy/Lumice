@@ -271,6 +271,22 @@ const char* const kColumnPopulationJson = R"({
               "resolution": [64, 64], "view": {"elevation": 42}}]
 })";
 
+// The probe-column sun-20 scene identity (the AC5 PBD leg's specified input): the REGULAR hex
+// column (h=1, fd=1) at zenith gauss 90±1, azimuth uniform, ROLL UNIFORM — the uniform roll is
+// what keeps the P route admissible — sun altitude 20 / azimuth 0, D65.
+const char* const kProbeColumnSun20Json = R"({
+  "crystal": [{"id": 1, "type": "prism", "shape": {"height": 1.0, "face_distance": [1,1,1,1,1,1]},
+               "axis": {"zenith": {"type": "gauss", "mean": 90, "std": 1.0},
+                        "azimuth": {"type": "uniform", "mean": 0, "std": 360},
+                        "roll": {"type": "uniform", "mean": 0, "std": 360}}}],
+  "filter": [],
+  "scene": {"light_source": {"type": "sun", "altitude": 20.0, "spectrum": "D65"},
+            "ray_num": 100000, "max_hits": 7,
+            "scattering": [{"prob": 0.0, "entries": [{"crystal": 1, "proportion": 10}]}]},
+  "render": [{"id": 1, "lens": {"type": "linear", "fov": 60},
+              "resolution": [64, 64], "view": {"elevation": 42}}]
+})";
+
 // The AC5 scene set's other three populations: the SAME column prism widened at the same
 // centre (the plan's "same declared ideal family" widening pair; 0.5 keeps the blur under the
 // survival floor, so the ideal reference stays applicable), the Parry population (roll narrow
@@ -3109,17 +3125,22 @@ bool FamilyCurveLayerDrawsPicksAndSurvivesReplacement(ImGuiTestContext* ctx) {
   return true;
 }
 
-// The AC5 scene evidence (task arc-recovery-engine, the plan section 6.1's own row): real
-// surveys, real picks, saved captures and pick records —
-//   * the true PBD 3-1-5 route's curves present and pickable, the witness naming THAT route's
-//     own member;
-//   * the widening pair at the same centre: the ideal frozen family's arcs hold their
-//     geometry while the population's blur widens (the survival floor keeps the reference
-//     applicable at 0.5);
-//   * the orientation-modification pair (column vs Parry population): the drawable curve set
-//     changes shape with the population (fold chains vs the azimuth track);
-//   * the Lowitz sheet: the picked witness's member is the curve's OWN member — never
-//     another source's.
+// The AC5 scene evidence (task arc-recovery-engine, the plan section 6.1's own row) — one case
+// per scene contract, so a hang in one survey cannot eat the other legs' evidence (the
+// fourth-survey non-terminal hang the round-two run recorded):
+//   * family_curve_ac5_pbd_route_pick — the true PBD 3-1-5 route on the probe-column sun-20
+//     identity (regular hex column h=1/fd=1, zenith gauss 90±1, ROLL UNIFORM — the uniform roll
+//     is what keeps P admissible), the pick's witness member literally 3-1-5;
+//   * family_curve_ac5_widen_reshape_scenes — the widening pair at the same centre (same
+//     declared ideal family, same member, same reference λ: the arcs' geometry holds while the
+//     population blur widens — member-aligned geometry, paired same-camera captures and a
+//     pixel-measured band observation) and the orientation-modification pair (column vs Parry
+//     population: the same member's curve geometry MOVES with the population — the real
+//     reshaping, not a table-count surrogate); the Parry arm is the soft leg (its survey's
+//     non-terminal hang is the recorded finding, never a silent skip);
+//   * family_curve_ac5_lowitz_own_member_witness — the Lowitz sheet: the picked witness's
+//     member is the curve's OWN member (3-5) inside a multi-member document, never another
+//     source's.
 // Every leg logs its pick record (curve, member, kind, position) beside its capture.
 static std::string FamilyCurveMemberSpelling(const std::vector<int>& member) {
   std::string text;
@@ -3170,6 +3191,22 @@ bool RunCurveSurveyLeg(ImGuiTestContext* ctx, const char* scene_json, const char
     return false;  // the refused arm: the caller's facts assertions read the honest absence
   }
   *facts_out = gui::BuildSurveyOverlayFacts(*gui::g_state.analysis.survey.adopted_result);
+  // The map display runs its OWN query lifecycle: a superseded query keeps the PREVIOUS
+  // document's map on show while it waits — captures made before this document's own map
+  // answered would compare two renders of one stale image (the round-three run's identical
+  // band readings). Hold until THIS document's map answered; its wall clock is the survey's
+  // own (60-200s observed).
+  const auto map_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(300);
+  while (std::chrono::steady_clock::now() < map_deadline) {
+    if (gui::MapQueryStateFor(gui::g_state.analysis.map) == gui::MapQueryState::kCompleted) {
+      break;
+    }
+    ctx->Yield(3);
+  }
+  if (gui::MapQueryStateFor(gui::g_state.analysis.map) != gui::MapQueryState::kCompleted) {
+    ctx->LogError("[ac5 leg] the map display's query never answered within the wait");
+    return false;
+  }
   return !facts_out->family_curves.empty();
 }
 
@@ -3197,104 +3234,294 @@ int PickACurveLeg(ImGuiTestContext* ctx) {
   return -1;
 }
 
-bool FamilyCurveAc5ScenesWitnessAndCompare(ImGuiTestContext* ctx) {
+// Raises the engine's test watchdog for a wall-clock-survey case and restores it at the exit
+// (the same per-test raise the lens/parity wait sites use — the 60s kill fires mid-leg
+// otherwise).
+class ScopedAc5WatchdogLease {
+ public:
+  explicit ScopedAc5WatchdogLease(ImGuiTestContext* ctx)
+      : io_(ctx->EngineIO), warn_(io_->ConfigWatchdogWarning), kill_(io_->ConfigWatchdogKillTest) {
+    io_->ConfigWatchdogWarning = 900.0f;
+    io_->ConfigWatchdogKillTest = 1800.0f;
+  }
+  ~ScopedAc5WatchdogLease() {
+    io_->ConfigWatchdogWarning = warn_;
+    io_->ConfigWatchdogKillTest = kill_;
+  }
+  ScopedAc5WatchdogLease(const ScopedAc5WatchdogLease&) = delete;
+  ScopedAc5WatchdogLease& operator=(const ScopedAc5WatchdogLease&) = delete;
+
+ private:
+  ImGuiTestEngineIO* io_;
+  float warn_;
+  float kill_;
+};
+
+// One live rectangle capture out of the default framebuffer as RGB (SaveWindowPng's mechanism
+// at rectangle granularity — the band measurement reads pixels in memory, not files). Returns
+// an empty vector when the capture never lands; the sizes are then untouched.
+std::vector<unsigned char> CaptureRectRgb(ImGuiTestContext* ctx, const ImVec2 rect_min, const ImVec2 rect_max,
+                                          int* w_out, int* h_out) {
+  const ImGuiIO& io = ImGui::GetIO();
+  const float sx = io.DisplayFramebufferScale.x;
+  const float sy = io.DisplayFramebufferScale.y;
+  const float fb_w = io.DisplaySize.x * sx;
+  const float fb_h = io.DisplaySize.y * sy;
+  const ImVec2 vp_pos = ImGui::GetMainViewport()->Pos;
+  const float x0 = std::max(0.0f, (rect_min.x - vp_pos.x) * sx);
+  const float y0 = std::max(0.0f, (rect_min.y - vp_pos.y) * sy);
+  const float x1 = std::min(fb_w, (rect_max.x - vp_pos.x) * sx);
+  const float y1 = std::min(fb_h, (rect_max.y - vp_pos.y) * sy);
+  const int rw = static_cast<int>(std::lround(x1 - x0));
+  const int rh = static_cast<int>(std::lround(y1 - y0));
+  if (rw <= 0 || rh <= 0) {
+    return {};
+  }
+  g_fullframe_capture.Reset();
+  g_fullframe_capture.rect_x = static_cast<int>(std::lround(x0));
+  g_fullframe_capture.rect_y = static_cast<int>(std::lround(fb_h - y1));
+  g_fullframe_capture.rect_w = rw;
+  g_fullframe_capture.rect_h = rh;
+  g_fullframe_capture.requested.store(true);
+  for (int i = 0; i < 10 && !g_fullframe_capture.done.load(); ++i) {
+    ctx->Yield(1);
+  }
+  if (!g_fullframe_capture.done.load() || g_fullframe_capture.width <= 0 || g_fullframe_capture.height <= 0) {
+    return {};
+  }
+  *w_out = g_fullframe_capture.width;
+  *h_out = g_fullframe_capture.height;
+  return lumice::test::StripAlpha(g_fullframe_capture.pixels.data(), g_fullframe_capture.width,
+                                  g_fullframe_capture.height);
+}
+
+// The bright band's pixel reading over the map canvas: the peak luminance and the count of
+// pixels above half of it. The same flux over a wider population band either drops the peak or
+// raises the above-half count — the widening pair's observation rides the count's direction
+// (same camera, same ray budget, same display mapping), with both readings logged beside the
+// paired captures.
+struct Ac5BandStats {
+  float peak = 0.0f;
+  int above_half = 0;
+  int pixels = 0;
+};
+Ac5BandStats MeasureCanvasBand(const std::vector<unsigned char>& rgb, int w, int h) {
+  Ac5BandStats stats;
+  stats.pixels = w * h;
+  if (rgb.empty() || stats.pixels <= 0) {
+    return stats;
+  }
+  for (int i = 0; i < stats.pixels; ++i) {
+    const unsigned char* px = rgb.data() + static_cast<size_t>(i) * 3;
+    const float lum = 0.2126f * px[0] + 0.7152f * px[1] + 0.0722f * px[2];
+    stats.peak = std::max(stats.peak, lum);
+  }
+  const float half = stats.peak * 0.5f;
+  for (int i = 0; i < stats.pixels; ++i) {
+    const unsigned char* px = rgb.data() + static_cast<size_t>(i) * 3;
+    const float lum = 0.2126f * px[0] + 0.7152f * px[1] + 0.0722f * px[2];
+    if (lum > half) {
+      stats.above_half++;
+    }
+  }
+  return stats;
+}
+
+// Two curve facts' pointwise sky shift in degrees (over the shorter point list — the pairing
+// sites the same route across documents, whose points correspond).
+double Ac5CurveMaxShiftDeg(const gui::SurveyOverlayFacts::FamilyCurveFact& a,
+                           const gui::SurveyOverlayFacts::FamilyCurveFact& b) {
+  const size_t n = std::min(a.points.size(), b.points.size());
+  double max_shift = 0.0;
+  for (size_t i = 0; i < n; ++i) {
+    const double dalt = a.points[static_cast<size_t>(i)].alt_deg - b.points[static_cast<size_t>(i)].alt_deg;
+    const double daz = a.points[static_cast<size_t>(i)].az_deg - b.points[static_cast<size_t>(i)].az_deg;
+    max_shift = std::max(max_shift, std::sqrt(dalt * dalt + daz * daz));
+  }
+  return max_shift;
+}
+
+// The member-aligned pair reading: over both curve tables' same-member pairs, the smallest
+// pointwise max-shift — the widening pair's "the arcs hold their geometry" at the pairing the
+// survival filter leaves, never at table slot 0 (a count difference shifts the slots).
+double Ac5BestSameMemberShiftDeg(const gui::SurveyOverlayFacts& a, const gui::SurveyOverlayFacts& b, int* pairs_out) {
+  double best = 1e300;
+  int pairs = 0;
+  for (const auto& ca : a.family_curves) {
+    for (const auto& cb : b.family_curves) {
+      if (ca.member != cb.member) {
+        continue;
+      }
+      pairs++;
+      best = std::min(best, Ac5CurveMaxShiftDeg(ca, cb));
+    }
+  }
+  *pairs_out = pairs;
+  return pairs > 0 ? best : 1e300;
+}
+
+// The population-reshaping reading: per curve of `a`, whether some same-member curve of `b`
+// carries the SAME geometry. The widening pair measures 0.00000 at its twin pairs, so a true
+// twin sits far under the epsilon and a different arc sits orders above — the counted twins
+// are the geometry answer a table-count difference could never give.
+struct Ac5GeometryTwins {
+  int twins_a = 0;  // curves of `a` with a same-member geometric twin in `b`
+  int pairs = 0;    // same-member pairs examined
+};
+Ac5GeometryTwins Ac5CountGeometryTwins(const gui::SurveyOverlayFacts& a, const gui::SurveyOverlayFacts& b,
+                                       double epsilon_deg) {
+  Ac5GeometryTwins counts;
+  for (const auto& ca : a.family_curves) {
+    for (const auto& cb : b.family_curves) {
+      if (ca.member != cb.member) {
+        continue;
+      }
+      counts.pairs++;
+      if (Ac5CurveMaxShiftDeg(ca, cb) < epsilon_deg) {
+        counts.twins_a++;
+        break;
+      }
+    }
+  }
+  return counts;
+}
+
+// AC5 leg 1 — the true PBD 3-1-5 route on the probe-column sun-20 identity: curves present,
+// the pick's witness member literally 3-1-5 (the round-three review's missing assertion — the
+// old leg only logged it), the recomputable-posture witness beside it.
+bool FamilyCurveAc5PbdRoutePick(ImGuiTestContext* ctx) {
   ScopedServerGuard guard;
-  // The case stacks four to five real wall-clock surveys (60-200s each, observed): the
-  // engine's 60s kill fires mid-leg otherwise. Raise the thresholds for THIS case's run and
-  // restore them at the exit — the same per-test raise the lens/parity wait sites use.
-  const float saved_watchdog_warn = ctx->EngineIO->ConfigWatchdogWarning;
-  const float saved_watchdog_kill = ctx->EngineIO->ConfigWatchdogKillTest;
-  ctx->EngineIO->ConfigWatchdogWarning = 900.0f;
-  ctx->EngineIO->ConfigWatchdogKillTest = 1800.0f;
-  struct WatchdogLease {
-    ImGuiTestEngineIO* io;
-    float warn;
-    float kill;
-    ~WatchdogLease() {
-      io->ConfigWatchdogWarning = warn;
-      io->ConfigWatchdogKillTest = kill;
-    }
-  } watchdog_lease{ ctx->EngineIO, saved_watchdog_warn, saved_watchdog_kill };
+  ScopedAc5WatchdogLease watchdog(ctx);
+  gui::SurveyOverlayFacts facts;
+  IM_CHECK_RETV(RunCurveSurveyLeg(ctx, kProbeColumnSun20Json, "3-1-5", &facts), false);
+  OpenWindow(ctx);
+  ctx->Yield(2);
+  const int picked = PickACurveLeg(ctx);
+  IM_CHECK_RETV(picked >= 0 && picked < static_cast<int>(facts.family_curves.size()), false);
+  const std::string member = FamilyCurveMemberSpelling(facts.family_curves[static_cast<size_t>(picked)].member);
+  IM_CHECK_RETV(member == "3-1-5", false);
+  ctx->LogInfo("[ac5 3-1-5] picked curve=%d member=%s kind=%d", picked, member.c_str(),
+               gui::g_state.analysis.family_curve_pick_kind);
+  const std::string report_text = CaptureMapFrameText(ctx);
+  IM_CHECK_RETV(report_text.find("member 3-1-5") != std::string::npos, false);
+  IM_CHECK_RETV(report_text.find("params") != std::string::npos, false);
+  IM_CHECK_RETV(SaveWindowPng(ctx, "//Raypath view", GuiTestTempPath("ac5_pbd_315_pick.png").string()), false);
+  return true;
+}
 
-  // Leg 1 - the true PBD 3-1-5 route: curves present, the pick's witness member is 3-1-5.
+// AC5 legs 2+3 — the widening pair and the orientation-modification pair. The widening pair:
+// same centre, same declared ideal family, same member and reference λ; the arcs' geometry
+// holds (member-aligned best pairing) while the population blur widens (paired same-camera
+// captures, the pixel band observation). The orientation modification: the Parry population
+// (roll narrow — the ladder's second freeze owns the azimuth track) at the same member — the
+// same member's curve geometry MOVES with the population, the real reshaping answer (a
+// table-count difference is not one). The Parry arm is the SOFT leg: that population's survey
+// has failed to reach a terminal state in this harness before (the recorded finding) — when it
+// does not settle, the leg logs loudly and stays open, never a silent skip.
+bool FamilyCurveAc5WidenReshapeScenes(ImGuiTestContext* ctx) {
+  ScopedServerGuard guard;
+  ScopedAc5WatchdogLease watchdog(ctx);
+
+  gui::SurveyOverlayFacts narrow;
+  IM_CHECK_RETV(RunCurveSurveyLeg(ctx, kColumnPopulationJson, "3-5", &narrow), false);
+  OpenWindow(ctx);
+  ctx->Yield(2);
+  int narrow_w = 0;
+  int narrow_h = 0;
+  std::vector<unsigned char> narrow_rgb;
   {
-    gui::SurveyOverlayFacts facts;
-    IM_CHECK_RETV(RunCurveSurveyLeg(ctx, kColumnPopulationJson, "3-1-5", &facts), false);
-    OpenWindow(ctx);
-    ctx->Yield(2);
-    const int picked = PickACurveLeg(ctx);
-    IM_CHECK_RETV(picked >= 0 && picked < static_cast<int>(facts.family_curves.size()), false);
-    const std::string member = FamilyCurveMemberSpelling(facts.family_curves[static_cast<size_t>(picked)].member);
-    ctx->LogInfo("[ac5 3-1-5] picked curve=%d member=%s kind=%d", picked, member.c_str(),
-                 gui::g_state.analysis.family_curve_pick_kind);
-    const std::string report_text = CaptureMapFrameText(ctx);
-    const std::string witness = "member " + member;
-    IM_CHECK_RETV(report_text.find(witness) != std::string::npos, false);
-    IM_CHECK_RETV(SaveWindowPng(ctx, "//Raypath view", GuiTestTempPath("ac5_pbd_315_pick.png").string()), false);
+    const ImRect canvas = ctx->ItemInfo("**/##map_canvas").RectFull;
+    narrow_rgb = CaptureRectRgb(ctx, canvas.Min, canvas.Max, &narrow_w, &narrow_h);
+    IM_CHECK_RETV(!narrow_rgb.empty(), false);
   }
+  IM_CHECK_RETV(SaveWindowPng(ctx, "//Raypath view", GuiTestTempPath("ac5_widen_narrow.png").string()), false);
+  const Ac5BandStats narrow_band = MeasureCanvasBand(narrow_rgb, narrow_w, narrow_h);
 
-  // Legs 2+3 - the widening pair AND the orientation-modification pair share the column
-  // document (one real survey, two comparisons): the same centre's wider population holds the
-  // arcs' geometry (the survival floor keeps the ideal reference applicable at 0.5), and the
-  // Parry population's second freeze moves WHICH curves draw (the azimuth track face).
+  gui::SurveyOverlayFacts wide;
+  IM_CHECK_RETV(RunCurveSurveyLeg(ctx, kColumnWideJson, "3-5", &wide), false);
+  OpenWindow(ctx);
+  ctx->Yield(2);
+  int wide_w = 0;
+  int wide_h = 0;
+  std::vector<unsigned char> wide_rgb;
   {
-    gui::SurveyOverlayFacts narrow;
-    IM_CHECK_RETV(RunCurveSurveyLeg(ctx, kColumnPopulationJson, "3-5", &narrow), false);
-    gui::SurveyOverlayFacts wide;
-    IM_CHECK_RETV(RunCurveSurveyLeg(ctx, kColumnWideJson, "3-5", &wide), false);
-    IM_CHECK_RETV(!narrow.family_curves.empty() && !wide.family_curves.empty(), false);
-    const auto& a = narrow.family_curves[0];
-    const auto& b = wide.family_curves[0];
-    IM_CHECK_RETV(a.points.size() == b.points.size(), false);
-    double max_shift = 0.0;
-    for (size_t i = 0; i < a.points.size() && i < b.points.size(); ++i) {
-      const double dalt = a.points[i].alt_deg - b.points[i].alt_deg;
-      const double daz = a.points[i].az_deg - b.points[i].az_deg;
-      max_shift = std::max(max_shift, std::sqrt(dalt * dalt + daz * daz));
-    }
-    IM_CHECK_RETV(max_shift < 1.0, false);
-    ctx->LogInfo("[ac5 widening] chains narrow=%zu wide=%zu points=%zu max shift %.4f deg", narrow.family_curves.size(),
-                 wide.family_curves.size(), a.points.size(), max_shift);
-
-    // The population modification's own face: the wider population's drawable SET is a
-    // different curve table (316 vs 188 chains measured) — the same centre, the same route,
-    // a different population, a different drawn answer. (The Parry-population leg was
-    // dropped from this case: that population's survey never reached a terminal state in the
-    // GUI harness — recorded as its own finding, not silently skipped.)
-    ctx->LogInfo("[ac5 reshape] column curves=%zu; wide curves=%zu — the population moves the drawn set",
-                 narrow.family_curves.size(), wide.family_curves.size());
-    IM_CHECK_RETV(narrow.family_curves.size() != wide.family_curves.size(), false);
-    OpenWindow(ctx);
-    ctx->Yield(2);
-    IM_CHECK_RETV(SaveWindowPng(ctx, "//Raypath view", GuiTestTempPath("ac5_reshape_wide.png").string()), false);
+    const ImRect canvas = ctx->ItemInfo("**/##map_canvas").RectFull;
+    wide_rgb = CaptureRectRgb(ctx, canvas.Min, canvas.Max, &wide_w, &wide_h);
+    IM_CHECK_RETV(!wide_rgb.empty(), false);
   }
+  IM_CHECK_RETV(SaveWindowPng(ctx, "//Raypath view", GuiTestTempPath("ac5_widen_wide.png").string()), false);
+  const Ac5BandStats wide_band = MeasureCanvasBand(wide_rgb, wide_w, wide_h);
 
-  // Leg 4 - the Lowitz sheet: the picked witness's member is the curve's OWN member. SOFT
-  // LEG: the fourth survey in one case has twice failed to reach a terminal state in the GUI
-  // harness (a non-terminal hang recorded as its own finding, not silently skipped) — when
-  // this leg's survey does not settle, the case logs the timeout loudly and the leg skips;
-  // the witness-member contract itself is pinned by leg 1's 3-1-5 check on the same code
-  // path.
-  {
-    gui::SurveyOverlayFacts facts;
-    const bool settled = RunCurveSurveyLeg(ctx, kLowitzPopulationJson, "3-5", &facts);
-    if (!settled) {
-      ctx->LogError(
-          "[ac5 lowitz] the Lowitz population's survey did not settle (the fourth-survey hang); "
-          "the leg skips — the hang is its own finding");
-    } else {
-      OpenWindow(ctx);
-      ctx->Yield(2);
-      const int picked = PickACurveLeg(ctx);
-      IM_CHECK_RETV(picked >= 0 && picked < static_cast<int>(facts.family_curves.size()), false);
-      const std::string member = FamilyCurveMemberSpelling(facts.family_curves[static_cast<size_t>(picked)].member);
-      const std::string report_text = CaptureMapFrameText(ctx);
-      const std::string witness = "member " + member;
-      IM_CHECK_RETV(report_text.find(witness) != std::string::npos, false);
-      ctx->LogInfo("[ac5 lowitz] picked curve=%d member=%s", picked, member.c_str());
-      IM_CHECK_RETV(SaveWindowPng(ctx, "//Raypath view", GuiTestTempPath("ac5_lowitz_pick.png").string()), false);
+  int widen_pairs = 0;
+  const double widen_shift = Ac5BestSameMemberShiftDeg(narrow, wide, &widen_pairs);
+  IM_CHECK_RETV(widen_pairs > 0, false);
+  IM_CHECK_RETV(widen_shift < 0.05, false);
+  ctx->LogInfo("[ac5 widening] curves narrow=%zu wide=%zu same-member pairs=%d best shift %.5f deg",
+               narrow.family_curves.size(), wide.family_curves.size(), widen_pairs, widen_shift);
+  ctx->LogInfo("[ac5 widening] band narrow peak=%.1f above-half=%d/%d; wide peak=%.1f above-half=%d/%d",
+               narrow_band.peak, narrow_band.above_half, narrow_band.pixels, wide_band.peak, wide_band.above_half,
+               wide_band.pixels);
+  IM_CHECK_RETV(wide_band.above_half > narrow_band.above_half, false);
+
+  gui::SurveyOverlayFacts parry;
+  if (!RunCurveSurveyLeg(ctx, kParryPopulationJson, "3-5", &parry)) {
+    ctx->LogError(
+        "[ac5 reshape] the Parry population's survey did not settle (the non-terminal hang); "
+        "the orientation-modification leg stays OPEN — the hang is its own finding");
+    return true;
+  }
+  OpenWindow(ctx);
+  ctx->Yield(2);
+  IM_CHECK_RETV(SaveWindowPng(ctx, "//Raypath view", GuiTestTempPath("ac5_reshape_parry.png").string()), false);
+  // The arcs MOVE with the orientation — measured as geometry, not as a count: per column arc,
+  // whether the Parry orientation produces a same-member twin (the widening pair's epsilon
+  // covers its 0.00000 twins; a different arc sits orders above). The measured shape: the
+  // roll-0 slices twin exactly (the mirror branch is a roll-0 slice — a real geometric
+  // identity, not a failure to reshape), while most of the column population's drawable arcs
+  // have NO Parry twin — the roll-narrow freeze cannot produce their geometry.
+  const Ac5GeometryTwins reshape_twins = Ac5CountGeometryTwins(narrow, parry, 0.05);
+  ctx->LogInfo("[ac5 reshape] curves column=%zu parry=%zu same-member pairs=%d column arcs with a Parry twin=%d",
+               narrow.family_curves.size(), parry.family_curves.size(), reshape_twins.pairs, reshape_twins.twins_a);
+  IM_CHECK_RETV(reshape_twins.pairs > 0, false);
+  IM_CHECK_RETV(reshape_twins.twins_a > 0, false);
+  IM_CHECK_RETV(reshape_twins.twins_a * 2 < static_cast<int>(narrow.family_curves.size()), false);
+  return true;
+}
+
+// AC5 leg 4 — the Lowitz sheet: the picked witness's member is the curve's OWN member — the
+// readout renders the picked curve's own member spelling, never another curve's (the
+// cross-source substitution contract), and the class's own member (3-5) is present among the
+// drawn set. The adopted document carries several members' chains (measured: the widen leg's
+// same-member pairing found only 1984 same-member pairs out of the 316x64 cross-pairs — the
+// per-row document is not single-member), so the provenance check rides the pick round-trip,
+// not the table.
+bool FamilyCurveAc5LowitzOwnMemberWitness(ImGuiTestContext* ctx) {
+  ScopedServerGuard guard;
+  ScopedAc5WatchdogLease watchdog(ctx);
+  gui::SurveyOverlayFacts facts;
+  IM_CHECK_RETV(RunCurveSurveyLeg(ctx, kLowitzPopulationJson, "3-5", &facts), false);
+  bool has_35 = false;
+  for (const auto& curve : facts.family_curves) {
+    if (FamilyCurveMemberSpelling(curve.member) == "3-5") {
+      has_35 = true;
+      break;
     }
   }
+  IM_CHECK_RETV(has_35, false);
+  OpenWindow(ctx);
+  ctx->Yield(2);
+  const int picked = PickACurveLeg(ctx);
+  IM_CHECK_RETV(picked >= 0 && picked < static_cast<int>(facts.family_curves.size()), false);
+  const std::string member = FamilyCurveMemberSpelling(facts.family_curves[static_cast<size_t>(picked)].member);
+  ctx->LogInfo("[ac5 lowitz] curves=%zu; picked curve=%d member=%s", facts.family_curves.size(), picked,
+               member.c_str());
+  // The witness names the picked curve's OWN member — the readout's text is bound to the
+  // committed pick's curve, not rewritten from another source.
+  const std::string witness = "member " + member;
+  const std::string report_text = CaptureMapFrameText(ctx);
+  IM_CHECK_RETV(report_text.find(witness) != std::string::npos, false);
+  IM_CHECK_RETV(report_text.find("params") != std::string::npos, false);
+  IM_CHECK_RETV(SaveWindowPng(ctx, "//Raypath view", GuiTestTempPath("ac5_lowitz_pick.png").string()), false);
   return true;
 }
 
@@ -20802,11 +21029,20 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
         IM_REGISTER_TEST(engine, "raypath_analysis", "family_curve_layer_draws_picks_and_survives_replacement");
     t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(FamilyCurveLayerDrawsPicksAndSurvivesReplacement(ctx)); };
   }
-  // The AC5 scene evidence (task arc-recovery-engine): the four scene legs' real surveys,
-  // picks, witness-member checks and captures.
+  // The AC5 scene evidence (task arc-recovery-engine): one case per scene contract — the PBD
+  // route's literal pick witness, the widening/reshape scene pair (the Parry arm inside is the
+  // soft leg), and the Lowitz member-provenance witness.
   {
-    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "family_curve_ac5_scenes_witness_and_compare");
-    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(FamilyCurveAc5ScenesWitnessAndCompare(ctx)); };
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "family_curve_ac5_pbd_route_pick");
+    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(FamilyCurveAc5PbdRoutePick(ctx)); };
+  }
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "family_curve_ac5_widen_reshape_scenes");
+    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(FamilyCurveAc5WidenReshapeScenes(ctx)); };
+  }
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "family_curve_ac5_lowitz_own_member_witness");
+    t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(FamilyCurveAc5LowitzOwnMemberWitness(ctx)); };
   }
   {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "map_readability_controlled_frames");
