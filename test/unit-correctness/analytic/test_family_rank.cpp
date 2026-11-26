@@ -1197,6 +1197,25 @@ TEST(FamilyRank, ConstantImageWindowSurvivesTheScanBound) {
     return;
   }
   bool found = false;
+  // TEMPORARY platform diagnostics (ARM64 gcc13 divergence probe; revert with the fix):
+  for (size_t ci = 0; ci < rank.fold_chains.size(); ++ci) {
+    const FoldChainRecord& chain = rank.fold_chains[ci];
+    std::printf("[diag] chain %zu closed=%d end_a=%d end_b=%d segments=%zu crossings=%zu\n", ci, chain.closed ? 1 : 0,
+                static_cast<int>(chain.end_a), static_cast<int>(chain.end_b), chain.segments.size(),
+                chain.order.size());
+    for (size_t si = 0; si < chain.segments.size(); ++si) {
+      const FoldSegmentRecord& segment = chain.segments[si];
+      std::printf("[diag]   seg %zu form=%d first=%d last=%d diam=%.10g bound=%.10g alt=%.10g az=%.10g\n", si,
+                  static_cast<int>(segment.form), segment.first, segment.last, segment.image_diameter_deg,
+                  segment.image_bound_deg, segment.image_alt_deg, segment.image_az_deg);
+    }
+    for (size_t oi = 0; oi < chain.order.size(); ++oi) {
+      const FoldPointRecord& p = rank.crossings[static_cast<size_t>(chain.order[oi])];
+      std::printf("[diag]   crossing %zu ord=%zu params=(%.12g,%.12g) alt=%.10g az=%.10g edge_dim=%d\n", oi, oi,
+                  p.params_deg[0], p.params_deg[1], p.image_alt_deg, p.image_az_deg, p.edge_dim);
+    }
+  }
+  std::printf("[diag] total chains=%zu crossings=%zu\n", rank.fold_chains.size(), rank.crossings.size());
   for (const FoldChainRecord& chain : rank.fold_chains) {
     for (const FoldSegmentRecord& segment : chain.segments) {
       if (segment.form != FoldSegmentForm::kPointImage || segment.first != 1 || segment.last != 2) {
