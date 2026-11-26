@@ -898,10 +898,10 @@ TEST(FamilyRank, C16UpperArcOrderedChainMatchesClosedFormOracle) {
   EXPECT_LT(steps[steps.size() / 2], 3.0);
 }
 
-// AC3: the mirror branch presents per segment — the collapsed middle verifies as a point
-// image at the geometric mirror identity (-sun altitude, azimuth 0), the extended ends stay
-// non-point segments, and the transition zones (where dJ(v) sinks below its resolution) stay
-// unknown — no cusp markers in numerically unresolvable regions.
+// AC3: the mirror branch presents per segment — at the exact identity plane the whole mirror
+// chain's image collapses (measured: all 70 images within ~1e-6 deg of the mirror constant),
+// the extended end fragments the unverifiable cells broke off stay non-point, and no cusp
+// markers publish in numerically unresolvable regions.
 TEST(FamilyRank, C16MirrorBranchSegmentation) {
   Fixture f;
   int slots[2];
@@ -912,12 +912,12 @@ TEST(FamilyRank, C16MirrorBranchSegmentation) {
   const RestrictedFamilyRank rank = RankRestrictedFamily(f.normals, slots, 2, C16SpinChart(), sun, kC16N, 128);
   ASSERT_EQ(rank.status, FamilyRankStatus::kOk);
 
-  // The mirror chain: the longest chain carrying a point-image segment. The strict-tangency
-  // contract (the tangency read's own instrument floor, the review's unit-corrected gate)
-  // segments the branch as the plan's own fact statement describes: the collapsed MIDDLE (the
-  // identity zone, where the deficit reads at the instrument's floor) is the point-image
-  // segment; the drifting ends (deficit 1e-4..7.8e-4 — resolvably misaligned) stay arcs. The
-  // old whole-run expectation (>40 points) embodied the curvature-swamped gate's over-claim.
+  // The mirror chain: the longest chain carrying a point-image segment. The true-tangent
+  // instrument (the review's criterion — the chord alignment is the locator only) verifies the
+  // WHOLE identity core: every speed on this chain sits under its own resolution (the reads
+  // measure ~2e-14 against a ~9e-14 floor — the exact-collapse rounding), so a segment of only
+  // the two deepest points would understate the collapse the chain's own diameter measures.
+  // The bar rejects a "found two points, done" implementation with an order of margin.
   size_t mirror = rank.fold_chains.size();
   size_t mirror_points = 0;
   for (size_t c = 0; c < rank.fold_chains.size(); c++) {
@@ -931,8 +931,9 @@ TEST(FamilyRank, C16MirrorBranchSegmentation) {
   ASSERT_LT(mirror, rank.fold_chains.size()) << "no point-image segment found";
   const FoldChainRecord& chain = rank.fold_chains[mirror];
   ASSERT_GE(chain.order.size(), 70u);
-  // A point-image claim carries a nonzero parameter extension (>= 2 crossings).
-  EXPECT_GE(mirror_points, 2u);
+  EXPECT_GE(mirror_points, 35u)
+      << "the identity core collapsed into a token pair: the chain's own diameter says the whole "
+      << "chain's image is constant, and the true-tangent speeds agree";
 
   // The collapsed segment sits at the geometric mirror identity (-sun altitude, azimuth 0) —
   // the horizontal-plane reflection's own constant, an independent witness.
@@ -944,8 +945,11 @@ TEST(FamilyRank, C16MirrorBranchSegmentation) {
     }
     has_point = true;
     EXPECT_LE(segment.image_diameter_deg, kFoldPointImageFloorDeg);
-    // The segment's own resolution statement (the verification's bound) rides the record.
+    // The segment's own resolution statement (the verification's bound) rides the record, and
+    // the measured diameter stays inside it — a claim contradicting its own bound is the
+    // review's counterexample shape, never published.
     EXPECT_GE(segment.image_bound_deg, 0.0);
+    EXPECT_GE(segment.image_bound_deg, segment.image_diameter_deg);
     EXPECT_NEAR(segment.image_alt_deg, -20.0, 0.01);
     EXPECT_NEAR(segment.image_az_deg, 0.0, 0.01);
     for (int p = segment.first; p <= segment.last; p++) {
@@ -976,9 +980,8 @@ TEST(FamilyRank, C16MirrorBranchSegmentation) {
   }
   EXPECT_LT(bottom, -22.0);
   EXPECT_TRUE(end_broken) << "the ends' breaks carry no reason";
-  // The ends are resolvably misaligned on the mirror chain itself (deficit 1e-4..7.8e-4
-  // against a ~1e-9 instrument floor): they read as arcs there, or ride the end fragments the
-  // unverifiable cells broke off.
+  // The mirror chain's own ends read by their resolvable speed wherever the chain carries
+  // them, or ride the end fragments the unverifiable cells broke off.
   int arc_points = 0;
   for (const FoldSegmentRecord& segment : chain.segments) {
     if (segment.form == FoldSegmentForm::kArc) {
@@ -1170,63 +1173,68 @@ TEST(FamilyRank, LowitzSheetOrderedChainsIncludeThePolarBranches) {
   EXPECT_EQ(provenance_ok, links_total) << "a direct link lacks its cell provenance";
 }
 
-// The review's near-degenerate counterexample: the spin chart with zenith fixed 89.9999 (one
-// hundred-thousandth of a degree off the mirror identity). Its long aligned run's measured sky
-// span (~3.6e-4 deg) sits UNDER the declared floor — the old fixed-diameter arbiter swallowed
-// it into a point image — but its kernel deficits (~7e-6, resolvably nonzero image velocity)
-// sit four orders above the tangency instrument floor: resolvably moving, an arc, never a
-// point image. The zenith-90 mirror beside it is the geometry-identity positive.
+// The review's near-degenerate counterexamples: the spin chart with zenith fixed a
+// hundred-thousandth-scale step off the mirror identity (89.9999, and the round-three
+// neighbours 89.99992 / 89.99995 the length bug survived at). At every one of them the whole
+// branch's true-tangent image speeds sit six orders above the instrument floor (measured:
+// 2.8e-6 .. 3.5e-6 against ~9e-14 — the identity is broken, the image resolvably drifts), so
+// NO point-image claim can be honest here: not the whole run (the old fixed-diameter
+// swallow), not a chord-cut pair ([34..35] with a real 2.8 deg parameter extent — its
+// predicted span passes the window's positioning bound nowhere), not a refinement-absorbed
+// sliver. Each input asserts the universal per-claim consistency AND the absence of point
+// claims; the zenith-90 mirror beside them is the geometry-identity positive.
 TEST(FamilyRank, NearDegenerateSmallArcStaysAnArc) {
   Fixture f;
   int slots[2];
   const int faces[2] = { 3, 5 };
   f.Resolve(faces, 2, slots);
-  RestrictedFamilySpec spec;
-  spec.zenith.mode = FamilyDimensionMode::kFixed;
-  spec.zenith.center_deg = 89.9999;
-  spec.azimuth.mode = FamilyDimensionMode::kFree;
-  spec.roll.mode = FamilyDimensionMode::kFree;
   double sun[3];
   SunAt(20.0, 0.0, sun);
-  const RestrictedFamilyRank rank = RankRestrictedFamily(f.normals, slots, 2, spec, sun, kC16N, 128);
-  ASSERT_EQ(rank.status, FamilyRankStatus::kOk);
-  int point_positions = 0;
-  int aligned_positions = 0;
-  for (const FoldChainRecord& chain : rank.fold_chains) {
-    for (const FoldSegmentRecord& segment : chain.segments) {
-      if (segment.form == FoldSegmentForm::kPointImage) {
+  const double zeniths[3] = { 89.9999, 89.99992, 89.99995 };
+  for (const double zenith_center : zeniths) {
+    RestrictedFamilySpec spec;
+    spec.zenith.mode = FamilyDimensionMode::kFixed;
+    spec.zenith.center_deg = zenith_center;
+    spec.azimuth.mode = FamilyDimensionMode::kFree;
+    spec.roll.mode = FamilyDimensionMode::kFree;
+    const RestrictedFamilyRank rank = RankRestrictedFamily(f.normals, slots, 2, spec, sun, kC16N, 128);
+    if (rank.status != FamilyRankStatus::kOk) {
+      ADD_FAILURE() << "zenith " << zenith_center << ": rank status " << FamilyRankStatusName(rank.status);
+      continue;  // this input's row is in; the other rows still drive
+    }
+    int point_positions = 0;
+    int aligned_positions = 0;
+    for (const FoldChainRecord& chain : rank.fold_chains) {
+      for (const FoldSegmentRecord& segment : chain.segments) {
+        if (segment.form != FoldSegmentForm::kPointImage) {
+          continue;
+        }
         point_positions += segment.last - segment.first + 1;
+        // Per-claim honesty (the review's bar — verify EVERY published claim, never just the
+        // last input's specific counterexample): a point claim contradicts its own declared
+        // bound is exactly the review's measured shape ([34..35]: diameter 8.0e-6 deg against
+        // its own 2.9e-6 bound) and must never reach the typed layer.
+        EXPECT_GE(segment.image_bound_deg, segment.image_diameter_deg)
+            << "zenith " << zenith_center << ": a point-image claim contradicts its own resolution bound (diameter "
+            << segment.image_diameter_deg << " vs bound " << segment.image_bound_deg << ")";
+      }
+      for (int idx : chain.order) {
+        if (rank.crossings[static_cast<size_t>(idx)].alignment >= 1.0 - kFoldPointImageLocatorSlack) {
+          aligned_positions++;
+        }
       }
     }
-    for (int idx : chain.order) {
-      if (rank.crossings[static_cast<size_t>(idx)].alignment >= 1.0 - kFoldPointImageLocatorSlack) {
-        aligned_positions++;
-      }
-    }
+    // The locator still sees the near-identity alignments (the input is a tenth-millidegree
+    // from the mirror) — the negative stays live: an implementation that publishes nothing
+    // because it sees nothing is not passing this test.
+    EXPECT_GT(aligned_positions, 20) << "zenith " << zenith_center << ": the counterexample lost its aligned run";
+    // No point-image claim at all: every true-tangent speed on these branches is resolvable
+    // above the instrument floor, so a constant-image claim cannot be grounded here — the
+    // whole-run swallow, the chord-cut pair and the refinement-absorbed sliver are all the
+    // same refusal.
+    EXPECT_EQ(point_positions, 0) << "zenith " << zenith_center << ": published " << point_positions
+                                  << " point-image positions on a branch whose speeds are six orders above the floor";
   }
-  // The locator still sees the near-identity alignments (the input is 4e-5 deg from the
-  // mirror); the tangency resolution gate refuses the run wholesale — the old 70-point
-  // collapse is gone. What remains is the genuinely-unresolvable island (a few positions
-  // whose deficits sit at the instrument floor: their own image velocity is below its own
-  // resolution, the honest point-image candidate the plan's criterion admits), a strict
-  // minority of the aligned run.
-  EXPECT_GT(aligned_positions, 20) << "the counterexample lost its aligned run";
-  // Per-segment honesty (the review's bar, not a count): every published point-image claim
-  // must be consistent with its OWN declared bound — the measured diameter and the
-  // velocities' predicted span inside the resolution it declares. The segment that survived
-  // last round's criterion ([34..36], diameter ~2.0e-5 deg against its ~9.8e-7 bound, image
-  // velocity ~3.5e-6 resolvable) must not reappear.
-  for (const FoldChainRecord& chain : rank.fold_chains) {
-    for (const FoldSegmentRecord& segment : chain.segments) {
-      if (segment.form != FoldSegmentForm::kPointImage) {
-        continue;
-      }
-      EXPECT_GE(segment.image_bound_deg, segment.image_diameter_deg)
-          << "a point-image claim contradicts its own resolution bound (diameter " << segment.image_diameter_deg
-          << " vs bound " << segment.image_bound_deg << ")";
-    }
-  }
-  EXPECT_LT(point_positions, aligned_positions / 2) << "the unresolvable island dominates the aligned run";
 }
 
 // AC1's one-dimensional leg: the Parry circle records as the ordered, validity-segmented track

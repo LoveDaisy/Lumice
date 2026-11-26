@@ -145,18 +145,19 @@ constexpr double kFoldLocalRankRatio = 1e-4;
 constexpr double kFoldCuspOnLocusDistanceDeg = 1e-3;
 // The point-image LOCATOR's alignment slack: a chain point joins a candidate run when
 // alignment >= 1 - this. Deliberately generous — the locator only proposes candidates; the
-// diameter verification (the floor above, midpoint-refined) is the arbiter, so a generous
-// locator costs a wasted verification on a slow arc, never a false point claim.
+// image-motion verification below is the arbiter, so a generous locator costs a wasted
+// verification on a slow arc, never a false point claim.
 constexpr double kFoldPointImageLocatorSlack = 0.05;
-// The tangency read's instrument floor (the alignment deficit's absolute uncertainty at a
-// bisected crossing): the kernel direction is reconstructed from a located read whose own
-// J residual tilts it, and the measured floor at this calibre sits at ~1e-10 (the C16 mirror
-// identity zone's deepest deficit). A deficit under max(sigma2/sigma1, this floor) cannot be
-// distinguished from exact tangency; a deficit above it is a resolvably non-constant image —
-// whatever its measured span (the near-degenerate counterexample's ~7e-6 deficit sits four
-// orders above). The constant-image SEGMENT is the strict-tangency sub-run this gate cuts
-// out of a candidate run, not the whole locator run.
-constexpr double kFoldTangencyRounding = 1e-9;
+// The true-tangent image-speed read's instrument floor: the speed is |rows . tau_true| through
+// the Jet2 chain, whose accumulated rounding on the Jacobian rows is ~1e-13 RELATIVE to the
+// rows' own magnitude — the larger singular value sigma1 is that magnitude's calibre (the same
+// relative rounding bar DjvResolution carries on the gradient). A speed under |J| (the located
+// point's positioning ambiguity) plus this floor cannot be distinguished from zero motion —
+// measured at the C16 mirror identity: the reads sit at ~2e-14 against a ~9e-14 floor (the
+// exact-collapse rounding), while the near-degenerate counterexample's resolvable drift sits
+// six orders above it. `sigma2`-floored variants were rejected by measurement: the mirror's
+// conditioning collapses faster than its rounding does.
+constexpr double kFoldImageSpeedRounding = 1e-13;
 
 // ---- the pose chart and the sky read --------------------------------------------------------------
 //
@@ -384,11 +385,15 @@ struct FoldChainLink {
 // segment; segments with no classification evidence at all come out as kUnknown — the honest
 // third form, never silently folded into an arc or a point).
 enum class FoldSegmentForm {
-  kArc,         // the image moves along the segment (the resolvably nonzero image-velocity runs)
-  kPointImage,  // verified constant image: alignment near 1 along the run AND the run's whole
-                // sky diameter (midpoint-refined) inside the declared floor
-  kUnknown,     // the numeric evidence cannot decide (alignment in the unresolved band, or a
-                // diameter the evidence cannot separate from the floor)
+  kArc,         // the image moves along the segment: the true-tangent image speed is resolvable
+                // above the segment's own positioning resolution, or the measured diameter
+                // contradicts the declared bound
+  kPointImage,  // verified constant image: every position's true-tangent image speed sits under
+                // its own resolution, the predicted motion span (parameter extent x the
+                // resolvable speed) stays inside the positioning bound, and the whole sky
+                // diameter (midpoint-refined) stays inside the declared bound
+  kUnknown,     // the numeric evidence cannot decide (a bound the evidence cannot separate from
+                // the claim ceiling, or a position with no qualified read)
 };
 const char* FoldSegmentFormName(FoldSegmentForm form);
 

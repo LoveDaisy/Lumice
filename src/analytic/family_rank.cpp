@@ -309,23 +309,31 @@ bool KernelDirection(const double rows[2][3], const double outgoing[3], double v
   return true;
 }
 
+// The neighbour parameters' per-dimension difference in canonical degree coordinates: a
+// periodic dimension's difference wraps to the short way across the seam. The DELTA is the
+// quantity the extent accumulation consumes (the un-normalized parameter displacement — the
+// review's separation of the parameter displacement from the unit tangent: a normalized helper
+// must never double as a length source, every non-degenerate adjacency would read exactly one
+// degree); the tangent helper normalizes it.
+void ChainParamDelta(const GridAxis axes[2], const double prev[2], const double next[2], double d[2]) {
+  for (int k = 0; k < 2; k++) {
+    d[k] = next[k] - prev[k];
+    if (axes[k].periodic) {
+      if (d[k] > 180.0) {
+        d[k] -= 360.0;
+      } else if (d[k] < -180.0) {
+        d[k] += 360.0;
+      }
+    }
+  }
+}
+
 // The unit tangent of the chain in canonical parameter coordinates (degrees — a uniform unit
 // factor per dimension leaves every direction comparison unchanged, so the degrees need no
 // conversion; the per-dimension differences must agree with the kernel's per-RADIAN components
-// only up to ONE common factor, which they do). `prev`/`next` are the neighbour parameters;
-// a periodic dimension's difference wraps to the short way across the seam.
+// only up to ONE common factor, which they do). `prev`/`next` are the neighbour parameters.
 void ChainTangent(const GridAxis axes[2], const double prev[2], const double next[2], double tau[2]) {
-  for (int k = 0; k < 2; k++) {
-    double d = next[k] - prev[k];
-    if (axes[k].periodic) {
-      if (d > 180.0) {
-        d -= 360.0;
-      } else if (d < -180.0) {
-        d += 360.0;
-      }
-    }
-    tau[k] = d;
-  }
+  ChainParamDelta(axes, prev, next, tau);
   const double norm = std::sqrt(tau[0] * tau[0] + tau[1] * tau[1]);
   if (norm > 0.0) {
     tau[0] /= norm;
@@ -1263,13 +1271,14 @@ RestrictedFamilyRank RankRestrictedFamily(const FaceNormalTable& normals, const 
     // ---- the image-form classification of one chain -----------------------------------------
     // Per order position: one Jet2 read (the exact second-order read of the SAME chain — the
     // value parts, the restricted Jacobian's kernel direction, and the signed Jacobian's exact
-    // gradient and Hessian), the chain tangent's alignment with the kernel, and the
-    // transversality read dJ(v) against a continuously oriented kernel. Runs of aligned points
-    // (length >= 2 — a point-image claim carries a nonzero parameter extension) are verified by
-    // their measured sky diameter with one midpoint refinement level; what passes is a
-    // kPointImage segment, what clearly moves is an arc, the undecidable band and the
-    // unevaluated positions say kUnknown. Cusp candidates are located sign-change zeros of
-    // dJ(v), searched on arc segments only.
+    // gradient and Hessian), the chain tangent's alignment with the kernel, the transversality
+    // read dJ(v) against a continuously oriented kernel, and the TRUE-tangent image speed —
+    // the classification's arbiter. Within runs of aligned points (the locator only), windows
+    // whose motion evidence stays consistent with a constant image at the window's own
+    // positioning resolution are verified by their measured sky diameter with one midpoint
+    // refinement level; what passes is a kPointImage segment, what resolvably moves is an arc,
+    // the undecidable band and the unevaluated positions say kUnknown. Cusp candidates are
+    // located sign-change zeros of dJ(v), searched on arc segments only.
     const auto classify_chain = [&](FoldChainRecord* chain) {
       const int n = static_cast<int>(chain->order.size());
       if (n == 0) {
@@ -1280,6 +1289,13 @@ RestrictedFamilyRank RankRestrictedFamily(const FaceNormalTable& normals, const 
       std::vector<double> tauhat(static_cast<size_t>(n) * 2, 0.0);
       std::vector<double> align(static_cast<size_t>(n), -1.0);
       std::vector<double> djv(static_cast<size_t>(n), 0.0);
+      // The true-tangent image-speed read (the classification's own instrument, the review's
+      // criterion): the J = 0 level curve's direction pushed through the restricted Jacobian
+      // rows, and the speed's own resolution — the positioning ambiguity plus the rounding
+      // floor. Zero speed means the critical set's own tangent lies in the map kernel: the
+      // image cannot move along the branch THERE, whatever the finite chord does.
+      std::vector<double> image_speed(static_cast<size_t>(n), 0.0);
+      std::vector<double> image_speed_res(static_cast<size_t>(n), 0.0);
       std::vector<char> read_ok(static_cast<size_t>(n), 0);
       for (int k = 0; k < n; k++) {
         if (stopped()) {
@@ -1336,6 +1352,23 @@ RestrictedFamilyRank RankRestrictedFamily(const FaceNormalTable& normals, const 
         align[static_cast<size_t>(k)] =
             std::fabs(tauhat[static_cast<size_t>(k) * 2] * v[0] + tauhat[static_cast<size_t>(k) * 2 + 1] * v[1]);
         djv[static_cast<size_t>(k)] = read.grad_jacobian[0] * v[0] + read.grad_jacobian[1] * v[1];
+        // The speed read (orientation-free — the |rows . tau_true| magnitude, never a signed
+        // chain quantity): tau_true is the J = 0 level curve's own direction, perpendicular to
+        // the gradient in the parameter plane.
+        const double g =
+            std::sqrt(read.grad_jacobian[0] * read.grad_jacobian[0] + read.grad_jacobian[1] * read.grad_jacobian[1]);
+        if (g > 0.0) {
+          const double tau_true[2] = { -read.grad_jacobian[1] / g, read.grad_jacobian[0] / g };
+          double w[3] = { 0.0, 0.0, 0.0 };
+          for (int c = 0; c < 3; c++) {
+            for (int p = 0; p < 2; p++) {
+              w[c] += read.rows[p][c] * tau_true[p];
+            }
+          }
+          image_speed[static_cast<size_t>(k)] = std::sqrt(w[0] * w[0] + w[1] * w[1] + w[2] * w[2]);
+        }
+        image_speed_res[static_cast<size_t>(k)] =
+            std::fabs(read.signed_jacobian) + kFoldImageSpeedRounding * read.sigma1;
         point.alignment = align[static_cast<size_t>(k)];
         point.djv = djv[static_cast<size_t>(k)];
         point.djv_resolution = DjvResolution(read);
@@ -1365,6 +1398,8 @@ RestrictedFamilyRank RankRestrictedFamily(const FaceNormalTable& normals, const 
           RotateVector(&tauhat, rotation);
           RotateVector(&align, rotation);
           RotateVector(&djv, rotation);
+          RotateVector(&image_speed, rotation);
+          RotateVector(&image_speed_res, rotation);
           RotateVector(&read_ok, rotation);
           RotateVector(&candidate, rotation);
         }
@@ -1398,30 +1433,38 @@ RestrictedFamilyRank RankRestrictedFamily(const FaceNormalTable& normals, const 
           }
         }
       }
-      // Verify each candidate run's STRICT-TANGENCY sub-runs: the locator admits points down
-      // to 0.95 alignment (deliberately generous), so the verification first cuts each
-      // candidate run at every position whose alignment deficit exceeds its own resolution
-      // (the kernel's conditioning sigma2/sigma1, floored at the read's instrument bar) — a
-      // deficit beyond that is a resolvably misaligned kernel read, a resolvably moving image
-      // (the near-degenerate counterexample's ~7e-6 deficit against a ~1e-10 conditioning
-      // reads arc; the C16 mirror's identity zone at ~1e-10 reads as the point-image segment
-      // the plan's own fact statement describes: the middle collapses, the ends extend). Each
-      // surviving sub-run (length >= 2) then runs the diameter/bound verification; candidate
-      // positions outside any strict sub-run keep the default arc (their misalignment is
-      // resolvable, their image provably moves).
+      // The point-image windows: the classification's arbiter is the critical set's TRUE
+      // tangent read (the chord alignment above is the locator's approximation, never the
+      // verdict — a finite chord misaligns through ordinary curvature, which is not image
+      // motion). Within each candidate run, a window [s..e] claims a constant image only
+      // while its motion evidence stays consistent with the claim at the window's own
+      // resolution:
+      //   motion: extent(s..e) x max resolvable speed(s..e) <= B_pos(s..e)
+      // A speed counts only above its own resolution (image_speed_res: the located point's
+      // positioning ambiguity |J| plus the Jet2 rounding floor on the rows); extent is the
+      // sum of the UNWRAPPED per-adjacency parameter displacements (the real parameter arc —
+      // a normalized tangent never doubles as a length source, every non-degenerate adjacency
+      // would otherwise read exactly one degree); B_pos is the window's positioning bound:
+      // twice the worst image offset sigma1 x |J| / grad_min over the window's points, plus
+      // the unit-sphere rounding floor. The motion bound compares against the POSITIONING
+      // bound deliberately, not the instrument-inclusive bound the diameter check uses below:
+      // a drift absorbed only by the refinement's own noise budget is not a collapse the
+      // instrument resolved (the near-degenerate counterexample's per-gap drift ~7e-7 deg
+      // against a ~1e-12 positioning bound reads arc; the exact mirror identity's speed sits
+      // under its resolution, the drift bound stays zero, and the whole core verifies as the
+      // point-image segment the plan's own fact statement describes — the middle collapses,
+      // the extended ends read arc by their own resolvable speed).
+      // B_pos past the claim ceiling grounds nothing: the position reads kUnknown. Windows
+      // shorter than two positions are no segment. The greedy scan grows the longest window
+      // from each position and restarts after it — deterministic, and every position ends
+      // inside a verified window or left at arc/unknown by its own evidence.
       std::vector<FoldSegmentForm> form(static_cast<size_t>(n), FoldSegmentForm::kArc);
       for (int k = 0; k < n; k++) {
         if (!read_ok[static_cast<size_t>(k)]) {
           form[static_cast<size_t>(k)] = FoldSegmentForm::kUnknown;
         }
       }
-      const auto point_strict = [&](int k) {
-        const double deficit = 1.0 - align[static_cast<size_t>(k)];
-        const double conditioning =
-            reads[static_cast<size_t>(k)].sigma2 / std::max(reads[static_cast<size_t>(k)].sigma1, 1e-300);
-        return deficit <= std::max(conditioning, kFoldTangencyRounding);
-      };
-      const auto verify_strict_subrun = [&](int run_first, int run_last) {
+      const auto verify_window = [&](int run_first, int run_last) {
         const Run run{ run_first, run_last };
         std::vector<std::array<double, 3>> dirs;
         dirs.reserve(static_cast<size_t>(run.last - run.first) * 2 + 1);
@@ -1432,19 +1475,21 @@ RestrictedFamilyRank RankRestrictedFamily(const FaceNormalTable& normals, const 
           dirs.push_back(dir);
         }
         bool mids_ok = true;
-        double align_deficit = 0.0;
-        double tangent_resolution = 0.0;
         // The on-locus refinement ("加密一致性"): the parameter chord's midpoint is NOT on the
         // branch (both chord endpoints are J zeros), so the finer sampling takes the shared
         // link cell's on-locus subdivision — its interior sub-crossings sit on the branch — at
-        // up to kFoldRunRefineGaps gaps evenly spaced along the run. Each refined point joins
-        // the diameter measure and re-reads its alignment against the gap's chord direction.
+        // up to kFoldRunRefineGaps gaps evenly spaced along the window. Each refined point
+        // joins the diameter measure and re-reads its kernel alignment against the gap's
+        // chord direction (the gross locator consistency — the refined midpoints' own
+        // 20-step-reduced bisection locates them an order coarser than the crossings' 52-step
+        // one, so no tangency verdict rides them; a gross misalignment still cuts the
+        // verification to kUnknown).
         int gap_count = run.last - run.first;
         const int refine_gaps = std::min(gap_count, kFoldRunRefineGaps);
         std::vector<Sample> refined_samples;
         std::vector<std::array<double, 2>> refined_params;
         for (int g = 0; g < refine_gaps && mids_ok; g++) {
-          // A cut refinement is an unfinished verification: the run's verdict stays kUnknown.
+          // A cut refinement is an unfinished verification: the window's verdict stays kUnknown.
           if (stopped()) {
             mids_ok = false;
             break;
@@ -1476,15 +1521,6 @@ RestrictedFamilyRank RankRestrictedFamily(const FaceNormalTable& normals, const 
               break;
             }
             const double refined_align = std::fabs((tau[0] / tau_norm) * v[0] + (tau[1] / tau_norm) * v[1]);
-            // The refined midpoints join the DIAMETER measure and the gross-locator check
-            // only: their 20-step-reduced bisection locates them an order coarser than the
-            // crossings' 52-step one, so their kernel reads carry a proportionally coarser
-            // noise floor — feeding them into the tangency gate would let the refinement's
-            // own noise flip a strict-tangency sub-run to arc (the review's one-evidence
-            // rule cuts the other way here: the tangency criterion rides the best-located
-            // reads, the crossings).
-            tangent_resolution =
-                std::max(tangent_resolution, refined_samples[r].sigma2 / std::max(refined_samples[r].sigma1, 1e-300));
             if (refined_align < 1.0 - kFoldPointImageLocatorSlack) {
               mids_ok = false;
               break;
@@ -1504,29 +1540,22 @@ RestrictedFamilyRank RankRestrictedFamily(const FaceNormalTable& normals, const 
               diameter = std::max(diameter, SkyAngleDeg(dirs[i].data(), dirs[j].data()));
             }
           }
-          // The classification is the plan's geometric criterion with its own resolution
-          // statement, plus the declared collapse cap. UNITS: the Jet2 variables are the
-          // parameters in RADIANS (degrees enter through kDegToRad), so grad_jacobian is
-          // dJ/d(radian) and |J| / |grad J| is a RADIAN distance — converted to the record's
-          // degree frame at the computation site, never compared raw against a *_deg bar
-          // (review: an unconverted distance reads ~57x too small against a degree bar).
-          // (a) the tangency — already strict at the split (every sub-run point's deficit is
-          //     under its own resolution); the refined midpoints re-check it and the
-          //     accumulated deficit gates below.
-          // (b) the measured sky diameter (points and on-locus refined midpoints, the same
-          //     sample set the verdict publishes) stays under the declared collapse cap
-          //     (kFoldPointImageFloorDeg — the mirror's identity zone measures ~1e-6 deg, the
-          //     planned counterexample arcs >= 1e-2 deg).
-          // The segment reports both the measured diameter and the derived position bound
-          // (twice the worst image offset sigma1 x |J| / |grad J| in the degree frame, over
-          // the run's points and refined midpoints, plus the unit-sphere rounding scale) —
-          // the resolution upper bound the plan asks the finite classification to carry.
-          for (int k = run.first; k <= run.last; k++) {
-            const FoldJet2Read& r = reads[static_cast<size_t>(k)];
-            align_deficit = std::max(align_deficit, 1.0 - align[static_cast<size_t>(k)]);
-            tangent_resolution = std::max(tangent_resolution, r.sigma2 / std::max(r.sigma1, 1e-300));
-          }
-          double derived_bound = 0.0;
+          // The declared bound and the direct consistency check. UNITS: the Jet2 variables
+          // are the parameters in RADIANS (degrees enter through kDegToRad), so grad_jacobian
+          // is dJ/d(radian) and |J| / |grad J| is a RADIAN distance — converted to the
+          // record's degree frame at the computation site, never compared raw against a
+          // *_deg bar (review: an unconverted distance reads ~57x too small against a degree
+          // bar). The bound covers (a) the window's points' positioning offsets, (b) the
+          // refined midpoints' own (the run's minimum gradient carries theirs), (c) the
+          // unit-sphere rounding floor, and (d) the refinement's own positioning bracket —
+          // the midpoints are located by the reduced 20-step bisection of half-spacing
+          // sub-edges, an order coarser than the crossings' 52-step one; their image spread
+          // enters the measured diameter, so the declared bound must cover what the diameter
+          // measures. The gates: the bound past the claim ceiling reads kUnknown (the
+          // evidence cannot ground any point claim); the measured diameter past the ceiling
+          // or past the window's OWN declared bound reads arc — a measured spread the
+          // declared resolution excludes is a resolvably moving image (the review's direct
+          // consistency check, never replaced by the motion-span prediction).
           double grad_min = 0.0;
           bool have_grad = false;
           for (int k = run.first; k <= run.last; k++) {
@@ -1538,102 +1567,38 @@ RestrictedFamilyRank RankRestrictedFamily(const FaceNormalTable& normals, const 
               have_grad = true;
             }
           }
-          std::vector<double> offs(static_cast<size_t>(n), 0.0);
+          double derived_bound = 0.0;
           for (int k = run.first; k <= run.last; k++) {
             const FoldJet2Read& r = reads[static_cast<size_t>(k)];
             // |J| / |grad J| is a radian distance; the record's frame is degrees.
             const double off_deg = grad_min > 0.0 ? std::fabs(r.signed_jacobian) / grad_min * kRadToDeg : 0.0;
-            offs[static_cast<size_t>(k)] = off_deg;
             derived_bound = std::max(derived_bound, 2.0 * r.sigma1 * off_deg);
           }
           for (const Sample& r : refined_samples) {
             // The refined midpoints carry no gradient of their own (a Sample, not a Jet2
-            // read): the run's own minimum gradient carries theirs, as before.
+            // read): the window's own minimum gradient carries theirs, as before.
             const double off_deg = grad_min > 0.0 ? std::fabs(r.signed_jacobian) / grad_min * kRadToDeg : 0.0;
             derived_bound = std::max(derived_bound, 2.0 * r.sigma1 * off_deg);
           }
           derived_bound += 1e-12;
-          // The positioning floor (a two-point run has no curvature probe at all): the
-          // endpoints' own location uncertainty over the chord length bounds how straight the
-          // tangent read can claim to be — the chord is in degrees, so the offsets it pairs
-          // with are the degree-frame ones.
-          for (int k = run.first; k < run.last; k++) {
-            const FoldPointRecord& pp = out.crossings[static_cast<size_t>(chain->order[static_cast<size_t>(k)])];
-            const FoldPointRecord& pn = out.crossings[static_cast<size_t>(chain->order[static_cast<size_t>(k + 1)])];
-            double d[2];
-            ChainTangent(axes, pp.params_deg, pn.params_deg, d);
-            const double chord = std::sqrt(d[0] * d[0] + d[1] * d[1]);
-            if (chord > 0.0) {
-              tangent_resolution = std::max(tangent_resolution,
-                                            (offs[static_cast<size_t>(k)] + offs[static_cast<size_t>(k + 1)]) / chord);
-            }
-          }
-          // The refinement's own positioning term: the midpoints are located by the reduced
-          // 20-step bisection of half-spacing sub-edges, an order coarser than the crossings'
-          // 52-step one — their image spread enters the measured diameter, so the declared
-          // bound must cover what the diameter measures.
           const double refine_bracket_deg = axes[0].spacing_deg * 0.5 / (1 << 20);
           double sigma1_max = 0.0;
           for (int k = run.first; k <= run.last; k++) {
             sigma1_max = std::max(sigma1_max, reads[static_cast<size_t>(k)].sigma1);
           }
           derived_bound += 2.0 * sigma1_max * refine_bracket_deg;
-          // The TRUE critical-set tangent's image velocity (the review's criterion, the
-          // verdict's own instrument): the locus's tangent (-J_v1, J_v0)/|grad J| — the
-          // J = 0 level curve's direction, perpendicular to the gradient in the parameter
-          // plane — pushed through the same restricted Jacobian rows. |rows . tau_true| is
-          // the image speed per parameter radian, zero exactly when the tangent lies in the
-          // kernel; the CHORD direction the split used is the locator's approximation, never
-          // the verdict's. The velocity read's own resolution: a positioning error of
-          // offs_pt moves J by |grad| x offs_pt and the tangent-parallel velocity with it —
-          // a point whose velocity sits under that ambiguity contributes zero.
-          double max_velocity = 0.0;
-          for (int k = run.first; k <= run.last; k++) {
-            const FoldJet2Read& r = reads[static_cast<size_t>(k)];
-            const double g =
-                std::sqrt(r.grad_jacobian[0] * r.grad_jacobian[0] + r.grad_jacobian[1] * r.grad_jacobian[1]);
-            if (!(g > 0.0)) {
-              continue;
-            }
-            const double tau_true[2] = { -r.grad_jacobian[1] / g, r.grad_jacobian[0] / g };
-            double w[3] = { 0.0, 0.0, 0.0 };
-            for (int c = 0; c < 3; c++) {
-              for (int p = 0; p < 2; p++) {
-                w[c] += r.rows[p][c] * tau_true[p];
-              }
-            }
-            const double speed = std::sqrt(w[0] * w[0] + w[1] * w[1] + w[2] * w[2]);
-            const double offs_rad = std::fabs(r.signed_jacobian) / g;
-            const double velocity_resolution = g * offs_rad;  // |grad| x offs: the positioning ambiguity
-            if (speed > velocity_resolution) {
-              max_velocity = std::max(max_velocity, speed);
-            }
-          }
-          // The predicted image span the resolvable velocities imply over the sub-run's own
-          // parameter extent (radians of parameter, degrees of image), compared against the
-          // segment's declared bound: the diameter-bound consistency the demand names, at
-          // the run's own resolution — the fixed 1e-3 cap stays the claim-scale ceiling
-          // only.
-          double extent_rad = 0.0;
-          for (int k = run.first; k < run.last; k++) {
-            const FoldPointRecord& pp = out.crossings[static_cast<size_t>(chain->order[static_cast<size_t>(k)])];
-            const FoldPointRecord& pn = out.crossings[static_cast<size_t>(chain->order[static_cast<size_t>(k + 1)])];
-            double d[2];
-            ChainTangent(axes, pp.params_deg, pn.params_deg, d);
-            extent_rad += std::sqrt(d[0] * d[0] + d[1] * d[1]) * kDegToRad;
-          }
-          const double predicted_span_deg = extent_rad * max_velocity * kRadToDeg;
           if (derived_bound > kFoldPointImageFloorDeg) {
-            verdict = FoldSegmentForm::kUnknown;  // the run's own evidence cannot ground a point claim
+            verdict = FoldSegmentForm::kUnknown;  // the window's own evidence cannot ground a point claim
           } else if (diameter > kFoldPointImageFloorDeg) {
             verdict = FoldSegmentForm::kArc;
-          } else if (predicted_span_deg > derived_bound) {
-            // The resolvable velocities integrate to a span the segment's own resolution
-            // excludes: a resolvably moving image, whatever its absolute size.
+          } else if (diameter > derived_bound) {
+            // The measured spread exceeds the window's own declared resolution: a
+            // resolvably moving image, whatever the absolute size.
             verdict = FoldSegmentForm::kArc;
           } else {
-            // Constant within the segment's own declared resolution, the measured span
-            // inside the evidence's reach: the point-image claim, bound published with it.
+            // Constant within the window's own declared resolution, the measured span
+            // inside the evidence's reach, the motion span inside the positioning bound
+            // (the scan's own condition): the point-image claim, bound published with it.
             verdict = FoldSegmentForm::kPointImage;
           }
           verdict_diameter = diameter;
@@ -1650,19 +1615,57 @@ RestrictedFamilyRank RankRestrictedFamily(const FaceNormalTable& normals, const 
       };
       for (const Run& run : runs) {
         int s = run.first;
-        while (s <= run.last) {
-          if (!point_strict(s)) {
-            s++;  // a resolvably misaligned position: the default arc stands
-            continue;
+        while (s + 1 <= run.last) {
+          double extent_deg = 0.0;
+          double max_speed = 0.0;
+          double sigma1_max = 0.0;
+          double jac_max = 0.0;
+          double grad_min = 0.0;
+          bool have_grad = false;
+          int best_e = -1;
+          bool cap_blind = false;
+          for (int e = s; e <= run.last; e++) {
+            const FoldJet2Read& r = reads[static_cast<size_t>(e)];
+            sigma1_max = std::max(sigma1_max, r.sigma1);
+            jac_max = std::max(jac_max, std::fabs(r.signed_jacobian));
+            const double g =
+                std::sqrt(r.grad_jacobian[0] * r.grad_jacobian[0] + r.grad_jacobian[1] * r.grad_jacobian[1]);
+            if (g > 0.0 && (!have_grad || g < grad_min)) {
+              grad_min = g;
+              have_grad = true;
+            }
+            if (image_speed[static_cast<size_t>(e)] > image_speed_res[static_cast<size_t>(e)]) {
+              max_speed = std::max(max_speed, image_speed[static_cast<size_t>(e)]);
+            }
+            if (e > s) {
+              const FoldPointRecord& pp = out.crossings[static_cast<size_t>(chain->order[static_cast<size_t>(e - 1)])];
+              const FoldPointRecord& pn = out.crossings[static_cast<size_t>(chain->order[static_cast<size_t>(e)])];
+              double d[2];
+              ChainParamDelta(axes, pp.params_deg, pn.params_deg, d);
+              extent_deg += std::sqrt(d[0] * d[0] + d[1] * d[1]);
+              const double pos_bound = have_grad && grad_min > 0.0 ? 2.0 * sigma1_max * jac_max / grad_min + 1e-12 :
+                                                                     kFoldPointImageFloorDeg * 2.0;
+              if (pos_bound > kFoldPointImageFloorDeg) {
+                cap_blind = true;  // this window start's own evidence cannot ground any point claim
+                break;
+              }
+              const double span_deg = extent_deg * kDegToRad * max_speed * kRadToDeg;
+              if (span_deg <= pos_bound) {
+                best_e = e;  // the longest consistent window so far; keep growing
+              } else if (best_e >= 0) {
+                break;  // the window stopped growing; verify the last consistent prefix
+              }
+            }
           }
-          int e = s;
-          while (e + 1 <= run.last && point_strict(e + 1)) {
-            e++;
+          if (best_e >= 0) {
+            verify_window(s, best_e);  // best_e >= s + 1: a first qualification needs two positions
+            s = best_e + 1;
+          } else {
+            if (cap_blind) {
+              form[static_cast<size_t>(s)] = FoldSegmentForm::kUnknown;
+            }
+            s++;
           }
-          if (e - s >= 1) {
-            verify_strict_subrun(s, e);  // length >= 2
-          }
-          s = e + 1;
         }
       }
       // The cusp candidates: located sign-change zeros of dJ(v) on arc positions only. The
