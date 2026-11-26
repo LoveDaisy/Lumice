@@ -46,6 +46,7 @@
 #include <vector>
 
 #include "IconsFontAwesome6.h"
+#include "gui/crystal_preview.hpp"  // GetLastAxisGizmoSnapshot — the pick-completion pose witness reads the submitted composite
 #include "gui/edit_modals.hpp"  // IsEditModalOpen / OpenEditModal / GetEditModalTarget — the toggle must not also trip the card's click handler, and the delete cases below read the editor's binding
 #include "gui/gui_state.hpp"
 #include "gui/raypath_segments.hpp"  // ParseSummandText — the filter row below is built the way the loader builds it
@@ -54,6 +55,10 @@
 #include "test_gui_shared.hpp"
 
 namespace {
+
+// The 4x4 identity, the observation's re-seated value (see the pick-completion witness below).
+constexpr float kIdentity16EntryMgmt[16] = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
+
 
 // Frames to let ProcessUpdateQueue render queued thumbnails. Generous rather than tight: what is
 // under test is that the work happens at all, and a tight bound would turn a slow frame into a red
@@ -1438,14 +1443,25 @@ void RegisterEntryManagementTests(ImGuiTestEngine* engine) {
       IM_CHECK_EQ(gui::GetEditModalTarget().layer_idx, 0);
       IM_CHECK_EQ(gui::GetEditModalTarget().entry_idx, 0);
 
-      // ...showing the crystal it now points at, from that crystal's default angle.
+      // ...showing the crystal it now points at, from that crystal's default angle. Under the
+      // O/R split that is two facts: the OBSERVATION re-seated to identity (the pick-completion
+      // reset writes the observation only — the physical pose is derived per frame from the
+      // buffers), and the SUBMITTED composite (what the preview frame actually rendered with)
+      // equals the classified family's representative pose. The composite goes through the
+      // production 4x4 compose, so compare with a tolerance: a −0/+0 byte flip on a zero entry
+      // is noise on a semantically identical rotation.
       gui::AxisDist params[3] = { column.zenith, column.azimuth, column.roll };
       float expected[16] = { 0 };
       gui::DefaultPreviewRotation(gui::AxisPreset::kColumn, params, expected);
       for (int i = 0; i < 16; ++i) {
-        if (gui::g_crystal_rotation[i] != expected[i]) {
-          IM_ERRORF("preview pose index %d is %f, expected the target crystal's default %f", i,
-                    static_cast<double>(gui::g_crystal_rotation[i]), static_cast<double>(expected[i]));
+        if (gui::g_crystal_rotation[i] != kIdentity16EntryMgmt[i]) {
+          IM_ERRORF("observation index %d is %f, expected the re-seated identity %f", i,
+                    static_cast<double>(gui::g_crystal_rotation[i]), static_cast<double>(kIdentity16EntryMgmt[i]));
+        }
+        if (std::fabs(gui::GetLastAxisGizmoSnapshot().body_rotation[i] - expected[i]) > 1e-6f) {
+          IM_ERRORF("preview composite index %d is %f, expected the target crystal's default %f", i,
+                    static_cast<double>(gui::GetLastAxisGizmoSnapshot().body_rotation[i]),
+                    static_cast<double>(expected[i]));
         }
       }
 
