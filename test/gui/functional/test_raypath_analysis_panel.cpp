@@ -3796,6 +3796,7 @@ int Ac5CountUncoveredCurves(const gui::SurveyOverlayFacts& new_set, const Ac5Dra
   return uncovered;
 }
 
+#ifndef LUMICE_SHARED_DEFINE
 // The declared physical system's own optical reference, built once from the scene's declared
 // identity: the population's crystal (prism h=0.3, fd=1x6), the declared sun (altitude 20,
 // azimuth 0, as the propagation direction EvaluatePath takes) and the survey arm's own
@@ -4488,6 +4489,10 @@ bool FamilyCurveAc5WidenReshapeScenes(ImGuiTestContext* ctx) {
 
   return true;
 }
+#endif  // LUMICE_SHARED_DEFINE: the AC5 witness legs call the static analytic kernel's own
+// C++ symbols (EvaluatePath / ResolveFaceSequence / BuildFaceNormals / IceRefractiveIndex)
+// that the shared engine's export surface deliberately does not carry; the shared gui_test
+// job is compile+link-only, so gating the legs here costs zero executed coverage.
 
 // AC5 leg 4 — the Lowitz sheet: the picked witness's member is the curve's OWN member — the
 // readout renders the picked curve's own member spelling, never another curve's (the
@@ -22073,7 +22078,9 @@ void RegisterRaypathAnalysisPanelTests(ImGuiTestEngine* engine) {
   }
   {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "family_curve_ac5_widen_reshape_scenes");
+#ifndef LUMICE_SHARED_DEFINE
     t->TestFunc = [](ImGuiTestContext* ctx) { IM_CHECK(FamilyCurveAc5WidenReshapeScenes(ctx)); };
+#endif
   }
   {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "raypath_analysis", "family_curve_ac5_lowitz_own_member_witness");
