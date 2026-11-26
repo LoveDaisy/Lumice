@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795656446322,
+  "lastUpdate": 1795656448781,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9620,50 +9620,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "4dfe2ac445b752957a1a13cbb722bb0f12a53d12",
-          "message": "Merge pull request #522 from LoveDaisy/feat/gui-visual-declutter\n\nfeat(gui): right-panel visual declutter — Continue dim, Resolution de-rust, aspect combo merge (task-713)",
-          "timestamp": "2026-10-20T02:27:18+08:00",
-          "tree_id": "ff8a85581ce9896080bb1822c5962ddbef7910ee",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/4dfe2ac445b752957a1a13cbb722bb0f12a53d12"
-        },
-        "date": 1792434793442,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 96.9,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 99.8,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 98.3,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 94.2,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "6997a5a16a019e98c1819cb1b23b8a6c42f5fc33",
           "message": "Merge pull request #523 from LoveDaisy/feat/raypath-survey-c17-c06-c09\n\nfeat(survey): C17/C06/C09 wiring — witness, dual-mechanism chroma, support set (task-714)",
           "timestamp": "2026-10-20T06:23:22+08:00",
@@ -14003,6 +13959,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 95.4,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b8fe6c8550932e7aff53ee851f4ba48b9ed93f40",
+          "message": "Merge pull request #652 from LoveDaisy/feat/rho-deep-tail-curve\n\nfix(gui): rho curve reads log densities on an independent axis; adopt the interpretive branch",
+          "timestamp": "2026-11-26T09:02:03+08:00",
+          "tree_id": "22ed15e99f07f7620cb8b9a1a189970bf09e1edf",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/b8fe6c8550932e7aff53ee851f4ba48b9ed93f40"
+        },
+        "date": 1795656448027,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 100.1,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 99.9,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 98.7,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 94.9,
             "unit": "%"
           }
         ]
