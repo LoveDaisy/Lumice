@@ -369,15 +369,12 @@ bool ComputeLabelMinWidthRatio(const FaceLabel* label, const float mvp[16], ImVe
 
 }  // namespace detail
 
-bool ProjectLabelToScreen(const FaceLabel* label, const float rotation[16], const float mvp[16], float zoom,
-                          float image_pos_x, float image_pos_y, float image_width, float image_height,
-                          float* out_screen_x, float* out_screen_y, bool* out_front_facing) {
-  const float* p = label->display_center;
-
+bool ProjectCrystalPointToImage(const float p_display[3], const float mvp[16], float image_pos_x, float image_pos_y,
+                                float image_width, float image_height, float* out_px_x, float* out_px_y) {
   // clip = mvp * (p, 1), column-major.
-  float cx = mvp[0] * p[0] + mvp[4] * p[1] + mvp[8] * p[2] + mvp[12];
-  float cy = mvp[1] * p[0] + mvp[5] * p[1] + mvp[9] * p[2] + mvp[13];
-  float cw = mvp[3] * p[0] + mvp[7] * p[1] + mvp[11] * p[2] + mvp[15];
+  float cx = mvp[0] * p_display[0] + mvp[4] * p_display[1] + mvp[8] * p_display[2] + mvp[12];
+  float cy = mvp[1] * p_display[0] + mvp[5] * p_display[1] + mvp[9] * p_display[2] + mvp[13];
+  float cw = mvp[3] * p_display[0] + mvp[7] * p_display[1] + mvp[11] * p_display[2] + mvp[15];
   // Near-singular guard: exact equality misses the cases that actually cause
   // overflow/NaN downstream (cw within float epsilon of zero). 1e-6f matches
   // the shader cross-magnitude clamp in crystal_renderer.cpp.
@@ -388,9 +385,19 @@ bool ProjectLabelToScreen(const FaceLabel* label, const float rotation[16], cons
   float ndc_x = cx / cw;
   float ndc_y = cy / cw;
 
-  *out_screen_x = image_pos_x + (ndc_x + 1.0f) * 0.5f * image_width;
+  *out_px_x = image_pos_x + (ndc_x + 1.0f) * 0.5f * image_width;
   // NDC.y is Y-up; screen is Y-down.
-  *out_screen_y = image_pos_y + (1.0f - (ndc_y + 1.0f) * 0.5f) * image_height;
+  *out_px_y = image_pos_y + (1.0f - (ndc_y + 1.0f) * 0.5f) * image_height;
+  return true;
+}
+
+bool ProjectLabelToScreen(const FaceLabel* label, const float rotation[16], const float mvp[16], float zoom,
+                          float image_pos_x, float image_pos_y, float image_width, float image_height,
+                          float* out_screen_x, float* out_screen_y, bool* out_front_facing) {
+  if (!ProjectCrystalPointToImage(label->display_center, mvp, image_pos_x, image_pos_y, image_width, image_height,
+                                  out_screen_x, out_screen_y)) {
+    return false;
+  }
 
   // Front-face test: dot(n_eye, p_eye) < 0 in the SAME model→eye frame the
   // renderer uses for edge classification (crystal_renderer.cpp::Render). The
@@ -399,6 +406,7 @@ bool ProjectLabelToScreen(const FaceLabel* label, const float rotation[16], cons
   // too — a bare `rotation` would sit in the pre-tilt model frame and mislabel
   // faces near the horizon. Correspondence with the renderer's per-edge cull
   // is mechanically guarded by unit/face_number_cull_matches_crystal_renderer_formula.
+  const float* p = label->display_center;
   const float* n = label->display_normal;
   float dist = CrystalRenderer::ComputeDist(zoom);
   float m_eye[16];

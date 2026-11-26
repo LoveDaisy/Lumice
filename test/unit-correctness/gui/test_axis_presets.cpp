@@ -6,18 +6,25 @@
 #include <cstring>
 #include <initializer_list>
 
+#include "core/geo3d_closedform.hpp"
 #include "core/simulator.hpp"
 #include "gui/axis_presets.hpp"
+#include "lumice_editor.h"
 
 namespace {
 
+using lumice::gui::ApplyMeshSwapWrap;
 using lumice::gui::AxisDist;
 using lumice::gui::AxisDistType;
+using lumice::gui::AxisGizmoPlan;
+using lumice::gui::AxisGizmoSmallArrow;
 using lumice::gui::AxisPreset;
 using lumice::gui::AxisPresetLabel;
 using lumice::gui::ChainRotationToMatrix;
 using lumice::gui::ClassifyAxisPreset;
+using lumice::gui::ComputeAxisGizmoPlan;
 using lumice::gui::DefaultPreviewRotation;
+using lumice::gui::kPresetTypicalChain;
 
 constexpr AxisDist kAzFull{ AxisDistType::kUniform, 0.0f, 360.0f };
 constexpr AxisDist kRollFull{ AxisDistType::kUniform, 0.0f, 360.0f };
@@ -672,6 +679,278 @@ TEST(DefaultPreviewRotation, ThumbnailFieldOrderConstructionContract) {
   DefaultPreviewRotation(AxisPreset::kCustom, params, r_via_params);
   ChainRotationToMatrix(az_dist.mean, zenith_dist.mean, roll_dist.mean, r_via_chain_core);
   ExpectMeshWrapEquals(r_via_chain_core, r_via_params);
+}
+
+// --------------------------------------------------------------------------------------------------
+// The family-DOF portrait (task 841). The plan is pure classifier consumption, so these cases read
+// as "the AC1 table, row by row, plus the adaptive rules' boundary rows". The boundary rows are the
+// load-bearing ones: the classifier's STRICT inequalities (std < 10 / std > 15) are exactly where
+// the portrait must flip, and any second threshold invented on the drawing side would show up as a
+// disagreement with these rows.
+// --------------------------------------------------------------------------------------------------
+
+constexpr AxisDist kAzFullDist{ AxisDistType::kUniform, 0.0f, 360.0f };
+// Core-frame body conventions the mesh-frame directions derive from through the (x,y,z)→(x,z,−y)
+// swap: the c axis is the body z convention; H_3 is the azimuth-90° long diagonal (the face-4/5
+// edge, proved below in AxisGizmoReference).
+constexpr float kBodyZDirCore[3] = { 0.0f, 0.0f, 1.0f };
+constexpr float kH3BodyDirCore[3] = { 0.0f, 1.0f, 0.0f };
+
+TEST(AxisGizmoPlan, EveryFamilyDrawsItsPortraitRow) {
+  struct Row {
+    const char* name;
+    AxisDist zenith;
+    AxisDist roll;
+    AxisPreset expected_family;
+    bool axis;
+    bool ring;
+    AxisGizmoSmallArrow small;
+  };
+  const Row kRows[] = {
+    // Column: free roll = the spin arrow about c. (Locked roll cannot reach this row — the
+    // classifier names it Parry first.)
+    { "column",
+      { AxisDistType::kGauss, 90.0f, 1.0f },
+      kRollFull,
+      AxisPreset::kColumn,
+      true,
+      true,
+      AxisGizmoSmallArrow::kSpin },
+    // Plate: roll free but MERGED with az (coaxial at zenith ≈ 0) — one arrow, no small arrow.
+    { "plate",
+      { AxisDistType::kGauss, 0.0f, 1.0f },
+      kRollFull,
+      AxisPreset::kPlate,
+      true,
+      true,
+      AxisGizmoSmallArrow::kNone },
+    // Parry: the narrow zenith spread is NOT promoted to a DOF.
+    { "parry",
+      { AxisDistType::kGauss, 90.0f, 1.0f },
+      kRollLockedGauss,
+      AxisPreset::kParry,
+      true,
+      true,
+      AxisGizmoSmallArrow::kNone },
+    // Lowitz: the H_3 swing.
+    { "lowitz",
+      { AxisDistType::kGauss, 0.0f, 40.0f },
+      kRollLockedGauss,
+      AxisPreset::kLowitz,
+      true,
+      true,
+      AxisGizmoSmallArrow::kTilt },
+    // Random: full freedom has no characteristic object — nothing, even though az is full.
+    { "random",
+      { AxisDistType::kUniform, 0.0f, 360.0f },
+      kRollFull,
+      AxisPreset::kRandom,
+      false,
+      false,
+      AxisGizmoSmallArrow::kNone },
+    // Custom's own default (roll not locked): the spin arm.
+    { "custom default",
+      { AxisDistType::kGauss, 90.0f, 20.0f },
+      { AxisDistType::kGauss, 0.0f, 20.0f },
+      AxisPreset::kCustom,
+      true,
+      true,
+      AxisGizmoSmallArrow::kSpin },
+  };
+  for (const Row& r : kRows) {
+    const AxisDist axis[3] = { r.zenith, kAzFullDist, r.roll };
+    const AxisGizmoPlan plan = ComputeAxisGizmoPlan(axis);
+    EXPECT_EQ(plan.family, r.expected_family) << r.name;
+    EXPECT_EQ(plan.draw_body_axis, r.axis) << r.name;
+    EXPECT_EQ(plan.draw_az_ring, r.ring) << r.name;
+    EXPECT_EQ(plan.small_arrow, r.small) << r.name;
+    EXPECT_EQ(plan.draw_world_up_reference, r.axis || r.ring) << r.name;
+  }
+}
+
+TEST(AxisGizmoPlan, AdaptiveRulesCarryNoSecondThreshold) {
+  struct Row {
+    const char* name;
+    AxisDist zenith;
+    AxisDist azimuth;
+    AxisDist roll;
+    AxisPreset expected_family;
+    bool ring;
+    AxisGizmoSmallArrow small;
+  };
+  const Row kRows[] = {
+    // Az narrowed: the triple leaves Column for Custom AND the ring retracts in the same read —
+    // the "az no longer full-uniform" edge of IsFullUniform360 is the only rule at work.
+    { "az narrowed",
+      { AxisDistType::kGauss, 90.0f, 1.0f },
+      { AxisDistType::kUniform, 0.0f, 180.0f },
+      kRollFull,
+      AxisPreset::kCustom,
+      false,
+      AxisGizmoSmallArrow::kSpin },
+    // Lowitz's own boundary (strict >): std == 15 misses the family, and the Custom fallback must
+    // NOT grant a tilt either — its eligibility reuses the same bound, so the row draws axis+ring
+    // only (roll locked: no spin arm either).
+    { "lowitz bound std 15",
+      { AxisDistType::kGauss, 0.0f, 15.0f },
+      kAzFullDist,
+      kRollLockedGauss,
+      AxisPreset::kCustom,
+      true,
+      AxisGizmoSmallArrow::kNone },
+    { "lowitz just inside std 15.01",
+      { AxisDistType::kGauss, 0.0f, 15.01f },
+      kAzFullDist,
+      kRollLockedGauss,
+      AxisPreset::kLowitz,
+      true,
+      AxisGizmoSmallArrow::kTilt },
+    // Custom's tilt arm does NOT require mean ≈ 0 — demanding it would re-derive the Lowitz
+    // recognizer as a second classifier. A wide zenith at mean 30 with locked roll is Custom and
+    // tilts.
+    { "custom tilt, nonzero mean",
+      { AxisDistType::kGauss, 30.0f, 40.0f },
+      kAzFullDist,
+      kRollLockedGauss,
+      AxisPreset::kCustom,
+      true,
+      AxisGizmoSmallArrow::kTilt },
+    // Narrow zenith with locked roll: neither Custom arm fires.
+    { "custom narrow, locked roll",
+      { AxisDistType::kGauss, 30.0f, 5.0f },
+      kAzFullDist,
+      kRollLockedGauss,
+      AxisPreset::kCustom,
+      true,
+      AxisGizmoSmallArrow::kNone },
+    // Random suppression holds even though az IS full here — the whole point of the row.
+    { "random suppresses despite full az",
+      { AxisDistType::kUniform, 0.0f, 360.0f },
+      kAzFullDist,
+      kRollFull,
+      AxisPreset::kRandom,
+      false,
+      AxisGizmoSmallArrow::kNone },
+  };
+  for (const Row& r : kRows) {
+    const AxisDist axis[3] = { r.zenith, r.azimuth, r.roll };
+    const AxisGizmoPlan plan = ComputeAxisGizmoPlan(axis);
+    EXPECT_EQ(plan.family, r.expected_family) << r.name;
+    EXPECT_EQ(plan.draw_az_ring, r.ring) << r.name;
+    EXPECT_EQ(plan.small_arrow, r.small) << r.name;
+    EXPECT_EQ(plan.draw_body_axis, plan.family != AxisPreset::kRandom) << r.name;
+    EXPECT_EQ(plan.draw_world_up_reference, plan.draw_body_axis || plan.draw_az_ring) << r.name;
+  }
+}
+
+// The relations the portrait's observation-invariance proofs rest on, at the typical chains the
+// representative pose is built from: Plate's c axis coaxial with the world vertical, Column/Parry
+// horizontal, Lowitz's H_3 horizontal. Expressed in the mesh frame the production compose uses
+// (chain → ApplyMeshSwapWrap; body directions through the same (x,y,z)→(x,z,−y) mapping), so the
+// numbers are the ones DrawCrystalAxisGizmo's matrices must reproduce.
+TEST(AxisGizmoPlan, RepresentativePoseKeepsTheFamilyAxisRelations) {
+  // Mesh-frame directions, each derived through the swap from its core-frame convention — never
+  // spelled as mesh literals: c = swap(body z), H_3 = swap(core-frame (0,1,0)).
+  const float kSwapC[3] = { kBodyZDirCore[0], kBodyZDirCore[2], -kBodyZDirCore[1] };      // (0, 1, 0)
+  const float kSwapH3[3] = { kH3BodyDirCore[0], kH3BodyDirCore[2], -kH3BodyDirCore[1] };  // (0, 0, -1)
+  const float kMeshUp[3] = { 0.0f, 1.0f, 0.0f };  // world vertical after the swap (documented fact)
+
+  struct Row {
+    AxisPreset family;
+    const float* body_dir;
+    float expected_abs_dot;
+  };
+  const Row kRows[] = {
+    { AxisPreset::kPlate, kSwapC, 1.0f },
+    { AxisPreset::kColumn, kSwapC, 0.0f },
+    { AxisPreset::kParry, kSwapC, 0.0f },
+    { AxisPreset::kLowitz, kSwapH3, 0.0f },
+  };
+  for (const Row& r : kRows) {
+    const auto& chain = kPresetTypicalChain[static_cast<int>(r.family)];
+    float core[16];
+    float mesh[16];
+    ChainRotationToMatrix(chain.az_deg, chain.zenith_deg, chain.roll_deg, core);
+    ApplyMeshSwapWrap(core, mesh);
+    // Rotate the body direction by the rotation part (column-major 3x3).
+    float rotated[3];
+    for (int i = 0; i < 3; ++i) {
+      rotated[i] = mesh[i] * r.body_dir[0] + mesh[4 + i] * r.body_dir[1] + mesh[8 + i] * r.body_dir[2];
+    }
+    const float dot = rotated[0] * kMeshUp[0] + rotated[1] * kMeshUp[1] + rotated[2] * kMeshUp[2];
+    EXPECT_NEAR(std::fabs(dot), r.expected_abs_dot, 1e-4f) << "family " << static_cast<int>(r.family);
+  }
+}
+
+// --------------------------------------------------------------------------------------------------
+// The H_3 source chain, white-box: closed-form face-constant tables → mesh face normals → the
+// face-number 4/5 sum. The preview derives its Lowitz axis by riding this chain (reference prism
+// through LUMICE_GetCrystalMesh, slots found by face NUMBER), so here the chain is held to the
+// canonical constants themselves — if the numbering ever shifted, production's structural checks
+// degrade the portrait while this test names the exact face that moved.
+// --------------------------------------------------------------------------------------------------
+
+TEST(AxisGizmoReference, FaceNormalsCarryTheFaceConventionToTheGuiChain) {
+  LUMICE_CrystalParam param{};
+  param.type = 0;  // prism
+  param.height = { LUMICE_DIST_NO_RANDOM, 1.0f, 0.0f };
+  for (int i = 0; i < 6; ++i) {
+    param.face_distance[i] = { LUMICE_DIST_NO_RANDOM, 1.0f, 0.0f };
+  }
+  LUMICE_CrystalMesh mesh{};
+  ASSERT_EQ(LUMICE_GetCrystalMesh(&param, /*sample_seed=*/0, &mesh), LUMICE_OK);
+  ASSERT_GT(mesh.face_count, 0);
+
+  // Every prism side face (numbers 3..8) points along its convention azimuth: face 3+i at i·60°.
+  int sides_found = 0;
+  float n45_sum[3] = { 0.0f, 0.0f, 0.0f };
+  float n78_sum[3] = { 0.0f, 0.0f, 0.0f };
+  for (int f = 0; f < mesh.face_count; ++f) {
+    const int number = mesh.face_numbers_by_face[f];
+    if (number < 3 || number > 8) {
+      continue;
+    }
+    ++sides_found;
+    const int i = number - 3;
+    const float* n = &mesh.face_normals[f * 3];
+    EXPECT_NEAR(n[0], static_cast<float>(lumice::kHexFaceCos[i]), 1e-5f) << "face " << number;
+    EXPECT_NEAR(n[1], static_cast<float>(lumice::kHexFaceSin[i]), 1e-5f) << "face " << number;
+    EXPECT_NEAR(n[2], 0.0f, 1e-5f) << "face " << number;
+    const float len = std::sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
+    EXPECT_NEAR(len, 1.0f, 1e-5f) << "face " << number;
+    if (number == 4 || number == 5) {
+      n45_sum[0] += n[0];
+      n45_sum[1] += n[1];
+      n45_sum[2] += n[2];
+    }
+    if (number == 7 || number == 8) {
+      n78_sum[0] += n[0];
+      n78_sum[1] += n[1];
+      n78_sum[2] += n[2];
+    }
+  }
+  ASSERT_EQ(sides_found, 6);
+
+  // The 4/5 bisector is the azimuth-90° long diagonal — H_3's direction in the core body frame.
+  const float len45 = std::sqrt(n45_sum[0] * n45_sum[0] + n45_sum[1] * n45_sum[1] + n45_sum[2] * n45_sum[2]);
+  ASSERT_NEAR(len45, lumice::kHexSqrt3Half * 2.0, 1e-3);  // two unit normals 60° apart sum to √3
+  const float h3_core[3] = { n45_sum[0] / len45, n45_sum[1] / len45, n45_sum[2] / len45 };
+  EXPECT_NEAR(h3_core[0], 0.0f, 1e-5f);
+  EXPECT_NEAR(h3_core[1], 1.0f, 1e-5f);
+  EXPECT_NEAR(h3_core[2], 0.0f, 1e-5f);
+
+  // Faces 7/8 are the antipodal pair: their bisector opposes H_3.
+  const float len78 = std::sqrt(n78_sum[0] * n78_sum[0] + n78_sum[1] * n78_sum[1] + n78_sum[2] * n78_sum[2]);
+  ASSERT_NEAR(len78, lumice::kHexSqrt3Half * 2.0, 1e-3);
+  const float dot78 = (h3_core[0] * n78_sum[0] + h3_core[1] * n78_sum[1] + h3_core[2] * n78_sum[2]) / len78;
+  EXPECT_NEAR(dot78, -1.0f, 1e-4f);
+
+  // Through the preview's mesh-frame swap, H_3 lands on −z: the analytic anchor the gui_test legs
+  // assert the production-submitted primitives against.
+  const float h3_mesh[3] = { h3_core[0], h3_core[2], -h3_core[1] };
+  EXPECT_NEAR(h3_mesh[0], 0.0f, 1e-5f);
+  EXPECT_NEAR(h3_mesh[1], 0.0f, 1e-5f);
+  EXPECT_NEAR(h3_mesh[2], -1.0f, 1e-5f);
 }
 
 }  // namespace

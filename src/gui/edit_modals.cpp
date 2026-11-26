@@ -235,7 +235,8 @@ static AxisDist g_axis_buf[3];  // zenith, azimuth, roll
 // The Axis tab's label buffer: the sticky label being edited. Like the axis triple, it is pulled
 // from the pool each frame and pushed on commit; pressing a Label chip is a full context switch —
 // it writes this buffer, writes the parameters (g_axis_buf) when the target's memory or
-// definition loads, and re-seats the preview pose on the target label's typical view. One
+// definition loads, and re-seats the observation so the composite view lands on the loaded
+// parameters' classified family's representative pose. One
 // parameter cache still serves the whole modal: its writers are the sliders, the chip row's
 // loads, Reset All's definition reload, the modal-open refill, and the Unlink re-read.
 // g_crystal_buf's own axis_preset copy is dead while the modal is open (CrystalTabFieldsEqual
@@ -1255,15 +1256,15 @@ void OpenEditModal(const EditRequest& req, GuiState& state) {
   // modal closes, when no external references are held.
   const CrystalConfig& src_crystal = state.crystals[entry.crystal_id];
 
-  // Bug 2 fix: card-to-card switch must reset preview pose to the target
-  // crystal's axis default. Compare crystal_id (not layer/entry index) so that
-  // two linked entries backed by the same pool crystal don't spuriously reset
-  // (their trackball history is meaningful shared state). Skip when opening
-  // the same crystal_id we already had loaded — preserves the trackball state
-  // for "close then re-open the same entry" flows and keeps this idempotent
-  // relative to the existing pick-link-completion reset in app_panels.cpp:429.
+  // Bug 2 fix: card-to-card switch must reset the preview OBSERVATION to identity, so the
+  // composite view lands on the target crystal's own representative pose (derived per frame from
+  // the buffers just below). Compare crystal_id (not layer/entry index) so that two linked
+  // entries backed by the same pool crystal don't spuriously reset (their trackball history is
+  // meaningful shared state). Skip when opening the same crystal_id we already had loaded —
+  // preserves the observation for "close then re-open the same entry" flows and keeps this
+  // idempotent relative to the existing pick-link-completion reset in app_panels.cpp.
   if (entry.crystal_id != g_modal_view_crystal_id) {
-    ResetCrystalViewToCrystal(src_crystal);
+    ResetCrystalViewToRepresentative();
     g_modal_view_crystal_id = entry.crystal_id;
   }
 
@@ -1440,10 +1441,25 @@ static void RenderCrystalPreviewPane(GuiState& /*state*/, float preview_px) {
     }
   }
 
+  // The physical representative pose is DERIVED per frame from the live axis buffers (typical
+  // chain for the classified family, live means for Custom, isometric sentinel for Random — the
+  // DefaultPreviewRotation single source), and the observation composes on top: mesh, face
+  // numbers and the portrait's body primitives all consume O·R; the portrait's world primitives
+  // consume O alone (DrawCrystalAxisGizmo). A reclassification or a Custom mean edit therefore
+  // re-seats the physical pose on the next frame without touching the user's observation.
+  const AxisGizmoPlan gizmo_plan = ComputeAxisGizmoPlan(g_axis_buf);
+  float representative_rotation[16];
+  DefaultPreviewRotation(gizmo_plan.family, g_axis_buf, representative_rotation);
+  float body_rotation[16];
+  CrystalRenderer::ComposeRotations(g_crystal_rotation, representative_rotation, body_rotation);
+
   // Render to FBO (F8: only caller of g_crystal_renderer.Render in production;
-  // no double-write with panels.cpp / thumbnail_cache.cpp).
+  // no double-write with panels.cpp / thumbnail_cache.cpp). The mesh pose the
+  // GL pass consumes is witnessed INSIDE Render (CrystalRenderer's own record
+  // of the rotation it received) — a call-site argument swap lands in the
+  // portrait snapshot's mesh record, not past it.
   auto crystal_style = static_cast<CrystalStyle>(g_crystal_style);
-  g_crystal_renderer.Render(g_crystal_rotation, g_crystal_zoom, crystal_style);
+  g_crystal_renderer.Render(body_rotation, g_crystal_zoom, crystal_style);
 
   // -- 3D Preview (horizontally centered inside the left pane) --
   auto tex_id = static_cast<ImTextureID>(g_crystal_renderer.GetTextureId());
@@ -1455,13 +1471,19 @@ static void RenderCrystalPreviewPane(GuiState& /*state*/, float preview_px) {
   ImVec2 preview_pos = ImGui::GetCursorScreenPos();
   ImGui::Image(tex_id, ImVec2(preview_px, preview_px), ImVec2(0, 1), ImVec2(1, 0));
 
+  // Axis family-DOF portrait, drawn BELOW the face numbers (numbers stay readable above it). One
+  // live-triple read feeds the classification, the representative pose above and the summary
+  // line's badge below: portrait, badge and numbers describe one frame's parameters.
+  DrawCrystalAxisGizmo(gizmo_plan, g_axis_buf, g_crystal_rotation, body_rotation, preview_pos, preview_px,
+                       ImGui::GetWindowDrawList(), g_crystal_zoom);
+
   // Face-number overlay: use the same rotation/zoom/size used by the GL render
   // pass above so screen coords align pixel-for-pixel with the FBO texture.
   if (const auto* m = GetLastCrystalMesh(); m != nullptr) {
     float mvp[16];
-    CrystalRenderer::ComputeMvp(g_crystal_rotation, g_crystal_zoom, static_cast<int>(preview_px),
+    CrystalRenderer::ComputeMvp(body_rotation, g_crystal_zoom, static_cast<int>(preview_px),
                                 static_cast<int>(preview_px), mvp);
-    DrawFaceNumberOverlay(m, g_crystal_rotation, mvp, g_crystal_zoom, preview_pos, ImVec2(preview_px, preview_px),
+    DrawFaceNumberOverlay(m, body_rotation, mvp, g_crystal_zoom, preview_pos, ImVec2(preview_px, preview_px),
                           ImGui::GetWindowDrawList(), crystal_style);
   }
 
@@ -1479,10 +1501,12 @@ static void RenderCrystalPreviewPane(GuiState& /*state*/, float preview_px) {
   ImGui::PopItemWidth();
   ImGui::SameLine();
   if (ImGui::SmallButton("Reset View##modal")) {
-    // Reset to the default view derived from the label buffer (the sticky label being edited) +
-    // edit-buffer distribution params. g_axis_buf reflects the user's live edits; for kCustom
-    // this drives a chain-formula default that matches the outer card thumbnail.
-    ResetCrystalView(g_axis_label_buf, g_axis_buf);
+    // Reset the OBSERVATION to identity: the composite view then lands on the live buffers'
+    // classified family's representative pose (derived per frame — nothing to look up here). For
+    // an in-domain triple this is the same view the card thumbnail derives from the sticky label;
+    // when the label has drifted, the view follows the ACTUAL family the badge names, never the
+    // stale label's old pose.
+    ResetCrystalViewToRepresentative();
   }
 
   // The state summary, from the edit buffers (what is being edited, not what the pool holds), so
@@ -1780,12 +1804,14 @@ static void RenderAxisModal(GuiState& state) {
   // A chip press is this row's single gesture — switch: the parameters currently in the buffers
   // are remembered under the label being left, the target label's memory loads (its definition
   // when nothing is remembered; a Custom target with neither renames only), the label follows,
-  // and the preview re-seats on the target label's typical view (ResetCrystalView — the same
-  // authority the card thumbnail and Reset View use; under Immediate the thumbnail flips on this
-  // same press, so a modal that kept the old view would be the divergence. The old worry about
-  // the view jumping mid-edit predates the switch being a full context change: what must not
-  // move the pose is editing parameters, and that is still true). One gesture, one writer: the
-  // sticky label never moves on its own, and pressing the already-highlighted chip does nothing.
+  // and the observation re-seats to identity (ResetCrystalViewToRepresentative — the composite
+  // view then lands on the loaded buffers' ACTUAL classified family's representative pose; under
+  // Immediate the thumbnail flips on this same press, so a modal that kept the old view would be
+  // the divergence. The old worry about the view jumping mid-edit predates the switch being a
+  // full context change: what must not move the view is editing parameters, and that is still
+  // true — parameter edits re-derive only the physical pose, the observation holds). One gesture,
+  // one writer: the sticky label never moves on its own, and pressing the already-highlighted
+  // chip does nothing.
   // (This row has carried two earlier semantics — "load definition" and "rename only"; both were
   // removed because a rename-only press read as "no reaction" in this modal, and a separate
   // load-only control spelled the chips' own words with different behavior.)
@@ -1798,8 +1824,8 @@ static void RenderAxisModal(GuiState& state) {
   // print.
   constexpr const char* kChipSwitchNote =
       "Switches to this label: remembers the current parameters under the one you leave, then "
-      "loads this label's memory — or its definition when nothing is remembered. The preview "
-      "pose follows, re-seating on this label's typical view.";
+      "loads this label's memory — or its definition when nothing is remembered. The preview view "
+      "follows, re-seating on the loaded parameters' classified family's typical view.";
   // Font pixels round independently of the scaled window/style; a vertical scrollbar can
   // consume the remaining slack. Budget the six gaps from live content width, not the modal's
   // nominal width. Text and button padding are already in window coordinates, so do not scale
@@ -1847,7 +1873,7 @@ static void RenderAxisModal(GuiState& state) {
             g_axis_buf[2] = press.triple[2];
           }
           g_axis_label_buf = entry.id;
-          ResetCrystalView(g_axis_label_buf, g_axis_buf);
+          ResetCrystalViewToRepresentative();
         }
       }
     }
@@ -1887,17 +1913,19 @@ static void RenderAxisModal(GuiState& state) {
   // EffectiveAxisPresetDist (the user's retuned values from the preset library where one is
   // stored). It is "pull this label's parameters back", nothing more: the label is not touched
   // (the chips are its only writer), the memory is not cleared (a slot is rewritten by the next
-  // leave anyway), and neither is the preview pose (the modal preview is pixel-identical across
-  // it — CrystalParamHash does not hash the axis triple, the mesh is built in canonical
-  // orientation, and the rendered orientation lives only in g_crystal_rotation), so every visible
-  // effect sits above: the three parameter rows and the preview's summary line. Disabled under
-  // Custom: it has no definition to reset to. Same family as the Crystal tab's Reset All and the
-  // Filter tab's Remove Filter — one full-height, fixed-width tail-row action button that resets
-  // this tab's parameter group (the old "Reset:" caption + Reload small button spelled one action
-  // with two words, and was the axis tab's only style outlier). Sits directly under the parameter
-  // rows on purpose: the control is where its effects land. (The row's earlier predecessor loaded
-  // a preset's definition through a dropdown whose items repeated the chips' own words with a
-  // different behavior; the chips' switch gesture covers that path, so the dropdown is gone.)
+  // leave anyway), and neither is the OBSERVATION (the user's view angle holds; the physical
+  // representative pose is derived per frame from these same buffers, so an in-domain reload —
+  // the only kind a non-Custom label can get while staying on its label — leaves the composite
+  // view pixel-identical, and a reload that reclassified the family would re-seat the physical
+  // pose without jumping the view). Every visible effect sits above: the three parameter rows and
+  // the preview's summary line. Disabled under Custom: it has no definition to reset to. Same
+  // family as the Crystal tab's Reset All and the Filter tab's Remove Filter — one full-height,
+  // fixed-width tail-row action button that resets this tab's parameter group (the old "Reset:"
+  // caption + Reload small button spelled one action with two words, and was the axis tab's only
+  // style outlier). Sits directly under the parameter rows on purpose: the control is where its
+  // effects land. (The row's earlier predecessor loaded a preset's definition through a dropdown
+  // whose items repeated the chips' own words with a different behavior; the chips' switch
+  // gesture covers that path, so the dropdown is gone.)
   ImGui::Spacing();
   const bool custom_label = active == AxisPreset::kCustom;
   if (custom_label) {

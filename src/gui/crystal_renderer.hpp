@@ -41,6 +41,12 @@ class CrystalRenderer {
   // coordinates; changing this function must keep Render's internal use in sync.
   static void ComputeMvp(const float rotation[16], float zoom, int width, int height, float out_mvp[16]);
 
+  // The mesh-consumption witness: the rotation and ImGui frame of the most recent Render() call
+  // ON THIS INSTANCE, recorded inside Render from its own parameter — the frame-attribution
+  // tests read what the GL pass actually consumed, so a call-site argument swap flows into the
+  // record instead of past it.
+  void LastRenderRotation(int* frame_out, float out[16]) const;
+
   // Compose the model → eye rotation used for eye-space front/back classification.
   // out_m_eye = V_rot(Rx(+kCameraTiltDeg)) · model_rotation (3×3 rotation part;
   // translation left at 0, homogeneous slot at 1). Both Render() (edge cull)
@@ -48,6 +54,12 @@ class CrystalRenderer {
   // using the raw model_rotation drops the fixed camera tilt and mislabels
   // faces near the horizon.
   static void ComputeEyeRotation(const float model_rotation[16], float out_m_eye[16]);
+
+  // Multiply the 3x3 rotation parts of two column-major 4x4 matrices: out = a · b (translation
+  // zeroed, homogeneous slot 1). The pose-composition primitive beside ComputeEyeRotation: the
+  // preview's observation · representative composite (crystal_preview.cpp) goes through here so
+  // the mesh and the axis portrait cannot disagree about how the two poses combine.
+  static void ComposeRotations(const float a[16], const float b[16], float out[16]);
 
   // Get the rendered texture ID for ImGui::Image()
   uintptr_t GetTextureId() const;
@@ -58,6 +70,10 @@ class CrystalRenderer {
  private:
   int width_ = 0;
   int height_ = 0;
+
+  // Mesh-consumption witness state (see LastRenderRotation above).
+  float last_render_rotation_[16] = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
+  int last_render_frame_ = -1;
 
   // MSAA FBO
   unsigned int fbo_ = 0;

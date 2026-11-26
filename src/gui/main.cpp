@@ -361,12 +361,12 @@ int main(int argc, char** argv) {
     GUI_LOG_ERROR("Failed to initialize crystal renderer");
     return 1;
   }
-  // Initialize the modal preview's trackball to the default entry's preset
-  // default view (matches what Reset View / the entry-card thumbnail show).
-  // Without this the user would have to click Reset View on first modal open
-  // to reach the same view the outer thumbnail already shows.
+  // Initialize the modal preview's observation to identity (matches what Reset View /
+  // the entry-card thumbnail show: the composite view lands on the live buffers' classified
+  // family's representative pose, derived per frame). Without this the user would have to click
+  // Reset View on first modal open to reach the same view the outer thumbnail already shows.
   if (!gui::g_state.layers.empty() && !gui::g_state.layers[0].entries.empty()) {
-    gui::ResetCrystalViewToCrystal(gui::g_state.crystals[gui::g_state.layers[0].entries[0].crystal_id]);
+    gui::ResetCrystalViewToRepresentative();
   } else {
     gui::ResetCrystalView();  // legacy fallback for unexpected empty state
   }

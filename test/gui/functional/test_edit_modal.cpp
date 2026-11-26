@@ -36,6 +36,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -728,6 +729,147 @@ bool ObserveGlyphTail(ImGuiTestContext* ctx, const ImGuiTestItemInfo& item, cons
   return true;
 }
 
+// --- Axis family-DOF portrait witnesses (task 841): shared helpers. ---
+
+// The 4x4 identity in column-major float16 form, the observation's re-seated value.
+constexpr float kIdentity16[16] = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
+
+// The body-frame constants the portrait is held to, derived through the same (x,y,z)→(x,z,−y)
+// swap the mesh itself goes through (core body z → mesh +y for c; the azimuth-90° diagonal
+// → mesh −z for H_3). These are the TEST's analytic anchors; the production side derives both
+// from its own chain (body-z constant and the reference-prism face normals — the chain the
+// AxisGizmoReference unit test pins to the closed-form tables), so a test value and a production
+// value agreeing is evidence, not tautology.
+constexpr float kTestAxisDirCMesh[3] = { 0.0f, 1.0f, 0.0f };
+constexpr float kTestAxisDirH3Mesh[3] = { 0.0f, 0.0f, -1.0f };
+
+// Column-major 3x3 rotation part of a pose matrix applied to a direction.
+void RotateBy(const float m[16], const float d[3], float out[3]) {
+  for (int i = 0; i < 3; ++i) {
+    out[i] = m[i] * d[0] + m[4 + i] * d[1] + m[8 + i] * d[2];
+  }
+}
+
+// Multiply the rotation parts of two column-major 4x4 poses (translation zeroed) — the arithmetic
+// half of the production compose, used to build EXPECTED composites from submitted factors
+// (observation · representative). This is matrix arithmetic on submitted values, not a re-derivation
+// of the pose semantics.
+void ComposeRotParts(const float a[16], const float b[16], float out[16]) {
+  for (int i = 0; i < 4; ++i) {
+    for (int j = 0; j < 4; ++j) {
+      float s = 0.0f;
+      for (int k = 0; k < 3; ++k) {
+        s += a[i + k * 4] * b[k + j * 4];
+      }
+      out[i + j * 4] = s;
+    }
+  }
+  out[3] = out[7] = out[11] = 0.0f;
+  out[12] = out[13] = out[14] = 0.0f;
+  out[15] = 1.0f;
+}
+
+// Compare two pose matrices entry-wise within `tol` — never byte-exact. A composite that passed
+// through the production 4x4 multiply may legally differ from its factor-built expectation on
+// signed-zero entries only (−0.0f + 0.0f = +0.0f), which a memcmp cannot express as "equal
+// rotation"; every semantic drift this tolerance lets through is far below the smallest angle the
+// float format can represent at these magnitudes.
+bool MatNear16(const float a[16], const float b[16], float tol) {
+  for (int i = 0; i < 16; ++i) {
+    if (std::fabs(a[i] - b[i]) > tol) {
+      return false;
+    }
+  }
+  return true;
+}
+
+void ExpectMatNear16(const float a[16], const float b[16], const char* where) {
+  for (int i = 0; i < 16; ++i) {
+    if (std::fabs(a[i] - b[i]) > 1e-6f) {
+      IM_ERRORF("%s: pose entry %d differs: actual=%.8f expected=%.8f", where, i, static_cast<double>(a[i]),
+                static_cast<double>(b[i]));
+      return;
+    }
+  }
+}
+
+float VecDot3(const float a[3], const float b[3]) {
+  return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+}
+
+bool VecNear3(const float a[3], float bx, float by, float bz, float tol) {
+  return std::fabs(a[0] - bx) <= tol && std::fabs(a[1] - by) <= tol && std::fabs(a[2] - bz) <= tol;
+}
+
+// The snapshot must be FRESH — a stale record (e.g. from before a click that should have
+// changed the drawing) would answer the next assertion with the previous frame's world.
+bool RequireFreshGizmoSnapshot(ImGuiTestContext* ctx, int before_frame, const char* where) {
+  const gui::CrystalAxisGizmoSnapshot& snap = gui::GetLastAxisGizmoSnapshot();
+  if (snap.frame_index <= before_frame) {
+    IM_ERRORF("%s: the portrait snapshot is stale (frame %d <= %d)", where, snap.frame_index, before_frame);
+    return false;
+  }
+  return true;
+}
+
+// Capture the preview image's own rectangle (the InvisibleButton shares its rect) to
+// GuiTestTempPath("axis_gizmo_<name>.png") — with --export-dir pointing at the task evidence
+// directory, these are the AC5/AC6 screenshots the portrait's readability judgement reads.
+bool CapturePreviewPNG(ImGuiTestContext* ctx, const char* name) {
+  const auto preview = ctx->ItemInfo("**/##modal_preview_interact");
+  IM_CHECK_RETV(preview.ID != 0 && preview.Window != nullptr, false);
+  g_fullframe_capture.Reset();
+  const ImGuiIO& io = ImGui::GetIO();
+  const float sx = io.DisplayFramebufferScale.x;
+  const float sy = io.DisplayFramebufferScale.y;
+  const float fb_w = io.DisplaySize.x * sx;
+  const float fb_h = io.DisplaySize.y * sy;
+  const ImVec2 vp_pos = ImGui::GetMainViewport()->Pos;
+  const float x0 = std::max(0.0f, (preview.RectFull.Min.x - vp_pos.x) * sx);
+  const float y0 = std::max(0.0f, (preview.RectFull.Min.y - vp_pos.y) * sy);
+  const float x1 = std::min(fb_w, (preview.RectFull.Max.x - vp_pos.x) * sx);
+  const float y1 = std::min(fb_h, (preview.RectFull.Max.y - vp_pos.y) * sy);
+  g_fullframe_capture.rect_x = static_cast<int>(std::lround(x0));
+  g_fullframe_capture.rect_y = static_cast<int>(std::lround(fb_h - y1));
+  g_fullframe_capture.rect_w = static_cast<int>(std::lround(x1 - x0));
+  g_fullframe_capture.rect_h = static_cast<int>(std::lround(y1 - y0));
+  g_fullframe_capture.requested.store(true);
+  for (int i = 0; i < 10 && !g_fullframe_capture.done.load(); ++i) {
+    ctx->Yield();
+  }
+  IM_CHECK_RETV(g_fullframe_capture.done.load(), false);
+  const auto rgb = lumice::test::StripAlpha(g_fullframe_capture.pixels.data(), g_fullframe_capture.width,
+                                            g_fullframe_capture.height);
+  const auto path = GuiTestTempPath((std::string("axis_gizmo_") + name + ".png").c_str()).string();
+  return lumice::test::SavePng(path.c_str(), rgb.data(), g_fullframe_capture.width, g_fullframe_capture.height, 3);
+}
+
+// The portrait's two canvas hues (crystal_preview.cpp's kGizmoAxisColor amber and
+// kGizmoWorldColor green), as (r,g,b) with the tolerance a ResolvesTo test may use. Mirrored here
+// so the ink-containment assertions name the drawn colors without reaching into the production
+// anonymous namespace; a palette change on either side turns the containment leg red loudly
+// instead of quietly asserting on colors nobody draws.
+constexpr int kTestGizmoAmber[3] = { 255, 176, 64 };
+constexpr int kTestGizmoGreen[3] = { 130, 225, 160 };
+
+// Count pixels within `tol` of either gizmo hue in an RGBA capture.
+int CountGizmoInk(const std::vector<unsigned char>& pixels, int tol) {
+  int count = 0;
+  for (size_t i = 0; i + 3 < pixels.size(); i += 4) {
+    const int r = pixels[i];
+    const int g = pixels[i + 1];
+    const int b = pixels[i + 2];
+    const bool amber = std::abs(r - kTestGizmoAmber[0]) <= tol && std::abs(g - kTestGizmoAmber[1]) <= tol &&
+                       std::abs(b - kTestGizmoAmber[2]) <= tol;
+    const bool green = std::abs(r - kTestGizmoGreen[0]) <= tol && std::abs(g - kTestGizmoGreen[1]) <= tol &&
+                       std::abs(b - kTestGizmoGreen[2]) <= tol;
+    if (amber || green) {
+      ++count;
+    }
+  }
+  return count;
+}
+
 }  // namespace
 
 void RegisterEditModalTests(ImGuiTestEngine* engine) {
@@ -750,8 +892,8 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
       ctx->Yield(3);
       constexpr const char* kText =
           "Switches to this label: remembers the current parameters under the one you leave, then "
-          "loads this label's memory — or its definition when nothing is remembered. The preview "
-          "pose follows, re-seating on this label's typical view.";
+          "loads this label's memory — or its definition when nothing is remembered. The preview view "
+          "follows, re-seating on the loaded parameters' classified family's typical view.";
       const auto exercise = [&](float multiplier, bool compact) -> bool {
         gui::g_state.modal_layout_compact = compact;
         gui::SetUiScaleMultiplierImmediate(multiplier);
@@ -1907,6 +2049,17 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
 
   // ===================================================================================
   // The crystal preview's pose, and the three things allowed to reset it.
+  //
+  // The pose is now TWO rotations with separate duties (task 841): the OBSERVATION O in
+  // g_crystal_rotation (what drag/wheel/Reset View write) and the representative physical pose R,
+  // derived per frame from the live axis buffers and never stored. What the tests may read:
+  //   * g_crystal_rotation — the observation only;
+  //   * gui::GetLastAxisGizmoSnapshot() — what the preview actually SUBMITTED last frame:
+  //     body_rotation (the O·R the mesh, face numbers and body-frame portrait primitives consumed)
+  //     and world_rotation (the O the world-frame primitives consumed), plus the primitive record.
+  // Every pose assertion below reads submitted values or the observation; none recomputes the
+  // derivation as its oracle. The shared helpers (kIdentity16, the analytic anchors, RotateBy /
+  // VecDot3 / VecNear3, RequireFreshGizmoSnapshot) live in the anonymous namespace above.
   // ===================================================================================
 
   // P85 / P88. Opening a DIFFERENT crystal snaps the preview to that crystal's own default pose;
@@ -1949,11 +2102,23 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
       float expected1[16] = { 0 };
       gui::DefaultPreviewRotation(gui::AxisPreset::kColumn, params1, expected1);
 
-      auto expect_pose = [](const char* where, const float* expected) {
+      // "Snapped to the crystal's default view" is two facts under the O/R split: the composite
+      // the mesh was rendered with equals the classified family's representative pose (premise
+      // above: label == classification, so DefaultPreviewRotation(label, params) IS that pose),
+      // and the OBSERVATION sits at identity — a leftover drag would show up here.
+      auto expect_seated = [](const char* where, const float* expected_composite) {
         for (int i = 0; i < 16; ++i) {
-          if (gui::g_crystal_rotation[i] != expected[i]) {
-            IM_ERRORF("%s: index %d actual=%f expected=%f", where, i, static_cast<double>(gui::g_crystal_rotation[i]),
-                      static_cast<double>(expected[i]));
+          if (gui::g_crystal_rotation[i] != kIdentity16[i]) {
+            IM_ERRORF("%s: observation not at identity, index %d actual=%f", where, i,
+                      static_cast<double>(gui::g_crystal_rotation[i]));
+          }
+          // The consumption-site record: judge the pose the GL MESH consumed (always recorded —
+          // Random draws no portrait, and the seat claim is about the mesh either way). Tolerance
+          // compare: the compose may flip a signed zero (see MatNear16).
+          if (std::fabs(gui::GetLastAxisGizmoSnapshot().mesh_render_rotation[i] - expected_composite[i]) > 1e-6f) {
+            IM_ERRORF("%s: mesh-consumed pose index %d actual=%f expected=%f", where, i,
+                      static_cast<double>(gui::GetLastAxisGizmoSnapshot().mesh_render_rotation[i]),
+                      static_cast<double>(expected_composite[i]));
           }
         }
       };
@@ -1961,7 +2126,7 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
       gui::EditRequest req0{ gui::EditTarget::kCrystal, /*layer_idx=*/0, /*entry_idx=*/0 };
       gui::OpenEditModal(req0, gui::g_state);
       ctx->Yield(2);
-      expect_pose("entry 0 on open", expected0);
+      expect_seated("entry 0 on open", expected0);
 
       if (ctx->IsError()) {
         return;
@@ -1969,12 +2134,12 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
 
       // Drag, so that entry 1 opening on ITS default is distinguishable from a leftover pose.
       gui::ApplyTrackballRotation(60.0f, 0.0f);
-      IM_CHECK(std::memcmp(gui::g_crystal_rotation, expected0, sizeof expected0) != 0);
+      IM_CHECK(std::memcmp(gui::g_crystal_rotation, kIdentity16, sizeof kIdentity16) != 0);
 
       gui::EditRequest req1{ gui::EditTarget::kCrystal, /*layer_idx=*/0, /*entry_idx=*/1 };
       gui::OpenEditModal(req1, gui::g_state);
       ctx->Yield(2);
-      expect_pose("entry 1 after a direct card-to-card switch", expected1);
+      expect_seated("entry 1 after a direct card-to-card switch", expected1);
 
       if (ctx->IsError()) {
         return;
@@ -1985,7 +2150,7 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
       gui::ApplyTrackballRotation(30.0f, 20.0f);
       float after_drag[16];
       std::memcpy(after_drag, gui::g_crystal_rotation, sizeof after_drag);
-      IM_CHECK(std::memcmp(after_drag, expected1, sizeof expected1) != 0);
+      IM_CHECK(std::memcmp(after_drag, kIdentity16, sizeof kIdentity16) != 0);
       gui::OpenEditModal(req1, gui::g_state);
       ctx->Yield(2);
       IM_CHECK(std::memcmp(gui::g_crystal_rotation, after_drag, sizeof after_drag) == 0);
@@ -2022,10 +2187,17 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
         ctx->Yield(3);
         ctx->ItemClick("**/Reset View##modal");
         ctx->Yield(2);
-        // Snapshot BEFORE Cancel: Cancel restores the pose saved at open time, so a read afterwards
-        // would observe the pre-open matrix instead of Reset View's result.
+        // Snapshot BEFORE Cancel: Cancel restores the observation saved at open time, so a read
+        // afterwards would observe the pre-open state instead of Reset View's result. The re-seat
+        // is two facts: the pose the GL MESH consumed equals the family's representative pose
+        // (the classify premise above makes label == classification, so DefaultPreviewRotation(
+        // preset, params) IS that pose — the same authority the card thumbnail derives from; the
+        // mesh record is the one consumption witness that exists for every family, Random
+        // included, which draws no portrait), and the observation is back at identity.
         float observed[16];
-        std::memcpy(observed, gui::g_crystal_rotation, sizeof observed);
+        std::memcpy(observed, gui::GetLastAxisGizmoSnapshot().mesh_render_rotation, sizeof observed);
+        float observed_observation[16];
+        std::memcpy(observed_observation, gui::g_crystal_rotation, sizeof observed_observation);
         ctx->ItemClick(kCancel);
         ctx->Yield(2);
 
@@ -2036,6 +2208,10 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
           if (observed[i] != expected[i]) {
             IM_ERRORF("preset=%s index=%d actual=%f expected=%f", label, i, static_cast<double>(observed[i]),
                       static_cast<double>(expected[i]));
+          }
+          if (observed_observation[i] != kIdentity16[i]) {
+            IM_ERRORF("preset=%s observation not re-seated to identity, index %d actual=%f", label, i,
+                      static_cast<double>(observed_observation[i]));
           }
         }
       };
@@ -2075,16 +2251,18 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
 
   // The chip switch and the Reset row carry opposite pose contracts, so they are two cases whose
   // names each tell the truth — one name cannot state both directions. The switch re-seats the
-  // modal preview on the target label's typical view: the same DefaultPreviewRotation the card
-  // thumbnail re-renders from on every label change, which is exactly why the modal must follow —
-  // under Immediate (the factory default) the thumbnail flips on the press, and a modal that kept
-  // the dragged pose would be the divergence, not the rule. The re-seat is unconditional,
-  // including a first Custom press that renames only: the card has already flipped, so a modal
-  // that stayed would re-create the mismatch. The Reset row is the opposite contract: parameters
-  // only, pose untouched. A drag precedes each pose assertion, so a pose-moving event cannot pass
-  // on the pose merely never having been moved; where the event's target view is known in
-  // advance, the premise also requires the dragged pose to differ from it, so the two worlds are
-  // not byte-identical.
+  // modal preview on the loaded buffers' classified family's representative view: the observation
+  // returns to identity and the submitted composite lands on DefaultPreviewRotation(actual F),
+  // which is exactly what the card thumbnail re-renders from on every label change — under
+  // Immediate (the factory default) the thumbnail flips on the press, and a modal that kept the
+  // old view would be the divergence, not the rule. The re-seat is unconditional, including a
+  // first Custom press that renames only: the card has already flipped, so a modal that stayed
+  // would re-create the mismatch — and the portrait follows the PARAMETERS, so the rename-only
+  // press keeps the same composite (asserted, not assumed). The Reset row is the opposite
+  // contract: parameters only, observation untouched. A drag precedes each pose assertion, so a
+  // pose-moving event cannot pass on the pose merely never having been moved; where the event's
+  // target view is known in advance, the premise also requires the dragged pose to differ from
+  // it, so the two worlds are not byte-identical.
   {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "edit_modal", "a_label_chip_switch_reseats_the_modal_preview_pose");
     t->TestFunc = [](ImGuiTestContext* ctx) {
@@ -2097,8 +2275,9 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
       ctx->ItemClick("**/###axis_tab");
       ctx->Yield(2);
 
-      // The Cancel baseline: the pose as of the open. A Staged Cancel must restore exactly this —
-      // the re-seat is buffer-side display state, never a commit.
+      // The Cancel baseline: the observation as of the open (identity on a fresh open). A Staged
+      // Cancel must restore exactly this — the re-seat is buffer-side display state, never a
+      // commit.
       float at_open[16];
       std::memcpy(at_open, gui::g_crystal_rotation, sizeof at_open);
 
@@ -2108,20 +2287,15 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
       gui::DefaultPreviewRotation(gui::AxisPreset::kPlate, plate_definition, plate_view);
 
       // Drag first, so a pose-moving switch is distinguishable from the pose merely surviving —
-      // and the premise is the discriminating fact: the dragged pose must differ from the view
-      // the switch is about to produce, otherwise the two worlds are byte-identical and the
-      // assertion below has no power.
+      // and the premise is the discriminating fact: the dragged OBSERVATION must differ from the
+      // re-seated value, otherwise the two worlds are byte-identical and the assertion below has
+      // no power.
       gui::ApplyTrackballRotation(45.0f, 15.0f);
       ctx->Yield(1);
       float dragged[16];
       std::memcpy(dragged, gui::g_crystal_rotation, sizeof dragged);
       if (std::memcmp(dragged, at_open, sizeof dragged) == 0) {
-        IM_ERRORF("%s", "premise: the drag did not move the pose, so the switch assertion below is vacuous");
-      }
-      if (std::memcmp(dragged, plate_view, sizeof dragged) == 0) {
-        IM_ERRORF("%s",
-                  "premise: the drag landed on Plate's typical view, so the switch assertion below cannot tell the two "
-                  "worlds apart");
+        IM_ERRORF("%s", "premise: the drag did not move the observation, so the switch assertion below is vacuous");
       }
 
       // Perturb zoom off the default so the zoom half of the re-seat is discriminative here —
@@ -2134,24 +2308,39 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
 
       // Premise: the switch actually happened — the zenith buffer now holds Plate's effective
       // value (the default document label is Random, whose zenith is the full uniform span), so
-      // a silently skipped press cannot pass the pose assertion below.
+      // a silently skipped press cannot pass the pose assertion below; and the loaded triple
+      // classifies as Plate, so the representative pose IS plate_view.
       const gui::EditModalBuffers after = gui::GetEditModalBuffers();
       if (!(after.axis[0] == gui::EffectiveAxisPresetZenith(plate))) {
         IM_ERRORF("%s", "premise: the chip press did not load Plate's zenith, so the pose assertion below is vacuous");
       }
+      IM_CHECK_EQ(static_cast<int>(gui::ClassifyAxisPreset(after.axis[0], after.axis[1], after.axis[2])),
+                  static_cast<int>(gui::AxisPreset::kPlate));
 
-      // The re-seat lands on the target label's typical view, and the packaged zoom comes back
-      // with it (ResetCrystalView owns both; a future split that drops the zoom half must fail
-      // here rather than drift silently).
+      // The re-seat lands the composite on the ACTUAL classified family's representative view
+      // (submitted body pose), the observation returns to identity, and the packaged zoom comes
+      // back with it (ResetCrystalViewToRepresentative owns both; a future split that drops the
+      // zoom half must fail here rather than drift silently).
       float observed[16];
-      std::memcpy(observed, gui::g_crystal_rotation, sizeof observed);
-      if (std::memcmp(observed, plate_view, sizeof observed) != 0) {
-        IM_ERRORF("%s", "a label chip switch must re-seat the preview pose on the target label's typical view");
+      std::memcpy(observed, gui::GetLastAxisGizmoSnapshot().body_rotation, sizeof observed);
+      // Composed matrices are compared with a tolerance, never byte-exact: the production 4x4
+      // multiply may legally turn a −0.0f entry into +0.0f (adding a +0 term to a −0 sum), which
+      // is byte noise on a semantically identical rotation. See MatNear16.
+      ExpectMatNear16(observed, plate_view, "a label chip switch must re-seat the submitted composite");
+      if (std::memcmp(gui::g_crystal_rotation, kIdentity16, sizeof kIdentity16) != 0) {
+        IM_ERRORF("%s", "a label chip switch must re-seat the observation to identity");
       }
       IM_CHECK_FLOAT_EQ_EPS(gui::g_crystal_zoom, gui::kDefaultCrystalZoom);
 
       // A first Custom press has neither memory nor a definition — the parameters do not move —
-      // and the pose still re-derives, now onto Custom's chain view of the live parameters.
+      // and the VIEW follows the parameters, not the label: the classification is unchanged, so
+      // the submitted composite must still be the Plate representative view. (The old pose stored
+      // a label-keyed derivation that happened to coincide numerically here; asserting the
+      // composite instead makes the "portrait follows parameters" reading load-bearing.) Park the
+      // mouse off-window first: hovering the Plate chip keeps its switch-note tooltip open, and a
+      // tooltip window under the cursor swallows the click the press below needs.
+      ctx->MouseMoveToPos(PointOffEveryCard());
+      ctx->Yield(1);
       ctx->ItemClick("**/Custom##axis_label_chip");
       ctx->Yield(3);
       {
@@ -2162,19 +2351,19 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
             IM_ERRORF("premise: the first Custom press moved axis[%d], so the rename-only setup is void", i);
           }
         }
-        float custom_view[16];
-        gui::DefaultPreviewRotation(gui::AxisPreset::kCustom, custom.axis, custom_view);
-        if (std::memcmp(gui::g_crystal_rotation, custom_view, sizeof custom_view) != 0) {
-          IM_ERRORF("%s", "the Custom rename press must re-derive the pose from the live parameters");
+        ExpectMatNear16(gui::GetLastAxisGizmoSnapshot().body_rotation, plate_view,
+                        "the Custom rename press must keep the view on the parameters' classified family");
+        if (std::memcmp(gui::g_crystal_rotation, kIdentity16, sizeof kIdentity16) != 0) {
+          IM_ERRORF("%s", "the rename press must keep the observation seated at identity");
         }
       }
 
-      // Staged Cancel rolls the pose back to the open-time snapshot: the re-seat never became
-      // document state.
+      // Staged Cancel rolls the observation back to the open-time snapshot: the re-seat never
+      // became document state.
       ctx->ItemClick(kCancel);
       ctx->Yield(2);
       if (std::memcmp(gui::g_crystal_rotation, at_open, sizeof at_open) != 0) {
-        IM_ERRORF("%s", "Cancel must restore the pose the modal was opened with");
+        IM_ERRORF("%s", "Cancel must restore the observation the modal was opened with");
       }
     };
   }
@@ -2207,6 +2396,10 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
       if (std::memcmp(dragged, seated, sizeof dragged) == 0) {
         IM_ERRORF("%s", "premise: the drag did not move the pose, so the Reset assertion below is vacuous");
       }
+      // The composite at the dragged observation: the value the in-domain drift + Reset must
+      // reproduce, because neither the observation nor the (unchanged) classification moves.
+      float dragged_composite[16];
+      std::memcpy(dragged_composite, gui::GetLastAxisGizmoSnapshot().body_rotation, sizeof dragged_composite);
 
       // Drift a parameter off the definition first, so Reset demonstrably rewrites the buffers
       // rather than re-writing what is already there, then assert the pose survived it.
@@ -2227,20 +2420,32 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
         }
       }
       if (std::memcmp(gui::g_crystal_rotation, dragged, sizeof dragged) != 0) {
-        IM_ERRORF("%s", "the Reset button moved the preview pose");
+        IM_ERRORF("%s", "the Reset button moved the observation");
       }
+      // The drift and the reload both stayed inside Plate's classification domain, so the
+      // representative pose never had a reason to move and the observation holds: the composite
+      // is the same bytes the pre-drag frame submitted. (A reload that DID reclassify would
+      // legitimately move the composite — the portrait follows the buffers — while the
+      // observation still holds;
+      // an_axis_slider_edit_holds_the_observation_while_the_pose_follows owns that half.)
+      ExpectMatNear16(gui::GetLastAxisGizmoSnapshot().body_rotation, dragged_composite,
+                      "an in-domain Reset must not move the composite (neither O nor R moved)");
 
       ctx->ItemClick(kCancel);
       ctx->Yield(2);
     };
   }
 
-  // P95's negative half. Only the preset buttons and Reset View may overwrite the pose; an ordinary
-  // axis-distribution edit must leave it alone, or dragging a Std slider would keep snapping the
-  // crystal back while the user is looking at it. The two halves of SliderWithInput write the same
-  // bound field, so the text path standing in for the drag path cannot hide a difference.
+  // P95's negative half, restated for the O/R split. An ordinary axis-distribution edit must
+  // never touch the OBSERVATION — dragging a slider must not steal the user's viewing angle —
+  // while the physical representative pose follows the buffers exactly as far as the
+  // classification moves: a reclassifying edit re-seats R (the portrait is the feature), an
+  // in-family spread edit moves nothing at all (typical chains do not drift with the spread).
+  // The two halves of SliderWithInput write the same bound field, so the text path standing in
+  // for the drag path cannot hide a difference.
   {
-    ImGuiTest* t = IM_REGISTER_TEST(engine, "edit_modal", "an_axis_slider_edit_leaves_the_preview_pose_alone");
+    ImGuiTest* t =
+        IM_REGISTER_TEST(engine, "edit_modal", "an_axis_slider_edit_holds_the_observation_while_the_pose_follows");
     t->TestFunc = [](ImGuiTestContext* ctx) {
       ResetTestState();
       const ScopedPopups popup_guard(ctx);
@@ -2249,7 +2454,8 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
       OpenCardEditor(ctx, 0, kCrystalTabRef);
       ctx->Yield(3);
 
-      // Snapshot AFTER the drag, so the baseline is the dragged pose rather than the open-time one.
+      // Snapshot AFTER the drag, so the baseline is the dragged observation rather than the
+      // open-time identity.
       gui::ApplyTrackballRotation(20.0f, 0.0f);
       ctx->Yield(1);
       float before[16];
@@ -2257,21 +2463,749 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
 
       ctx->ItemClick("**/###axis_tab");
       ctx->Yield(2);
+      const int frame_before_edit = gui::GetLastAxisGizmoSnapshot().frame_index;
+
+      // Part 1 — a reclassifying edit: the default crystal is Random (full-uniform triple);
+      // moving the zenith mean to 45 breaks Random's mean≈0 clause, the triple reclassifies as
+      // Custom, and the representative pose follows (sentinel → chain of the live means). The
+      // observation holds.
       ctx->ItemInputValue("**/Zenith/##Mean_input", 45.0f);
       ctx->Yield(2);
 
-      // ...and again BEFORE Cancel, for the same reason as in the Reset View case above.
-      float after[16];
-      std::memcpy(after, gui::g_crystal_rotation, sizeof after);
-      ctx->ItemClick(kCancel);
-      ctx->Yield(2);
-
-      for (int i = 0; i < 16; ++i) {
-        if (before[i] != after[i]) {
-          IM_ERRORF("an axis edit moved the preview at index %d: before=%f after=%f", i, static_cast<double>(before[i]),
-                    static_cast<double>(after[i]));
+      {
+        const gui::CrystalAxisGizmoSnapshot& snap = gui::GetLastAxisGizmoSnapshot();
+        RequireFreshGizmoSnapshot(ctx, frame_before_edit, "reclassifying edit");
+        if (std::memcmp(gui::g_crystal_rotation, before, sizeof before) != 0) {
+          IM_ERRORF("%s", "an axis edit moved the observation");
+        }
+        if (snap.family != gui::AxisPreset::kCustom) {
+          IM_ERRORF("the reclassifying edit did not move the submitted family: %d", static_cast<int>(snap.family));
+        }
+        float expected_custom[16] = { 0 };
+        const gui::EditModalBuffers buffers = gui::GetEditModalBuffers();
+        gui::DefaultPreviewRotation(gui::AxisPreset::kCustom, buffers.axis, expected_custom);
+        // The submitted composite is observation · representative; the observation is still the
+        // dragged pose, so build the expectation by composing the submitted O with the same
+        // authority's representative (tolerance compare: see MatNear16).
+        float expected_composite[16];
+        ComposeRotParts(gui::g_crystal_rotation, expected_custom, expected_composite);
+        ExpectMatNear16(snap.body_rotation, expected_composite,
+                        "the reclassifying edit did not re-derive the submitted composite from the live means");
+        // The world-frame primitives still consumed the bare observation — never the composite.
+        if (std::memcmp(snap.world_rotation, before, sizeof before) != 0) {
+          IM_ERRORF("%s", "the world rotation stopped matching the observation after a physical-pose change");
         }
       }
+
+      // Part 2 — an in-family spread edit: Column's std moving 1 → 2 stays inside Column's
+      // criterion, so neither the classification nor the typical-chain representative pose may
+      // move. The spread is a distribution property, not a new DOF. (The chip press re-seats the
+      // observation to identity — the switch contract — so a fresh drag establishes this part's
+      // baseline; the mouse parks first so the switch-note tooltip cannot swallow the press.)
+      ctx->MouseMoveToPos(PointOffEveryCard());
+      ctx->Yield(1);
+      ctx->ItemClick("**/Column##axis_label_chip");
+      ctx->Yield(2);
+      {
+        const gui::EditModalBuffers buffers = gui::GetEditModalBuffers();
+        if (buffers.axis_preset != gui::AxisPreset::kColumn) {
+          IM_ERRORF("premise: the Column press did not land (label=%d)", static_cast<int>(buffers.axis_preset));
+        }
+      }
+      gui::ApplyTrackballRotation(15.0f, 25.0f);
+      ctx->Yield(1);
+      float before_spread_observation[16];
+      std::memcpy(before_spread_observation, gui::g_crystal_rotation, sizeof before_spread_observation);
+      const int frame_before_spread = gui::GetLastAxisGizmoSnapshot().frame_index;
+      ctx->ItemInputValue("**/Zenith/##Std_input", 2.0f);
+      ctx->Yield(2);
+      {
+        RequireFreshGizmoSnapshot(ctx, frame_before_spread, "in-family spread edit");
+        if (std::memcmp(gui::g_crystal_rotation, before_spread_observation, sizeof before_spread_observation) != 0) {
+          IM_ERRORF("%s", "a spread edit moved the observation");
+        }
+        const gui::CrystalAxisGizmoSnapshot& snap = gui::GetLastAxisGizmoSnapshot();
+        if (snap.family != gui::AxisPreset::kColumn) {
+          IM_ERRORF("the in-family spread edit reclassified the triple: %d", static_cast<int>(snap.family));
+        }
+        gui::AxisDist params[3] = { gui::AxisPresetEntryFor(gui::AxisPreset::kColumn).zenith,
+                                    gui::AxisPresetEntryFor(gui::AxisPreset::kColumn).azimuth,
+                                    gui::AxisPresetEntryFor(gui::AxisPreset::kColumn).roll };
+        float expected_column[16] = { 0 };
+        gui::DefaultPreviewRotation(gui::AxisPreset::kColumn, params, expected_column);
+        float expected_composite[16];
+        ComposeRotParts(gui::g_crystal_rotation, expected_column, expected_composite);
+        ExpectMatNear16(snap.body_rotation, expected_composite,
+                        "an in-family spread edit moved the representative pose");
+      }
+
+      ctx->ItemClick(kCancel);
+      ctx->Yield(2);
+    };
+  }
+
+  // ===================================================================================
+  // The axis family-DOF portrait (task 841): what the live preview actually draws.
+  //
+  // The plan's testing contract for the portrait: assert on REAL SUBMITTED primitives (the
+  // gizmo snapshot) read through real chip presses / slider inputs / drags — never on a
+  // recomputed parallel derivation — with the Lowitz axis direction held to an INDEPENDENT
+  // analytic oracle (this file's own reference-prism face-normal chain, not production's helper).
+  // The layout-rect half of AC4 is carried by the regenerated modal_layout references (the
+  // scenes below save the preview screenshots the readability judgement reads); this suite owns
+  // the gizmo-specific geometry facts: the ink stays inside the preview image, and the
+  // primitive record matches the AC1 table row by row.
+  // ===================================================================================
+
+  // The AC1 table, row by row, on the live preview. Every row is entered through a REAL chip
+  // press or input (the same path a user drives), and the assertions read the submitted
+  // primitive record.
+  {
+    ImGuiTest* t =
+        IM_REGISTER_TEST(engine, "edit_modal", "the_portrait_draws_the_family_dof_table_in_the_live_preview");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      const ScopedPopups popup_guard(ctx);
+      gui::SetEditEntryStagedModePreference(true);  // OK/Cancel exist only in Staged
+      ctx->Yield(2);
+      OpenCardEditor(ctx, 0, kCrystalTabRef);
+      ctx->Yield(3);
+      ctx->ItemClick("**/###axis_tab");
+      ctx->Yield(2);
+      ctx->MouseMoveToPos(PointOffEveryCard());
+      ctx->Yield(1);
+
+      // The independent H_3 oracle: this test's own reference-prism chain (C API face normals →
+      // 4/5 bisector → mesh-frame swap). Production derives its direction from the same C API
+      // but its own code path; agreement between the two chains is the AC2 evidence.
+      LUMICE_CrystalParam ref_param{};
+      ref_param.type = 0;
+      ref_param.height = { LUMICE_DIST_NO_RANDOM, 1.0f, 0.0f };
+      for (int i = 0; i < 6; ++i) {
+        ref_param.face_distance[i] = { LUMICE_DIST_NO_RANDOM, 1.0f, 0.0f };
+      }
+      LUMICE_CrystalMesh ref_mesh{};
+      IM_CHECK_EQ(LUMICE_GetCrystalMesh(&ref_param, 0, &ref_mesh), LUMICE_OK);
+      IM_CHECK_GT(ref_mesh.face_count, 0);
+      float oracle_h3_core[3] = { 0.0f, 0.0f, 0.0f };
+      int four = -1;
+      int five = -1;
+      for (int f = 0; f < ref_mesh.face_count; ++f) {
+        if (ref_mesh.face_numbers_by_face[f] == 4) {
+          four = f;
+        }
+        if (ref_mesh.face_numbers_by_face[f] == 5) {
+          five = f;
+        }
+      }
+      IM_CHECK_GT(four, -1);
+      IM_CHECK_GT(five, -1);
+      for (int i = 0; i < 3; ++i) {
+        oracle_h3_core[i] = ref_mesh.face_normals[four * 3 + i] + ref_mesh.face_normals[five * 3 + i];
+      }
+      const float oracle_len = std::sqrt(oracle_h3_core[0] * oracle_h3_core[0] + oracle_h3_core[1] * oracle_h3_core[1] +
+                                         oracle_h3_core[2] * oracle_h3_core[2]);
+      IM_CHECK_GT(oracle_len, 0.5f);
+      const float oracle_h3_mesh[3] = { oracle_h3_core[0] / oracle_len, oracle_h3_core[2] / oracle_len,
+                                        -oracle_h3_core[1] / oracle_len };
+
+      // One table row per family. `dir` is the expected body-frame axis object (nullptr for the
+      // rows that draw none); `capture` names the screenshot the row saves for the readability
+      // judgement (nullptr = no capture for this row).
+      struct RowSpec {
+        const char* chip;  // chip to press, or nullptr for the input-driven Custom row
+        gui::AxisPreset family;
+        bool ring;
+        bool axis;
+        gui::AxisGizmoSmallArrow small;
+        const float* dir;
+        const char* capture;
+      };
+
+      auto expect_row = [&](const char* where, int frame_before, const RowSpec& row) {
+        if (!RequireFreshGizmoSnapshot(ctx, frame_before, where)) {
+          return;
+        }
+        const gui::CrystalAxisGizmoSnapshot& s = gui::GetLastAxisGizmoSnapshot();
+        const bool any_content = row.axis || row.ring || row.small != gui::AxisGizmoSmallArrow::kNone;
+        if (s.drawn != any_content) {
+          IM_ERRORF("%s: drawn=%d expected=%d", where, static_cast<int>(s.drawn), static_cast<int>(any_content));
+        }
+        if (s.family != row.family) {
+          IM_ERRORF("%s: family=%d expected=%d", where, static_cast<int>(s.family), static_cast<int>(row.family));
+        }
+        if (s.az_ring_drawn != row.ring) {
+          IM_ERRORF("%s: az_ring=%d expected=%d", where, static_cast<int>(s.az_ring_drawn), static_cast<int>(row.ring));
+        }
+        if (s.body_axis_drawn != row.axis) {
+          IM_ERRORF("%s: body_axis=%d expected=%d", where, static_cast<int>(s.body_axis_drawn),
+                    static_cast<int>(row.axis));
+        }
+        if (s.small_arrow_drawn != (row.small != gui::AxisGizmoSmallArrow::kNone)) {
+          IM_ERRORF("%s: small_arrow=%d expected kind=%d", where, static_cast<int>(s.small_arrow_drawn),
+                    static_cast<int>(row.small));
+        }
+        if (s.small_arrow_drawn && s.small_arrow_kind != row.small) {
+          IM_ERRORF("%s: small kind=%d expected=%d", where, static_cast<int>(s.small_arrow_kind),
+                    static_cast<int>(row.small));
+        }
+        if (s.world_up_ref_drawn != any_content) {
+          IM_ERRORF("%s: world_up_ref=%d expected=%d", where, static_cast<int>(s.world_up_ref_drawn),
+                    static_cast<int>(any_content));
+        }
+        if (row.dir != nullptr) {
+          if (!VecNear3(s.axis_dir_mesh, row.dir[0], row.dir[1], row.dir[2], 1e-3f) ||
+              std::fabs(VecDot3(s.axis_dir_mesh, s.axis_dir_mesh) - 1.0f) > 1e-3f) {
+            IM_ERRORF("%s: axis dir (%.4f,%.4f,%.4f) is not the expected unit anchor", where,
+                      static_cast<double>(s.axis_dir_mesh[0]), static_cast<double>(s.axis_dir_mesh[1]),
+                      static_cast<double>(s.axis_dir_mesh[2]));
+          }
+        }
+        if (row.capture != nullptr && !CapturePreviewPNG(ctx, row.capture)) {
+          IM_ERRORF("%s: preview capture failed", where);
+        }
+      };
+
+      // Column → Plate → Parry → Lowitz: first presses all load their definitions.
+      int frame_before = gui::GetLastAxisGizmoSnapshot().frame_index;
+      ctx->ItemClick("**/Column##axis_label_chip");
+      ctx->Yield(3);
+      expect_row("Column row", frame_before,
+                 { nullptr, gui::AxisPreset::kColumn, true, true, gui::AxisGizmoSmallArrow::kSpin, kTestAxisDirCMesh,
+                   "column" });
+
+      frame_before = gui::GetLastAxisGizmoSnapshot().frame_index;
+      ctx->ItemClick("**/Plate##axis_label_chip");
+      ctx->Yield(3);
+      expect_row("Plate row", frame_before,
+                 { nullptr, gui::AxisPreset::kPlate, true, true, gui::AxisGizmoSmallArrow::kNone, kTestAxisDirCMesh,
+                   "plate" });
+
+      frame_before = gui::GetLastAxisGizmoSnapshot().frame_index;
+      ctx->ItemClick("**/Parry##axis_label_chip");
+      ctx->Yield(3);
+      expect_row("Parry row", frame_before,
+                 { nullptr, gui::AxisPreset::kParry, true, true, gui::AxisGizmoSmallArrow::kNone, kTestAxisDirCMesh,
+                   "parry" });
+
+      frame_before = gui::GetLastAxisGizmoSnapshot().frame_index;
+      ctx->ItemClick("**/Lowitz##axis_label_chip");
+      ctx->Yield(3);
+      expect_row(
+          "Lowitz row", frame_before,
+          { nullptr, gui::AxisPreset::kLowitz, true, true, gui::AxisGizmoSmallArrow::kTilt, oracle_h3_mesh, "lowitz" });
+
+      // Random: nothing at all — including no world-up reference (it must not read as one more
+      // characteristic axis).
+      frame_before = gui::GetLastAxisGizmoSnapshot().frame_index;
+      ctx->ItemClick("**/Random##axis_label_chip");
+      ctx->Yield(3);
+      expect_row(
+          "Random row", frame_before,
+          { nullptr, gui::AxisPreset::kRandom, false, false, gui::AxisGizmoSmallArrow::kNone, nullptr, nullptr });
+
+      // Custom over Random-domain parameters (first Custom press renames only): the LABEL moved
+      // to Custom, but the parameters still classify as Random — the portrait must stay empty.
+      frame_before = gui::GetLastAxisGizmoSnapshot().frame_index;
+      ctx->ItemClick("**/Custom##axis_label_chip");
+      ctx->Yield(3);
+      expect_row(
+          "Custom-over-Random row", frame_before,
+          { nullptr, gui::AxisPreset::kRandom, false, false, gui::AxisGizmoSmallArrow::kNone, nullptr, nullptr });
+
+      // Then a real Custom triple: zenith mean → 90 leaves Random (mean no longer ≈ 0), the
+      // parameters classify as Custom, and the Custom row draws axis + ring + spin (roll is the
+      // loaded Random definition's free uniform).
+      frame_before = gui::GetLastAxisGizmoSnapshot().frame_index;
+      ctx->ItemInputValue("**/Zenith/##Mean_input", 90.0f);
+      ctx->Yield(3);
+      expect_row("Custom row", frame_before,
+                 { nullptr, gui::AxisPreset::kCustom, true, true, gui::AxisGizmoSmallArrow::kSpin, kTestAxisDirCMesh,
+                   "custom" });
+
+      ctx->ItemClick(kCancel);
+      ctx->Yield(2);
+    };
+  }
+
+  // The portrait under live edits: the ring retracts when az narrows, the axis object switches
+  // with the classification, the small arrow follows the roll predicate through the cascade, and
+  // a Custom label never pins the drawing to a stale family.
+  {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "edit_modal", "the_portrait_adapts_to_live_distribution_edits");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      const ScopedPopups popup_guard(ctx);
+      gui::SetEditEntryStagedModePreference(true);  // OK/Cancel exist only in Staged
+      ctx->Yield(2);
+      OpenCardEditor(ctx, 0, kCrystalTabRef);
+      ctx->Yield(3);
+      ctx->ItemClick("**/###axis_tab");
+      ctx->Yield(2);
+      ctx->MouseMoveToPos(PointOffEveryCard());
+      ctx->Yield(1);
+
+      // Lowitz baseline, then narrow the azimuth range through the REAL input: the sticky label
+      // stays Lowitz, the badge predicate fires (the badge and the portrait read the same
+      // buffers), and the portrait re-draws as the parameters' actual family — Custom here,
+      // whose tilt arm inherits the wide Lowitz-shaped zenith, while the ring retracts and the
+      // axis object hands over from H_3 to c.
+      int frame_before = gui::GetLastAxisGizmoSnapshot().frame_index;
+      ctx->ItemClick("**/Lowitz##axis_label_chip");
+      ctx->Yield(3);
+      RequireFreshGizmoSnapshot(ctx, frame_before, "Lowitz baseline");
+      const gui::CrystalAxisGizmoSnapshot& baseline = gui::GetLastAxisGizmoSnapshot();
+      if (baseline.family != gui::AxisPreset::kLowitz || !baseline.az_ring_drawn ||
+          baseline.small_arrow_kind != gui::AxisGizmoSmallArrow::kTilt) {
+        IM_ERRORF("%s", "premise: the Lowitz baseline did not draw the Lowitz row");
+      }
+      if (!VecNear3(baseline.axis_dir_mesh, kTestAxisDirH3Mesh[0], kTestAxisDirH3Mesh[1], kTestAxisDirH3Mesh[2],
+                    1e-3f)) {
+        IM_ERRORF("%s", "premise: the Lowitz baseline is not riding the H_3 diagonal");
+      }
+      if (!CapturePreviewPNG(ctx, "lowitz-baseline")) {
+        IM_ERRORF("%s", "preview capture failed");
+      }
+
+      frame_before = gui::GetLastAxisGizmoSnapshot().frame_index;
+      ctx->ItemInputValue("**/Azimuth/##Range_input", 180.0f);
+      ctx->Yield(3);
+      RequireFreshGizmoSnapshot(ctx, frame_before, "az narrowed");
+      {
+        const gui::CrystalAxisGizmoSnapshot& s = gui::GetLastAxisGizmoSnapshot();
+        const gui::EditModalBuffers buffers = gui::GetEditModalBuffers();
+        if (buffers.axis_preset != gui::AxisPreset::kLowitz) {
+          IM_ERRORF("%s", "the sticky label must not move on its own when the parameters drift");
+        }
+        if (!gui::AxisLabelOutOfDomain(buffers.axis_preset, buffers.axis[0], buffers.axis[1], buffers.axis[2])) {
+          IM_ERRORF("%s", "premise: the drifted triple should light the out-of-domain badge predicate");
+        }
+        if (s.family != gui::AxisPreset::kCustom) {
+          IM_ERRORF("the drifted portrait must follow the classifier's family: %d", static_cast<int>(s.family));
+        }
+        if (s.az_ring_drawn) {
+          IM_ERRORF("%s", "the az ring must retract in the same read that un-uniforms the azimuth");
+        }
+        if (!s.body_axis_drawn ||
+            !VecNear3(s.axis_dir_mesh, kTestAxisDirCMesh[0], kTestAxisDirCMesh[1], kTestAxisDirCMesh[2], 1e-3f)) {
+          IM_ERRORF("%s", "the axis object must hand over from H_3 to c when the family reclassifies");
+        }
+        if (!s.small_arrow_drawn || s.small_arrow_kind != gui::AxisGizmoSmallArrow::kTilt) {
+          IM_ERRORF("%s", "the wide Lowitz-shaped zenith must keep the Custom tilt arm alive");
+        }
+        // The Custom tilt axis at the live roll anchor (roll mean 0): the zenith DOF's body-frame
+        // axis reduces to the H_3 direction — a coincidence of the anchor, asserted here as
+        // recorded, not as a reclassification.
+        if (!VecNear3(s.small_arc_axis_mesh, kTestAxisDirH3Mesh[0], kTestAxisDirH3Mesh[1], kTestAxisDirH3Mesh[2],
+                      1e-3f)) {
+          IM_ERRORF("%s", "the Custom tilt axis must record the live roll anchor's zenith axis");
+        }
+        if (!CapturePreviewPNG(ctx, "lowitz-az-narrowed")) {
+          IM_ERRORF("%s", "preview capture failed");
+        }
+      }
+
+      // The lock cascade: Column draws its spin while the roll is free; the same zenith-domain
+      // triple with a LOCKED roll classifies as Parry (the classifier judges Parry first) and the
+      // portrait must drop the spin arrow without keeping it for the Column label.
+      frame_before = gui::GetLastAxisGizmoSnapshot().frame_index;
+      ctx->ItemClick("**/Column##axis_label_chip");
+      ctx->Yield(3);
+      RequireFreshGizmoSnapshot(ctx, frame_before, "Column baseline");
+      if (gui::GetLastAxisGizmoSnapshot().small_arrow_kind != gui::AxisGizmoSmallArrow::kSpin) {
+        IM_ERRORF("%s", "premise: Column with a free roll must draw the spin arrow");
+      }
+      frame_before = gui::GetLastAxisGizmoSnapshot().frame_index;
+      ctx->ItemClick("**/Parry##axis_label_chip");
+      ctx->Yield(3);
+      RequireFreshGizmoSnapshot(ctx, frame_before, "roll locked via Parry");
+      {
+        const gui::CrystalAxisGizmoSnapshot& s = gui::GetLastAxisGizmoSnapshot();
+        if (s.family != gui::AxisPreset::kParry || s.small_arrow_drawn) {
+          IM_ERRORF("the locked-roll cascade must drop the small arrow (family=%d small=%d)",
+                    static_cast<int>(s.family), static_cast<int>(s.small_arrow_drawn));
+        }
+      }
+
+      // A Custom LABEL over Parry-domain parameters: no badge (Custom is exempt by definition)
+      // and the Parry portrait — the drawing follows the classification, the label pins nothing.
+      frame_before = gui::GetLastAxisGizmoSnapshot().frame_index;
+      ctx->ItemClick("**/Custom##axis_label_chip");
+      ctx->Yield(3);
+      RequireFreshGizmoSnapshot(ctx, frame_before, "Custom over Parry params");
+      {
+        const gui::CrystalAxisGizmoSnapshot& s = gui::GetLastAxisGizmoSnapshot();
+        const gui::EditModalBuffers buffers = gui::GetEditModalBuffers();
+        IM_CHECK_EQ(static_cast<int>(buffers.axis_preset), static_cast<int>(gui::AxisPreset::kCustom));
+        if (gui::AxisLabelOutOfDomain(buffers.axis_preset, buffers.axis[0], buffers.axis[1], buffers.axis[2])) {
+          IM_ERRORF("%s", "premise: the Custom label must be badge-exempt");
+        }
+        if (s.family != gui::AxisPreset::kParry || !s.body_axis_drawn || s.small_arrow_drawn) {
+          IM_ERRORF("the badge-exempt Custom label must still draw the actual family (%d)", static_cast<int>(s.family));
+        }
+      }
+
+      ctx->ItemClick(kCancel);
+      ctx->Yield(2);
+    };
+  }
+
+  // The physical-frame invariants under observation drag (AC5's machine half): the body axis and
+  // the world vertical keep their physical relation across a strong asymmetric drag, the world
+  // primitives consume the bare observation (never the composite), and a Custom mean edit moves
+  // ONLY the physical pose.
+  {
+    ImGuiTest* t =
+        IM_REGISTER_TEST(engine, "edit_modal", "the_portrait_keeps_physical_relations_under_observation_drag");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      const ScopedPopups popup_guard(ctx);
+      gui::SetEditEntryStagedModePreference(true);  // OK/Cancel exist only in Staged
+      ctx->Yield(2);
+      OpenCardEditor(ctx, 0, kCrystalTabRef);
+      ctx->Yield(3);
+      ctx->ItemClick("**/###axis_tab");
+      ctx->Yield(2);
+      ctx->MouseMoveToPos(PointOffEveryCard());
+      ctx->Yield(1);
+
+      // The invariant per family: the submitted body pose acting on the drawn axis object, dotted
+      // with the submitted world pose acting on the ring normal, must be |1| for Plate (coaxial)
+      // and 0 for Column / Parry / Lowitz (horizontal) — before and after any drag, because the
+      // observation is orthogonal and cancels out of the dot product.
+      auto axis_dot_up = [](const gui::CrystalAxisGizmoSnapshot& s) {
+        float axis_world[3];
+        float up_world[3];
+        RotateBy(s.body_rotation, s.axis_dir_mesh, axis_world);
+        RotateBy(s.world_rotation, s.ring_normal_mesh, up_world);
+        return VecDot3(axis_world, up_world);
+      };
+      auto expect_dot = [&](const char* where, float expected_abs) {
+        const gui::CrystalAxisGizmoSnapshot& s = gui::GetLastAxisGizmoSnapshot();
+        const float dot = axis_dot_up(s);
+        if (std::fabs(std::fabs(dot) - expected_abs) > 1e-3f) {
+          IM_ERRORF("%s: |dot|=%.6f expected %.3f", where, static_cast<double>(std::fabs(dot)),
+                    static_cast<double>(expected_abs));
+        }
+        // The world pose must be the observation's own bytes — the ring and up reference are
+        // drawn WITHOUT the physical pose, the failure the "world got multiplied by R" probe
+        // plants.
+        if (std::memcmp(s.world_rotation, gui::g_crystal_rotation, sizeof s.world_rotation) != 0) {
+          IM_ERRORF("%s: the submitted world rotation is not the observation", where);
+        }
+        // The GL mesh consumed the same composite the body-frame primitives project with — the
+        // mesh and the portrait are one rigid scene, witnessed at both consumption sites.
+        ExpectMatNear16(s.mesh_render_rotation, s.body_rotation, "mesh and body-primitive poses diverged");
+      };
+
+      int frame_before = gui::GetLastAxisGizmoSnapshot().frame_index;
+      ctx->ItemClick("**/Plate##axis_label_chip");
+      ctx->Yield(3);
+      RequireFreshGizmoSnapshot(ctx, frame_before, "Plate seat");
+      expect_dot("Plate seat", 1.0f);
+      // The screen anchors: what the strokes actually followed, projected through the REAL mvp's
+      // (recorded in production, never re-derived here). The drag and the R-only edit below are
+      // judged against these.
+      const gui::CrystalAxisGizmoSnapshot& seat = gui::GetLastAxisGizmoSnapshot();
+      if (!seat.ring_end_px_valid || !seat.body_tip_px_valid) {
+        IM_ERRORF("%s", "premise: the Plate seat did not record both screen anchors");
+      }
+      const float seat_ring_px[2] = { seat.ring_end_px[0], seat.ring_end_px[1] };
+      const float seat_tip_px[2] = { seat.body_tip_px[0], seat.body_tip_px[1] };
+
+      // Strong asymmetric drag, Plate edition: both submitted poses must move (the observation
+      // composes into both projections) while the coaxial relation survives, and the world pose
+      // must move WITH the observation — it is the observation's own bytes, the fact the "world
+      // got multiplied by R" probe breaks.
+      float world_before_drag[16];
+      std::memcpy(world_before_drag, gui::GetLastAxisGizmoSnapshot().world_rotation, sizeof world_before_drag);
+      float body_before_drag[16];
+      std::memcpy(body_before_drag, gui::GetLastAxisGizmoSnapshot().body_rotation, sizeof body_before_drag);
+      frame_before = gui::GetLastAxisGizmoSnapshot().frame_index;
+      gui::ApplyTrackballRotation(85.0f, 60.0f);
+      ctx->Yield(2);
+      RequireFreshGizmoSnapshot(ctx, frame_before, "strong drag (Plate)");
+      expect_dot("Plate relation after drag", 1.0f);
+      {
+        const gui::CrystalAxisGizmoSnapshot& s = gui::GetLastAxisGizmoSnapshot();
+        if (std::memcmp(s.world_rotation, world_before_drag, sizeof world_before_drag) == 0) {
+          IM_ERRORF("%s",
+                    "premise: the drag did not move the submitted world pose, so the invariance claim is vacuous");
+        }
+        if (std::memcmp(s.body_rotation, body_before_drag, sizeof body_before_drag) == 0) {
+          IM_ERRORF("%s", "premise: the drag did not move the submitted body pose, so the invariance claim is vacuous");
+        }
+        // The strokes actually moved with the observation: both projected anchors left their
+        // seat-time pixels. This is the consumption-side witness — an mvp whose argument was
+        // swapped would drag these pixels with the bug, whatever the matrix records say.
+        if (!s.ring_end_px_valid || !s.body_tip_px_valid) {
+          IM_ERRORF("%s", "the drag frame did not record both screen anchors");
+        } else {
+          const float ring_dx = s.ring_end_px[0] - seat_ring_px[0];
+          const float ring_dy = s.ring_end_px[1] - seat_ring_px[1];
+          const float tip_dx = s.body_tip_px[0] - seat_tip_px[0];
+          const float tip_dy = s.body_tip_px[1] - seat_tip_px[1];
+          if (std::sqrt(ring_dx * ring_dx + ring_dy * ring_dy) < 5.0f ||
+              std::sqrt(tip_dx * tip_dx + tip_dy * tip_dy) < 5.0f) {
+            IM_ERRORF("the drag moved a matrix but not the strokes: ring moved %.2f px, tip moved %.2f px",
+                      static_cast<double>(std::sqrt(ring_dx * ring_dx + ring_dy * ring_dy)),
+                      static_cast<double>(std::sqrt(tip_dx * tip_dx + tip_dy * tip_dy)));
+          }
+        }
+      }
+
+      // Lowitz edition: seat on its family (the chip re-seats the observation — this leg's own
+      // baseline), hold the horizontal relation through its own drag. Column's horizontal
+      // relation is asserted at its seat the same way (Parry's is the unit test's typical-chain
+      // row; the drawing contract is identical and its definition drive adds no discriminating
+      // power here).
+      frame_before = gui::GetLastAxisGizmoSnapshot().frame_index;
+      ctx->ItemClick("**/Column##axis_label_chip");
+      ctx->Yield(3);
+      RequireFreshGizmoSnapshot(ctx, frame_before, "Column seat");
+      expect_dot("Column seat", 0.0f);
+
+      frame_before = gui::GetLastAxisGizmoSnapshot().frame_index;
+      ctx->ItemClick("**/Lowitz##axis_label_chip");
+      ctx->Yield(3);
+      RequireFreshGizmoSnapshot(ctx, frame_before, "Lowitz seat");
+      expect_dot("Lowitz seat", 0.0f);
+      float lowitz_world_before[16];
+      std::memcpy(lowitz_world_before, gui::GetLastAxisGizmoSnapshot().world_rotation, sizeof lowitz_world_before);
+      frame_before = gui::GetLastAxisGizmoSnapshot().frame_index;
+      gui::ApplyTrackballRotation(70.0f, 45.0f);
+      ctx->Yield(2);
+      RequireFreshGizmoSnapshot(ctx, frame_before, "strong drag (Lowitz)");
+      expect_dot("Lowitz relation after drag", 0.0f);
+      if (std::memcmp(gui::GetLastAxisGizmoSnapshot().world_rotation, lowitz_world_before,
+                      sizeof lowitz_world_before) == 0) {
+        IM_ERRORF("%s", "premise: the second drag did not move the world pose, so its invariance claim is vacuous");
+      }
+
+      // A Custom mean edit moves ONLY the physical pose: the observation (and therefore the
+      // world primitives' pose) holds byte for byte. (The Custom press renames over the Lowitz
+      // parameters — the family stays Lowitz until the mean leaves its domain.) Park the mouse
+      // before the press: the Lowitz chip's switch-note tooltip is still open under the cursor,
+      // and a tooltip window swallows the press — which then lands frames later than the reads
+      // below expect, exactly the stale-baseline failure the landing premises catch.
+      ctx->MouseMoveToPos(PointOffEveryCard());
+      ctx->Yield(1);
+      frame_before = gui::GetLastAxisGizmoSnapshot().frame_index;
+      ctx->ItemClick("**/Custom##axis_label_chip");
+      ctx->Yield(3);
+      {
+        const gui::EditModalBuffers buffers = gui::GetEditModalBuffers();
+        if (buffers.axis_preset != gui::AxisPreset::kCustom) {
+          IM_ERRORF("premise: the Custom press did not land (label=%d)", static_cast<int>(buffers.axis_preset));
+        }
+        if (std::memcmp(gui::g_crystal_rotation, kIdentity16, sizeof kIdentity16) != 0) {
+          IM_ERRORF("%s", "premise: the rename press did not re-seat the observation to identity");
+        }
+      }
+      RequireFreshGizmoSnapshot(ctx, frame_before, "Custom rename over Lowitz params");
+      float world_before_edit[16];
+      std::memcpy(world_before_edit, gui::GetLastAxisGizmoSnapshot().world_rotation, sizeof world_before_edit);
+      float body_before_edit[16];
+      std::memcpy(body_before_edit, gui::GetLastAxisGizmoSnapshot().body_rotation, sizeof body_before_edit);
+      // The pre-edit anchors: the R-only differential below judges these pixels.
+      const gui::CrystalAxisGizmoSnapshot& before_edit = gui::GetLastAxisGizmoSnapshot();
+      if (!before_edit.ring_end_px_valid || !before_edit.body_tip_px_valid) {
+        IM_ERRORF("%s", "premise: the pre-edit frame did not record both screen anchors");
+      }
+      const float pre_edit_ring_px[2] = { before_edit.ring_end_px[0], before_edit.ring_end_px[1] };
+      const float pre_edit_tip_px[2] = { before_edit.body_tip_px[0], before_edit.body_tip_px[1] };
+      frame_before = gui::GetLastAxisGizmoSnapshot().frame_index;
+      ctx->ItemInputValue("**/Zenith/##Mean_input", 20.0f);
+      ctx->Yield(3);
+      RequireFreshGizmoSnapshot(ctx, frame_before, "Custom mean edit");
+      {
+        const gui::CrystalAxisGizmoSnapshot& s = gui::GetLastAxisGizmoSnapshot();
+        if (s.family != gui::AxisPreset::kCustom) {
+          IM_ERRORF("the mean edit must leave the Lowitz domain: family=%d", static_cast<int>(s.family));
+        }
+        if (std::memcmp(s.body_rotation, body_before_edit, sizeof body_before_edit) == 0) {
+          IM_ERRORF("%s",
+                    "premise: the Custom mean edit did not move the physical pose, so the claim below is vacuous");
+        }
+        if (std::memcmp(s.world_rotation, world_before_edit, sizeof world_before_edit) != 0) {
+          IM_ERRORF("%s", "the Custom mean edit moved the world pose — the physical pose leaked into the world frame");
+        }
+        // The consumption-side differential: with the world matrix frozen, the drawn ring pixel
+        // is frozen too (same mvp, same geometry — byte-identical reprojection), while the body
+        // tip rides the moved physical pose.
+        if (!s.ring_end_px_valid || !s.body_tip_px_valid) {
+          IM_ERRORF("%s", "the mean-edit frame did not record both screen anchors");
+        } else {
+          const float ring_move =
+              std::hypot(s.ring_end_px[0] - pre_edit_ring_px[0], s.ring_end_px[1] - pre_edit_ring_px[1]);
+          const float tip_move =
+              std::hypot(s.body_tip_px[0] - pre_edit_tip_px[0], s.body_tip_px[1] - pre_edit_tip_px[1]);
+          if (ring_move > 0.01f) {
+            IM_ERRORF(
+                "the world matrix was frozen but the drawn ring pixel moved %.4f px — the ring is not drawn "
+                "with the recorded world pose",
+                static_cast<double>(ring_move));
+          }
+          if (tip_move < 5.0f) {
+            IM_ERRORF("the physical pose moved but the drawn body tip followed only %.2f px",
+                      static_cast<double>(tip_move));
+          }
+        }
+        // A spread-only edit moves nothing physical: the representative chain reads the MEANS.
+        const int frame_before_spread = gui::GetLastAxisGizmoSnapshot().frame_index;
+        float body_before_spread[16];
+        std::memcpy(body_before_spread, gui::GetLastAxisGizmoSnapshot().body_rotation, sizeof body_before_spread);
+        ctx->ItemInputValue("**/Zenith/##Std_input", 41.0f);
+        ctx->Yield(3);
+        RequireFreshGizmoSnapshot(ctx, frame_before_spread, "spread-only edit");
+        if (std::memcmp(gui::GetLastAxisGizmoSnapshot().body_rotation, body_before_spread, sizeof body_before_spread) !=
+            0) {
+          IM_ERRORF("%s", "a spread-only edit moved the representative pose");
+        }
+        if (std::memcmp(gui::GetLastAxisGizmoSnapshot().world_rotation, world_before_edit, sizeof world_before_edit) !=
+            0) {
+          IM_ERRORF("%s", "a spread-only edit moved the world pose");
+        }
+      }
+
+      ctx->ItemClick(kCancel);
+      ctx->Yield(2);
+    };
+  }
+
+  // The four layout × scale scenes (AC4/AC6's geometry half): the portrait's ink stays inside
+  // the preview image at every size the modal supports, with the ink present in the image
+  // itself. The exact rects are pinned by the modal_layout reference suite (this change's regen
+  // proves them unchanged outside the preview ink); these assertions hold the gizmo-specific
+  // half.
+  {
+    ImGuiTest* t =
+        IM_REGISTER_TEST(engine, "edit_modal", "the_portrait_ink_stays_inside_the_preview_across_layouts_and_scales");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+      ResetTestState();
+      const ScopedPopups popup_guard(ctx);
+      // The scale scenes grow the shared window (the product leaves an already-grown window alone
+      // when the multiplier returns to 1x); the basis guard restores it at case exit, or the next
+      // case's entry audit counts the leak and fails the whole run.
+      const ScopedWindowBasis basis_guard(ctx);
+      gui::SetEditEntryStagedModePreference(true);  // OK/Cancel exist only in Staged
+      ctx->Yield(2);
+
+      const auto scene = [&](bool compact, float multiplier) {
+        gui::SetUiScaleMultiplierImmediate(multiplier);
+        gui::g_state.modal_layout_compact = compact;
+        ctx->Yield(4);
+        // Keep the larger-scale default layout on a large enough client (same premise as the
+        // chip-fit suite below the pose section).
+        g_window_size_test.Reset();
+        g_window_size_test.width = std::max(gui::kInitWindowWidth, gui::UiPxI(gui::kInitWindowWidth));
+        g_window_size_test.height = std::max(gui::kInitWindowHeight, gui::UiPxI(gui::kInitWindowHeight));
+        g_window_size_test.requested.store(true);
+        for (int i = 0; i < 20 && !g_window_size_test.done.load(); ++i) {
+          ctx->Yield();
+        }
+        IM_CHECK_RETV(g_window_size_test.done.load(), false);
+
+        OpenCardEditor(ctx, 0, kCrystalTabRef);
+        ctx->Yield(3);
+        // Compact keeps the chips on the Axis tab (Expanded draws every section at once).
+        if (compact) {
+          ctx->ItemClick("**/###axis_tab");
+          ctx->Yield(2);
+        }
+        ctx->ItemClick("**/Column##axis_label_chip");
+        ctx->Yield(2);
+        ctx->MouseMoveToPos(PointOffEveryCard());
+        ctx->Yield(2);
+
+        const auto preview = ctx->ItemInfo("**/##modal_preview_interact");
+        IM_CHECK_RETV(preview.ID != 0 && preview.Window != nullptr, false);
+        const float side = preview.RectFull.Max.x - preview.RectFull.Min.x;
+        const float side_y = preview.RectFull.Max.y - preview.RectFull.Min.y;
+        if (side <= 100.0f) {
+          IM_ERRORF("layout scene compact=%d scale=%.2f: preview image degenerate (%.1f px)", compact ? 1 : 0,
+                    static_cast<double>(multiplier), static_cast<double>(side));
+          return false;
+        }
+        IM_CHECK_RETV(std::fabs(side - side_y) < 1.0f, false);  // the image is square by contract
+
+        // Capture the image EXPANDED by a 3-px margin and judge the ring: zero gizmo-hued
+        // pixels outside the image (the clip contract), a healthy count inside it (the ink is
+        // actually drawn at this scale — "the rect contains" is not "the canvas has ink").
+        g_fullframe_capture.Reset();
+        const ImGuiIO& io = ImGui::GetIO();
+        const float sx = io.DisplayFramebufferScale.x;
+        const float sy = io.DisplayFramebufferScale.y;
+        const float fb_w = io.DisplaySize.x * sx;
+        const float fb_h = io.DisplaySize.y * sy;
+        const ImVec2 vp_pos = ImGui::GetMainViewport()->Pos;
+        const int margin = 3;
+        const float x0 = std::max(0.0f, (preview.RectFull.Min.x - vp_pos.x) * sx) - margin;
+        const float y0 = std::max(0.0f, (preview.RectFull.Min.y - vp_pos.y) * sy) - margin;
+        const float x1 = std::min(fb_w, (preview.RectFull.Max.x - vp_pos.x) * sx) + margin;
+        const float y1 = std::min(fb_h, (preview.RectFull.Max.y - vp_pos.y) * sy) + margin;
+        g_fullframe_capture.rect_x = static_cast<int>(std::lround(x0));
+        g_fullframe_capture.rect_y = static_cast<int>(std::lround(fb_h - y1));
+        g_fullframe_capture.rect_w = static_cast<int>(std::lround(x1 - x0));
+        g_fullframe_capture.rect_h = static_cast<int>(std::lround(y1 - y0));
+        g_fullframe_capture.requested.store(true);
+        for (int i = 0; i < 10 && !g_fullframe_capture.done.load(); ++i) {
+          ctx->Yield();
+        }
+        IM_CHECK_RETV(g_fullframe_capture.done.load(), false);
+
+        const int img_w = g_fullframe_capture.width;
+        const int img_h = g_fullframe_capture.height;
+        const std::vector<unsigned char> pixels = g_fullframe_capture.pixels;
+        int ring_ink = 0;
+        for (int y = 0; y < img_h; ++y) {
+          for (int x = 0; x < img_w; ++x) {
+            const bool in_ring = x < margin || y < margin || x >= img_w - margin || y >= img_h - margin;
+            if (!in_ring) {
+              continue;
+            }
+            const size_t base = (static_cast<size_t>(y) * static_cast<size_t>(img_w) + static_cast<size_t>(x)) * 4;
+            const int px[3] = { pixels[base], pixels[base + 1], pixels[base + 2] };
+            const bool amber = std::abs(px[0] - kTestGizmoAmber[0]) <= 24 &&
+                               std::abs(px[1] - kTestGizmoAmber[1]) <= 24 && std::abs(px[2] - kTestGizmoAmber[2]) <= 24;
+            const bool green = std::abs(px[0] - kTestGizmoGreen[0]) <= 24 &&
+                               std::abs(px[1] - kTestGizmoGreen[1]) <= 24 && std::abs(px[2] - kTestGizmoGreen[2]) <= 24;
+            if (amber || green) {
+              ++ring_ink;
+            }
+          }
+        }
+        if (ring_ink != 0) {
+          IM_ERRORF("compact=%d scale=%.2f: %d gizmo-colored pixels leaked outside the preview image", compact ? 1 : 0,
+                    static_cast<double>(multiplier), ring_ink);
+        }
+
+        // Ink inside: recolor the full capture and subtract nothing — a nontrivial count of
+        // gizmo-hued pixels inside the whole capture is the "the drawing happened at all" arm.
+        const int total_ink = CountGizmoInk(pixels, 24);
+        if (total_ink <= 50) {
+          IM_ERRORF("layout scene compact=%d scale=%.2f: only %d gizmo-hued pixels inside the capture", compact ? 1 : 0,
+                    static_cast<double>(multiplier), total_ink);
+          return false;
+        }
+
+        if (g_keep_export_png && !CapturePreviewPNG(ctx, compact ? "layout-compact" : "layout-expanded")) {
+          IM_ERRORF("layout scene compact=%d scale=%.2f: capture failed", compact ? 1 : 0,
+                    static_cast<double>(multiplier));
+        }
+
+        ctx->ItemClick(kCancel);
+        ctx->Yield(2);
+        return true;
+      };
+
+      IM_CHECK(scene(true, 1.0f));
+      IM_CHECK(scene(false, 1.0f));
+      IM_CHECK(scene(true, 1.25f));
+      IM_CHECK(scene(false, 1.25f));
+
+      gui::SetUiScaleMultiplierImmediate(1.0f);
+      ctx->Yield(4);
     };
   }
 
