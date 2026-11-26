@@ -226,6 +226,10 @@ struct OverlayLegendState {
   int tir_turn_count = 0;              // how many turns drew (one entry per turn pair)
   bool family_curves = false;          // any family fold arc / track submitted ink
   int family_curve_count = 0;          // how many curves submitted (one entry counts them)
+  int family_curve_unknown_links = 0;  // submitted line links with an unknown-form end — the
+                                       // kernel's unclassified stretches are drawn but must not
+                                       // silently read as certified fold arcs (the legend names
+                                       // them when present)
   // The reference calibers the drawn arcs quote, recorded with the bits so the legend keys can
   // name them: the support/edge bounds read at the survey document's own scope wavelength (a
   // FIXED reference, whatever the map's λ slider shows), the turn pair at the chromatic pair's
@@ -543,6 +547,10 @@ struct FamilyCurvePick {
   int point_index = -1;    // kPoint: the order position the line's nearer end sits at
   int segment_index = -1;  // kPointImage: the collapsed run
   int cusp_index = -1;     // kCusp: the located candidate
+  int segment_form = -1;   // kPoint: the hit point's own segment form (LUMICE_PATH_CURVE_SEGMENT_*,
+                           // -1 when the point sits outside any recorded segment) — the kernel's
+                           // evidence grade rides the pick: an unknown stretch must never read as
+                           // a certified fold arc downstream
   float dist_sq = 0.0f;    // squared points, the pick's own tolerance scale
 };
 

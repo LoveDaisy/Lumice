@@ -3116,6 +3116,44 @@ bool FamilyCurveLayerDrawsPicksAndSurvivesReplacement(ImGuiTestContext* ctx) {
     }
   }
   IM_CHECK_RETV(have_chain, false);
+  {
+    size_t segments_with_form = 0;
+    size_t segments_total = 0;
+    int arc_curves = 0;
+    int unknown_curves = 0;
+    for (const auto& curve : facts.family_curves) {
+      segments_total += curve.segments.size();
+      for (const auto& segment : curve.segments) {
+        if (segment.form == LUMICE_PATH_CURVE_SEGMENT_FORM_UNKNOWN) {
+          ++segments_with_form;
+        }
+      }
+      bool has_arc = false;
+      bool has_unknown = false;
+      for (const auto& segment : curve.segments) {
+        has_arc = has_arc || segment.form == LUMICE_PATH_CURVE_SEGMENT_FORM_ARC;
+        has_unknown = has_unknown || segment.form == LUMICE_PATH_CURVE_SEGMENT_FORM_UNKNOWN;
+      }
+      arc_curves += has_arc ? 1 : 0;
+      unknown_curves += has_unknown ? 1 : 0;
+    }
+    ctx->LogInfo("[curve layer] segments total=%zu unknown=%zu; curves arc=%d unknown=%d", segments_total,
+                 segments_with_form, arc_curves, unknown_curves);
+    int unknown_drawable = 0;
+    size_t unknown_drawable_points = 0;
+    for (const auto& curve : facts.family_curves) {
+      bool has_unknown = false;
+      for (const auto& segment : curve.segments) {
+        has_unknown = has_unknown || segment.form == LUMICE_PATH_CURVE_SEGMENT_FORM_UNKNOWN;
+      }
+      if (has_unknown && curve.points.size() >= 2) {
+        ++unknown_drawable;
+        unknown_drawable_points += curve.points.size();
+      }
+    }
+    ctx->LogInfo("[curve layer] unknown curves with drawable lines=%d (%zu points)", unknown_drawable,
+                 unknown_drawable_points);
+  }
   ctx->LogInfo("[curve layer] %zu curves (chain=%d track=%d)", facts.family_curves.size(), have_chain ? 1 : 0,
                have_track ? 1 : 0);
 
@@ -3173,6 +3211,114 @@ bool FamilyCurveLayerDrawsPicksAndSurvivesReplacement(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(report_text.find("member") != std::string::npos, false);
   IM_CHECK_RETV(report_text.find("params") != std::string::npos, false);
   IM_CHECK_RETV(SaveWindowPng(ctx, "//Raypath view", GuiTestTempPath("family_curve_pick.png").string()), false);
+
+  // The consumer-side evidence-grade control (the generation-3 review): the pick carries the
+  // hit point's OWN segment form, and the readout speaks it — an arc-form pick reads "fold
+  // arc", an unknown-form pick reads "unclassified stretch" (the kernel's honest downgrade
+  // must survive into the consumer, never silently upgraded to a certified fold). Both forms
+  // exist in this document (measured distribution), so the sweep keeps pressing until each
+  // grade has been picked once.
+  {
+    bool picked_arc_grade = false;
+    bool picked_unknown_grade = false;
+    bool arc_grade_ok = true;
+    bool unknown_grade_ok = true;
+    // The sweep clicks the frame's OWN submitted ink vertices (the draw list's family-ink
+    // points — real coordinates the display actually owns), so every press lands on some
+    // curve's line and the pick's form grade comes from the hit point itself, not from a
+    // lucky grid.
+    const ImGuiWindow* ink_region = MapRegionWindow();
+    IM_CHECK_RETV(ink_region != nullptr, false);
+    const ImU32 kArcInkCol = IM_COL32(255, 176, 92, 235);
+    const ImU32 kUnknownInkCol = IM_COL32(255, 176, 92, 110);  // the dim unknown-stretch line
+    int arc_col_count = 0;
+    int unknown_col_count = 0;
+    for (int i = 0; i < ink_region->DrawList->VtxBuffer.Size; ++i) {
+      const ImU32 col = ink_region->DrawList->VtxBuffer[i].col;
+      arc_col_count += col == kArcInkCol ? 1 : 0;
+      unknown_col_count += col == kUnknownInkCol ? 1 : 0;
+    }
+    ctx->LogInfo("[curve pick] draw-list ink vertices: arc=%d unknown=%d", arc_col_count, unknown_col_count);
+    std::vector<ImVec2> ink_points;
+    std::vector<ImVec2> unknown_points;
+    for (int i = 0; i < ink_region->DrawList->VtxBuffer.Size; i += 13) {
+      const ImU32 col = ink_region->DrawList->VtxBuffer[i].col;
+      if (col == kArcInkCol && static_cast<int>(ink_points.size()) < 60) {
+        ink_points.push_back(ink_region->DrawList->VtxBuffer[i].pos);
+      }
+      if (col == kUnknownInkCol && static_cast<int>(unknown_points.size()) < 60) {
+        unknown_points.push_back(ink_region->DrawList->VtxBuffer[i].pos);
+      }
+    }
+    IM_CHECK_RETV(static_cast<int>(ink_points.size()) >= 8, false);
+    const bool unknown_ink_visible = static_cast<int>(unknown_points.size()) >= 2;
+    if (!unknown_ink_visible) {
+      ctx->LogInfo(
+          "[curve pick] no unknown-stretch ink in this frame's view — the document's unknown "
+          "stretches sit outside the linear view's sky cone (a measured scene fact); the "
+          "grade control asserts the arc side, the unknown wording is pinned by the unit-grade "
+          "assertions");
+    }
+    ctx->SetRef("//Raypath view");
+    for (const ImVec2& ink_at : ink_points) {
+      if (picked_arc_grade) {
+        break;
+      }
+      ctx->MouseMoveToPos(ink_at);
+      ctx->MouseClick(ImGuiMouseButton_Left);
+      ctx->Yield(2);
+      if (!gui::FamilyCurveSelectionActive(gui::g_state)) {
+        continue;
+      }
+      const int form = gui::g_state.analysis.family_curve_segment_form;
+      if (form != LUMICE_PATH_CURVE_SEGMENT_FORM_ARC) {
+        continue;
+      }
+      const std::string grade_text = CaptureMapFrameText(ctx);
+      if (grade_text.find("fold arc · level") == std::string::npos ||
+          grade_text.find("unclassified stretch — no ordinary-fold verdict") != std::string::npos) {
+        ctx->LogError("[curve pick] an arc-form pick read the wrong grade (see the saved readout)");
+        arc_grade_ok = false;
+        break;
+      }
+      picked_arc_grade = true;
+    }
+    for (const ImVec2& ink_at : unknown_points) {
+      if (picked_unknown_grade) {
+        break;
+      }
+      ctx->MouseMoveToPos(ink_at);
+      ctx->MouseClick(ImGuiMouseButton_Left);
+      ctx->Yield(2);
+      if (!gui::FamilyCurveSelectionActive(gui::g_state)) {
+        continue;
+      }
+      const int form = gui::g_state.analysis.family_curve_segment_form;
+      if (form != LUMICE_PATH_CURVE_SEGMENT_FORM_UNKNOWN) {
+        continue;
+      }
+      const std::string grade_text = CaptureMapFrameText(ctx);
+      if (grade_text.find("unclassified stretch — no ordinary-fold verdict") == std::string::npos ||
+          grade_text.find("fold arc · level") != std::string::npos) {
+        ctx->LogError("[curve pick] an unknown-form pick read the wrong grade (see the saved readout)");
+        unknown_grade_ok = false;
+        break;
+      }
+      picked_unknown_grade = true;
+    }
+    ctx->SetRef("");
+    IM_CHECK_RETV(picked_arc_grade, false);
+    IM_CHECK_RETV(arc_grade_ok, false);  // the arc-side wording, asserted outside the sweep
+    if (unknown_ink_visible) {
+      IM_CHECK_RETV(picked_unknown_grade, false);
+      IM_CHECK_RETV(unknown_grade_ok, false);  // the unknown-side wording, outside the sweep
+    }
+    ctx->LogInfo(unknown_ink_visible ?
+                     "[curve pick] evidence grades read both ways: arc -> fold arc, unknown -> unclassified "
+                     "stretch" :
+                     "[curve pick] arc grade read: fold arc · level (the unknown side stays a conditional "
+                     "carry in this view)");
+  }
 
   // A new class's survey invalidates the selection (the adopted-identity binding).
   SetListRef(ctx);
@@ -3532,70 +3678,92 @@ int Ac5CountGeometryTwins(const gui::SurveyOverlayFacts& a, const gui::SurveyOve
 // covers.
 namespace analytic = lumice::analytic;
 
-// A drawable polyline run in sky coordinates (consecutive vertices the display draws as one
-// line), and the geometry set built from the facts at the display's own calibre: segment runs
-// of the line-drawing forms, one marker point per collapsed (point-image) segment. A run
-// breaks where consecutive sky vertices step more than kAc5RunBreakDeg — a period seam or an
-// unsolved hole is never bridged (the projection-continuity law at instrument calibre; real
-// chain sample steps sit near a degree, real seams and holes order tens of degrees).
-constexpr double kAc5RunBreakDeg = 5.0;
-struct Ac5GeometryRun {
-  std::vector<double> alt_deg;
-  std::vector<double> az_deg;
+// (The drawable-geometry set and its coverage distance live below, built at the display's own
+// adjacency semantics — the round-one review, generation 3.)
+// A drawable adjacency (the production link: two order positions the display would submit as
+// one line) and the geometry set built from the facts at the display's OWN adjacency semantics
+// (the round-one review, generation 3: the coverage set must collect every adjacency the
+// display actually submits, or an in-place resample masquerades as movement). For a fold chain
+// that is every consecutive ordered pair (form boundaries are NOT topology breaks — the two
+// arcs' junction link is a real link), plus the closing pair when closed; a link whose both
+// ends sit inside ONE point-image run draws nothing (the run IS its marker — its collapsed
+// image enters the set as a point). For a regular track the validity runs are the real gaps:
+// links run per segment, plus the closing pair. No sky-step surrogate here: the display's
+// projection-continuity rule breaks a link at draw time and the sky-distance measure answers
+// through the chords the display actually owns.
+struct Ac5GeometryLink {
+  int a = 0;
+  int b = 0;  // order positions within the curve's point list
 };
 struct Ac5DrawableGeometry {
-  std::vector<Ac5GeometryRun> runs;
-  std::vector<std::pair<double, double>> points;
+  // Per curve: the curve's points plus its submitted links (positions index the SAME list).
+  std::vector<gui::SurveyOverlayFacts::FamilyCurveFact> curves;
+  std::vector<std::vector<Ac5GeometryLink>> links;
+  std::vector<std::pair<double, double>> points;  // point-image markers
 };
 Ac5DrawableGeometry Ac5CollectDrawableGeometry(const gui::SurveyOverlayFacts& facts) {
   Ac5DrawableGeometry geometry;
   for (const auto& curve : facts.family_curves) {
+    const int n = static_cast<int>(curve.points.size());
+    if (n < 1) {
+      continue;
+    }
+    // The point-image run owner per order position (the marker takes over run-interior links).
+    std::vector<int> collapsed_segment(static_cast<size_t>(n), -1);
+    int segment_id = 0;
     for (const auto& segment : curve.segments) {
       if (segment.form == LUMICE_PATH_CURVE_SEGMENT_FORM_POINT_IMAGE) {
+        for (int i = segment.first; i <= segment.last && i < n; ++i) {
+          collapsed_segment[static_cast<size_t>(i)] = segment_id;
+        }
         geometry.points.emplace_back(segment.image_alt_deg, segment.image_az_deg);
-        continue;
       }
-      Ac5GeometryRun run;
-      auto flush = [&geometry, &run]() {
-        if (run.alt_deg.size() >= 2) {
-          geometry.runs.push_back(run);
+      segment_id++;
+    }
+    auto inside_one_run = [&](int i, int j) {
+      return collapsed_segment[static_cast<size_t>(i)] >= 0 &&
+             collapsed_segment[static_cast<size_t>(i)] == collapsed_segment[static_cast<size_t>(j)];
+    };
+    std::vector<Ac5GeometryLink> curve_links;
+    if (curve.kind == LUMICE_PATH_CURVE_KIND_REGULAR_TRACK) {
+      // The validity runs are the real gaps: links inside each segment only, then the closing
+      // pair (the producer's own closed declaration — grid-adjacent through the wrap).
+      for (const auto& segment : curve.segments) {
+        for (int i = segment.first; i < segment.last; ++i) {
+          curve_links.push_back({ i, i + 1 });
         }
-        run = Ac5GeometryRun{};
-      };
-      for (int i = segment.first; i <= segment.last && i < static_cast<int>(curve.points.size()); ++i) {
-        const auto& point = curve.points[static_cast<size_t>(i)];
-        if (!run.alt_deg.empty()) {
-          gui::SurveyOverlayFacts::FamilyCurveFact::Point previous;
-          previous.alt_deg = run.alt_deg.back();
-          previous.az_deg = run.az_deg.back();
-          if (Ac5PointDistanceDeg(previous, point) > kAc5RunBreakDeg) {
-            flush();  // the seam: this vertex starts the next run
-          }
-        }
-        run.alt_deg.push_back(point.alt_deg);
-        run.az_deg.push_back(point.az_deg);
       }
-      flush();
+    } else {
+      // The fold chain: every consecutive ordered pair — form boundaries included.
+      for (int i = 0; i + 1 < n; ++i) {
+        if (!inside_one_run(i, i + 1)) {
+          curve_links.push_back({ i, i + 1 });
+        }
+      }
+    }
+    if (curve.closed && n >= 2 && !inside_one_run(n - 1, 0)) {
+      curve_links.push_back({ n - 1, 0 });
+    }
+    if (!curve_links.empty()) {
+      geometry.curves.push_back(curve);
+      geometry.links.push_back(std::move(curve_links));
     }
   }
   return geometry;
 }
 
-// One-way coverage: the sky point's angular distance to the set's nearest real segment or
-// marker (degrees; 1e300 against an empty set).
+// One-way coverage: the sky point's angular distance to the set's nearest submitted link chord
+// or marker (degrees; 1e300 against an empty set).
 double Ac5DistanceToDrawableGeometry(double alt_deg, double az_deg, const Ac5DrawableGeometry& geometry) {
   gui::SurveyOverlayFacts::FamilyCurveFact::Point point;
   point.alt_deg = alt_deg;
   point.az_deg = az_deg;
   double best = 1e300;
-  for (const auto& run : geometry.runs) {
-    for (size_t s = 0; s + 1 < run.alt_deg.size(); ++s) {
-      gui::SurveyOverlayFacts::FamilyCurveFact::Point q1;
-      gui::SurveyOverlayFacts::FamilyCurveFact::Point q2;
-      q1.alt_deg = run.alt_deg[s];
-      q1.az_deg = run.az_deg[s];
-      q2.alt_deg = run.alt_deg[s + 1];
-      q2.az_deg = run.az_deg[s + 1];
+  for (size_t c = 0; c < geometry.curves.size(); ++c) {
+    const auto& curve = geometry.curves[c];
+    for (const auto& link : geometry.links[c]) {
+      const auto& q1 = curve.points[static_cast<size_t>(link.a)];
+      const auto& q2 = curve.points[static_cast<size_t>(link.b)];
       best = std::min(best, Ac5PointToSegmentDistanceDeg(point, q1, q2));
     }
   }
@@ -3684,8 +3852,14 @@ struct Ac5ReshapeGates {
   int uncovered_curves = 0;       // > 0 required: drawable geometry the old set cannot cover
   bool tracks_witnessed = false;  // every drawable track point recomputes onto its drawn sky
   int track_witness_points = 0;
+  bool family_ok = false;             // the tracks' poses sit ON the declared frozen family's pins — the
+                                      // round-one review (generation 3): optical self-consistency and
+                                      // family membership are ORTHOGONAL conditions, both required; a
+                                      // tilted-but-feasible trajectory must fail here even though the
+                                      // optical gate passes it
   char first_witness_note[256] = {};  // the first failing point's own numbers (forensics)
-  bool Accepted() const { return kind_ok && uncovered_curves > 0 && tracks_witnessed; }
+  char first_family_note[160] = {};   // the first off-pin pose's own decomposition (forensics)
+  bool Accepted() const { return kind_ok && uncovered_curves > 0 && tracks_witnessed && family_ok; }
   const char* FirstFailedGate() const {
     if (!kind_ok) {
       return "kind";
@@ -3695,6 +3869,9 @@ struct Ac5ReshapeGates {
     }
     if (!tracks_witnessed) {
       return "track-optical";
+    }
+    if (!family_ok) {
+      return "family";
     }
     return nullptr;
   }
@@ -3719,6 +3896,7 @@ Ac5ReshapeGates Ac5JudgeReshapeAcceptance(const Ac5ReshapeReference& reference, 
   // unwitnessable track is not witnessed.
   int checked = 0;
   bool all_match = true;
+  bool family_all_ok = true;
   for (const auto& curve : new_set.family_curves) {
     if (curve.kind != LUMICE_PATH_CURVE_KIND_REGULAR_TRACK || curve.points.size() < 2 || curve.member.empty() ||
         curve.member.size() > 64) {
@@ -3740,9 +3918,29 @@ Ac5ReshapeGates Ac5JudgeReshapeAcceptance(const Ac5ReshapeReference& reference, 
     outputs.interface_transmittances = transmittance_scratch.data();
     for (const auto& point : curve.points) {
       bool witnessed = false;
+      bool on_family = false;
       double image_alt_deg = 0.0;
       double image_az_deg = 0.0;
       bool evaluated = false;
+      // The family-membership gate (orthogonal to the optical witness): the pose decomposes
+      // onto the declared frozen pins — the Parry population declares zenith gauss 90 +-0.3
+      // and roll gauss 0 +-0.3, so the drawn tracks' own world-frame poses must read
+      // zenith~90/roll~0 (the class expansion's conjugate members carry the same frozen pins —
+      // measured: the 3-7 track's poses read zenith 90 / roll 0 too). A feasible-but-tilted
+      // trajectory (the review's zenith 70 / roll 30 probe) fails here even though the optical
+      // gate passes it.
+      {
+        const double pin_zenith =
+            std::acos(std::max(-1.0, std::min(1.0, point.pose[8]))) * (180.0 / 3.14159265358979323846);
+        const double pin_roll = std::atan2(-point.pose[7], point.pose[6]) * (180.0 / 3.14159265358979323846);
+        on_family = std::fabs(pin_zenith - 90.0) <= 2.0 && std::fabs(pin_roll) <= 2.0;
+        if (!on_family && gates.first_family_note[0] == '\0') {
+          std::snprintf(gates.first_family_note, sizeof(gates.first_family_note),
+                        "member=(%d,%d) pose reads zenith %.3f roll %.3f — off the declared pins (90, 0)",
+                        curve.member.empty() ? -1 : curve.member[0], curve.member.size() > 1 ? curve.member[1] : -1,
+                        pin_zenith, pin_roll);
+        }
+      }
       if (analytic::EvaluatePath(reference.normals, slots, member_count, reference.refractive_index, reference.incident,
                                  point.pose, &outputs)) {
         evaluated = true;
@@ -3767,11 +3965,15 @@ Ac5ReshapeGates Ac5JudgeReshapeAcceptance(const Ac5ReshapeReference& reference, 
       if (!witnessed) {
         all_match = false;
       }
+      if (!on_family) {
+        family_all_ok = false;
+      }
       checked++;
     }
   }
   gates.track_witness_points = checked;
   gates.tracks_witnessed = checked >= 2 && all_match;
+  gates.family_ok = checked >= 2 && family_all_ok;
   return gates;
 }
 
@@ -4148,17 +4350,92 @@ bool FamilyCurveAc5WidenReshapeScenes(ImGuiTestContext* ctx) {
       IM_CHECK_RETV(control.uncovered_curves == 0, false);  // the movement gate fires: nothing moved
       IM_CHECK_RETV(!control.tracks_witnessed, false);      // the optical gate fires: the pose does not own that sky
     }
+    // The round-one review's (generation 3) tilted-family probe: a zenith 70 / roll 30
+    // trajectory that is OPTICALLY self-consistent — every point's image recomputes from its
+    // own pose through the member's own mapping — yet belongs to NO declared frozen family
+    // (the population pins zenith 90 / roll 0). The composite must reject it on the family
+    // gate while the optical gate passes it: the two conditions are orthogonal, both required.
+    {
+      gui::SurveyOverlayFacts tilted_old;
+      tilted_old.family_curves.push_back(Ac5SyntheticEquatorArc(-40.0, -20.0, 2.0, { 3, 5 }));
+      const Ac5ReshapeReference tilted_reference = Ac5BuildParryReference();
+      IM_CHECK_RETV(tilted_reference.built, false);
+      int tilt_slots[2];
+      const int tilt_faces[2] = { 3, 5 };
+      IM_CHECK_RETV(
+          analytic::ResolveFaceSequence(tilted_reference.normals, tilt_faces, 2, tilt_slots) == analytic::Status::kOk,
+          false);
+      gui::SurveyOverlayFacts tilted_new;
+      gui::SurveyOverlayFacts::FamilyCurveFact tilted_track;
+      tilted_track.kind = LUMICE_PATH_CURVE_KIND_REGULAR_TRACK;
+      tilted_track.member = { 3, 5 };
+      tilted_track.grid_spacing_deg[0] = 2.8125;
+      tilted_track.grid_spacing_deg[1] = 2.8125;
+      analytic::PathOutputs tilt_outputs;
+      std::vector<double> tilt_segments_scratch(3 * 3, 0.0);
+      std::vector<double> tilt_transmittance_scratch(2, 0.0);
+      tilt_outputs.segment_directions = tilt_segments_scratch.data();
+      tilt_outputs.interface_transmittances = tilt_transmittance_scratch.data();
+      int tilted_sampled = 0;
+      // The tilt family's feasible window is narrow at this sun (measured: the low-azimuth
+      // stretch refuses every sample), so the probe sweeps the full circle and keeps whatever
+      // poses the member's own chain admits — the review's own probe found 11 that way.
+      for (double tilt_az = 0.0; tilt_az < 360.0; tilt_az += 10.0) {
+        double tilt_pose[9];
+        analytic::EulerPoseDeg(tilt_az, 70.0, 30.0, tilt_pose);
+        if (!analytic::EvaluatePath(tilted_reference.normals, tilt_slots, 2, tilted_reference.refractive_index,
+                                    tilted_reference.incident, tilt_pose, &tilt_outputs)) {
+          continue;  // an infeasible tilt sample: skipped, the feasible ones carry the probe
+        }
+        double tilt_alt = 0.0;
+        double tilt_img_az = 0.0;
+        analytic::ImageAltAzDeg(tilt_outputs.outgoing_direction, &tilt_alt, &tilt_img_az);
+        gui::SurveyOverlayFacts::FamilyCurveFact::Point p;
+        p.params_deg[0] = tilt_az;
+        p.params_deg[1] = 30.0;
+        for (int k = 0; k < 9; ++k) {
+          p.pose[k] = tilt_pose[k];
+        }
+        p.alt_deg = tilt_alt;
+        p.az_deg = tilt_img_az;
+        tilted_track.points.push_back(p);
+        tilted_sampled++;
+      }
+      IM_CHECK_RETV(tilted_sampled >= 4, false);  // the probe built enough self-consistent samples
+      gui::SurveyOverlayFacts::FamilyCurveFact::Segment tilted_segment;
+      tilted_segment.form = LUMICE_PATH_CURVE_SEGMENT_FORM_ARC;
+      tilted_segment.first = 0;
+      tilted_segment.last = static_cast<int>(tilted_track.points.size()) - 1;
+      tilted_track.segments.push_back(tilted_segment);
+      tilted_new.family_curves.push_back(tilted_track);
+      const Ac5ReshapeGates tilted = Ac5JudgeReshapeAcceptance(tilted_reference, tilted_old, tilted_new, 0.05);
+      ctx->LogInfo("[ac5 reshape] tilted control: kind=%d uncovered=%d tracks_witnessed=%d (%d pts) family_ok=%d -> %s",
+                   tilted.kind_ok ? 1 : 0, tilted.uncovered_curves, tilted.tracks_witnessed ? 1 : 0,
+                   tilted.track_witness_points, tilted.family_ok ? 1 : 0, tilted.Accepted() ? "ACCEPTED" : "REJECTED");
+      if (!tilted.family_ok && tilted.first_family_note[0] != '\0') {
+        ctx->LogInfo("[ac5 reshape] tilted control forensics: %s", tilted.first_family_note);
+      }
+      IM_CHECK_RETV(!tilted.Accepted(), false);
+      IM_CHECK_RETV(tilted.kind_ok, false);               // the kind gate passes here too
+      IM_CHECK_RETV(tilted.uncovered_curves > 0, false);  // the tilted sky is new drawable geometry
+      IM_CHECK_RETV(tilted.tracks_witnessed, false);      // the optical gate PASSES it (self-consistent)
+      IM_CHECK_RETV(!tilted.family_ok, false);            // the family gate rejects: off the declared pins
+    }
     // The REAL payload through the same composite: the Parry orientation's own curves.
     const Ac5ReshapeReference reference = Ac5BuildParryReference();
     IM_CHECK_RETV(reference.built, false);
     const Ac5ReshapeGates reshape = Ac5JudgeReshapeAcceptance(reference, narrow, parry, 0.05);
-    ctx->LogInfo("[ac5 reshape] real payload: kind=%d uncovered=%d tracks_witnessed=%d (%d pts) -> %s",
+    ctx->LogInfo("[ac5 reshape] real payload: kind=%d uncovered=%d tracks_witnessed=%d (%d pts) family_ok=%d -> %s",
                  reshape.kind_ok ? 1 : 0, reshape.uncovered_curves, reshape.tracks_witnessed ? 1 : 0,
-                 reshape.track_witness_points, reshape.Accepted() ? "ACCEPTED" : "REJECTED");
+                 reshape.track_witness_points, reshape.family_ok ? 1 : 0, reshape.Accepted() ? "ACCEPTED" : "REJECTED");
     if (!reshape.tracks_witnessed && reshape.first_witness_note[0] != '\0') {
       ctx->LogInfo("[ac5 reshape] first unwitnessed point: %s", reshape.first_witness_note);
     }
+    if (!reshape.family_ok && reshape.first_family_note[0] != '\0') {
+      ctx->LogInfo("[ac5 reshape] first off-pin pose: %s", reshape.first_family_note);
+    }
     IM_CHECK_RETV(reshape.Accepted(), false);
+    IM_CHECK_RETV(reshape.family_ok, false);  // the real tracks sit on the declared pins
     const int reshape_twins = Ac5CountGeometryTwins(narrow, parry, 0.05);
     ctx->LogInfo("[ac5 reshape] column arcs with a Parry twin=%d of %zu", reshape_twins, narrow.family_curves.size());
     IM_CHECK_RETV(reshape_twins > 0, false);  // the shared slices

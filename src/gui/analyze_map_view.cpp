@@ -54,6 +54,9 @@ static_assert(kPointMassColour == IM_COL32(250, 184, 74, 255), "the promoted mas
 // hue (the arc replaces that marker), the point-image run the collapse family's, the cusp
 // candidates a hotter variant of the arc hue — one semantics one entry in the legend.
 constexpr ImU32 kFamilyArcInk = IM_COL32(255, 176, 92, 235);
+// The unclassified stretch's own ink: the same hue, dimmer — the kernel's honest downgrade is
+// visible as a weaker line (the legend and the readout name it too).
+constexpr ImU32 kFamilyUnknownInk = IM_COL32(255, 176, 92, 110);
 constexpr ImU32 kFamilyPointInk = IM_COL32(198, 160, 255, 235);
 constexpr ImU32 kFamilyCuspInk = IM_COL32(255, 120, 80, 235);
 
@@ -560,6 +563,7 @@ void SelectFamilyCurve(GuiState& state, const FamilyCurvePick& pick, std::vector
   s.family_curve_point_index = pick.point_index;
   s.family_curve_segment_index = pick.segment_index;
   s.family_curve_cusp_index = pick.cusp_index;
+  s.family_curve_segment_form = pick.segment_form;
   s.family_curve_source_picks = std::move(sources);
   s.family_curve_source_slot = 0;  // the committed curve is the nearest hit's — slot zero
 }
@@ -580,6 +584,7 @@ void CycleFamilyCurveSource(GuiState& state, int step) {
   s.family_curve_point_index = slot_pick.point_index;
   s.family_curve_segment_index = slot_pick.segment_index;
   s.family_curve_cusp_index = slot_pick.cusp_index;
+  s.family_curve_segment_form = slot_pick.segment_form;
 }
 
 void ClearFamilyCurveSelection(GuiState& state) {
@@ -591,6 +596,7 @@ void ClearFamilyCurveSelection(GuiState& state) {
   s.family_curve_point_index = -1;
   s.family_curve_segment_index = -1;
   s.family_curve_cusp_index = -1;
+  s.family_curve_segment_form = -1;
   s.family_curve_source_picks.clear();
   s.family_curve_source_slot = 0;
 }
@@ -1307,9 +1313,14 @@ const SurveyOverlayCache& RefreshSurveyOverlayCache(const SurveyQuerySession& su
 
 // The family curve pick's identity header (task arc-recovery-engine): the curve's kind words
 // and its literal member/level — the 820 ruling's theoretical caliber, never an actual-measure
-// interpretation.
-void RenderFamilyCurveHeader(const SurveyOverlayFacts::FamilyCurveFact& curve) {
-  const char* kind = curve.kind == LUMICE_PATH_CURVE_KIND_REGULAR_TRACK ? "regular track" : "fold arc";
+// interpretation. `segment_form` is the hit point's OWN segment form: a kernel-unclassified
+// stretch names itself here and never reads as a certified fold arc (the review: the honest
+// downgrade must survive into the consumer).
+void RenderFamilyCurveHeader(const SurveyOverlayFacts::FamilyCurveFact& curve, int segment_form = -1) {
+  const bool unclassified = segment_form == LUMICE_PATH_CURVE_SEGMENT_FORM_UNKNOWN;
+  const char* kind = curve.kind == LUMICE_PATH_CURVE_KIND_REGULAR_TRACK ? "regular track" :
+                     unclassified ? "unclassified stretch — no ordinary-fold verdict" :
+                                    "fold arc";
   std::string member;
   for (size_t i = 0; i < curve.member.size(); ++i) {
     if (i > 0) {
@@ -1342,7 +1353,12 @@ void RenderFamilyCurveTooltip(const SurveyOverlayFacts::FamilyCurveFact& curve, 
   switch (pick.kind) {
     case FamilyCurvePickKind::kPoint: {
       ImGui::TextUnformatted("Family curve");
-      RenderFamilyCurveHeader(curve);
+      RenderFamilyCurveHeader(curve, pick.segment_form);
+      if (pick.segment_form == LUMICE_PATH_CURVE_SEGMENT_FORM_UNKNOWN) {
+        ImGui::TextDisabled(
+            "this stretch carries no ordinary-fold verdict — the kernel left it unclassified "
+            "(rank/resolution evidence missing)");
+      }
       if (pick.point_index >= 0 && pick.point_index < static_cast<int>(curve.points.size())) {
         const SurveyOverlayFacts::FamilyCurveFact::Point& p = curve.points[static_cast<size_t>(pick.point_index)];
         RenderFamilyCurvePoseWitness(p.params_deg, p.pose, p.alt_deg, p.az_deg);
@@ -1445,6 +1461,8 @@ void DrawSurveyOverlays(ImDrawList* dl, GuiState& state, const MapCanvasProjecti
   // the hover (the nearest submitted ink's own event witness — point, point-image run or cusp),
   // and every submitted ink records its click surface for the stationary-click selection.
   int family_curve_entries = 0;
+  int family_curve_unknown_links = 0;  // submitted links touching an unclassified stretch (the
+                                       // legend names the kernel's honest downgrades)
   // The objects whose curves PRESENTED ink this frame (the supersede set: a curve that drew
   // nothing — a single-point fragment chain — keeps its card's representative marker).
   std::vector<int> drawn_curve_objects;
@@ -1513,12 +1531,22 @@ void DrawSurveyOverlays(ImDrawList* dl, GuiState& state, const MapCanvasProjecti
       // chain's own cell adjacency and keeps its line and pick surface; only a link whose both
       // ends sit in the SAME verified segment is replaced by that segment's marker.
       std::vector<int> collapsed_segment(curve.points.size(), -1);
+      // Every point's OWN segment (any form): the pick's evidence grade and the legend's
+      // unknown-ink count read this, not the point-image owner map.
+      std::vector<int> point_segment(curve.points.size(), -1);
       {
         int segment_id = 0;
         for (const SurveyOverlayFacts::FamilyCurveFact::Segment& segment : curve.segments) {
           if (segment.form == LUMICE_PATH_CURVE_SEGMENT_FORM_POINT_IMAGE) {
             for (int i = segment.first; i <= segment.last && i < static_cast<int>(collapsed_segment.size()); ++i) {
               collapsed_segment[static_cast<size_t>(i)] = segment_id;
+            }
+          }
+          // The pick's evidence grade reads the point's OWN segment (any form — the typed runs
+          // partition the point sequence, so the first covering segment is its owner).
+          for (int i = segment.first; i <= segment.last && i < static_cast<int>(collapsed_segment.size()); ++i) {
+            if (point_segment[static_cast<size_t>(i)] < 0) {
+              point_segment[static_cast<size_t>(i)] = segment_id;
             }
           }
           segment_id++;
@@ -1558,13 +1586,37 @@ void DrawSurveyOverlays(ImDrawList* dl, GuiState& state, const MapCanvasProjecti
         }
         const ImVec2 a(static_cast<float>(ax), static_cast<float>(ay));
         const ImVec2 b(static_cast<float>(bx), static_cast<float>(by));
-        dl->AddLine(a, b, kFamilyArcInk, UiPx(1.4f));
+        // The evidence grade is also the INK: a link touching an unclassified stretch draws
+        // dimmer (same hue, lower alpha) — the kernel's honest downgrade must be visible, not
+        // only worded (the user sees a weaker line where no ordinary-fold verdict exists).
+        const bool unknown_ink =
+            (point_segment[static_cast<size_t>(a_index)] >= 0 &&
+             curve.segments[static_cast<size_t>(point_segment[static_cast<size_t>(a_index)])].form ==
+                 LUMICE_PATH_CURVE_SEGMENT_FORM_UNKNOWN) ||
+            (point_segment[static_cast<size_t>(b_index)] >= 0 &&
+             curve.segments[static_cast<size_t>(point_segment[static_cast<size_t>(b_index)])].form ==
+                 LUMICE_PATH_CURVE_SEGMENT_FORM_UNKNOWN);
+        dl->AddLine(a, b, unknown_ink ? kFamilyUnknownInk : kFamilyArcInk, UiPx(1.4f));
         FamilyCurvePick pick;
         pick.curve_index = curve_index;
         pick.kind = FamilyCurvePickKind::kPoint;
         const float da = (mouse.x - a.x) * (mouse.x - a.x) + (mouse.y - a.y) * (mouse.y - a.y);
         const float db = (mouse.x - b.x) * (mouse.x - b.x) + (mouse.y - b.y) * (mouse.y - b.y);
         pick.point_index = da <= db ? a_index : b_index;
+        // The hit point's own segment form rides the pick (the review: the kernel's evidence
+        // grade must survive into tooltip/readout — an unknown stretch never reads as a
+        // certified fold arc), and the frame's unknown ink is counted for the legend.
+        const int hit_segment = point_segment[static_cast<size_t>(pick.point_index)];
+        pick.segment_form = hit_segment >= 0 ? curve.segments[static_cast<size_t>(hit_segment)].form : -1;
+        const int form_a = point_segment[static_cast<size_t>(a_index)] >= 0 ?
+                               curve.segments[static_cast<size_t>(point_segment[static_cast<size_t>(a_index)])].form :
+                               -1;
+        const int form_b = point_segment[static_cast<size_t>(b_index)] >= 0 ?
+                               curve.segments[static_cast<size_t>(point_segment[static_cast<size_t>(b_index)])].form :
+                               -1;
+        if (form_a == LUMICE_PATH_CURVE_SEGMENT_FORM_UNKNOWN || form_b == LUMICE_PATH_CURVE_SEGMENT_FORM_UNKNOWN) {
+          family_curve_unknown_links += 1;
+        }
         submit_surface(pick, a, b);
         consider_hover(pick, PointSegmentDistanceSq(mouse.x, mouse.y, a.x, a.y, b.x, b.y));
         return true;
@@ -1644,6 +1696,7 @@ void DrawSurveyOverlays(ImDrawList* dl, GuiState& state, const MapCanvasProjecti
     if (legend != nullptr && family_curve_entries > 0) {
       legend->family_curves = true;
       legend->family_curve_count = family_curve_entries;
+      legend->family_curve_unknown_links = family_curve_unknown_links;
     }
     curve_hovered_dist = hovered_dist;
   }
@@ -3586,7 +3639,11 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
       }
       const SurveyOverlayFacts::FamilyCurveFact& curve =
           sel_cache.facts.family_curves[static_cast<size_t>(curve_index)];
-      RenderFamilyCurveHeader(curve);
+      RenderFamilyCurveHeader(curve, state.analysis.family_curve_segment_form);
+      if (state.analysis.family_curve_pick_kind == static_cast<int>(FamilyCurvePickKind::kPoint) &&
+          state.analysis.family_curve_segment_form == LUMICE_PATH_CURVE_SEGMENT_FORM_UNKNOWN) {
+        ImGui::TextDisabled("this stretch carries no ordinary-fold verdict — the kernel left it unclassified");
+      }
       if (sel_cache.model.scope_available) {
         ImGui::TextDisabled("reference λ %.1f nm · the ideal frozen family's own critical arc",
                             sel_cache.model.wavelength_nm);
@@ -3927,6 +3984,12 @@ void RenderAnalyzeMapRegion(GuiState& state, const ImVec2& size) {
           ImGui::GetFrameHeight(), 0.0f, 0.0f);
       ImGui::TextWrapped("family fold arcs — %d curve%s · hover for member & pose", legend.family_curve_count,
                          legend.family_curve_count == 1 ? "" : "s");
+      if (legend.family_curve_unknown_links > 0) {
+        ImGui::TextDisabled(
+            "%d line link%s touch an unclassified stretch — those stretches carry no ordinary-fold "
+            "verdict",
+            legend.family_curve_unknown_links, legend.family_curve_unknown_links == 1 ? "" : "s");
+      }
     }
     if (legend.dispersion_red || legend.dispersion_blue) {
       ImGui::Bullet();

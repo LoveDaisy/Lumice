@@ -2000,6 +2000,9 @@ struct GuiState {
     int family_curve_point_index = -1;
     int family_curve_segment_index = -1;
     int family_curve_cusp_index = -1;
+    int family_curve_segment_form = -1;  // the picked point's own segment form (the kernel's
+                                         // evidence grade; the readout names an unknown stretch
+                                         // instead of passing it off as a certified fold arc)
     // Every curve that shared the commit click, each with ITS OWN pick at that position (the
     // event the click hit on that curve — never a rewritten default): the overlap cycle walks
     // these picks, so switching sources keeps the clicked sky position and event identity
