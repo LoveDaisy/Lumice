@@ -1173,6 +1173,45 @@ TEST(FamilyRank, LowitzSheetOrderedChainsIncludeThePolarBranches) {
   EXPECT_EQ(provenance_ok, links_total) << "a direct link lacks its cell provenance";
 }
 
+// The review's unit-audit scenario (round two, 3-1-6 sun-10 roll-pinned): a real
+// constant-image window the window scan refused BEFORE verification — the scan's positioning
+// bound carried the radian offset against the degree span and the degree claim ceiling, ~57x
+// too small. With the bound in the record's degree frame (the same expression and units the
+// final verification derives), the window qualifies and publishes: its measured diameter
+// inside its own declared bound, its image at the optics' own constant.
+TEST(FamilyRank, ConstantImageWindowSurvivesTheScanBound) {
+  Fixture f;
+  int slots[3];
+  const int faces[3] = { 3, 1, 6 };
+  f.Resolve(faces, 3, slots);
+  RestrictedFamilySpec spec;
+  spec.zenith.mode = FamilyDimensionMode::kFree;
+  spec.azimuth.mode = FamilyDimensionMode::kFree;
+  spec.roll.mode = FamilyDimensionMode::kFixed;
+  spec.roll.center_deg = 90.0;
+  double sun[3];
+  SunAt(10.0, 0.0, sun);
+  const RestrictedFamilyRank rank = RankRestrictedFamily(f.normals, slots, 3, spec, sun, kC16N, 64);
+  if (rank.status != FamilyRankStatus::kOk) {
+    ADD_FAILURE() << "rank status " << FamilyRankStatusName(rank.status);
+    return;
+  }
+  bool found = false;
+  for (const FoldChainRecord& chain : rank.fold_chains) {
+    for (const FoldSegmentRecord& segment : chain.segments) {
+      if (segment.form != FoldSegmentForm::kPointImage || segment.first != 1 || segment.last != 2) {
+        continue;
+      }
+      found = true;
+      EXPECT_GE(segment.image_bound_deg, segment.image_diameter_deg)
+          << "the scanned window published against its own bound";
+      EXPECT_NEAR(segment.image_alt_deg, -10.0, 0.01);
+      EXPECT_NEAR(segment.image_az_deg, 0.0, 0.01);
+    }
+  }
+  EXPECT_TRUE(found) << "the constant-image window the review measured stayed refused";
+}
+
 // The review's grid64 counterexample: the C16 spin chart at grid 64 — its mirror identity's
 // endpoints carried |dJ(v)| = 2.8e-15 against a 6.2e-14 resolution (two orders under — no
 // ordinary-fold evidence at all, their images the mirror constant) and still published as

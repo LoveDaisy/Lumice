@@ -1655,8 +1655,18 @@ RestrictedFamilyRank RankRestrictedFamily(const FaceNormalTable& normals, const 
               double d[2];
               ChainParamDelta(axes, pp.params_deg, pn.params_deg, d);
               extent_deg += std::sqrt(d[0] * d[0] + d[1] * d[1]);
-              const double pos_bound = have_grad && grad_min > 0.0 ? 2.0 * sigma1_max * jac_max / grad_min + 1e-12 :
-                                                                     kFoldPointImageFloorDeg * 2.0;
+              // The scan's positioning bound — the SAME expression the final verification's
+              // derived_bound starts from, IN THE SAME UNITS: sigma1 x (|J| / |grad J|) is a
+              // radian image distance (grad_jacobian differentiates per radian), converted to
+              // the record's degree frame here exactly as the verification converts it, plus
+              // the same 1e-12 degree rounding floor. An unconverted bound reads ~57x too
+              // small against the degree-span comparison and the degree claim ceiling — the
+              // review's own unit audit repeated on this second site: a real constant-image
+              // window (3-1-6, sun 10, roll fixed 90, grid 64: diameter 1.35e-6 deg against a
+              // true 8.09e-6 deg bound) was refused before verification ever ran.
+              const double pos_bound = have_grad && grad_min > 0.0 ?
+                                           2.0 * sigma1_max * jac_max / grad_min * kRadToDeg + 1e-12 :
+                                           kFoldPointImageFloorDeg * 2.0;
               if (pos_bound > kFoldPointImageFloorDeg) {
                 cap_blind = true;  // this window start's own evidence cannot ground any point claim
                 break;

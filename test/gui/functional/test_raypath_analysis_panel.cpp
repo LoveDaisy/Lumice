@@ -3493,6 +3493,27 @@ int Ac5CountGeometryTwins(const gui::SurveyOverlayFacts& a, const gui::SurveyOve
   return twins;
 }
 
+// How many of `b`'s curves read NO geometric twin in `a` — drawable geometry the `a`
+// orientation cannot produce. The reshaping movement witness: pure deletion NEVER satisfies it
+// (a subset's every curve keeps its source as a verbatim twin), so the composition's
+// new-geometry gate is what separates "curves were removed" from "the arcs' geometry moved".
+int Ac5CountNewGeometryCurves(const gui::SurveyOverlayFacts& a, const gui::SurveyOverlayFacts& b, double epsilon_deg) {
+  int fresh = 0;
+  for (const auto& cb : b.family_curves) {
+    bool twinned = false;
+    for (const auto& ca : a.family_curves) {
+      if (ca.member == cb.member && Ac5CurvePairDistanceDeg(ca, cb) < epsilon_deg) {
+        twinned = true;
+        break;
+      }
+    }
+    if (!twinned) {
+      fresh++;
+    }
+  }
+  return fresh;
+}
+
 // AC5 leg 1 — the true PBD 3-1-5 route on the probe-column sun-20 identity: curves present,
 // the pick's witness member literally 3-1-5 (the round-three review's missing assertion — the
 // old leg only logged it), the recomputable-posture witness beside it.
@@ -3641,12 +3662,16 @@ bool FamilyCurveAc5WidenReshapeScenes(ImGuiTestContext* ctx) {
   IM_CHECK_RETV(SaveWindowPng(ctx, "//Raypath view", GuiTestTempPath("ac5_reshape_parry.png").string()), false);
   // The arcs MOVE with the orientation — three independent geometry readings, none of them a
   // count and none of them satisfiable by deletion or resampling:
-  //   (a) kind composition: the same member's drawable kind mix changes with the population
-  //       (the roll-narrow freeze owns a different face of the family);
-  //   (b) per-curve twins: the fraction of column arcs carrying a Parry geometric twin (the
-  //       roll-0 slices twin for real — a geometric identity, kept); most have none;
-  //   (c) the flagship arcs: the longest curve of each set reads no twin in the other set —
-  //       the branches a user actually sees are different arcs.
+  //   (a) the movement witness (the review's demand — absence is not reshaping, and pure
+  //       deletion never passes this gate): the Parry orientation produces drawable geometry
+  //       the column orientation cannot — curves with no column twin;
+  //   (b) the kind mix as an ASSERTION (deletion cannot add a kind): the roll-narrow freeze
+  //       owns the 1-D track face the column orientation does not emit;
+  //   (c) supplementary absence readings, reported but never the answer: most column arcs
+  //       carry no Parry twin (the freeze removed them), the shared roll-0 slices twin for
+  //       real (a geometric identity, kept exactly — the Parry flagship reads 0.000 against
+  //       its column twin), and the column flagship reads ~5.7 deg from its nearest Parry
+  //       curve.
   {
     int narrow_chains = 0;
     int narrow_tracks = 0;
@@ -3660,6 +3685,26 @@ bool FamilyCurveAc5WidenReshapeScenes(ImGuiTestContext* ctx) {
     }
     ctx->LogInfo("[ac5 reshape] kinds column chains=%d tracks=%d; parry chains=%d tracks=%d", narrow_chains,
                  narrow_tracks, parry_chains, parry_tracks);
+    // The pure-deletion control, wired into the acceptance composition (the review's own
+    // construction): a parry set that is a verbatim SUBSET of the narrow set reads zero new
+    // geometry — the same predicate the movement gate consumes refuses it, so "delete most
+    // curves, move nothing" can never read as reshaping here.
+    {
+      gui::SurveyOverlayFacts subset_sim;
+      subset_sim.family_curves = { narrow.family_curves[0], narrow.family_curves[1], narrow.family_curves[2],
+                                   narrow.family_curves[3] };
+      gui::SurveyOverlayFacts kept_sim;
+      kept_sim.family_curves = { narrow.family_curves[1] };  // one verbatim survivor
+      IM_CHECK_RETV(Ac5CountNewGeometryCurves(subset_sim, kept_sim, 0.05) == 0, false);
+    }
+    // The movement gate: the Parry orientation's own drawable geometry includes curves no
+    // column curve matches — loci derived from the roll pin, absent from the roll-uniform
+    // orientation's answer.
+    const int parry_fresh = Ac5CountNewGeometryCurves(narrow, parry, 0.05);
+    ctx->LogInfo("[ac5 reshape] Parry curves with no column twin=%d of %zu (new geometry)", parry_fresh,
+                 parry.family_curves.size());
+    IM_CHECK_RETV(parry_fresh > 0, false);
+    IM_CHECK_RETV(narrow_tracks == 0 && parry_tracks >= 1, false);
     const int reshape_twins = Ac5CountGeometryTwins(narrow, parry, 0.05);
     ctx->LogInfo("[ac5 reshape] column arcs with a Parry twin=%d of %zu", reshape_twins, narrow.family_curves.size());
     IM_CHECK_RETV(reshape_twins > 0, false);  // the shared roll-0 slices
