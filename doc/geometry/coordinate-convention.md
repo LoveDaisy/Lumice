@@ -240,15 +240,40 @@ camera convention that is separate from the simulator camera in §9.1–9.5.
   positive sign tilts world `+z` (mesh `+y`) toward the camera so the
   crystal's top face is visible (looking down at the crystal from above).
 - **Mouse-drag semantics:** rotation is composed in world coordinates by
-  left-multiplying `g_crystal_rotation` with a Rodrigues axis. Camera position
-  stays put; the crystal turns relative to the user's world frame.
+  left-multiplying `g_crystal_rotation` — which since the axis-DOF portrait
+  (task 841) holds the **observation** `O` only — with a Rodrigues axis.
+  Camera position stays put; the whole physical scene (crystal, body-frame
+  portrait primitives, and the world-frame ones: az ring, up reference) turns
+  together relative to the user's world frame, so the physical relations
+  between the groups are drag-invariant.
   - Drag right (`dx>0`) → rotate around mesh `+y` (= world `+z`, vertical
     spin axis).
   - Drag down (`dy>0`) → rotate around mesh `+x` (= world `+x`, camera-right
     tilt; crystal top tips toward viewer).
+- **Representative pose `R` vs observation `O`:** the crystal's physical pose
+  is never stored. Each frame derives it with the same
+  `axis_presets.hpp::DefaultPreviewRotation` authority from the classified
+  family of the live axis buffers (typical chain for built-in families, live
+  means for `kCustom`, isometric sentinel for `kRandom`), and the mesh, face
+  numbers and body-frame portrait primitives are drawn with the composite
+  `O·R` (`CrystalRenderer::ComposeRotations`); the world-frame primitives are
+  drawn with `O` alone (`crystal_preview.cpp::DrawCrystalAxisGizmo` records
+  both submitted poses in `CrystalAxisGizmoSnapshot`). Modal open / label-chip
+  switch / Reset View re-seat `O` to identity, which lands the composite on
+  the classified family's representative view; parameter edits re-derive `R`
+  without touching `O`.
+- **The family-DOF portrait:** what the preview draws per family (axis
+  object, az ring, small DOF arrow, world-up reference) is stated once in
+  `axis_presets.hpp::ComputeAxisGizmoPlan`, consuming only the classifier's
+  own predicates — the portrait follows the family `ClassifyAxisPreset`
+  names for the live buffers, never the sticky label, the same narrative the
+  out-of-domain badge tells. The Lowitz characteristic axis (the `H_3` long
+  diagonal at body azimuth 90°) is derived per process from reference-prism
+  face normals through `LUMICE_GetCrystalMesh` — no GUI-side angle literal.
 - **Default orientations:** `axis_presets.hpp::DefaultPreviewRotation` is the
-  single source for both modal Reset View / preset-button and the entry-card
-  thumbnail. The function takes `(preset, params, out)` where `params` mirrors
+  single source for the representative pose behind the modal preview (per
+  frame, see above) and the entry-card thumbnail (stored). The function takes
+  `(preset, params, out)` where `params` mirrors
   `g_axis_buf` (`[0]=zenith, [1]=azimuth, [2]=roll`):
   - `kColumn` / `kPlate` / `kParry` / `kLowitz` use the
     `kPresetTypicalChain` table (fixed typical chain inputs)
