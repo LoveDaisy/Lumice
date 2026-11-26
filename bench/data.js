@@ -1,56 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795656448781,
+  "lastUpdate": 1795686113664,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "6997a5a16a019e98c1819cb1b23b8a6c42f5fc33",
-          "message": "Merge pull request #523 from LoveDaisy/feat/raypath-survey-c17-c06-c09\n\nfeat(survey): C17/C06/C09 wiring — witness, dual-mechanism chroma, support set (task-714)",
-          "timestamp": "2026-10-20T06:23:22+08:00",
-          "tree_id": "aa3e3ba9cc15c5e4714f8d861ef924a19ad59994",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/6997a5a16a019e98c1819cb1b23b8a6c42f5fc33"
-        },
-        "date": 1792448815936,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 376480.5,
-            "unit": "rays/sec",
-            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 506171.3,
-            "unit": "rays/sec",
-            "extra": "CPU: Neoverse-N2\\nCores: 4"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 365858.2,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 7763 64-Core Processor\\nCores: 4"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 312854.6,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -4800,6 +4752,54 @@ window.BENCHMARK_DATA = {
             "value": 513020.3,
             "unit": "rays/sec",
             "extra": "CPU: AMD EPYC 9V45 96-Core Processor                \\nCores: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "6f2d696ad1743bef647f6647b1b87f3bdb7e276d",
+          "message": "Merge pull request #658 from LoveDaisy/feat/parry-survey-nonterminal-hang\n\ntest(gui): single-source the survey partial-budget note (Parry survey hang verdict)",
+          "timestamp": "2026-11-26T17:24:07+08:00",
+          "tree_id": "5db2995bb95caa5a58cf49210337423e630afc4d",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/6f2d696ad1743bef647f6647b1b87f3bdb7e276d"
+        },
+        "date": 1795686113167,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 273754.4,
+            "unit": "rays/sec",
+            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 505796.9,
+            "unit": "rays/sec",
+            "extra": "CPU: Neoverse-N2\\nCores: 4"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 411700.6,
+            "unit": "rays/sec",
+            "extra": "CPU: Intel(R) Xeon(R) Platinum 8370C CPU @ 2.80GHz\\nCores: 4"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 360337.5,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 9V74 80-Core Processor                \\nCores: 4"
           }
         ]
       }
