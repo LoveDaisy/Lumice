@@ -1821,8 +1821,13 @@ RestrictedFamilyRank RankRestrictedFamily(const FaceNormalTable& normals, const 
       };
       int k = 0;
       while (k < n) {
-        int j = k;
-        while (j < n && form[static_cast<size_t>(j)] == form[static_cast<size_t>(k)]) {
+        int j = k + 1;
+        // A verified window's readings ride its FIRST position only, and adjacent windows with
+        // the same verdict carry DISTINCT junction evidence (the scan stopped the first window
+        // where the span exceeded the bound): each published point segment is exactly one
+        // verified window — a position carrying its own verification mark starts a new one.
+        while (j < n && form[static_cast<size_t>(j)] == form[static_cast<size_t>(k)] &&
+               !run_verified[static_cast<size_t>(j)]) {
           j++;
         }
         if (form[static_cast<size_t>(k)] == FoldSegmentForm::kArc) {
