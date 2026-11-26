@@ -1800,12 +1800,24 @@ static void RenderAxisModal(GuiState& state) {
       "Switches to this label: remembers the current parameters under the one you leave, then "
       "loads this label's memory — or its definition when nothing is remembered. The preview "
       "pose follows, re-seating on this label's typical view.";
+  // Font pixels round independently of the scaled window/style; a vertical scrollbar can
+  // consume the remaining slack. Budget the six gaps from live content width, not the modal's
+  // nominal width. Text and button padding are already in window coordinates, so do not scale
+  // them again. Flooring the gap prevents per-item pixel snapping from accumulating overflow.
+  const ImGuiStyle& style = ImGui::GetStyle();
+  float fixed_width = ImGui::CalcTextSize("Label:").x;
+  for (const auto& entry : kAxisPresets) {
+    fixed_width += ImGui::CalcTextSize(entry.label).x + 2.0f * style.FramePadding.x;
+  }
+  const float chip_gap =
+      std::min(style.ItemSpacing.x, std::max(0.0f, std::floor((ImGui::GetContentRegionAvail().x - fixed_width) /
+                                                              static_cast<float>(kAxisPresetCount))));
   ImGui::Text("Label:");
   if (ImGui::IsItemHovered()) {
     ImGui::SetTooltip("%s", kChipSwitchNote);
   }
   for (const auto& entry : kAxisPresets) {
-    ImGui::SameLine();
+    ImGui::SameLine(0.0f, chip_gap);
     bool highlighted = entry.id == active;
     if (highlighted) {
       ImGui::PushStyleColor(ImGuiCol_Button, active_color);
@@ -3305,7 +3317,9 @@ static void RenderModalTwoColumn(GuiState& state, bool crystal_dirty, bool axis_
   const float column_floor_h = above_filter_h + style.ItemSpacing.y + header_h + kEditModalFlexPaneMinRows * row_h;
   const float column_h = EditModalFlexPaneHeight(column_budget_h, column_floor_h, max_h);
 
-  ImGui::BeginChild("##modal_expanded_left", ImVec2(kModalColumnWidthCrystal, column_h), ImGuiChildFlags_None);
+  // Column widths are 1x design units, like the outer window's fixed width. Convert once
+  // to layout coordinates; the live style spacing and font metrics are already scaled.
+  ImGui::BeginChild("##modal_expanded_left", ImVec2(UiPx(kModalColumnWidthCrystal), column_h), ImGuiChildFlags_None);
   RenderCrystalPreviewPane(state, preview_px);
   RenderModalSectionHeader("Crystal", crystal_dirty, show_dirty);
   ImGui::PushID(entry_layer);
@@ -3317,7 +3331,8 @@ static void RenderModalTwoColumn(GuiState& state, bool crystal_dirty, bool axis_
 
   ImGui::SameLine();
 
-  ImGui::BeginChild("##modal_expanded_right", ImVec2(kModalColumnWidthAxisOrFilter, column_h), ImGuiChildFlags_None);
+  ImGui::BeginChild("##modal_expanded_right", ImVec2(UiPx(kModalColumnWidthAxisOrFilter), column_h),
+                    ImGuiChildFlags_None);
   RenderModalSectionHeader("Axis", axis_dirty, show_dirty);
   ImGui::BeginChild("##modal_expanded_axis", ImVec2(-FLT_MIN, axis_h), ImGuiChildFlags_None);
   ImGui::PushID(entry_layer);

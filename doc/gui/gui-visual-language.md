@@ -110,6 +110,16 @@ ScrollbarRounding 3  WindowRounding 4  PopupRounding 4
 
 **Settings tooltip 行长** —— `gui/tooltip.hpp` 的 `SetWrappedTooltip` 保留 ImGui tooltip 的格式化、定位与覆盖语义，正文最多 `UiPx(400)`，外框另加实际 `WindowPadding`；短句仍自适应宽度。400 是排版设计选值，不代表已经通过用户观感终裁。当前仅 Settings 采用，不改变其他窗口的 tooltip。
 
+**紧凑按钮的行高与墨迹是两份边界**：`SmallButton` 保留文本行的名义高度、基线、横向 padding、
+ID 和命中框，但名义 `FontSize` 不是实际 glyph 的纵向墨迹包围盒。例如 1.5× 的 Roboto 取整到
+23px，而 `y` 的栅格下界是 24px；不能以 23px 的文字 CPU fine clip 吞掉非透明尾行。
+`cmake/imgui_small_button_ink.cmake` 在只读的锁定依赖源上生成 build-local widgets TU，产品与测试
+共用：仅在 SmallButton 路径以当前可见 label 的 glyph bounds 补足纵向文字 clip，保留横向 clip、
+按钮布局和窗口 scissor。字体、atlas 构造、全局行高与间距不变；不复制按钮输入处理。
+依赖内容变更会在 configure 拒绝，须重新核对上游度量/对齐/裁剪链，不能只更新 SHA 后跳过验证。
+字形回归同时核查未裁 atlas UV、所属 draw-command clip 和 framebuffer 中原尾行的可辨贡献；
+被 tooltip 遮挡或暗字与底色合成后低于像素量化精度的帧不能冒称可辨墨迹证据。
+
 **4.3 调色板** —— 见 §3 定案列。核心两条规则：**强调色不做大面积常驻填充，且滑条静止态不上色**；分组标题是**染色**不是实心条。
 
 ⚠️ 这条规则曾被写成"强调色只在**交互进行中**出现"，那个措辞是错的，且会主动否掉正确答案。`src/gui/theme.cpp` 的 `ApplyPalette` 自己就把 accent 给了**静止的**勾选态（`c[ImGuiCol_CheckMark] = p.accent`），而紧随其后那段注释解释的其实是**滑条**——"Grab neutral at rest, accent only while dragging"，理由是滑条是面板里重复次数最多的控件，它的静止色调定全局基调。所以规则真正管的是**面积**与**滑条**，不是"任何交互态都不许常驻上色"：勾选态本身就是内容（"这一项被选中"），涂色是内容的一部分，不是装饰性强调。同理，卡片的关联边框（`src/gui/panels.cpp` 的 active / co-shared 两态）、状态栏的 `Simulating...`、LINK 徽标都用 accent 而不违反这条——它们都是细线或短文本，且都在陈述"此刻是这个"。
