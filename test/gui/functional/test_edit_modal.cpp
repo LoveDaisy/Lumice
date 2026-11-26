@@ -743,6 +743,7 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
       ResetTestState();
       const ScopedPopups popups(ctx);
       const ScopedTooltipUiScale scale(ctx);
+      gui::SetEditEntryStagedModePreference(true);  // OK/Cancel exist only in Staged (host premise policy)
       ctx->Yield(2);
       OpenCardEditor(ctx, 0, kCrystalTabRef);
       ctx->ItemClick("**/###axis_tab");
@@ -909,6 +910,7 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
       ResetTestState();
       const ScopedPopups popups(ctx);
       const ScopedTooltipUiScale scale(ctx);
+      gui::SetEditEntryStagedModePreference(true);  // OK/Cancel exist only in Staged (host premise policy)
       const auto exercise = [&](float multiplier, bool compact, bool fit_only = false) -> bool {
         gui::SetUiScaleMultiplierImmediate(multiplier);
         gui::g_state.modal_layout_compact = compact;
