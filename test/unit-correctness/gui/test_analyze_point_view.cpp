@@ -149,7 +149,8 @@ TEST(AnalyzePointView, PointViewStateDefaultsPinTheFactorySession) {
   // lives here so a flip is a one-line red, not a GUI-run surprise). The Fresnel toggle defaults
   // ON (2026-11-17 feedback: the ratio numbers are the trace's exact-value face); the grid
   // backdrop stays ON; the frame starts in world; the curve range starts at Fit; the globe view
-  // starts at Full (the fixed crystal basis — the default view).
+  // starts at Full (the fixed crystal basis — the default view). The interpretive-pose fact
+  // starts ABSENT (no document adopted yet — the honest no-pose state, never a fabricated one).
   PointViewState view;
   EXPECT_TRUE(view.show_fresnel_labels);
   EXPECT_TRUE(view.show_deviation_grid);
@@ -159,6 +160,9 @@ TEST(AnalyzePointView, PointViewStateDefaultsPinTheFactorySession) {
   EXPECT_EQ(view.component_index, 0);
   EXPECT_EQ(view.sample_index, 0);
   EXPECT_FALSE(view.playing);
+  EXPECT_FALSE(view.interpretive_available);
+  EXPECT_EQ(view.interpretive_component, -1);
+  EXPECT_EQ(view.interpretive_valid_position, -1);
 }
 
 TEST(AnalyzePointView, ResetOrbitRestoresOnlyOrientationAndIsIdempotent) {
@@ -351,7 +355,10 @@ TEST(AnalyzePointView, FactorLinesSpellUnavailableNotZero) {
   sample.interface_count = 2;
   const int faces_seq[2] = { 3, 7 };  // entry + exit: both factors are transmittances
 
-  const std::vector<std::string> lines = PointFactorLines(sample, faces_seq, 2);
+  // The log fact travels beside the sample (the caller's density read): null keeps the
+  // linear-only spellings, the states below pin the log-aware ones.
+  const double log_finite = std::log(0.0125);
+  const std::vector<std::string> lines = PointFactorLines(sample, &log_finite, faces_seq, 2);
   std::string joined;
   for (const std::string& l : lines) {
     joined += l;
@@ -362,10 +369,11 @@ TEST(AnalyzePointView, FactorLinesSpellUnavailableNotZero) {
   EXPECT_EQ(joined.find("axis density × A/a^2 × T × K = "), std::string::npos);  // no product number without J
   EXPECT_NE(joined.find("face 3, entry refraction: transmittance = 0.977"), std::string::npos);
   EXPECT_NE(joined.find("face 7, exit refraction: transmittance = 0.978"), std::string::npos);
-  EXPECT_EQ(joined.find("(degenerate)"), std::string::npos);  // not degenerate: the marker stays off
+  EXPECT_NE(joined.find("axis density = 0.0125 rad^-3"), std::string::npos);  // linear payload carries the value
+  EXPECT_EQ(joined.find("(degenerate)"), std::string::npos);                  // not degenerate: the marker stays off
 
   sample.angles_degenerate = 1;
-  const std::vector<std::string> degenerate = PointFactorLines(sample, faces_seq, 2);
+  const std::vector<std::string> degenerate = PointFactorLines(sample, &log_finite, faces_seq, 2);
   std::string joined_deg;
   for (const std::string& l : degenerate) {
     joined_deg += l;
@@ -380,7 +388,7 @@ TEST(AnalyzePointView, FactorLinesSpellUnavailableNotZero) {
   sample.singular_values[1] = 0.1;
   sample.k_carea = 2.0;
   sample.factor_product = 0.0083;
-  const std::vector<std::string> with_j = PointFactorLines(sample, faces_seq, 2);
+  const std::vector<std::string> with_j = PointFactorLines(sample, &log_finite, faces_seq, 2);
   std::string joined2;
   for (const std::string& l : with_j) {
     joined2 += l;
@@ -388,6 +396,39 @@ TEST(AnalyzePointView, FactorLinesSpellUnavailableNotZero) {
   }
   EXPECT_NE(joined2.find("K = 1/(J+eps) = 2"), std::string::npos);
   EXPECT_NE(joined2.find("axis density × A/a^2 × T × K = 0.0083"), std::string::npos);
+
+  // ---- The rho line's log-aware states: a linear 0 that carries a finite log spells the
+  // absolute density and names the underflow — the "drawn ρ arm / ρ=0 readout" contradiction
+  // this task retires; -inf/+inf keep the contract's own words; null/NaN keep the linear fact.
+  sample.rho = 0.0;
+  const double log_deep = std::log(5.37e-89);
+  const std::vector<std::string> underflow = PointFactorHeadLines(sample, &log_deep);
+  ASSERT_GE(underflow.size(), 2U);
+  EXPECT_NE(underflow[1].find("e-89"), std::string::npos);
+  EXPECT_NE(underflow[1].find("below its underflow"), std::string::npos);
+  const double log_off = -std::numeric_limits<double>::infinity();
+  const std::vector<std::string> off_support = PointFactorHeadLines(sample, &log_off);
+  EXPECT_NE(off_support[1].find("no ordinary density"), std::string::npos);
+  const double log_div = std::numeric_limits<double>::infinity();
+  const std::vector<std::string> divergent = PointFactorHeadLines(sample, &log_div);
+  EXPECT_NE(divergent[1].find("divergent"), std::string::npos);
+  const double log_nan = std::numeric_limits<double>::quiet_NaN();
+  const std::vector<std::string> unverified = PointFactorHeadLines(sample, &log_nan);
+  EXPECT_NE(unverified[1].find("axis density = 0"), std::string::npos);
+  EXPECT_NE(unverified[1].find("did not verify"), std::string::npos);
+  // Null (the reader did not answer): the plain linear line.
+  const std::vector<std::string> no_fact = PointFactorHeadLines(sample, nullptr);
+  EXPECT_NE(no_fact[1].find("axis density = 0 rad^-3"), std::string::npos);
+  // A finite linear value stays verbatim with a finite log (the payload carries the value).
+  sample.rho = 0.5;
+  const std::vector<std::string> healthy = PointFactorHeadLines(sample, &log_finite);
+  EXPECT_NE(healthy[1].find("axis density = 0.5 rad^-3"), std::string::npos);
+  sample.rho = -1.0;  // a negative linear payload: the head line stays the engine's verbatim
+                      // number (finite = printed); the CURVE classifier is what names it
+                      // unavailable (PointCurveClassify's own contract)
+  const std::vector<std::string> negative = PointFactorHeadLines(sample, &log_finite);
+  EXPECT_NE(negative[1].find("axis density = -1 rad^-3"), std::string::npos);
+  sample.rho = 0.0125;
 }
 
 // ---- The per-contact roles and the loss reading (c03 AC1/AC2): the controlled chains ------------------
@@ -728,6 +769,7 @@ TEST(AnalyzePointView, CurveModesUseExactPositiveUnionAndFiveOrFourteenDecadeFlo
   using K = PointCurveValueKind;
   PointContributionCurve curve;
   EXPECT_FALSE(PointCurveAxisFit(curve).valid);
+  EXPECT_FALSE(PointCurveRhoAxisFit(curve).valid);
   curve.points.resize(1001);
   for (size_t i = 0; i < curve.points.size(); ++i) {
     auto& p = curve.points[i];
@@ -742,24 +784,232 @@ TEST(AnalyzePointView, CurveModesUseExactPositiveUnionAndFiveOrFourteenDecadeFlo
   }
   curve.points[0].rho = 1e-320;
   curve.points[0].rho_kind = K::kPositive;
+  curve.points[0].log10_rho = -320.0;
   curve.points[0].k_carea = 3.2;
   curve.points[0].k_kind = K::kPositive;
-  EXPECT_DOUBLE_EQ(PointCurveAxisFit(curve).lo, 3.2e-5);
+  // The rho arm is NOT in the left union anymore — the four arms' window is independent of a
+  // deep tail (the fixed replacement for the shared-axis clipping defect): the union is
+  // [2, 3.2], and its own floor (3.2e-5 / 3.2e-14) sits BELOW the data minimum, so the exact
+  // endpoints survive. (The old shared union would have floored the 1e-320 rho into the band.)
+  EXPECT_DOUBLE_EQ(PointCurveAxisFit(curve).lo, 2.0);
   EXPECT_DOUBLE_EQ(PointCurveAxisFit(curve).hi, 3.2);
-  EXPECT_DOUBLE_EQ(PointCurveAxisFit(curve, PointCurveRangeMode::kFull).lo, 3.2e-14);
+  EXPECT_DOUBLE_EQ(PointCurveAxisFit(curve, PointCurveRangeMode::kFull).lo, 2.0);
+  // ...while the right axis spans exactly the finite logs, no decade cap (a 1e-320 tail fits).
+  const PointCurveRhoAxisRange rho = PointCurveRhoAxisFit(curve);
+  ASSERT_TRUE(rho.valid);
+  EXPECT_DOUBLE_EQ(rho.lo_log10, -320.0);
+  EXPECT_DOUBLE_EQ(rho.hi_log10, -320.0);  // single value so far: constant branch stays valid
+  // A second finite log widens the span to the exact pair; a mode switch must not move it.
+  curve.points[500].rho_kind = K::kPositive;
+  curve.points[500].log10_rho = -3.0;
+  const PointCurveRhoAxisRange spanned = PointCurveRhoAxisFit(curve);
+  ASSERT_TRUE(spanned.valid);
+  EXPECT_DOUBLE_EQ(spanned.lo_log10, -320.0);
+  EXPECT_DOUBLE_EQ(spanned.hi_log10, -3.0);
+  // Off-support / divergent points never enter the span.
+  curve.points[0].rho_kind = K::kOffSupport;
+  const PointCurveRhoAxisRange off = PointCurveRhoAxisFit(curve);
+  ASSERT_TRUE(off.valid);
+  EXPECT_DOUBLE_EQ(off.lo_log10, -3.0);
+  EXPECT_DOUBLE_EQ(off.hi_log10, -3.0);
+  curve.points[500].rho_kind = K::kDivergent;
+  EXPECT_FALSE(PointCurveRhoAxisFit(curve).valid);
   curve.points.resize(1);
   curve.points[0] = {};
   curve.points[0].rho_kind = K::kPositive;
-  for (double v : { std::numeric_limits<double>::denorm_min(), 1e-320, 2.0, std::numeric_limits<double>::max() }) {
-    curve.points[0].rho = v;
-    const auto one = PointCurveAxisFit(curve);
-    EXPECT_DOUBLE_EQ(one.lo, v);
-    EXPECT_DOUBLE_EQ(one.hi, v);
+  for (double log10_v : { -2000.0, -150.0, 0.0, 4.5 }) {
+    curve.points[0].log10_rho = log10_v;
+    const auto one = PointCurveRhoAxisFit(curve);
+    EXPECT_TRUE(one.valid);
+    EXPECT_DOUBLE_EQ(one.lo_log10, log10_v);
+    EXPECT_DOUBLE_EQ(one.hi_log10, log10_v);
   }
-  curve.points[0].rho = std::numeric_limits<double>::infinity();
-  EXPECT_FALSE(PointCurveAxisFit(curve).valid);
-  curve.points[0].rho = 0.0;
-  EXPECT_FALSE(PointCurveAxisFit(curve).valid);
+  curve.points[0].rho_kind = K::kUnavailable;
+  EXPECT_FALSE(PointCurveRhoAxisFit(curve).valid);
+  curve.points[0].rho_kind = K::kPositive;
+  // A non-finite decade bound answers absent (the fit never promises an undrawable span).
+  curve.points[0].log10_rho = std::numeric_limits<double>::infinity();
+  EXPECT_FALSE(PointCurveRhoAxisFit(curve).valid);
+}
+
+// The rho arm's states come from the density reader's own words (v4.64): finite log drawable,
+// -inf the contract's no-ordinary-density, +inf the declared divergence, NaN / failed read
+// named unavailable. A finite log is NEVER an exact zero — even log 0 (rho = 1) is drawable.
+TEST(AnalyzePointView, RhoClassifyReadsTheDensityReaderStates) {
+  using K = PointCurveValueKind;
+  EXPECT_EQ(PointCurveRhoClassify(false, 0.0), K::kUnavailable);
+  EXPECT_EQ(PointCurveRhoClassify(false, -std::numeric_limits<double>::infinity()), K::kUnavailable);
+  EXPECT_EQ(PointCurveRhoClassify(true, std::nan("")), K::kUnavailable);
+  EXPECT_EQ(PointCurveRhoClassify(true, -std::numeric_limits<double>::infinity()), K::kOffSupport);
+  EXPECT_EQ(PointCurveRhoClassify(true, std::numeric_limits<double>::infinity()), K::kDivergent);
+  EXPECT_EQ(PointCurveRhoClassify(true, 0.0), K::kPositive);      // rho = 1: drawable
+  EXPECT_EQ(PointCurveRhoClassify(true, -203.8), K::kPositive);   // a deep tail: drawable
+  EXPECT_EQ(PointCurveRhoClassify(true, -2000.0), K::kPositive);  // beyond any linear double
+  EXPECT_EQ(PointCurveRhoClassify(true, 2.5), K::kPositive);
+  // The four-arm classifier keeps its own vocabulary (the log facts never enter it).
+  EXPECT_EQ(PointCurveClassify(0.0, true), K::kExactZero);
+}
+
+TEST(AnalyzePointView, RhoTicksLabelsAndValueTextGoBeyondDoubleRange) {
+  // A 1e-2049 tail: the ticks are (mantissa, exponent) pairs — formed values would be
+  // impossible, so the label spells the exponent directly.
+  const std::vector<PointCurveRhoTick> ticks = PointCurveRhoLogTicks(-2050.0, -2047.0, 1, true);
+  ASSERT_FALSE(ticks.empty());
+  for (size_t i = 0; i < ticks.size(); ++i) {
+    EXPECT_TRUE(ticks[i].exponent <= -2047 && ticks[i].exponent >= -2051);
+    EXPECT_TRUE(ticks[i].mantissa == 1.0 || ticks[i].mantissa == 2.0 || ticks[i].mantissa == 5.0);
+    const double log10_value = static_cast<double>(ticks[i].exponent) + std::log10(ticks[i].mantissa);
+    EXPECT_GE(log10_value, -2050.0);
+    EXPECT_LE(log10_value, -2047.0);
+    if (i > 0) {
+      // Ascending in log space, like the left axis's ticks (the loop walks decades upward).
+      EXPECT_GT(log10_value, static_cast<double>(ticks[i - 1].exponent) + std::log10(ticks[i - 1].mantissa) - 1e-12);
+    }
+  }
+  EXPECT_TRUE(ticks.front().major);  // the decade boundary leads
+  EXPECT_EQ(PointCurveRhoTickLabel(ticks.front()), "1e-2050");
+  // The mantissa ticks spell their digit.
+  const std::vector<PointCurveRhoTick> five = PointCurveRhoLogTicks(2.69, 2.71, 1, true);  // 5e2 = log10 2.699
+  bool saw_five = false;
+  for (const PointCurveRhoTick& t : five) {
+    if (t.mantissa == 5.0) {
+      EXPECT_EQ(PointCurveRhoTickLabel(t), "5e2");
+      saw_five = true;
+    }
+  }
+  EXPECT_TRUE(saw_five);
+  // A degenerate band widens to one decade through the ONE display-span definition — the
+  // ticks never widen on their own; the constant branch's range maps through it.
+  const PointCurveRhoAxisRange constant_band{ true, -89.0, -89.0 };
+  const std::vector<PointCurveRhoTick> one =
+      PointCurveRhoLogTicks(CurveRhoDisplayLo(constant_band), CurveRhoDisplayHi(constant_band), 1, true);
+  ASSERT_GE(one.size(), 2U);
+  {
+    const double lo_tick = static_cast<double>(one.front().exponent) + std::log10(one.front().mantissa);
+    const double hi_tick = static_cast<double>(one.back().exponent) + std::log10(one.back().mantissa);
+    EXPECT_GE(lo_tick, -89.5);
+    EXPECT_LE(hi_tick, -88.5);
+    EXPECT_FALSE(PointCurveRhoLogTicks(-89.0, -89.0, 1, true).empty());  // the raw band still carries its own tick
+  }
+  // Beyond ~1e6 decades the axis is not spellable: the same absent/n-a family as the
+  // non-finite guards (the int-cast UB the review's extreme-magnitude leg closed).
+  EXPECT_EQ(PointCurveRhoValueText(2e6), "n/a");
+  EXPECT_EQ(PointCurveRhoValueText(-2e6), "n/a");
+  EXPECT_TRUE(PointCurveRhoLogTicks(-2e6, 2e6, 1, true).empty());
+  // A mantissa within rounding distance of the next decade carries up (9.997 prints as
+  // "10.00e-90" without the normalization — the same value misread).
+  EXPECT_EQ(PointCurveRhoValueText(std::log10(9.9977e-90)), "1.00e-89");
+  EXPECT_EQ(PointCurveRhoValueText(-89.0001), "1.00e-89");
+  // The loop follows the LABELLED decades, never the raw span (plan §3.2's loop half): a
+  // 100k-decade span at a stride of 10000 visits 11 majors and, without minors, nothing else;
+  // the same span at stride 1 with minors stays the dense 1/2/5 lattice.
+  const std::vector<PointCurveRhoTick> strided = PointCurveRhoLogTicks(0.0, 100000.0, 10000, false);
+  ASSERT_EQ(strided.size(), 11U);
+  EXPECT_EQ(strided.front().exponent, 0);
+  EXPECT_EQ(strided.back().exponent, 100000);
+  for (const PointCurveRhoTick& t : strided) {
+    EXPECT_TRUE(t.major);
+    EXPECT_EQ(t.mantissa, 1.0);
+  }
+  // The label stride itself stays in int's domain for any legal span (the double-through-divide
+  // computation; a clamp beyond the tick guard's domain is carried for form only).
+  EXPECT_EQ(PointCurveRhoLogLabelStep(0.0, 2e9, 200.0f, 15.0f), 1000000);
+  EXPECT_EQ(PointCurveRhoLogLabelStep(-2000.0, 0.0, 200.0f, 15.0f), 250);  // ceil(2000 / floor(200/22.5))
+  // Nothing finite to span answers empty.
+  EXPECT_TRUE(PointCurveRhoLogTicks(0.0, std::numeric_limits<double>::infinity(), 1, true).empty());
+  EXPECT_TRUE(PointCurveRhoLogTicks(std::numeric_limits<double>::quiet_NaN(), 1.0, 1, true).empty());
+  // The absolute value text: mantissa from the decade fraction, exponent direct — a 1e-2000
+  // tail spells out exactly, and the annotation transform never exps the whole value.
+  EXPECT_EQ(PointCurveRhoValueText(-2000.0), "1.00e-2000");
+  EXPECT_EQ(PointCurveRhoValueText(0.0), "1.00e0");
+  const std::string text = PointCurveRhoValueText(std::log10(5.37e-89));
+  EXPECT_NE(text.find("e-89"), std::string::npos);
+  EXPECT_EQ(text[0], '5');  // 5.37e-89's mantissa, from the log alone
+  EXPECT_EQ(PointCurveRhoValueText(std::numeric_limits<double>::infinity()), "n/a");
+  // The label step: 2000 decades on a ~200px plot collapses to a sparse stride; a 3-decade
+  // band labels every major; degenerate and out-of-domain answer 1.
+  EXPECT_GE(PointCurveRhoLogLabelStep(-2000.0, 0.0, 200.0f, 15.0f), 10);
+  EXPECT_EQ(PointCurveRhoLogLabelStep(-89.0, -86.0, 200.0f, 15.0f), 1);
+  EXPECT_EQ(PointCurveRhoLogLabelStep(-89.0, -89.0, 200.0f, 15.0f), 1);
+  EXPECT_EQ(PointCurveRhoLogLabelStep(std::numeric_limits<double>::infinity(), 0.0, 200.0f, 15.0f), 1);
+  // The left-axis overload still answers its own live worst case through the shared core.
+  EXPECT_GE(PointCurveLogLabelStep(1.1287457567142152e-213, 1.6273993240820983, 200.0f, 15.0f), 20);
+}
+
+TEST(AnalyzePointView, RhoGutterLabelPyIsTheSlotTopTitlesOneYieldRule) {
+  // Clear of the title band: the label keeps its own py — siblings have no say in it.
+  EXPECT_EQ(PointCurveRhoGutterLabelPy(60.0f, 9.0f, 15.0f, {}), 60.0f);
+  // A rider sinks one full line below the title row's bottom edge (9 + 15).
+  EXPECT_EQ(PointCurveRhoGutterLabelPy(4.0f, 9.0f, 15.0f, {}), 24.0f);
+  EXPECT_EQ(PointCurveRhoGutterLabelPy(-7.0f, 9.0f, 15.0f, {}), 24.0f);
+  // Exact touch is not overlap: the label's top edge exactly on the title's bottom edge stays.
+  EXPECT_EQ(PointCurveRhoGutterLabelPy(16.5f, 9.0f, 15.0f, {}), 16.5f);
+  // The sink line taken by an unyielding label (within one line height of the slot): the
+  // rider's text is skipped outright — nothing is squeezed over an existing label.
+  EXPECT_FALSE(PointCurveRhoGutterLabelPy(4.0f, 9.0f, 15.0f, { 24.0f }).has_value());
+  EXPECT_FALSE(PointCurveRhoGutterLabelPy(0.0f, 9.0f, 15.0f, { 35.0f }).has_value());
+  // A neighbour beyond one line height leaves the sink line free.
+  EXPECT_EQ(PointCurveRhoGutterLabelPy(0.0f, 9.0f, 15.0f, { 45.0f }), 24.0f);
+  // Degenerate line height: nothing rides anything, the input passes through untouched.
+  EXPECT_EQ(PointCurveRhoGutterLabelPy(60.0f, 9.0f, 0.0f, {}), 60.0f);
+}
+
+TEST(AnalyzePointView, RhoClipSegmentsInLog10Space) {
+  // Window [-10, 0] decades; a segment from -20 (below) to -5 (inside) enters at y=0.
+  const PointCurveRhoAxisRange window{ true, -10.0, 0.0 };
+  PointCurveSegment s{};
+  ASSERT_TRUE(PointCurveRhoClipSegment(0, -20.0, 10, -5.0, window, &s));
+  // y0 = (-20+10)/10 = -1, y1 = 0.5: crossing at t = 2/3 -> x = 6.667.
+  EXPECT_NEAR(s.x0, 20.0 / 3.0, 1e-12);
+  EXPECT_DOUBLE_EQ(s.y0, 0.0);
+  EXPECT_DOUBLE_EQ(s.x1, 10.0);
+  EXPECT_NEAR(s.y1, 0.5, 1e-12);
+  // Fully above/below the window refuses whole (the linear clip's own contract — no fabricated
+  // edge-hugging segments).
+  EXPECT_FALSE(PointCurveRhoClipSegment(0, 5.0, 10, 8.0, window, &s));
+  EXPECT_FALSE(PointCurveRhoClipSegment(0, -30.0, 10, -25.0, window, &s));
+  // A constant-branch window (hi == lo): the display span widens, the data value maps inside.
+  const PointCurveRhoAxisRange constant{ true, -89.0, -89.0 };
+  ASSERT_TRUE(PointCurveRhoClipSegment(0, -89.0, 10, -89.0, constant, &s));
+  EXPECT_NEAR(s.y0, 0.5, 1e-12);
+  // Non-finite guards mirror the linear clip.
+  EXPECT_FALSE(PointCurveRhoClipSegment(0, std::nan(""), 10, 0.0, window, &s));
+  EXPECT_FALSE(PointCurveRhoClipSegment(0, 0.0, 10, 0.0, {}, &s));
+}
+
+// The interpretive cursor's pure mapping (AC3): the reader's stored point index converts to the
+// valid-position domain — out-of-range components, unavailable answers and non-valid indices
+// answer the baseline, an invalid prefix maps by walk order.
+TEST(AnalyzePointView, InterpretiveCursorMapsStoredIndexToValidPosition) {
+  LUMICE_PathPointInterpretive interp{};
+  interp.struct_size = sizeof(interp);
+  // Unavailable: the baseline (adopt=false) — never a fabricated branch.
+  interp.available = 0;
+  interp.component_index = 1;
+  interp.point_index = 5;
+  EXPECT_FALSE(PointViewInterpretiveCursorFor(interp, 3, { 0, 2, 5, 7 }).adopt);
+  // Available, component in range, stored index inside an invalid prefix: the position is the
+  // valid WALK order, not the stored index.
+  interp.available = 1;
+  const auto mapped = PointViewInterpretiveCursorFor(interp, 3, { 0, 2, 5, 7 });
+  ASSERT_TRUE(mapped.adopt);
+  EXPECT_EQ(mapped.component, 1);
+  EXPECT_EQ(mapped.valid_position, 2);
+  // Out-of-range component, negative index, and a stored index that is not a valid sample all
+  // answer the baseline.
+  interp.component_index = 3;
+  EXPECT_FALSE(PointViewInterpretiveCursorFor(interp, 3, { 0, 2, 5, 7 }).adopt);
+  interp.component_index = 1;
+  interp.point_index = -1;
+  EXPECT_FALSE(PointViewInterpretiveCursorFor(interp, 3, { 0, 2, 5, 7 }).adopt);
+  interp.point_index = 4;  // invalid sample between 2 and 5
+  EXPECT_FALSE(PointViewInterpretiveCursorFor(interp, 3, { 0, 2, 5, 7 }).adopt);
+  // The first valid sample maps to position 0 — the indistinguishable-from-default case the
+  // engine-level test pairs with the reader's own answer.
+  interp.point_index = 0;
+  const auto first = PointViewInterpretiveCursorFor(interp, 3, { 0, 2, 5, 7 });
+  ASSERT_TRUE(first.adopt);
+  EXPECT_EQ(first.valid_position, 0);
 }
 
 TEST(AnalyzePointView, CurveModeResetsOnAdoptionButKeepsTheCamera) {
@@ -767,9 +1017,17 @@ TEST(AnalyzePointView, CurveModeResetsOnAdoptionButKeepsTheCamera) {
   EXPECT_EQ(view.curve_range_mode, PointCurveRangeMode::kFit);
   view.curve_range_mode = PointCurveRangeMode::kFull;
   view.orbit_zoom = 2.0f;
+  view.interpretive_available = true;
+  view.interpretive_component = 1;
+  view.interpretive_valid_position = 3;
   ResetPointViewStateForNewAdoption(&view);
   EXPECT_EQ(view.curve_range_mode, PointCurveRangeMode::kFit);
   EXPECT_FLOAT_EQ(view.orbit_zoom, 2.0f);
+  // The interpretive fact is PER-DOCUMENT: a reset is a document change, the stale pose's
+  // recorded fact goes with it (the pump re-records it when the new document names one).
+  EXPECT_FALSE(view.interpretive_available);
+  EXPECT_EQ(view.interpretive_component, -1);
+  EXPECT_EQ(view.interpretive_valid_position, -1);
 }
 
 // The globe view is the curve mode's same-vocabulary DIFFERENT-LIFE sibling: adoption keeps it
@@ -1334,6 +1592,55 @@ TEST(AnalyzePointView, PointPumpAdoptsEchoesAndMovesHonestly) {
       LUMICE_PATH_READ_OK);
   EXPECT_NE(sample.valid, 0);
 
+  // The adoption's opening cursor IS the document's interpretive pose (AC3): the view's
+  // component/sample equal the v4.64 reader's own answer mapped to the valid-position domain —
+  // or the reader named nothing and the baseline cursor stands with the named absence. The
+  // identity assertion holds either way; the pure-mapping test carries the non-trivial witness.
+  PointViewState& view = state.analysis.point_view;
+  {
+    LUMICE_PathPointInterpretive interpretive{};
+    interpretive.struct_size = sizeof(interpretive);
+    ASSERT_EQ(LUMICE_PathPointGetInterpretivePose(state.analysis.point.adopted_result.get(), &interpretive),
+              LUMICE_PATH_READ_OK);
+    const std::vector<int> named_valid =
+        interpretive.available != 0 && interpretive.component_index >= 0 ?
+            CollectValidSampleIndices(*state.analysis.point.adopted_result, interpretive.component_index) :
+            std::vector<int>{};
+    const PointViewInterpretiveCursor expected =
+        PointViewInterpretiveCursorFor(interpretive, static_cast<int>(info.component_count), named_valid);
+    EXPECT_EQ(view.interpretive_available, expected.adopt);
+    if (expected.adopt) {
+      EXPECT_EQ(view.component_index, expected.component);
+      EXPECT_EQ(view.sample_index, expected.valid_position);
+      EXPECT_EQ(view.interpretive_component, interpretive.component_index);
+      EXPECT_EQ(view.interpretive_valid_position, expected.valid_position);
+      // The stored index is DERIVED back through the view's own mapping — no stored copy of
+      // it exists (the adoption's pure function consumed it; review round 1's orphan ruling).
+      EXPECT_EQ(PointValidSampleIndexAt(*state.analysis.point.adopted_result, view.component_index, view.sample_index),
+                interpretive.point_index);
+      EXPECT_EQ(view.interpretive_log_density, interpretive.log_density);
+    } else {
+      EXPECT_EQ(view.component_index, 0);
+      EXPECT_EQ(view.sample_index, 0);
+    }
+  }
+
+  // The initialization is ONE-shot at the adoption boundary: manual branch/sample writes
+  // survive every subsequent pump — the interpretive pose never re-grabs the cursor per frame.
+  if (components > 1 || valid_count > 1) {
+    view.component_index = components > 1 ? 1 : 0;
+    view.sample_index = valid_count > 1 ? 1 : 0;
+    double manual_now = now;
+    for (int i = 0; i < 5; ++i) {
+      PumpPointQuery(state, executor, manual_now);
+      PumpRayTrace(state, executor);
+      manual_now += 0.05;
+      std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    EXPECT_EQ(view.component_index, components > 1 ? 1 : 0);
+    EXPECT_EQ(view.sample_index, valid_count > 1 ? 1 : 0);
+  }
+
   // Moving the sky point is a new intent; the old answer DROPS (a newer target's answer must not
   // linger under the new one — AC5), and the gate kills the superseded zombie when it arrives.
   SetSkyPoint(state, 21.9, 60.0);
@@ -1343,6 +1650,28 @@ TEST(AnalyzePointView, PointPumpAdoptsEchoesAndMovesHonestly) {
   EXPECT_EQ(PointQueryStateFor(state.analysis.point), PointQueryState::kWaiting);
   ASSERT_TRUE(
       PumpAllUntil(state, executor, now, [&] { return state.analysis.point.adopted_result != nullptr; }, 60000));
+  // The NEW document re-records the interpretive fact as its own — the stale record died with
+  // the reset, and the fresh answer's cursor governs.
+  {
+    LUMICE_PathPointInterpretive interpretive{};
+    interpretive.struct_size = sizeof(interpretive);
+    ASSERT_EQ(LUMICE_PathPointGetInterpretivePose(state.analysis.point.adopted_result.get(), &interpretive),
+              LUMICE_PATH_READ_OK);
+    LUMICE_PathPointInfo fresh_info{};
+    fresh_info.struct_size = sizeof(fresh_info);
+    ASSERT_EQ(LUMICE_PathPointGetInfo(state.analysis.point.adopted_result.get(), &fresh_info), LUMICE_PATH_READ_OK);
+    const std::vector<int> named_valid =
+        interpretive.available != 0 && interpretive.component_index >= 0 ?
+            CollectValidSampleIndices(*state.analysis.point.adopted_result, interpretive.component_index) :
+            std::vector<int>{};
+    const PointViewInterpretiveCursor expected =
+        PointViewInterpretiveCursorFor(interpretive, static_cast<int>(fresh_info.component_count), named_valid);
+    EXPECT_EQ(view.interpretive_available, expected.adopt);
+    if (expected.adopt) {
+      EXPECT_EQ(view.component_index, expected.component);
+      EXPECT_EQ(view.sample_index, expected.valid_position);
+    }
+  }
   executor.ShutdownAndJoin();
 }
 
@@ -1367,12 +1696,18 @@ TEST(AnalyzePointView, RayTraceFollowsTheSampleAndDiesWithThePoint) {
   ASSERT_TRUE(
       PumpAllUntil(state, executor, now, [&] { return state.analysis.trace.adopted_result != nullptr; }, 30000));
   const RayTraceKey key = state.analysis.trace.key;
-  EXPECT_EQ(key.component, 0);
-  const int valid_count = PointValidSampleCount(*state.analysis.point.adopted_result, 0);
-  EXPECT_EQ(key.sample, PointValidSampleIndexAt(*state.analysis.point.adopted_result, 0, 0));
+  // The ray follows the ADOPTED cursor — the interpretive-pose initialization may open the
+  // document at a non-zero branch/sample, and the trace must be on THAT pose (the identity the
+  // adoption test pins in full; here the key is coherent with the view's own cursor).
+  const int adopted_component = state.analysis.point_view.component_index;
+  EXPECT_EQ(key.component, adopted_component);
+  const int adopted_valid = PointValidSampleCount(*state.analysis.point.adopted_result, adopted_component);
+  EXPECT_EQ(key.sample,
+            PointValidSampleIndexAt(*state.analysis.point.adopted_result, adopted_component,
+                                    std::clamp(state.analysis.point_view.sample_index, 0, adopted_valid - 1)));
   RayTraceKey current;
   current.point_id = state.analysis.point.intent_id;
-  current.component = 0;
+  current.component = adopted_component;
   current.sample = key.sample;
   EXPECT_EQ(RayTraceDisplayStateFor(state.analysis.trace, current), RayTraceDisplayState::kDrawn);
   // The polyline: entry + internal + exit over a two-face path, straight from the readers.
@@ -1385,8 +1720,8 @@ TEST(AnalyzePointView, RayTraceFollowsTheSampleAndDiesWithThePoint) {
   EXPECT_EQ(line.seg_kinds[2], 2);
   // A stale key never draws (AC4): ask for another sample — the state is the named computing
   // until the fresh trace arrives, and the drawn polyline below re-keys to the new sample.
-  current.sample = key.sample + 1 < valid_count ? key.sample + 1 : key.sample - 1;
-  state.analysis.point_view.sample_index = 1 < valid_count ? 1 : 0;
+  current.sample = key.sample + 1 < adopted_valid ? key.sample + 1 : key.sample - 1;
+  state.analysis.point_view.sample_index = 1 < adopted_valid ? 1 : 0;
   if (current.sample != state.analysis.trace.key.sample) {
     EXPECT_EQ(RayTraceDisplayStateFor(state.analysis.trace, current), RayTraceDisplayState::kComputing);
   }
@@ -1394,10 +1729,10 @@ TEST(AnalyzePointView, RayTraceFollowsTheSampleAndDiesWithThePoint) {
       state, executor, now,
       [&] {
         current.point_id = state.analysis.point.intent_id;
-        current.component = 0;
+        current.component = adopted_component;
         current.sample =
-            PointValidSampleIndexAt(*state.analysis.point.adopted_result, 0,
-                                    std::clamp(state.analysis.point_view.sample_index, 0, valid_count - 1));
+            PointValidSampleIndexAt(*state.analysis.point.adopted_result, adopted_component,
+                                    std::clamp(state.analysis.point_view.sample_index, 0, adopted_valid - 1));
         return state.analysis.trace.key == current && state.analysis.trace.adopted_result != nullptr;
       },
       30000));
@@ -1767,12 +2102,22 @@ TEST(AnalyzePointView, ContributionCurveBuildsFromTheRandomPrismDocument) {
   // The valid walk: one truth with the slider's own map.
   EXPECT_EQ(curve.valid_positions, CollectValidSampleIndices(result, 0));
 
-  // Per-point classification invariants (the flags decide availability; the arms stay coherent).
+  // Per-point classification invariants (the flags decide availability; the arms stay coherent;
+  // the rho arm's states come from the density reader, cross-checked independently).
   bool any_positive_rho = false;
   bool any_positive_product = false;
-  for (const PointCurvePoint& p : curve.points) {
-    EXPECT_NE(p.rho_kind, PointCurveValueKind::kUnavailable);  // rho is produced unconditionally
-    any_positive_rho = any_positive_rho || p.rho_kind == PointCurveValueKind::kPositive;
+  constexpr double kTestLn10 = 2.30258509299404568402;
+  for (size_t i = 0; i < curve.points.size(); ++i) {
+    const PointCurvePoint& p = curve.points[i];
+    LUMICE_PathPointDensity density{};
+    density.struct_size = sizeof(density);
+    const bool read_ok = LUMICE_PathPointGetSampleDensity(&result, 0, i, &density) == LUMICE_PATH_READ_OK;
+    EXPECT_EQ(p.rho_kind, PointCurveRhoClassify(read_ok, density.log_rho)) << "rho at point " << i;
+    if (p.rho_kind == PointCurveValueKind::kPositive) {
+      any_positive_rho = true;
+      // The drawable coordinate is the reader's own log, converted to decades once.
+      EXPECT_NEAR(p.log10_rho, density.log_rho / kTestLn10, 1e-9) << "log10 rho at point " << i;
+    }
     if (p.product_kind == PointCurveValueKind::kPositive) {
       any_positive_product = true;
       EXPECT_TRUE(p.valid);
@@ -1821,9 +2166,11 @@ TEST(AnalyzePointView, ContributionCurveBuildsFromTheRandomPrismDocument) {
 }
 
 // The plate family (fixed axis, the C11 corpus shape): the angle-Lebesgue caliber's declared
-// honesty — rho reads identically zero (the legal exact zero, never absence), the product
-// inherits it, the other arms stay informative per their own flags, the measure registration's
-// note is retrievable verbatim (J7's trigger), and the arc's seed sits mid-curve.
+// honesty — the density reader's log fact reads -inf at every point (the contract's "no
+// ordinary density": what rho's declared 0 means), the linear rho payload stays the engine's
+// verbatim zero, the product inherits the zero, the other arms stay informative per their own
+// flags, the measure registration's note is retrievable verbatim (J7's trigger), and the arc's
+// seed sits mid-curve.
 TEST(AnalyzePointView, ContributionCurveReadsThePlateMeasureHonestly) {
   constexpr const char* kPlateSceneJson = R"({
     "crystal": [ { "id": 1, "type": "prism",
@@ -1866,9 +2213,16 @@ TEST(AnalyzePointView, ContributionCurveReadsThePlateMeasureHonestly) {
   int positive_k = 0;
   int positive_t = 0;
   for (const PointCurvePoint& p : curve.points) {
-    // The declared measure's rho: identically zero — the legal exact zero, never unavailable,
-    // never absent (audit §4's plate row).
-    EXPECT_EQ(p.rho_kind, PointCurveValueKind::kExactZero) << "rho at a plate point";
+    // The declared measure's rho, in the density reader's own words: every point reads -inf —
+    // the contract's "no ordinary density" (what rho's 0 means), never a drawable finite
+    // value, never absence (the linear payload stays the declared zero below).
+    EXPECT_EQ(p.rho_kind, PointCurveValueKind::kOffSupport) << "rho at a plate point";
+    LUMICE_PathPointDensity density{};
+    density.struct_size = sizeof(density);
+    EXPECT_EQ(LUMICE_PathPointGetSampleDensity(&result, 0, static_cast<size_t>(&p - curve.points.data()), &density),
+              LUMICE_PATH_READ_OK);
+    EXPECT_EQ(density.log_rho, -std::numeric_limits<double>::infinity());
+    EXPECT_EQ(p.rho, 0.0);  // the engine's linear payload: the declared zero, verbatim
     // The product inherits the zero wherever its gate stands; it is never positive here.
     EXPECT_NE(p.product_kind, PointCurveValueKind::kPositive);
     if (p.product_kind == PointCurveValueKind::kExactZero) {

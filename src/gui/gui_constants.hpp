@@ -162,7 +162,11 @@ constexpr float kPoseViewCurveCanvasRatioUndragged = 0.0f;
 // Narrow wraps/partial notes scroll, and a D7 drag always takes priority over this quota.
 constexpr float kPoseViewCurveCanvasFloor = 40.0f;
 constexpr float kPoseViewCurveCompanionFloor = 32.0f;
-constexpr int kPoseViewCurveCompanionLines = 3;
+// The companion's line quota (2026-11-25: 3 -> 4 — the interpretive-pose opening line joined
+// the fixed stack beside the one-line dual-axis caliber fact; the legend's five entries stay
+// default-readable, the contract's AC4 default-readable rule, not below the fold. The quota
+// tracks the content: the same four wrapped lines at every UI tier, the quota case pins it).
+constexpr int kPoseViewCurveCompanionLines = 4;
 // The two analysis windows' title display spellings, the ONE source for every consumer of those
 // spellings: the windows' own Begin calls, the Raypath view window's in-place Pose button (the
 // constant plus the button's `###pose_open` addressing suffix), and the main window's Selection
