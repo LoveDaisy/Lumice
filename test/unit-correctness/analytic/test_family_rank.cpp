@@ -1196,34 +1196,27 @@ TEST(FamilyRank, ConstantImageWindowSurvivesTheScanBound) {
     ADD_FAILURE() << "rank status " << FamilyRankStatusName(rank.status);
     return;
   }
+  // The review's regression, at the level the scan can guarantee across platforms. The grid
+  // scan's discovery registers sign flips at grid-edge endpoints, and a crossing whose J sits
+  // within rounding of zero flips registration per compiler (measured: macOS/clang and
+  // Ubuntu/gcc-13 return DIFFERENT crossing populations for this scenario — Linux registers an
+  // extra fold sheet near azimuth 180 that macOS does not). Which windows exist is therefore
+  // not platform-stable; what IS stable, and what the degree-frame fix is about, is that every
+  // constant-image window that does register PUBLISHES within its own bound at the optics'
+  // constant instead of being refused by the old 57x-too-small radian bound.
   bool found = false;
-  // TEMPORARY platform diagnostics (ARM64 gcc13 divergence probe; revert with the fix):
-  for (size_t ci = 0; ci < rank.fold_chains.size(); ++ci) {
-    const FoldChainRecord& chain = rank.fold_chains[ci];
-    std::printf("[diag] chain %zu closed=%d end_a=%d end_b=%d segments=%zu crossings=%zu\n", ci, chain.closed ? 1 : 0,
-                static_cast<int>(chain.end_a), static_cast<int>(chain.end_b), chain.segments.size(),
-                chain.order.size());
-    for (size_t si = 0; si < chain.segments.size(); ++si) {
-      const FoldSegmentRecord& segment = chain.segments[si];
-      std::printf("[diag]   seg %zu form=%d first=%d last=%d diam=%.10g bound=%.10g alt=%.10g az=%.10g\n", si,
-                  static_cast<int>(segment.form), segment.first, segment.last, segment.image_diameter_deg,
-                  segment.image_bound_deg, segment.image_alt_deg, segment.image_az_deg);
-    }
-    for (size_t oi = 0; oi < chain.order.size(); ++oi) {
-      const FoldPointRecord& p = rank.crossings[static_cast<size_t>(chain.order[oi])];
-      std::printf("[diag]   crossing %zu ord=%zu params=(%.12g,%.12g) alt=%.10g az=%.10g edge_dim=%d\n", oi, oi,
-                  p.params_deg[0], p.params_deg[1], p.image_alt_deg, p.image_az_deg, p.edge_dim);
-    }
-  }
-  std::printf("[diag] total chains=%zu crossings=%zu\n", rank.fold_chains.size(), rank.crossings.size());
   for (const FoldChainRecord& chain : rank.fold_chains) {
     for (const FoldSegmentRecord& segment : chain.segments) {
-      if (segment.form != FoldSegmentForm::kPointImage || segment.first != 1 || segment.last != 2) {
+      if (segment.form != FoldSegmentForm::kPointImage) {
+        continue;
+      }
+      if (std::fabs(segment.image_alt_deg - (-10.0)) > 0.01 || std::fabs(segment.image_az_deg) > 0.01) {
         continue;
       }
       found = true;
       EXPECT_GE(segment.image_bound_deg, segment.image_diameter_deg)
           << "the scanned window published against its own bound";
+      EXPECT_LE(segment.image_diameter_deg, 1e-5) << "the constant-image window is not at the constant's scale";
       EXPECT_NEAR(segment.image_alt_deg, -10.0, 0.01);
       EXPECT_NEAR(segment.image_az_deg, 0.0, 0.01);
     }
