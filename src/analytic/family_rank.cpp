@@ -1568,23 +1568,73 @@ RestrictedFamilyRank RankRestrictedFamily(const FaceNormalTable& normals, const 
                                             (offs[static_cast<size_t>(k)] + offs[static_cast<size_t>(k + 1)]) / chord);
             }
           }
-          const double deficit_resolution = std::max(tangent_resolution, kFoldTangencyRounding);
+          // The refinement's own positioning term: the midpoints are located by the reduced
+          // 20-step bisection of half-spacing sub-edges, an order coarser than the crossings'
+          // 52-step one — their image spread enters the measured diameter, so the declared
+          // bound must cover what the diameter measures.
+          const double refine_bracket_deg = axes[0].spacing_deg * 0.5 / (1 << 20);
+          double sigma1_max = 0.0;
+          for (int k = run.first; k <= run.last; k++) {
+            sigma1_max = std::max(sigma1_max, reads[static_cast<size_t>(k)].sigma1);
+          }
+          derived_bound += 2.0 * sigma1_max * refine_bracket_deg;
+          // The TRUE critical-set tangent's image velocity (the review's criterion, the
+          // verdict's own instrument): the locus's tangent (-J_v1, J_v0)/|grad J| — the
+          // J = 0 level curve's direction, perpendicular to the gradient in the parameter
+          // plane — pushed through the same restricted Jacobian rows. |rows . tau_true| is
+          // the image speed per parameter radian, zero exactly when the tangent lies in the
+          // kernel; the CHORD direction the split used is the locator's approximation, never
+          // the verdict's. The velocity read's own resolution: a positioning error of
+          // offs_pt moves J by |grad| x offs_pt and the tangent-parallel velocity with it —
+          // a point whose velocity sits under that ambiguity contributes zero.
+          double max_velocity = 0.0;
+          for (int k = run.first; k <= run.last; k++) {
+            const FoldJet2Read& r = reads[static_cast<size_t>(k)];
+            const double g =
+                std::sqrt(r.grad_jacobian[0] * r.grad_jacobian[0] + r.grad_jacobian[1] * r.grad_jacobian[1]);
+            if (!(g > 0.0)) {
+              continue;
+            }
+            const double tau_true[2] = { -r.grad_jacobian[1] / g, r.grad_jacobian[0] / g };
+            double w[3] = { 0.0, 0.0, 0.0 };
+            for (int c = 0; c < 3; c++) {
+              for (int p = 0; p < 2; p++) {
+                w[c] += r.rows[p][c] * tau_true[p];
+              }
+            }
+            const double speed = std::sqrt(w[0] * w[0] + w[1] * w[1] + w[2] * w[2]);
+            const double offs_rad = std::fabs(r.signed_jacobian) / g;
+            const double velocity_resolution = g * offs_rad;  // |grad| x offs: the positioning ambiguity
+            if (speed > velocity_resolution) {
+              max_velocity = std::max(max_velocity, speed);
+            }
+          }
+          // The predicted image span the resolvable velocities imply over the sub-run's own
+          // parameter extent (radians of parameter, degrees of image), compared against the
+          // segment's declared bound: the diameter-bound consistency the demand names, at
+          // the run's own resolution — the fixed 1e-3 cap stays the claim-scale ceiling
+          // only.
+          double extent_rad = 0.0;
+          for (int k = run.first; k < run.last; k++) {
+            const FoldPointRecord& pp = out.crossings[static_cast<size_t>(chain->order[static_cast<size_t>(k)])];
+            const FoldPointRecord& pn = out.crossings[static_cast<size_t>(chain->order[static_cast<size_t>(k + 1)])];
+            double d[2];
+            ChainTangent(axes, pp.params_deg, pn.params_deg, d);
+            extent_rad += std::sqrt(d[0] * d[0] + d[1] * d[1]) * kDegToRad;
+          }
+          const double predicted_span_deg = extent_rad * max_velocity * kRadToDeg;
           if (derived_bound > kFoldPointImageFloorDeg) {
             verdict = FoldSegmentForm::kUnknown;  // the run's own evidence cannot ground a point claim
           } else if (diameter > kFoldPointImageFloorDeg) {
             verdict = FoldSegmentForm::kArc;
-          } else if (align_deficit > deficit_resolution) {
-            // A resolvably misaligned kernel read is a resolvably moving image, however
-            // small the measured span.
+          } else if (predicted_span_deg > derived_bound) {
+            // The resolvable velocities integrate to a span the segment's own resolution
+            // excludes: a resolvably moving image, whatever its absolute size.
             verdict = FoldSegmentForm::kArc;
-          } else if (align_deficit <= deficit_resolution) {
-            // The refined midpoints' deficits live at the instrument floor, far above the raw
-            // kernel conditioning: the gate is the same resolution the split used.
-            verdict = FoldSegmentForm::kPointImage;
           } else {
-            // Under the cap but the tangency read is not resolvable enough to ground the
-            // criterion: the honest third form.
-            verdict = FoldSegmentForm::kUnknown;
+            // Constant within the segment's own declared resolution, the measured span
+            // inside the evidence's reach: the point-image claim, bound published with it.
+            verdict = FoldSegmentForm::kPointImage;
           }
           verdict_diameter = diameter;
           verdict_bound = derived_bound;
@@ -1901,13 +1951,18 @@ RestrictedFamilyRank RankRestrictedFamily(const FaceNormalTable& normals, const 
         if (next < 0) {
           break;
         }
-        chain.links.push_back(next_link);
-        prev = current;
-        current = next;
+        // The poll sits BEFORE the link commits: a walk unit is the ATOMIC (link + target
+        // point) pair, so a cut here ends the chain at `current` with the links ==
+        // order.size() - 1 invariant intact — a dangling link to a point that never joined
+        // the order would fail the frozen boundary's topology check (the review's probe:
+        // the old order turned every walk-phase cancel into a freeze exception).
         if (stopped()) {
           step_cut = true;
           break;
         }
+        chain.links.push_back(next_link);
+        prev = current;
+        current = next;
       }
       chain.end_a = end_reason_at(chain.order.front());
       chain.end_b = step_cut ? FoldChainEnd::kStopRequested : end_reason_at(chain.order.back());
@@ -1962,13 +2017,15 @@ RestrictedFamilyRank RankRestrictedFamily(const FaceNormalTable& normals, const 
           }
           break;
         }
-        chain.links.push_back(next_link);
-        prev = current;
-        current = next;
+        // The same atomic (link + target point) commit: the poll precedes the link, a cut
+        // walk publishes links == order.size() - 1 and never a closed loop.
         if (stopped()) {
           step_cut = true;
           break;
         }
+        chain.links.push_back(next_link);
+        prev = current;
+        current = next;
       }
       chain.closed = closed;
       if (closed) {

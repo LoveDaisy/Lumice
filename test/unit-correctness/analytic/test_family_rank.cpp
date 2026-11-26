@@ -1211,7 +1211,21 @@ TEST(FamilyRank, NearDegenerateSmallArcStaysAnArc) {
   // resolution, the honest point-image candidate the plan's criterion admits), a strict
   // minority of the aligned run.
   EXPECT_GT(aligned_positions, 20) << "the counterexample lost its aligned run";
-  EXPECT_LT(point_positions, 10) << "a resolvably moving near-degenerate arc collapsed wholesale to a point image";
+  // Per-segment honesty (the review's bar, not a count): every published point-image claim
+  // must be consistent with its OWN declared bound — the measured diameter and the
+  // velocities' predicted span inside the resolution it declares. The segment that survived
+  // last round's criterion ([34..36], diameter ~2.0e-5 deg against its ~9.8e-7 bound, image
+  // velocity ~3.5e-6 resolvable) must not reappear.
+  for (const FoldChainRecord& chain : rank.fold_chains) {
+    for (const FoldSegmentRecord& segment : chain.segments) {
+      if (segment.form != FoldSegmentForm::kPointImage) {
+        continue;
+      }
+      EXPECT_GE(segment.image_bound_deg, segment.image_diameter_deg)
+          << "a point-image claim contradicts its own resolution bound (diameter " << segment.image_diameter_deg
+          << " vs bound " << segment.image_bound_deg << ")";
+    }
+  }
   EXPECT_LT(point_positions, aligned_positions / 2) << "the unresolvable island dominates the aligned run";
 }
 
@@ -1441,6 +1455,54 @@ TEST(FamilyRank, StopStandingAtEntryRunsNothing) {
   EXPECT_TRUE(rank.crossings.empty());
   EXPECT_TRUE(rank.fold_chains.empty());
   EXPECT_GT(token.PollCount(kPollFamilyCurve), 0) << "the first poll site never moved";
+}
+
+// A stop landing in the WALK phase (the handshake waits past the scan and the pairing — on
+// grid128 the pairing polls per cell, so a late threshold lands the cancel inside the chain
+// walks): every published chain keeps its topology contract — links == points - 1 open,
+// links == points closed, no dangling adjacency to a point that never joined the order, the
+// cut ends declared. This is the invariant the typed freeze enforces; the review's probe
+// turned the old commit order (link first, poll after) into a guaranteed freeze exception.
+TEST(FamilyRank, WalkPhaseStopKeepsTheTopologyContract) {
+  Fixture f;
+  int slots[2];
+  const int faces[2] = { 3, 5 };
+  f.Resolve(faces, 2, slots);
+  double sun[3];
+  SunAt(20.0, 0.0, sun);
+  StopToken token;
+  DiscoveryStop stop;
+  stop.token = &token;
+  std::atomic<bool> cancelled{ false };
+  std::thread canceller([&] {
+    // The threshold sits a few polls past the pairing's own cell count (grid128 C16: 128
+    // scan rows + 255 edge-batch rows + 255 cliff rows + 16256 pairing cells ~= 16894), so
+    // the cancel lands INSIDE the first chain's walk steps — the phase the old commit order
+    // turned into a dangling link.
+    while (token.PollCount(kPollFamilyCurve) < 16910 && !cancelled.load()) {
+    }
+    token.RequestCancel();
+  });
+  // The uncut reference: the chains the full scan builds (the cut either truncates a walk or
+  // stops a chain from ever starting — both leave fewer chains than the whole).
+  const RestrictedFamilyRank whole = RankRestrictedFamily(f.normals, slots, 2, C16SpinChart(), sun, kC16N, 128);
+  ASSERT_EQ(whole.status, FamilyRankStatus::kOk);
+  const RestrictedFamilyRank rank = RankRestrictedFamily(f.normals, slots, 2, C16SpinChart(), sun, kC16N, 128, &stop);
+  cancelled.store(true);
+  canceller.join();
+  EXPECT_TRUE(rank.stop_requested);
+  int cut_chains = 0;
+  for (const FoldChainRecord& chain : rank.fold_chains) {
+    const size_t expected = chain.order.size() - (chain.closed ? 0u : 1u);
+    EXPECT_EQ(chain.links.size(), expected) << "a cut walk published a dangling link (points " << chain.order.size()
+                                            << ", links " << chain.links.size() << ", closed " << chain.closed << ")";
+    if (chain.end_a == FoldChainEnd::kStopRequested || chain.end_b == FoldChainEnd::kStopRequested) {
+      cut_chains++;
+      EXPECT_FALSE(chain.closed) << "a cut walk declared a closed loop";
+    }
+  }
+  EXPECT_GT(cut_chains + (rank.fold_chains.size() < whole.fold_chains.size() ? 1 : 0), 0)
+      << "the walk-phase threshold left no trace: no cut chain and the full chain set";
 }
 
 
