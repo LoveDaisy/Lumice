@@ -656,6 +656,10 @@ TEST(AnalyzeOverviewChain, DeadlineDocumentKeepsItsArmAndItsProducedLegs) {
   EXPECT_EQ(model.execution, LUMICE_PATH_OUTCOME_DEADLINE_EXCEEDED);
   EXPECT_FALSE(model.early_stopped);
   EXPECT_NE(model.arm, SurveyArm::kIdentity);
+  // The cut rides an OK carrier under kCompleted — the partial-budget note is the cut's only
+  // summary-side name, so a deadline document must trigger it (the renderer consumes this
+  // function's bytes verbatim).
+  EXPECT_FALSE(SurveyPartialBudgetNoteFor(model).empty());
 
   // The partial is stated, not papered over: no tint block (the leg never ran to a reading),
   // and no conclusion line claims anything physical about the class.
