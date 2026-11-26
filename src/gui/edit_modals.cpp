@@ -1454,9 +1454,14 @@ static void RenderCrystalPreviewPane(GuiState& /*state*/, float preview_px) {
   CrystalRenderer::ComposeRotations(g_crystal_rotation, representative_rotation, body_rotation);
 
   // Render to FBO (F8: only caller of g_crystal_renderer.Render in production;
-  // no double-write with panels.cpp / thumbnail_cache.cpp).
+  // no double-write with panels.cpp / thumbnail_cache.cpp). `mesh_pose` is the
+  // ONE expression both the GL pass and the portrait's mesh witness consume —
+  // a swap at this source flows into the record the frame-attribution tests
+  // contradict, instead of past them.
+  const float* const mesh_pose = body_rotation;
+  RecordMeshRenderRotation(mesh_pose);
   auto crystal_style = static_cast<CrystalStyle>(g_crystal_style);
-  g_crystal_renderer.Render(body_rotation, g_crystal_zoom, crystal_style);
+  g_crystal_renderer.Render(mesh_pose, g_crystal_zoom, crystal_style);
 
   // -- 3D Preview (horizontally centered inside the left pane) --
   auto tex_id = static_cast<ImTextureID>(g_crystal_renderer.GetTextureId());

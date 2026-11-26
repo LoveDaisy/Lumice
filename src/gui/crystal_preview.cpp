@@ -617,14 +617,25 @@ void ResetAxisGizmoSnapshot() {
   g_axis_gizmo_snapshot = {};
 }
 
+// The mesh-consumption witness: written by the pane at the Render call site, copied into the
+// snapshot at publish. A separate holder because Render runs before the portrait draws within the
+// same frame; the pair must stay same-frame coherent (both stamped every submitted frame).
+float g_mesh_render_rotation[16]{};
+int g_mesh_render_frame = -1;
+
+void RecordMeshRenderRotation(const float m[16]) {
+  std::memcpy(g_mesh_render_rotation, m, sizeof(g_mesh_render_rotation));
+  g_mesh_render_frame = ImGui::GetFrameCount();
+}
+
 void DrawCrystalAxisGizmo(const AxisGizmoPlan& plan, const AxisDist live_axis[3], const float observation[16],
                           const float body_rotation[16], ImVec2 image_pos, float image_px, ImDrawList* draw_list,
                           float zoom) {
   CrystalAxisGizmoSnapshot snap;
   snap.frame_index = ImGui::GetFrameCount();
   snap.family = plan.family;
-  std::memcpy(snap.body_rotation, body_rotation, sizeof(snap.body_rotation));
-  std::memcpy(snap.world_rotation, observation, sizeof(snap.world_rotation));
+  // The mesh-consumption record is the pane's same-frame write; carry it through untouched.
+  std::memcpy(snap.mesh_render_rotation, g_mesh_render_rotation, sizeof(snap.mesh_render_rotation));
 
   snap.drawn = plan.draw_body_axis || plan.draw_az_ring || plan.small_arrow != AxisGizmoSmallArrow::kNone;
   if (!snap.drawn || draw_list == nullptr || image_px <= 0.0f) {
@@ -649,10 +660,16 @@ void DrawCrystalAxisGizmo(const AxisGizmoPlan& plan, const AxisDist live_axis[3]
   }
 
   const int px = static_cast<int>(image_px);
+  // Consumption-site records: each group's ComputeMvp and its record read the ONE shared
+  // expression below, so a swap at the source flows into the record the tests contradict.
+  const float* const body_pose = body_rotation;
   float body_mvp[16];
-  CrystalRenderer::ComputeMvp(body_rotation, zoom, px, px, body_mvp);
+  CrystalRenderer::ComputeMvp(body_pose, zoom, px, px, body_mvp);
+  std::memcpy(snap.body_rotation, body_pose, sizeof(snap.body_rotation));
+  const float* const world_pose = observation;
   float world_mvp[16];
-  CrystalRenderer::ComputeMvp(observation, zoom, px, px, world_mvp);
+  CrystalRenderer::ComputeMvp(world_pose, zoom, px, px, world_mvp);
+  std::memcpy(snap.world_rotation, world_pose, sizeof(snap.world_rotation));
 
   const float kDeg2Rad = CrystalRenderer::kDeg2Rad;
 
@@ -678,6 +695,11 @@ void DrawCrystalAxisGizmo(const AxisGizmoPlan& plan, const AxisDist live_axis[3]
       if (ProjectCrystalPointToImage(end_point, world_mvp, image_pos.x, image_pos.y, image_px, image_px, &end_px.x,
                                      &end_px.y)) {
         DrawArrowHead(draw_list, end_px, end_dir, UiPx(9.0f), kGizmoWorldColor, UiPx(2.0f));
+        // The anchor the tests read is the arc end's ACTUAL projected pixel, from the same mvp
+        // the stroke was drawn with — not a test-side reprojection.
+        snap.ring_end_px_valid = true;
+        snap.ring_end_px[0] = end_px.x;
+        snap.ring_end_px[1] = end_px.y;
       }
       snap.az_ring_drawn = true;
       for (int i = 0; i < 3; ++i) {
@@ -736,6 +758,11 @@ void DrawCrystalAxisGizmo(const AxisGizmoPlan& plan, const AxisDist live_axis[3]
       draw_list->AddLine(sp_px, b_px, kGizmoAxisColor, UiPx(2.0f));
       draw_list->AddLine(sn_px, a_px, kGizmoAxisColor, UiPx(2.0f));
       snap.body_axis_drawn = true;
+      // The tip anchor: the exposed end's actual projected pixel, from the mvp the strokes were
+      // drawn with.
+      snap.body_tip_px_valid = true;
+      snap.body_tip_px[0] = b_px.x;
+      snap.body_tip_px[1] = b_px.y;
       for (int i = 0; i < 3; ++i) {
         snap.axis_dir_mesh[i] = axis_dir_mesh[i];
         snap.axis_tip_mesh[i] = axis_max[i];

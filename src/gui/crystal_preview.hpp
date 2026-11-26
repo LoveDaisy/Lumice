@@ -109,8 +109,23 @@ struct CrystalAxisGizmoSnapshot {
   bool small_arrow_drawn = false;
   AxisGizmoSmallArrow small_arrow_kind = AxisGizmoSmallArrow::kNone;
   bool world_up_ref_drawn = false;
-  float body_rotation[16];       // O·R — pose submitted for mesh, face numbers and body primitives
-  float world_rotation[16];      // O — pose submitted for the world-frame primitives
+  // The three poses below are recorded AT THEIR CONSUMPTION SITES, not at an input boundary:
+  // body_rotation is read by the same expression that feeds the body primitives' ComputeMvp,
+  // world_rotation the one that feeds the world primitives' ComputeMvp, and mesh_render_rotation
+  // is taken at the pane's g_crystal_renderer.Render call site (what the GL mesh actually
+  // consumed). A consumption-site bug therefore flows into the record it contradicts.
+  float body_rotation[16];
+  float world_rotation[16];
+  float mesh_render_rotation[16];
+  // Screen anchors PROJECTED THROUGH the real MVPs (never re-derived by the tests): the az ring
+  // arc's end pixel and the body axis tip's pixel. They are what the drawn strokes actually
+  // follow, so anchor-based assertions stay sensitive to consumption bugs that a matrix record
+  // alone could be edited around. Valid per group that drew (see az_ring_drawn /
+  // body_axis_drawn).
+  bool ring_end_px_valid = false;
+  float ring_end_px[2];
+  bool body_tip_px_valid = false;
+  float body_tip_px[2];
   float axis_dir_mesh[3];        // unit direction of the drawn axis object (mesh frame)
   float axis_tip_mesh[3];        // exposed axis end hosting the small arrow (mesh frame)
   float small_arc_axis_mesh[3];  // rotation axis the small arrow indicates (mesh frame)
@@ -124,6 +139,10 @@ const CrystalAxisGizmoSnapshot& GetLastAxisGizmoSnapshot();
 // Test-isolation reset (gui_test's per-case boundary): a stale "drawn" record must not answer the
 // next case's negative assertions.
 void ResetAxisGizmoSnapshot();
+// The mesh-consumption witness: the pane calls this with the exact argument expression it hands
+// to g_crystal_renderer.Render, so the snapshot's mesh_render_rotation mirrors what the GL pass
+// actually consumed (a swapped Render argument flows into the record the tests check it against).
+void RecordMeshRenderRotation(const float m[16]);
 
 // Draw the family-DOF portrait over the crystal preview image and record the snapshot. `plan` is
 // the ComputeAxisGizmoPlan answer for `live_axis` computed by the caller ONCE for this frame (the

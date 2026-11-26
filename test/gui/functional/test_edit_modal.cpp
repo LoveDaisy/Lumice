@@ -2112,9 +2112,12 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
             IM_ERRORF("%s: observation not at identity, index %d actual=%f", where, i,
                       static_cast<double>(gui::g_crystal_rotation[i]));
           }
-          if (gui::GetLastAxisGizmoSnapshot().body_rotation[i] != expected_composite[i]) {
-            IM_ERRORF("%s: submitted body pose index %d actual=%f expected=%f", where, i,
-                      static_cast<double>(gui::GetLastAxisGizmoSnapshot().body_rotation[i]),
+          // The consumption-site record: judge the pose the GL MESH consumed (always recorded —
+          // Random draws no portrait, and the seat claim is about the mesh either way). Tolerance
+          // compare: the compose may flip a signed zero (see MatNear16).
+          if (std::fabs(gui::GetLastAxisGizmoSnapshot().mesh_render_rotation[i] - expected_composite[i]) > 1e-6f) {
+            IM_ERRORF("%s: mesh-consumed pose index %d actual=%f expected=%f", where, i,
+                      static_cast<double>(gui::GetLastAxisGizmoSnapshot().mesh_render_rotation[i]),
                       static_cast<double>(expected_composite[i]));
           }
         }
@@ -2186,12 +2189,13 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
         ctx->Yield(2);
         // Snapshot BEFORE Cancel: Cancel restores the observation saved at open time, so a read
         // afterwards would observe the pre-open state instead of Reset View's result. The re-seat
-        // is two facts: the submitted composite equals the family's representative pose (the
-        // classify premise above makes label == classification, so DefaultPreviewRotation(preset,
-        // params) IS that pose — the same authority the card thumbnail derives from), and the
-        // observation is back at identity.
+        // is two facts: the pose the GL MESH consumed equals the family's representative pose
+        // (the classify premise above makes label == classification, so DefaultPreviewRotation(
+        // preset, params) IS that pose — the same authority the card thumbnail derives from; the
+        // mesh record is the one consumption witness that exists for every family, Random
+        // included, which draws no portrait), and the observation is back at identity.
         float observed[16];
-        std::memcpy(observed, gui::GetLastAxisGizmoSnapshot().body_rotation, sizeof observed);
+        std::memcpy(observed, gui::GetLastAxisGizmoSnapshot().mesh_render_rotation, sizeof observed);
         float observed_observation[16];
         std::memcpy(observed_observation, gui::g_crystal_rotation, sizeof observed_observation);
         ctx->ItemClick(kCancel);
@@ -2889,6 +2893,9 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
         if (std::memcmp(s.world_rotation, gui::g_crystal_rotation, sizeof s.world_rotation) != 0) {
           IM_ERRORF("%s: the submitted world rotation is not the observation", where);
         }
+        // The GL mesh consumed the same composite the body-frame primitives project with — the
+        // mesh and the portrait are one rigid scene, witnessed at both consumption sites.
+        ExpectMatNear16(s.mesh_render_rotation, s.body_rotation, "mesh and body-primitive poses diverged");
       };
 
       int frame_before = gui::GetLastAxisGizmoSnapshot().frame_index;
@@ -2896,6 +2903,15 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
       ctx->Yield(3);
       RequireFreshGizmoSnapshot(ctx, frame_before, "Plate seat");
       expect_dot("Plate seat", 1.0f);
+      // The screen anchors: what the strokes actually followed, projected through the REAL mvp's
+      // (recorded in production, never re-derived here). The drag and the R-only edit below are
+      // judged against these.
+      const gui::CrystalAxisGizmoSnapshot& seat = gui::GetLastAxisGizmoSnapshot();
+      if (!seat.ring_end_px_valid || !seat.body_tip_px_valid) {
+        IM_ERRORF("%s", "premise: the Plate seat did not record both screen anchors");
+      }
+      const float seat_ring_px[2] = { seat.ring_end_px[0], seat.ring_end_px[1] };
+      const float seat_tip_px[2] = { seat.body_tip_px[0], seat.body_tip_px[1] };
 
       // Strong asymmetric drag, Plate edition: both submitted poses must move (the observation
       // composes into both projections) while the coaxial relation survives, and the world pose
@@ -2918,6 +2934,23 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
         }
         if (std::memcmp(s.body_rotation, body_before_drag, sizeof body_before_drag) == 0) {
           IM_ERRORF("%s", "premise: the drag did not move the submitted body pose, so the invariance claim is vacuous");
+        }
+        // The strokes actually moved with the observation: both projected anchors left their
+        // seat-time pixels. This is the consumption-side witness — an mvp whose argument was
+        // swapped would drag these pixels with the bug, whatever the matrix records say.
+        if (!s.ring_end_px_valid || !s.body_tip_px_valid) {
+          IM_ERRORF("%s", "the drag frame did not record both screen anchors");
+        } else {
+          const float ring_dx = s.ring_end_px[0] - seat_ring_px[0];
+          const float ring_dy = s.ring_end_px[1] - seat_ring_px[1];
+          const float tip_dx = s.body_tip_px[0] - seat_tip_px[0];
+          const float tip_dy = s.body_tip_px[1] - seat_tip_px[1];
+          if (std::sqrt(ring_dx * ring_dx + ring_dy * ring_dy) < 5.0f ||
+              std::sqrt(tip_dx * tip_dx + tip_dy * tip_dy) < 5.0f) {
+            IM_ERRORF("the drag moved a matrix but not the strokes: ring moved %.2f px, tip moved %.2f px",
+                      static_cast<double>(std::sqrt(ring_dx * ring_dx + ring_dy * ring_dy)),
+                      static_cast<double>(std::sqrt(tip_dx * tip_dx + tip_dy * tip_dy)));
+          }
         }
       }
 
@@ -2974,6 +3007,13 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
       std::memcpy(world_before_edit, gui::GetLastAxisGizmoSnapshot().world_rotation, sizeof world_before_edit);
       float body_before_edit[16];
       std::memcpy(body_before_edit, gui::GetLastAxisGizmoSnapshot().body_rotation, sizeof body_before_edit);
+      // The pre-edit anchors: the R-only differential below judges these pixels.
+      const gui::CrystalAxisGizmoSnapshot& before_edit = gui::GetLastAxisGizmoSnapshot();
+      if (!before_edit.ring_end_px_valid || !before_edit.body_tip_px_valid) {
+        IM_ERRORF("%s", "premise: the pre-edit frame did not record both screen anchors");
+      }
+      const float pre_edit_ring_px[2] = { before_edit.ring_end_px[0], before_edit.ring_end_px[1] };
+      const float pre_edit_tip_px[2] = { before_edit.body_tip_px[0], before_edit.body_tip_px[1] };
       frame_before = gui::GetLastAxisGizmoSnapshot().frame_index;
       ctx->ItemInputValue("**/Zenith/##Mean_input", 20.0f);
       ctx->Yield(3);
@@ -2989,6 +3029,27 @@ void RegisterEditModalTests(ImGuiTestEngine* engine) {
         }
         if (std::memcmp(s.world_rotation, world_before_edit, sizeof world_before_edit) != 0) {
           IM_ERRORF("%s", "the Custom mean edit moved the world pose — the physical pose leaked into the world frame");
+        }
+        // The consumption-side differential: with the world matrix frozen, the drawn ring pixel
+        // is frozen too (same mvp, same geometry — byte-identical reprojection), while the body
+        // tip rides the moved physical pose.
+        if (!s.ring_end_px_valid || !s.body_tip_px_valid) {
+          IM_ERRORF("%s", "the mean-edit frame did not record both screen anchors");
+        } else {
+          const float ring_move =
+              std::hypot(s.ring_end_px[0] - pre_edit_ring_px[0], s.ring_end_px[1] - pre_edit_ring_px[1]);
+          const float tip_move =
+              std::hypot(s.body_tip_px[0] - pre_edit_tip_px[0], s.body_tip_px[1] - pre_edit_tip_px[1]);
+          if (ring_move > 0.01f) {
+            IM_ERRORF(
+                "the world matrix was frozen but the drawn ring pixel moved %.4f px — the ring is not drawn "
+                "with the recorded world pose",
+                static_cast<double>(ring_move));
+          }
+          if (tip_move < 5.0f) {
+            IM_ERRORF("the physical pose moved but the drawn body tip followed only %.2f px",
+                      static_cast<double>(tip_move));
+          }
         }
         // A spread-only edit moves nothing physical: the representative chain reads the MEANS.
         const int frame_before_spread = gui::GetLastAxisGizmoSnapshot().frame_index;
