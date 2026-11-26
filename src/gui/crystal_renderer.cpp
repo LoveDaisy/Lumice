@@ -331,6 +331,10 @@ void CrystalRenderer::ComputeEyeRotation(const float model_rotation[16], float o
   Mul4x4Rot(v_rot, model_rotation, out_m_eye);
 }
 
+void CrystalRenderer::ComposeRotations(const float a[16], const float b[16], float out[16]) {
+  Mul4x4Rot(a, b, out);
+}
+
 float CrystalRenderer::ComputeDist(float zoom) {
   float half_tan = std::tan(kFovDeg * kDeg2Rad * 0.5f);
   return zoom / half_tan;

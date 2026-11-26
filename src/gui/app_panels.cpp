@@ -1002,7 +1002,7 @@ void RenderLeftPanel(float window_height) {
   if (pick_source_at_entry.has_value() && !g_state.pick_link_source.has_value()) {
     const auto& src = *pick_source_at_entry;
     const auto& editing_entry = g_state.layers[src.layer_idx].entries[src.entry_idx];
-    ResetCrystalViewToCrystal(g_state.crystals[editing_entry.crystal_id]);
+    ResetCrystalViewToRepresentative();
     EditRequest reopen;
     reopen.target = EditTarget::kCrystal;
     reopen.layer_idx = src.layer_idx;

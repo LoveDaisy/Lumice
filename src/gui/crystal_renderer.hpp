@@ -49,6 +49,12 @@ class CrystalRenderer {
   // faces near the horizon.
   static void ComputeEyeRotation(const float model_rotation[16], float out_m_eye[16]);
 
+  // Multiply the 3x3 rotation parts of two column-major 4x4 matrices: out = a · b (translation
+  // zeroed, homogeneous slot 1). The pose-composition primitive beside ComputeEyeRotation: the
+  // preview's observation · representative composite (crystal_preview.cpp) goes through here so
+  // the mesh and the axis portrait cannot disagree about how the two poses combine.
+  static void ComposeRotations(const float a[16], const float b[16], float out[16]);
+
   // Get the rendered texture ID for ImGui::Image()
   uintptr_t GetTextureId() const;
 

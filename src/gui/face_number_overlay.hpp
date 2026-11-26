@@ -108,6 +108,15 @@ FaceLabelStyle ResolveFaceLabelStyle(CrystalStyle style);
 
 }  // namespace detail
 
+// Project one display-space point through `mvp` to absolute pixel coordinates over the preview
+// image (image_pos + the NDC→pixel mapping; NDC.y up → screen y down). The ONE implementation of
+// that convention for every CPU-projected overlay drawn over the crystal FBO — face labels and the
+// axis portrait both defer here, so the two can never disagree about where a mesh-space point
+// lands. Returns false on the near-singular guard (|clip.w| < 1e-6, the same threshold the edge
+// shader's cross clamp uses); out parameters are then untouched.
+bool ProjectCrystalPointToImage(const float p_display[3], const float mvp[16], float image_pos_x, float image_pos_y,
+                                float image_width, float image_height, float* out_px_x, float* out_px_y);
+
 // Project a label center to 2D image-space coordinates and evaluate a
 // front-face test in eye space using the same `dot(n_eye, p_eye) < 0` rule
 // as crystal_renderer.cpp:358-385. `mvp` and `zoom` serve *different*

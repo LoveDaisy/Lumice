@@ -199,6 +199,9 @@ void ResetTestState() {
 
   // UI view state
   gui::ResetCrystalView();
+  // The axis portrait's submission record: a case that opened a modal leaves a "drawn" snapshot
+  // behind, and the next case's negative assertion (e.g. "Random draws nothing") must not read it.
+  gui::ResetAxisGizmoSnapshot();
   gui::InitializeCrystalPreviewSession(gui::g_state);
   gui::g_state.left_panel_collapsed = false;
   gui::g_state.right_panel_collapsed = false;

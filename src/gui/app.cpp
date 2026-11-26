@@ -2091,10 +2091,11 @@ void ResetFrontendState(GuiState& state, FrontendResetReason reason, LmcTexture*
   }
 
   // Trackball reset for the modal-preview view — document-switch reasons only. Revert keeps
-  // current trackball pose (config restore, not scene switch).
+  // current observation (config restore, not scene switch); the physical representative pose
+  // re-derives per frame from the buffers, so only the observation needs the reset here.
   if (reason != FrontendResetReason::kRevert) {
     if (!state.layers.empty() && !state.layers[0].entries.empty()) {
-      ResetCrystalViewToCrystal(state.crystals[state.layers[0].entries[0].crystal_id]);
+      ResetCrystalViewToRepresentative();
     }
   }
 }

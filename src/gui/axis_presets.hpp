@@ -404,6 +404,114 @@ inline bool AxisLabelOutOfDomain(AxisPreset label, const AxisDist& zenith, const
   return label != AxisPreset::kCustom && ClassifyAxisPreset(zenith, azimuth, roll) != label;
 }
 
+// --------------------------------------------------------------------------------------------------
+// The Edit Entry crystal preview's family-DOF portrait (what to draw over the mesh for a live axis
+// triple). The portrait is a FAMILY-CENTERED reading, not a per-Euler-slot diagram: the big arrow
+// is always the azimuth DOF (rotation about the world vertical), and the small arrow is THE one
+// DOF the family has beyond azimuth, drawn on the physical axis that DOF turns about — the c axis
+// for Column, the H_3 long diagonal for Lowitz. The drawing follows the family the CLASSIFIER
+// names for the live triple, never the sticky label — the same narrative the out-of-domain badge
+// tells (badge and portrait are the classifier's parallel faces on one read; when the badge says
+// "currently reads as X", the portrait draws X's geometry).
+//
+// This function is the portrait's single statement (AC1): primitive presence per family, the
+// binary adaptive rules and the Plate merge all live here, and every field it reads is a
+// classifier predicate or classifier constant — it adds no thresholds of its own, so the arrows
+// cannot drift from the badge. The geometry side (which physical axis object each family's
+// portrait uses, the representative pose, the projection) lives in crystal_preview.cpp; only
+// presence/shape policy is decided here, so this header stays free of mesh and C API concerns.
+// --------------------------------------------------------------------------------------------------
+
+// The az-beyond-DOF arrow's form, when the family has one to show at all. kSpin = continuous
+// rotation about the drawn axis (one arrowhead on a long arc); kTilt = back-and-forth swing about
+// the drawn axis (short arc, arrowheads on both ends).
+enum class AxisGizmoSmallArrow { kNone, kSpin, kTilt };
+
+struct AxisGizmoPlan {
+  AxisPreset family;    // what the live triple actually classifies as — the portrait
+                        // draws THIS, never the sticky label
+  bool draw_body_axis;  // the family's characteristic axis through the crystal
+  bool draw_az_ring;    // the big arrow: open ring in the world horizontal plane
+  AxisGizmoSmallArrow small_arrow;
+  bool draw_world_up_reference;  // weak world-vertical segment + "up" mark, present exactly when
+                                 // any gizmo content is (Random draws nothing, so no reference
+                                 // either — it must not read as one more "characteristic axis")
+};
+
+// Resolve the portrait for one live (zenith, azimuth, roll) triple — params[0..2] in the
+// g_axis_buf layout. Total over AxisPreset; the classifier's cascade order IS the table's order.
+inline AxisGizmoPlan ComputeAxisGizmoPlan(const AxisDist axis[3]) {
+  const AxisDist& zenith = axis[0];
+  const AxisDist& azimuth = axis[1];
+  const AxisDist& roll = axis[2];
+
+  AxisGizmoPlan plan;
+  plan.family = ClassifyAxisPreset(zenith, azimuth, roll);
+  plan.draw_body_axis = false;
+  plan.draw_az_ring = false;
+  plan.small_arrow = AxisGizmoSmallArrow::kNone;
+  plan.draw_world_up_reference = false;
+
+  // A and L below are the classifier's own predicates: the arrows are binary presence questions
+  // (az still full-uniform? roll still locked?) with no second threshold — magnitude grading by
+  // spread width is a deferred v2 idea and deliberately not encoded here.
+  const bool az_full = axis_preset_detail::IsFullUniform360(azimuth);
+  const bool roll_locked = axis_preset_detail::IsRollLocked(roll);
+
+  switch (plan.family) {
+    case AxisPreset::kColumn:
+      plan.draw_body_axis = true;
+      plan.draw_az_ring = az_full;
+      // The classifier judges Parry before Column, so a Column triple with locked roll is
+      // impossible — this kSpin arm is only reached while the parameters really are Column's.
+      plan.small_arrow = roll_locked ? AxisGizmoSmallArrow::kNone : AxisGizmoSmallArrow::kSpin;
+      break;
+    case AxisPreset::kPlate:
+      // At zenith ≈ 0 the azimuth and roll rotations are coaxial (both turn about the world
+      // vertical), so the family reads as ONE azimuth DOF: presented by the big arrow alone, no
+      // small arrow. Leaving the Plate domain hands the portrait to whatever the classifier names
+      // next — no "angle near zero" second heuristic.
+      plan.draw_body_axis = true;
+      plan.draw_az_ring = az_full;
+      break;
+    case AxisPreset::kParry:
+      plan.draw_body_axis = true;
+      plan.draw_az_ring = az_full;
+      // Roll locked and zenith locked at 90±1: azimuth is the family's only DOF, so no small
+      // arrow — and the narrow zenith spread is NOT promoted to one (it is a distribution, not a
+      // new freedom).
+      break;
+    case AxisPreset::kLowitz:
+      plan.draw_body_axis = true;
+      plan.draw_az_ring = az_full;
+      // The family's physical form: a swing about the H_3 long diagonal (the zenith DOF's shape
+      // as this family moves). The preset is the widened two-parameter family, not a literal
+      // one-parameter H_3 rotation measure — the arrow presents the form without claiming the
+      // measure equivalence.
+      plan.small_arrow = AxisGizmoSmallArrow::kTilt;
+      break;
+    case AxisPreset::kRandom:
+      // Full freedom has no characteristic object: nothing at all, even though az_full holds.
+      break;
+    case AxisPreset::kCustom:
+      plan.draw_body_axis = true;
+      plan.draw_az_ring = az_full;
+      // Two mutually exclusive small-arrow arms, roll-first (the family-DOF rule applied to
+      // "none of the above"): a free roll is a spin about c; a locked roll with a Lowitz-shaped
+      // WIDE zenith is the generic tilt swing (the classifier's own zenith-type set and its own
+      // Lowitz std bound — requiring mean ≈ 0 here would just re-derive the Lowitz recognizer as
+      // a second classifier). Everything narrower draws no small arrow.
+      if (!roll_locked) {
+        plan.small_arrow = AxisGizmoSmallArrow::kSpin;
+      } else if (axis_preset_detail::IsLowitzZenithType(zenith.type) && zenith.std > kLowitzZenithStdLowerBound) {
+        plan.small_arrow = AxisGizmoSmallArrow::kTilt;
+      }
+      break;
+  }
+  plan.draw_world_up_reference = plan.draw_body_axis || plan.draw_az_ring;
+  return plan;
+}
+
 // The badge's three-line tooltip, exact readings throughout — the classifier is a precise
 // predicate, so a vague "may be outside" would smuggle the fuzziness the sticky label removed back
 // in through the wording. `domain_description` is the second line's text, PASSED IN rather than
