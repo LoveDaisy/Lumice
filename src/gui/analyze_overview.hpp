@@ -313,6 +313,15 @@ struct SurveyOverviewModel {
 // answers.
 SurveyOverviewModel BuildSurveyOverviewModel(const LUMICE_PathSurvey& result, bool point_sun_premise);
 
+// The one partial-budget spelling (a56 — one sentence, every consumer): what the summary
+// states when the adopted document was cut inside its budget — a deadline outcome, or the
+// identity arm's early stop. Empty when the document carries no cut; the renderer omits the
+// line entirely. Pure, so the unit layer holds the bytes and the trigger predicate. The line
+// matters because a cut document rides an OK carrier and lands under kCompleted (the engine
+// answers a deadline with a partial, not an error) — this sentence is the cut's only
+// user-facing name on the summary.
+std::string SurveyPartialBudgetNoteFor(const SurveyOverviewModel& model);
+
 // The map overlay layers' display facts (the five-group layer plan): the positional payload the
 // map's reach/edge/TIR layers draw, read back through the typed readers — a second pure read of
 // the same document, NOT an extension of SurveyOverviewModel (the overview's consumers are the

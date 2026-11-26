@@ -742,6 +742,13 @@ const char* SurveyOutcomeName(int execution) {
   }
 }
 
+std::string SurveyPartialBudgetNoteFor(const SurveyOverviewModel& model) {
+  if (model.execution == LUMICE_PATH_OUTCOME_DEADLINE_EXCEEDED || model.early_stopped) {
+    return "The survey stopped inside its budget — the facts on show are partial.";
+  }
+  return {};
+}
+
 const char* SurveyObjectKindName(int kind) {
   switch (kind) {
     case LUMICE_PATH_SURVEY_SOURCE_IMAGE:
@@ -1021,8 +1028,9 @@ void RenderSurveyDefaultLayer(const SurveyOverviewModel& model, SurveyRowHoverRe
   // used to carry keeps its content, minus the counts line that moved into the diagnostics
   // group).
   ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-  if (model.execution == LUMICE_PATH_OUTCOME_DEADLINE_EXCEEDED || model.early_stopped) {
-    ImGui::TextWrapped("The survey stopped inside its budget — the facts on show are partial.");
+  const std::string partial_budget_note = SurveyPartialBudgetNoteFor(model);
+  if (!partial_budget_note.empty()) {
+    ImGui::TextWrapped("%s", partial_budget_note.c_str());
   }
   if (model.unevaluated_count > 0) {
     ImGui::TextWrapped("%zu object(s) unevaluated.", model.unevaluated_count);

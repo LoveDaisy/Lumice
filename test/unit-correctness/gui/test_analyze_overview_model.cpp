@@ -176,6 +176,19 @@ TEST(AnalyzeOverviewModel, VocabularyAndTextHelpers) {
   text.length = 5;
   EXPECT_EQ(SurveyTextString(text), "650nm");
   text.data = nullptr;
+
+  // The partial-budget note: the cut document's one user-facing name. The bytes are held and
+  // so is the trigger — a deadline outcome or the identity arm's early stop names the cut; a
+  // completed document states nothing (the renderer omits an empty line).
+  SurveyOverviewModel cut;
+  cut.execution = LUMICE_PATH_OUTCOME_DEADLINE_EXCEEDED;
+  EXPECT_EQ(SurveyPartialBudgetNoteFor(cut), "The survey stopped inside its budget — the facts on show are partial.");
+  SurveyOverviewModel early_stopped;
+  early_stopped.early_stopped = true;
+  EXPECT_FALSE(SurveyPartialBudgetNoteFor(early_stopped).empty());
+  SurveyOverviewModel complete;
+  complete.execution = LUMICE_PATH_OUTCOME_COMPLETED;
+  EXPECT_TRUE(SurveyPartialBudgetNoteFor(complete).empty());
   text.length = 0;
   EXPECT_EQ(SurveyTextString(text), "");
 }

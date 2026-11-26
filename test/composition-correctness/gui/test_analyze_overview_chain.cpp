@@ -656,6 +656,10 @@ TEST(AnalyzeOverviewChain, DeadlineDocumentKeepsItsArmAndItsProducedLegs) {
   EXPECT_EQ(model.execution, LUMICE_PATH_OUTCOME_DEADLINE_EXCEEDED);
   EXPECT_FALSE(model.early_stopped);
   EXPECT_NE(model.arm, SurveyArm::kIdentity);
+  // The cut rides an OK carrier under kCompleted — the partial-budget note is the cut's only
+  // summary-side name, so a deadline document must trigger it (the renderer consumes this
+  // function's bytes verbatim).
+  EXPECT_FALSE(SurveyPartialBudgetNoteFor(model).empty());
 
   // The partial is stated, not papered over: no tint block (the leg never ran to a reading),
   // and no conclusion line claims anything physical about the class.
@@ -682,6 +686,10 @@ TEST(AnalyzeOverviewChain, IdentityDocumentRowSwitchesUnderItsOwnKindGate) {
   const SurveyOverviewModel model = BuildSurveyOverviewModel(*survey, /*point_sun_premise=*/true);
   ASSERT_TRUE(model.valid);
   ASSERT_EQ(model.arm, SurveyArm::kIdentity) << "the rank-0 chain routes to the identity arm on this scene";
+  // The identity arm IS the early stop: its real document triggers the partial-budget note —
+  // the trigger predicate's second arm, held on the real chain beside the deadline leg's.
+  ASSERT_TRUE(model.early_stopped);
+  EXPECT_FALSE(SurveyPartialBudgetNoteFor(model).empty());
   ASSERT_EQ(model.objects.size(), 1u);
   ASSERT_TRUE(model.objects[0].position_available);
   EXPECT_EQ(model.objects[0].kind_name, "source image");
