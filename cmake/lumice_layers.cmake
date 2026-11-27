@@ -110,6 +110,8 @@ set(LUMICE_LAYER_analytic_FILES
   analytic/band_sum.cpp
   analytic/band_sum.hpp
   analytic/capi_zero_pad.hpp
+  analytic/caustic_continuation.cpp
+  analytic/caustic_continuation.hpp
   analytic/discovery.cpp
   analytic/discovery.hpp
   analytic/entry_measure.cpp
@@ -154,6 +156,7 @@ set(LUMICE_LAYER_analytic_FILES
   analytic/path_fiber.hpp
   analytic/path_rank.cpp
   analytic/path_rank.hpp
+  analytic/pose_curve.hpp
   analytic/pose_density.cpp
   analytic/pose_density.hpp
   analytic/reflection_group.cpp
