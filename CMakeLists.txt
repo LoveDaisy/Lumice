@@ -1059,6 +1059,7 @@ set(lumice_analytic_kernel_src
   "${PROJ_SRC_DIR}/analytic/dp_focus.cpp"
   "${PROJ_SRC_DIR}/analytic/dp_contour.cpp"
   "${PROJ_SRC_DIR}/analytic/family_rank.cpp"
+  "${PROJ_SRC_DIR}/analytic/caustic_continuation.cpp"
   "${PROJ_SRC_DIR}/analytic/reflection_group.cpp"
   "${PROJ_SRC_DIR}/analytic/discovery.cpp"
   "${PROJ_SRC_DIR}/analytic/path_rank.cpp"

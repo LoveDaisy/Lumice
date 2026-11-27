@@ -26,6 +26,24 @@ constexpr double kSnellEventTolerance = 1e-8;
 
 static_assert(kMaxFaceCount + 2 <= kMaxDomainMargins, "a path's validity margins must fit a DomainEvaluation");
 
+// Single authority for which margin indices in ChainDomain are entry/exit Snell discriminants
+// in the complete path layout (margin 1 and slot_count + 1 for multi-face transmission paths;
+// none for 1-face reflection) and how kSnellEventTolerance applies to them.
+struct OpticalMarginVerdict {
+  bool valid = false;
+  double min_effective_margin = -1.0;
+  int failing_index = -1;
+  bool failing_is_snell = false;
+  int margin_count = 0;
+  double margins[kMaxDomainMargins]{};
+};
+
+inline bool IsSnellMarginIndex(int index, int slot_count) {
+  return slot_count >= 2 && (index == 1 || index == slot_count + 1);
+}
+
+OpticalMarginVerdict ClassifyChainMargins(bool chain_ok, const ChainDomain& domain, int slot_count);
+
 class IcePathMap {
  public:
   // `slots` holds `slot_count` resolved slots of `table` (ResolveFaceSequence), 1 <= slot_count <=

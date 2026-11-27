@@ -73,6 +73,13 @@ class Corridor {
   // refractive index.
   EntryMeasure Evaluate(const double s_body[3], double refractive_index, CorridorDiagnostics* diagnostics = nullptr);
 
+  // Read-only signed 2D projected overlap margin across all unfolded corridor polygons, without
+  // mutating Evaluate's scratch buffers: positive when every projected polygon pair overlaps, zero
+  // at touching contact, smoothly negative when any pair is disjoint, and NaN when the entry or
+  // exit optical gate fails. For a one-face external reflection path, returns cos_i (> 0 when the
+  // entry gate passes).
+  double OverlapMargin(const double s_body[3], double refractive_index) const;
+
   double Eps() const { return eps_; }
 
   // Recovers the representative ray of an evaluated pose: the centroid of the corridor
