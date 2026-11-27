@@ -2056,6 +2056,106 @@ TEST(CausticContinuation, EdgeCaseRegressions) {
       EXPECT_LT(seg.end_idx, static_cast<int>(c_cap.nodes.size()));
     }
   }
+
+  // 9af. Valid ultra-fine 1D step (min_step = max_step = 1e-14) must advance and reach
+  //      max_nodes_per_branch = 3 immediately without looping until an external deadline.
+  {
+    int slots1[1];
+    const int faces1[1] = { 1 };
+    f.Resolve(faces1, 1, slots1);
+    double sun20[3];
+    AltAzDegToSky(20.0, 0.0, sun20);
+    PoseManifold m;
+    m.axes[PoseManifold::kAxisAzimuth] = PoseAxis::FreeRad(0.0, 0.001, false);
+    m.axes[PoseManifold::kAxisZenith] = PoseAxis::PinnedDeg(0.0);
+    m.axes[PoseManifold::kAxisRoll] = PoseAxis::PinnedDeg(0.0);
+
+    Family1DParams p_fine;
+    p_fine.min_step = 1e-14;
+    p_fine.max_step = 1e-14;
+    p_fine.max_nodes_per_branch = 3;
+    const CausticTraceResult res_fine = TraceFamily1D(f.normals, slots1, 1, n, sun20, m, nullptr, p_fine);
+    EXPECT_FALSE(res_fine.stop_requested);
+    ASSERT_EQ(res_fine.curves.size(), 1u);
+    EXPECT_EQ(res_fine.curves[0].nodes.size(), 3u);
+    EXPECT_TRUE(res_fine.curves[0].coverage.budget_truncated);
+  }
+
+  // 9ag. Seed deduplication in a compact 2D domain must not merge distinct parallel caustic
+  //      branches separated by < 1e-3 rad: C16 Column 3-5, sun alt 20 deg, az [25.77, 25.83] deg,
+  //      roll [120.02, 120.05] deg must recover BOTH branches reaching both roll bounds.
+  {
+    int slots35[2];
+    const int faces35[2] = { 3, 5 };
+    f.Resolve(faces35, 2, slots35);
+    double sun20[3];
+    AltAzDegToSky(20.0, 0.0, sun20);
+    PoseManifold m;
+    m.axes[PoseManifold::kAxisAzimuth] = PoseAxis::FreeDeg(25.77, 25.83, false);
+    m.axes[PoseManifold::kAxisZenith] = PoseAxis::PinnedDeg(90.0);
+    m.axes[PoseManifold::kAxisRoll] = PoseAxis::FreeDeg(120.02, 120.05, false);
+
+    const CausticTraceResult res = TraceCausticLocus(f.normals, slots35, 2, n, sun20, m);
+    ASSERT_GE(res.curves.size(), 2u) << "Compact-domain dedup merged two distinct parallel caustic branches";
+    int branches_spanning_roll = 0;
+    for (const PoseCurve& c : res.curves) {
+      double min_roll = 1e9;
+      double max_roll = -1e9;
+      for (const PoseCurveNode& nd : c.nodes) {
+        const double rd = nd.param[PoseManifold::kAxisRoll] * kRadToDeg;
+        min_roll = std::min(min_roll, rd);
+        max_roll = std::max(max_roll, rd);
+      }
+      if (min_roll <= 120.021 && max_roll >= 120.049) {
+        branches_spanning_roll++;
+      }
+    }
+    EXPECT_GE(branches_spanning_roll, 2) << "Both parallel branches must reach both roll bounds [120.02, 120.05] deg";
+
+    // Setting dedup_tol = 0 must also preserve both branches without any hidden distance shortcut.
+    CausticContinuationParams p_nodedup;
+    p_nodedup.dedup_tol = 0.0;
+    const CausticTraceResult res_nodedup = TraceCausticLocus(f.normals, slots35, 2, n, sun20, m, nullptr, p_nodedup);
+    EXPECT_GE(res_nodedup.curves.size(), 2u);
+  }
+
+  // 9ah. Compact mirror branch around az [25.713648, 25.913648] deg, roll [119.9, 120.1] deg
+  //      (C16 Column 3-5, sun alt 20 deg): the constant-image mirror branch must be segmented
+  //      entirely as kPointImage and emit zero spurious kCusp events.
+  {
+    int slots35[2];
+    const int faces35[2] = { 3, 5 };
+    f.Resolve(faces35, 2, slots35);
+    double sun20[3];
+    AltAzDegToSky(20.0, 0.0, sun20);
+    PoseManifold m;
+    m.axes[PoseManifold::kAxisAzimuth] = PoseAxis::FreeDeg(25.713648, 25.913648, false);
+    m.axes[PoseManifold::kAxisZenith] = PoseAxis::PinnedDeg(90.0);
+    m.axes[PoseManifold::kAxisRoll] = PoseAxis::FreeDeg(119.9, 120.1, false);
+
+    const CausticTraceResult res = TraceCausticLocus(f.normals, slots35, 2, n, sun20, m);
+    ASSERT_FALSE(res.curves.empty());
+    bool found_mirror_point_image = false;
+    for (const PoseCurve& c : res.curves) {
+      double max_sky_spread = 0.0;
+      for (size_t i = 1; i < c.nodes.size(); i++) {
+        max_sky_spread = std::max(max_sky_spread, so3::AngleBetween(c.nodes[0].sky, c.nodes[i].sky));
+      }
+      if (max_sky_spread < 1e-6) {
+        for (const CurveEvent& ev : c.events) {
+          EXPECT_NE(ev.kind, CurveEventKind::kCusp)
+              << "Constant-image mirror branch emitted spurious kCusp at s=" << ev.arclength;
+        }
+        EXPECT_FALSE(c.segments.empty());
+        for (const CurveSegment& seg : c.segments) {
+          EXPECT_EQ(seg.kind, CurveSegmentKind::kPointImage)
+              << "Constant-image mirror branch must be segmented entirely as kPointImage";
+        }
+        found_mirror_point_image = true;
+      }
+    }
+    EXPECT_TRUE(found_mirror_point_image);
+  }
 }
 
 }  // namespace

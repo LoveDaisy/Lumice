@@ -863,8 +863,9 @@ void Trace1DSingleFragment(const EvalFn& eval_fn, int slot_count, int free_ax, d
   Eval1D e_curr = e_start;
   double arclen = 0.0;
   double h = std::min(params.max_step, std::max(params.min_step, (t_end - t_start) / 8.0));
+  const double step_eps = std::min(1e-13, 0.25 * params.min_step);
 
-  while (t_curr < t_end - 1e-13) {
+  while (t_curr < t_end - step_eps) {
     if (CheckStop(stop)) {
       *stop_requested = true;
       curve->coverage.budget_truncated = true;
@@ -877,6 +878,9 @@ void Trace1DSingleFragment(const EvalFn& eval_fn, int slot_count, int free_ax, d
 
     double step = std::min(h, t_end - t_curr);
     double t_next = t_curr + step;
+    if (!(t_next > t_curr)) {
+      break;
+    }
     Eval1D e_next = eval_fn(t_next, track_corridor);
 
     bool shrunk = false;
@@ -915,13 +919,13 @@ void Trace1DSingleFragment(const EvalFn& eval_fn, int slot_count, int free_ax, d
       break;
     }
 
-    if (*stop_requested) {
+    if (*stop_requested || !(t_next > t_curr)) {
       break;
     }
 
     auto commit_valid_step = [&](double t_target, const Eval1D& e_target) -> bool {
       const double seg_step = t_target - t_curr;
-      if (seg_step <= 1e-13) {
+      if (seg_step <= step_eps) {
         return true;
       }
       // Collect step-internal non-splitting events and flush only those within the committed
@@ -1015,7 +1019,7 @@ void Trace1DSingleFragment(const EvalFn& eval_fn, int slot_count, int free_ax, d
       }
 
       const double ds_rem = t_target - t_prev_p;
-      if (ds_rem > 1e-13) {
+      if (ds_rem > step_eps) {
         if (static_cast<int>(curve->nodes.size()) >= params.max_nodes_per_branch) {
           curve->coverage.budget_truncated = true;
           AppendEventsWithinArclength(step_events, curve->nodes.back().arclength, &curve->events);
@@ -2215,10 +2219,13 @@ struct Seed2D {
   double priority = 0.0;
 };
 
-// Checks if a candidate seed already lies on any traced curve using point-to-segment distance
-// with normal-offset discrimination so nearby parallel branches are never conflated.
-bool IsSeedCoveredByCurves(const Seed2D& seed, int ax0, int ax1, const PoseManifold& manifold,
-                           const std::vector<PoseCurve>& curves, double dedup_tol) {
+// Checks if a candidate seed already lies on any traced curve by projecting the closest chord
+// point onto J = 0 and verifying both gradient orientation and true normal agreement, so distinct
+// parallel branches in compact domains are never merged even when separated by < 1e-3 rad.
+bool IsSeedCoveredByCurves(const FaceNormalTable& table, const int* slots, int slot_count, double refractive_index,
+                           const double sun_dir[3], const Seed2D& seed, int ax0, int ax1, const PoseManifold& manifold,
+                           const std::vector<PoseCurve>& curves, const CausticContinuationParams& params) {
+  const double dedup_tol = params.dedup_tol;
   const PoseAxis& pax0 = manifold.axes[ax0];
   const PoseAxis& pax1 = manifold.axes[ax1];
   double seed_tau[2] = { 0.0, 0.0 };
@@ -2229,7 +2236,8 @@ bool IsSeedCoveredByCurves(const Seed2D& seed, int ax0, int ax1, const PoseManif
     seed_tau[0] = -seed_nrm[1];
     seed_tau[1] = seed_nrm[0];
   }
-  const double normal_tol = std::min(0.005, 0.2 * dedup_tol);
+  const double branch_tol =
+      std::max(1e-7, 100.0 * params.residual_tol / std::max(seed.eval.grad_norm, params.grad_tol));
 
   for (const PoseCurve& curve : curves) {
     const size_t n = curve.nodes.size();
@@ -2238,7 +2246,7 @@ bool IsSeedCoveredByCurves(const Seed2D& seed, int ax0, int ax1, const PoseManif
     }
     if (n == 1) {
       const double p[2] = { curve.nodes[0].param[ax0], curve.nodes[0].param[ax1] };
-      if (Dist2D(seed.q, p, pax0, pax1) < 1e-3) {
+      if (Dist2D(seed.q, p, pax0, pax1) <= std::min(branch_tol, std::max(dedup_tol, 1e-10))) {
         return true;
       }
       continue;
@@ -2258,18 +2266,38 @@ bool IsSeedCoveredByCurves(const Seed2D& seed, int ax0, int ax1, const PoseManif
       const double rx = ax - t * sx;
       const double ry = ay - t * sy;
       const double dist = std::hypot(rx, ry);
-      if (dist < 1e-3) {
+      if (dist <= 1e-11) {
         return true;
       }
-      if (dist < dedup_tol && seed.eval.grad_norm > 0.0) {
+      if (!(dedup_tol > 0.0) || dist >= dedup_tol) {
+        continue;
+      }
+      if (seed.eval.grad_norm > 0.0) {
         const double seg_t0 = (1.0 - t) * na.tangent[ax0] + t * nb.tangent[ax0];
         const double seg_t1 = (1.0 - t) * na.tangent[ax1] + t * nb.tangent[ax1];
         const double stn = std::hypot(seg_t0, seg_t1);
-        if (stn > 0.0) {
-          const double align = std::fabs((seg_t0 * seed_tau[0] + seg_t1 * seed_tau[1]) / stn);
-          const double normal_off = std::fabs(rx * seed_nrm[0] + ry * seed_nrm[1]);
-          if (align > 0.85 && normal_off < normal_tol) {
-            return true;
+        if (!(stn > 0.0)) {
+          continue;
+        }
+        const double align = std::fabs((seg_t0 * seed_tau[0] + seg_t1 * seed_tau[1]) / stn);
+        if (align <= 0.85) {
+          continue;
+        }
+        const double seg_len = std::sqrt(s2);
+        const double p_proj[2] = { WrapAxis(na.param[ax0] + t * sx, pax0), WrapAxis(na.param[ax1] + t * sy, pax1) };
+        const double proj_drift = std::max(0.5 * seg_len, 2.0 * dist);
+        const ProjectResult pm = ProjectOntoCaustic(table, slots, slot_count, refractive_index, sun_dir, manifold, ax0,
+                                                    ax1, p_proj, proj_drift, params, /*allow_ulp_cliff=*/true);
+        if (pm.outcome == ProjectOutcome::kConverged && pm.eval.grad_norm >= params.grad_tol) {
+          const double grad_dot = pm.eval.grad_j[0] * seed.eval.grad_j[0] + pm.eval.grad_j[1] * seed.eval.grad_j[1];
+          if (grad_dot > 0.0) {
+            const double tdx = DeltaAxis(seed.q[0], pm.q[0], pax0);
+            const double tdy = DeltaAxis(seed.q[1], pm.q[1], pax1);
+            const double true_normal_off = std::fabs(tdx * seed_nrm[0] + tdy * seed_nrm[1]);
+            const double true_tang_off = std::fabs(tdx * seed_tau[0] + tdy * seed_tau[1]);
+            if (true_normal_off <= branch_tol && true_tang_off <= std::max(dedup_tol, 0.5 * seg_len + 1e-7)) {
+              return true;
+            }
           }
         }
       }
@@ -2280,11 +2308,15 @@ bool IsSeedCoveredByCurves(const Seed2D& seed, int ax0, int ax1, const PoseManif
 
 // Invariant for HalfBranch2D:
 //   - node_stationary.size() == nodes.size()
+//   - node_grad_norm.size() == nodes.size()
+//   - node_abs_j.size() == nodes.size()
 //   - edge_corridor_open.size() == (nodes.empty() ? 0 : nodes.size() - 1)
 //   - edge_corridor_open[i] is the corridor open/closed state of the interior of edge (nodes[i], nodes[i+1]).
 struct HalfBranch2D {
   std::vector<PoseCurveNode> nodes;
   std::vector<bool> node_stationary;
+  std::vector<double> node_grad_norm;
+  std::vector<double> node_abs_j;
   std::vector<bool> edge_corridor_open;
   bool first_node_corridor_open = true;
   std::vector<CurveEvent> events;
@@ -2339,6 +2371,8 @@ HalfBranch2D TraceHalfBranch2D(const FaceNormalTable& table, const int* slots, i
     const double zero_floor = NumericalZeroSigmaFloor(e.margin.min_effective_margin);
     const bool stat = (node.sigma1 <= zero_floor) || (node.sky_speed <= params.speed_tol * node.sigma1);
     out.node_stationary.push_back(stat);
+    out.node_grad_norm.push_back(e.grad_norm);
+    out.node_abs_j.push_back(std::fabs(e.j_val));
   };
 
   push_node(e_curr, tau_curr, 0.0, e_curr.corridor_open);
@@ -3319,14 +3353,121 @@ PoseCurve StitchHalfBranches(const HalfBranch& forward, const HalfBranch& backwa
 }
 
 PoseCurve StitchCausticCurve(const HalfBranch2D& forward, const HalfBranch2D& backward, int seed_grid_n,
-                             double speed_tol, double residual_tol) {
+                             double speed_tol, double residual_tol, double grad_tol) {
   PoseCurve curve = StitchHalfBranches(forward, backward, PoseCurveKind::kCaustic2D, seed_grid_n, speed_tol,
                                        forward.unresolved_singularities + backward.unresolved_singularities);
 
+  // Stitch per-node ||grad J|| and |J| in the same order as curve.nodes so conditioning-aware
+  // point-image classification and cusp verification account for pose-error amplification
+  // max(|J|, residual_tol) / ||grad J||.
+  std::vector<double> node_grad_norm;
+  std::vector<double> node_abs_j;
+  if (forward.closed || backward.nodes.size() <= 1) {
+    node_grad_norm = forward.node_grad_norm;
+    node_abs_j = forward.node_abs_j;
+  } else {
+    const size_t b_cnt = backward.nodes.size();
+    const size_t f_cnt = forward.nodes.size();
+    node_grad_norm.reserve(b_cnt - 1 + f_cnt);
+    node_abs_j.reserve(b_cnt - 1 + f_cnt);
+    for (size_t idx = b_cnt - 1; idx >= 1; idx--) {
+      node_grad_norm.push_back(backward.node_grad_norm[idx]);
+      node_abs_j.push_back(backward.node_abs_j[idx]);
+    }
+    for (size_t idx = 0; idx < f_cnt; idx++) {
+      node_grad_norm.push_back(forward.node_grad_norm[idx]);
+      node_abs_j.push_back(forward.node_abs_j[idx]);
+    }
+  }
+
+  auto sky_uncertainty_at = [&](size_t idx) {
+    const PoseCurveNode& nd = curve.nodes[idx];
+    const double gn = idx < node_grad_norm.size() ? node_grad_norm[idx] : 1.0;
+    const double aj = idx < node_abs_j.size() ? node_abs_j[idx] : residual_tol;
+    const double pose_err = std::max(aj, residual_tol) / std::max(gn, grad_tol);
+    return std::max(1e-14, 10.0 * pose_err * std::max(nd.sigma1, 1.0));
+  };
+
+  // Refine segment classification using conditioned chord sky motion:
+  //   1. An interior constant-image edge whose sky displacement stays within the conditioned
+  //      locus uncertainty AND whose endpoint sky speeds are both near-zero (<= max(50*speed_tol,
+  //      5e-8)*sigma1) is promoted to kPointImage (catches exact mirror branches whose tangent
+  //      derivative picks up O(1e-9) conditioning jitter while keeping near-degenerate moving arcs
+  //      such as TiltedSpin(89.99) strictly kArc).
+  //   2. Once any kPointImage edge exists, adjacent singular-approach edges whose sky displacement
+  //      stays within their conditioned sky uncertainty are absorbed into the same kPointImage run
+  //      (prevents an X-junction singularity at the tip of a mirror branch from splitting off a
+  //      spurious kArc tail).
+  if (curve.nodes.size() >= 2 && !curve.segments.empty()) {
+    const size_t edge_cnt = curve.nodes.size() - 1;
+    std::vector<CurveSegmentKind> edge_kind(edge_cnt, CurveSegmentKind::kArc);
+    std::vector<bool> edge_open(edge_cnt, true);
+    for (const CurveSegment& seg : curve.segments) {
+      for (int e = seg.start_idx; e < seg.end_idx && static_cast<size_t>(e) < edge_cnt; e++) {
+        edge_kind[static_cast<size_t>(e)] = seg.kind;
+        edge_open[static_cast<size_t>(e)] = seg.corridor_open;
+      }
+    }
+    const double cond_speed_bar = std::max(50.0 * speed_tol, 5e-8);
+    bool changed = false;
+    for (size_t e = 0; e < edge_cnt; e++) {
+      if (edge_kind[e] == CurveSegmentKind::kPointImage) {
+        continue;
+      }
+      const double sky_step = so3::AngleBetween(curve.nodes[e].sky, curve.nodes[e + 1].sky);
+      const double sky_unc = std::max(sky_uncertainty_at(e), sky_uncertainty_at(e + 1));
+      const double max_s1 = std::max(curve.nodes[e].sigma1, curve.nodes[e + 1].sigma1);
+      const double max_spd = std::max(curve.nodes[e].sky_speed, curve.nodes[e + 1].sky_speed);
+      if (sky_step <= sky_unc && max_spd <= cond_speed_bar * std::max(max_s1, 1.0)) {
+        edge_kind[e] = CurveSegmentKind::kPointImage;
+        changed = true;
+      }
+    }
+    // Propagate outward from confirmed kPointImage runs into adjacent singular-approach edges
+    // whose sky image has not moved past their conditioned locus uncertainty.
+    bool grew = true;
+    while (grew) {
+      grew = false;
+      for (size_t e = 0; e < edge_cnt; e++) {
+        if (edge_kind[e] == CurveSegmentKind::kPointImage) {
+          continue;
+        }
+        const bool adj_point = (e > 0 && edge_kind[e - 1] == CurveSegmentKind::kPointImage) ||
+                               (e + 1 < edge_cnt && edge_kind[e + 1] == CurveSegmentKind::kPointImage);
+        if (!adj_point) {
+          continue;
+        }
+        const double sky_step = so3::AngleBetween(curve.nodes[e].sky, curve.nodes[e + 1].sky);
+        const double sky_unc = std::max(sky_uncertainty_at(e), sky_uncertainty_at(e + 1));
+        if (sky_step <= sky_unc) {
+          edge_kind[e] = CurveSegmentKind::kPointImage;
+          changed = true;
+          grew = true;
+        }
+      }
+    }
+    if (changed) {
+      curve.segments.clear();
+      int seg_start = 0;
+      for (size_t i = 1; i <= edge_cnt; i++) {
+        const bool split = (i == edge_cnt) || (edge_kind[i] != edge_kind[static_cast<size_t>(seg_start)]) ||
+                           (edge_open[i] != edge_open[static_cast<size_t>(seg_start)]);
+        if (split) {
+          CurveSegment seg;
+          seg.start_idx = seg_start;
+          seg.end_idx = static_cast<int>(i);
+          seg.kind = edge_kind[static_cast<size_t>(seg_start)];
+          seg.corridor_open = edge_open[static_cast<size_t>(seg_start)];
+          curve.segments.push_back(seg);
+          seg_start = static_cast<int>(i);
+        }
+      }
+    }
+  }
+
   // Scale-free geometric verification for every candidate kCusp against the stitched curve:
   // a genuine cusp lies outside kPointImage segments and shows resolved opposing sky motion
-  // consistent with the local tangential sky velocity on BOTH sides (passing arbitrarily tight
-  // compact boxes such as +-0.00020 deg while still suppressing mirror-branch residual jitter).
+  // above the ||grad J||-conditioned sky uncertainty floor on BOTH sides.
   if (!curve.events.empty() && curve.nodes.size() >= 3) {
     auto node_in_point_image = [&](int node_idx) {
       for (const CurveSegment& seg : curve.segments) {
@@ -3355,7 +3496,7 @@ PoseCurve StitchCausticCurve(const HalfBranch2D& forward, const HalfBranch2D& ba
         }
         const double ds = std::fabs(ev.arclength - nd.arclength);
         const double ang = so3::AngleBetween(nd.sky, ev.sky);
-        const double sky_floor = std::max(1e-14, 2.0 * residual_tol * std::max(nd.sigma1, 1.0));
+        const double sky_floor = sky_uncertainty_at(static_cast<size_t>(idx));
         return ang > sky_floor && ang >= 0.05 * nd.sky_speed * ds;
       };
       int left_idx = -1;
@@ -4661,7 +4802,8 @@ CausticTraceResult TraceCausticLocus(const FaceNormalTable& table, const int* sl
       result.coverage.budget_truncated = true;
       break;
     }
-    if (IsSeedCoveredByCurves(seed, ax0, ax1, manifold, result.curves, params.dedup_tol)) {
+    if (IsSeedCoveredByCurves(table, slots, slot_count, refractive_index, sun_dir, seed, ax0, ax1, manifold,
+                              result.curves, params)) {
       continue;
     }
     // Check max_curves ONLY when an uncovered seed would genuinely start another curve.
@@ -4678,7 +4820,7 @@ CausticTraceResult TraceCausticLocus(const FaceNormalTable& table, const int* sl
                                    seed.eval, -1, false, corridor, params, stop);
     }
 
-    PoseCurve curve = StitchCausticCurve(forward, backward, n, params.speed_tol, params.residual_tol);
+    PoseCurve curve = StitchCausticCurve(forward, backward, n, params.speed_tol, params.residual_tol, params.grad_tol);
     result.stop_requested = result.stop_requested || forward.stop_requested || backward.stop_requested;
     result.coverage.closed = result.coverage.closed || curve.coverage.closed;
     result.coverage.budget_truncated = result.coverage.budget_truncated || curve.coverage.budget_truncated;
