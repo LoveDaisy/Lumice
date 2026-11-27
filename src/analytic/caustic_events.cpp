@@ -436,7 +436,8 @@ void BuildSegments(const std::vector<PoseCurveNode>& nodes, const std::vector<bo
 }  // namespace caustic_detail
 
 bool ValidateParams(const Family1DParams& p) {
-  if (p.scan_samples < 4 || p.bisection_iters < 1 || p.max_nodes_per_branch < 1) {
+  if (p.scan_samples < 4 || p.scan_samples > std::numeric_limits<int>::max() - 1 || p.bisection_iters < 1 ||
+      p.max_nodes_per_branch < 1) {
     return false;
   }
   if (!std::isfinite(p.min_step) || !std::isfinite(p.max_step) || !std::isfinite(p.max_turning_angle) ||
@@ -448,8 +449,9 @@ bool ValidateParams(const Family1DParams& p) {
 }
 
 bool ValidateParams(const CausticContinuationParams& p) {
-  if (p.seed_grid_n < 4 || p.max_newton_iters < 1 || p.max_steps_per_branch < 1 || p.max_curves < 1 ||
-      p.bisection_iters < 1) {
+  if (p.seed_grid_n < 4 || p.seed_grid_n > std::numeric_limits<int>::max() - 1 ||
+      (p.seed_grid_n + 1) > std::numeric_limits<int>::max() / (p.seed_grid_n + 1) || p.max_newton_iters < 1 ||
+      p.max_steps_per_branch < 1 || p.max_curves < 1 || p.bisection_iters < 1) {
     return false;
   }
   if (!std::isfinite(p.rank_tol) || !std::isfinite(p.residual_tol) || !std::isfinite(p.grad_tol) ||

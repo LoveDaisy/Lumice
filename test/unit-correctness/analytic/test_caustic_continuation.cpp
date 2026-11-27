@@ -2236,36 +2236,39 @@ TEST(CausticContinuation, EdgeCaseRegressions) {
     }
     EXPECT_TRUE(found_loose_mirror);
 
-    // Shrunken window around the transverse crossing: both constant-image mirror branches must stay
-    // kPointImage (and cusp-free) at both default residual_tol=1e-12 and loose residual_tol=1e-6.
-    PoseManifold m_shrunk;
-    m_shrunk.axes[PoseManifold::kAxisAzimuth] = PoseAxis::FreeDeg(25.813648 - 0.02, 25.813648 + 0.02, false);
-    m_shrunk.axes[PoseManifold::kAxisZenith] = PoseAxis::PinnedDeg(90.0);
-    m_shrunk.axes[PoseManifold::kAxisRoll] = PoseAxis::FreeDeg(120.0 - 0.02, 120.0 + 0.02, false);
-    for (double rtol : { 1e-12, 1e-6 }) {
-      CausticContinuationParams p_shrunk;
-      p_shrunk.residual_tol = rtol;
-      const CausticTraceResult res_shrunk =
-          TraceCausticLocus(f.normals, slots35, 2, n, sun20, m_shrunk, nullptr, p_shrunk);
-      int mirror_branch_count = 0;
-      for (const PoseCurve& c : res_shrunk.curves) {
-        double max_sky_spread = 0.0;
-        for (size_t i = 1; i < c.nodes.size(); i++) {
-          max_sky_spread = std::max(max_sky_spread, so3::AngleBetween(c.nodes[0].sky, c.nodes[i].sky));
-        }
-        if (max_sky_spread < 1e-6) {
-          mirror_branch_count++;
-          for (const CurveEvent& ev : c.events) {
-            EXPECT_NE(ev.kind, CurveEventKind::kCusp) << "rtol=" << rtol;
+    // Shrunken windows around the transverse crossing (+-0.02 deg and +-0.01 deg): both
+    // constant-image mirror branches must stay kPointImage (and cusp-free) at both default
+    // residual_tol=1e-12 and loose residual_tol=1e-6.
+    for (double hw_deg : { 0.02, 0.01 }) {
+      PoseManifold m_shrunk;
+      m_shrunk.axes[PoseManifold::kAxisAzimuth] = PoseAxis::FreeDeg(25.813648 - hw_deg, 25.813648 + hw_deg, false);
+      m_shrunk.axes[PoseManifold::kAxisZenith] = PoseAxis::PinnedDeg(90.0);
+      m_shrunk.axes[PoseManifold::kAxisRoll] = PoseAxis::FreeDeg(120.0 - hw_deg, 120.0 + hw_deg, false);
+      for (double rtol : { 1e-12, 1e-6 }) {
+        CausticContinuationParams p_shrunk;
+        p_shrunk.residual_tol = rtol;
+        const CausticTraceResult res_shrunk =
+            TraceCausticLocus(f.normals, slots35, 2, n, sun20, m_shrunk, nullptr, p_shrunk);
+        int mirror_branch_count = 0;
+        for (const PoseCurve& c : res_shrunk.curves) {
+          double max_sky_spread = 0.0;
+          for (size_t i = 1; i < c.nodes.size(); i++) {
+            max_sky_spread = std::max(max_sky_spread, so3::AngleBetween(c.nodes[0].sky, c.nodes[i].sky));
           }
-          EXPECT_FALSE(c.segments.empty()) << "rtol=" << rtol;
-          for (const CurveSegment& seg : c.segments) {
-            EXPECT_EQ(seg.kind, CurveSegmentKind::kPointImage)
-                << "Shrunken mirror branch flipped to kArc at rtol=" << rtol;
+          if (max_sky_spread < 1e-6) {
+            mirror_branch_count++;
+            for (const CurveEvent& ev : c.events) {
+              EXPECT_NE(ev.kind, CurveEventKind::kCusp) << "hw=" << hw_deg << " rtol=" << rtol;
+            }
+            EXPECT_FALSE(c.segments.empty()) << "hw=" << hw_deg << " rtol=" << rtol;
+            for (const CurveSegment& seg : c.segments) {
+              EXPECT_EQ(seg.kind, CurveSegmentKind::kPointImage)
+                  << "Shrunken mirror branch flipped to kArc at hw=" << hw_deg << " rtol=" << rtol;
+            }
           }
         }
+        EXPECT_GE(mirror_branch_count, 2) << "Expected both mirror branches at hw=" << hw_deg << " rtol=" << rtol;
       }
-      EXPECT_GE(mirror_branch_count, 2) << "Expected both mirror branches at rtol=" << rtol;
     }
 
     // Near-degenerate moving arc TiltedSpin(89.99) must stay kArc even at loose residual_tol=1e-6.
@@ -2362,7 +2365,8 @@ TEST(CausticContinuation, EdgeCaseRegressions) {
     }
   }
 
-  // 9al. Pre-cancelled trace must return before allocating the seed_grid_n^2 pre-scan grid.
+  // 9al. Pre-cancelled 1D/2D traces must return before allocating pre-scan arrays, and
+  //      ValidateParams must reject seed_grid_n whose (n + 1)^2 overflows int indexing.
   {
     int slots35[2];
     const int faces35[2] = { 3, 5 };
@@ -2380,6 +2384,22 @@ TEST(CausticContinuation, EdgeCaseRegressions) {
     EXPECT_TRUE(res_stopped.stop_requested);
     EXPECT_TRUE(res_stopped.coverage.budget_truncated);
     EXPECT_TRUE(res_stopped.curves.empty());
+
+    Family1DParams p_large_1d;
+    p_large_1d.scan_samples = 4194304;
+    const CausticTraceResult res_1d_stopped =
+        TraceFamily1D(f.normals, slots35, 2, n, sun20, PoseManifold::Plate(), nullptr, p_large_1d, &stop);
+    EXPECT_TRUE(res_1d_stopped.stop_requested);
+    EXPECT_TRUE(res_1d_stopped.coverage.budget_truncated);
+    EXPECT_TRUE(res_1d_stopped.curves.empty());
+
+    CausticContinuationParams p_overflow;
+    p_overflow.seed_grid_n = 46341;
+    EXPECT_FALSE(ValidateParams(p_overflow));
+    p_overflow.seed_grid_n = 46340;
+    EXPECT_FALSE(ValidateParams(p_overflow));
+    p_overflow.seed_grid_n = 46339;
+    EXPECT_TRUE(ValidateParams(p_overflow));
   }
 }
 

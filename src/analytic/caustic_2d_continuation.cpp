@@ -1047,10 +1047,15 @@ PoseCurve StitchHalfBranches(const HalfBranch2D& forward, const HalfBranch2D& ba
   return curve;
 }
 
+static double TrackedSkyUncertainty(double pose_err, double sigma1) {
+  return std::max(1e-14, 10.0 * pose_err * std::max(sigma1, 1.0));
+}
+
 // Single-authority point-image classification: polishes candidate nodes onto J_reg = 0 regardless
 // of caller residual_tol (handling domain-boundary endpoints via SolveOnDomainBoundary2D) and
 // requires both pairwise-within-uncertainty sky agreement from the best-conditioned anchor and a
-// noise-certified stationary speed witness (or low whole-segment secant speed).
+// noise-certified stationary speed witness, low whole-segment secant speed, or whole-branch
+// constant-sky normal-snap witness.
 static void ReclassifyPointImageEdges(const Context2D& ctx, const std::vector<double>& node_pose_err,
                                       PoseCurve* curve) {
   if (curve->nodes.size() < 2 || curve->segments.empty()) {
@@ -1070,7 +1075,7 @@ static void ReclassifyPointImageEdges(const Context2D& ctx, const std::vector<do
 
   auto tracked_sky_unc = [&](size_t idx) {
     const double pose_err = idx < node_pose_err.size() ? node_pose_err[idx] : 1e-14;
-    return std::max(1e-14, 10.0 * pose_err * std::max(curve->nodes[idx].sigma1, 1.0));
+    return TrackedSkyUncertainty(pose_err, curve->nodes[idx].sigma1);
   };
 
   CausticContinuationParams tight_params = ctx.params;
@@ -1079,8 +1084,10 @@ static void ReclassifyPointImageEdges(const Context2D& ctx, const std::vector<do
                              ctx.manifold, ctx.ax0,   ctx.ax1,        tight_params };
   struct TightNode {
     bool valid = false;
+    double q[2]{};
     double sky[3]{};
     double sigma1 = 1.0;
+    double pose_err = 1e-14;
     double sky_unc = 1e-14;
     double sky_speed = 0.0;
     double spd_noise = 0.0;
@@ -1116,11 +1123,14 @@ static void ReclassifyPointImageEdges(const Context2D& ctx, const std::vector<do
     TightNode tn;
     if (e.valid && e.grad_reg_norm >= ctx.params.grad_tol) {
       tn.valid = true;
+      tn.q[0] = e.param[ctx.ax0];
+      tn.q[1] = e.param[ctx.ax1];
       so3::Copy3(e.sky, tn.sky);
       const double s1 = std::max(e.sigma1, 1.0);
       const double pose_err = ComputeRegularizedPoseErr(e, ctx.params.grad_tol);
       tn.sigma1 = s1;
-      tn.sky_unc = std::max(1e-14, 10.0 * pose_err * s1);
+      tn.pose_err = pose_err;
+      tn.sky_unc = TrackedSkyUncertainty(pose_err, s1);
       double tau[2];
       TangentFromGrad(e.grad_j_reg, e.grad_reg_norm, +1, tau);
       double v[3];
@@ -1207,7 +1217,54 @@ static void ReclassifyPointImageEdges(const Context2D& ctx, const std::vector<do
     }
     const double seg_len = curve->nodes[run_b].arclength - curve->nodes[run_a].arclength;
     const bool secant_low = (seg_len > 0.0 && seg_spread / seg_len <= cond_speed_bar * max_s1);
-    if (within_unc && (has_certified_low_speed || secant_low)) {
+    bool constant_sky_witness = false;
+    // On a short whole-branch constant mirror near an X-junction, ||grad J_reg|| is small enough
+    // that local speed noise exceeds cond_speed_bar and endpoint uncertainty inflates seg_spread /
+    // seg_len. Verify directly via O(1)-conditioned 1D normal snapping onto t_anchor.sky that every
+    // separated node on the branch satisfies sky == t_anchor.sky and J_reg == 0 within pose error.
+    if (within_unc && !has_certified_low_speed && !secant_low && run_a == 0 && run_b == edge_cnt && seg_len > 0.0 &&
+        t_anchor.sky_speed <= cond_speed_bar * t_anchor.sigma1) {
+      const double eps = std::numeric_limits<double>::epsilon();
+      constant_sky_witness = true;
+      for (size_t k = run_a; k <= run_b; k++) {
+        if (k == anchor) {
+          continue;
+        }
+        const TightNode& tk = tighten_node(k);
+        Eval2DJet2 et = Evaluate2DJet2(tight_ctx, tk.q, nullptr, false);
+        double e_sky[3]{};
+        if (!et.valid || et.grad_reg_norm < ctx.params.grad_tol || !DominantLeftSingularVector(et.x1, et.x2, e_sky)) {
+          constant_sky_witness = false;
+          break;
+        }
+        const double nhat[2] = { et.grad_j_reg[0] / et.grad_reg_norm, et.grad_j_reg[1] / et.grad_reg_norm };
+        double s_tot = 0.0;
+        for (int it = 0; it < 6; it++) {
+          const double diff[3] = { et.sky[0] - t_anchor.sky[0], et.sky[1] - t_anchor.sky[1],
+                                   et.sky[2] - t_anchor.sky[2] };
+          const double vn[3] = { nhat[0] * et.x1[0] + nhat[1] * et.x2[0], nhat[0] * et.x1[1] + nhat[1] * et.x2[1],
+                                 nhat[0] * et.x1[2] + nhat[1] * et.x2[2] };
+          const double fp = so3::Dot3(e_sky, vn);
+          if (std::fabs(fp) < 1e-12) {
+            break;
+          }
+          s_tot -= so3::Dot3(e_sky, diff) / fp;
+          const double q_try[2] = { tk.q[0] + s_tot * nhat[0], tk.q[1] + s_tot * nhat[1] };
+          et = Evaluate2DJet2(tight_ctx, q_try, nullptr, false);
+          if (!et.valid) {
+            break;
+          }
+        }
+        const double pe_bound = 4.0 * std::max(tk.pose_err, k < node_pose_err.size() ? node_pose_err[k] : 1e-14);
+        const double jr_cap = std::max(1e-15, 64.0 * eps * et.w_val * std::max(et.sigma1 * et.sigma1, 1.0));
+        if (!et.valid || std::fabs(s_tot) > pe_bound || so3::AngleBetween(et.sky, t_anchor.sky) > 1e-13 ||
+            std::fabs(et.j_reg) > jr_cap) {
+          constant_sky_witness = false;
+          break;
+        }
+      }
+    }
+    if (within_unc && (has_certified_low_speed || secant_low || constant_sky_witness)) {
       for (size_t k = run_a; k < run_b; k++) {
         if (edge_kind[k] != CurveSegmentKind::kPointImage) {
           edge_kind[k] = CurveSegmentKind::kPointImage;
@@ -1241,9 +1298,8 @@ PoseCurve StitchCausticCurve(const Context2D& ctx, const HalfBranch2D& forward, 
   ReclassifyPointImageEdges(ctx, node_pose_err, &curve);
 
   auto sky_uncertainty_at = [&](size_t idx) {
-    const PoseCurveNode& nd = curve.nodes[idx];
     const double pose_err = idx < node_pose_err.size() ? node_pose_err[idx] : 1e-14;
-    return std::max(1e-14, 10.0 * pose_err * std::max(nd.sigma1, 1.0));
+    return TrackedSkyUncertainty(pose_err, curve.nodes[idx].sigma1);
   };
 
   if (!curve.events.empty() && curve.nodes.size() >= 3) {

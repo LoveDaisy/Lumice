@@ -556,6 +556,12 @@ CausticTraceResult Trace1DWithEvaluator(const PoseAxis& pax, int free_ax, int sl
   const double span = pax.Span();
   const double max_probe_step = std::max(params.min_step * 4.0, 0.25 * span / static_cast<double>(n));
 
+  if (CheckStop(stop)) {
+    result.stop_requested = true;
+    result.coverage.budget_truncated = true;
+    return result;
+  }
+
   std::vector<bool> valid(static_cast<size_t>(sample_cnt), false);
   std::vector<double> scan_margin(static_cast<size_t>(sample_cnt), -1.0);
   bool any_nonzero_speed = false;
