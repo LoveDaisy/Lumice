@@ -303,23 +303,11 @@ TEST(CausticContinuation, C16ColumnTangentArcsAndMirrorPointImage) {
       }
       if (i > 0 && i + 1 < curve.nodes.size()) {
         double j_ind = 0.0;
-        double j_reg_ind = 0.0;
-        double min_snell_disc = 1.0;
-        if (!IndependentSignedJacobian2D(f.normals, slots, 2, n, sun_dir, column, node.param, &j_ind, nullptr, nullptr,
-                                         nullptr, &j_reg_ind, &min_snell_disc)) {
+        if (!IndependentSignedJacobian2D(f.normals, slots, 2, n, sun_dir, column, node.param, &j_ind)) {
           ADD_FAILURE() << "Independent evaluation invalid at node " << i;
           continue;
         }
-        // Away from the final 2e-5 grazing Snell cliff (where ||grad J|| = O(1/d) exceeds 2e4 and
-        // 1 ULP of float64 pose at q ~ 6 rad shifts J by > 1e-11), raw |J| must stay <= 1e-11; all
-        // the way down to kSnellEventTolerance = 1e-8, desingularized |entry_disc * exit_disc * J|
-        // stays <= 1e-13.
-        EXPECT_LE(std::fabs(j_reg_ind), 1e-13)
-            << "node " << i << " |J_reg|=" << std::fabs(j_reg_ind) << " min_disc=" << min_snell_disc;
-        if (min_snell_disc > 2e-5) {
-          EXPECT_LE(std::fabs(j_ind), 1e-11)
-              << "node " << i << " |J|=" << std::fabs(j_ind) << " min_disc=" << min_snell_disc;
-        }
+        EXPECT_LE(std::fabs(j_ind), 1e-11) << "node " << i << " |J|=" << std::fabs(j_ind);
         total_checked_nodes++;
       }
     }
@@ -337,6 +325,16 @@ TEST(CausticContinuation, C16ColumnTangentArcsAndMirrorPointImage) {
         }
         if (max_dist_from_mirror_deg < 1e-3 && seg.end_idx - seg.start_idx >= 5) {
           found_mirror_point_image = true;
+          // Constant-image mirror segments must emit zero spurious kCusp events.
+          const double s_lo = curve.nodes[static_cast<size_t>(seg.start_idx)].arclength;
+          const double s_hi = curve.nodes[static_cast<size_t>(seg.end_idx)].arclength;
+          int mirror_cusps = 0;
+          for (const CurveEvent& ev : curve.events) {
+            if (ev.kind == CurveEventKind::kCusp && ev.arclength >= s_lo - 1e-9 && ev.arclength <= s_hi + 1e-9) {
+              mirror_cusps++;
+            }
+          }
+          EXPECT_EQ(mirror_cusps, 0) << "Constant-image mirror emitted spurious kCusp events";
         }
       } else {
         double seg_max_alt = -90.0;
@@ -467,19 +465,11 @@ TEST(CausticContinuation, LowitzMainAndNearSunBranchesAndAntisymmetry) {
       for (size_t i = 1; i + 1 < curve.nodes.size(); i++) {
         const PoseCurveNode& node = curve.nodes[i];
         double j_ind = 0.0;
-        double j_reg_ind = 0.0;
-        double min_snell_disc = 1.0;
-        if (!IndependentSignedJacobian2D(f.normals, slots, 2, n, sun_dir, lowitz, node.param, &j_ind, nullptr, nullptr,
-                                         nullptr, &j_reg_ind, &min_snell_disc)) {
+        if (!IndependentSignedJacobian2D(f.normals, slots, 2, n, sun_dir, lowitz, node.param, &j_ind)) {
           ADD_FAILURE() << "Independent evaluation invalid at sun_alt=" << sun_alt_deg << " node " << i;
           continue;
         }
-        EXPECT_LE(std::fabs(j_reg_ind), 1e-13)
-            << "sun_alt=" << sun_alt_deg << " |J_reg|=" << std::fabs(j_reg_ind) << " min_disc=" << min_snell_disc;
-        if (min_snell_disc > 2e-5) {
-          EXPECT_LE(std::fabs(j_ind), 1e-11)
-              << "sun_alt=" << sun_alt_deg << " |J|=" << std::fabs(j_ind) << " min_disc=" << min_snell_disc;
-        }
+        EXPECT_LE(std::fabs(j_ind), 1e-11) << "sun_alt=" << sun_alt_deg << " |J|=" << std::fabs(j_ind);
         all_nodes.push_back(node);
 
         double alt = 0.0;
@@ -521,19 +511,11 @@ TEST(CausticContinuation, LowitzMainAndNearSunBranchesAndAntisymmetry) {
       double param_same_z[3] = { sym_az_deg * kDegToRad, z_deg * kDegToRad, 0.0 };
       double param_flip_z[3] = { sym_az_deg * kDegToRad, sym_z_deg * kDegToRad, 0.0 };
       double j_same = 1.0;
-      double j_same_reg = 1.0;
-      double disc_same = 1.0;
       double j_flip = 1.0;
-      double j_flip_reg = 1.0;
-      double disc_flip = 1.0;
-      const bool ok_same = IndependentSignedJacobian2D(f.normals, slots, 2, n, sun_dir, lowitz, param_same_z, &j_same,
-                                                       nullptr, nullptr, nullptr, &j_same_reg, &disc_same);
-      const bool ok_flip = IndependentSignedJacobian2D(f.normals, slots, 2, n, sun_dir, lowitz, param_flip_z, &j_flip,
-                                                       nullptr, nullptr, nullptr, &j_flip_reg, &disc_flip);
-      const bool same_on_locus =
-          ok_same && (std::fabs(j_same) < 1e-9 || (disc_same <= 1e-5 && std::fabs(j_same_reg) < 1e-12));
-      const bool flip_on_locus =
-          ok_flip && (std::fabs(j_flip) < 1e-9 || (disc_flip <= 1e-5 && std::fabs(j_flip_reg) < 1e-12));
+      const bool ok_same = IndependentSignedJacobian2D(f.normals, slots, 2, n, sun_dir, lowitz, param_same_z, &j_same);
+      const bool ok_flip = IndependentSignedJacobian2D(f.normals, slots, 2, n, sun_dir, lowitz, param_flip_z, &j_flip);
+      const bool same_on_locus = ok_same && std::fabs(j_same) < 1e-9;
+      const bool flip_on_locus = ok_flip && std::fabs(j_flip) < 1e-9;
       if (!(same_on_locus || flip_on_locus)) {
         ADD_FAILURE() << "No symmetric partner on J=0 for (az=" << az_deg << ", z=" << z_deg << ")";
         continue;
@@ -1165,6 +1147,226 @@ TEST(CausticContinuation, EdgeCaseRegressions) {
         TraceCausticLocus(f.normals, slots35, 2, n, sun20, PoseManifold::Lowitz(0.0), nullptr, p2);
     EXPECT_EQ(r2.curves.size(), 2u);
     EXPECT_TRUE(r2.coverage.budget_truncated);
+  }
+
+  // 9g. 1D periodic trace must NOT close across an interior grazing optical gap missed by step
+  //     endpoints: basal reflection {1}, zenith 20.000005 deg, roll 0 deg, sun (20 deg, 0.6 deg).
+  {
+    int slots1[1];
+    const int faces1[1] = { 1 };
+    f.Resolve(faces1, 1, slots1);
+    double sun_gap[3];
+    AltAzDegToSky(20.0, 0.6, sun_gap);
+    PoseManifold m;
+    m.axes[PoseManifold::kAxisAzimuth] = PoseAxis::FreeRad(0.0, 2.0 * kPi, true);
+    m.axes[PoseManifold::kAxisZenith] = PoseAxis::PinnedDeg(20.000005);
+    m.axes[PoseManifold::kAxisRoll] = PoseAxis::PinnedDeg(0.0);
+    const CausticTraceResult res = TraceFamily1D(f.normals, slots1, 1, n, sun_gap, m);
+    ASSERT_EQ(res.curves.size(), 1u);
+    EXPECT_FALSE(res.curves[0].coverage.closed);
+    EXPECT_FALSE(res.coverage.closed);
+    int opt_bnds = 0;
+    for (const CurveEvent& ev : res.curves[0].events) {
+      if (ev.kind == CurveEventKind::kOpticalBoundary) {
+        opt_bnds++;
+      }
+    }
+    EXPECT_EQ(opt_bnds, 2) << "1D trace closed across an optically invalid interior gap";
+  }
+
+  // 9h. Stitching preserves backward boundary events when the seed lands on a domain boundary:
+  //     Column {3, 5} at 20 deg, azimuth [220, 224] deg, periodic roll [-180, 180).
+  {
+    int slots35[2];
+    const int faces35[2] = { 3, 5 };
+    f.Resolve(faces35, 2, slots35);
+    double sun20[3];
+    AltAzDegToSky(20.0, 0.0, sun20);
+    PoseManifold m;
+    m.axes[PoseManifold::kAxisAzimuth] = PoseAxis::FreeDeg(220.0, 224.0, false);
+    m.axes[PoseManifold::kAxisZenith] = PoseAxis::PinnedDeg(90.0);
+    m.axes[PoseManifold::kAxisRoll] = PoseAxis::FreeDeg(-180.0, 180.0, true);
+    const CausticTraceResult res = TraceCausticLocus(f.normals, slots35, 2, n, sun20, m);
+    ASSERT_FALSE(res.curves.empty());
+    bool hit_220 = false;
+    bool hit_224 = false;
+    for (const PoseCurve& c : res.curves) {
+      for (const CurveEvent& ev : c.events) {
+        if (ev.kind == CurveEventKind::kDomainBoundary && ev.detail_index == PoseManifold::kAxisAzimuth) {
+          const double az_deg = ev.param[PoseManifold::kAxisAzimuth] * kRadToDeg;
+          if (std::fabs(az_deg - 220.0) < 1e-2) {
+            hit_220 = true;
+          }
+          if (std::fabs(az_deg - 224.0) < 1e-2) {
+            hit_224 = true;
+          }
+        }
+      }
+    }
+    EXPECT_TRUE(hit_220) << "Missing 220 deg domain boundary event after stitching";
+    EXPECT_TRUE(hit_224) << "Missing 224 deg domain boundary event after stitching";
+  }
+
+  // 9i. Continuous poses, consistent arclength/tangent, and max_curves enforcement on rank-1
+  //     collapsed Column {3, 1, 6}.
+  {
+    int slots316[3];
+    const int faces316[3] = { 3, 1, 6 };
+    f.Resolve(faces316, 3, slots316);
+    double sun20[3];
+    AltAzDegToSky(20.0, 0.0, sun20);
+
+    const CausticTraceResult res = TraceCausticLocus(f.normals, slots316, 3, n, sun20, PoseManifold::Column());
+    EXPECT_EQ(res.generic_rank, 1);
+    ASSERT_FALSE(res.curves.empty());
+    for (const PoseCurve& c : res.curves) {
+      for (size_t i = 1; i < c.nodes.size(); i++) {
+        const PoseCurveNode& a = c.nodes[i - 1];
+        const PoseCurveNode& b = c.nodes[i];
+        // Consecutive poses in SO(3) must stay continuous (never teleport 150 deg across rolls).
+        double trace = 0.0;
+        for (int k = 0; k < 9; k++) {
+          trace += a.pose[k] * b.pose[k];
+        }
+        const double so3_angle_deg = std::acos(std::clamp(0.5 * (trace - 1.0), -1.0, 1.0)) * kRadToDeg;
+        EXPECT_LT(so3_angle_deg, 20.0) << "Discontinuous SO(3) pose jump in rank-1 collapsed curve";
+        const double d_az = AngleDiffDeg(b.param[PoseManifold::kAxisAzimuth] * kRadToDeg,
+                                         a.param[PoseManifold::kAxisAzimuth] * kRadToDeg) *
+                            kDegToRad;
+        const double d_roll =
+            AngleDiffDeg(b.param[PoseManifold::kAxisRoll] * kRadToDeg, a.param[PoseManifold::kAxisRoll] * kRadToDeg) *
+            kDegToRad;
+        const double ds_param = std::hypot(d_az, d_roll);
+        EXPECT_NEAR(b.arclength - a.arclength, ds_param, 1e-4);
+      }
+    }
+
+    // Nonperiodic [180, 540] deg with max_curves = 1 must truncate cleanly at 1 curve.
+    PoseManifold nonper;
+    nonper.axes[PoseManifold::kAxisAzimuth] = PoseAxis::FreeDeg(180.0, 540.0, false);
+    nonper.axes[PoseManifold::kAxisZenith] = PoseAxis::PinnedDeg(90.0);
+    nonper.axes[PoseManifold::kAxisRoll] = PoseAxis::FreeDeg(-180.0, 180.0, true);
+    CausticContinuationParams p1;
+    p1.max_curves = 1;
+    const CausticTraceResult r_lim = TraceCausticLocus(f.normals, slots316, 3, n, sun20, nonper, nullptr, p1);
+    EXPECT_EQ(r_lim.curves.size(), 1u);
+    EXPECT_TRUE(r_lim.coverage.budget_truncated);
+  }
+
+  // 9j. Compact Euler pole TiltedSpin(0 deg) on face {3}, az [100, 120] deg, roll [0, 20] deg:
+  //     must cover full attainable az + roll in [100, 140] deg (including pose (100, 0) deg)
+  //     with all poses staying within both bounds.
+  {
+    int slots3[1];
+    const int faces3[1] = { 3 };
+    f.Resolve(faces3, 1, slots3);
+    double sun20[3];
+    AltAzDegToSky(20.0, 0.0, sun20);
+    PoseManifold pole;
+    pole.axes[PoseManifold::kAxisAzimuth] = PoseAxis::FreeDeg(100.0, 120.0, false);
+    pole.axes[PoseManifold::kAxisZenith] = PoseAxis::PinnedDeg(0.0);
+    pole.axes[PoseManifold::kAxisRoll] = PoseAxis::FreeDeg(0.0, 20.0, false);
+    const CausticTraceResult res = TraceCausticLocus(f.normals, slots3, 1, n, sun20, pole);
+    EXPECT_EQ(res.generic_rank, 1);
+    ASSERT_FALSE(res.curves.empty());
+
+    // All emitted poses must stay within both axis bounds.
+    bool saw_pole_ev = false;
+    for (const PoseCurve& c : res.curves) {
+      for (const CurveEvent& ev : c.events) {
+        if (ev.kind == CurveEventKind::kDomainBoundary && ev.detail_index == PoseManifold::kAxisZenith) {
+          saw_pole_ev = true;
+        }
+      }
+      for (const PoseCurveNode& nd : c.nodes) {
+        const double az_d = nd.param[PoseManifold::kAxisAzimuth] * kRadToDeg;
+        const double r_d = nd.param[PoseManifold::kAxisRoll] * kRadToDeg;
+        EXPECT_GE(az_d, 100.0 - 1e-6);
+        EXPECT_LE(az_d, 120.0 + 1e-6);
+        EXPECT_GE(r_d, 0.0 - 1e-6);
+        EXPECT_LE(r_d, 20.0 + 1e-6);
+      }
+    }
+    EXPECT_TRUE(saw_pole_ev);
+
+    // Check independent sky coverage for both corner poses (100, 0) and (120, 20).
+    const double inc[3] = { -sun20[0], -sun20[1], -sun20[2] };
+    for (const std::pair<double, double>& pt : { std::make_pair(100.0, 0.0), std::make_pair(120.0, 20.0) }) {
+      double pose[9];
+      EulerPoseDeg(pt.first, 0.0, pt.second, pose);
+      double out_dir[3];
+      if (!TracePathChain<double>(f.normals, slots3, 1, n, inc, pose, out_dir, nullptr, nullptr)) {
+        ADD_FAILURE() << "Corner pose (" << pt.first << ", " << pt.second << ") unexpectedly invalid";
+        continue;
+      }
+      const double sky_ref[3] = { -out_dir[0], -out_dir[1], -out_dir[2] };
+      double min_ang_deg = 180.0;
+      for (const PoseCurve& c : res.curves) {
+        for (const PoseCurveNode& nd : c.nodes) {
+          min_ang_deg = std::min(min_ang_deg, so3::AngleBetween(sky_ref, nd.sky) * kRadToDeg);
+        }
+      }
+      EXPECT_LT(min_ang_deg, 1.0) << "Compact Euler pole missed sky direction for (" << pt.first << ", " << pt.second
+                                  << ")";
+    }
+  }
+
+  // 9k. Fine 1D step resolving the parhelion near-zero neighborhood with > 4 nodes must still
+  //     emit kStationaryPoint: Plate {3, 5}, +-1.6e-6 rad centered on minimum, step = 1e-7.
+  {
+    int slots35[2];
+    const int faces35[2] = { 3, 5 };
+    f.Resolve(faces35, 2, slots35);
+    double sun20[3];
+    AltAzDegToSky(20.0, 0.0, sun20);
+    const CausticTraceResult full_plate = TraceFamily1D(f.normals, slots35, 2, n, sun20, PoseManifold::Plate());
+    double stat_az = -1.0;
+    for (const PoseCurve& c : full_plate.curves) {
+      for (const CurveEvent& ev : c.events) {
+        if (ev.kind == CurveEventKind::kStationaryPoint) {
+          stat_az = ev.param[PoseManifold::kAxisAzimuth];
+          break;
+        }
+      }
+    }
+    ASSERT_GE(stat_az, 0.0);
+    PoseManifold fine = PoseManifold::Plate();
+    fine.axes[PoseManifold::kAxisAzimuth] = PoseAxis::FreeRad(stat_az - 1.6e-6, stat_az + 1.6e-6, false);
+    Family1DParams fp;
+    fp.min_step = 1e-7;
+    fp.max_step = 1e-7;
+    const CausticTraceResult res = TraceFamily1D(f.normals, slots35, 2, n, sun20, fine, nullptr, fp);
+    ASSERT_EQ(res.curves.size(), 1u);
+    int stat_cnt = 0;
+    for (const CurveEvent& ev : res.curves[0].events) {
+      if (ev.kind == CurveEventKind::kStationaryPoint) {
+        stat_cnt++;
+      }
+    }
+    EXPECT_EQ(stat_cnt, 1) << "Fine 1D step suppressed parhelion kStationaryPoint";
+  }
+
+  // 9l. Partial-chain internal incidence failure must NOT be mislabeled as a Snell failure:
+  //     Column {3, 1, 6} at (az = 0 deg, roll = 0 deg), sun 20 deg fails at internal face margin 2.
+  {
+    int slots316[3];
+    const int faces316[3] = { 3, 1, 6 };
+    f.Resolve(faces316, 3, slots316);
+    double sun20[3];
+    AltAzDegToSky(20.0, 0.0, sun20);
+    const double inc[3] = { -sun20[0], -sun20[1], -sun20[2] };
+    double pose[9];
+    EulerPoseDeg(0.0, 90.0, 0.0, pose);
+    double out_dir[3];
+    ChainDomain dom;
+    double mbuf[kMaxDomainMargins]{};
+    dom.margins = mbuf;
+    const bool ok = TracePathChain<double>(f.normals, slots316, 3, n, inc, pose, out_dir, nullptr, &dom);
+    EXPECT_FALSE(ok);
+    const OpticalMarginVerdict v = ClassifyChainMargins(ok, dom, 3);
+    EXPECT_FALSE(v.valid);
+    EXPECT_EQ(v.failing_index, 2);
+    EXPECT_FALSE(v.failing_is_snell) << "Internal incidence failure was misclassified as Snell failure";
   }
 }
 

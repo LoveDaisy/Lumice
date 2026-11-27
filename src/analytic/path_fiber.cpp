@@ -22,9 +22,8 @@ OpticalMarginVerdict ClassifyChainMargins(bool chain_ok, const ChainDomain& doma
         break;
       }
     }
-    out.failing_is_snell =
-        (domain.failure == ChainFailure::kTirBoundary) ||
-        (out.failing_index >= 0 && IsSnellMarginIndex(out.failing_index, domain.margin_count, slot_count));
+    out.failing_is_snell = (domain.failure == ChainFailure::kTirBoundary) ||
+                           (out.failing_index >= 0 && IsSnellMarginIndex(out.failing_index, slot_count));
     return out;
   }
 
@@ -32,7 +31,7 @@ OpticalMarginVerdict ClassifyChainMargins(bool chain_ok, const ChainDomain& doma
   int min_idx = -1;
   bool min_is_snell = false;
   for (int i = 0; i < domain.margin_count; i++) {
-    const bool is_snell = IsSnellMarginIndex(i, domain.margin_count, slot_count);
+    const bool is_snell = IsSnellMarginIndex(i, slot_count);
     const double eff = is_snell ? (domain.margins[i] - kSnellEventTolerance) : domain.margins[i];
     if (!std::isfinite(eff)) {
       out.valid = false;

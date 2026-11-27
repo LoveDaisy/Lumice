@@ -215,6 +215,7 @@ struct Eval1D {
   bool valid = false;
   OpticalMarginVerdict margin;
   double param[3]{};
+  double tangent[3]{};
   double pose[9]{};
   double u[3]{};
   double sky[3]{};
@@ -224,16 +225,18 @@ struct Eval1D {
   bool corridor_open = true;
 };
 
-Eval1D Evaluate1DAtPose(const FaceNormalTable& table, const int* slots, int slot_count, double refractive_index,
-                        const double sun_dir[3], const double param_rad[3], int vary_ax, Corridor* corridor,
-                        bool eval_corridor) {
+Eval1D Evaluate1DAlongTangent(const FaceNormalTable& table, const int* slots, int slot_count, double refractive_index,
+                              const double sun_dir[3], const double param_rad[3], const double tangent_dir[3],
+                              Corridor* corridor, bool eval_corridor) {
   Eval1D out;
   for (int k = 0; k < 3; k++) {
     out.param[k] = param_rad[k];
+    out.tangent[k] = tangent_dir[k];
   }
   Jet<1> ang[3];
   for (int k = 0; k < 3; k++) {
-    ang[k] = (k == vary_ax) ? Jet<1>::Variable(out.param[k], 0) : Jet<1>(out.param[k]);
+    ang[k] = Jet<1>(out.param[k]);
+    ang[k].v[0] = tangent_dir[k];
   }
   Jet<1> pose_j[9];
   EulerPose(ang[0], ang[1], ang[2], pose_j);
@@ -274,13 +277,22 @@ Eval1D Evaluate1DAtPose(const FaceNormalTable& table, const int* slots, int slot
   return out;
 }
 
-PoseCurveNode NodeFromEval1D(const Eval1D& e, int free_ax, double arclength) {
+Eval1D Evaluate1DAtPose(const FaceNormalTable& table, const int* slots, int slot_count, double refractive_index,
+                        const double sun_dir[3], const double param_rad[3], int vary_ax, Corridor* corridor,
+                        bool eval_corridor) {
+  double t_dir[3] = { 0.0, 0.0, 0.0 };
+  t_dir[vary_ax] = 1.0;
+  return Evaluate1DAlongTangent(table, slots, slot_count, refractive_index, sun_dir, param_rad, t_dir, corridor,
+                                eval_corridor);
+}
+
+PoseCurveNode NodeFromEval1D(const Eval1D& e, double arclength) {
   PoseCurveNode node;
   for (int k = 0; k < 3; k++) {
     node.param[k] = e.param[k];
     node.u[k] = e.u[k];
     node.sky[k] = e.sky[k];
-    node.tangent[k] = (k == free_ax) ? 1.0 : 0.0;
+    node.tangent[k] = e.tangent[k];
   }
   for (int k = 0; k < 9; k++) {
     node.pose[k] = e.pose[k];
@@ -330,18 +342,104 @@ Eval1D BisectOpticalBoundary1DFn(const EvalFn& eval_fn, double t_valid, double t
   return best;
 }
 
+// Probes a near-grazing valid 1D step [t_a, t_b] for an interior invalid optical gap (e.g. a
+// narrow negative dip of incidence cosine or Snell discriminant missed by both endpoints).
+// Uses quartile bracketing + golden-section minimization of min_effective_margin, exiting early
+// as soon as any invalid interior sample is found.
+template <class EvalFn>
+bool FindInteriorOpticalGap1D(const EvalFn& eval_fn, double t_a, double m_a, double t_b, double m_b, double margin_lip,
+                              double* t_invalid_out) {
+  const double step = t_b - t_a;
+  if (!(step > 1e-13) || m_a + m_b > margin_lip * step) {
+    return false;
+  }
+
+  double ts[5] = { t_a, t_a + 0.25 * step, t_a + 0.5 * step, t_a + 0.75 * step, t_b };
+  double ms[5] = { m_a, 0.0, 0.0, 0.0, m_b };
+  int best_idx = (m_a <= m_b) ? 0 : 4;
+  double best_m = std::min(m_a, m_b);
+  for (int k = 1; k <= 3; k++) {
+    const Eval1D ek = eval_fn(ts[k], false);
+    if (!ek.valid) {
+      *t_invalid_out = ts[k];
+      return true;
+    }
+    ms[k] = ek.margin.min_effective_margin;
+    if (ms[k] < best_m) {
+      best_m = ms[k];
+      best_idx = k;
+    }
+  }
+
+  // Only run golden-section refinement when an interior point dips below the linear chord or the
+  // minimum margin is close enough to zero that a local trough could cross zero.
+  double lo = (best_idx > 0) ? ts[best_idx - 1] : ts[0];
+  double hi = (best_idx < 4) ? ts[best_idx + 1] : ts[4];
+  if (best_m > 0.5 * margin_lip * (hi - lo)) {
+    return false;
+  }
+
+  constexpr double kInvPhi = 0.6180339887498949;
+  double c = hi - kInvPhi * (hi - lo);
+  double d = lo + kInvPhi * (hi - lo);
+  Eval1D ec = eval_fn(c, false);
+  if (!ec.valid) {
+    *t_invalid_out = c;
+    return true;
+  }
+  Eval1D ed = eval_fn(d, false);
+  if (!ed.valid) {
+    *t_invalid_out = d;
+    return true;
+  }
+  for (int it = 0; it < 24; it++) {
+    if (ec.margin.min_effective_margin < ed.margin.min_effective_margin) {
+      hi = d;
+      d = c;
+      ed = ec;
+      c = hi - kInvPhi * (hi - lo);
+      ec = eval_fn(c, false);
+      if (!ec.valid) {
+        *t_invalid_out = c;
+        return true;
+      }
+    } else {
+      lo = c;
+      c = d;
+      ec = ed;
+      d = lo + kInvPhi * (hi - lo);
+      ed = eval_fn(d, false);
+      if (!ed.valid) {
+        *t_invalid_out = d;
+        return true;
+      }
+    }
+  }
+  const double t_mid = 0.5 * (lo + hi);
+  const Eval1D em = eval_fn(t_mid, false);
+  if (!em.valid) {
+    *t_invalid_out = t_mid;
+    return true;
+  }
+  return false;
+}
+
 // Traces a single contiguous valid sub-interval [t_start, t_end]. If a narrow interior optical gap
-// is discovered during adaptive stepping, finishes this fragment at the left edge of the gap and
-// returns `gap_hit = true` with `gap_invalid_t` so the caller can locate the far edge and resume.
+// is discovered during adaptive stepping (either via an invalid trial endpoint or an interior
+// grazing-margin minimum), finishes this fragment at the left edge of the gap and returns
+// `gap_hit = true` so the caller can locate the far edge and resume.
 template <class EvalFn>
 void Trace1DSingleFragment(const EvalFn& eval_fn, int slot_count, int free_ax, double t_start, double t_end,
                            bool is_periodic_full, bool left_is_domain, bool right_is_domain, int left_fail_idx,
-                           int right_fail_idx, bool track_corridor, const Family1DParams& params,
+                           int right_fail_idx, double margin_lip, bool track_corridor, const Family1DParams& params,
                            const DiscoveryStop* stop, Fragment1D* frag, bool* stop_requested, bool* gap_hit,
-                           double* gap_invalid_t, double* gap_step_hint) {
+                           double* gap_invalid_t, double* gap_step_hint, bool* has_gap_resume_valid,
+                           double* gap_resume_valid_t) {
   *gap_hit = false;
   *gap_invalid_t = t_end;
   *gap_step_hint = params.min_step;
+  *has_gap_resume_valid = false;
+  *gap_resume_valid_t = t_end;
 
   PoseCurve* curve = &frag->curve;
   curve->kind = PoseCurveKind::kFamily1D;
@@ -359,7 +457,7 @@ void Trace1DSingleFragment(const EvalFn& eval_fn, int slot_count, int free_ax, d
     if (!curve->nodes.empty()) {
       frag->edge_corridor_open.push_back(edge_open);
     }
-    curve->nodes.push_back(NodeFromEval1D(e, free_ax, arclen));
+    curve->nodes.push_back(NodeFromEval1D(e, arclen));
     frag->node_stationary.push_back(e.sky_speed <= params.speed_tol);
   };
 
@@ -374,14 +472,12 @@ void Trace1DSingleFragment(const EvalFn& eval_fn, int slot_count, int free_ax, d
     curve->events.push_back(ev);
   }
 
-  // Track the last moving node across any isolated near-zero run so an accepted node landing
-  // directly on a stationary point (e.g. parhelion minimum with sky_speed ~ 1e-16) still emits
-  // exactly one kStationaryPoint event when dx reverses across it.
+  // Retain the last moving sample across any number of intervening near-zero nodes so fine step
+  // sizes resolving an isolated stationary point (e.g. parhelion minimum) never suppress the event.
   bool have_last_moving = e_start.sky_speed > params.speed_tol;
   double last_moving_t = t_start;
   Eval1D last_moving_e = e_start;
   double last_moving_arclen = 0.0;
-  int near_zero_count = have_last_moving ? 0 : 1;
 
   double t_curr = t_start;
   Eval1D e_curr = e_start;
@@ -464,10 +560,37 @@ void Trace1DSingleFragment(const EvalFn& eval_fn, int slot_count, int free_ax, d
       break;
     }
 
-    // 1. Stationary point detection (||dx/dt|| = 0): catches both bracketed sign flips and exact
-    //    node hits where 1..4 intermediate nodes have sky_speed <= speed_tol.
+    // Even when both step endpoints are valid, a near-grazing step can bridge a narrow negative
+    // dip in incidence cosine or Snell discriminant. Probe for an interior invalid minimum before
+    // accepting the step so periodic traces never close across an invalid interval.
+    double t_gap_inv = t_next;
+    if (FindInteriorOpticalGap1D(eval_fn, t_curr, e_curr.margin.min_effective_margin, t_next,
+                                 e_next.margin.min_effective_margin, margin_lip, &t_gap_inv)) {
+      double t_bnd = t_curr;
+      int fail_idx = -1;
+      const Eval1D e_bnd =
+          BisectOpticalBoundary1DFn(eval_fn, t_curr, t_gap_inv, params.bisection_iters, &t_bnd, &fail_idx);
+      const double ds = t_bnd - t_curr;
+      if (ds > 1e-13) {
+        arclen += ds;
+        push_node(e_bnd, arclen, e_curr.corridor_open);
+      }
+      CurveEvent ev;
+      CopyNodeToEvent(curve->nodes.back(), CurveEventKind::kOpticalBoundary, fail_idx, &ev);
+      curve->events.push_back(ev);
+      *gap_hit = true;
+      *gap_invalid_t = t_gap_inv;
+      *gap_step_hint = std::min(step, t_next - t_gap_inv);
+      *has_gap_resume_valid = true;
+      *gap_resume_valid_t = t_next;
+      break;
+    }
+
+    // 1. Stationary point detection (||dx/dt|| = 0): works independently of how many fine steps
+    //    resolve the near-zero neighborhood, while rejecting flat constant-image plateaus via a
+    //    scale-invariant two-sided speed check around the bisected minimum.
     if (e_next.sky_speed > params.speed_tol) {
-      if (have_last_moving && near_zero_count <= 4 && so3::Dot3(last_moving_e.dx, e_next.dx) < 0.0) {
+      if (have_last_moving && so3::Dot3(last_moving_e.dx, e_next.dx) < 0.0) {
         double ref[3] = { e_next.dx[0] - last_moving_e.dx[0], e_next.dx[1] - last_moving_e.dx[1],
                           e_next.dx[2] - last_moving_e.dx[2] };
         const double rn = so3::Norm3(ref);
@@ -495,10 +618,18 @@ void Trace1DSingleFragment(const EvalFn& eval_fn, int slot_count, int free_ax, d
           const double t_stat = 0.5 * (ta + tb);
           const Eval1D e_stat = eval_fn(t_stat, false);
           if (e_stat.valid && e_stat.sky_speed <= params.stationary_tol) {
-            const PoseCurveNode n_stat = NodeFromEval1D(e_stat, free_ax, last_moving_arclen + (t_stat - last_moving_t));
-            CurveEvent ev;
-            CopyNodeToEvent(n_stat, CurveEventKind::kStationaryPoint, -1, &ev);
-            curve->events.push_back(ev);
+            const Eval1D e_left = eval_fn(0.5 * (last_moving_t + t_stat), false);
+            const Eval1D e_right = eval_fn(0.5 * (t_stat + t_next), false);
+            const double min_end_speed = std::min(last_moving_e.sky_speed, e_next.sky_speed);
+            const bool isolated_min = e_left.valid && e_right.valid && e_left.sky_speed > 0.1 * min_end_speed &&
+                                      e_right.sky_speed > 0.1 * min_end_speed &&
+                                      so3::Dot3(e_left.dx, ref) * so3::Dot3(e_right.dx, ref) < 0.0;
+            if (isolated_min) {
+              const PoseCurveNode n_stat = NodeFromEval1D(e_stat, last_moving_arclen + (t_stat - last_moving_t));
+              CurveEvent ev;
+              CopyNodeToEvent(n_stat, CurveEventKind::kStationaryPoint, -1, &ev);
+              curve->events.push_back(ev);
+            }
           }
         }
       }
@@ -506,9 +637,6 @@ void Trace1DSingleFragment(const EvalFn& eval_fn, int slot_count, int free_ax, d
       last_moving_t = t_next;
       last_moving_e = e_next;
       last_moving_arclen = arclen + (t_next - t_curr);
-      near_zero_count = 0;
-    } else {
-      near_zero_count++;
     }
 
     // 2. Internal TIR onset for each internal reflection step k in [1, slot_count - 2].
@@ -534,7 +662,7 @@ void Trace1DSingleFragment(const EvalFn& eval_fn, int slot_count, int free_ax, d
         const double t_tir = 0.5 * (ta + tb);
         const Eval1D e_tir = eval_fn(t_tir, false);
         if (e_tir.valid) {
-          const PoseCurveNode n_tir = NodeFromEval1D(e_tir, free_ax, arclen + (t_tir - t_curr));
+          const PoseCurveNode n_tir = NodeFromEval1D(e_tir, arclen + (t_tir - t_curr));
           CurveEvent ev;
           CopyNodeToEvent(n_tir, CurveEventKind::kTirOnset, k, &ev);
           curve->events.push_back(ev);
@@ -651,7 +779,7 @@ PoseCurve StitchPeriodicSeam1D(const Fragment1D& back_frag, const Fragment1D& fr
 template <class EvalFn>
 void Trace1DIntervalResumingGaps(const EvalFn& eval_fn, int slot_count, int free_ax, double t_start, double t_end,
                                  bool is_periodic_full, bool left_is_domain, bool right_is_domain, int left_fail_idx,
-                                 int right_fail_idx, double max_probe_step, bool track_corridor,
+                                 int right_fail_idx, double margin_lip, double max_probe_step, bool track_corridor,
                                  const Family1DParams& params, const DiscoveryStop* stop,
                                  std::vector<Fragment1D>* fragments, bool* stop_requested) {
   double cur_start = t_start;
@@ -673,9 +801,12 @@ void Trace1DIntervalResumingGaps(const EvalFn& eval_fn, int slot_count, int free
     bool gap_hit = false;
     double gap_inv_t = t_end;
     double gap_step_hint = params.min_step;
+    bool has_resume_valid = false;
+    double gap_resume_valid_t = t_end;
     Trace1DSingleFragment(eval_fn, slot_count, free_ax, cur_start, t_end, cur_periodic_full, cur_left_domain,
-                          final_right_domain, cur_left_fail, final_right_fail, track_corridor, params, stop, &frag,
-                          stop_requested, &gap_hit, &gap_inv_t, &gap_step_hint);
+                          final_right_domain, cur_left_fail, final_right_fail, margin_lip, track_corridor, params, stop,
+                          &frag, stop_requested, &gap_hit, &gap_inv_t, &gap_step_hint, &has_resume_valid,
+                          &gap_resume_valid_t);
     if (!frag.curve.nodes.empty()) {
       fragments->push_back(std::move(frag));
     }
@@ -683,24 +814,28 @@ void Trace1DIntervalResumingGaps(const EvalFn& eval_fn, int slot_count, int free
       break;
     }
 
-    // Locate the far (right) boundary of the narrow gap by probing forward up to t_end.
+    // Locate the far (right) boundary of the narrow gap by probing forward up to t_end, or reuse
+    // the already-valid right endpoint when the gap was caught inside a valid step.
     double t_inv = gap_inv_t;
-    double p_step = std::max(params.min_step, gap_step_hint);
-    double t_probe = t_inv;
-    bool found_resume = false;
-    while (t_probe < t_end - 1e-13) {
-      if (CheckStop(stop)) {
-        *stop_requested = true;
-        break;
+    double t_probe = gap_resume_valid_t;
+    bool found_resume = has_resume_valid;
+    if (!found_resume) {
+      double p_step = std::max(params.min_step, gap_step_hint);
+      t_probe = t_inv;
+      while (t_probe < t_end - 1e-13) {
+        if (CheckStop(stop)) {
+          *stop_requested = true;
+          break;
+        }
+        t_probe = std::min(t_end, t_probe + p_step);
+        const Eval1D ep = eval_fn(t_probe, false);
+        if (ep.valid) {
+          found_resume = true;
+          break;
+        }
+        t_inv = t_probe;
+        p_step = std::min(p_step * 2.0, max_probe_step);
       }
-      t_probe = std::min(t_end, t_probe + p_step);
-      const Eval1D ep = eval_fn(t_probe, false);
-      if (ep.valid) {
-        found_resume = true;
-        break;
-      }
-      t_inv = t_probe;
-      p_step = std::min(p_step * 2.0, max_probe_step);
     }
     if (!found_resume || *stop_requested) {
       break;
@@ -716,11 +851,11 @@ void Trace1DIntervalResumingGaps(const EvalFn& eval_fn, int slot_count, int free
   }
 }
 
-// Shared 1D scan + interval tracing driver for both TraceFamily1D and axis-aligned rank-1 2D
-// projected envelopes.
+// Shared 1D scan + interval tracing driver for TraceFamily1D and Euler-pole 1D manifolds.
 template <class EvalFn>
-CausticTraceResult Trace1DWithEvaluator(const PoseAxis& pax, int free_ax, int slot_count, const EvalFn& eval_fn,
-                                        bool track_corridor, const Family1DParams& params, const DiscoveryStop* stop) {
+CausticTraceResult Trace1DWithEvaluator(const PoseAxis& pax, int free_ax, int slot_count, double margin_lip,
+                                        const EvalFn& eval_fn, bool track_corridor, const Family1DParams& params,
+                                        const DiscoveryStop* stop) {
   CausticTraceResult result;
   result.coverage.seed_grid_n = params.scan_samples;
 
@@ -763,7 +898,7 @@ CausticTraceResult Trace1DWithEvaluator(const PoseAxis& pax, int free_ax, int sl
     std::vector<Fragment1D> fragments;
     bool stopped = false;
     Trace1DIntervalResumingGaps(eval_fn, slot_count, free_ax, pax.min_val, pax.max_val, true, false, false, -1, -1,
-                                max_probe_step, track_corridor, params, stop, &fragments, &stopped);
+                                margin_lip, max_probe_step, track_corridor, params, stop, &fragments, &stopped);
     result.stop_requested = result.stop_requested || stopped;
 
     if (fragments.size() >= 2 && fragments.front().starts_at_seam && fragments.back().ends_at_seam) {
@@ -842,8 +977,8 @@ CausticTraceResult Trace1DWithEvaluator(const PoseAxis& pax, int free_ax, int sl
     std::vector<Fragment1D> fragments;
     bool stopped = false;
     Trace1DIntervalResumingGaps(eval_fn, slot_count, free_ax, t_left, t_right, false, left_is_domain, right_is_domain,
-                                left_fail_idx, right_fail_idx, max_probe_step, track_corridor, params, stop, &fragments,
-                                &stopped);
+                                left_fail_idx, right_fail_idx, margin_lip, max_probe_step, track_corridor, params, stop,
+                                &fragments, &stopped);
     result.stop_requested = result.stop_requested || stopped;
     for (Fragment1D& f : fragments) {
       result.coverage.budget_truncated = result.coverage.budget_truncated || f.curve.coverage.budget_truncated;
@@ -944,9 +1079,9 @@ struct Eval2DJet2 {
   double j_val = 0.0;
   double grad_j[2]{};
   double grad_norm = 0.0;
-  // Snell-desingularized J_reg = sqrt(entry_disc * exit_disc) * J and its exact gradient.
-  // Has the exact same zero set as J (since both discriminants are strictly positive on the valid
-  // domain) while removing the 1/sqrt(disc) pole at grazing optical cliffs so Newton stays O(1).
+  // Snell-desingularized J_reg = entry_disc * exit_disc * J (1 * J for 1-face reflection) and its
+  // exact gradient grad J_reg = w * grad J + J * grad w. Shares the exact zero set of J on the
+  // valid domain while keeping ||grad J_reg|| = O(1) as exit_disc -> 0 (where ||grad J|| = O(1/d)).
   double j_reg = 0.0;
   double grad_j_reg[2]{};
   double grad_reg_norm = 0.0;
@@ -1109,6 +1244,7 @@ PoseCurveNode NodeFromEval2D(const Eval2DJet2& e, int ax0, int ax1, const double
 
 enum class ProjectOutcome {
   kConverged,
+  kCliffUlpLimit,
   kDomainCrossed,
   kOpticalInvalid,
   kPoleHit,
@@ -1125,13 +1261,15 @@ struct ProjectResult {
   int failing_margin = -1;
 };
 
-// Safeguarded orthogonal 1D Newton projection onto J(q) = 0 from q_start (unwrapped). Uses
-// backtracking damping when a full step crosses an optical cliff or increases |J|, and accounts
-// for floating-point conditioning near steep optical cliffs (where ||grad J|| >> 1).
+// Safeguarded orthogonal 1D Newton projection onto J(q) = 0 from q_start (unwrapped). Uses the
+// Snell-desingularized residual J_reg = entry_disc * exit_disc * J for step direction and
+// backtracking, while enforcing raw |J| <= max(residual_tol, 1e-11) whenever allow_ulp_cliff is
+// false (returning kCliffUlpLimit if Newton reaches float64 parameter-space ULP precision near a
+// grazing cliff where raw |J| cannot be represented below 1e-11).
 ProjectResult ProjectOntoCaustic(const FaceNormalTable& table, const int* slots, int slot_count,
                                  double refractive_index, const double sun_dir[3], const PoseManifold& manifold,
                                  int ax0, int ax1, const double q_start[2], double max_total_drift,
-                                 const CausticContinuationParams& params) {
+                                 const CausticContinuationParams& params, bool allow_ulp_cliff = false) {
   ProjectResult res;
   res.q[0] = q_start[0];
   res.q[1] = q_start[1];
@@ -1162,13 +1300,14 @@ ProjectResult ProjectOntoCaustic(const FaceNormalTable& table, const int* slots,
   }
 
   const double q_scale = std::max(1.0, std::hypot(res.q[0], res.q[1]));
+  const double raw_ulp_cap = std::max(params.residual_tol, 1e-11);
+  auto ulp_outcome = [&](double abs_j) {
+    return (abs_j <= raw_ulp_cap || allow_ulp_cliff) ? ProjectOutcome::kConverged : ProjectOutcome::kCliffUlpLimit;
+  };
+
   for (int iter = 0; iter <= params.max_newton_iters; iter++) {
     const double abs_j = std::fabs(res.eval.j_val);
     const double abs_j_reg = std::fabs(res.eval.j_reg);
-    // Immediate convergence requires raw |J| <= residual_tol so interior nodes always reach full
-    // precision. Near extreme grazing cliffs (||grad J|| >> 1e4), a 1-ULP change in q shifts J by
-    // ~2.22e-16 * q_scale * ||grad J||; in that regime we only accept on the parameter-space ULP
-    // floor (param_dist = |J_reg| / ||grad J_reg|| <= 1e-14 * q_scale) after Newton stalls.
     const double param_dist =
         (res.eval.grad_reg_norm > 0.0) ? (abs_j_reg / res.eval.grad_reg_norm) : std::numeric_limits<double>::infinity();
     const bool converged_ulp = (param_dist <= 5e-15 * q_scale);
@@ -1180,7 +1319,7 @@ ProjectResult ProjectOntoCaustic(const FaceNormalTable& table, const int* slots,
     }
     if (iter == params.max_newton_iters) {
       if (converged_ulp) {
-        res.outcome = ProjectOutcome::kConverged;
+        res.outcome = ulp_outcome(abs_j);
         res.iterations = iter;
         return res;
       }
@@ -1201,7 +1340,7 @@ ProjectResult ProjectOntoCaustic(const FaceNormalTable& table, const int* slots,
       return res;
     }
     if (step_norm <= 2.5e-16 * q_scale && converged_ulp) {
-      res.outcome = ProjectOutcome::kConverged;
+      res.outcome = ulp_outcome(abs_j);
       res.iterations = iter;
       return res;
     }
@@ -1264,7 +1403,7 @@ ProjectResult ProjectOntoCaustic(const FaceNormalTable& table, const int* slots,
 
     if (!step_accepted) {
       if (last_fail == ProjectOutcome::kDiverged && converged_ulp) {
-        res.outcome = ProjectOutcome::kConverged;
+        res.outcome = ulp_outcome(abs_j);
         res.iterations = iter;
         return res;
       }
@@ -1284,12 +1423,14 @@ ProjectResult ProjectOntoCaustic(const FaceNormalTable& table, const int* slots,
 bool SolveOnDomainBoundary2D(const FaceNormalTable& table, const int* slots, int slot_count, double refractive_index,
                              const double sun_dir[3], const PoseManifold& manifold, int ax0, int ax1, int pinned_slot,
                              double bound_val, double other_start, double max_drift,
-                             const CausticContinuationParams& params, double q_out[2], Eval2DJet2* eval_out) {
+                             const CausticContinuationParams& params, double q_out[2], Eval2DJet2* eval_out,
+                             bool allow_ulp_cliff = false) {
   double q[2];
   q[pinned_slot] = bound_val;
   q[1 - pinned_slot] = other_start;
   const PoseAxis& other_ax = (pinned_slot == 0) ? manifold.axes[ax1] : manifold.axes[ax0];
   const double q_scale = std::max(1.0, std::hypot(bound_val, other_start));
+  const double raw_ulp_cap = std::max(params.residual_tol, 1e-11);
   for (int iter = 0; iter <= params.max_newton_iters; iter++) {
     if (!InAxisBounds(q[1 - pinned_slot], other_ax)) {
       return false;
@@ -1303,7 +1444,8 @@ bool SolveOnDomainBoundary2D(const FaceNormalTable& table, const int* slots, int
     const double abs_j_reg = std::fabs(e.j_reg);
     const double param_dist =
         (e.grad_reg_norm > 0.0) ? (abs_j_reg / e.grad_reg_norm) : std::numeric_limits<double>::infinity();
-    if (abs_j <= params.residual_tol || (iter == params.max_newton_iters && param_dist <= 5e-15 * q_scale)) {
+    const bool ulp_ok = (param_dist <= 5e-15 * q_scale) && (abs_j <= raw_ulp_cap || allow_ulp_cliff);
+    if (abs_j <= params.residual_tol || (iter == params.max_newton_iters && ulp_ok)) {
       q_out[0] = q[0];
       q_out[1] = q[1];
       *eval_out = e;
@@ -1320,7 +1462,7 @@ bool SolveOnDomainBoundary2D(const FaceNormalTable& table, const int* slots, int
     if (!std::isfinite(step) || std::fabs(step) > max_drift) {
       return false;
     }
-    if (std::fabs(step) <= 2.5e-16 * q_scale && param_dist <= 5e-15 * q_scale) {
+    if (std::fabs(step) <= 2.5e-16 * q_scale && ulp_ok) {
       q_out[0] = q[0];
       q_out[1] = q[1];
       *eval_out = e;
@@ -1340,7 +1482,7 @@ bool BisectBoundaryOnLocus(const FaceNormalTable& table, const int* slots, int s
                            const double sun_dir[3], const PoseManifold& manifold, int ax0, int ax1,
                            const double q_curr[2], const double tau_curr[2], double h,
                            const CausticContinuationParams& params, double q_bnd[2], Eval2DJet2* eval_bnd,
-                           int* failing_margin_out) {
+                           int* failing_margin_out, bool allow_ulp_cliff = false) {
   double t_lo = 0.0;
   double t_hi = 1.0;
   q_bnd[0] = q_curr[0];
@@ -1353,7 +1495,7 @@ bool BisectBoundaryOnLocus(const FaceNormalTable& table, const int* slots, int s
     const double t_mid = 0.5 * (t_lo + t_hi);
     const double q_guess[2] = { q_curr[0] + t_mid * h * tau_curr[0], q_curr[1] + t_mid * h * tau_curr[1] };
     const ProjectResult pr = ProjectOntoCaustic(table, slots, slot_count, refractive_index, sun_dir, manifold, ax0, ax1,
-                                                q_guess, drift_cap, params);
+                                                q_guess, drift_cap, params, allow_ulp_cliff);
     if (pr.outcome == ProjectOutcome::kConverged) {
       t_lo = t_mid;
       q_bnd[0] = pr.q[0];
@@ -1543,7 +1685,6 @@ HalfBranch2D TraceHalfBranch2D(const FaceNormalTable& table, const int* slots, i
   double last_moving_e_sky[3] = { e_sky_curr[0], e_sky_curr[1], e_sky_curr[2] };
   double last_moving_s_sky = s_sky_curr;
   double last_moving_arclen = 0.0;
-  int stationary_gap_steps = 0;
 
   // Appends one node and (for every node after the first) the corridor state of the edge ending at
   // this node, preserving edge_corridor_open.size() == nodes.size() - 1.
@@ -1583,12 +1724,12 @@ HalfBranch2D TraceHalfBranch2D(const FaceNormalTable& table, const int* slots, i
     }
 
     // 1. Cusp detection: sign change of tangential sky speed s_sky = e_sky . (dx * tau) along
-    //    well-conditioned non-stationary segments (never near X-junction singularities).
+    //    well-conditioned non-stationary segments. Final geometric verification in StitchCausticCurve
+    //    confirms resolved opposing sky motion on both sides and rejects constant-image mirror noise.
     const bool next_moving = have_e_sky_next && std::fabs(s_sky_next) > params.speed_tol * e_next.sigma1 &&
-                             e_next.grad_norm >= 10.0 * params.grad_tol;
+                             e_next.grad_norm >= 100.0 * params.grad_tol;
     if (next_moving) {
-      if (have_last_moving && stationary_gap_steps <= 2 && so3::Dot3(last_moving_e_sky, e_sky_next) > 0.5 &&
-          last_moving_s_sky * s_sky_next < 0.0) {
+      if (have_last_moving && so3::Dot3(last_moving_e_sky, e_sky_next) > 0.5 && last_moving_s_sky * s_sky_next < 0.0) {
         const bool sign_a_pos = last_moving_s_sky > 0.0;
         double q_cusp[2];
         Eval2DJet2 e_cusp;
@@ -1610,7 +1751,7 @@ HalfBranch2D TraceHalfBranch2D(const FaceNormalTable& table, const int* slots, i
         };
         if (BisectOnLocusEvent(table, slots, slot_count, refractive_index, sun_dir, manifold, ax0, ax1, last_moving_q,
                                q_next_in, last_moving_tau, dir_sign, params, pred, q_cusp, &e_cusp, tau_cusp) &&
-            e_cusp.grad_norm >= 10.0 * params.grad_tol) {
+            e_cusp.grad_norm >= 100.0 * params.grad_tol) {
           const double ds_c = std::hypot(q_cusp[0] - last_moving_q[0], q_cusp[1] - last_moving_q[1]);
           const PoseCurveNode n_cusp = NodeFromEval2D(e_cusp, ax0, ax1, tau_cusp, last_moving_arclen + ds_c);
           CurveEvent ev;
@@ -1626,12 +1767,6 @@ HalfBranch2D TraceHalfBranch2D(const FaceNormalTable& table, const int* slots, i
       so3::Copy3(e_sky_next, last_moving_e_sky);
       last_moving_s_sky = s_sky_next;
       last_moving_arclen = arclen + adv;
-      stationary_gap_steps = 0;
-    } else {
-      stationary_gap_steps++;
-      if (stationary_gap_steps > 2) {
-        have_last_moving = false;
-      }
     }
 
     // 2. Internal TIR onset detection on [q_curr, q_next].
@@ -1846,6 +1981,157 @@ HalfBranch2D TraceHalfBranch2D(const FaceNormalTable& table, const int* slots, i
         return out;
       }
 
+      // When Newton reaches float64 parameter-space ULP precision near a steep grazing Snell cliff
+      // (where ||grad J|| = O(1/d) prevents raw |J| <= 1e-11), march silently along the
+      // desingularized J_reg = 0 locus without emitting ULP-noisy interior nodes, so only the
+      // exact terminal kOpticalBoundary / kDomainBoundary endpoint is appended.
+      if (pr.outcome == ProjectOutcome::kCliffUlpLimit) {
+        double q_c[2] = { q_curr[0], q_curr[1] };
+        Eval2DJet2 e_c = e_curr;
+        double tau_c[2] = { tau_curr[0], tau_curr[1] };
+        double s_cliff = 0.0;
+        double h_c = std::clamp(std::max(h, 1e-6), 1e-9, 1e-3);
+        const double raw_ulp_cap = std::max(params.residual_tol, 1e-11);
+        bool resumed_raw = false;
+
+        for (int cstep = 0; cstep < 512 && s_cliff < 0.05; cstep++) {
+          if (CheckStop(stop)) {
+            out.stop_requested = true;
+            out.budget_truncated = true;
+            return out;
+          }
+          ProjectResult pr_c;
+          double tau_c_next[2]{};
+          double adv_c = 0.0;
+          bool c_accepted = false;
+          while (true) {
+            const double q_cp[2] = { q_c[0] + h_c * tau_c[0], q_c[1] + h_c * tau_c[1] };
+            pr_c = ProjectOntoCaustic(table, slots, slot_count, refractive_index, sun_dir, manifold, ax0, ax1, q_cp,
+                                      std::max(2.0 * h_c, 1e-4), params, /*allow_ulp_cliff=*/true);
+            if (pr_c.outcome == ProjectOutcome::kConverged && pr_c.eval.grad_norm >= params.grad_tol) {
+              TangentFromGrad(pr_c.eval.grad_j, pr_c.eval.grad_norm, dir_sign, tau_c_next);
+              const double d0 = pr_c.q[0] - q_c[0];
+              const double d1 = pr_c.q[1] - q_c[1];
+              adv_c = std::hypot(d0, d1);
+              const double p_c = d0 * tau_c[0] + d1 * tau_c[1];
+              const double td = tau_c_next[0] * tau_c[0] + tau_c_next[1] * tau_c[1];
+              if (adv_c > 1e-15 && p_c > 0.0 && td > 0.0) {
+                c_accepted = true;
+                break;
+              }
+              pr_c.outcome = ProjectOutcome::kDiverged;
+            }
+            if (h_c > 2e-9) {
+              const double next_hc = std::max(1e-9, 0.5 * h_c);
+              if (next_hc < h_c) {
+                h_c = next_hc;
+                continue;
+              }
+            }
+            break;
+          }
+
+          if (c_accepted) {
+            s_cliff += adv_c;
+            q_c[0] = pr_c.q[0];
+            q_c[1] = pr_c.q[1];
+            e_c = pr_c.eval;
+            tau_c[0] = tau_c_next[0];
+            tau_c[1] = tau_c_next[1];
+            // If the branch emerges back into a well-conditioned regime with raw |J| <= 1e-11,
+            // resume normal continuation from this valid point.
+            if (std::fabs(e_c.j_val) <= raw_ulp_cap && e_c.margin.min_effective_margin > 3e-5) {
+              pr.q[0] = q_c[0];
+              pr.q[1] = q_c[1];
+              pr.eval = e_c;
+              pr.outcome = ProjectOutcome::kConverged;
+              tau_next[0] = tau_c[0];
+              tau_next[1] = tau_c[1];
+              adv = s_cliff;
+              turn_dot = tau_next[0] * tau_curr[0] + tau_next[1] * tau_curr[1];
+              sky_turn_angle = 0.0;
+              resumed_raw = true;
+              break;
+            }
+            h_c = std::clamp(1.5 * h_c, 1e-9, 1e-3);
+            continue;
+          }
+
+          if (pr_c.outcome == ProjectOutcome::kOpticalInvalid) {
+            double q_bnd[2] = { q_c[0], q_c[1] };
+            Eval2DJet2 e_bnd = e_c;
+            int fail_margin = pr_c.failing_margin;
+            BisectBoundaryOnLocus(table, slots, slot_count, refractive_index, sun_dir, manifold, ax0, ax1, q_c, tau_c,
+                                  h_c, params, q_bnd, &e_bnd, &fail_margin, /*allow_ulp_cliff=*/true);
+            const double ds_end = s_cliff + std::hypot(q_bnd[0] - q_c[0], q_bnd[1] - q_c[1]);
+            if (ds_end > 1e-13 && e_bnd.grad_norm >= params.grad_tol) {
+              double tau_b[2];
+              TangentFromGrad(e_bnd.grad_j, e_bnd.grad_norm, dir_sign, tau_b);
+              e_bnd.corridor_open = EvaluateCorridorOpen(corridor, e_bnd.pose, sun_dir, refractive_index);
+              arclen += ds_end;
+              push_node(e_bnd, tau_b, arclen, e_curr.corridor_open);
+            }
+            CurveEvent ev;
+            CopyNodeToEvent(out.nodes.back(), CurveEventKind::kOpticalBoundary, fail_margin, &ev);
+            out.events.push_back(ev);
+            return out;
+          }
+
+          if (pr_c.outcome == ProjectOutcome::kDomainCrossed || pr_c.outcome == ProjectOutcome::kPoleHit) {
+            int bnd_axis = pr_c.crossed_axis;
+            double q_bnd[2] = { q_c[0], q_c[1] };
+            Eval2DJet2 e_bnd = e_c;
+            int dummy_fail = -1;
+            BisectBoundaryOnLocus(table, slots, slot_count, refractive_index, sun_dir, manifold, ax0, ax1, q_c, tau_c,
+                                  h_c, params, q_bnd, &e_bnd, &dummy_fail, /*allow_ulp_cliff=*/true);
+            const double ds_end = s_cliff + std::hypot(q_bnd[0] - q_c[0], q_bnd[1] - q_c[1]);
+            if (ds_end > 1e-13 && e_bnd.grad_norm >= params.grad_tol) {
+              double tau_b[2];
+              TangentFromGrad(e_bnd.grad_j, e_bnd.grad_norm, dir_sign, tau_b);
+              e_bnd.corridor_open = EvaluateCorridorOpen(corridor, e_bnd.pose, sun_dir, refractive_index);
+              arclen += ds_end;
+              push_node(e_bnd, tau_b, arclen, e_curr.corridor_open);
+            }
+            CurveEvent ev;
+            CopyNodeToEvent(out.nodes.back(), CurveEventKind::kDomainBoundary, bnd_axis, &ev);
+            out.events.push_back(ev);
+            return out;
+          }
+
+          const double q_cp[2] = { q_c[0] + h_c * tau_c[0], q_c[1] + h_c * tau_c[1] };
+          const Eval2DJet2 e_cp = Evaluate2DJet2(table, slots, slot_count, refractive_index, sun_dir, manifold, ax0,
+                                                 ax1, q_cp, nullptr, false);
+          if (!e_cp.valid) {
+            if (s_cliff > 1e-13 && e_c.grad_norm >= params.grad_tol) {
+              e_c.corridor_open = EvaluateCorridorOpen(corridor, e_c.pose, sun_dir, refractive_index);
+              arclen += s_cliff;
+              push_node(e_c, tau_c, arclen, e_curr.corridor_open);
+            }
+            CurveEvent ev;
+            CopyNodeToEvent(out.nodes.back(), CurveEventKind::kOpticalBoundary, e_cp.margin.failing_index, &ev);
+            out.events.push_back(ev);
+            return out;
+          }
+          break;
+        }
+
+        if (resumed_raw) {
+          accepted = true;
+          break;
+        }
+        // Fallback if cliff march exhausted without reaching an invalid probe.
+        if (s_cliff > 1e-13 && e_c.grad_norm >= params.grad_tol) {
+          e_c.corridor_open = EvaluateCorridorOpen(corridor, e_c.pose, sun_dir, refractive_index);
+          arclen += s_cliff;
+          push_node(e_c, tau_c, arclen, e_curr.corridor_open);
+        }
+        out.unresolved_singularities++;
+        CurveEvent ev;
+        CopyNodeToEvent(out.nodes.back(), CurveEventKind::kLocusSingularity, -1, &ev);
+        out.events.push_back(ev);
+        return out;
+      }
+
       // Check whether an optical cliff lies within [q_curr, q_curr + h * tau] before reporting
       // kLocusSingularity.
       const double q_probe[2] = { q_curr[0] + h * tau_curr[0], q_curr[1] + h * tau_curr[1] };
@@ -1967,6 +2253,22 @@ PoseCurve StitchCausticCurve(const HalfBranch2D& forward, const HalfBranch2D& ba
     node_stationary = forward.node_stationary;
     edge_corridor_open = forward.edge_corridor_open;
     curve.events = forward.events;
+    if (!forward.closed) {
+      for (CurveEvent ev : backward.events) {
+        ev.arclength = 0.0;
+        bool duplicate = false;
+        for (const CurveEvent& existing : curve.events) {
+          if (existing.kind == ev.kind && existing.detail_index == ev.detail_index &&
+              std::fabs(existing.arclength - ev.arclength) <= 1e-12) {
+            duplicate = true;
+            break;
+          }
+        }
+        if (!duplicate) {
+          curve.events.push_back(ev);
+        }
+      }
+    }
   } else {
     const double back_len = backward.nodes.back().arclength;
     const size_t b_cnt = backward.nodes.size();
@@ -2008,126 +2310,80 @@ PoseCurve StitchCausticCurve(const HalfBranch2D& forward, const HalfBranch2D& ba
   std::sort(curve.events.begin(), curve.events.end(),
             [](const CurveEvent& a, const CurveEvent& b) { return a.arclength < b.arclength; });
   BuildSegments(curve.nodes, node_stationary, edge_corridor_open, speed_tol, &curve.segments);
+
+  // Verify every candidate kCusp geometrically against the stitched curve: a genuine cusp must
+  // lie on a kArc segment and exhibit resolved opposite-direction sky motion on BOTH sides
+  // (suppressing spurious residual-jitter cusps on constant-image kPointImage mirrors).
+  if (!curve.events.empty() && curve.nodes.size() >= 3) {
+    auto node_in_point_image = [&](int node_idx) {
+      for (const CurveSegment& seg : curve.segments) {
+        if (seg.kind == CurveSegmentKind::kPointImage && node_idx >= seg.start_idx && node_idx <= seg.end_idx) {
+          return true;
+        }
+      }
+      return false;
+    };
+    auto cusp_resolved = [&](const CurveEvent& ev) {
+      // Reject if event sits inside any kPointImage segment.
+      for (const CurveSegment& seg : curve.segments) {
+        const double s0 = curve.nodes[static_cast<size_t>(seg.start_idx)].arclength;
+        const double s1 = curve.nodes[static_cast<size_t>(seg.end_idx)].arclength;
+        if (seg.kind == CurveSegmentKind::kPointImage && ev.arclength >= s0 - 1e-12 && ev.arclength <= s1 + 1e-12) {
+          return false;
+        }
+      }
+      // Locate the first node with arclength >= ev.arclength.
+      size_t split_idx = 0;
+      while (split_idx < curve.nodes.size() && curve.nodes[split_idx].arclength < ev.arclength) {
+        split_idx++;
+      }
+      constexpr double kSkyResolveTol = 1e-5;  // ~0.0006 deg: far above mirror jitter, tiny vs real arcs
+      int left_idx = -1;
+      for (int i = static_cast<int>(split_idx) - 1; i >= 0; i--) {
+        if (node_in_point_image(i)) {
+          break;
+        }
+        if (so3::AngleBetween(curve.nodes[static_cast<size_t>(i)].sky, ev.sky) >= kSkyResolveTol) {
+          left_idx = i;
+          break;
+        }
+      }
+      int right_idx = -1;
+      for (int i = static_cast<int>(split_idx); i < static_cast<int>(curve.nodes.size()); i++) {
+        if (node_in_point_image(i)) {
+          break;
+        }
+        if (so3::AngleBetween(curve.nodes[static_cast<size_t>(i)].sky, ev.sky) >= kSkyResolveTol) {
+          right_idx = i;
+          break;
+        }
+      }
+      if (left_idx < 0 || right_idx < 0) {
+        return false;
+      }
+      const double* s_left = curve.nodes[static_cast<size_t>(left_idx)].sky;
+      const double* s_right = curve.nodes[static_cast<size_t>(right_idx)].sky;
+      const double d_in[3] = { ev.sky[0] - s_left[0], ev.sky[1] - s_left[1], ev.sky[2] - s_left[2] };
+      const double d_out[3] = { s_right[0] - ev.sky[0], s_right[1] - ev.sky[1], s_right[2] - ev.sky[2] };
+      return so3::Dot3(d_in, d_out) < 0.0;
+    };
+
+    std::vector<CurveEvent> filtered;
+    filtered.reserve(curve.events.size());
+    for (const CurveEvent& ev : curve.events) {
+      if (ev.kind == CurveEventKind::kCusp && !cusp_resolved(ev)) {
+        continue;
+      }
+      filtered.push_back(ev);
+    }
+    curve.events = std::move(filtered);
+  }
   return curve;
 }
 
 // =================================================================================================
-// Rank-1 Collapsed 2D Image Tracer (full feasible projection over the fiber coordinate)
+// Rank-1 Collapsed 2D Continuous Fiber-Following Tracer
 // =================================================================================================
-
-// Evaluates the 2D projected feasibility envelope at coordinate `t` along `vary_ax` when sky
-// depends only on `vary_ax` and is invariant along `fiber_ax` (e.g. Column {3, 1, 6}). Finds a
-// feasible `fiber_ax` value maximizing optical margin (and preferring corridor_open when requested).
-struct ProjectedFiberEvaluator {
-  const FaceNormalTable* table;
-  const int* slots;
-  int slot_count;
-  double refractive_index;
-  const double* sun_dir;
-  const PoseManifold* manifold;
-  int vary_ax;
-  int fiber_ax;
-  Corridor* corridor;
-  int fiber_samples;
-  mutable double hint_fiber;
-
-  Eval1D EvalAt(double t_vary, double f_val, bool eval_corridor) const {
-    double param[3] = { manifold->axes[0].value, manifold->axes[1].value, manifold->axes[2].value };
-    param[vary_ax] = WrapAxis(t_vary, manifold->axes[vary_ax]);
-    param[fiber_ax] = WrapAxis(f_val, manifold->axes[fiber_ax]);
-    return Evaluate1DAtPose(*table, slots, slot_count, refractive_index, sun_dir, param, vary_ax, corridor,
-                            eval_corridor);
-  }
-
-  Eval1D operator()(double t_vary, bool eval_corridor) const {
-    const PoseAxis& fax = manifold->axes[fiber_ax];
-    const bool need_corridor = eval_corridor && corridor != nullptr;
-
-    // Fast path: reuse warm-started fiber coordinate when comfortably inside feasible domain.
-    Eval1D best = EvalAt(t_vary, hint_fiber, need_corridor);
-    if (best.valid && best.margin.min_effective_margin > 0.05 && (!need_corridor || best.corridor_open)) {
-      return best;
-    }
-
-    // Coarse scan across the fiber axis to find the best feasible (or least-infeasible) fiber value.
-    const int m = fiber_samples;
-    const double f_span = fax.Span();
-    const double f_step = fax.periodic ? (f_span / static_cast<double>(m)) : (f_span / static_cast<double>(m - 1));
-    double best_f = hint_fiber;
-    double best_score = best.margin.min_effective_margin;
-    bool best_valid = best.valid;
-    bool best_open = best.valid && best.corridor_open;
-
-    for (int j = 0; j < m; j++) {
-      const double f_val = fax.periodic ?
-                               (fax.min_val + f_span * (static_cast<double>(j) + 0.5) / static_cast<double>(m)) :
-                               (fax.min_val + f_span * static_cast<double>(j) / static_cast<double>(m - 1));
-      const Eval1D e = EvalAt(t_vary, f_val, need_corridor);
-      const bool e_open = e.valid && e.corridor_open;
-      bool better = false;
-      if (need_corridor && e_open != best_open) {
-        better = e_open;
-      } else if (e.valid != best_valid) {
-        better = e.valid;
-      } else if (e.margin.min_effective_margin > best_score) {
-        better = true;
-      }
-      if (better) {
-        best = e;
-        best_f = f_val;
-        best_score = e.margin.min_effective_margin;
-        best_valid = e.valid;
-        best_open = e_open;
-      }
-    }
-
-    // Refine around best_f by golden-section maximization of min_effective_margin so narrow
-    // feasible bands and true 2D envelope boundaries are resolved accurately.
-    if (!best_valid || best_score < 0.05) {
-      constexpr double kInvPhi = 0.6180339887498949;
-      double lo = best_f - f_step;
-      double hi = best_f + f_step;
-      if (!fax.periodic) {
-        lo = std::max(fax.min_val, lo);
-        hi = std::min(fax.max_val, hi);
-      }
-      double c = hi - kInvPhi * (hi - lo);
-      double d = lo + kInvPhi * (hi - lo);
-      Eval1D ec = EvalAt(t_vary, c, false);
-      Eval1D ed = EvalAt(t_vary, d, false);
-      for (int it = 0; it < 20; it++) {
-        if (ec.margin.min_effective_margin > ed.margin.min_effective_margin) {
-          hi = d;
-          d = c;
-          ed = ec;
-          c = hi - kInvPhi * (hi - lo);
-          ec = EvalAt(t_vary, c, false);
-        } else {
-          lo = c;
-          c = d;
-          ec = ed;
-          d = lo + kInvPhi * (hi - lo);
-          ed = EvalAt(t_vary, d, false);
-        }
-      }
-      const double f_peak = 0.5 * (lo + hi);
-      const Eval1D ep = EvalAt(t_vary, f_peak, need_corridor);
-      if (ep.valid && (!best_valid || ep.margin.min_effective_margin > best_score)) {
-        best = ep;
-        best_f = f_peak;
-        best_valid = true;
-      } else if (!best_valid && ep.margin.min_effective_margin > best_score) {
-        best = ep;
-        best_f = f_peak;
-      }
-    }
-
-    if (best_valid) {
-      hint_fiber = WrapAxis(best_f, fax);
-    }
-    return best;
-  }
-};
 
 bool IsSkyCoveredByCurves(const double sky[3], const std::vector<PoseCurve>& curves, double tol_rad) {
   for (const PoseCurve& c : curves) {
@@ -2138,6 +2394,651 @@ bool IsSkyCoveredByCurves(const double sky[3], const std::vector<PoseCurve>& cur
     }
   }
   return false;
+}
+
+// Traces continuous pose curves for an axis-aligned rank-1 collapsed 2D family (sky depends on
+// `vary_ax`, invariant along `fiber_ax`). Within each curve, `fiber_ax` slides continuously inside
+// the locally connected feasible component (never jumping across an infeasible fiber gap), and
+// every node's tangent, arclength, and sky_speed reflect the true 2D step (dt, df). Disjoint
+// feasible sheets are split into separate curves, and every valid coarse grid cell's sky direction
+// is covered up to `params.max_curves`.
+struct Rank1ContinuousHalf {
+  std::vector<PoseCurveNode> nodes;
+  std::vector<bool> node_stationary;
+  std::vector<bool> edge_corridor_open;
+  std::vector<CurveEvent> events;
+  bool closed = false;
+  bool budget_truncated = false;
+  bool stop_requested = false;
+};
+
+CausticTraceResult TraceContinuousRank1AxisAligned(const FaceNormalTable& table, const int* slots, int slot_count,
+                                                   double refractive_index, const double sun_dir[3],
+                                                   const PoseManifold& manifold, int ax0, int ax1, int vary_ax,
+                                                   int fiber_ax, const std::vector<Eval2DJet1>& grid, int grid_n,
+                                                   Corridor* corridor, const CausticContinuationParams& params,
+                                                   const DiscoveryStop* stop) {
+  CausticTraceResult out;
+  out.generic_rank = 1;
+  out.coverage.seed_grid_n = grid_n;
+
+  const PoseAxis& vax = manifold.axes[vary_ax];
+  const PoseAxis& fax = manifold.axes[fiber_ax];
+  const bool track_corridor = (corridor != nullptr);
+  const double margin_lip = std::max(6.0, 3.0 * refractive_index * refractive_index);
+  const double v_span = vax.Span();
+  const double f_span = fax.Span();
+  const double step_min = std::max(params.min_step, 1e-4);
+  const double step_max = std::min(params.max_step, 0.08);
+  const double max_turn = params.max_turning_angle;
+  const int max_nodes = 4096;
+
+  auto eval_at = [&](double t_vary, double f_val, bool eval_corridor) {
+    double param[3] = { manifold.axes[0].value, manifold.axes[1].value, manifold.axes[2].value };
+    param[vary_ax] = WrapAxis(t_vary, vax);
+    param[fiber_ax] = WrapAxis(f_val, fax);
+    return Evaluate1DAtPose(table, slots, slot_count, refractive_index, sun_dir, param, vary_ax, corridor,
+                            eval_corridor);
+  };
+
+  // Finds a locally connected feasible fiber coordinate near `f_curr` at `t_next`, without ever
+  // crossing an infeasible fiber gap.
+  auto find_local_fiber = [&](double t_curr, double f_curr, double t_next, double* f_next_out, Eval1D* e_next_out,
+                              int* fail_idx_out) -> bool {
+    const Eval1D e0 = eval_at(t_next, f_curr, track_corridor);
+    *fail_idx_out = e0.margin.failing_index;
+    if (e0.valid && e0.margin.min_effective_margin >= 0.02 && (!track_corridor || e0.corridor_open)) {
+      *f_next_out = f_curr;
+      *e_next_out = e0;
+      return true;
+    }
+
+    const double dt_abs = std::fabs(t_next - t_curr);
+    const double max_slide = std::min(0.2 * f_span, std::max(0.03, 3.0 * dt_abs));
+    constexpr int kProbesPerSide = 10;
+    const double df_probe = max_slide / static_cast<double>(kProbesPerSide);
+
+    bool have_best = e0.valid;
+    double best_f = f_curr;
+    Eval1D best_e = e0;
+    double best_score = e0.valid ? e0.margin.min_effective_margin : -1e9;
+    bool best_open = e0.valid && e0.corridor_open;
+
+    for (int side : { -1, +1 }) {
+      bool found_valid_on_side = e0.valid;
+      for (int k = 1; k <= kProbesPerSide; k++) {
+        double f_cand = f_curr + static_cast<double>(side * k) * df_probe;
+        if (!fax.periodic) {
+          if (f_cand < fax.min_val || f_cand > fax.max_val) {
+            break;
+          }
+        }
+        const Eval1D ec = eval_at(t_next, f_cand, track_corridor);
+        if (!ec.valid) {
+          if (found_valid_on_side) {
+            break;  // Never jump across an infeasible fiber gap.
+          }
+          continue;
+        }
+        // When sliding off an invalid f_curr, verify the diagonal midpoint in (t, f) is valid so
+        // the step stays strictly inside the connected feasible region.
+        if (!e0.valid) {
+          const Eval1D emid = eval_at(0.5 * (t_curr + t_next), 0.5 * (f_curr + f_cand), false);
+          if (!emid.valid) {
+            continue;
+          }
+        }
+        found_valid_on_side = true;
+        const bool c_open = ec.corridor_open;
+        bool better = false;
+        if (!have_best) {
+          better = true;
+        } else if (track_corridor && c_open != best_open) {
+          better = c_open;
+        } else if (ec.margin.min_effective_margin > best_score) {
+          better = true;
+        }
+        if (better) {
+          have_best = true;
+          best_f = f_cand;
+          best_e = ec;
+          best_score = ec.margin.min_effective_margin;
+          best_open = c_open;
+        }
+      }
+    }
+
+    if (!have_best) {
+      return false;
+    }
+
+    // Local golden-section refinement around best_f within +-df_probe to keep margin smooth.
+    if (best_score < 0.05) {
+      constexpr double kInvPhi = 0.6180339887498949;
+      double lo = best_f - df_probe;
+      double hi = best_f + df_probe;
+      if (!fax.periodic) {
+        lo = std::max(fax.min_val, lo);
+        hi = std::min(fax.max_val, hi);
+      }
+      if (hi - lo > 1e-12) {
+        double c = hi - kInvPhi * (hi - lo);
+        double d = lo + kInvPhi * (hi - lo);
+        Eval1D ec = eval_at(t_next, c, false);
+        Eval1D ed = eval_at(t_next, d, false);
+        for (int it = 0; it < 10; it++) {
+          if (ec.margin.min_effective_margin > ed.margin.min_effective_margin) {
+            hi = d;
+            d = c;
+            ed = ec;
+            c = hi - kInvPhi * (hi - lo);
+            ec = eval_at(t_next, c, false);
+          } else {
+            lo = c;
+            c = d;
+            ec = ed;
+            d = lo + kInvPhi * (hi - lo);
+            ed = eval_at(t_next, d, false);
+          }
+        }
+        const double f_ref = 0.5 * (lo + hi);
+        const Eval1D er = eval_at(t_next, f_ref, track_corridor);
+        const bool mid_ok = e0.valid || eval_at(0.5 * (t_curr + t_next), 0.5 * (f_curr + f_ref), false).valid;
+        if (er.valid && mid_ok && (!track_corridor || er.corridor_open || !best_open) &&
+            er.margin.min_effective_margin > best_score) {
+          best_f = f_ref;
+          best_e = er;
+        }
+      }
+    }
+
+    *f_next_out = best_f;
+    *e_next_out = best_e;
+    return true;
+  };
+
+  auto make_node = [&](const Eval1D& e, double dt_signed, double df_signed, double arclen) {
+    PoseCurveNode nd = NodeFromEval1D(e, arclen);
+    const double ds = std::hypot(dt_signed, df_signed);
+    nd.tangent[0] = 0.0;
+    nd.tangent[1] = 0.0;
+    nd.tangent[2] = 0.0;
+    if (ds > 0.0) {
+      nd.tangent[vary_ax] = dt_signed / ds;
+      nd.tangent[fiber_ax] = df_signed / ds;
+      // Sky is invariant along fiber_ax (d(sky)/df = 0), so d(sky)/ds = (dt/ds) * (d(sky)/dt).
+      nd.sky_speed = std::fabs(dt_signed / ds) * e.sky_speed;
+      nd.sigma1 = nd.sky_speed;
+    } else {
+      nd.tangent[vary_ax] = (dt_signed < 0.0) ? -1.0 : 1.0;
+    }
+    return nd;
+  };
+
+  auto trace_half = [&](double t_seed, double f_seed, int dir_sign, bool allow_closure) -> Rank1ContinuousHalf {
+    Rank1ContinuousHalf half;
+    const double sgn = static_cast<double>(dir_sign);
+    const double t_limit = vax.periodic ? (t_seed + sgn * v_span) : ((dir_sign > 0) ? vax.max_val : vax.min_val);
+
+    Eval1D e_curr = eval_at(t_seed, f_seed, track_corridor);
+    if (!e_curr.valid) {
+      return half;
+    }
+    double t_curr = t_seed;
+    double f_curr = f_seed;
+    double arclen = 0.0;
+
+    auto push_nd = [&](const Eval1D& e, double dt_s, double df_s, double s_val, bool edge_open) {
+      if (!half.nodes.empty()) {
+        half.edge_corridor_open.push_back(edge_open);
+      }
+      PoseCurveNode nd = make_node(e, dt_s, df_s, s_val);
+      half.nodes.push_back(nd);
+      half.node_stationary.push_back(nd.sky_speed <= params.speed_tol);
+    };
+
+    push_nd(e_curr, sgn, 0.0, 0.0, e_curr.corridor_open);
+
+    // If the seed itself sits on a non-periodic domain boundary in the traced direction, emit it.
+    if (!vax.periodic && std::fabs(t_limit - t_curr) <= 1e-13) {
+      CurveEvent ev;
+      CopyNodeToEvent(half.nodes.back(), CurveEventKind::kDomainBoundary, vary_ax, &ev);
+      half.events.push_back(ev);
+      return half;
+    }
+
+    bool have_last_moving = e_curr.sky_speed > params.speed_tol;
+    double last_moving_t = t_curr;
+    double last_moving_f = f_curr;
+    Eval1D last_moving_e = e_curr;
+    double last_moving_arclen = 0.0;
+
+    double h = std::min(step_max, std::max(step_min, 0.04));
+
+    while (sgn * (t_limit - t_curr) > 1e-13) {
+      if (CheckStop(stop)) {
+        half.stop_requested = true;
+        half.budget_truncated = true;
+        return half;
+      }
+      if (static_cast<int>(half.nodes.size()) >= max_nodes) {
+        half.budget_truncated = true;
+        return half;
+      }
+
+      double step = std::min(h, sgn * (t_limit - t_curr));
+      double t_next = t_curr + sgn * step;
+      double f_next = f_curr;
+      Eval1D e_next;
+      int fail_idx = -1;
+      bool ok = find_local_fiber(t_curr, f_curr, t_next, &f_next, &e_next, &fail_idx);
+      bool shrunk = false;
+
+      while (step > step_min * 2.0) {
+        if (CheckStop(stop)) {
+          half.stop_requested = true;
+          half.budget_truncated = true;
+          return half;
+        }
+        bool need_shrink = !ok;
+        if (ok) {
+          const double df_abs = std::fabs(f_next - f_curr);
+          const double sky_step = so3::AngleBetween(e_curr.sky, e_next.sky);
+          if (df_abs > 0.12 || sky_step > max_turn) {
+            need_shrink = true;
+          } else if (e_curr.sky_speed > params.speed_tol && e_next.sky_speed > params.speed_tol) {
+            const double d_angle = so3::AngleBetween(e_curr.dx, e_next.dx);
+            if (d_angle > max_turn && d_angle < 2.5) {
+              need_shrink = true;
+            }
+          }
+        }
+        if (!need_shrink) {
+          break;
+        }
+        const double next_step = std::max(step_min, 0.5 * step);
+        if (!(next_step < step)) {
+          break;
+        }
+        step = next_step;
+        t_next = t_curr + sgn * step;
+        ok = find_local_fiber(t_curr, f_curr, t_next, &f_next, &e_next, &fail_idx);
+        shrunk = true;
+      }
+
+      if (!ok) {
+        // Connected fiber sheet hit its optical boundary: bisect along the valid segment.
+        double t_v = t_curr;
+        double f_v = f_curr;
+        double t_i = t_next;
+        Eval1D e_bnd = e_curr;
+        int bnd_fail = fail_idx;
+        for (int it = 0; it < params.bisection_iters; it++) {
+          const double t_m = 0.5 * (t_v + t_i);
+          double f_m = f_v;
+          Eval1D e_m;
+          int f_fail = -1;
+          if (find_local_fiber(t_v, f_v, t_m, &f_m, &e_m, &f_fail)) {
+            t_v = t_m;
+            f_v = f_m;
+            e_bnd = e_m;
+          } else {
+            t_i = t_m;
+            if (f_fail >= 0) {
+              bnd_fail = f_fail;
+            }
+          }
+        }
+        const double dt_b = t_v - t_curr;
+        const double df_b = f_v - f_curr;
+        const double ds_b = std::hypot(dt_b, df_b);
+        if (ds_b > 1e-13) {
+          arclen += ds_b;
+          push_nd(e_bnd, dt_b, df_b, arclen, e_curr.corridor_open);
+        }
+        CurveEvent ev;
+        CopyNodeToEvent(half.nodes.back(), CurveEventKind::kOpticalBoundary, bnd_fail, &ev);
+        half.events.push_back(ev);
+        return half;
+      }
+
+      // Check for an interior grazing optical gap along the linear chord (t_curr, f_curr) -> (t_next, f_next).
+      auto chord_eval = [&](double u_par, bool eval_corr) {
+        return eval_at(t_curr + u_par * (t_next - t_curr), f_curr + u_par * (f_next - f_curr), eval_corr);
+      };
+      const double ds_chord = std::hypot(t_next - t_curr, f_next - f_curr);
+      double u_inv = 1.0;
+      if (FindInteriorOpticalGap1D(chord_eval, 0.0, e_curr.margin.min_effective_margin, 1.0,
+                                   e_next.margin.min_effective_margin, margin_lip * ds_chord, &u_inv)) {
+        double u_lo = 0.0;
+        double u_hi = u_inv;
+        Eval1D e_bnd = e_curr;
+        int bnd_fail = chord_eval(u_inv, false).margin.failing_index;
+        for (int it = 0; it < params.bisection_iters; it++) {
+          const double u_m = 0.5 * (u_lo + u_hi);
+          const Eval1D em = chord_eval(u_m, false);
+          if (em.valid) {
+            u_lo = u_m;
+            e_bnd = em;
+          } else {
+            u_hi = u_m;
+            if (em.margin.failing_index >= 0) {
+              bnd_fail = em.margin.failing_index;
+            }
+          }
+        }
+        const double dt_b = u_lo * (t_next - t_curr);
+        const double df_b = u_lo * (f_next - f_curr);
+        const double ds_b = std::hypot(dt_b, df_b);
+        if (ds_b > 1e-13) {
+          arclen += ds_b;
+          push_nd(e_bnd, dt_b, df_b, arclen, e_curr.corridor_open);
+        }
+        CurveEvent ev;
+        CopyNodeToEvent(half.nodes.back(), CurveEventKind::kOpticalBoundary, bnd_fail, &ev);
+        half.events.push_back(ev);
+        return half;
+      }
+
+      const double dt_s = t_next - t_curr;
+      const double df_s = f_next - f_curr;
+      const double ds = std::hypot(dt_s, df_s);
+
+      // Update node 0's tangent to match the actual first step when f slides immediately.
+      if (half.nodes.size() == 1 && ds > 0.0) {
+        half.nodes[0].tangent[vary_ax] = dt_s / ds;
+        half.nodes[0].tangent[fiber_ax] = df_s / ds;
+        half.nodes[0].sky_speed = std::fabs(dt_s / ds) * e_curr.sky_speed;
+        half.nodes[0].sigma1 = half.nodes[0].sky_speed;
+      }
+
+      // Stationary point detection along the vary_ax derivative (sky depends only on vary_ax).
+      if (e_next.sky_speed > params.speed_tol) {
+        if (have_last_moving && so3::Dot3(last_moving_e.dx, e_next.dx) < 0.0) {
+          double ref[3] = { e_next.dx[0] - last_moving_e.dx[0], e_next.dx[1] - last_moving_e.dx[1],
+                            e_next.dx[2] - last_moving_e.dx[2] };
+          const double rn = so3::Norm3(ref);
+          if (rn > 0.0) {
+            ref[0] /= rn;
+            ref[1] /= rn;
+            ref[2] /= rn;
+            double ta = last_moving_t;
+            double tb = t_next;
+            double fa = so3::Dot3(last_moving_e.dx, ref);
+            for (int it = 0; it < params.bisection_iters; it++) {
+              const double tm = 0.5 * (ta + tb);
+              const double frac = (tm - last_moving_t) / (t_next - last_moving_t);
+              const Eval1D em = eval_at(tm, last_moving_f + frac * (f_next - last_moving_f), false);
+              if (!em.valid) {
+                break;
+              }
+              const double fm = so3::Dot3(em.dx, ref);
+              if ((fa <= 0.0 && fm <= 0.0) || (fa > 0.0 && fm > 0.0)) {
+                ta = tm;
+                fa = fm;
+              } else {
+                tb = tm;
+              }
+            }
+            const double t_stat = 0.5 * (ta + tb);
+            const double frac = (t_stat - last_moving_t) / (t_next - last_moving_t);
+            const double f_stat = last_moving_f + frac * (f_next - last_moving_f);
+            const Eval1D e_stat = eval_at(t_stat, f_stat, false);
+            if (e_stat.valid && e_stat.sky_speed <= 1e-4) {
+              const double s_stat = last_moving_arclen + std::hypot(t_stat - last_moving_t, f_stat - last_moving_f);
+              const PoseCurveNode n_stat = make_node(e_stat, dt_s, df_s, s_stat);
+              CurveEvent ev;
+              CopyNodeToEvent(n_stat, CurveEventKind::kStationaryPoint, -1, &ev);
+              half.events.push_back(ev);
+            }
+          }
+        }
+        have_last_moving = true;
+        last_moving_t = t_next;
+        last_moving_f = f_next;
+        last_moving_e = e_next;
+        last_moving_arclen = arclen + ds;
+      }
+
+      // Internal TIR onset along chord.
+      for (int k = 1; k < slot_count - 1; k++) {
+        const double da = e_curr.internal_disc[k];
+        const double db = e_next.internal_disc[k];
+        if ((da > 0.0) != (db > 0.0)) {
+          double ua = 0.0;
+          double ub = 1.0;
+          const bool pos_a = da > 0.0;
+          for (int it = 0; it < params.bisection_iters; it++) {
+            const double um = 0.5 * (ua + ub);
+            const Eval1D em = chord_eval(um, false);
+            if (!em.valid) {
+              break;
+            }
+            if ((em.internal_disc[k] > 0.0) == pos_a) {
+              ua = um;
+            } else {
+              ub = um;
+            }
+          }
+          const double u_tir = 0.5 * (ua + ub);
+          const Eval1D e_tir = chord_eval(u_tir, false);
+          if (e_tir.valid) {
+            const PoseCurveNode n_tir = make_node(e_tir, dt_s, df_s, arclen + u_tir * ds);
+            CurveEvent ev;
+            CopyNodeToEvent(n_tir, CurveEventKind::kTirOnset, k, &ev);
+            half.events.push_back(ev);
+          }
+        }
+      }
+
+      // Corridor cutoff along chord.
+      if (track_corridor && e_curr.corridor_open != e_next.corridor_open) {
+        double ua = 0.0;
+        double ub = 1.0;
+        const bool open_a = e_curr.corridor_open;
+        for (int it = 0; it < params.bisection_iters; it++) {
+          const double um = 0.5 * (ua + ub);
+          const Eval1D em = chord_eval(um, true);
+          if (!em.valid) {
+            break;
+          }
+          if (em.corridor_open == open_a) {
+            ua = um;
+          } else {
+            ub = um;
+          }
+        }
+        const double u_cut = 0.5 * (ua + ub);
+        const Eval1D e_cut = chord_eval(u_cut, true);
+        if (e_cut.valid) {
+          const double ds1 = u_cut * ds;
+          if (ds1 > 1e-13) {
+            arclen += ds1;
+            push_nd(e_cut, dt_s, df_s, arclen, open_a);
+          }
+          CurveEvent ev;
+          CopyNodeToEvent(half.nodes.back(), CurveEventKind::kCorridorCutoff, -1, &ev);
+          half.events.push_back(ev);
+          const double ds2 = (1.0 - u_cut) * ds;
+          if (ds2 > 1e-13) {
+            arclen += ds2;
+            push_nd(e_next, dt_s, df_s, arclen, e_next.corridor_open);
+          }
+          t_curr = t_next;
+          f_curr = f_next;
+          e_curr = e_next;
+          h = shrunk ? std::max(step_min, step) : std::min(step_max, step * 1.25);
+          continue;
+        }
+      }
+
+      arclen += ds;
+      push_nd(e_next, dt_s, df_s, arclen, e_curr.corridor_open);
+      t_curr = t_next;
+      f_curr = f_next;
+      e_curr = e_next;
+      h = shrunk ? std::max(step_min, step) : std::min(step_max, step * 1.25);
+    }
+
+    // Reached t_limit cleanly.
+    if (!vax.periodic) {
+      CurveEvent ev;
+      CopyNodeToEvent(half.nodes.back(), CurveEventKind::kDomainBoundary, vary_ax, &ev);
+      half.events.push_back(ev);
+    } else if (allow_closure) {
+      const double df_close = DeltaAxis(f_seed, f_curr, fax);
+      if (std::fabs(df_close) <= 1e-9) {
+        half.closed = true;
+      } else {
+        // Attempt a smooth continuous fiber closure back to f_seed at t_seed if connected.
+        const int n_close = std::max(1, static_cast<int>(std::ceil(std::fabs(df_close) / 0.05)));
+        bool path_ok = true;
+        std::vector<Eval1D> close_evals;
+        close_evals.reserve(static_cast<size_t>(n_close));
+        for (int k = 1; k <= n_close; k++) {
+          const double f_k = f_curr + df_close * static_cast<double>(k) / static_cast<double>(n_close);
+          const Eval1D ek = eval_at(t_seed, f_k, track_corridor);
+          if (!ek.valid) {
+            path_ok = false;
+            break;
+          }
+          close_evals.push_back(ek);
+        }
+        if (path_ok) {
+          const double df_step = df_close / static_cast<double>(n_close);
+          for (const Eval1D& ek : close_evals) {
+            arclen += std::fabs(df_step);
+            push_nd(ek, 0.0, df_step, arclen, e_curr.corridor_open);
+            e_curr = ek;
+          }
+          half.closed = true;
+        }
+      }
+    }
+    return half;
+  };
+
+  auto stitch_rank1 = [&](const Rank1ContinuousHalf& forward, const Rank1ContinuousHalf& backward) {
+    PoseCurve curve;
+    curve.kind = PoseCurveKind::kCollapsed2D;
+    curve.coverage.seed_grid_n = grid_n;
+    curve.coverage.closed = forward.closed;
+    curve.coverage.budget_truncated = forward.budget_truncated || backward.budget_truncated;
+
+    std::vector<bool> node_stationary;
+    std::vector<bool> edge_corridor_open;
+    if (forward.closed || backward.nodes.size() <= 1) {
+      curve.nodes = forward.nodes;
+      node_stationary = forward.node_stationary;
+      edge_corridor_open = forward.edge_corridor_open;
+      curve.events = forward.events;
+      if (!forward.closed) {
+        for (CurveEvent ev : backward.events) {
+          ev.arclength = 0.0;
+          curve.events.push_back(ev);
+        }
+      }
+    } else {
+      const double back_len = backward.nodes.back().arclength;
+      const size_t b_cnt = backward.nodes.size();
+      const size_t f_cnt = forward.nodes.size();
+      curve.nodes.reserve(b_cnt - 1 + f_cnt);
+      node_stationary.reserve(b_cnt - 1 + f_cnt);
+      edge_corridor_open.reserve(b_cnt - 1 + f_cnt);
+      for (size_t idx = b_cnt - 1; idx >= 1; idx--) {
+        PoseCurveNode nd = backward.nodes[idx];
+        nd.arclength = back_len - nd.arclength;
+        nd.tangent[0] = -nd.tangent[0];
+        nd.tangent[1] = -nd.tangent[1];
+        nd.tangent[2] = -nd.tangent[2];
+        curve.nodes.push_back(nd);
+        node_stationary.push_back(backward.node_stationary[idx]);
+        edge_corridor_open.push_back(backward.edge_corridor_open[idx - 1]);
+      }
+      for (size_t idx = 0; idx < f_cnt; idx++) {
+        PoseCurveNode nd = forward.nodes[idx];
+        nd.arclength += back_len;
+        curve.nodes.push_back(nd);
+        node_stationary.push_back(forward.node_stationary[idx]);
+        if (idx + 1 < f_cnt) {
+          edge_corridor_open.push_back(forward.edge_corridor_open[idx]);
+        }
+      }
+      for (CurveEvent ev : backward.events) {
+        ev.arclength = back_len - ev.arclength;
+        curve.events.push_back(ev);
+      }
+      for (CurveEvent ev : forward.events) {
+        ev.arclength += back_len;
+        curve.events.push_back(ev);
+      }
+    }
+    std::sort(curve.events.begin(), curve.events.end(),
+              [](const CurveEvent& a, const CurveEvent& b) { return a.arclength < b.arclength; });
+    BuildSegments(curve.nodes, node_stationary, edge_corridor_open, params.speed_tol, &curve.segments);
+    return curve;
+  };
+
+  // Rank all valid coarse 2D grid cells by margin descending so we seed from interior high-margin
+  // poses first, and trace additional continuous sheets until all valid sky directions are covered.
+  struct CellSeed {
+    int i = 0;
+    int j = 0;
+    double margin = 0.0;
+  };
+  std::vector<CellSeed> valid_cells;
+  valid_cells.reserve(grid.size());
+  for (int i = 0; i < grid_n; i++) {
+    for (int j = 0; j < grid_n; j++) {
+      const Eval2DJet1& cell = grid[static_cast<size_t>(i * grid_n + j)];
+      if (cell.valid) {
+        valid_cells.push_back({ i, j, cell.margin.min_effective_margin });
+      }
+    }
+  }
+  std::sort(valid_cells.begin(), valid_cells.end(),
+            [](const CellSeed& a, const CellSeed& b) { return a.margin > b.margin; });
+
+  auto grid_val = [grid_n](int idx, const PoseAxis& ax) {
+    if (ax.periodic) {
+      return ax.min_val + ax.Span() * (static_cast<double>(idx) + 0.5) / static_cast<double>(grid_n);
+    }
+    return ax.min_val + ax.Span() * static_cast<double>(idx) / static_cast<double>(grid_n - 1);
+  };
+
+  for (const CellSeed& cs : valid_cells) {
+    if (CheckStop(stop)) {
+      out.stop_requested = true;
+      out.coverage.budget_truncated = true;
+      break;
+    }
+    const Eval2DJet1& cell = grid[static_cast<size_t>(cs.i * grid_n + cs.j)];
+    if (IsSkyCoveredByCurves(cell.sky, out.curves, 0.015)) {
+      continue;
+    }
+    if (static_cast<int>(out.curves.size()) >= params.max_curves) {
+      out.coverage.budget_truncated = true;
+      break;
+    }
+    const double q0 = grid_val(cs.i, manifold.axes[ax0]);
+    const double q1 = grid_val(cs.j, manifold.axes[ax1]);
+    const double t_seed = (vary_ax == ax0) ? q0 : q1;
+    const double f_seed = (fiber_ax == ax0) ? q0 : q1;
+
+    const Rank1ContinuousHalf forward = trace_half(t_seed, f_seed, +1, true);
+    Rank1ContinuousHalf backward;
+    if (!forward.closed && !forward.stop_requested) {
+      backward = trace_half(t_seed, f_seed, -1, false);
+    }
+    out.stop_requested = out.stop_requested || forward.stop_requested || backward.stop_requested;
+    PoseCurve c = stitch_rank1(forward, backward);
+    if (!c.nodes.empty()) {
+      out.coverage.closed = out.coverage.closed || c.coverage.closed;
+      out.coverage.budget_truncated = out.coverage.budget_truncated || c.coverage.budget_truncated;
+      out.curves.push_back(std::move(c));
+    }
+  }
+  return out;
 }
 
 }  // namespace
@@ -2206,7 +3107,8 @@ CausticTraceResult TraceFamily1D(const FaceNormalTable& table, const int* slots,
     return Evaluate1DAtPose(table, slots, slot_count, refractive_index, sun_dir, param, ax, corridor, eval_corridor);
   };
 
-  return Trace1DWithEvaluator(pax, ax, slot_count, eval_fn, corridor != nullptr, params, stop);
+  const double margin_lip = std::max(6.0, 3.0 * refractive_index * refractive_index);
+  return Trace1DWithEvaluator(pax, ax, slot_count, margin_lip, eval_fn, corridor != nullptr, params, stop);
 }
 
 // =================================================================================================
@@ -2331,28 +3233,19 @@ CausticTraceResult TraceCausticLocus(const FaceNormalTable& table, const int* sl
     return curve;
   };
 
-  // Explicit Euler-pole generator rank loss (e.g. TiltedSpin(0 deg) or TiltedSpin(180 deg) where
-  // azimuth and roll collapse onto the same spin generator everywhere): trace the 1D image AND
-  // explicitly emit kDomainBoundary on kAxisZenith rather than disguising it as a pure optical fold.
-  if (!any_full_generator_rank) {
-    result.generic_rank = any_rank1 ? 1 : 0;
-    if (!any_rank1) {
-      result.curves.push_back(build_rank0_curve(true));
-      return result;
-    }
-    PoseManifold slice = manifold;
-    const bool keep_ax0 = (max_x1_norm >= max_x2_norm);
-    const double pin_val = keep_ax0 ? grid_coord(best_valid_j, pax1) : grid_coord(best_valid_i, pax0);
-    slice.axes[keep_ax0 ? ax1 : ax0] = PoseAxis::PinnedRad(pin_val);
-    Family1DParams f1d;
-    f1d.speed_tol = params.speed_tol;
-    f1d.bisection_iters = params.bisection_iters;
-    CausticTraceResult collapsed =
-        TraceFamily1D(table, slots, slot_count, refractive_index, sun_dir, slice, corridor, f1d, stop);
-    for (PoseCurve& c : collapsed.curves) {
+  // Shared relabel/merge helper for all collapsed 2D return paths: enforces params.max_curves,
+  // records budget_truncated when any curve is omitted, and optionally emits the zenith pole event.
+  auto append_collapsed_curves = [&](CausticTraceResult& sub, bool add_pole_event) {
+    result.stop_requested = result.stop_requested || sub.stop_requested;
+    result.coverage.budget_truncated = result.coverage.budget_truncated || sub.coverage.budget_truncated;
+    for (PoseCurve& c : sub.curves) {
+      if (static_cast<int>(result.curves.size()) >= params.max_curves) {
+        result.coverage.budget_truncated = true;
+        break;
+      }
       c.kind = PoseCurveKind::kCollapsed2D;
       c.coverage.seed_grid_n = n;
-      if (!c.nodes.empty()) {
+      if (add_pole_event && !c.nodes.empty()) {
         CurveEvent pole_ev;
         CopyNodeToEvent(c.nodes.front(), CurveEventKind::kDomainBoundary, PoseManifold::kAxisZenith, &pole_ev);
         c.events.insert(c.events.begin(), pole_ev);
@@ -2361,7 +3254,66 @@ CausticTraceResult TraceCausticLocus(const FaceNormalTable& table, const int* sl
       result.coverage.budget_truncated = result.coverage.budget_truncated || c.coverage.budget_truncated;
       result.curves.push_back(std::move(c));
     }
-    result.stop_requested = collapsed.stop_requested;
+  };
+
+  // Explicit Euler-pole generator rank loss (e.g. TiltedSpin(0 deg) or TiltedSpin(180 deg) where
+  // azimuth and roll collapse onto the same spin generator everywhere): trace the full attainable
+  // spin interval (az + roll at zenith = 0, az - roll at zenith = pi) mapped continuously into
+  // both axis bounds, and emit kDomainBoundary on kAxisZenith.
+  if (!any_full_generator_rank) {
+    result.generic_rank = any_rank1 ? 1 : 0;
+    if (!any_rank1) {
+      result.curves.push_back(build_rank0_curve(true));
+      return result;
+    }
+    Family1DParams f1d;
+    f1d.speed_tol = params.speed_tol;
+    f1d.bisection_iters = params.bisection_iters;
+    const double margin_lip = std::max(6.0, 3.0 * refractive_index * refractive_index);
+
+    CausticTraceResult collapsed;
+    const bool is_az_roll_pole = (ax0 == PoseManifold::kAxisAzimuth && ax1 == PoseManifold::kAxisRoll);
+    if (is_az_roll_pole && !pax0.periodic && !pax1.periodic) {
+      const double z_val = grid[static_cast<size_t>(best_valid_i * n + best_valid_j)].param[PoseManifold::kAxisZenith];
+      const double pole_sign = (std::cos(z_val) >= 0.0) ? 1.0 : -1.0;
+      const double span_az = pax0.Span();
+      const double span_roll = pax1.Span();
+      const double total_spin = span_az + span_roll;
+      const double d_az_dphi = span_az / total_spin;
+      const double d_roll_dphi = pole_sign * (span_roll / total_spin);
+      const double ds_dphi = std::hypot(d_az_dphi, d_roll_dphi);
+      const double t_vec[3] = { d_az_dphi / ds_dphi, 0.0, d_roll_dphi / ds_dphi };
+
+      const double az_start = pax0.min_val;
+      const double roll_start = (pole_sign > 0.0) ? pax1.min_val : pax1.max_val;
+      const double phi_span = std::min(total_spin, 2.0 * math::kPiD);
+      const double arc_span = phi_span * ds_dphi;
+      const PoseAxis arc_axis = PoseAxis::FreeRad(0.0, arc_span, false);
+
+      auto pole_eval = [&](double s_arc, bool eval_corridor) {
+        double param[3] = { manifold.axes[0].value, manifold.axes[1].value, manifold.axes[2].value };
+        param[PoseManifold::kAxisAzimuth] = std::clamp(az_start + s_arc * t_vec[0], pax0.min_val, pax0.max_val);
+        param[PoseManifold::kAxisZenith] = z_val;
+        param[PoseManifold::kAxisRoll] = std::clamp(roll_start + s_arc * t_vec[2], pax1.min_val, pax1.max_val);
+        return Evaluate1DAlongTangent(table, slots, slot_count, refractive_index, sun_dir, param, t_vec, corridor,
+                                      eval_corridor);
+      };
+      collapsed = Trace1DWithEvaluator(arc_axis, PoseManifold::kAxisAzimuth, slot_count, margin_lip, pole_eval,
+                                       corridor != nullptr, f1d, stop);
+    } else if (is_az_roll_pole && (pax0.periodic || pax1.periodic)) {
+      PoseManifold slice = manifold;
+      const bool keep_ax0 = pax0.periodic;
+      const double pin_val = keep_ax0 ? grid_coord(best_valid_j, pax1) : grid_coord(best_valid_i, pax0);
+      slice.axes[keep_ax0 ? ax1 : ax0] = PoseAxis::PinnedRad(pin_val);
+      collapsed = TraceFamily1D(table, slots, slot_count, refractive_index, sun_dir, slice, corridor, f1d, stop);
+    } else {
+      PoseManifold slice = manifold;
+      const bool keep_ax0 = (max_x1_norm >= max_x2_norm);
+      const double pin_val = keep_ax0 ? grid_coord(best_valid_j, pax1) : grid_coord(best_valid_i, pax0);
+      slice.axes[keep_ax0 ? ax1 : ax0] = PoseAxis::PinnedRad(pin_val);
+      collapsed = TraceFamily1D(table, slots, slot_count, refractive_index, sun_dir, slice, corridor, f1d, stop);
+    }
+    append_collapsed_curves(collapsed, /*add_pole_event=*/true);
     return result;
   }
 
@@ -2378,54 +3330,32 @@ CausticTraceResult TraceCausticLocus(const FaceNormalTable& table, const int* sl
     f1d.speed_tol = params.speed_tol;
     f1d.bisection_iters = params.bisection_iters;
 
-    // When sky is invariant along one free axis (the common physical case: e.g. basal mirror
-    // Column {3, 1, 6} or parallel path {3, 5, 6, 8}), trace the FULL 2D projected feasibility
-    // envelope across the fiber axis so no feasible sky image is dropped by pinning one slice.
+    // When sky is invariant along one free axis (e.g. basal mirror Column {3, 1, 6} or parallel
+    // path {3, 5, 6, 8}), follow continuous locally-connected fiber sheets across all uncovered
+    // coarse cells (splitting disjoint sheets cleanly and enforcing max_curves).
     const bool sky_only_ax0 = (max_x2_norm <= params.rank_tol * max_x1_norm);
     const bool sky_only_ax1 = (max_x1_norm <= params.rank_tol * max_x2_norm);
     if (sky_only_ax0 || sky_only_ax1) {
       const int vary_ax = sky_only_ax0 ? ax0 : ax1;
       const int fiber_ax = sky_only_ax0 ? ax1 : ax0;
-      const double init_fiber = sky_only_ax0 ? grid_coord(best_valid_j, pax1) : grid_coord(best_valid_i, pax0);
-      const ProjectedFiberEvaluator proj_eval{ &table,  slots,    slot_count, refractive_index, sun_dir,   &manifold,
-                                               vary_ax, fiber_ax, corridor,   std::max(n, 48),  init_fiber };
       CausticTraceResult projected =
-          Trace1DWithEvaluator(manifold.axes[vary_ax], vary_ax, slot_count, proj_eval, corridor != nullptr, f1d, stop);
-      for (PoseCurve& c : projected.curves) {
-        c.kind = PoseCurveKind::kCollapsed2D;
-        c.coverage.seed_grid_n = n;
-        result.coverage.closed = result.coverage.closed || c.coverage.closed;
-        result.coverage.budget_truncated = result.coverage.budget_truncated || c.coverage.budget_truncated;
-        result.curves.push_back(std::move(c));
-      }
-      result.stop_requested = projected.stop_requested;
+          TraceContinuousRank1AxisAligned(table, slots, slot_count, refractive_index, sun_dir, manifold, ax0, ax1,
+                                          vary_ax, fiber_ax, grid, n, corridor, params, stop);
+      append_collapsed_curves(projected, /*add_pole_event=*/false);
       return result;
     }
 
     // General non-axis-aligned rank-1 family: trace slices along the faster-moving axis until
     // every valid coarse grid cell's sky direction is covered.
     const bool keep_ax0 = (max_x1_norm >= max_x2_norm);
-    const int vary_ax = keep_ax0 ? ax0 : ax1;
     const int pin_ax = keep_ax0 ? ax1 : ax0;
     auto trace_slice_at = [&](double pin_val) {
       PoseManifold slice = manifold;
       slice.axes[pin_ax] = PoseAxis::PinnedRad(pin_val);
       CausticTraceResult sub =
           TraceFamily1D(table, slots, slot_count, refractive_index, sun_dir, slice, corridor, f1d, stop);
-      result.stop_requested = result.stop_requested || sub.stop_requested;
-      for (PoseCurve& c : sub.curves) {
-        if (static_cast<int>(result.curves.size()) >= params.max_curves) {
-          result.coverage.budget_truncated = true;
-          break;
-        }
-        c.kind = PoseCurveKind::kCollapsed2D;
-        c.coverage.seed_grid_n = n;
-        result.coverage.closed = result.coverage.closed || c.coverage.closed;
-        result.coverage.budget_truncated = result.coverage.budget_truncated || c.coverage.budget_truncated;
-        result.curves.push_back(std::move(c));
-      }
+      append_collapsed_curves(sub, /*add_pole_event=*/false);
     };
-    (void)vary_ax;
     trace_slice_at(keep_ax0 ? grid_coord(best_valid_j, pax1) : grid_coord(best_valid_i, pax0));
     for (int i = 0; i < n && !result.stop_requested; i++) {
       for (int j = 0; j < n && !result.stop_requested; j++) {

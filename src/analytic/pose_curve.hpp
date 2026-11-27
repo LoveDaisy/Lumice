@@ -17,7 +17,6 @@
 
 #include "analytic/family_rank.hpp"
 #include "analytic/fiber_continuation.hpp"
-#include "analytic/jet.hpp"
 #include "analytic/path_evaluation.hpp"
 #include "analytic/so3.hpp"
 #include "core/math.hpp"
