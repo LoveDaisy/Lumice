@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <vector>
 
 #include "analytic/caustic_continuation.hpp"
@@ -2235,15 +2236,53 @@ TEST(CausticContinuation, EdgeCaseRegressions) {
     }
     EXPECT_TRUE(found_loose_mirror);
 
+    // Shrunken window around the transverse crossing: both constant-image mirror branches must stay
+    // kPointImage (and cusp-free) at both default residual_tol=1e-12 and loose residual_tol=1e-6.
+    PoseManifold m_shrunk;
+    m_shrunk.axes[PoseManifold::kAxisAzimuth] = PoseAxis::FreeDeg(25.813648 - 0.02, 25.813648 + 0.02, false);
+    m_shrunk.axes[PoseManifold::kAxisZenith] = PoseAxis::PinnedDeg(90.0);
+    m_shrunk.axes[PoseManifold::kAxisRoll] = PoseAxis::FreeDeg(120.0 - 0.02, 120.0 + 0.02, false);
+    for (double rtol : { 1e-12, 1e-6 }) {
+      CausticContinuationParams p_shrunk;
+      p_shrunk.residual_tol = rtol;
+      const CausticTraceResult res_shrunk =
+          TraceCausticLocus(f.normals, slots35, 2, n, sun20, m_shrunk, nullptr, p_shrunk);
+      int mirror_branch_count = 0;
+      for (const PoseCurve& c : res_shrunk.curves) {
+        double max_sky_spread = 0.0;
+        for (size_t i = 1; i < c.nodes.size(); i++) {
+          max_sky_spread = std::max(max_sky_spread, so3::AngleBetween(c.nodes[0].sky, c.nodes[i].sky));
+        }
+        if (max_sky_spread < 1e-6) {
+          mirror_branch_count++;
+          for (const CurveEvent& ev : c.events) {
+            EXPECT_NE(ev.kind, CurveEventKind::kCusp) << "rtol=" << rtol;
+          }
+          EXPECT_FALSE(c.segments.empty()) << "rtol=" << rtol;
+          for (const CurveSegment& seg : c.segments) {
+            EXPECT_EQ(seg.kind, CurveSegmentKind::kPointImage)
+                << "Shrunken mirror branch flipped to kArc at rtol=" << rtol;
+          }
+        }
+      }
+      EXPECT_GE(mirror_branch_count, 2) << "Expected both mirror branches at rtol=" << rtol;
+    }
+
     // Near-degenerate moving arc TiltedSpin(89.99) must stay kArc even at loose residual_tol=1e-6.
     const CausticTraceResult res_8999_loose =
         TraceCausticLocus(f.normals, slots35, 2, n, sun20, PoseManifold::TiltedSpin(89.99), nullptr, p_loose);
     EXPECT_EQ(res_8999_loose.generic_rank, 2);
+    ASSERT_FALSE(res_8999_loose.curves.empty());
+    int arc_seg_count = 0;
     for (const PoseCurve& c : res_8999_loose.curves) {
       for (const CurveSegment& seg : c.segments) {
         EXPECT_EQ(seg.kind, CurveSegmentKind::kArc);
+        if (seg.kind == CurveSegmentKind::kArc && seg.end_idx > seg.start_idx) {
+          arc_seg_count++;
+        }
       }
     }
+    EXPECT_GT(arc_seg_count, 0);
   }
 
   // 9ai. Low-gradient seed rejection must be declared honestly in coverage (unresolved_singularities
@@ -2267,6 +2306,70 @@ TEST(CausticContinuation, EdgeCaseRegressions) {
     EXPECT_TRUE(res_empty.curves.empty());
     EXPECT_GT(res_empty.coverage.unresolved_singularities, 0);
     EXPECT_GT(res_empty.coverage.failed_seeds, 0);
+  }
+
+  // 9aj. Newton iteration budget exhaustion without gradient evidence must set budget_truncated
+  //      and must NOT fabricate a geometric kLocusSingularity event.
+  {
+    int slots35[2];
+    const int faces35[2] = { 3, 5 };
+    f.Resolve(faces35, 2, slots35);
+    double sun20[3];
+    AltAzDegToSky(20.0, 0.0, sun20);
+    CausticContinuationParams p_budget;
+    p_budget.min_step = 0.02;
+    p_budget.initial_step = 0.02;
+    p_budget.max_step = 0.02;
+    p_budget.max_newton_iters = 1;
+    const CausticTraceResult res_budget =
+        TraceCausticLocus(f.normals, slots35, 2, n, sun20, PoseManifold::Column(), nullptr, p_budget);
+    ASSERT_FALSE(res_budget.curves.empty());
+    EXPECT_TRUE(res_budget.coverage.budget_truncated);
+    bool found_truncated_without_singularity = false;
+    for (const PoseCurve& c : res_budget.curves) {
+      if (c.coverage.budget_truncated && c.nodes.size() == 1) {
+        found_truncated_without_singularity = true;
+      }
+      for (const CurveEvent& ev : c.events) {
+        if (ev.kind == CurveEventKind::kLocusSingularity) {
+          // Any published kLocusSingularity must have genuine near-zero gradient, never a
+          // regular point truncated only by max_newton_iters=1.
+          EXPECT_FALSE(c.nodes.size() == 1 && c.coverage.budget_truncated);
+        }
+      }
+    }
+    EXPECT_TRUE(found_truncated_without_singularity);
+    // Verify no single-node curve emits a spurious kLocusSingularity when truncated by Newton budget.
+    for (const PoseCurve& c : res_budget.curves) {
+      for (const CurveEvent& ev : c.events) {
+        EXPECT_NE(ev.kind, CurveEventKind::kLocusSingularity)
+            << "Newton budget exhaustion emitted spurious kLocusSingularity at s=" << ev.arclength;
+      }
+    }
+  }
+
+  // 9ak. max_steps_per_branch == INT_MAX must saturate max_nodes_per_branch without signed overflow
+  //      and return the same pole curve as INT_MAX - 1 on TiltedSpin(0).
+  {
+    int slots35[2];
+    const int faces35[2] = { 3, 5 };
+    f.Resolve(faces35, 2, slots35);
+    double sun20[3];
+    AltAzDegToSky(20.0, 0.0, sun20);
+    CausticContinuationParams p_max_minus_1;
+    p_max_minus_1.max_steps_per_branch = std::numeric_limits<int>::max() - 1;
+    CausticContinuationParams p_max;
+    p_max.max_steps_per_branch = std::numeric_limits<int>::max();
+    const CausticTraceResult res_m1 =
+        TraceCausticLocus(f.normals, slots35, 2, n, sun20, PoseManifold::TiltedSpin(0.0), nullptr, p_max_minus_1);
+    const CausticTraceResult res_max =
+        TraceCausticLocus(f.normals, slots35, 2, n, sun20, PoseManifold::TiltedSpin(0.0), nullptr, p_max);
+    ASSERT_FALSE(res_m1.curves.empty());
+    ASSERT_EQ(res_max.curves.size(), res_m1.curves.size());
+    for (size_t i = 0; i < res_m1.curves.size(); i++) {
+      EXPECT_EQ(res_max.curves[i].nodes.size(), res_m1.curves[i].nodes.size());
+      EXPECT_EQ(res_max.curves[i].coverage.closed, res_m1.curves[i].coverage.closed);
+    }
   }
 }
 

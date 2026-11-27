@@ -887,13 +887,21 @@ HalfBranch2D TraceHalfBranch2D(const Context2D& ctx, const double q_seed[2], con
         return out;
       }
 
+      if (pr.outcome == ProjectOutcome::kSingularity) {
+        out.unresolved_singularities++;
+        finish_boundary(false, q_curr, e_curr, CurveEventKind::kLocusSingularity, -1);
+        return out;
+      }
+
       const double q_probe[2] = { q_curr[0] + h * tau_curr[0], q_curr[1] + h * tau_curr[1] };
       const Eval2DJet2 e_probe = Evaluate2DJet2(ctx, q_probe, nullptr, false);
       if (!e_probe.valid) {
         finish_boundary(false, q_curr, e_curr, CurveEventKind::kOpticalBoundary, e_probe.margin.failing_index);
-      } else {
+      } else if (e_probe.grad_reg_norm < params.grad_tol) {
         out.unresolved_singularities++;
         finish_boundary(false, q_curr, e_curr, CurveEventKind::kLocusSingularity, -1);
+      } else {
+        out.budget_truncated = true;
       }
       return out;
     }
@@ -1073,86 +1081,143 @@ PoseCurve StitchCausticCurve(const Context2D& ctx, const HalfBranch2D& forward, 
       }
     }
     const double cond_speed_bar = std::max(5.0 * speed_tol, 5e-9);
-    const bool loose_tol = (ctx.params.residual_tol > 1e-12);
+    constexpr double kTightReprojectTol = 1e-14;
 
-    // When a caller passes a loose residual_tol, off-locus error can perturb both sky position and
-    // tangent speed on an exact constant-image mirror branch. Locally tighten both edge endpoints
-    // onto J_reg = 0 before classifying so physical segmentation stays invariant to residual_tol.
+    // Single-authority point-image classification: polish candidate nodes onto J_reg = 0 regardless
+    // of caller residual_tol (handling domain-boundary endpoints via SolveOnDomainBoundary2D) and
+    // verify both per-edge and whole-segment sky displacement + tangential speed uncertainty.
     CausticContinuationParams tight_params = ctx.params;
-    tight_params.residual_tol = std::min(ctx.params.residual_tol, 1e-13);
+    tight_params.residual_tol = std::min(ctx.params.residual_tol, kTightReprojectTol);
     const Context2D tight_ctx{ ctx.table,    ctx.slots, ctx.slot_count, ctx.refractive_index, ctx.sun_dir,
                                ctx.manifold, ctx.ax0,   ctx.ax1,        tight_params };
-    auto is_tight_point_image_edge = [&](size_t e, bool require_low_speed) {
-      const double q0[2] = { curve.nodes[e].param[ctx.ax0], curve.nodes[e].param[ctx.ax1] };
-      const double q1[2] = { curve.nodes[e + 1].param[ctx.ax0], curve.nodes[e + 1].param[ctx.ax1] };
+    struct TightNode {
+      bool valid = false;
+      double sky[3]{};
+      double sigma1 = 1.0;
+      double sky_unc = 1e-14;
+      double sky_speed = 0.0;
+      double spd_bar = 0.0;
+    };
+    std::vector<TightNode> tight_nodes(curve.nodes.size());
+    std::vector<bool> tight_ready(curve.nodes.size(), false);
+    auto tighten_node = [&](size_t idx) -> const TightNode& {
+      if (tight_ready[idx]) {
+        return tight_nodes[idx];
+      }
+      tight_ready[idx] = true;
+      const double q[2] = { curve.nodes[idx].param[ctx.ax0], curve.nodes[idx].param[ctx.ax1] };
       const double drift = std::max(10.0 * ctx.params.residual_tol, 1e-4);
-      const ProjectResult p0 = ProjectOntoCaustic(tight_ctx, q0, drift);
-      const ProjectResult p1 = ProjectOntoCaustic(tight_ctx, q1, drift);
-      if (p0.outcome != ProjectOutcome::kConverged || p1.outcome != ProjectOutcome::kConverged ||
-          p0.eval.grad_reg_norm < ctx.params.grad_tol || p1.eval.grad_reg_norm < ctx.params.grad_tol) {
-        return false;
+      const ProjectResult pr = ProjectOntoCaustic(tight_ctx, q, drift);
+      Eval2DJet2 e = pr.eval;
+      if (pr.outcome == ProjectOutcome::kDomainCrossed) {
+        const int pinned_slot = (pr.crossed_axis == ctx.ax0) ? 0 : 1;
+        const PoseAxis& b_ax = ctx.manifold.axes[pr.crossed_axis];
+        const double bound_val =
+            (std::fabs(q[pinned_slot] - b_ax.min_val) <= std::fabs(q[pinned_slot] - b_ax.max_val)) ? b_ax.min_val :
+                                                                                                     b_ax.max_val;
+        double q_bnd[2]{};
+        Eval2DJet2 e_bnd;
+        if (SolveOnDomainBoundary2D(tight_ctx, pinned_slot, bound_val, q[1 - pinned_slot], drift, q_bnd, &e_bnd) &&
+            (!e.valid || std::fabs(e_bnd.j_reg) < std::fabs(e.j_reg))) {
+          e = e_bnd;
+        }
       }
-      const double u0 = std::max(
-          1e-14, 10.0 * ComputeRegularizedPoseErr(p0.eval, ctx.params.grad_tol) * std::max(p0.eval.sigma1, 1.0));
-      const double u1 = std::max(
-          1e-14, 10.0 * ComputeRegularizedPoseErr(p1.eval, ctx.params.grad_tol) * std::max(p1.eval.sigma1, 1.0));
-      if (so3::AngleBetween(p0.eval.sky, p1.eval.sky) > std::max(u0, u1)) {
-        return false;
+      if (!e.valid) {
+        e = Evaluate2DJet2(tight_ctx, q, nullptr, false);
       }
-      if (!require_low_speed) {
-        return true;
+      TightNode tn;
+      if (e.valid && e.grad_reg_norm >= ctx.params.grad_tol) {
+        tn.valid = true;
+        so3::Copy3(e.sky, tn.sky);
+        const double s1 = std::max(e.sigma1, 1.0);
+        const double pose_err = ComputeRegularizedPoseErr(e, ctx.params.grad_tol);
+        tn.sigma1 = s1;
+        tn.sky_unc = std::max(1e-14, 10.0 * pose_err * s1);
+        double tau[2];
+        TangentFromGrad(e.grad_j_reg, e.grad_reg_norm, +1, tau);
+        double v[3];
+        SkyVelocity2D(e, tau, v);
+        tn.sky_speed = so3::Norm3(v);
+        tn.spd_bar = std::max(cond_speed_bar * s1, 10.0 * s1 * e.w_val * pose_err / e.grad_reg_norm);
       }
-      double tau0[2];
-      double tau1[2];
-      TangentFromGrad(p0.eval.grad_j_reg, p0.eval.grad_reg_norm, +1, tau0);
-      TangentFromGrad(p1.eval.grad_j_reg, p1.eval.grad_reg_norm, +1, tau1);
-      double v0[3];
-      double v1[3];
-      SkyVelocity2D(p0.eval, tau0, v0);
-      SkyVelocity2D(p1.eval, tau1, v1);
-      const double max_s1 = std::max(p0.eval.sigma1, p1.eval.sigma1);
-      return std::max(so3::Norm3(v0), so3::Norm3(v1)) <= cond_speed_bar * std::max(max_s1, 1.0);
+      tight_nodes[idx] = tn;
+      return tight_nodes[idx];
     };
 
-    bool changed = false;
+    std::vector<bool> cand_edge(edge_cnt, false);
     for (size_t e = 0; e < edge_cnt; e++) {
       if (edge_kind[e] == CurveSegmentKind::kPointImage) {
+        cand_edge[e] = true;
         continue;
       }
-      const double sky_step = so3::AngleBetween(curve.nodes[e].sky, curve.nodes[e + 1].sky);
-      const double sky_unc = std::max(sky_uncertainty_at(e), sky_uncertainty_at(e + 1));
-      const double max_s1 = std::max(curve.nodes[e].sigma1, curve.nodes[e + 1].sigma1);
-      const double max_spd = std::max(curve.nodes[e].sky_speed, curve.nodes[e + 1].sky_speed);
-      if (sky_step <= sky_unc && max_spd <= cond_speed_bar * std::max(max_s1, 1.0)) {
-        edge_kind[e] = CurveSegmentKind::kPointImage;
-        changed = true;
-      } else if (loose_tol && sky_step <= std::max(sky_unc, 10.0 * ctx.params.residual_tol * std::max(max_s1, 1.0)) &&
-                 is_tight_point_image_edge(e, /*require_low_speed=*/true)) {
-        edge_kind[e] = CurveSegmentKind::kPointImage;
-        changed = true;
+      const double sky_step_tracked = so3::AngleBetween(curve.nodes[e].sky, curve.nodes[e + 1].sky);
+      const double sky_unc_tracked = std::max(sky_uncertainty_at(e), sky_uncertainty_at(e + 1));
+      const double max_s1_tracked = std::max({ curve.nodes[e].sigma1, curve.nodes[e + 1].sigma1, 1.0 });
+      if (sky_step_tracked > std::max(sky_unc_tracked, 20.0 * ctx.params.residual_tol * max_s1_tracked)) {
+        continue;
+      }
+      const TightNode& t0 = tighten_node(e);
+      const TightNode& t1 = tighten_node(e + 1);
+      if (!t0.valid || !t1.valid) {
+        continue;
+      }
+      if (so3::AngleBetween(t0.sky, t1.sky) <= std::max(t0.sky_unc, t1.sky_unc) && t0.sky_speed <= t0.spd_bar &&
+          t1.sky_speed <= t1.spd_bar) {
+        cand_edge[e] = true;
       }
     }
-    bool grew = true;
-    while (grew) {
-      grew = false;
-      for (size_t e = 0; e < edge_cnt; e++) {
-        if (edge_kind[e] == CurveSegmentKind::kPointImage) {
-          continue;
+
+    bool changed = false;
+    size_t e = 0;
+    while (e < edge_cnt) {
+      if (!cand_edge[e]) {
+        e++;
+        continue;
+      }
+      const size_t run_a = e;
+      bool needs_promo = false;
+      bool has_preexisting_pi = false;
+      while (e < edge_cnt && cand_edge[e]) {
+        needs_promo = needs_promo || (edge_kind[e] != CurveSegmentKind::kPointImage);
+        has_preexisting_pi = has_preexisting_pi || (edge_kind[e] == CurveSegmentKind::kPointImage);
+        e++;
+      }
+      const size_t run_b = e;
+      if (!needs_promo) {
+        continue;
+      }
+      bool all_valid = true;
+      double seg_spread = 0.0;
+      double seg_unc = 0.0;
+      double max_s1 = 1.0;
+      bool has_low_speed = has_preexisting_pi;
+      const TightNode& t_start = tighten_node(run_a);
+      if (!t_start.valid) {
+        all_valid = false;
+      }
+      for (size_t k = run_a; k <= run_b && all_valid; k++) {
+        const TightNode& tk = tighten_node(k);
+        if (!tk.valid) {
+          all_valid = false;
+          break;
         }
-        const bool adj_point = (e > 0 && edge_kind[e - 1] == CurveSegmentKind::kPointImage) ||
-                               (e + 1 < edge_cnt && edge_kind[e + 1] == CurveSegmentKind::kPointImage);
-        if (!adj_point) {
-          continue;
+        seg_unc = std::max(seg_unc, tk.sky_unc);
+        max_s1 = std::max(max_s1, tk.sigma1);
+        if (tk.sky_speed <= cond_speed_bar * tk.sigma1) {
+          has_low_speed = true;
         }
-        const double sky_step = so3::AngleBetween(curve.nodes[e].sky, curve.nodes[e + 1].sky);
-        const double sky_unc = std::max(sky_uncertainty_at(e), sky_uncertainty_at(e + 1));
-        const double max_s1 = std::max(curve.nodes[e].sigma1, curve.nodes[e + 1].sigma1);
-        if (sky_step <= sky_unc ||
-            (loose_tol && sky_step <= std::max(sky_unc, 10.0 * ctx.params.residual_tol * std::max(max_s1, 1.0)) &&
-             is_tight_point_image_edge(e, /*require_low_speed=*/false))) {
-          edge_kind[e] = CurveSegmentKind::kPointImage;
-          changed = true;
-          grew = true;
+        if (k > run_a) {
+          seg_spread = std::max(seg_spread, so3::AngleBetween(t_start.sky, tk.sky));
+        }
+      }
+      const double seg_len = curve.nodes[run_b].arclength - curve.nodes[run_a].arclength;
+      const bool secant_low = (seg_len > 0.0 && seg_spread / seg_len <= cond_speed_bar * max_s1);
+      if (all_valid && seg_spread <= seg_unc && (has_low_speed || secant_low)) {
+        for (size_t k = run_a; k < run_b; k++) {
+          if (edge_kind[k] != CurveSegmentKind::kPointImage) {
+            edge_kind[k] = CurveSegmentKind::kPointImage;
+            changed = true;
+          }
         }
       }
     }

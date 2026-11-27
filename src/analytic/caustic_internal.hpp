@@ -251,6 +251,9 @@ CausticTraceResult Trace1DWithEvaluator(const PoseAxis& pax, int free_ax, int sl
                                         const Family1DParams& params, const DiscoveryStop* stop);
 
 // caustic_2d_continuation.cpp
+// When require_margin is true (default), Eval2DJet1::valid reflects full continuation margin validity.
+// When false, Eval2DJet1::valid reflects raw chain_ok so 1D-bisected optical boundary endpoints
+// sitting within 1 ULP of kSnellEventTolerance still receive exact 2D Jet<2> SVD (sigma1, sigma2).
 Eval2DJet1 Evaluate2DJet1(const Context2D& ctx, const double q_in[2], bool require_margin = true);
 Eval2DJet2 Evaluate2DJet2(const Context2D& ctx, const double q_in[2], Corridor* corridor, bool eval_corridor);
 ProjectResult ProjectOntoCaustic(const Context2D& ctx, const double q_start[2], double max_total_drift);

@@ -379,7 +379,9 @@ Family1DParams MakeFamily1DParams(const CausticContinuationParams& params) {
   f1d.max_turning_angle = params.max_turning_angle;
   f1d.speed_tol = params.speed_tol;
   f1d.bisection_iters = params.bisection_iters;
-  f1d.max_nodes_per_branch = params.max_steps_per_branch + 1;
+  f1d.max_nodes_per_branch = (params.max_steps_per_branch < std::numeric_limits<int>::max()) ?
+                                 (params.max_steps_per_branch + 1) :
+                                 std::numeric_limits<int>::max();
   return f1d;
 }
 
