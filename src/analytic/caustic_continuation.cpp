@@ -1901,6 +1901,31 @@ void PolishFinestCoordULP(const FaceNormalTable& table, const int* slots, int sl
   *eval = best_e;
 }
 
+// Returns true iff raw |J(q)| <= raw_ulp_cap is representable across float64 FMA / rounding
+// differences (e.g. Jet<2> vs Jet2<2> across compilers and ISAs). Near a steep grazing Snell
+// cliff (||grad J|| = O(1/d)), a 1-ULP rounding shift in exit_disc moves raw J by O(eps * ||grad J||);
+// points whose evaluation-noise budget exceeds raw_ulp_cap transition to the silent desingularized
+// cliff march instead of emitting FMA-sensitive interior nodes.
+bool IsRawJRepresentable(const FaceNormalTable& table, const int* slots, int slot_count, double refractive_index,
+                         const double sun_dir[3], const PoseManifold& manifold, int ax0, int ax1, const double q[2],
+                         const Eval2DJet2& eval, double raw_ulp_cap, double noise_safety = 32.0) {
+  const double abs_j = std::fabs(eval.j_val);
+  if (abs_j > raw_ulp_cap) {
+    return false;
+  }
+  const double eval_noise = noise_safety * std::numeric_limits<double>::epsilon() * eval.grad_norm;
+  if (abs_j + eval_noise > raw_ulp_cap) {
+    return false;
+  }
+  if (eval.margin.min_effective_margin < 1e-2) {
+    const Eval2DJet1 e1 = Evaluate2DJet1(table, slots, slot_count, refractive_index, sun_dir, manifold, ax0, ax1, q);
+    if (!e1.valid || std::fabs(e1.j_val) > raw_ulp_cap) {
+      return false;
+    }
+  }
+  return true;
+}
+
 // Safeguarded orthogonal 1D Newton projection onto J(q) = 0 from q_start (unwrapped). Uses the
 // Snell-desingularized residual J_reg = entry_disc * exit_disc * J for step direction and
 // backtracking, while enforcing raw |J| <= max(residual_tol, kRawInteriorJCap) whenever
@@ -1942,12 +1967,20 @@ ProjectResult ProjectOntoCaustic(const FaceNormalTable& table, const int* slots,
   const double q_scale = std::max(1.0, std::hypot(res.q[0], res.q[1]));
   const double raw_ulp_cap = std::max(params.residual_tol, kRawInteriorJCap);
   auto ulp_outcome = [&](double abs_j) {
-    if (abs_j > raw_ulp_cap && !allow_ulp_cliff) {
+    if (allow_ulp_cliff) {
+      return ProjectOutcome::kConverged;
+    }
+    if (32.0 * std::numeric_limits<double>::epsilon() * res.eval.grad_norm >= raw_ulp_cap) {
+      return ProjectOutcome::kCliffUlpLimit;
+    }
+    if (abs_j > raw_ulp_cap) {
       PolishFinestCoordULP(table, slots, slot_count, refractive_index, sun_dir, manifold, ax0, ax1, raw_ulp_cap, params,
                            res.q, &res.eval);
-      abs_j = std::fabs(res.eval.j_val);
     }
-    return (abs_j <= raw_ulp_cap || allow_ulp_cliff) ? ProjectOutcome::kConverged : ProjectOutcome::kCliffUlpLimit;
+    return IsRawJRepresentable(table, slots, slot_count, refractive_index, sun_dir, manifold, ax0, ax1, res.q, res.eval,
+                               raw_ulp_cap) ?
+               ProjectOutcome::kConverged :
+               ProjectOutcome::kCliffUlpLimit;
   };
 
   for (int iter = 0; iter <= params.max_newton_iters; iter++) {
@@ -1958,7 +1991,10 @@ ProjectResult ProjectOntoCaustic(const FaceNormalTable& table, const int* slots,
     const bool converged_ulp = (param_dist <= 5e-15 * q_scale);
 
     if (abs_j <= params.residual_tol) {
-      res.outcome = ProjectOutcome::kConverged;
+      res.outcome = (allow_ulp_cliff || IsRawJRepresentable(table, slots, slot_count, refractive_index, sun_dir,
+                                                            manifold, ax0, ax1, res.q, res.eval, raw_ulp_cap)) ?
+                        ProjectOutcome::kConverged :
+                        ProjectOutcome::kCliffUlpLimit;
       res.iterations = iter;
       return res;
     }
@@ -2412,8 +2448,10 @@ HalfBranch2D TraceHalfBranch2D(const FaceNormalTable& table, const int* slots, i
     // 1. Cusp detection: sign change of tangential sky speed s_sky = e_sky . (dx * tau) along
     //    well-conditioned non-stationary segments, gated against residual-induced tangent jitter
     //    near singularities. Final scale-free geometric verification runs in StitchCausticCurve.
-    const double pose_err_next =
-        std::max(std::fabs(e_next.j_val), params.residual_tol) / std::max(e_next.grad_norm, params.grad_tol);
+    const double j_floor_next =
+        16.0 * std::numeric_limits<double>::epsilon() * std::max(e_next.sigma1 * e_next.sigma1, 1.0);
+    const double pose_err_next = std::max({ std::fabs(e_next.j_val), params.residual_tol, j_floor_next }) /
+                                 std::max(e_next.grad_norm, params.grad_tol);
     const double cusp_speed_floor =
         std::max(params.speed_tol * e_next.sigma1, 1e4 * pose_err_next * std::max(e_next.sigma1, 1.0));
     const bool next_moving =
@@ -2548,7 +2586,8 @@ HalfBranch2D TraceHalfBranch2D(const FaceNormalTable& table, const int* slots, i
           tau_cuts[c][1] = -tau_cuts[c][1];
         }
       }
-      if (std::fabs(e_cuts[c].j_val) > raw_ulp_cap) {
+      if (!IsRawJRepresentable(table, slots, slot_count, refractive_index, sun_dir, manifold, ax0, ax1, q_cuts[c],
+                               e_cuts[c], raw_ulp_cap)) {
         // Walk back toward q_curr to locate the furthest raw-accurate split node on the open_a side.
         if (cut_cnt == 1) {
           double ql[2] = { q_curr[0], q_curr[1] };
@@ -2565,7 +2604,8 @@ HalfBranch2D TraceHalfBranch2D(const FaceNormalTable& table, const int* slots, i
             }
             PolishFinestCoordULP(table, slots, slot_count, refractive_index, sun_dir, manifold, ax0, ax1, raw_ulp_cap,
                                  params, pm.q, &pm.eval, /*max_coarse_ulps=*/128);
-            const bool raw_ok = std::fabs(pm.eval.j_val) <= raw_ulp_cap;
+            const bool raw_ok = IsRawJRepresentable(table, slots, slot_count, refractive_index, sun_dir, manifold, ax0,
+                                                    ax1, pm.q, pm.eval, raw_ulp_cap);
             const bool side_ok =
                 EvaluateCorridorOpen(corridor, pm.eval.pose, sun_dir, refractive_index) == e_curr.corridor_open;
             if (raw_ok && side_ok) {
@@ -2916,7 +2956,9 @@ HalfBranch2D TraceHalfBranch2D(const FaceNormalTable& table, const int* slots, i
           // If extreme cliff conditioning prevents polishing q_cut directly within raw_ulp_cap,
           // bisect along [q_pushed, q_cut] for the furthest raw-accurate pose on the open_a side
           // so the segment is still cleanly split without violating |J| <= raw_ulp_cap.
-          if (std::fabs(e_cut.j_val) > raw_ulp_cap && s_cut - s_pushed > 1e-13) {
+          if (!IsRawJRepresentable(table, slots, slot_count, refractive_index, sun_dir, manifold, ax0, ax1, q_cut,
+                                   e_cut, raw_ulp_cap) &&
+              s_cut - s_pushed > 1e-13) {
             double ql[2] = { q_pushed[0], q_pushed[1] };
             double qh[2] = { q_cut[0], q_cut[1] };
             const double span_p = std::hypot(q_cut[0] - q_pushed[0], q_cut[1] - q_pushed[1]);
@@ -2937,7 +2979,8 @@ HalfBranch2D TraceHalfBranch2D(const FaceNormalTable& table, const int* slots, i
               }
               PolishFinestCoordULP(table, slots, slot_count, refractive_index, sun_dir, manifold, ax0, ax1, raw_ulp_cap,
                                    params, pm.q, &pm.eval, /*max_coarse_ulps=*/128);
-              const bool raw_ok = std::fabs(pm.eval.j_val) <= raw_ulp_cap;
+              const bool raw_ok = IsRawJRepresentable(table, slots, slot_count, refractive_index, sun_dir, manifold,
+                                                      ax0, ax1, pm.q, pm.eval, raw_ulp_cap);
               const bool side_ok = EvaluateCorridorOpen(corridor, pm.eval.pose, sun_dir, refractive_index) == open_a;
               if (raw_ok && side_ok) {
                 ql[0] = pm.q[0];
@@ -2968,7 +3011,8 @@ HalfBranch2D TraceHalfBranch2D(const FaceNormalTable& table, const int* slots, i
           }
 
           const double ds_cut = s_cut - s_pushed;
-          if (ds_cut > 1e-13 && std::fabs(e_cut.j_val) <= raw_ulp_cap) {
+          if (ds_cut > 1e-13 && IsRawJRepresentable(table, slots, slot_count, refractive_index, sun_dir, manifold, ax0,
+                                                    ax1, q_cut, e_cut, raw_ulp_cap)) {
             arclen += ds_cut;
             push_node(e_cut, tau_cut, arclen, corr_pushed);
             q_pushed[0] = q_cut[0];
@@ -3046,7 +3090,7 @@ HalfBranch2D TraceHalfBranch2D(const FaceNormalTable& table, const int* slots, i
           out.events.push_back(ev);
         };
 
-        for (int cstep = 0; cstep < 512 && s_cliff < 0.05; cstep++) {
+        for (int cstep = 0; cstep < 512 && s_cliff < 0.25; cstep++) {
           if (CheckStop(stop)) {
             out.stop_requested = true;
             out.budget_truncated = true;
@@ -3098,7 +3142,9 @@ HalfBranch2D TraceHalfBranch2D(const FaceNormalTable& table, const int* slots, i
             corr_c = corr_next;
             // If the branch emerges back into a well-conditioned regime with raw |J| <= kRawInteriorJCap,
             // resume normal continuation from this valid point.
-            if (std::fabs(e_c.j_val) <= raw_ulp_cap && e_c.margin.min_effective_margin > 3e-5) {
+            if (IsRawJRepresentable(table, slots, slot_count, refractive_index, sun_dir, manifold, ax0, ax1, q_c, e_c,
+                                    raw_ulp_cap, /*noise_safety=*/64.0) &&
+                e_c.margin.min_effective_margin > 3e-5) {
               pr.q[0] = q_c[0];
               pr.q[1] = q_c[1];
               pr.eval = e_c;
@@ -3384,7 +3430,8 @@ PoseCurve StitchCausticCurve(const HalfBranch2D& forward, const HalfBranch2D& ba
     const PoseCurveNode& nd = curve.nodes[idx];
     const double gn = idx < node_grad_norm.size() ? node_grad_norm[idx] : 1.0;
     const double aj = idx < node_abs_j.size() ? node_abs_j[idx] : residual_tol;
-    const double pose_err = std::max(aj, residual_tol) / std::max(gn, grad_tol);
+    const double j_floor = 16.0 * std::numeric_limits<double>::epsilon() * std::max(nd.sigma1 * nd.sigma1, 1.0);
+    const double pose_err = std::max({ aj, residual_tol, j_floor }) / std::max(gn, grad_tol);
     return std::max(1e-14, 10.0 * pose_err * std::max(nd.sigma1, 1.0));
   };
 

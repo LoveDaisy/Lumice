@@ -32,8 +32,8 @@ namespace lumice::analytic {
 // azimuth in [0, 2*pi), zenith in [0, pi], roll in [0, 2*pi). At the poles (zenith near 0 or pi),
 // roll is set to 0 and azimuth absorbs the combined z-spin.
 inline void PoseToEulerRad(const double pose[9], double param[3]) {
-  constexpr double kTwoPi = 2.0 * math::kPiD;
   auto wrap_two_pi = [](double v) {
+    constexpr double kTwoPi = 2.0 * math::kPiD;
     double r = std::fmod(v, kTwoPi);
     if (r < 0.0) {
       r += kTwoPi;
