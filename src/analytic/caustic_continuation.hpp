@@ -51,6 +51,11 @@ struct CausticContinuationParams {
   int bisection_iters = 52;             // exact event bisection iterations
 };
 
+// Validates that every field of Family1DParams / CausticContinuationParams is finite, positive
+// where required, and properly ordered (e.g. 0 < min_step <= initial_step <= max_step).
+bool ValidateParams(const Family1DParams& params);
+bool ValidateParams(const CausticContinuationParams& params);
+
 // Aggregate output of TraceFamily1D and TraceCausticLocus.
 struct CausticTraceResult {
   std::vector<PoseCurve> curves;

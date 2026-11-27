@@ -15,6 +15,7 @@
 #include <cmath>
 #include <vector>
 
+#include "analytic/family_rank.hpp"
 #include "analytic/fiber_continuation.hpp"
 #include "analytic/jet.hpp"
 #include "analytic/path_evaluation.hpp"
@@ -23,36 +24,10 @@
 
 namespace lumice::analytic {
 
-// Production Euler chart: R(az, zenith, roll) = Rz(az - pi) Ry(-zenith) Rz(roll), body -> world,
-// row-major. Works for double, Jet<N>, and Jet2<N> via unqualified Sin/Cos overloads.
-template <class S>
-void EulerPoseRad(const S& azimuth, const S& zenith, const S& roll, S pose[9]) {
-  const S ca = -Cos(azimuth);  // cos(azimuth - pi)
-  const S sa = -Sin(azimuth);  // sin(azimuth - pi)
-  const S ct = Cos(zenith);
-  const S st = Sin(zenith);
-  const S cr = Cos(roll);
-  const S sr = Sin(roll);
-  const S m00 = ca * ct;
-  const S m01 = -sa;
-  const S m02 = -ca * st;
-  const S m10 = sa * ct;
-  const S m11 = ca;
-  const S m12 = -sa * st;
-  pose[0] = m00 * cr + m01 * sr;
-  pose[1] = -m00 * sr + m01 * cr;
-  pose[2] = m02;
-  pose[3] = m10 * cr + m11 * sr;
-  pose[4] = -m10 * sr + m11 * cr;
-  pose[5] = m12;
-  pose[6] = st * cr;
-  pose[7] = -st * sr;
-  pose[8] = ct;
-}
-
-inline void EulerPoseDegRadOut(double az_deg, double zenith_deg, double roll_deg, double pose[9]) {
-  EulerPoseRad(az_deg * math::kDegreeToRadD, zenith_deg * math::kDegreeToRadD, roll_deg * math::kDegreeToRadD, pose);
-}
+// Production Euler chart R(az, zenith, roll) = Rz(az - pi) Ry(-zenith) Rz(roll) and sky read
+// ImageAltAzDeg are owned by family_rank.hpp (the single authority: EulerPose / EulerPoseDeg /
+// ImageAltAzDeg). This header provides only the genuinely new inverses and thin sky-direction
+// wrappers over those authorities.
 
 // Inverse decomposition of a body -> world rotation onto (azimuth, zenith, roll) in radians:
 // azimuth in [0, 2*pi), zenith in [0, pi], roll in [0, 2*pi). At the poles (zenith near 0 or pi),
@@ -83,11 +58,11 @@ inline void PoseToEulerRad(const double pose[9], double param[3]) {
   }
 }
 
-// Converts a unit sky direction (sky = -outgoing) to altitude and azimuth in degrees.
+// Converts a unit sky direction (sky = -outgoing) to altitude and azimuth in degrees, forwarding
+// to family_rank.hpp's ImageAltAzDeg authority.
 inline void SkyToAltAzDeg(const double sky[3], double* alt_deg, double* az_deg) {
-  const double z = std::max(-1.0, std::min(1.0, sky[2]));
-  *alt_deg = std::asin(z) / math::kDegreeToRadD;
-  *az_deg = std::atan2(sky[1], sky[0]) / math::kDegreeToRadD;
+  const double outgoing[3] = { -sky[0], -sky[1], -sky[2] };
+  ImageAltAzDeg(outgoing, alt_deg, az_deg);
 }
 
 // Converts (altitude_deg, azimuth_deg) to a unit sky direction.
@@ -234,6 +209,22 @@ struct PoseManifold {
     m.axes[kAxisAzimuth] = PoseAxis::FreeRad(0.0, 2.0 * math::kPiD, true);
     m.axes[kAxisZenith] = PoseAxis::PinnedDeg(zenith_deg);
     m.axes[kAxisRoll] = PoseAxis::FreeRad(0.0, 2.0 * math::kPiD, true);
+    return m;
+  }
+
+  // Maps a RestrictedFamilySpec (family_rank.hpp) onto a full-range PoseManifold: kFixed ->
+  // PinnedDeg(center_deg), kFree -> full periodic [0, 2*pi) for azimuth/roll or [0, pi] for zenith.
+  static PoseManifold FromRestrictedFamilySpec(const RestrictedFamilySpec& spec) {
+    PoseManifold m;
+    m.axes[kAxisAzimuth] = (spec.azimuth.mode == FamilyDimensionMode::kFixed) ?
+                               PoseAxis::PinnedDeg(spec.azimuth.center_deg) :
+                               PoseAxis::FreeRad(0.0, 2.0 * math::kPiD, true);
+    m.axes[kAxisZenith] = (spec.zenith.mode == FamilyDimensionMode::kFixed) ?
+                              PoseAxis::PinnedDeg(spec.zenith.center_deg) :
+                              PoseAxis::FreeRad(0.0, math::kPiD, false);
+    m.axes[kAxisRoll] = (spec.roll.mode == FamilyDimensionMode::kFixed) ?
+                            PoseAxis::PinnedDeg(spec.roll.center_deg) :
+                            PoseAxis::FreeRad(0.0, 2.0 * math::kPiD, true);
     return m;
   }
 };
