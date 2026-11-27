@@ -304,6 +304,11 @@ CausticTraceResult TraceContinuousRank1AxisAligned(const Context2D& ctx, int var
         ok = find_local_fiber(t_curr, f_curr, t_next, &f_next, &e_next, &fail_idx);
         shrunk = true;
       }
+      // Guard against float64 ULP stagnation when |t_curr| is large enough that t_curr + sgn*step == t_curr.
+      if (sgn * (t_next - t_curr) <= 1e-13) {
+        half.budget_truncated = true;
+        return half;
+      }
 
       auto commit_chord_step = [&](double t_tgt, double f_tgt, const Eval1D& e_tgt) {
         const double dt_s = t_tgt - t_curr;
@@ -673,7 +678,10 @@ CausticTraceResult TraceCausticLocus(const FaceNormalTable& table, const int* sl
       if (recompute_2d_svd) {
         for (PoseCurveNode& nd : c.nodes) {
           const double q_nd[2] = { nd.param[ax0], nd.param[ax1] };
-          const Eval2DJet1 e2 = Evaluate2DJet1(ctx, q_nd);
+          // Evaluate 2D Jacobian SVD without re-applying the continuation margin threshold: 1D
+          // bisected optical endpoints sit within ~1 ULP of kSnellEventTolerance, where FMA
+          // contraction differences between Jet<1> and Jet<2> can flip the margin verdict by ~1e-16.
+          const Eval2DJet1 e2 = Evaluate2DJet1(ctx, q_nd, /*require_margin=*/false);
           if (e2.valid) {
             nd.sigma1 = e2.sigma1;
             nd.sigma2 = e2.sigma2;
@@ -782,14 +790,22 @@ CausticTraceResult TraceCausticLocus(const FaceNormalTable& table, const int* sl
 
   auto try_add_seed = [&](const double q_guess[2], double drift_cap) {
     const ProjectResult pr = ProjectOntoCaustic(ctx, q_guess, drift_cap);
-    if (pr.outcome == ProjectOutcome::kConverged && pr.eval.grad_reg_norm >= params.grad_tol) {
-      Seed2D s;
-      s.q[0] = WrapAxis(pr.q[0], pax0);
-      s.q[1] = WrapAxis(pr.q[1], pax1);
-      s.eval = pr.eval;
-      s.priority = std::min(pr.eval.margin.min_effective_margin, 0.1) * std::min(pr.eval.grad_norm, 10.0);
-      seeds.push_back(s);
-    } else if (pr.outcome == ProjectOutcome::kSingularity || pr.outcome == ProjectOutcome::kDiverged) {
+    if (pr.outcome == ProjectOutcome::kConverged) {
+      if (pr.eval.grad_reg_norm >= params.grad_tol) {
+        Seed2D s;
+        s.q[0] = WrapAxis(pr.q[0], pax0);
+        s.q[1] = WrapAxis(pr.q[1], pax1);
+        s.eval = pr.eval;
+        s.priority = std::min(pr.eval.margin.min_effective_margin, 0.1) * std::min(pr.eval.grad_norm, 10.0);
+        seeds.push_back(s);
+      } else {
+        result.coverage.unresolved_singularities++;
+        failed_seeds++;
+      }
+    } else if (pr.outcome == ProjectOutcome::kSingularity) {
+      result.coverage.unresolved_singularities++;
+      failed_seeds++;
+    } else if (pr.outcome == ProjectOutcome::kDiverged) {
       failed_seeds++;
     }
   };
@@ -798,16 +814,15 @@ CausticTraceResult TraceCausticLocus(const FaceNormalTable& table, const int* sl
     double qa[2] = { qa_in[0], qa_in[1] };
     double qb[2] = { qb_in[0], qb_in[1] };
     double fa = ja;
+    const double bracket_tol = std::min(1e-12, 0.1 * params.residual_tol);
     for (int it = 0; it < params.bisection_iters; it++) {
+      if (std::hypot(qb[0] - qa[0], qb[1] - qa[1]) <= bracket_tol) {
+        break;
+      }
       const double qm[2] = { 0.5 * (qa[0] + qb[0]), 0.5 * (qa[1] + qb[1]) };
       const Eval2DJet1 em = Evaluate2DJet1(ctx, qm);
       if (!em.valid) {
         return;
-      }
-      if (std::fabs(em.j_val) <= params.residual_tol) {
-        qa[0] = qb[0] = qm[0];
-        qa[1] = qb[1] = qm[1];
-        break;
       }
       if ((fa <= 0.0) == (em.j_val <= 0.0)) {
         qa[0] = qm[0];
@@ -1022,7 +1037,7 @@ CausticTraceResult TraceCausticLocus(const FaceNormalTable& table, const int* sl
       backward = TraceHalfBranch2D(ctx, seed.q, seed.eval, -1, false, corridor, stop);
     }
 
-    PoseCurve curve = StitchCausticCurve(forward, backward, n, params.speed_tol);
+    PoseCurve curve = StitchCausticCurve(ctx, forward, backward, n);
     result.stop_requested = result.stop_requested || forward.stop_requested || backward.stop_requested;
     result.coverage.closed = result.coverage.closed || curve.coverage.closed;
     result.coverage.budget_truncated = result.coverage.budget_truncated || curve.coverage.budget_truncated;

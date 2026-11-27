@@ -16,7 +16,7 @@ namespace {
 template <typename JetT>
 bool TraceChain2D(const Context2D& ctx, const double q_in[2], double param_out[3], double pose_out[9],
                   double* gen_cross_out, OpticalMarginVerdict* margin_out, JetT outgoing[3],
-                  ChainInterfaceDiagnostics<JetT>* diag_out) {
+                  ChainInterfaceDiagnostics<JetT>* diag_out, bool require_margin = true) {
   for (int k = 0; k < 3; k++) {
     param_out[k] = ctx.manifold.axes[k].value;
   }
@@ -48,7 +48,42 @@ bool TraceChain2D(const Context2D& ctx, const double q_in[2], double param_out[3
       ctx.table, ctx.slots, ctx.slot_count, JetT(ctx.refractive_index), incident, pose_j, outgoing, nullptr, &domain,
       diag_out);
   *margin_out = ClassifyChainMargins(chain_ok, domain, ctx.slot_count);
-  return margin_out->valid;
+  return require_margin ? margin_out->valid : chain_ok;
+}
+
+// Single-authority O(1) normal parameter-space convergence predicate shared by ProjectOntoCaustic
+// and SolveOnDomainBoundary2D. Takes at least one Newton polish step when iter == 0 and param_dist
+// exceeds the float64 ULP floor so small-step linear predictors never accumulate unprojected drift.
+struct ConvergenceState {
+  bool tol_ok = false;
+  bool ulp_ok = false;
+  bool converged_now = false;
+};
+
+ConvergenceState CheckO1Convergence(double abs_j_reg, double grad_reg_norm, double q_scale, double residual_tol,
+                                    int iter, int max_newton_iters) {
+  const double param_dist =
+      (grad_reg_norm > 0.0) ? (abs_j_reg / grad_reg_norm) : std::numeric_limits<double>::infinity();
+  const bool tol_ok = (param_dist <= residual_tol);
+  const bool ulp_ok = (param_dist <= 5e-15 * q_scale);
+  const bool converged_now = (tol_ok && (iter > 0 || ulp_ok)) || (iter == max_newton_iters && (tol_ok || ulp_ok));
+  return { tol_ok, ulp_ok, converged_now };
+}
+
+bool IsStepAtFloat64Ulp(double step_norm, double q_scale, const ConvergenceState& cv) {
+  return step_norm <= 2.5e-16 * q_scale && (cv.tol_ok || cv.ulp_ok);
+}
+
+// O(1)-conditioned normal parameter-space uncertainty at a converged J_reg = 0 node.
+// Since J_reg = w * J, the float64 rounding floor of J_reg scales by w_val:
+//   - Away from cliffs: w_val cancels grad_reg_norm = w_val * grad_norm, avoiding 1/w inflation.
+//   - At grazing cliffs (d -> 0): w_val * sigma1^2 = O(d) * O(1/d) = O(1), keeping the floor O(eps).
+// The outer 16 * eps radian floor keeps constant-image mirrors cusp-free even at residual_tol = 1e-16,
+// while using actual |J_reg| (rather than inflating to residual_tol) preserves micro-scale cusps.
+double ComputeRegularizedPoseErr(const Eval2DJet2& e, double grad_tol) {
+  const double eps = std::numeric_limits<double>::epsilon();
+  const double j_reg_floor = 16.0 * eps * e.w_val * std::max(e.sigma1 * e.sigma1, 1.0);
+  return std::max(16.0 * eps, std::max(std::fabs(e.j_reg), j_reg_floor) / std::max(e.grad_reg_norm, grad_tol));
 }
 
 void TangentFromGrad(const double grad_j_reg[2], double grad_reg_norm, int dir_sign, double tau[2]) {
@@ -87,7 +122,6 @@ bool SolveOnDomainBoundary2D(const Context2D& ctx, int pinned_slot, double bound
   q[1 - pinned_slot] = other_start;
   const PoseAxis& other_ax = (pinned_slot == 0) ? ctx.manifold.axes[ctx.ax1] : ctx.manifold.axes[ctx.ax0];
   const double q_scale = std::max(1.0, std::hypot(bound_val, other_start));
-  const double ulp_dist_floor = 5e-15 * q_scale;
 
   for (int iter = 0; iter <= ctx.params.max_newton_iters; iter++) {
     if (!InAxisBounds(q[1 - pinned_slot], other_ax)) {
@@ -97,10 +131,8 @@ bool SolveOnDomainBoundary2D(const Context2D& ctx, int pinned_slot, double bound
     if (!e.valid) {
       return false;
     }
-    const double param_dist =
-        (e.grad_reg_norm > 0.0) ? (std::fabs(e.j_reg) / e.grad_reg_norm) : std::numeric_limits<double>::infinity();
-    const bool tol_ok = (param_dist <= ctx.params.residual_tol);
-    const bool ulp_ok = (param_dist <= ulp_dist_floor);
+    const ConvergenceState cv = CheckO1Convergence(std::fabs(e.j_reg), e.grad_reg_norm, q_scale,
+                                                   ctx.params.residual_tol, iter, ctx.params.max_newton_iters);
     auto finish = [&](bool ok) {
       if (ok) {
         q_out[0] = q[0];
@@ -109,7 +141,7 @@ bool SolveOnDomainBoundary2D(const Context2D& ctx, int pinned_slot, double bound
       }
       return ok;
     };
-    if ((tol_ok && (iter > 0 || ulp_ok)) || (iter == ctx.params.max_newton_iters && (tol_ok || ulp_ok))) {
+    if (cv.converged_now) {
       return finish(true);
     }
     if (iter == ctx.params.max_newton_iters) {
@@ -117,18 +149,18 @@ bool SolveOnDomainBoundary2D(const Context2D& ctx, int pinned_slot, double bound
     }
     const double deriv = e.grad_j_reg[1 - pinned_slot];
     if (std::fabs(deriv) < ctx.params.grad_tol) {
-      return finish(tol_ok);
+      return finish(cv.tol_ok);
     }
     const double step = -e.j_reg / deriv;
     if (!std::isfinite(step) || std::fabs(step) > max_drift) {
-      return finish(tol_ok);
+      return finish(cv.tol_ok);
     }
-    if (std::fabs(step) <= 2.5e-16 * q_scale && (tol_ok || ulp_ok)) {
+    if (IsStepAtFloat64Ulp(std::fabs(step), q_scale, cv)) {
       return finish(true);
     }
     const double q_next = q[1 - pinned_slot] + step;
     if (std::fabs(q_next - other_start) > max_drift || !InAxisBounds(q_next, other_ax)) {
-      return finish(tol_ok);
+      return finish(cv.tol_ok);
     }
     q[1 - pinned_slot] = q_next;
   }
@@ -215,10 +247,11 @@ bool BisectOnLocusEvent(const Context2D& ctx, const double q_a[2], const double 
 
 }  // namespace
 
-Eval2DJet1 Evaluate2DJet1(const Context2D& ctx, const double q_in[2]) {
+Eval2DJet1 Evaluate2DJet1(const Context2D& ctx, const double q_in[2], bool require_margin) {
   Eval2DJet1 out;
   Jet<2> outgoing[3];
-  if (!TraceChain2D<Jet<2>>(ctx, q_in, out.param, out.pose, &out.generator_cross, &out.margin, outgoing, nullptr)) {
+  if (!TraceChain2D<Jet<2>>(ctx, q_in, out.param, out.pose, &out.generator_cross, &out.margin, outgoing, nullptr,
+                            require_margin)) {
     return out;
   }
   for (int i = 0; i < 3; i++) {
@@ -345,16 +378,13 @@ ProjectResult ProjectOntoCaustic(const Context2D& ctx, const double q_start[2], 
   }
 
   const double q_scale = std::max(1.0, std::hypot(res.q[0], res.q[1]));
-  const double ulp_dist_floor = 5e-15 * q_scale;
 
   for (int iter = 0; iter <= ctx.params.max_newton_iters; iter++) {
     const double abs_j_reg = std::fabs(res.eval.j_reg);
-    const double param_dist =
-        (res.eval.grad_reg_norm > 0.0) ? (abs_j_reg / res.eval.grad_reg_norm) : std::numeric_limits<double>::infinity();
-    const bool tol_ok = (param_dist <= ctx.params.residual_tol);
-    const bool converged_ulp = (param_dist <= ulp_dist_floor);
+    const ConvergenceState cv = CheckO1Convergence(abs_j_reg, res.eval.grad_reg_norm, q_scale, ctx.params.residual_tol,
+                                                   iter, ctx.params.max_newton_iters);
 
-    if ((tol_ok && (iter > 0 || converged_ulp)) || (iter == ctx.params.max_newton_iters && (tol_ok || converged_ulp))) {
+    if (cv.converged_now) {
       res.outcome = ProjectOutcome::kConverged;
       res.iterations = iter;
       return res;
@@ -363,7 +393,7 @@ ProjectResult ProjectOntoCaustic(const Context2D& ctx, const double q_start[2], 
       break;
     }
     if (res.eval.grad_reg_norm < ctx.params.grad_tol) {
-      res.outcome = tol_ok ? ProjectOutcome::kConverged : ProjectOutcome::kSingularity;
+      res.outcome = cv.tol_ok ? ProjectOutcome::kConverged : ProjectOutcome::kSingularity;
       res.iterations = iter;
       return res;
     }
@@ -372,11 +402,11 @@ ProjectResult ProjectOntoCaustic(const Context2D& ctx, const double q_start[2], 
     const double dq1 = scale * res.eval.grad_j_reg[1];
     const double step_norm = std::hypot(dq0, dq1);
     if (!std::isfinite(step_norm) || step_norm > std::max(4.0 * max_total_drift, 0.25)) {
-      res.outcome = tol_ok ? ProjectOutcome::kConverged : ProjectOutcome::kDiverged;
+      res.outcome = cv.tol_ok ? ProjectOutcome::kConverged : ProjectOutcome::kDiverged;
       res.iterations = iter;
       return res;
     }
-    if (step_norm <= 2.5e-16 * q_scale && (tol_ok || converged_ulp)) {
+    if (IsStepAtFloat64Ulp(step_norm, q_scale, cv)) {
       res.outcome = ProjectOutcome::kConverged;
       res.iterations = iter;
       return res;
@@ -422,8 +452,8 @@ ProjectResult ProjectOntoCaustic(const Context2D& ctx, const double q_start[2], 
     }
 
     if (!step_accepted) {
-      res.outcome = (tol_ok || (last_fail == ProjectOutcome::kDiverged && converged_ulp)) ? ProjectOutcome::kConverged :
-                                                                                            last_fail;
+      res.outcome =
+          (cv.tol_ok || (last_fail == ProjectOutcome::kDiverged && cv.ulp_ok)) ? ProjectOutcome::kConverged : last_fail;
       res.crossed_axis = last_axis;
       res.failing_margin = last_margin;
       res.iterations = iter;
@@ -534,12 +564,6 @@ HalfBranch2D TraceHalfBranch2D(const Context2D& ctx, const double q_seed[2], con
   double last_moving_s_sky = s_sky_curr;
   double last_moving_arclen = 0.0;
 
-  auto compute_pose_err = [&](const Eval2DJet2& e) {
-    const double eps = std::numeric_limits<double>::epsilon();
-    const double j_reg_floor = 16.0 * eps * e.w_val * std::max(e.sigma1 * e.sigma1, 1.0);
-    return std::max(16.0 * eps, std::max(std::fabs(e.j_reg), j_reg_floor) / std::max(e.grad_reg_norm, params.grad_tol));
-  };
-
   auto push_node = [&](const Eval2DJet2& e, const double tau[2], double s_val, bool incoming_edge_open) {
     if (!out.nodes.empty()) {
       out.edge_corridor_open.push_back(incoming_edge_open);
@@ -548,7 +572,7 @@ HalfBranch2D TraceHalfBranch2D(const Context2D& ctx, const double q_seed[2], con
     out.nodes.push_back(node);
     const double zero_floor = NumericalZeroSigmaFloor(e.margin.min_effective_margin);
     out.node_stationary.push_back((node.sigma1 <= zero_floor) || (node.sky_speed <= params.speed_tol * node.sigma1));
-    out.node_pose_err.push_back(compute_pose_err(e));
+    out.node_pose_err.push_back(ComputeRegularizedPoseErr(e, params.grad_tol));
   };
 
   push_node(e_curr, tau_curr, 0.0, e_curr.corridor_open);
@@ -587,7 +611,8 @@ HalfBranch2D TraceHalfBranch2D(const Context2D& ctx, const double q_seed[2], con
 
     // 1. Cusp detection gated against O(1) regularized locus uncertainty.
     const double cusp_speed_floor =
-        std::max(params.speed_tol * e_next.sigma1, 1e4 * compute_pose_err(e_next) * std::max(e_next.sigma1, 1.0));
+        std::max(params.speed_tol * e_next.sigma1,
+                 1e4 * ComputeRegularizedPoseErr(e_next, params.grad_tol) * std::max(e_next.sigma1, 1.0));
     const bool next_moving =
         have_e_sky_next && std::fabs(s_sky_next) > cusp_speed_floor && e_next.grad_reg_norm >= 100.0 * params.grad_tol;
     if (next_moving) {
@@ -1014,8 +1039,9 @@ PoseCurve StitchHalfBranches(const HalfBranch2D& forward, const HalfBranch2D& ba
   return curve;
 }
 
-PoseCurve StitchCausticCurve(const HalfBranch2D& forward, const HalfBranch2D& backward, int seed_grid_n,
-                             double speed_tol) {
+PoseCurve StitchCausticCurve(const Context2D& ctx, const HalfBranch2D& forward, const HalfBranch2D& backward,
+                             int seed_grid_n) {
+  const double speed_tol = ctx.params.speed_tol;
   PoseCurve curve = StitchHalfBranches(forward, backward, PoseCurveKind::kCaustic2D, seed_grid_n, speed_tol,
                                        forward.unresolved_singularities + backward.unresolved_singularities);
 
@@ -1047,6 +1073,47 @@ PoseCurve StitchCausticCurve(const HalfBranch2D& forward, const HalfBranch2D& ba
       }
     }
     const double cond_speed_bar = std::max(5.0 * speed_tol, 5e-9);
+    const bool loose_tol = (ctx.params.residual_tol > 1e-12);
+
+    // When a caller passes a loose residual_tol, off-locus error can perturb both sky position and
+    // tangent speed on an exact constant-image mirror branch. Locally tighten both edge endpoints
+    // onto J_reg = 0 before classifying so physical segmentation stays invariant to residual_tol.
+    CausticContinuationParams tight_params = ctx.params;
+    tight_params.residual_tol = std::min(ctx.params.residual_tol, 1e-13);
+    const Context2D tight_ctx{ ctx.table,    ctx.slots, ctx.slot_count, ctx.refractive_index, ctx.sun_dir,
+                               ctx.manifold, ctx.ax0,   ctx.ax1,        tight_params };
+    auto is_tight_point_image_edge = [&](size_t e, bool require_low_speed) {
+      const double q0[2] = { curve.nodes[e].param[ctx.ax0], curve.nodes[e].param[ctx.ax1] };
+      const double q1[2] = { curve.nodes[e + 1].param[ctx.ax0], curve.nodes[e + 1].param[ctx.ax1] };
+      const double drift = std::max(10.0 * ctx.params.residual_tol, 1e-4);
+      const ProjectResult p0 = ProjectOntoCaustic(tight_ctx, q0, drift);
+      const ProjectResult p1 = ProjectOntoCaustic(tight_ctx, q1, drift);
+      if (p0.outcome != ProjectOutcome::kConverged || p1.outcome != ProjectOutcome::kConverged ||
+          p0.eval.grad_reg_norm < ctx.params.grad_tol || p1.eval.grad_reg_norm < ctx.params.grad_tol) {
+        return false;
+      }
+      const double u0 = std::max(
+          1e-14, 10.0 * ComputeRegularizedPoseErr(p0.eval, ctx.params.grad_tol) * std::max(p0.eval.sigma1, 1.0));
+      const double u1 = std::max(
+          1e-14, 10.0 * ComputeRegularizedPoseErr(p1.eval, ctx.params.grad_tol) * std::max(p1.eval.sigma1, 1.0));
+      if (so3::AngleBetween(p0.eval.sky, p1.eval.sky) > std::max(u0, u1)) {
+        return false;
+      }
+      if (!require_low_speed) {
+        return true;
+      }
+      double tau0[2];
+      double tau1[2];
+      TangentFromGrad(p0.eval.grad_j_reg, p0.eval.grad_reg_norm, +1, tau0);
+      TangentFromGrad(p1.eval.grad_j_reg, p1.eval.grad_reg_norm, +1, tau1);
+      double v0[3];
+      double v1[3];
+      SkyVelocity2D(p0.eval, tau0, v0);
+      SkyVelocity2D(p1.eval, tau1, v1);
+      const double max_s1 = std::max(p0.eval.sigma1, p1.eval.sigma1);
+      return std::max(so3::Norm3(v0), so3::Norm3(v1)) <= cond_speed_bar * std::max(max_s1, 1.0);
+    };
+
     bool changed = false;
     for (size_t e = 0; e < edge_cnt; e++) {
       if (edge_kind[e] == CurveSegmentKind::kPointImage) {
@@ -1057,6 +1124,10 @@ PoseCurve StitchCausticCurve(const HalfBranch2D& forward, const HalfBranch2D& ba
       const double max_s1 = std::max(curve.nodes[e].sigma1, curve.nodes[e + 1].sigma1);
       const double max_spd = std::max(curve.nodes[e].sky_speed, curve.nodes[e + 1].sky_speed);
       if (sky_step <= sky_unc && max_spd <= cond_speed_bar * std::max(max_s1, 1.0)) {
+        edge_kind[e] = CurveSegmentKind::kPointImage;
+        changed = true;
+      } else if (loose_tol && sky_step <= std::max(sky_unc, 10.0 * ctx.params.residual_tol * std::max(max_s1, 1.0)) &&
+                 is_tight_point_image_edge(e, /*require_low_speed=*/true)) {
         edge_kind[e] = CurveSegmentKind::kPointImage;
         changed = true;
       }
@@ -1070,8 +1141,15 @@ PoseCurve StitchCausticCurve(const HalfBranch2D& forward, const HalfBranch2D& ba
         }
         const bool adj_point = (e > 0 && edge_kind[e - 1] == CurveSegmentKind::kPointImage) ||
                                (e + 1 < edge_cnt && edge_kind[e + 1] == CurveSegmentKind::kPointImage);
-        if (adj_point && so3::AngleBetween(curve.nodes[e].sky, curve.nodes[e + 1].sky) <=
-                             std::max(sky_uncertainty_at(e), sky_uncertainty_at(e + 1))) {
+        if (!adj_point) {
+          continue;
+        }
+        const double sky_step = so3::AngleBetween(curve.nodes[e].sky, curve.nodes[e + 1].sky);
+        const double sky_unc = std::max(sky_uncertainty_at(e), sky_uncertainty_at(e + 1));
+        const double max_s1 = std::max(curve.nodes[e].sigma1, curve.nodes[e + 1].sigma1);
+        if (sky_step <= sky_unc ||
+            (loose_tol && sky_step <= std::max(sky_unc, 10.0 * ctx.params.residual_tol * std::max(max_s1, 1.0)) &&
+             is_tight_point_image_edge(e, /*require_low_speed=*/false))) {
           edge_kind[e] = CurveSegmentKind::kPointImage;
           changed = true;
           grew = true;

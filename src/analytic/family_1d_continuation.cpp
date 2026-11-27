@@ -117,6 +117,11 @@ void Trace1DSingleFragment(FunctionRef<Eval1D(double, bool)> eval_fn, int slot_c
     if (*stop_requested) {
       break;
     }
+    // Guard against float64 ULP stagnation when |t_curr| is large enough that t_curr + step == t_curr.
+    if (!(t_next > t_curr) || (t_next - t_curr) <= 1e-13) {
+      curve->coverage.budget_truncated = true;
+      break;
+    }
 
     auto commit_valid_step = [&](double t_target, const Eval1D& e_target) -> bool {
       const double seg_step = t_target - t_curr;
@@ -368,7 +373,15 @@ void Trace1DIntervalResumingGaps(FunctionRef<Eval1D(double, bool)> eval_fn, int 
           *stop_requested = true;
           break;
         }
-        t_probe = std::min(t_end, t_probe + p_step);
+        const double next_probe = std::min(t_end, t_probe + p_step);
+        if (!(next_probe > t_probe)) {
+          if (p_step >= max_probe_step) {
+            break;
+          }
+          p_step = std::min(p_step * 2.0, max_probe_step);
+          continue;
+        }
+        t_probe = next_probe;
         if (eval_fn(t_probe, false).valid) {
           found_resume = true;
           break;
@@ -381,8 +394,13 @@ void Trace1DIntervalResumingGaps(FunctionRef<Eval1D(double, bool)> eval_fn, int 
       break;
     }
 
+    double t_resume = cur_start;
     int resume_fail_idx = -1;
-    BisectOpticalBoundary1D(eval_fn, t_probe, t_inv, params.bisection_iters, &cur_start, &resume_fail_idx);
+    BisectOpticalBoundary1D(eval_fn, t_probe, t_inv, params.bisection_iters, &t_resume, &resume_fail_idx);
+    if (!(t_resume > cur_start)) {
+      break;
+    }
+    cur_start = t_resume;
     cur_periodic_full = false;
     cur_left_domain = false;
     cur_left_fail = resume_fail_idx;

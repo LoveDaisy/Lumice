@@ -1454,6 +1454,25 @@ TEST(CausticContinuation, EdgeCaseRegressions) {
         TraceCausticLocus(f_short.normals, slots35, 2, n, sun20, PoseManifold::Column(), &corr);
     bool found_upper_with_cutoffs = false;
     for (const PoseCurve& c : res.curves) {
+      // Verify |J_reg| <= 1e-12 everywhere (including cliff cutoff splits) and raw |J| <= 1e-11
+      // on well-conditioned interior nodes across ALL curves (upper and lower arcs).
+      for (size_t i = 1; i + 1 < c.nodes.size(); i++) {
+        double j_ind = 0.0;
+        double j_reg = 0.0;
+        double min_snell_disc = 0.0;
+        if (!IndependentSignedJacobian2D(f_short.normals, slots35, 2, n, sun20, PoseManifold::Column(),
+                                         c.nodes[i].param, &j_ind, nullptr, nullptr, nullptr, &j_reg,
+                                         &min_snell_disc)) {
+          ADD_FAILURE() << "Independent evaluation invalid at short-prism node " << i;
+          continue;
+        }
+        EXPECT_LE(std::fabs(j_reg), 1e-12)
+            << "Short-prism (h=" << short_h << ") interior node " << i << " |J_reg|=" << j_reg;
+        if (min_snell_disc >= 1e-2) {
+          EXPECT_LE(std::fabs(j_ind), 1e-11)
+              << "Short-prism (h=" << short_h << ") interior node " << i << " |J|=" << j_ind;
+        }
+      }
       double max_alt = -90.0;
       for (const PoseCurveNode& nd : c.nodes) {
         double alt = 0.0;
@@ -1501,25 +1520,6 @@ TEST(CausticContinuation, EdgeCaseRegressions) {
         EXPECT_FALSE(eval_open_at_pose(c.nodes.back().pose));
         const int mid_open_idx = (c.segments[1].start_idx + c.segments[1].end_idx) / 2;
         EXPECT_TRUE(eval_open_at_pose(c.nodes[static_cast<size_t>(mid_open_idx)].pose));
-        // Verify |J_reg| <= 1e-12 everywhere (including cliff cutoff splits) and raw |J| <= 1e-11
-        // on well-conditioned interior nodes.
-        for (size_t i = 1; i + 1 < c.nodes.size(); i++) {
-          double j_ind = 0.0;
-          double j_reg = 0.0;
-          double min_snell_disc = 0.0;
-          if (!IndependentSignedJacobian2D(f_short.normals, slots35, 2, n, sun20, PoseManifold::Column(),
-                                           c.nodes[i].param, &j_ind, nullptr, nullptr, nullptr, &j_reg,
-                                           &min_snell_disc)) {
-            ADD_FAILURE() << "Independent evaluation invalid at short-prism node " << i;
-            continue;
-          }
-          EXPECT_LE(std::fabs(j_reg), 1e-12)
-              << "Short-prism (h=" << short_h << ") interior node " << i << " |J_reg|=" << j_reg;
-          if (min_snell_disc >= 1e-2) {
-            EXPECT_LE(std::fabs(j_ind), 1e-11)
-                << "Short-prism (h=" << short_h << ") interior node " << i << " |J|=" << j_ind;
-          }
-        }
         found_upper_with_cutoffs = (cutoffs >= 2);
       }
     }
@@ -2122,6 +2122,17 @@ TEST(CausticContinuation, EdgeCaseRegressions) {
     ASSERT_EQ(res_floor.curves.size(), 1u);
     EXPECT_EQ(res_floor.curves[0].nodes.size(), 3u);
     EXPECT_TRUE(res_floor.curves[0].coverage.budget_truncated);
+
+    // Non-periodic large-magnitude domain where t_curr + 1e-10 == t_curr in float64 must terminate
+    // cleanly with budget_truncated = true rather than spinning forever.
+    PoseManifold m_large = m;
+    m_large.axes[PoseManifold::kAxisAzimuth] = PoseAxis::FreeRad(2097152.0, 2097152.01, false);
+    const CausticTraceResult res_large = TraceFamily1D(f.normals, slots1, 1, n, sun20, m_large, nullptr, p_floor);
+    EXPECT_FALSE(res_large.stop_requested);
+    ASSERT_EQ(res_large.curves.size(), 1u);
+    EXPECT_TRUE(res_large.curves[0].coverage.budget_truncated);
+    EXPECT_TRUE(res_large.coverage.budget_truncated);
+    EXPECT_FALSE(res_large.curves[0].coverage.closed);
   }
 
   // 9ag. Seed deduplication in a compact 2D domain must not merge distinct parallel caustic
@@ -2198,6 +2209,64 @@ TEST(CausticContinuation, EdgeCaseRegressions) {
       }
     }
     EXPECT_TRUE(found_mirror_point_image);
+
+    // Mirror segmentation must remain kPointImage (and cusp-free) even at loose residual_tol=1e-6.
+    CausticContinuationParams p_loose;
+    p_loose.residual_tol = 1e-6;
+    const CausticTraceResult res_loose = TraceCausticLocus(f.normals, slots35, 2, n, sun20, m, nullptr, p_loose);
+    ASSERT_FALSE(res_loose.curves.empty());
+    bool found_loose_mirror = false;
+    for (const PoseCurve& c : res_loose.curves) {
+      double max_sky_spread = 0.0;
+      for (size_t i = 1; i < c.nodes.size(); i++) {
+        max_sky_spread = std::max(max_sky_spread, so3::AngleBetween(c.nodes[0].sky, c.nodes[i].sky));
+      }
+      if (max_sky_spread < 1e-6) {
+        for (const CurveEvent& ev : c.events) {
+          EXPECT_NE(ev.kind, CurveEventKind::kCusp);
+        }
+        EXPECT_FALSE(c.segments.empty());
+        for (const CurveSegment& seg : c.segments) {
+          EXPECT_EQ(seg.kind, CurveSegmentKind::kPointImage)
+              << "Loose residual_tol=1e-6 flipped constant-image mirror branch to kArc";
+        }
+        found_loose_mirror = true;
+      }
+    }
+    EXPECT_TRUE(found_loose_mirror);
+
+    // Near-degenerate moving arc TiltedSpin(89.99) must stay kArc even at loose residual_tol=1e-6.
+    const CausticTraceResult res_8999_loose =
+        TraceCausticLocus(f.normals, slots35, 2, n, sun20, PoseManifold::TiltedSpin(89.99), nullptr, p_loose);
+    EXPECT_EQ(res_8999_loose.generic_rank, 2);
+    for (const PoseCurve& c : res_8999_loose.curves) {
+      for (const CurveSegment& seg : c.segments) {
+        EXPECT_EQ(seg.kind, CurveSegmentKind::kArc);
+      }
+    }
+  }
+
+  // 9ai. Low-gradient seed rejection must be declared honestly in coverage (unresolved_singularities
+  //      and failed_seeds > 0) rather than silently returning an empty result with zero failures.
+  {
+    int slots35[2];
+    const int faces35[2] = { 3, 5 };
+    f.Resolve(faces35, 2, slots35);
+    double sun20[3];
+    AltAzDegToSky(20.0, 0.0, sun20);
+    PoseManifold tight = PoseManifold::Lowitz(0.0);
+    tight.axes[PoseManifold::kAxisAzimuth] = PoseAxis::FreeDeg(197.81628321 - 0.00020, 197.81628321 + 0.00020, false);
+    tight.axes[PoseManifold::kAxisZenith] = PoseAxis::FreeDeg(13.831146705 - 0.00020, 13.831146705 + 0.00020, false);
+
+    CausticContinuationParams p_high_grad;
+    p_high_grad.residual_tol = 1e-7;
+    p_high_grad.grad_tol = 1.0;
+    const CausticTraceResult res_empty =
+        TraceCausticLocus(f.normals, slots35, 2, n, sun20, tight, nullptr, p_high_grad);
+    EXPECT_EQ(res_empty.generic_rank, 2);
+    EXPECT_TRUE(res_empty.curves.empty());
+    EXPECT_GT(res_empty.coverage.unresolved_singularities, 0);
+    EXPECT_GT(res_empty.coverage.failed_seeds, 0);
   }
 }
 

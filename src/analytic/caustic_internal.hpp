@@ -251,7 +251,7 @@ CausticTraceResult Trace1DWithEvaluator(const PoseAxis& pax, int free_ax, int sl
                                         const Family1DParams& params, const DiscoveryStop* stop);
 
 // caustic_2d_continuation.cpp
-Eval2DJet1 Evaluate2DJet1(const Context2D& ctx, const double q_in[2]);
+Eval2DJet1 Evaluate2DJet1(const Context2D& ctx, const double q_in[2], bool require_margin = true);
 Eval2DJet2 Evaluate2DJet2(const Context2D& ctx, const double q_in[2], Corridor* corridor, bool eval_corridor);
 ProjectResult ProjectOntoCaustic(const Context2D& ctx, const double q_start[2], double max_total_drift);
 bool IsSeedCoveredByCurves(const Context2D& ctx, const Seed2D& seed, const std::vector<PoseCurve>& curves);
@@ -259,8 +259,8 @@ HalfBranch2D TraceHalfBranch2D(const Context2D& ctx, const double q_seed[2], con
                                bool allow_closure, Corridor* corridor, const DiscoveryStop* stop);
 PoseCurve StitchHalfBranches(const HalfBranch2D& forward, const HalfBranch2D& backward, PoseCurveKind kind,
                              int seed_grid_n, double speed_tol, int unresolved_singularities);
-PoseCurve StitchCausticCurve(const HalfBranch2D& forward, const HalfBranch2D& backward, int seed_grid_n,
-                             double speed_tol);
+PoseCurve StitchCausticCurve(const Context2D& ctx, const HalfBranch2D& forward, const HalfBranch2D& backward,
+                             int seed_grid_n);
 
 }  // namespace lumice::analytic::caustic_detail
 
