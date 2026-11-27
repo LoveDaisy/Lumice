@@ -3022,7 +3022,11 @@ HalfBranch2D TraceHalfBranch2D(const FaceNormalTable& table, const int* slots, i
             CurveEvent ev;
             CopyNodeToEvent(out.nodes.back(), CurveEventKind::kCorridorCutoff, -1, &ev);
             out.events.push_back(ev);
-          } else if (ds_cut <= 1e-13 && out.nodes.size() >= 2) {
+          } else if (out.nodes.size() >= 2 && !out.edge_corridor_open.empty() &&
+                     out.edge_corridor_open.back() == open_a && corr_pushed == open_a && s_b - s_pushed > 1e-13) {
+            // q_pushed (out.nodes.back()) is already the furthest raw-accurate node on the open_a
+            // side; split the segment boundary directly at out.nodes.back() so the incoming edge
+            // stays open_a and the outgoing cliff edge flips to open_b.
             CurveEvent ev;
             CopyNodeToEvent(out.nodes.back(), CurveEventKind::kCorridorCutoff, -1, &ev);
             out.events.push_back(ev);
