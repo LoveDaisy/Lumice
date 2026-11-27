@@ -110,12 +110,16 @@ set(LUMICE_LAYER_analytic_FILES
   analytic/band_sum.cpp
   analytic/band_sum.hpp
   analytic/capi_zero_pad.hpp
-  analytic/caustic_continuation.cpp
+  analytic/caustic_2d_continuation.cpp
   analytic/caustic_continuation.hpp
+  analytic/caustic_events.cpp
+  analytic/caustic_internal.hpp
+  analytic/collapsed_rank1_continuation.cpp
   analytic/discovery.cpp
   analytic/discovery.hpp
   analytic/entry_measure.cpp
   analytic/entry_measure.hpp
+  analytic/family_1d_continuation.cpp
   analytic/family_rank.cpp
   analytic/family_rank.hpp
   analytic/fiber_continuation.cpp

@@ -1,10 +1,11 @@
 // Unit tests for PoseManifold / PoseCurve (src/analytic/pose_curve.hpp) and 1D/2D continuous
-// caustic continuation (src/analytic/caustic_continuation.{hpp,cpp}).
+// caustic continuation (src/analytic/caustic_continuation.hpp).
 
 #include <gtest/gtest.h>
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <vector>
 
 #include "analytic/caustic_continuation.hpp"
@@ -306,7 +307,8 @@ TEST(CausticContinuation, C16ColumnTangentArcsAndMirrorPointImage) {
       EXPECT_EQ(curve.segments[s].start_idx, curve.segments[s - 1].end_idx);
     }
 
-    // Check |J| <= 1e-11 on every interior continued node via independent Jet<2> evaluation.
+    // Check O(1) desingularized |J_reg| <= 1e-12 everywhere (including grazing Snell cliffs)
+    // and raw |J| <= 1e-11 on well-conditioned interior nodes via independent Jet<2> evaluation.
     for (size_t i = 0; i < curve.nodes.size(); i++) {
       const PoseCurveNode& node = curve.nodes[i];
       if (i > 0) {
@@ -314,11 +316,17 @@ TEST(CausticContinuation, C16ColumnTangentArcsAndMirrorPointImage) {
       }
       if (i > 0 && i + 1 < curve.nodes.size()) {
         double j_ind = 0.0;
-        if (!IndependentSignedJacobian2D(f.normals, slots, 2, n, sun_dir, column, node.param, &j_ind)) {
+        double j_reg = 0.0;
+        double min_snell_disc = 0.0;
+        if (!IndependentSignedJacobian2D(f.normals, slots, 2, n, sun_dir, column, node.param, &j_ind, nullptr, nullptr,
+                                         nullptr, &j_reg, &min_snell_disc)) {
           ADD_FAILURE() << "Independent evaluation invalid at node " << i;
           continue;
         }
-        EXPECT_LE(std::fabs(j_ind), kRawInteriorJCap) << "node " << i << " |J|=" << std::fabs(j_ind);
+        EXPECT_LE(std::fabs(j_reg), 1e-12) << "node " << i << " |J_reg|=" << std::fabs(j_reg);
+        if (min_snell_disc >= 1e-2) {
+          EXPECT_LE(std::fabs(j_ind), 1e-11) << "node " << i << " |J|=" << std::fabs(j_ind);
+        }
         total_checked_nodes++;
       }
     }
@@ -462,7 +470,8 @@ TEST(CausticContinuation, LowitzMainAndNearSunBranchesAndAntisymmetry) {
       continue;
     }
 
-    // Collect all interior nodes to verify |J| <= 1e-11 and branch coverage.
+    // Collect all interior nodes to verify |J_reg| <= 1e-12 everywhere, raw |J| <= 1e-11 on
+    // well-conditioned interior nodes, and branch coverage.
     std::vector<PoseCurveNode> all_nodes;
     bool has_main_fold = false;
     bool has_left_side_branch = false;
@@ -476,11 +485,17 @@ TEST(CausticContinuation, LowitzMainAndNearSunBranchesAndAntisymmetry) {
       for (size_t i = 1; i + 1 < curve.nodes.size(); i++) {
         const PoseCurveNode& node = curve.nodes[i];
         double j_ind = 0.0;
-        if (!IndependentSignedJacobian2D(f.normals, slots, 2, n, sun_dir, lowitz, node.param, &j_ind)) {
+        double j_reg = 0.0;
+        double min_snell_disc = 0.0;
+        if (!IndependentSignedJacobian2D(f.normals, slots, 2, n, sun_dir, lowitz, node.param, &j_ind, nullptr, nullptr,
+                                         nullptr, &j_reg, &min_snell_disc)) {
           ADD_FAILURE() << "Independent evaluation invalid at sun_alt=" << sun_alt_deg << " node " << i;
           continue;
         }
-        EXPECT_LE(std::fabs(j_ind), kRawInteriorJCap) << "sun_alt=" << sun_alt_deg << " |J|=" << std::fabs(j_ind);
+        EXPECT_LE(std::fabs(j_reg), 1e-12) << "sun_alt=" << sun_alt_deg << " |J_reg|=" << std::fabs(j_reg);
+        if (min_snell_disc >= 1e-2) {
+          EXPECT_LE(std::fabs(j_ind), 1e-11) << "sun_alt=" << sun_alt_deg << " |J|=" << std::fabs(j_ind);
+        }
         all_nodes.push_back(node);
 
         double alt = 0.0;
@@ -523,10 +538,14 @@ TEST(CausticContinuation, LowitzMainAndNearSunBranchesAndAntisymmetry) {
       double param_flip_z[3] = { sym_az_deg * kDegToRad, sym_z_deg * kDegToRad, 0.0 };
       double j_same = 1.0;
       double j_flip = 1.0;
-      const bool ok_same = IndependentSignedJacobian2D(f.normals, slots, 2, n, sun_dir, lowitz, param_same_z, &j_same);
-      const bool ok_flip = IndependentSignedJacobian2D(f.normals, slots, 2, n, sun_dir, lowitz, param_flip_z, &j_flip);
-      const bool same_on_locus = ok_same && std::fabs(j_same) < 1e-9;
-      const bool flip_on_locus = ok_flip && std::fabs(j_flip) < 1e-9;
+      double j_reg_same = 1.0;
+      double j_reg_flip = 1.0;
+      const bool ok_same = IndependentSignedJacobian2D(f.normals, slots, 2, n, sun_dir, lowitz, param_same_z, &j_same,
+                                                       nullptr, nullptr, nullptr, &j_reg_same);
+      const bool ok_flip = IndependentSignedJacobian2D(f.normals, slots, 2, n, sun_dir, lowitz, param_flip_z, &j_flip,
+                                                       nullptr, nullptr, nullptr, &j_reg_flip);
+      const bool same_on_locus = ok_same && std::fabs(j_reg_same) < 1e-10;
+      const bool flip_on_locus = ok_flip && std::fabs(j_reg_flip) < 1e-10;
       if (!(same_on_locus || flip_on_locus)) {
         ADD_FAILURE() << "No symmetric partner on J=0 for (az=" << az_deg << ", z=" << z_deg << ")";
         continue;
@@ -1436,6 +1455,25 @@ TEST(CausticContinuation, EdgeCaseRegressions) {
         TraceCausticLocus(f_short.normals, slots35, 2, n, sun20, PoseManifold::Column(), &corr);
     bool found_upper_with_cutoffs = false;
     for (const PoseCurve& c : res.curves) {
+      // Verify |J_reg| <= 1e-12 everywhere (including cliff cutoff splits) and raw |J| <= 1e-11
+      // on well-conditioned interior nodes across ALL curves (upper and lower arcs).
+      for (size_t i = 1; i + 1 < c.nodes.size(); i++) {
+        double j_ind = 0.0;
+        double j_reg = 0.0;
+        double min_snell_disc = 0.0;
+        if (!IndependentSignedJacobian2D(f_short.normals, slots35, 2, n, sun20, PoseManifold::Column(),
+                                         c.nodes[i].param, &j_ind, nullptr, nullptr, nullptr, &j_reg,
+                                         &min_snell_disc)) {
+          ADD_FAILURE() << "Independent evaluation invalid at short-prism node " << i;
+          continue;
+        }
+        EXPECT_LE(std::fabs(j_reg), 1e-12)
+            << "Short-prism (h=" << short_h << ") interior node " << i << " |J_reg|=" << j_reg;
+        if (min_snell_disc >= 1e-2) {
+          EXPECT_LE(std::fabs(j_ind), 1e-11)
+              << "Short-prism (h=" << short_h << ") interior node " << i << " |J|=" << j_ind;
+        }
+      }
       double max_alt = -90.0;
       for (const PoseCurveNode& nd : c.nodes) {
         double alt = 0.0;
@@ -1483,17 +1521,6 @@ TEST(CausticContinuation, EdgeCaseRegressions) {
         EXPECT_FALSE(eval_open_at_pose(c.nodes.back().pose));
         const int mid_open_idx = (c.segments[1].start_idx + c.segments[1].end_idx) / 2;
         EXPECT_TRUE(eval_open_at_pose(c.nodes[static_cast<size_t>(mid_open_idx)].pose));
-        // Verify raw |J| <= kRawInteriorJCap on every interior node including cliff cutoff splits.
-        for (size_t i = 1; i + 1 < c.nodes.size(); i++) {
-          double j_ind = 0.0;
-          if (!IndependentSignedJacobian2D(f_short.normals, slots35, 2, n, sun20, PoseManifold::Column(),
-                                           c.nodes[i].param, &j_ind)) {
-            ADD_FAILURE() << "Independent evaluation invalid at short-prism node " << i;
-            continue;
-          }
-          EXPECT_LE(std::fabs(j_ind), kRawInteriorJCap)
-              << "Short-prism (h=" << short_h << ") interior node " << i << " |J|=" << j_ind;
-        }
         found_upper_with_cutoffs = (cutoffs >= 2);
       }
     }
@@ -2057,8 +2084,9 @@ TEST(CausticContinuation, EdgeCaseRegressions) {
     }
   }
 
-  // 9af. Valid ultra-fine 1D step (min_step = max_step = 1e-14) must advance and reach
-  //      max_nodes_per_branch = 3 immediately without looping until an external deadline.
+  // 9af. Engineering valid-domain step floor: ValidateParams rejects min_step < 1e-10 rad for
+  //      both 1D and 2D params, while min_step = max_step = 1e-10 rad makes finite bounded
+  //      progress to max_nodes_per_branch = 3 without hanging.
   {
     int slots1[1];
     const int faces1[1] = { 1 };
@@ -2070,15 +2098,42 @@ TEST(CausticContinuation, EdgeCaseRegressions) {
     m.axes[PoseManifold::kAxisZenith] = PoseAxis::PinnedDeg(0.0);
     m.axes[PoseManifold::kAxisRoll] = PoseAxis::PinnedDeg(0.0);
 
-    Family1DParams p_fine;
-    p_fine.min_step = 1e-14;
-    p_fine.max_step = 1e-14;
-    p_fine.max_nodes_per_branch = 3;
-    const CausticTraceResult res_fine = TraceFamily1D(f.normals, slots1, 1, n, sun20, m, nullptr, p_fine);
-    EXPECT_FALSE(res_fine.stop_requested);
-    ASSERT_EQ(res_fine.curves.size(), 1u);
-    EXPECT_EQ(res_fine.curves[0].nodes.size(), 3u);
-    EXPECT_TRUE(res_fine.curves[0].coverage.budget_truncated);
+    Family1DParams p_sub_1d;
+    p_sub_1d.min_step = 1e-14;
+    p_sub_1d.max_step = 1e-14;
+    EXPECT_FALSE(ValidateParams(p_sub_1d));
+    p_sub_1d.min_step = 9.9e-11;
+    p_sub_1d.max_step = 1e-9;
+    EXPECT_FALSE(ValidateParams(p_sub_1d));
+    EXPECT_TRUE(TraceFamily1D(f.normals, slots1, 1, n, sun20, m, nullptr, p_sub_1d).curves.empty());
+
+    CausticContinuationParams p_sub_2d;
+    p_sub_2d.min_step = 1e-14;
+    EXPECT_FALSE(ValidateParams(p_sub_2d));
+    p_sub_2d.min_step = 9.9e-11;
+    EXPECT_FALSE(ValidateParams(p_sub_2d));
+
+    Family1DParams p_floor;
+    p_floor.min_step = 1e-10;
+    p_floor.max_step = 1e-10;
+    p_floor.max_nodes_per_branch = 3;
+    EXPECT_TRUE(ValidateParams(p_floor));
+    const CausticTraceResult res_floor = TraceFamily1D(f.normals, slots1, 1, n, sun20, m, nullptr, p_floor);
+    EXPECT_FALSE(res_floor.stop_requested);
+    ASSERT_EQ(res_floor.curves.size(), 1u);
+    EXPECT_EQ(res_floor.curves[0].nodes.size(), 3u);
+    EXPECT_TRUE(res_floor.curves[0].coverage.budget_truncated);
+
+    // Non-periodic large-magnitude domain where t_curr + 1e-10 == t_curr in float64 must terminate
+    // cleanly with budget_truncated = true rather than spinning forever.
+    PoseManifold m_large = m;
+    m_large.axes[PoseManifold::kAxisAzimuth] = PoseAxis::FreeRad(2097152.0, 2097152.01, false);
+    const CausticTraceResult res_large = TraceFamily1D(f.normals, slots1, 1, n, sun20, m_large, nullptr, p_floor);
+    EXPECT_FALSE(res_large.stop_requested);
+    ASSERT_EQ(res_large.curves.size(), 1u);
+    EXPECT_TRUE(res_large.curves[0].coverage.budget_truncated);
+    EXPECT_TRUE(res_large.coverage.budget_truncated);
+    EXPECT_FALSE(res_large.curves[0].coverage.closed);
   }
 
   // 9ag. Seed deduplication in a compact 2D domain must not merge distinct parallel caustic
@@ -2155,6 +2210,196 @@ TEST(CausticContinuation, EdgeCaseRegressions) {
       }
     }
     EXPECT_TRUE(found_mirror_point_image);
+
+    // Mirror segmentation must remain kPointImage (and cusp-free) even at loose residual_tol=1e-6.
+    CausticContinuationParams p_loose;
+    p_loose.residual_tol = 1e-6;
+    const CausticTraceResult res_loose = TraceCausticLocus(f.normals, slots35, 2, n, sun20, m, nullptr, p_loose);
+    ASSERT_FALSE(res_loose.curves.empty());
+    bool found_loose_mirror = false;
+    for (const PoseCurve& c : res_loose.curves) {
+      double max_sky_spread = 0.0;
+      for (size_t i = 1; i < c.nodes.size(); i++) {
+        max_sky_spread = std::max(max_sky_spread, so3::AngleBetween(c.nodes[0].sky, c.nodes[i].sky));
+      }
+      if (max_sky_spread < 1e-6) {
+        for (const CurveEvent& ev : c.events) {
+          EXPECT_NE(ev.kind, CurveEventKind::kCusp);
+        }
+        EXPECT_FALSE(c.segments.empty());
+        for (const CurveSegment& seg : c.segments) {
+          EXPECT_EQ(seg.kind, CurveSegmentKind::kPointImage)
+              << "Loose residual_tol=1e-6 flipped constant-image mirror branch to kArc";
+        }
+        found_loose_mirror = true;
+      }
+    }
+    EXPECT_TRUE(found_loose_mirror);
+
+    // Shrunken windows around the transverse crossing (+-0.02 deg and +-0.01 deg): both
+    // constant-image mirror branches must stay kPointImage (and cusp-free) at both default
+    // residual_tol=1e-12 and loose residual_tol=1e-6.
+    for (double hw_deg : { 0.02, 0.01 }) {
+      PoseManifold m_shrunk;
+      m_shrunk.axes[PoseManifold::kAxisAzimuth] = PoseAxis::FreeDeg(25.813648 - hw_deg, 25.813648 + hw_deg, false);
+      m_shrunk.axes[PoseManifold::kAxisZenith] = PoseAxis::PinnedDeg(90.0);
+      m_shrunk.axes[PoseManifold::kAxisRoll] = PoseAxis::FreeDeg(120.0 - hw_deg, 120.0 + hw_deg, false);
+      for (double rtol : { 1e-12, 1e-6 }) {
+        CausticContinuationParams p_shrunk;
+        p_shrunk.residual_tol = rtol;
+        const CausticTraceResult res_shrunk =
+            TraceCausticLocus(f.normals, slots35, 2, n, sun20, m_shrunk, nullptr, p_shrunk);
+        int mirror_branch_count = 0;
+        for (const PoseCurve& c : res_shrunk.curves) {
+          double max_sky_spread = 0.0;
+          for (size_t i = 1; i < c.nodes.size(); i++) {
+            max_sky_spread = std::max(max_sky_spread, so3::AngleBetween(c.nodes[0].sky, c.nodes[i].sky));
+          }
+          if (max_sky_spread < 1e-6) {
+            mirror_branch_count++;
+            for (const CurveEvent& ev : c.events) {
+              EXPECT_NE(ev.kind, CurveEventKind::kCusp) << "hw=" << hw_deg << " rtol=" << rtol;
+            }
+            EXPECT_FALSE(c.segments.empty()) << "hw=" << hw_deg << " rtol=" << rtol;
+            for (const CurveSegment& seg : c.segments) {
+              EXPECT_EQ(seg.kind, CurveSegmentKind::kPointImage)
+                  << "Shrunken mirror branch flipped to kArc at hw=" << hw_deg << " rtol=" << rtol;
+            }
+          }
+        }
+        EXPECT_GE(mirror_branch_count, 2) << "Expected both mirror branches at hw=" << hw_deg << " rtol=" << rtol;
+      }
+    }
+
+    // Near-degenerate moving arc TiltedSpin(89.99) must stay kArc even at loose residual_tol=1e-6.
+    const CausticTraceResult res_8999_loose =
+        TraceCausticLocus(f.normals, slots35, 2, n, sun20, PoseManifold::TiltedSpin(89.99), nullptr, p_loose);
+    EXPECT_EQ(res_8999_loose.generic_rank, 2);
+    ASSERT_FALSE(res_8999_loose.curves.empty());
+    int arc_seg_count = 0;
+    for (const PoseCurve& c : res_8999_loose.curves) {
+      for (const CurveSegment& seg : c.segments) {
+        EXPECT_EQ(seg.kind, CurveSegmentKind::kArc);
+        if (seg.kind == CurveSegmentKind::kArc && seg.end_idx > seg.start_idx) {
+          arc_seg_count++;
+        }
+      }
+    }
+    EXPECT_GT(arc_seg_count, 0);
+  }
+
+  // 9ai. Low-gradient seed rejection must be declared honestly in coverage (unresolved_singularities
+  //      and failed_seeds > 0) rather than silently returning an empty result with zero failures.
+  {
+    int slots35[2];
+    const int faces35[2] = { 3, 5 };
+    f.Resolve(faces35, 2, slots35);
+    double sun20[3];
+    AltAzDegToSky(20.0, 0.0, sun20);
+    PoseManifold tight = PoseManifold::Lowitz(0.0);
+    tight.axes[PoseManifold::kAxisAzimuth] = PoseAxis::FreeDeg(197.81628321 - 0.00020, 197.81628321 + 0.00020, false);
+    tight.axes[PoseManifold::kAxisZenith] = PoseAxis::FreeDeg(13.831146705 - 0.00020, 13.831146705 + 0.00020, false);
+
+    CausticContinuationParams p_high_grad;
+    p_high_grad.residual_tol = 1e-7;
+    p_high_grad.grad_tol = 1.0;
+    const CausticTraceResult res_empty =
+        TraceCausticLocus(f.normals, slots35, 2, n, sun20, tight, nullptr, p_high_grad);
+    EXPECT_EQ(res_empty.generic_rank, 2);
+    EXPECT_TRUE(res_empty.curves.empty());
+    EXPECT_GT(res_empty.coverage.unresolved_singularities, 0);
+    EXPECT_GT(res_empty.coverage.failed_seeds, 0);
+  }
+
+  // 9aj. Newton iteration budget exhaustion without gradient evidence must set budget_truncated
+  //      and must NOT fabricate a geometric kLocusSingularity event.
+  {
+    int slots35[2];
+    const int faces35[2] = { 3, 5 };
+    f.Resolve(faces35, 2, slots35);
+    double sun20[3];
+    AltAzDegToSky(20.0, 0.0, sun20);
+    CausticContinuationParams p_budget;
+    p_budget.min_step = 0.02;
+    p_budget.initial_step = 0.02;
+    p_budget.max_step = 0.02;
+    p_budget.max_newton_iters = 1;
+    const CausticTraceResult res_budget =
+        TraceCausticLocus(f.normals, slots35, 2, n, sun20, PoseManifold::Column(), nullptr, p_budget);
+    ASSERT_FALSE(res_budget.curves.empty());
+    EXPECT_TRUE(res_budget.coverage.budget_truncated);
+    bool found_truncated_without_singularity = false;
+    for (const PoseCurve& c : res_budget.curves) {
+      if (c.coverage.budget_truncated && c.nodes.size() == 1) {
+        found_truncated_without_singularity = true;
+      }
+      for (const CurveEvent& ev : c.events) {
+        EXPECT_NE(ev.kind, CurveEventKind::kLocusSingularity)
+            << "Newton budget exhaustion emitted spurious kLocusSingularity at s=" << ev.arclength;
+      }
+    }
+    EXPECT_TRUE(found_truncated_without_singularity);
+  }
+
+  // 9ak. max_steps_per_branch == INT_MAX must saturate max_nodes_per_branch without signed overflow
+  //      and return the same pole curve as INT_MAX - 1 on TiltedSpin(0).
+  {
+    int slots35[2];
+    const int faces35[2] = { 3, 5 };
+    f.Resolve(faces35, 2, slots35);
+    double sun20[3];
+    AltAzDegToSky(20.0, 0.0, sun20);
+    CausticContinuationParams p_max_minus_1;
+    p_max_minus_1.max_steps_per_branch = std::numeric_limits<int>::max() - 1;
+    CausticContinuationParams p_max;
+    p_max.max_steps_per_branch = std::numeric_limits<int>::max();
+    const CausticTraceResult res_m1 =
+        TraceCausticLocus(f.normals, slots35, 2, n, sun20, PoseManifold::TiltedSpin(0.0), nullptr, p_max_minus_1);
+    const CausticTraceResult res_max =
+        TraceCausticLocus(f.normals, slots35, 2, n, sun20, PoseManifold::TiltedSpin(0.0), nullptr, p_max);
+    ASSERT_FALSE(res_m1.curves.empty());
+    ASSERT_EQ(res_max.curves.size(), res_m1.curves.size());
+    for (size_t i = 0; i < res_m1.curves.size(); i++) {
+      EXPECT_EQ(res_max.curves[i].nodes.size(), res_m1.curves[i].nodes.size());
+      EXPECT_EQ(res_max.curves[i].coverage.closed, res_m1.curves[i].coverage.closed);
+    }
+  }
+
+  // 9al. Pre-cancelled 1D/2D traces must return before allocating pre-scan arrays, and
+  //      ValidateParams must reject seed_grid_n whose (n + 1)^2 overflows int indexing.
+  {
+    int slots35[2];
+    const int faces35[2] = { 3, 5 };
+    f.Resolve(faces35, 2, slots35);
+    double sun20[3];
+    AltAzDegToSky(20.0, 0.0, sun20);
+    CausticContinuationParams p_large_grid;
+    p_large_grid.seed_grid_n = 1024;
+    StopToken token;
+    token.RequestCancel();
+    DiscoveryStop stop;
+    stop.token = &token;
+    const CausticTraceResult res_stopped =
+        TraceCausticLocus(f.normals, slots35, 2, n, sun20, PoseManifold::Column(), nullptr, p_large_grid, &stop);
+    EXPECT_TRUE(res_stopped.stop_requested);
+    EXPECT_TRUE(res_stopped.coverage.budget_truncated);
+    EXPECT_TRUE(res_stopped.curves.empty());
+
+    Family1DParams p_large_1d;
+    p_large_1d.scan_samples = 4194304;
+    const CausticTraceResult res_1d_stopped =
+        TraceFamily1D(f.normals, slots35, 2, n, sun20, PoseManifold::Plate(), nullptr, p_large_1d, &stop);
+    EXPECT_TRUE(res_1d_stopped.stop_requested);
+    EXPECT_TRUE(res_1d_stopped.coverage.budget_truncated);
+    EXPECT_TRUE(res_1d_stopped.curves.empty());
+
+    CausticContinuationParams p_overflow;
+    p_overflow.seed_grid_n = 46341;
+    EXPECT_FALSE(ValidateParams(p_overflow));
+    p_overflow.seed_grid_n = 46340;
+    EXPECT_FALSE(ValidateParams(p_overflow));
+    p_overflow.seed_grid_n = 46339;
+    EXPECT_TRUE(ValidateParams(p_overflow));
   }
 }
 
