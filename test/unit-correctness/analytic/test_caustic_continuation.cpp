@@ -1437,15 +1437,38 @@ TEST(CausticContinuation, EdgeCaseRegressions) {
         for (const CurveEvent& ev : c.events) {
           if (ev.kind == CurveEventKind::kCorridorCutoff) {
             cutoffs++;
+            // Cutoff must sit on an actual segment boundary separating open and closed sides.
+            bool at_seg_split = false;
+            for (size_t s = 0; s + 1 < c.segments.size(); s++) {
+              const double s_split = c.nodes[static_cast<size_t>(c.segments[s].end_idx)].arclength;
+              if (std::fabs(s_split - ev.arclength) < 1e-7 &&
+                  c.segments[s].corridor_open != c.segments[s + 1].corridor_open) {
+                at_seg_split = true;
+                break;
+              }
+            }
+            EXPECT_TRUE(at_seg_split) << "Cliff kCorridorCutoff at s=" << ev.arclength
+                                      << " did not split segment corridor_open states";
           }
         }
         EXPECT_GE(cutoffs, 2) << "Upper arc cliff tails missed kCorridorCutoff events";
-        if (c.segments.empty()) {
-          ADD_FAILURE() << "Upper arc has empty segments";
+        if (c.segments.size() < 3u) {
+          ADD_FAILURE() << "Expected open middle segment flanked by closed cliff segments";
           continue;
         }
         EXPECT_FALSE(c.segments.front().corridor_open);
+        EXPECT_TRUE(c.segments[1].corridor_open);
         EXPECT_FALSE(c.segments.back().corridor_open);
+        // Verify raw |J| <= kRawInteriorJCap on every interior node including cliff cutoff splits.
+        for (size_t i = 1; i + 1 < c.nodes.size(); i++) {
+          double j_ind = 0.0;
+          if (!IndependentSignedJacobian2D(f_short.normals, slots35, 2, n, sun20, PoseManifold::Column(),
+                                           c.nodes[i].param, &j_ind)) {
+            ADD_FAILURE() << "Independent evaluation invalid at short-prism node " << i;
+            continue;
+          }
+          EXPECT_LE(std::fabs(j_ind), kRawInteriorJCap) << "Short-prism interior node " << i << " |J|=" << j_ind;
+        }
         found_upper_with_cutoffs = (cutoffs >= 2);
       }
     }
@@ -1592,6 +1615,201 @@ TEST(CausticContinuation, EdgeCaseRegressions) {
     AltAzDegToSky(20.0, 0.0, sun20);
     const CausticTraceResult res = TraceFamily1D(f.normals, slots1, 1, n, sun20, bad_per);
     EXPECT_TRUE(res.curves.empty());
+  }
+
+  // 9u. Double internal TIR onset inside a single 1D step: Parry {3, 1, 6}, roll 0 deg,
+  //     sun altitude 32.027351 deg has internal_disc[1] crossing - -> + -> - inside [178.8, 181.7] deg.
+  {
+    int slots316[3];
+    const int faces316[3] = { 3, 1, 6 };
+    f.Resolve(faces316, 3, slots316);
+    double sun_tir[3];
+    AltAzDegToSky(32.027351, 0.0, sun_tir);
+    const CausticTraceResult res = TraceFamily1D(f.normals, slots316, 3, n, sun_tir, PoseManifold::Parry(0.0));
+    int tir_in_window = 0;
+    for (const PoseCurve& c : res.curves) {
+      for (const CurveEvent& ev : c.events) {
+        if (ev.kind == CurveEventKind::kTirOnset && ev.detail_index == 1) {
+          const double az_d = WrapAngleDeg(ev.param[PoseManifold::kAxisAzimuth] * kRadToDeg);
+          if (az_d > 178.0 && az_d < 182.0) {
+            tir_in_window++;
+          }
+        }
+      }
+    }
+    EXPECT_GE(tir_in_window, 2) << "1D step skipped double internal TIR onset";
+  }
+
+  // 9v. Double corridor cutoff inside a single 1D step: Parry {3, 5}, sun 20 deg,
+  //     prism height 0.00572556886455 opens and closes inside [268.9, 271.8] deg.
+  {
+    const PrismFixture f_thin(0.00572556886455);
+    int slots35[2];
+    const int faces35[2] = { 3, 5 };
+    f_thin.Resolve(faces35, 2, slots35);
+    double sun20[3];
+    AltAzDegToSky(20.0, 0.0, sun20);
+    Corridor corr(f_thin.normals, f_thin.polygons, slots35, 2);
+    const CausticTraceResult res = TraceFamily1D(f_thin.normals, slots35, 2, n, sun20, PoseManifold::Parry(0.0), &corr);
+    int cutoffs = 0;
+    int open_segs = 0;
+    for (const PoseCurve& c : res.curves) {
+      for (const CurveEvent& ev : c.events) {
+        if (ev.kind == CurveEventKind::kCorridorCutoff) {
+          cutoffs++;
+        }
+      }
+      for (const CurveSegment& seg : c.segments) {
+        if (seg.corridor_open) {
+          open_segs++;
+        }
+      }
+    }
+    EXPECT_GE(cutoffs, 2) << "1D step skipped double corridor cutoff";
+    EXPECT_GE(open_segs, 1) << "1D step failed to split narrow open corridor segment";
+  }
+
+  // 9w. Euler-pole collapsed curve must report 2D manifold Jacobian sigma1 (not 1D slice speed):
+  //     TiltedSpin(0 deg) on {3, 5}, sun 20 deg.
+  {
+    int slots35[2];
+    const int faces35[2] = { 3, 5 };
+    f.Resolve(faces35, 2, slots35);
+    double sun20[3];
+    AltAzDegToSky(20.0, 0.0, sun20);
+    const PoseManifold pole = PoseManifold::TiltedSpin(0.0);
+    const CausticTraceResult res = TraceCausticLocus(f.normals, slots35, 2, n, sun20, pole);
+    EXPECT_EQ(res.generic_rank, 1);
+    ASSERT_FALSE(res.curves.empty());
+    for (const PoseCurve& c : res.curves) {
+      for (size_t i = 0; i < c.nodes.size(); i += std::max<size_t>(1, c.nodes.size() / 12)) {
+        double j_ind = 0.0;
+        double s1_ind = 0.0;
+        double s2_ind = 0.0;
+        if (!IndependentSignedJacobian2D(f.normals, slots35, 2, n, sun20, pole, c.nodes[i].param, &j_ind, &s1_ind,
+                                         &s2_ind)) {
+          ADD_FAILURE() << "Independent Jet<2> invalid at pole node " << i;
+          continue;
+        }
+        EXPECT_NEAR(c.nodes[i].sigma1, s1_ind, 1e-5) << "Euler-pole node reported 1D speed instead of 2D sigma1";
+        EXPECT_NEAR(c.nodes[i].sigma2, s2_ind, 1e-5);
+      }
+    }
+  }
+
+  // 9x. Bounded Euler pole with total spin > 360 deg must NOT invent a kDomainBoundary strictly
+  //     inside both axis bounds: zenith=0, az=[140, 350] deg, roll=[80, 280] deg, {3, 5}, sun 20 deg.
+  {
+    int slots35[2];
+    const int faces35[2] = { 3, 5 };
+    f.Resolve(faces35, 2, slots35);
+    double sun20[3];
+    AltAzDegToSky(20.0, 0.0, sun20);
+    PoseManifold m;
+    m.axes[PoseManifold::kAxisAzimuth] = PoseAxis::FreeDeg(140.0, 350.0, false);
+    m.axes[PoseManifold::kAxisZenith] = PoseAxis::PinnedDeg(0.0);
+    m.axes[PoseManifold::kAxisRoll] = PoseAxis::FreeDeg(80.0, 280.0, false);
+    const CausticTraceResult res = TraceCausticLocus(f.normals, slots35, 2, n, sun20, m);
+    EXPECT_EQ(res.generic_rank, 1);
+    ASSERT_FALSE(res.curves.empty());
+    for (const PoseCurve& c : res.curves) {
+      for (const CurveEvent& ev : c.events) {
+        if (ev.kind == CurveEventKind::kDomainBoundary && ev.detail_index == PoseManifold::kAxisAzimuth) {
+          const double az_d = ev.param[PoseManifold::kAxisAzimuth] * kRadToDeg;
+          const bool at_bound = (std::fabs(az_d - 140.0) < 1e-3) || (std::fabs(az_d - 350.0) < 1e-3);
+          EXPECT_TRUE(at_bound) << "Bounded pole emitted interior kDomainBoundary(az) at az=" << az_d;
+        }
+      }
+    }
+  }
+
+  // 9y. Ultra-tight compact Lowitz cusp (+-0.00020 deg around (197.81628321, 13.831146705) deg)
+  //     must still emit kCusp while C16 mirror keeps zero cusps even at residual_tol=1e-16.
+  {
+    int slots35[2];
+    const int faces35[2] = { 3, 5 };
+    f.Resolve(faces35, 2, slots35);
+    double sun20[3];
+    AltAzDegToSky(20.0, 0.0, sun20);
+    PoseManifold tight = PoseManifold::Lowitz(0.0);
+    tight.axes[PoseManifold::kAxisAzimuth] = PoseAxis::FreeDeg(197.81628321 - 0.00020, 197.81628321 + 0.00020, false);
+    tight.axes[PoseManifold::kAxisZenith] = PoseAxis::FreeDeg(13.831146705 - 0.00020, 13.831146705 + 0.00020, false);
+    const CausticTraceResult res = TraceCausticLocus(f.normals, slots35, 2, n, sun20, tight);
+    ASSERT_FALSE(res.curves.empty());
+    int cusp_cnt = 0;
+    for (const PoseCurve& c : res.curves) {
+      for (const CurveEvent& ev : c.events) {
+        if (ev.kind == CurveEventKind::kCusp) {
+          cusp_cnt++;
+        }
+      }
+    }
+    EXPECT_EQ(cusp_cnt, 1) << "Tight +-0.00020 deg bounds suppressed genuine Lowitz cusp";
+
+    // Also verify C16 mirror emits zero cusps at residual_tol = 1e-16.
+    CausticContinuationParams p_tight;
+    p_tight.residual_tol = 1e-16;
+    const CausticTraceResult c16_tight =
+        TraceCausticLocus(f.normals, slots35, 2, n, sun20, PoseManifold::Column(), nullptr, p_tight);
+    for (const PoseCurve& c : c16_tight.curves) {
+      for (const CurveSegment& seg : c.segments) {
+        if (seg.kind == CurveSegmentKind::kPointImage) {
+          const double s0 = c.nodes[static_cast<size_t>(seg.start_idx)].arclength;
+          const double s1 = c.nodes[static_cast<size_t>(seg.end_idx)].arclength;
+          for (const CurveEvent& ev : c.events) {
+            if (ev.kind == CurveEventKind::kCusp) {
+              EXPECT_FALSE(ev.arclength >= s0 - 1e-9 && ev.arclength <= s1 + 1e-9)
+                  << "C16 mirror emitted spurious cusp at residual_tol=1e-16";
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // 9z. 1D corridor-split node budget enforcement & single-node closed corridor state:
+  //     Parry {3, 1, 6}, height 0.8, sun 20 deg.
+  {
+    const PrismFixture f08(0.8);
+    int slots316[3];
+    const int faces316[3] = { 3, 1, 6 };
+    f08.Resolve(faces316, 3, slots316);
+    double sun20[3];
+    AltAzDegToSky(20.0, 0.0, sun20);
+    Corridor corr(f08.normals, f08.polygons, slots316, 3);
+
+    Family1DParams p21;
+    p21.max_nodes_per_branch = 21;
+    const CausticTraceResult r21 =
+        TraceFamily1D(f08.normals, slots316, 3, n, sun20, PoseManifold::Parry(0.0), &corr, p21);
+    ASSERT_FALSE(r21.curves.empty());
+    for (const PoseCurve& c : r21.curves) {
+      EXPECT_LE(c.nodes.size(), 21u) << "Corridor split exceeded max_nodes_per_branch=21";
+    }
+
+    Family1DParams p1;
+    p1.max_nodes_per_branch = 1;
+    const CausticTraceResult r1 =
+        TraceFamily1D(f08.normals, slots316, 3, n, sun20, PoseManifold::Parry(0.0), &corr, p1);
+    ASSERT_FALSE(r1.curves.empty());
+    bool saw_closed_single = false;
+    for (const PoseCurve& c : r1.curves) {
+      EXPECT_EQ(c.nodes.size(), 1u);
+      if (c.segments.size() == 1u) {
+        double s_body[3];
+        WorldToBody(c.nodes[0].pose, sun20, s_body);
+        s_body[0] = -s_body[0];
+        s_body[1] = -s_body[1];
+        s_body[2] = -s_body[2];
+        const EntryMeasure em = corr.Evaluate(s_body, n);
+        const bool expected_open = (em.status == EntryMeasureStatus::kOk && em.value > 0.0);
+        EXPECT_EQ(c.segments[0].corridor_open, expected_open);
+        if (!expected_open) {
+          saw_closed_single = true;
+        }
+      }
+    }
+    EXPECT_TRUE(saw_closed_single);
   }
 }
 
