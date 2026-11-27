@@ -286,10 +286,17 @@ struct CurveEvent {
 };
 
 struct CurveCoverage {
+  // Coarse seed grid resolution (1D scan samples or 2D grid N per axis).
   int seed_grid_n = 0;
+  // True iff the branch closed smoothly onto itself without boundary/gap/budget termination.
   bool closed = false;
+  // True iff node/step/curve/evaluation budget or cooperative stop truncated the trace.
   bool budget_truncated = false;
+  // Count of unresolved singular or numerically unrepresentable loci encountered on this branch:
+  // locus singularities (||grad J|| < grad_tol), cliff-march exhaustion without reaching a
+  // boundary, or detected corridor cutoffs that could not be split within the raw |J| cap.
   int unresolved_singularities = 0;
+  // Count of coarse crossing seeds whose Newton projection failed to converge to the locus.
   int failed_seeds = 0;
 };
 
@@ -370,6 +377,8 @@ inline PoseCurve PoseCurveFromFiber(const TraceResult& fiber, const double sun_d
       ev.detail_index = -1;
       if (fiber.reason == FiberReason::kRankLoss || fiber.reason == FiberReason::kTopologyAmbiguity) {
         ev.kind = CurveEventKind::kLocusSingularity;
+      } else if (fiber.reason == FiberReason::kChartBoundary) {
+        ev.kind = CurveEventKind::kDomainBoundary;
       } else {
         ev.kind = CurveEventKind::kOpticalBoundary;
       }

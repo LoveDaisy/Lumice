@@ -433,6 +433,25 @@ void CopyNodeToEvent(const PoseCurveNode& node, CurveEventKind kind, int detail_
   ev->detail_index = detail_index;
 }
 
+// Single-authority event arclength invariant: never emit or retain events past the final
+// committed node's arclength (within floating-point tolerance).
+void AppendEventsWithinArclength(const std::vector<CurveEvent>& src, double max_arclength,
+                                 std::vector<CurveEvent>* dst) {
+  const double limit = max_arclength + 1e-12;
+  for (const CurveEvent& ev : src) {
+    if (ev.arclength <= limit) {
+      dst->push_back(ev);
+    }
+  }
+}
+
+void ClipEventsToArclength(double max_arclength, std::vector<CurveEvent>* events) {
+  const double limit = max_arclength + 1e-12;
+  events->erase(
+      std::remove_if(events->begin(), events->end(), [limit](const CurveEvent& ev) { return ev.arclength > limit; }),
+      events->end());
+}
+
 // Conservative Lipschitz bound on optical / internal-TIR margins with respect to crystal pose
 // angles (radians): incidence cosines have |d(cos_i)/dt| <= 1 and Snell/TIR discriminants
 // 1 - n^2 (1 - cos^2) have |d(disc)/dt| <= 2 n^2; 3 n^2 with floor 6.0 covers both with safety.
@@ -900,21 +919,135 @@ void Trace1DSingleFragment(const EvalFn& eval_fn, int slot_count, int free_ax, d
       break;
     }
 
+    auto commit_valid_step = [&](double t_target, const Eval1D& e_target) -> bool {
+      const double seg_step = t_target - t_curr;
+      if (seg_step <= 1e-13) {
+        return true;
+      }
+      // Collect step-internal non-splitting events and flush only those within the committed
+      // arclength so node-budget truncation never leaves events past nodes.back().arclength.
+      std::vector<CurveEvent> step_events;
+
+      // 1. Stationary point detection (||dx/dt|| = 0) via shared helper.
+      if (e_target.sky_speed > params.speed_tol) {
+        if (have_last_moving) {
+          double u_stat = 0.0;
+          Eval1D e_stat;
+          auto eval_stat_u = [&](double u) { return eval_fn(last_moving_t + u * (t_target - last_moving_t), false); };
+          if (DetectStationaryPoint1D(last_moving_e, e_target, params.stationary_tol, params.bisection_iters,
+                                      eval_stat_u, &u_stat, &e_stat)) {
+            const PoseCurveNode n_stat =
+                NodeFromEval1D(e_stat, last_moving_arclen + u_stat * (t_target - last_moving_t));
+            CurveEvent ev;
+            CopyNodeToEvent(n_stat, CurveEventKind::kStationaryPoint, -1, &ev);
+            step_events.push_back(ev);
+          }
+        }
+        have_last_moving = true;
+        last_moving_t = t_target;
+        last_moving_e = e_target;
+        last_moving_arclen = arclen + seg_step;
+      }
+
+      // 2. Internal TIR onset detection (single and interior double crossings) via shared helper.
+      auto eval_tir_u = [&](double u, int k, double* disc_out) {
+        const Eval1D em = eval_fn(t_curr + u * seg_step, false);
+        if (!em.valid) {
+          return false;
+        }
+        *disc_out = em.internal_disc[k];
+        return true;
+      };
+      auto emit_tir_u = [&](double u_tir, int k) {
+        const Eval1D e_tir = eval_fn(t_curr + u_tir * seg_step, false);
+        if (e_tir.valid) {
+          const PoseCurveNode n_tir = NodeFromEval1D(e_tir, arclen + u_tir * seg_step);
+          CurveEvent ev;
+          CopyNodeToEvent(n_tir, CurveEventKind::kTirOnset, k, &ev);
+          step_events.push_back(ev);
+        }
+      };
+      DetectStepTirOnsets(slot_count, e_curr.internal_disc, e_target.internal_disc, seg_step, margin_lip,
+                          params.bisection_iters, eval_tir_u, emit_tir_u);
+
+      // 3. Corridor cutoff detection (single and continuous-margin interior double crossings) via
+      //    shared helper, strictly honoring params.max_nodes_per_branch before every node insertion.
+      int cut_cnt = 0;
+      double u_cuts[2] = { 0.0, 0.0 };
+      if (track_corridor) {
+        auto eval_corr_u = [&](double u, bool /*need_margin*/, bool* open_out, double* margin_out) {
+          const Eval1D em = eval_fn(t_curr + u * seg_step, true);
+          if (!em.valid) {
+            return false;
+          }
+          *open_out = em.corridor_open;
+          *margin_out = em.corridor_margin;
+          return true;
+        };
+        cut_cnt =
+            FindStepCorridorCrossings(e_curr.corridor_open, e_curr.corridor_margin, e_target.corridor_open,
+                                      e_target.corridor_margin, seg_step, params.bisection_iters, eval_corr_u, u_cuts);
+      }
+
+      double t_prev_p = t_curr;
+      bool cur_open = e_curr.corridor_open;
+      for (int c = 0; c < cut_cnt; c++) {
+        const double t_cut = t_curr + u_cuts[c] * seg_step;
+        const Eval1D e_cut = eval_fn(t_cut, true);
+        if (!e_cut.valid) {
+          break;
+        }
+        const double ds_c = t_cut - t_prev_p;
+        if (ds_c > 1e-13) {
+          if (static_cast<int>(curve->nodes.size()) >= params.max_nodes_per_branch) {
+            curve->coverage.budget_truncated = true;
+            AppendEventsWithinArclength(step_events, curve->nodes.back().arclength, &curve->events);
+            return false;
+          }
+          arclen += ds_c;
+          push_node(e_cut, arclen, cur_open);
+          t_prev_p = t_cut;
+        }
+        CurveEvent ev;
+        CopyNodeToEvent(curve->nodes.back(), CurveEventKind::kCorridorCutoff, -1, &ev);
+        curve->events.push_back(ev);
+        cur_open = !cur_open;
+      }
+
+      const double ds_rem = t_target - t_prev_p;
+      if (ds_rem > 1e-13) {
+        if (static_cast<int>(curve->nodes.size()) >= params.max_nodes_per_branch) {
+          curve->coverage.budget_truncated = true;
+          AppendEventsWithinArclength(step_events, curve->nodes.back().arclength, &curve->events);
+          return false;
+        }
+        arclen += ds_rem;
+        push_node(e_target, arclen, cur_open);
+      }
+      AppendEventsWithinArclength(step_events, curve->nodes.back().arclength, &curve->events);
+      t_curr = t_target;
+      e_curr = e_target;
+      return true;
+    };
+
     if (!e_next.valid) {
       // Discovered a narrow interior optical gap missed by the coarse scan: finish this fragment
-      // cleanly at the bisected left edge and signal caller to locate the far edge and resume.
+      // cleanly at the bisected left edge (running all step-internal event detectors on the valid
+      // portion [t_curr, t_bnd]) and signal caller to locate the far edge and resume.
       double t_bnd = t_curr;
       int fail_idx = -1;
-      const Eval1D e_bnd =
-          BisectOpticalBoundary1DFn(eval_fn, t_curr, t_next, params.bisection_iters, &t_bnd, &fail_idx);
-      const double ds = t_bnd - t_curr;
-      if (ds > 1e-13) {
-        arclen += ds;
-        push_node(e_bnd, arclen, e_curr.corridor_open);
+      Eval1D e_bnd = BisectOpticalBoundary1DFn(eval_fn, t_curr, t_next, params.bisection_iters, &t_bnd, &fail_idx);
+      if (track_corridor) {
+        const Eval1D e_bnd_c = eval_fn(t_bnd, true);
+        if (e_bnd_c.valid) {
+          e_bnd = e_bnd_c;
+        }
       }
-      CurveEvent ev;
-      CopyNodeToEvent(curve->nodes.back(), CurveEventKind::kOpticalBoundary, fail_idx, &ev);
-      curve->events.push_back(ev);
+      if (commit_valid_step(t_bnd, e_bnd)) {
+        CurveEvent ev;
+        CopyNodeToEvent(curve->nodes.back(), CurveEventKind::kOpticalBoundary, fail_idx, &ev);
+        curve->events.push_back(ev);
+      }
       *gap_hit = true;
       *gap_invalid_t = t_next;
       *gap_step_hint = step;
@@ -929,16 +1062,18 @@ void Trace1DSingleFragment(const EvalFn& eval_fn, int slot_count, int free_ax, d
                                  e_next.margin.min_effective_margin, margin_lip, &t_gap_inv)) {
       double t_bnd = t_curr;
       int fail_idx = -1;
-      const Eval1D e_bnd =
-          BisectOpticalBoundary1DFn(eval_fn, t_curr, t_gap_inv, params.bisection_iters, &t_bnd, &fail_idx);
-      const double ds = t_bnd - t_curr;
-      if (ds > 1e-13) {
-        arclen += ds;
-        push_node(e_bnd, arclen, e_curr.corridor_open);
+      Eval1D e_bnd = BisectOpticalBoundary1DFn(eval_fn, t_curr, t_gap_inv, params.bisection_iters, &t_bnd, &fail_idx);
+      if (track_corridor) {
+        const Eval1D e_bnd_c = eval_fn(t_bnd, true);
+        if (e_bnd_c.valid) {
+          e_bnd = e_bnd_c;
+        }
       }
-      CurveEvent ev;
-      CopyNodeToEvent(curve->nodes.back(), CurveEventKind::kOpticalBoundary, fail_idx, &ev);
-      curve->events.push_back(ev);
+      if (commit_valid_step(t_bnd, e_bnd)) {
+        CurveEvent ev;
+        CopyNodeToEvent(curve->nodes.back(), CurveEventKind::kOpticalBoundary, fail_idx, &ev);
+        curve->events.push_back(ev);
+      }
       *gap_hit = true;
       *gap_invalid_t = t_gap_inv;
       *gap_step_hint = std::min(step, t_next - t_gap_inv);
@@ -947,120 +1082,9 @@ void Trace1DSingleFragment(const EvalFn& eval_fn, int slot_count, int free_ax, d
       break;
     }
 
-    // Collect step-internal non-splitting events and flush only those within the committed
-    // arclength so node-budget truncation never leaves events past nodes.back().arclength.
-    std::vector<CurveEvent> step_events;
-    auto flush_step_events = [&]() {
-      const double max_s = curve->nodes.back().arclength + 1e-12;
-      for (const CurveEvent& ev : step_events) {
-        if (ev.arclength <= max_s) {
-          curve->events.push_back(ev);
-        }
-      }
-    };
-
-    // 1. Stationary point detection (||dx/dt|| = 0) via shared helper.
-    if (e_next.sky_speed > params.speed_tol) {
-      if (have_last_moving) {
-        double u_stat = 0.0;
-        Eval1D e_stat;
-        auto eval_stat_u = [&](double u) { return eval_fn(last_moving_t + u * (t_next - last_moving_t), false); };
-        if (DetectStationaryPoint1D(last_moving_e, e_next, params.stationary_tol, params.bisection_iters, eval_stat_u,
-                                    &u_stat, &e_stat)) {
-          const PoseCurveNode n_stat = NodeFromEval1D(e_stat, last_moving_arclen + u_stat * (t_next - last_moving_t));
-          CurveEvent ev;
-          CopyNodeToEvent(n_stat, CurveEventKind::kStationaryPoint, -1, &ev);
-          step_events.push_back(ev);
-        }
-      }
-      have_last_moving = true;
-      last_moving_t = t_next;
-      last_moving_e = e_next;
-      last_moving_arclen = arclen + (t_next - t_curr);
-    }
-
-    // 2. Internal TIR onset detection (single and interior double crossings) via shared helper.
-    auto eval_tir_u = [&](double u, int k, double* disc_out) {
-      const Eval1D em = eval_fn(t_curr + u * step, false);
-      if (!em.valid) {
-        return false;
-      }
-      *disc_out = em.internal_disc[k];
-      return true;
-    };
-    auto emit_tir_u = [&](double u_tir, int k) {
-      const Eval1D e_tir = eval_fn(t_curr + u_tir * step, false);
-      if (e_tir.valid) {
-        const PoseCurveNode n_tir = NodeFromEval1D(e_tir, arclen + u_tir * step);
-        CurveEvent ev;
-        CopyNodeToEvent(n_tir, CurveEventKind::kTirOnset, k, &ev);
-        step_events.push_back(ev);
-      }
-    };
-    DetectStepTirOnsets(slot_count, e_curr.internal_disc, e_next.internal_disc, step, margin_lip,
-                        params.bisection_iters, eval_tir_u, emit_tir_u);
-
-    // 3. Corridor cutoff detection (single and continuous-margin interior double crossings) via
-    //    shared helper, strictly honoring params.max_nodes_per_branch before every node insertion.
-    int cut_cnt = 0;
-    double u_cuts[2] = { 0.0, 0.0 };
-    if (track_corridor) {
-      auto eval_corr_u = [&](double u, bool /*need_margin*/, bool* open_out, double* margin_out) {
-        const Eval1D em = eval_fn(t_curr + u * step, true);
-        if (!em.valid) {
-          return false;
-        }
-        *open_out = em.corridor_open;
-        *margin_out = em.corridor_margin;
-        return true;
-      };
-      cut_cnt = FindStepCorridorCrossings(e_curr.corridor_open, e_curr.corridor_margin, e_next.corridor_open,
-                                          e_next.corridor_margin, step, params.bisection_iters, eval_corr_u, u_cuts);
-    }
-
-    bool truncated = false;
-    double t_prev_p = t_curr;
-    bool cur_open = e_curr.corridor_open;
-    for (int c = 0; c < cut_cnt; c++) {
-      const double t_cut = t_curr + u_cuts[c] * step;
-      const Eval1D e_cut = eval_fn(t_cut, true);
-      if (!e_cut.valid) {
-        break;
-      }
-      const double ds_c = t_cut - t_prev_p;
-      if (ds_c > 1e-13) {
-        if (static_cast<int>(curve->nodes.size()) >= params.max_nodes_per_branch) {
-          curve->coverage.budget_truncated = true;
-          truncated = true;
-          break;
-        }
-        arclen += ds_c;
-        push_node(e_cut, arclen, cur_open);
-        t_prev_p = t_cut;
-      }
-      CurveEvent ev;
-      CopyNodeToEvent(curve->nodes.back(), CurveEventKind::kCorridorCutoff, -1, &ev);
-      curve->events.push_back(ev);
-      cur_open = !cur_open;
-    }
-    if (truncated) {
-      flush_step_events();
+    if (!commit_valid_step(t_next, e_next)) {
       break;
     }
-
-    const double ds_rem = t_next - t_prev_p;
-    if (ds_rem > 1e-13) {
-      if (static_cast<int>(curve->nodes.size()) >= params.max_nodes_per_branch) {
-        curve->coverage.budget_truncated = true;
-        flush_step_events();
-        break;
-      }
-      arclen += ds_rem;
-      push_node(e_next, arclen, cur_open);
-    }
-    flush_step_events();
-    t_curr = t_next;
-    e_curr = e_next;
     h = shrunk ? std::max(params.min_step, step) : std::min(params.max_step, step * 1.25);
   }
 
@@ -1089,8 +1113,10 @@ void Trace1DSingleFragment(const EvalFn& eval_fn, int slot_count, int free_ax, d
 }
 
 // Stitches two 1D fragments across a periodic seam (back_frag ending at max_val, front_frag
-// starting at min_val == max_val) into one continuous open PoseCurve.
-PoseCurve StitchPeriodicSeam1D(const Fragment1D& back_frag, const Fragment1D& front_frag, double speed_tol) {
+// starting at min_val == max_val) into one continuous open PoseCurve while enforcing the single-
+// branch node budget on the assembled curve.
+PoseCurve StitchPeriodicSeam1D(const Fragment1D& back_frag, const Fragment1D& front_frag, double speed_tol,
+                               int max_nodes_per_branch) {
   PoseCurve stitched;
   stitched.kind = back_frag.curve.kind;
   stitched.coverage.seed_grid_n = back_frag.curve.coverage.seed_grid_n;
@@ -1104,8 +1130,19 @@ PoseCurve StitchPeriodicSeam1D(const Fragment1D& back_frag, const Fragment1D& fr
   std::vector<bool> edge_corridor_open = back_frag.edge_corridor_open;
   stitched.events = back_frag.curve.events;
 
+  if (max_nodes_per_branch > 0 && static_cast<int>(stitched.nodes.size()) > max_nodes_per_branch) {
+    stitched.nodes.resize(static_cast<size_t>(max_nodes_per_branch));
+    node_stationary.resize(static_cast<size_t>(max_nodes_per_branch));
+    edge_corridor_open.resize(static_cast<size_t>(max_nodes_per_branch - 1));
+    stitched.coverage.budget_truncated = true;
+  }
+
   // Skip front_frag.nodes[0] which coincides with back_frag.nodes.back() at the periodic seam.
   for (size_t i = 1; i < front_frag.curve.nodes.size(); i++) {
+    if (max_nodes_per_branch > 0 && static_cast<int>(stitched.nodes.size()) >= max_nodes_per_branch) {
+      stitched.coverage.budget_truncated = true;
+      break;
+    }
     PoseCurveNode nd = front_frag.curve.nodes[i];
     nd.arclength += back_len;
     stitched.nodes.push_back(nd);
@@ -1115,6 +1152,9 @@ PoseCurve StitchPeriodicSeam1D(const Fragment1D& back_frag, const Fragment1D& fr
   for (CurveEvent ev : front_frag.curve.events) {
     ev.arclength += back_len;
     stitched.events.push_back(ev);
+  }
+  if (!stitched.nodes.empty()) {
+    ClipEventsToArclength(stitched.nodes.back().arclength, &stitched.events);
   }
   std::sort(stitched.events.begin(), stitched.events.end(),
             [](const CurveEvent& a, const CurveEvent& b) { return a.arclength < b.arclength; });
@@ -1368,7 +1408,8 @@ CausticTraceResult Trace1DWithEvaluator(const PoseAxis& pax, int free_ax, int sl
     result.stop_requested = result.stop_requested || stopped;
 
     if (fragments.size() >= 2 && fragments.front().starts_at_seam && fragments.back().ends_at_seam) {
-      PoseCurve stitched = StitchPeriodicSeam1D(fragments.back(), fragments.front(), params.speed_tol);
+      PoseCurve stitched =
+          StitchPeriodicSeam1D(fragments.back(), fragments.front(), params.speed_tol, params.max_nodes_per_branch);
       result.coverage.budget_truncated = result.coverage.budget_truncated || stitched.coverage.budget_truncated;
       result.curves.push_back(std::move(stitched));
       for (size_t k = 1; k + 1 < fragments.size(); k++) {
@@ -2541,16 +2582,16 @@ HalfBranch2D TraceHalfBranch2D(const FaceNormalTable& table, const int* slots, i
         push_node(e_next, tau_next, arclen, cur_open);
       }
     } else {
+      if (cut_cnt > 0) {
+        // Detected a corridor cutoff that could not be split within raw_ulp_cap; declare it via
+        // unresolved_singularities to match the cliff-march unrepresentable-cutoff contract.
+        out.unresolved_singularities++;
+      }
       arclen += adv;
       push_node(e_next, tau_next, arclen, e_curr.corridor_open);
     }
 
-    const double max_s = out.nodes.back().arclength + 1e-12;
-    for (const CurveEvent& ev : step_events) {
-      if (ev.arclength <= max_s) {
-        out.events.push_back(ev);
-      }
-    }
+    AppendEventsWithinArclength(step_events, out.nodes.back().arclength, &out.events);
 
     q_curr[0] = q_next_in[0];
     q_curr[1] = q_next_in[1];
@@ -2965,10 +3006,7 @@ HalfBranch2D TraceHalfBranch2D(const FaceNormalTable& table, const int* slots, i
             arclen += ds_rem;
             push_node(e_end, tau_end, arclen, corr_pushed);
           }
-          const double max_s = out.nodes.back().arclength + 1e-12;
-          out.events.erase(std::remove_if(out.events.begin(), out.events.end(),
-                                          [max_s](const CurveEvent& ev) { return ev.arclength > max_s; }),
-                           out.events.end());
+          ClipEventsToArclength(out.nodes.back().arclength, &out.events);
           CurveEvent ev;
           CopyNodeToEvent(out.nodes.back(), kind, detail_idx, &ev);
           out.events.push_back(ev);
@@ -3717,8 +3755,129 @@ CausticTraceResult TraceContinuousRank1AxisAligned(const FaceNormalTable& table,
         shrunk = true;
       }
 
+      auto commit_chord_step = [&](double t_tgt, double f_tgt, const Eval1D& e_tgt) {
+        const double dt_s = t_tgt - t_curr;
+        const double df_s = f_tgt - f_curr;
+        const double ds = std::hypot(dt_s, df_s);
+        if (ds <= 1e-13) {
+          return;
+        }
+        auto seg_eval = [&](double u_par, bool eval_corr) {
+          return eval_at(t_curr + u_par * dt_s, f_curr + u_par * df_s, eval_corr);
+        };
+
+        // Update node 0's tangent and directional sky_speed to match the actual first step when f
+        // slides immediately (keep node 0's manifold sigma1 = e_curr.sky_speed intact).
+        if (half.nodes.size() == 1) {
+          half.nodes[0].tangent[vary_ax] = dt_s / ds;
+          half.nodes[0].tangent[fiber_ax] = df_s / ds;
+          half.nodes[0].sky_speed = std::fabs(dt_s / ds) * e_curr.sky_speed;
+        }
+
+        // Collect step-internal non-splitting events and flush only those within the committed
+        // arclength so truncation never leaves events past half.nodes.back().arclength.
+        std::vector<CurveEvent> step_events;
+
+        // Stationary point detection along the vary_ax derivative via shared helper.
+        const double rank1_stationary_tol = MakeFamily1DParams(params).stationary_tol;
+        if (e_tgt.sky_speed > params.speed_tol) {
+          if (have_last_moving) {
+            double u_stat = 0.0;
+            Eval1D e_stat;
+            auto eval_stat_u = [&](double u) {
+              return eval_at(last_moving_t + u * (t_tgt - last_moving_t), last_moving_f + u * (f_tgt - last_moving_f),
+                             false);
+            };
+            if (DetectStationaryPoint1D(last_moving_e, e_tgt, rank1_stationary_tol, params.bisection_iters, eval_stat_u,
+                                        &u_stat, &e_stat)) {
+              const double t_stat = last_moving_t + u_stat * (t_tgt - last_moving_t);
+              const double f_stat = last_moving_f + u_stat * (f_tgt - last_moving_f);
+              const double s_stat = last_moving_arclen + std::hypot(t_stat - last_moving_t, f_stat - last_moving_f);
+              const PoseCurveNode n_stat = make_node(e_stat, dt_s, df_s, s_stat);
+              CurveEvent ev;
+              CopyNodeToEvent(n_stat, CurveEventKind::kStationaryPoint, -1, &ev);
+              step_events.push_back(ev);
+            }
+          }
+          have_last_moving = true;
+          last_moving_t = t_tgt;
+          last_moving_f = f_tgt;
+          last_moving_e = e_tgt;
+          last_moving_arclen = arclen + ds;
+        }
+
+        // Internal TIR onset along chord (single and interior double crossings) via shared helper.
+        auto eval_tir_u = [&](double u, int k, double* disc_out) {
+          const Eval1D em = seg_eval(u, false);
+          if (!em.valid) {
+            return false;
+          }
+          *disc_out = em.internal_disc[k];
+          return true;
+        };
+        auto emit_tir_u = [&](double u_tir, int k) {
+          const Eval1D e_tir = seg_eval(u_tir, false);
+          if (e_tir.valid) {
+            const PoseCurveNode n_tir = make_node(e_tir, dt_s, df_s, arclen + u_tir * ds);
+            CurveEvent ev;
+            CopyNodeToEvent(n_tir, CurveEventKind::kTirOnset, k, &ev);
+            step_events.push_back(ev);
+          }
+        };
+        DetectStepTirOnsets(slot_count, e_curr.internal_disc, e_tgt.internal_disc, ds, margin_lip,
+                            params.bisection_iters, eval_tir_u, emit_tir_u);
+
+        // Corridor cutoff along chord (single and continuous-margin interior double crossings) via
+        // shared helper.
+        int cut_cnt = 0;
+        double u_cuts[2] = { 0.0, 0.0 };
+        if (track_corridor) {
+          auto eval_corr_u = [&](double u, bool /*need_margin*/, bool* open_out, double* margin_out) {
+            const Eval1D em = seg_eval(u, true);
+            if (!em.valid) {
+              return false;
+            }
+            *open_out = em.corridor_open;
+            *margin_out = em.corridor_margin;
+            return true;
+          };
+          cut_cnt = FindStepCorridorCrossings(e_curr.corridor_open, e_curr.corridor_margin, e_tgt.corridor_open,
+                                              e_tgt.corridor_margin, ds, params.bisection_iters, eval_corr_u, u_cuts);
+        }
+
+        double u_prev_p = 0.0;
+        bool cur_open = e_curr.corridor_open;
+        for (int c = 0; c < cut_cnt; c++) {
+          const Eval1D e_cut = seg_eval(u_cuts[c], true);
+          if (!e_cut.valid) {
+            break;
+          }
+          const double ds_c = (u_cuts[c] - u_prev_p) * ds;
+          if (ds_c > 1e-13) {
+            arclen += ds_c;
+            push_nd(e_cut, dt_s, df_s, arclen, cur_open);
+            u_prev_p = u_cuts[c];
+          }
+          CurveEvent ev;
+          CopyNodeToEvent(half.nodes.back(), CurveEventKind::kCorridorCutoff, -1, &ev);
+          half.events.push_back(ev);
+          cur_open = !cur_open;
+        }
+        const double ds_rem = (1.0 - u_prev_p) * ds;
+        if (ds_rem > 1e-13) {
+          arclen += ds_rem;
+          push_nd(e_tgt, dt_s, df_s, arclen, cur_open);
+        }
+
+        AppendEventsWithinArclength(step_events, half.nodes.back().arclength, &half.events);
+        t_curr = t_tgt;
+        f_curr = f_tgt;
+        e_curr = e_tgt;
+      };
+
       if (!ok) {
-        // Connected fiber sheet hit its optical boundary: bisect along the valid segment.
+        // Connected fiber sheet hit its optical boundary: bisect along the valid segment and run
+        // step-internal event detectors on the valid portion before emitting kOpticalBoundary.
         double t_v = t_curr;
         double f_v = f_curr;
         double t_i = t_next;
@@ -3740,13 +3899,13 @@ CausticTraceResult TraceContinuousRank1AxisAligned(const FaceNormalTable& table,
             }
           }
         }
-        const double dt_b = t_v - t_curr;
-        const double df_b = f_v - f_curr;
-        const double ds_b = std::hypot(dt_b, df_b);
-        if (ds_b > 1e-13) {
-          arclen += ds_b;
-          push_nd(e_bnd, dt_b, df_b, arclen, e_curr.corridor_open);
+        if (track_corridor) {
+          const Eval1D e_bnd_c = eval_at(t_v, f_v, true);
+          if (e_bnd_c.valid) {
+            e_bnd = e_bnd_c;
+          }
         }
+        commit_chord_step(t_v, f_v, e_bnd);
         CurveEvent ev;
         CopyNodeToEvent(half.nodes.back(), CurveEventKind::kOpticalBoundary, bnd_fail, &ev);
         half.events.push_back(ev);
@@ -3778,136 +3937,22 @@ CausticTraceResult TraceContinuousRank1AxisAligned(const FaceNormalTable& table,
             }
           }
         }
-        const double dt_b = u_lo * (t_next - t_curr);
-        const double df_b = u_lo * (f_next - f_curr);
-        const double ds_b = std::hypot(dt_b, df_b);
-        if (ds_b > 1e-13) {
-          arclen += ds_b;
-          push_nd(e_bnd, dt_b, df_b, arclen, e_curr.corridor_open);
+        const double t_bnd = t_curr + u_lo * (t_next - t_curr);
+        const double f_bnd = f_curr + u_lo * (f_next - f_curr);
+        if (track_corridor) {
+          const Eval1D e_bnd_c = eval_at(t_bnd, f_bnd, true);
+          if (e_bnd_c.valid) {
+            e_bnd = e_bnd_c;
+          }
         }
+        commit_chord_step(t_bnd, f_bnd, e_bnd);
         CurveEvent ev;
         CopyNodeToEvent(half.nodes.back(), CurveEventKind::kOpticalBoundary, bnd_fail, &ev);
         half.events.push_back(ev);
         return half;
       }
 
-      const double dt_s = t_next - t_curr;
-      const double df_s = f_next - f_curr;
-      const double ds = std::hypot(dt_s, df_s);
-
-      // Update node 0's tangent and directional sky_speed to match the actual first step when f
-      // slides immediately (keep node 0's manifold sigma1 = e_curr.sky_speed intact).
-      if (half.nodes.size() == 1 && ds > 0.0) {
-        half.nodes[0].tangent[vary_ax] = dt_s / ds;
-        half.nodes[0].tangent[fiber_ax] = df_s / ds;
-        half.nodes[0].sky_speed = std::fabs(dt_s / ds) * e_curr.sky_speed;
-      }
-
-      // Collect step-internal non-splitting events and flush only those within the committed
-      // arclength so truncation never leaves events past half.nodes.back().arclength.
-      std::vector<CurveEvent> step_events;
-
-      // Stationary point detection along the vary_ax derivative via shared helper.
-      const double rank1_stationary_tol = MakeFamily1DParams(params).stationary_tol;
-      if (e_next.sky_speed > params.speed_tol) {
-        if (have_last_moving) {
-          double u_stat = 0.0;
-          Eval1D e_stat;
-          auto eval_stat_u = [&](double u) {
-            return eval_at(last_moving_t + u * (t_next - last_moving_t), last_moving_f + u * (f_next - last_moving_f),
-                           false);
-          };
-          if (DetectStationaryPoint1D(last_moving_e, e_next, rank1_stationary_tol, params.bisection_iters, eval_stat_u,
-                                      &u_stat, &e_stat)) {
-            const double t_stat = last_moving_t + u_stat * (t_next - last_moving_t);
-            const double f_stat = last_moving_f + u_stat * (f_next - last_moving_f);
-            const double s_stat = last_moving_arclen + std::hypot(t_stat - last_moving_t, f_stat - last_moving_f);
-            const PoseCurveNode n_stat = make_node(e_stat, dt_s, df_s, s_stat);
-            CurveEvent ev;
-            CopyNodeToEvent(n_stat, CurveEventKind::kStationaryPoint, -1, &ev);
-            step_events.push_back(ev);
-          }
-        }
-        have_last_moving = true;
-        last_moving_t = t_next;
-        last_moving_f = f_next;
-        last_moving_e = e_next;
-        last_moving_arclen = arclen + ds;
-      }
-
-      // Internal TIR onset along chord (single and interior double crossings) via shared helper.
-      auto eval_tir_u = [&](double u, int k, double* disc_out) {
-        const Eval1D em = chord_eval(u, false);
-        if (!em.valid) {
-          return false;
-        }
-        *disc_out = em.internal_disc[k];
-        return true;
-      };
-      auto emit_tir_u = [&](double u_tir, int k) {
-        const Eval1D e_tir = chord_eval(u_tir, false);
-        if (e_tir.valid) {
-          const PoseCurveNode n_tir = make_node(e_tir, dt_s, df_s, arclen + u_tir * ds);
-          CurveEvent ev;
-          CopyNodeToEvent(n_tir, CurveEventKind::kTirOnset, k, &ev);
-          step_events.push_back(ev);
-        }
-      };
-      DetectStepTirOnsets(slot_count, e_curr.internal_disc, e_next.internal_disc, ds, margin_lip,
-                          params.bisection_iters, eval_tir_u, emit_tir_u);
-
-      // Corridor cutoff along chord (single and continuous-margin interior double crossings) via
-      // shared helper.
-      int cut_cnt = 0;
-      double u_cuts[2] = { 0.0, 0.0 };
-      if (track_corridor) {
-        auto eval_corr_u = [&](double u, bool /*need_margin*/, bool* open_out, double* margin_out) {
-          const Eval1D em = chord_eval(u, true);
-          if (!em.valid) {
-            return false;
-          }
-          *open_out = em.corridor_open;
-          *margin_out = em.corridor_margin;
-          return true;
-        };
-        cut_cnt = FindStepCorridorCrossings(e_curr.corridor_open, e_curr.corridor_margin, e_next.corridor_open,
-                                            e_next.corridor_margin, ds, params.bisection_iters, eval_corr_u, u_cuts);
-      }
-
-      double u_prev_p = 0.0;
-      bool cur_open = e_curr.corridor_open;
-      for (int c = 0; c < cut_cnt; c++) {
-        const Eval1D e_cut = chord_eval(u_cuts[c], true);
-        if (!e_cut.valid) {
-          break;
-        }
-        const double ds_c = (u_cuts[c] - u_prev_p) * ds;
-        if (ds_c > 1e-13) {
-          arclen += ds_c;
-          push_nd(e_cut, dt_s, df_s, arclen, cur_open);
-          u_prev_p = u_cuts[c];
-        }
-        CurveEvent ev;
-        CopyNodeToEvent(half.nodes.back(), CurveEventKind::kCorridorCutoff, -1, &ev);
-        half.events.push_back(ev);
-        cur_open = !cur_open;
-      }
-      const double ds_rem = (1.0 - u_prev_p) * ds;
-      if (ds_rem > 1e-13) {
-        arclen += ds_rem;
-        push_nd(e_next, dt_s, df_s, arclen, cur_open);
-      }
-
-      const double max_s = half.nodes.back().arclength + 1e-12;
-      for (const CurveEvent& ev : step_events) {
-        if (ev.arclength <= max_s) {
-          half.events.push_back(ev);
-        }
-      }
-
-      t_curr = t_next;
-      f_curr = f_next;
-      e_curr = e_next;
+      commit_chord_step(t_next, f_next, e_next);
       steps_taken++;
       h = shrunk ? std::max(step_min, step) : std::min(step_max, step * 1.25);
     }

@@ -246,6 +246,17 @@ TEST(CausticContinuation, PoseCurveFromFiberAdaptsTraceResult) {
       EXPECT_GT(node.arclength, curve.nodes[i - 1].arclength);
     }
   }
+
+  // Chart-boundary termination maps explicitly to kDomainBoundary with detail_index = -1.
+  TargetChart tight_chart = MakeTargetChart(target_out);
+  tight_chart.minimum_dot = 1.0 - 1e-8;
+  const TraceResult chart_exit = TraceFiber(map, tight_chart, seed_pose, cp);
+  ASSERT_EQ(chart_exit.status, FiberStatus::kEventTerminated);
+  ASSERT_EQ(chart_exit.reason, FiberReason::kChartBoundary);
+  const PoseCurve chart_curve = PoseCurveFromFiber(chart_exit, sun_dir, target_sky);
+  ASSERT_EQ(chart_curve.events.size(), 1u);
+  EXPECT_EQ(chart_curve.events[0].kind, CurveEventKind::kDomainBoundary);
+  EXPECT_EQ(chart_curve.events[0].detail_index, -1);
 }
 
 // =================================================================================================
@@ -1982,6 +1993,67 @@ TEST(CausticContinuation, EdgeCaseRegressions) {
         EXPECT_LE(ev.arclength, max_s + 1e-12)
             << "Truncated branch emitted event at s=" << ev.arclength << " past final node s=" << max_s;
       }
+    }
+  }
+
+  // 9ae. Basal-reflection {1} grazing-gap fixture (zenith=20.000005 deg, roll=0 deg,
+  //      sun=(20 deg, 0.6 deg)): (a) with unit-height prism corridor, the clipped step entering
+  //      the optical gap must still emit its kCorridorCutoff (~180.50-180.51 deg) and close the
+  //      terminal segment through 180.557778 deg alongside the right-side cutoff (~180.698 deg);
+  //      (b) without corridor and max_nodes_per_branch=70, periodic seam stitching must enforce
+  //      the per-branch node budget and retain only segments/events within the returned arclength.
+  {
+    int slots1[1];
+    const int faces1[1] = { 1 };
+    f.Resolve(faces1, 1, slots1);
+    double sun_gap[3];
+    AltAzDegToSky(20.0, 0.6, sun_gap);
+    PoseManifold m;
+    m.axes[PoseManifold::kAxisAzimuth] = PoseAxis::FreeRad(0.0, 2.0 * kPi, true);
+    m.axes[PoseManifold::kAxisZenith] = PoseAxis::PinnedDeg(20.000005);
+    m.axes[PoseManifold::kAxisRoll] = PoseAxis::PinnedDeg(0.0);
+
+    // (a) Corridor cutoffs on both sides of the grazing gap.
+    Corridor corr(f.normals, f.polygons, slots1, 1);
+    const CausticTraceResult res_corr = TraceFamily1D(f.normals, slots1, 1, n, sun_gap, m, &corr);
+    ASSERT_EQ(res_corr.curves.size(), 1u);
+    const PoseCurve& c_corr = res_corr.curves[0];
+    EXPECT_FALSE(c_corr.coverage.closed);
+    int left_cutoffs = 0;
+    int right_cutoffs = 0;
+    for (const CurveEvent& ev : c_corr.events) {
+      if (ev.kind == CurveEventKind::kCorridorCutoff) {
+        const double az_d = WrapAngleDeg(ev.param[PoseManifold::kAxisAzimuth] * kRadToDeg);
+        if (az_d > 180.4 && az_d < 180.56) {
+          left_cutoffs++;
+        } else if (az_d > 180.64 && az_d < 180.8) {
+          right_cutoffs++;
+        }
+      }
+    }
+    EXPECT_GE(left_cutoffs, 1) << "Missing corridor cutoff on the clipped left side of the grazing gap";
+    EXPECT_GE(right_cutoffs, 1) << "Missing corridor cutoff on the right side of the grazing gap";
+    ASSERT_GE(c_corr.segments.size(), 3u);
+    EXPECT_FALSE(c_corr.segments.front().corridor_open);
+    EXPECT_FALSE(c_corr.segments.back().corridor_open);
+
+    // (b) Periodic seam stitching honors max_nodes_per_branch = 70.
+    Family1DParams p70;
+    p70.max_nodes_per_branch = 70;
+    const CausticTraceResult res_cap = TraceFamily1D(f.normals, slots1, 1, n, sun_gap, m, nullptr, p70);
+    ASSERT_EQ(res_cap.curves.size(), 1u);
+    const PoseCurve& c_cap = res_cap.curves[0];
+    EXPECT_LE(c_cap.nodes.size(), 70u);
+    EXPECT_TRUE(c_cap.coverage.budget_truncated);
+    EXPECT_TRUE(res_cap.coverage.budget_truncated);
+    const double max_s = c_cap.nodes.back().arclength;
+    for (const CurveEvent& ev : c_cap.events) {
+      EXPECT_GE(ev.arclength, -1e-12);
+      EXPECT_LE(ev.arclength, max_s + 1e-12);
+    }
+    for (const CurveSegment& seg : c_cap.segments) {
+      EXPECT_GE(seg.start_idx, 0);
+      EXPECT_LT(seg.end_idx, static_cast<int>(c_cap.nodes.size()));
     }
   }
 }
