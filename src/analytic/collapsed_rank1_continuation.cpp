@@ -591,6 +591,11 @@ CausticTraceResult TraceCausticLocus(const FaceNormalTable& table, const int* sl
   const double cell_diag = std::hypot(step0, step1);
 
   // Stage 1: Coarse Jet<2> pre-scan.
+  if (CheckStop(stop)) {
+    result.stop_requested = true;
+    result.coverage.budget_truncated = true;
+    return result;
+  }
   std::vector<Eval2DJet1> grid(static_cast<size_t>(n * n));
   int valid_count = 0;
   bool any_full_generator_rank = false;

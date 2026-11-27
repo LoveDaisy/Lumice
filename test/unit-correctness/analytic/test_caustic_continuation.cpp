@@ -2331,21 +2331,11 @@ TEST(CausticContinuation, EdgeCaseRegressions) {
         found_truncated_without_singularity = true;
       }
       for (const CurveEvent& ev : c.events) {
-        if (ev.kind == CurveEventKind::kLocusSingularity) {
-          // Any published kLocusSingularity must have genuine near-zero gradient, never a
-          // regular point truncated only by max_newton_iters=1.
-          EXPECT_FALSE(c.nodes.size() == 1 && c.coverage.budget_truncated);
-        }
-      }
-    }
-    EXPECT_TRUE(found_truncated_without_singularity);
-    // Verify no single-node curve emits a spurious kLocusSingularity when truncated by Newton budget.
-    for (const PoseCurve& c : res_budget.curves) {
-      for (const CurveEvent& ev : c.events) {
         EXPECT_NE(ev.kind, CurveEventKind::kLocusSingularity)
             << "Newton budget exhaustion emitted spurious kLocusSingularity at s=" << ev.arclength;
       }
     }
+    EXPECT_TRUE(found_truncated_without_singularity);
   }
 
   // 9ak. max_steps_per_branch == INT_MAX must saturate max_nodes_per_branch without signed overflow
@@ -2370,6 +2360,26 @@ TEST(CausticContinuation, EdgeCaseRegressions) {
       EXPECT_EQ(res_max.curves[i].nodes.size(), res_m1.curves[i].nodes.size());
       EXPECT_EQ(res_max.curves[i].coverage.closed, res_m1.curves[i].coverage.closed);
     }
+  }
+
+  // 9al. Pre-cancelled trace must return before allocating the seed_grid_n^2 pre-scan grid.
+  {
+    int slots35[2];
+    const int faces35[2] = { 3, 5 };
+    f.Resolve(faces35, 2, slots35);
+    double sun20[3];
+    AltAzDegToSky(20.0, 0.0, sun20);
+    CausticContinuationParams p_large_grid;
+    p_large_grid.seed_grid_n = 1024;
+    StopToken token;
+    token.RequestCancel();
+    DiscoveryStop stop;
+    stop.token = &token;
+    const CausticTraceResult res_stopped =
+        TraceCausticLocus(f.normals, slots35, 2, n, sun20, PoseManifold::Column(), nullptr, p_large_grid, &stop);
+    EXPECT_TRUE(res_stopped.stop_requested);
+    EXPECT_TRUE(res_stopped.coverage.budget_truncated);
+    EXPECT_TRUE(res_stopped.curves.empty());
   }
 }
 
