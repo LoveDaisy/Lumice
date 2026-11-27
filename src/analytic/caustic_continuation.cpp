@@ -80,6 +80,288 @@ bool EvaluateCorridorOpen(Corridor* corridor, const double pose[9], const double
   return em.status == EntryMeasureStatus::kOk && em.value > 0.0;
 }
 
+double EvaluateCorridorOverlapMargin(const Corridor* corridor, const double pose[9], const double sun_dir[3],
+                                     double refractive_index) {
+  if (corridor == nullptr) {
+    return 1.0;
+  }
+  const double incident[3] = { -sun_dir[0], -sun_dir[1], -sun_dir[2] };
+  double s_body[3];
+  WorldToBody(pose, incident, s_body);
+  return corridor->OverlapMargin(s_body, refractive_index);
+}
+
+void EvaluateCorridorStateAndMargin(Corridor* corridor, const double pose[9], const double sun_dir[3],
+                                    double refractive_index, bool need_margin, bool* open_out, double* margin_out) {
+  if (!need_margin) {
+    *open_out = EvaluateCorridorOpen(corridor, pose, sun_dir, refractive_index);
+    return;
+  }
+  const double m = EvaluateCorridorOverlapMargin(corridor, pose, sun_dir, refractive_index);
+  *margin_out = m;
+  *open_out =
+      (std::isfinite(m) && m >= -1e-9) ? EvaluateCorridorOpen(corridor, pose, sun_dir, refractive_index) : false;
+}
+
+// Shared step-internal TIR onset detector over u in [0, 1] for all tracers (1D family, 2D rank-2
+// caustic, 2D rank-1 collapsed fiber, and cliff march). Handles both single endpoint sign changes
+// and same-sign interior double crossings (quartile + 24-iter golden-section extremum search gated
+// by |da| + |db| <= margin_lip * step_len).
+//   eval_disc(double u, int k, double* disc_out) -> bool
+//   emit_tir(double u_tir, int k) -> void
+template <class EvalDiscFn, class EmitTirFn>
+void DetectStepTirOnsets(int slot_count, const double disc_a[kMaxFaceCount], const double disc_b[kMaxFaceCount],
+                         double step_len, double margin_lip, int bisection_iters, const EvalDiscFn& eval_disc,
+                         const EmitTirFn& emit_tir) {
+  auto bisect_tir = [&](int k, double u_a, bool pos_a, double u_b) {
+    double ua = u_a;
+    double ub = u_b;
+    for (int it = 0; it < bisection_iters; it++) {
+      const double um = 0.5 * (ua + ub);
+      double dm = 0.0;
+      if (!eval_disc(um, k, &dm)) {
+        break;
+      }
+      if ((dm > 0.0) == pos_a) {
+        ua = um;
+      } else {
+        ub = um;
+      }
+    }
+    emit_tir(0.5 * (ua + ub), k);
+  };
+
+  for (int k = 1; k < slot_count - 1; k++) {
+    const double da = disc_a[k];
+    const double db = disc_b[k];
+    const bool pos_a = da > 0.0;
+    const bool pos_b = db > 0.0;
+    if (pos_a != pos_b) {
+      bisect_tir(k, 0.0, pos_a, 1.0);
+    } else if (std::fabs(da) + std::fabs(db) <= margin_lip * step_len) {
+      const double us[5] = { 0.0, 0.25, 0.5, 0.75, 1.0 };
+      int best_idx = (pos_a ? (da <= db) : (da >= db)) ? 0 : 4;
+      double best_d = pos_a ? std::min(da, db) : std::max(da, db);
+      bool found_opp = false;
+      double u_opp = 0.0;
+      for (int q = 1; q <= 3; q++) {
+        double dq = 0.0;
+        if (!eval_disc(us[q], k, &dq)) {
+          continue;
+        }
+        if ((dq > 0.0) != pos_a) {
+          found_opp = true;
+          u_opp = us[q];
+          break;
+        }
+        if (pos_a ? (dq < best_d) : (dq > best_d)) {
+          best_d = dq;
+          best_idx = q;
+        }
+      }
+      if (!found_opp) {
+        double lo = (best_idx > 0) ? us[best_idx - 1] : us[0];
+        double hi = (best_idx < 4) ? us[best_idx + 1] : us[4];
+        if (std::fabs(best_d) <= 0.5 * margin_lip * step_len * (hi - lo)) {
+          constexpr double kInvPhi = 0.6180339887498949;
+          double c = hi - kInvPhi * (hi - lo);
+          double d = lo + kInvPhi * (hi - lo);
+          double dc = 0.0;
+          double dd = 0.0;
+          bool ok_c = eval_disc(c, k, &dc);
+          bool ok_d = eval_disc(d, k, &dd);
+          auto check_opp = [&](double ux, bool ok, double dx) {
+            if (ok && (dx > 0.0) != pos_a) {
+              found_opp = true;
+              u_opp = ux;
+              return true;
+            }
+            return false;
+          };
+          if (!check_opp(c, ok_c, dc) && !check_opp(d, ok_d, dd) && ok_c && ok_d) {
+            for (int it = 0; it < 24; it++) {
+              const bool go_left = pos_a ? (dc < dd) : (dc > dd);
+              if (go_left) {
+                hi = d;
+                d = c;
+                dd = dc;
+                ok_d = ok_c;
+                c = hi - kInvPhi * (hi - lo);
+                ok_c = eval_disc(c, k, &dc);
+                if (check_opp(c, ok_c, dc) || !ok_c) {
+                  break;
+                }
+              } else {
+                lo = c;
+                c = d;
+                dc = dd;
+                ok_c = ok_d;
+                d = lo + kInvPhi * (hi - lo);
+                ok_d = eval_disc(d, k, &dd);
+                if (check_opp(d, ok_d, dd) || !ok_d) {
+                  break;
+                }
+              }
+            }
+          }
+        }
+      }
+      if (found_opp) {
+        bisect_tir(k, 0.0, pos_a, u_opp);
+        bisect_tir(k, u_opp, !pos_a, 1.0);
+      }
+    }
+  }
+}
+
+// Shared step-internal corridor crossing detector over u in [0, 1] for all tracers (1D family,
+// 2D rank-2 caustic, 2D rank-1 collapsed fiber, and cliff march). Returns 0, 1, or 2 crossing
+// parameters in ascending order in u_cuts_out[0..count-1]. For same-sign endpoints, uses quartile
+// probes plus 24-iter golden-section extremum search on Corridor::OverlapMargin (maximizing when
+// both endpoints are closed, minimizing when both are open), confirming every candidate against
+// exact Corridor::Evaluate before bisecting both crossings.
+//   eval_corr(double u, bool need_margin, bool* open_out, double* margin_out) -> bool
+template <class EvalCorrFn>
+int FindStepCorridorCrossings(bool open_a, double margin_a, bool open_b, double margin_b, double step_len,
+                              int bisection_iters, const EvalCorrFn& eval_corr, double u_cuts_out[2]) {
+  auto bisect_corridor = [&](double u_a, bool side_a_open, double u_b) {
+    double ua = u_a;
+    double ub = u_b;
+    for (int it = 0; it < bisection_iters; it++) {
+      const double um = 0.5 * (ua + ub);
+      bool open_m = side_a_open;
+      double dummy_m = 0.0;
+      if (!eval_corr(um, false, &open_m, &dummy_m)) {
+        break;
+      }
+      if (open_m == side_a_open) {
+        ua = um;
+      } else {
+        ub = um;
+      }
+    }
+    return 0.5 * (ua + ub);
+  };
+
+  if (open_a != open_b) {
+    u_cuts_out[0] = bisect_corridor(0.0, open_a, 1.0);
+    return 1;
+  }
+
+  const bool search_max = !open_a;
+  const double us[5] = { 0.0, 0.25, 0.5, 0.75, 1.0 };
+  double ms[5] = { margin_a, 0.0, 0.0, 0.0, margin_b };
+  bool m_valid[5] = { std::isfinite(margin_a), false, false, false, std::isfinite(margin_b) };
+  int best_idx = -1;
+  double best_m = 0.0;
+  auto consider_m = [&](int idx, double m_val) {
+    if (!std::isfinite(m_val)) {
+      return;
+    }
+    if (best_idx < 0 || (search_max ? (m_val > best_m) : (m_val < best_m))) {
+      best_idx = idx;
+      best_m = m_val;
+    }
+  };
+  consider_m(0, margin_a);
+  consider_m(4, margin_b);
+
+  bool found_opp = false;
+  double u_opp = 0.0;
+  for (int q = 1; q <= 3; q++) {
+    bool open_q = open_a;
+    double mq = std::numeric_limits<double>::quiet_NaN();
+    if (!eval_corr(us[q], true, &open_q, &mq)) {
+      continue;
+    }
+    if (open_q != open_a) {
+      found_opp = true;
+      u_opp = us[q];
+      break;
+    }
+    if (std::isfinite(mq)) {
+      ms[q] = mq;
+      m_valid[q] = true;
+      consider_m(q, mq);
+    }
+  }
+
+  if (!found_opp && best_idx >= 0) {
+    double max_slope_est = step_len;
+    if (m_valid[0] && m_valid[1]) {
+      max_slope_est = std::max(max_slope_est, std::fabs(ms[1] - ms[0]));
+    }
+    if (m_valid[3] && m_valid[4]) {
+      max_slope_est = std::max(max_slope_est, std::fabs(ms[4] - ms[3]));
+    }
+    if (m_valid[0] && m_valid[4]) {
+      max_slope_est = std::max(max_slope_est, std::fabs(ms[4] - ms[0]));
+    }
+    bool worth_search = (best_idx >= 1 && best_idx <= 3);
+    if (!worth_search) {
+      worth_search = search_max ? (best_m > -4.0 * max_slope_est) : (best_m < 4.0 * max_slope_est);
+    }
+    if (search_max && best_m >= 0.0) {
+      worth_search = true;
+    }
+    if (worth_search) {
+      double lo = (best_idx > 0) ? us[best_idx - 1] : us[0];
+      double hi = (best_idx < 4) ? us[best_idx + 1] : us[4];
+      constexpr double kInvPhi = 0.6180339887498949;
+      double c = hi - kInvPhi * (hi - lo);
+      double d = lo + kInvPhi * (hi - lo);
+      bool open_c = open_a;
+      bool open_d = open_a;
+      double mc = std::numeric_limits<double>::quiet_NaN();
+      double md = std::numeric_limits<double>::quiet_NaN();
+      bool ok_c = eval_corr(c, true, &open_c, &mc);
+      bool ok_d = eval_corr(d, true, &open_d, &md);
+      auto check_opp = [&](double ux, bool ok, bool open_x) {
+        if (ok && open_x != open_a) {
+          found_opp = true;
+          u_opp = ux;
+          return true;
+        }
+        return false;
+      };
+      if (!check_opp(c, ok_c, open_c) && !check_opp(d, ok_d, open_d) && ok_c && ok_d && std::isfinite(mc) &&
+          std::isfinite(md)) {
+        for (int it = 0; it < 24; it++) {
+          const bool go_left = search_max ? (mc > md) : (mc < md);
+          if (go_left) {
+            hi = d;
+            d = c;
+            md = mc;
+            ok_d = ok_c;
+            c = hi - kInvPhi * (hi - lo);
+            ok_c = eval_corr(c, true, &open_c, &mc);
+            if (check_opp(c, ok_c, open_c) || !ok_c || !std::isfinite(mc)) {
+              break;
+            }
+          } else {
+            lo = c;
+            c = d;
+            mc = md;
+            ok_c = ok_d;
+            d = lo + kInvPhi * (hi - lo);
+            ok_d = eval_corr(d, true, &open_d, &md);
+            if (check_opp(d, ok_d, open_d) || !ok_d || !std::isfinite(md)) {
+              break;
+            }
+          }
+        }
+      }
+    }
+  }
+
+  if (found_opp) {
+    u_cuts_out[0] = bisect_corridor(0.0, open_a, u_opp);
+    u_cuts_out[1] = bisect_corridor(u_opp, !open_a, 1.0);
+    return 2;
+  }
+  return 0;
+}
+
 // Computes ||omega_{ax0} x omega_{ax1}|| for the two right-trivialized body angular velocity
 // generators of the Euler chart R(az, zenith, roll) = Rz(az - pi) Ry(-zenith) Rz(roll).
 double GeneratorCrossNorm2D(const double param[3], int ax0, int ax1) {
@@ -245,7 +527,61 @@ struct Eval1D {
   double sky_speed = 0.0;
   double internal_disc[kMaxFaceCount]{};
   bool corridor_open = true;
+  double corridor_margin = 1.0;
 };
+
+// Shared 1D stationary-point detector between two moving samples e_a (at u = 0) and e_b (at u = 1):
+// bisects dx . ref = 0 along eval_u(u), requires ||dx/dt|| <= stationary_tol, and verifies a
+// scale-invariant two-sided isolated minimum (rejecting flat constant-image plateaus).
+template <class EvalUFn>
+bool DetectStationaryPoint1D(const Eval1D& e_a, const Eval1D& e_b, double stationary_tol, int bisection_iters,
+                             const EvalUFn& eval_u, double* u_stat_out, Eval1D* e_stat_out) {
+  if (!(so3::Dot3(e_a.dx, e_b.dx) < 0.0)) {
+    return false;
+  }
+  double ref[3] = { e_b.dx[0] - e_a.dx[0], e_b.dx[1] - e_a.dx[1], e_b.dx[2] - e_a.dx[2] };
+  const double rn = so3::Norm3(ref);
+  if (!(rn > 0.0)) {
+    return false;
+  }
+  ref[0] /= rn;
+  ref[1] /= rn;
+  ref[2] /= rn;
+  double ua = 0.0;
+  double ub = 1.0;
+  double fa = so3::Dot3(e_a.dx, ref);
+  for (int it = 0; it < bisection_iters; it++) {
+    const double um = 0.5 * (ua + ub);
+    const Eval1D em = eval_u(um);
+    if (!em.valid) {
+      break;
+    }
+    const double fm = so3::Dot3(em.dx, ref);
+    if ((fa <= 0.0 && fm <= 0.0) || (fa > 0.0 && fm > 0.0)) {
+      ua = um;
+      fa = fm;
+    } else {
+      ub = um;
+    }
+  }
+  const double u_stat = 0.5 * (ua + ub);
+  const Eval1D e_stat = eval_u(u_stat);
+  if (!e_stat.valid || e_stat.sky_speed > stationary_tol) {
+    return false;
+  }
+  const Eval1D e_left = eval_u(0.5 * u_stat);
+  const Eval1D e_right = eval_u(0.5 * (u_stat + 1.0));
+  const double min_end_speed = std::min(e_a.sky_speed, e_b.sky_speed);
+  const bool isolated_min = e_left.valid && e_right.valid && e_left.sky_speed > 0.1 * min_end_speed &&
+                            e_right.sky_speed > 0.1 * min_end_speed &&
+                            so3::Dot3(e_left.dx, ref) * so3::Dot3(e_right.dx, ref) < 0.0;
+  if (!isolated_min) {
+    return false;
+  }
+  *u_stat_out = u_stat;
+  *e_stat_out = e_stat;
+  return true;
+}
 
 Eval1D Evaluate1DAlongTangent(const FaceNormalTable& table, const int* slots, int slot_count, double refractive_index,
                               const double sun_dir[3], const double param_rad[3], const double tangent_dir[3],
@@ -294,7 +630,8 @@ Eval1D Evaluate1DAlongTangent(const FaceNormalTable& table, const int* slots, in
   }
   out.valid = true;
   if (eval_corridor) {
-    out.corridor_open = EvaluateCorridorOpen(corridor, out.pose, sun_dir, refractive_index);
+    EvaluateCorridorStateAndMargin(corridor, out.pose, sun_dir, refractive_index, true, &out.corridor_open,
+                                   &out.corridor_margin);
   }
   return out;
 }
@@ -610,51 +947,30 @@ void Trace1DSingleFragment(const EvalFn& eval_fn, int slot_count, int free_ax, d
       break;
     }
 
-    // 1. Stationary point detection (||dx/dt|| = 0): works independently of how many fine steps
-    //    resolve the near-zero neighborhood, while rejecting flat constant-image plateaus via a
-    //    scale-invariant two-sided speed check around the bisected minimum.
+    // Collect step-internal non-splitting events and flush only those within the committed
+    // arclength so node-budget truncation never leaves events past nodes.back().arclength.
+    std::vector<CurveEvent> step_events;
+    auto flush_step_events = [&]() {
+      const double max_s = curve->nodes.back().arclength + 1e-12;
+      for (const CurveEvent& ev : step_events) {
+        if (ev.arclength <= max_s) {
+          curve->events.push_back(ev);
+        }
+      }
+    };
+
+    // 1. Stationary point detection (||dx/dt|| = 0) via shared helper.
     if (e_next.sky_speed > params.speed_tol) {
-      if (have_last_moving && so3::Dot3(last_moving_e.dx, e_next.dx) < 0.0) {
-        double ref[3] = { e_next.dx[0] - last_moving_e.dx[0], e_next.dx[1] - last_moving_e.dx[1],
-                          e_next.dx[2] - last_moving_e.dx[2] };
-        const double rn = so3::Norm3(ref);
-        if (rn > 0.0) {
-          ref[0] /= rn;
-          ref[1] /= rn;
-          ref[2] /= rn;
-          double ta = last_moving_t;
-          double tb = t_next;
-          double fa = so3::Dot3(last_moving_e.dx, ref);
-          for (int it = 0; it < params.bisection_iters; it++) {
-            const double tm = 0.5 * (ta + tb);
-            const Eval1D em = eval_fn(tm, false);
-            if (!em.valid) {
-              break;
-            }
-            const double fm = so3::Dot3(em.dx, ref);
-            if ((fa <= 0.0 && fm <= 0.0) || (fa > 0.0 && fm > 0.0)) {
-              ta = tm;
-              fa = fm;
-            } else {
-              tb = tm;
-            }
-          }
-          const double t_stat = 0.5 * (ta + tb);
-          const Eval1D e_stat = eval_fn(t_stat, false);
-          if (e_stat.valid && e_stat.sky_speed <= params.stationary_tol) {
-            const Eval1D e_left = eval_fn(0.5 * (last_moving_t + t_stat), false);
-            const Eval1D e_right = eval_fn(0.5 * (t_stat + t_next), false);
-            const double min_end_speed = std::min(last_moving_e.sky_speed, e_next.sky_speed);
-            const bool isolated_min = e_left.valid && e_right.valid && e_left.sky_speed > 0.1 * min_end_speed &&
-                                      e_right.sky_speed > 0.1 * min_end_speed &&
-                                      so3::Dot3(e_left.dx, ref) * so3::Dot3(e_right.dx, ref) < 0.0;
-            if (isolated_min) {
-              const PoseCurveNode n_stat = NodeFromEval1D(e_stat, last_moving_arclen + (t_stat - last_moving_t));
-              CurveEvent ev;
-              CopyNodeToEvent(n_stat, CurveEventKind::kStationaryPoint, -1, &ev);
-              curve->events.push_back(ev);
-            }
-          }
+      if (have_last_moving) {
+        double u_stat = 0.0;
+        Eval1D e_stat;
+        auto eval_stat_u = [&](double u) { return eval_fn(last_moving_t + u * (t_next - last_moving_t), false); };
+        if (DetectStationaryPoint1D(last_moving_e, e_next, params.stationary_tol, params.bisection_iters, eval_stat_u,
+                                    &u_stat, &e_stat)) {
+          const PoseCurveNode n_stat = NodeFromEval1D(e_stat, last_moving_arclen + u_stat * (t_next - last_moving_t));
+          CurveEvent ev;
+          CopyNodeToEvent(n_stat, CurveEventKind::kStationaryPoint, -1, &ev);
+          step_events.push_back(ev);
         }
       }
       have_last_moving = true;
@@ -663,245 +979,86 @@ void Trace1DSingleFragment(const EvalFn& eval_fn, int slot_count, int free_ax, d
       last_moving_arclen = arclen + (t_next - t_curr);
     }
 
-    // 2. Internal TIR onset for each internal reflection step k in [1, slot_count - 2],
-    //    detecting both single crossings and interior double crossings (e.g. - -> + -> - inside
-    //    one accepted step when |da| + |db| <= margin_lip * step).
-    auto bisect_tir_1d = [&](int k, double t_a, bool pos_a, double t_b) {
-      double ta = t_a;
-      double tb = t_b;
-      for (int it = 0; it < params.bisection_iters; it++) {
-        const double tm = 0.5 * (ta + tb);
-        const Eval1D em = eval_fn(tm, false);
-        if (!em.valid) {
-          break;
-        }
-        if ((em.internal_disc[k] > 0.0) == pos_a) {
-          ta = tm;
-        } else {
-          tb = tm;
-        }
+    // 2. Internal TIR onset detection (single and interior double crossings) via shared helper.
+    auto eval_tir_u = [&](double u, int k, double* disc_out) {
+      const Eval1D em = eval_fn(t_curr + u * step, false);
+      if (!em.valid) {
+        return false;
       }
-      const double t_tir = 0.5 * (ta + tb);
-      const Eval1D e_tir = eval_fn(t_tir, false);
+      *disc_out = em.internal_disc[k];
+      return true;
+    };
+    auto emit_tir_u = [&](double u_tir, int k) {
+      const Eval1D e_tir = eval_fn(t_curr + u_tir * step, false);
       if (e_tir.valid) {
-        const PoseCurveNode n_tir = NodeFromEval1D(e_tir, arclen + (t_tir - t_curr));
+        const PoseCurveNode n_tir = NodeFromEval1D(e_tir, arclen + u_tir * step);
         CurveEvent ev;
         CopyNodeToEvent(n_tir, CurveEventKind::kTirOnset, k, &ev);
-        curve->events.push_back(ev);
+        step_events.push_back(ev);
       }
     };
+    DetectStepTirOnsets(slot_count, e_curr.internal_disc, e_next.internal_disc, step, margin_lip,
+                        params.bisection_iters, eval_tir_u, emit_tir_u);
 
-    for (int k = 1; k < slot_count - 1; k++) {
-      const double da = e_curr.internal_disc[k];
-      const double db = e_next.internal_disc[k];
-      const bool pos_a = da > 0.0;
-      const bool pos_b = db > 0.0;
-      if (pos_a != pos_b) {
-        bisect_tir_1d(k, t_curr, pos_a, t_next);
-      } else if (std::fabs(da) + std::fabs(db) <= margin_lip * step) {
-        // Probe for an interior sign reversal of internal_disc[k] via quartile + golden-section
-        // extremum search (minimizing if pos_a, maximizing if !pos_a).
-        double ts[5] = { t_curr, t_curr + 0.25 * step, t_curr + 0.5 * step, t_curr + 0.75 * step, t_next };
-        double ds_v[5] = { da, 0.0, 0.0, 0.0, db };
-        int best_idx = (pos_a ? (da <= db) : (da >= db)) ? 0 : 4;
-        double best_d = pos_a ? std::min(da, db) : std::max(da, db);
-        bool found_opp = false;
-        double t_opp = t_curr;
-        for (int q = 1; q <= 3; q++) {
-          const Eval1D eq = eval_fn(ts[q], false);
-          if (!eq.valid) {
-            continue;
-          }
-          const double dq = eq.internal_disc[k];
-          ds_v[q] = dq;
-          if ((dq > 0.0) != pos_a) {
-            found_opp = true;
-            t_opp = ts[q];
-            break;
-          }
-          if (pos_a ? (dq < best_d) : (dq > best_d)) {
-            best_d = dq;
-            best_idx = q;
-          }
-        }
-        if (!found_opp) {
-          double lo = (best_idx > 0) ? ts[best_idx - 1] : ts[0];
-          double hi = (best_idx < 4) ? ts[best_idx + 1] : ts[4];
-          if (std::fabs(best_d) <= 0.5 * margin_lip * (hi - lo)) {
-            constexpr double kInvPhi = 0.6180339887498949;
-            double c = hi - kInvPhi * (hi - lo);
-            double d = lo + kInvPhi * (hi - lo);
-            Eval1D ec = eval_fn(c, false);
-            Eval1D ed = eval_fn(d, false);
-            auto eval_opp = [&](double t_x, const Eval1D& ex) {
-              if (ex.valid && (ex.internal_disc[k] > 0.0) != pos_a) {
-                found_opp = true;
-                t_opp = t_x;
-                return true;
-              }
-              return false;
-            };
-            if (!eval_opp(c, ec) && !eval_opp(d, ed)) {
-              for (int it = 0; it < 24; it++) {
-                const bool go_left =
-                    pos_a ? (ec.internal_disc[k] < ed.internal_disc[k]) : (ec.internal_disc[k] > ed.internal_disc[k]);
-                if (go_left) {
-                  hi = d;
-                  d = c;
-                  ed = ec;
-                  c = hi - kInvPhi * (hi - lo);
-                  ec = eval_fn(c, false);
-                  if (eval_opp(c, ec)) {
-                    break;
-                  }
-                } else {
-                  lo = c;
-                  c = d;
-                  ec = ed;
-                  d = lo + kInvPhi * (hi - lo);
-                  ed = eval_fn(d, false);
-                  if (eval_opp(d, ed)) {
-                    break;
-                  }
-                }
-              }
-            }
-          }
-        }
-        if (found_opp) {
-          bisect_tir_1d(k, t_curr, pos_a, t_opp);
-          bisect_tir_1d(k, t_opp, !pos_a, t_next);
-        }
-      }
-    }
-
-    // 3. Corridor cutoff (A_P crossing 0), handling both single crossings and interior double
-    //    crossings (e.g. 0 -> open -> 0 inside one accepted step), while strictly honoring
-    //    params.max_nodes_per_branch before every node insertion.
+    // 3. Corridor cutoff detection (single and continuous-margin interior double crossings) via
+    //    shared helper, strictly honoring params.max_nodes_per_branch before every node insertion.
+    int cut_cnt = 0;
+    double u_cuts[2] = { 0.0, 0.0 };
     if (track_corridor) {
-      auto bisect_corridor_1d = [&](double t_a, bool open_a, double t_b, double* t_cut_out) {
-        double ta = t_a;
-        double tb = t_b;
-        for (int it = 0; it < params.bisection_iters; it++) {
-          const double tm = 0.5 * (ta + tb);
-          const Eval1D em = eval_fn(tm, true);
-          if (!em.valid) {
-            break;
-          }
-          if (em.corridor_open == open_a) {
-            ta = tm;
-          } else {
-            tb = tm;
-          }
+      auto eval_corr_u = [&](double u, bool /*need_margin*/, bool* open_out, double* margin_out) {
+        const Eval1D em = eval_fn(t_curr + u * step, true);
+        if (!em.valid) {
+          return false;
         }
-        *t_cut_out = 0.5 * (ta + tb);
-        return eval_fn(*t_cut_out, true);
+        *open_out = em.corridor_open;
+        *margin_out = em.corridor_margin;
+        return true;
       };
-
-      if (e_curr.corridor_open != e_next.corridor_open) {
-        const bool open_a = e_curr.corridor_open;
-        double t_cut = t_curr;
-        const Eval1D e_cut = bisect_corridor_1d(t_curr, open_a, t_next, &t_cut);
-        if (e_cut.valid) {
-          const double ds1 = t_cut - t_curr;
-          if (ds1 > 1e-13) {
-            if (static_cast<int>(curve->nodes.size()) >= params.max_nodes_per_branch) {
-              curve->coverage.budget_truncated = true;
-              break;
-            }
-            arclen += ds1;
-            push_node(e_cut, arclen, open_a);
-          }
-          CurveEvent ev;
-          CopyNodeToEvent(curve->nodes.back(), CurveEventKind::kCorridorCutoff, -1, &ev);
-          curve->events.push_back(ev);
-          const double ds2 = t_next - t_cut;
-          if (ds2 > 1e-13) {
-            if (static_cast<int>(curve->nodes.size()) >= params.max_nodes_per_branch) {
-              curve->coverage.budget_truncated = true;
-              break;
-            }
-            arclen += ds2;
-            push_node(e_next, arclen, e_next.corridor_open);
-          }
-          t_curr = t_next;
-          e_curr = e_next;
-          h = shrunk ? std::max(params.min_step, step) : std::min(params.max_step, step * 1.25);
-          continue;
-        }
-      } else {
-        // Probe interior samples for a narrow corridor opening or closing that starts and ends
-        // inside [t_curr, t_next].
-        const int sub_n = (step > 0.03) ? 16 : 8;
-        bool found_opp = false;
-        double t_opp = t_curr;
-        for (int q = 1; q < sub_n; q++) {
-          const double tq = t_curr + step * static_cast<double>(q) / static_cast<double>(sub_n);
-          const Eval1D eq = eval_fn(tq, true);
-          if (eq.valid && eq.corridor_open != e_curr.corridor_open) {
-            found_opp = true;
-            t_opp = tq;
-            break;
-          }
-        }
-        if (found_opp) {
-          const bool open_a = e_curr.corridor_open;
-          double t_cut1 = t_curr;
-          double t_cut2 = t_next;
-          const Eval1D e_cut1 = bisect_corridor_1d(t_curr, open_a, t_opp, &t_cut1);
-          const Eval1D e_cut2 = bisect_corridor_1d(t_opp, !open_a, t_next, &t_cut2);
-          if (e_cut1.valid && e_cut2.valid) {
-            double t_prev_p = t_curr;
-            const double ds1 = t_cut1 - t_prev_p;
-            if (ds1 > 1e-13) {
-              if (static_cast<int>(curve->nodes.size()) >= params.max_nodes_per_branch) {
-                curve->coverage.budget_truncated = true;
-                break;
-              }
-              arclen += ds1;
-              push_node(e_cut1, arclen, open_a);
-              t_prev_p = t_cut1;
-            }
-            {
-              CurveEvent ev1;
-              CopyNodeToEvent(curve->nodes.back(), CurveEventKind::kCorridorCutoff, -1, &ev1);
-              curve->events.push_back(ev1);
-            }
-            const double ds2 = t_cut2 - t_prev_p;
-            if (ds2 > 1e-13) {
-              if (static_cast<int>(curve->nodes.size()) >= params.max_nodes_per_branch) {
-                curve->coverage.budget_truncated = true;
-                break;
-              }
-              arclen += ds2;
-              push_node(e_cut2, arclen, !open_a);
-              t_prev_p = t_cut2;
-            }
-            {
-              CurveEvent ev2;
-              CopyNodeToEvent(curve->nodes.back(), CurveEventKind::kCorridorCutoff, -1, &ev2);
-              curve->events.push_back(ev2);
-            }
-            const double ds3 = t_next - t_prev_p;
-            if (ds3 > 1e-13) {
-              if (static_cast<int>(curve->nodes.size()) >= params.max_nodes_per_branch) {
-                curve->coverage.budget_truncated = true;
-                break;
-              }
-              arclen += ds3;
-              push_node(e_next, arclen, e_next.corridor_open);
-            }
-            t_curr = t_next;
-            e_curr = e_next;
-            h = shrunk ? std::max(params.min_step, step) : std::min(params.max_step, step * 1.25);
-            continue;
-          }
-        }
-      }
+      cut_cnt = FindStepCorridorCrossings(e_curr.corridor_open, e_curr.corridor_margin, e_next.corridor_open,
+                                          e_next.corridor_margin, step, params.bisection_iters, eval_corr_u, u_cuts);
     }
 
-    arclen += (t_next - t_curr);
-    push_node(e_next, arclen, e_curr.corridor_open);
+    bool truncated = false;
+    double t_prev_p = t_curr;
+    bool cur_open = e_curr.corridor_open;
+    for (int c = 0; c < cut_cnt; c++) {
+      const double t_cut = t_curr + u_cuts[c] * step;
+      const Eval1D e_cut = eval_fn(t_cut, true);
+      if (!e_cut.valid) {
+        break;
+      }
+      const double ds_c = t_cut - t_prev_p;
+      if (ds_c > 1e-13) {
+        if (static_cast<int>(curve->nodes.size()) >= params.max_nodes_per_branch) {
+          curve->coverage.budget_truncated = true;
+          truncated = true;
+          break;
+        }
+        arclen += ds_c;
+        push_node(e_cut, arclen, cur_open);
+        t_prev_p = t_cut;
+      }
+      CurveEvent ev;
+      CopyNodeToEvent(curve->nodes.back(), CurveEventKind::kCorridorCutoff, -1, &ev);
+      curve->events.push_back(ev);
+      cur_open = !cur_open;
+    }
+    if (truncated) {
+      flush_step_events();
+      break;
+    }
+
+    const double ds_rem = t_next - t_prev_p;
+    if (ds_rem > 1e-13) {
+      if (static_cast<int>(curve->nodes.size()) >= params.max_nodes_per_branch) {
+        curve->coverage.budget_truncated = true;
+        flush_step_events();
+        break;
+      }
+      arclen += ds_rem;
+      push_node(e_next, arclen, cur_open);
+    }
+    flush_step_events();
     t_curr = t_next;
     e_curr = e_next;
     h = shrunk ? std::max(params.min_step, step) : std::min(params.max_step, step * 1.25);
@@ -1598,7 +1755,8 @@ struct ProjectResult {
 // Newton along the finer coordinate to land on a float64 lattice point with |J| <= target_j.
 void PolishFinestCoordULP(const FaceNormalTable& table, const int* slots, int slot_count, double refractive_index,
                           const double sun_dir[3], const PoseManifold& manifold, int ax0, int ax1, double target_j,
-                          const CausticContinuationParams& params, double q[2], Eval2DJet2* eval) {
+                          const CausticContinuationParams& params, double q[2], Eval2DJet2* eval,
+                          int max_coarse_ulps = 8) {
   if (!eval->valid || std::fabs(eval->j_val) <= target_j) {
     return;
   }
@@ -1620,6 +1778,25 @@ void PolishFinestCoordULP(const FaceNormalTable& table, const int* slots, int sl
   Eval2DJet2 best_e = *eval;
   double best_abs_j = std::fabs(eval->j_val);
 
+  auto test_point = [&](const double qt[2]) {
+    if (!InAxisBounds(qt[fine], fine_ax)) {
+      return Eval2DJet2{};
+    }
+    const Eval2DJet2 et =
+        Evaluate2DJet2(table, slots, slot_count, refractive_index, sun_dir, manifold, ax0, ax1, qt, nullptr, false);
+    if (!et.valid || et.generator_cross < params.pole_tol) {
+      return Eval2DJet2{};
+    }
+    const double aj = std::fabs(et.j_val);
+    if (aj < best_abs_j) {
+      best_abs_j = aj;
+      best_q[0] = qt[0];
+      best_q[1] = qt[1];
+      best_e = et;
+    }
+    return et;
+  };
+
   auto try_coarse = [&](double q_c_val) {
     if (!InAxisBounds(q_c_val, coarse_ax)) {
       return;
@@ -1628,22 +1805,11 @@ void PolishFinestCoordULP(const FaceNormalTable& table, const int* slots, int sl
     qt[coarse] = q_c_val;
     qt[fine] = q[fine];
     for (int it = 0; it < 4; it++) {
-      if (!InAxisBounds(qt[fine], fine_ax)) {
+      const Eval2DJet2 et = test_point(qt);
+      if (!et.valid) {
         break;
       }
-      const Eval2DJet2 et =
-          Evaluate2DJet2(table, slots, slot_count, refractive_index, sun_dir, manifold, ax0, ax1, qt, nullptr, false);
-      if (!et.valid || et.generator_cross < params.pole_tol) {
-        break;
-      }
-      const double aj = std::fabs(et.j_val);
-      if (aj < best_abs_j) {
-        best_abs_j = aj;
-        best_q[0] = qt[0];
-        best_q[1] = qt[1];
-        best_e = et;
-      }
-      if (aj <= target_j) {
+      if (best_abs_j <= target_j) {
         return;
       }
       const double deriv = et.grad_j_reg[fine];
@@ -1660,12 +1826,23 @@ void PolishFinestCoordULP(const FaceNormalTable& table, const int* slots, int sl
       }
       qt[fine] = next_f;
     }
+    // Probe +-1 ULP along the fine coordinate around the 1D Newton endpoint in case float64
+    // rounding stopped one lattice step away from the minimum |J|.
+    if (best_abs_j > target_j) {
+      double q_nb[2] = { qt[0], qt[1] };
+      q_nb[fine] = std::nextafter(qt[fine], qt[fine] + 1.0);
+      test_point(q_nb);
+      if (best_abs_j > target_j) {
+        q_nb[fine] = std::nextafter(qt[fine], qt[fine] - 1.0);
+        test_point(q_nb);
+      }
+    }
   };
 
   try_coarse(q[coarse]);
   double q_pos = q[coarse];
   double q_neg = q[coarse];
-  for (int k = 1; k <= 8 && best_abs_j > target_j; k++) {
+  for (int k = 1; k <= max_coarse_ulps && best_abs_j > target_j; k++) {
     q_pos = std::nextafter(q_pos, q_pos + 1.0);
     try_coarse(q_pos);
     if (best_abs_j <= target_j) {
@@ -2130,9 +2307,18 @@ HalfBranch2D TraceHalfBranch2D(const FaceNormalTable& table, const int* slots, i
   double max_dist_from_seed = 0.0;
   bool moved_away = false;
   const double cos_max_turn = std::cos(params.max_turning_angle);
+  const double margin_lip = MarginLip(refractive_index);
 
   auto commit_step = [&](const double q_next_in[2], Eval2DJet2 e_next, const double tau_next[2], double adv) {
-    e_next.corridor_open = EvaluateCorridorOpen(corridor, e_next.pose, sun_dir, refractive_index);
+    double margin_b = 1.0;
+    if (corridor != nullptr) {
+      EvaluateCorridorStateAndMargin(corridor, e_next.pose, sun_dir, refractive_index, true, &e_next.corridor_open,
+                                     &margin_b);
+    } else {
+      e_next.corridor_open = true;
+    }
+
+    std::vector<CurveEvent> step_events;
 
     double e_sky_next[3]{};
     bool have_e_sky_next = DominantLeftSingularVector(e_next.x1, e_next.x2, e_sky_next);
@@ -2185,7 +2371,7 @@ HalfBranch2D TraceHalfBranch2D(const FaceNormalTable& table, const int* slots, i
           const PoseCurveNode n_cusp = NodeFromEval2D(e_cusp, ax0, ax1, tau_cusp, last_moving_arclen + ds_c);
           CurveEvent ev;
           CopyNodeToEvent(n_cusp, CurveEventKind::kCusp, -1, &ev);
-          out.events.push_back(ev);
+          step_events.push_back(ev);
         }
       }
       have_last_moving = true;
@@ -2198,68 +2384,174 @@ HalfBranch2D TraceHalfBranch2D(const FaceNormalTable& table, const int* slots, i
       last_moving_arclen = arclen + adv;
     }
 
-    // 2. Internal TIR onset detection on [q_curr, q_next].
-    for (int k = 1; k < slot_count - 1; k++) {
-      const double da = e_curr.internal_disc[k];
-      const double db = e_next.internal_disc[k];
-      if ((da > 0.0) != (db > 0.0)) {
-        const bool pos_a = da > 0.0;
-        double q_tir[2];
-        Eval2DJet2 e_tir;
-        double tau_tir[2];
-        auto pred = [k, pos_a](const Eval2DJet2& em, const double* /*tm*/) {
-          return (em.internal_disc[k] > 0.0) == pos_a;
-        };
-        if (BisectOnLocusEvent(table, slots, slot_count, refractive_index, sun_dir, manifold, ax0, ax1, q_curr,
-                               q_next_in, tau_curr, dir_sign, params, pred, q_tir, &e_tir, tau_tir)) {
-          const double ds_t = std::hypot(q_tir[0] - q_curr[0], q_tir[1] - q_curr[1]);
-          const PoseCurveNode n_tir = NodeFromEval2D(e_tir, ax0, ax1, tau_tir, arclen + ds_t);
-          CurveEvent ev;
-          CopyNodeToEvent(n_tir, CurveEventKind::kTirOnset, k, &ev);
-          out.events.push_back(ev);
+    const double step_chord = std::hypot(q_next_in[0] - q_curr[0], q_next_in[1] - q_curr[1]);
+    const double drift_cap = std::max(2.0 * std::max(adv, step_chord), 1e-4);
+    const double raw_ulp_cap = std::max(params.residual_tol, kRawInteriorJCap);
+    // Project intermediate event-search points onto J_reg = 0 with allow_ulp_cliff=true so
+    // bisection and golden-section probes never abort early near a grazing Snell cliff; emitted
+    // corridor-split nodes are polished back to raw |J| <= raw_ulp_cap below before insertion.
+    auto project_u = [&](double u, double q_out[2], Eval2DJet2* e_out, double tau_out[2]) {
+      const double q_guess[2] = { q_curr[0] + u * (q_next_in[0] - q_curr[0]),
+                                  q_curr[1] + u * (q_next_in[1] - q_curr[1]) };
+      const ProjectResult pm = ProjectOntoCaustic(table, slots, slot_count, refractive_index, sun_dir, manifold, ax0,
+                                                  ax1, q_guess, drift_cap, params, /*allow_ulp_cliff=*/true);
+      if (pm.outcome != ProjectOutcome::kConverged || pm.eval.grad_norm < params.grad_tol) {
+        return false;
+      }
+      TangentFromGrad(pm.eval.grad_j, pm.eval.grad_norm, dir_sign, tau_out);
+      if (tau_out[0] * tau_curr[0] + tau_out[1] * tau_curr[1] < 0.0) {
+        tau_out[0] = -tau_out[0];
+        tau_out[1] = -tau_out[1];
+      }
+      q_out[0] = pm.q[0];
+      q_out[1] = pm.q[1];
+      *e_out = pm.eval;
+      return true;
+    };
+
+    // 2. Internal TIR onset detection (single and interior double crossings) via shared helper.
+    auto eval_tir_u = [&](double u, int k, double* disc_out) {
+      double qm[2];
+      Eval2DJet2 em;
+      double tm[2];
+      if (!project_u(u, qm, &em, tm)) {
+        return false;
+      }
+      *disc_out = em.internal_disc[k];
+      return true;
+    };
+    auto emit_tir_u = [&](double u_tir, int k) {
+      double q_tir[2];
+      Eval2DJet2 e_tir;
+      double tau_tir[2];
+      if (project_u(u_tir, q_tir, &e_tir, tau_tir)) {
+        const double ds_t = std::hypot(q_tir[0] - q_curr[0], q_tir[1] - q_curr[1]);
+        const PoseCurveNode n_tir = NodeFromEval2D(e_tir, ax0, ax1, tau_tir, arclen + ds_t);
+        CurveEvent ev;
+        CopyNodeToEvent(n_tir, CurveEventKind::kTirOnset, k, &ev);
+        step_events.push_back(ev);
+      }
+    };
+    DetectStepTirOnsets(slot_count, e_curr.internal_disc, e_next.internal_disc, adv, margin_lip, params.bisection_iters,
+                        eval_tir_u, emit_tir_u);
+
+    // 3. Corridor cutoff detection (single and continuous-margin interior double crossings) via
+    //    shared helper, polishing each split node to raw |J| <= raw_ulp_cap before insertion.
+    int cut_cnt = 0;
+    double u_cuts[2] = { 0.0, 0.0 };
+    if (corridor != nullptr) {
+      const double margin_a = EvaluateCorridorOverlapMargin(corridor, e_curr.pose, sun_dir, refractive_index);
+      auto eval_corr_u = [&](double u, bool need_margin, bool* open_out, double* margin_out) {
+        double qm[2];
+        Eval2DJet2 em;
+        double tm[2];
+        if (!project_u(u, qm, &em, tm)) {
+          return false;
         }
+        EvaluateCorridorStateAndMargin(corridor, em.pose, sun_dir, refractive_index, need_margin, open_out, margin_out);
+        return true;
+      };
+      cut_cnt = FindStepCorridorCrossings(e_curr.corridor_open, margin_a, e_next.corridor_open, margin_b, adv,
+                                          params.bisection_iters, eval_corr_u, u_cuts);
+    }
+
+    double q_cuts[2][2]{};
+    Eval2DJet2 e_cuts[2];
+    double tau_cuts[2][2]{};
+    bool all_cuts_ok = (cut_cnt > 0);
+    for (int c = 0; c < cut_cnt; c++) {
+      if (!project_u(u_cuts[c], q_cuts[c], &e_cuts[c], tau_cuts[c])) {
+        all_cuts_ok = false;
+        break;
+      }
+      PolishFinestCoordULP(table, slots, slot_count, refractive_index, sun_dir, manifold, ax0, ax1, raw_ulp_cap, params,
+                           q_cuts[c], &e_cuts[c], /*max_coarse_ulps=*/128);
+      if (e_cuts[c].grad_norm >= params.grad_tol) {
+        TangentFromGrad(e_cuts[c].grad_j, e_cuts[c].grad_norm, dir_sign, tau_cuts[c]);
+        if (tau_cuts[c][0] * tau_curr[0] + tau_cuts[c][1] * tau_curr[1] < 0.0) {
+          tau_cuts[c][0] = -tau_cuts[c][0];
+          tau_cuts[c][1] = -tau_cuts[c][1];
+        }
+      }
+      if (std::fabs(e_cuts[c].j_val) > raw_ulp_cap) {
+        // Walk back toward q_curr to locate the furthest raw-accurate split node on the open_a side.
+        if (cut_cnt == 1) {
+          double ql[2] = { q_curr[0], q_curr[1] };
+          double qh[2] = { q_cuts[0][0], q_cuts[0][1] };
+          bool found_back = false;
+          for (int it = 0; it < 16; it++) {
+            const double qm_g[2] = { 0.5 * (ql[0] + qh[0]), 0.5 * (ql[1] + qh[1]) };
+            ProjectResult pm = ProjectOntoCaustic(table, slots, slot_count, refractive_index, sun_dir, manifold, ax0,
+                                                  ax1, qm_g, drift_cap, params, /*allow_ulp_cliff=*/true);
+            if (pm.outcome != ProjectOutcome::kConverged || pm.eval.grad_norm < params.grad_tol) {
+              qh[0] = qm_g[0];
+              qh[1] = qm_g[1];
+              continue;
+            }
+            PolishFinestCoordULP(table, slots, slot_count, refractive_index, sun_dir, manifold, ax0, ax1, raw_ulp_cap,
+                                 params, pm.q, &pm.eval, /*max_coarse_ulps=*/128);
+            const bool raw_ok = std::fabs(pm.eval.j_val) <= raw_ulp_cap;
+            const bool side_ok =
+                EvaluateCorridorOpen(corridor, pm.eval.pose, sun_dir, refractive_index) == e_curr.corridor_open;
+            if (raw_ok && side_ok) {
+              ql[0] = pm.q[0];
+              ql[1] = pm.q[1];
+              q_cuts[0][0] = pm.q[0];
+              q_cuts[0][1] = pm.q[1];
+              e_cuts[0] = pm.eval;
+              TangentFromGrad(pm.eval.grad_j, pm.eval.grad_norm, dir_sign, tau_cuts[0]);
+              if (tau_cuts[0][0] * tau_curr[0] + tau_cuts[0][1] * tau_curr[1] < 0.0) {
+                tau_cuts[0][0] = -tau_cuts[0][0];
+                tau_cuts[0][1] = -tau_cuts[0][1];
+              }
+              found_back = true;
+            } else {
+              qh[0] = pm.q[0];
+              qh[1] = pm.q[1];
+            }
+          }
+          if (found_back) {
+            continue;
+          }
+        }
+        all_cuts_ok = false;
+        break;
       }
     }
 
-    // 3. Corridor cutoff detection on [q_curr, q_next]: split into edge (q_curr -> q_cut) with
-    //    state open_a and edge (q_cut -> q_next) with state e_next.corridor_open.
-    if (corridor != nullptr && e_curr.corridor_open != e_next.corridor_open) {
-      const bool open_a = e_curr.corridor_open;
-      double q_cut[2];
-      Eval2DJet2 e_cut;
-      double tau_cut[2];
-      auto pred = [corridor, sun_dir, refractive_index, open_a](const Eval2DJet2& em, const double* /*tm*/) {
-        return EvaluateCorridorOpen(corridor, em.pose, sun_dir, refractive_index) == open_a;
-      };
-      if (BisectOnLocusEvent(table, slots, slot_count, refractive_index, sun_dir, manifold, ax0, ax1, q_curr, q_next_in,
-                             tau_curr, dir_sign, params, pred, q_cut, &e_cut, tau_cut)) {
-        const double ds1 = std::hypot(q_cut[0] - q_curr[0], q_cut[1] - q_curr[1]);
-        const double ds2 = std::hypot(q_next_in[0] - q_cut[0], q_next_in[1] - q_cut[1]);
-        if (ds1 > 1e-13) {
-          arclen += ds1;
-          push_node(e_cut, tau_cut, arclen, open_a);
+    if (all_cuts_ok) {
+      double q_prev_p[2] = { q_curr[0], q_curr[1] };
+      bool cur_open = e_curr.corridor_open;
+      for (int c = 0; c < cut_cnt; c++) {
+        const double ds_c = std::hypot(q_cuts[c][0] - q_prev_p[0], q_cuts[c][1] - q_prev_p[1]);
+        if (ds_c > 1e-13) {
+          arclen += ds_c;
+          push_node(e_cuts[c], tau_cuts[c], arclen, cur_open);
+          q_prev_p[0] = q_cuts[c][0];
+          q_prev_p[1] = q_cuts[c][1];
         }
         CurveEvent ev;
         CopyNodeToEvent(out.nodes.back(), CurveEventKind::kCorridorCutoff, -1, &ev);
         out.events.push_back(ev);
-        if (ds2 > 1e-13) {
-          arclen += ds2;
-          push_node(e_next, tau_next, arclen, e_next.corridor_open);
-        }
-        q_curr[0] = q_next_in[0];
-        q_curr[1] = q_next_in[1];
-        e_curr = e_next;
-        tau_curr[0] = tau_next[0];
-        tau_curr[1] = tau_next[1];
-        have_e_sky_curr = have_e_sky_next;
-        so3::Copy3(e_sky_next, e_sky_curr);
-        s_sky_curr = s_sky_next;
-        return;
+        cur_open = !cur_open;
+      }
+      const double ds_rem = std::hypot(q_next_in[0] - q_prev_p[0], q_next_in[1] - q_prev_p[1]);
+      if (ds_rem > 1e-13) {
+        arclen += ds_rem;
+        push_node(e_next, tau_next, arclen, cur_open);
+      }
+    } else {
+      arclen += adv;
+      push_node(e_next, tau_next, arclen, e_curr.corridor_open);
+    }
+
+    const double max_s = out.nodes.back().arclength + 1e-12;
+    for (const CurveEvent& ev : step_events) {
+      if (ev.arclength <= max_s) {
+        out.events.push_back(ev);
       }
     }
 
-    arclen += adv;
-    push_node(e_next, tau_next, arclen, e_curr.corridor_open);
     q_curr[0] = q_next_in[0];
     q_curr[1] = q_next_in[1];
     e_curr = e_next;
@@ -2413,12 +2705,14 @@ HalfBranch2D TraceHalfBranch2D(const FaceNormalTable& table, const int* slots, i
       // When Newton reaches float64 parameter-space ULP precision near a steep grazing Snell cliff
       // (where ||grad J|| = O(1/d) prevents raw |J| <= kRawInteriorJCap), march silently along the
       // desingularized J_reg = 0 locus without emitting ULP-noisy interior nodes, while tracking
-      // corridor state transitions across internal cliff steps and at the terminal endpoint.
+      // internal TIR onsets and corridor state transitions across internal cliff steps and at the
+      // terminal endpoint.
       if (pr.outcome == ProjectOutcome::kCliffUlpLimit) {
         double q_c[2] = { q_curr[0], q_curr[1] };
         Eval2DJet2 e_c = e_curr;
         double tau_c[2] = { tau_curr[0], tau_curr[1] };
         bool corr_c = e_curr.corridor_open;
+        double q_pushed[2] = { q_curr[0], q_curr[1] };
         double s_cliff = 0.0;
         double s_pushed = 0.0;
         bool corr_pushed = e_curr.corridor_open;
@@ -2426,10 +2720,61 @@ HalfBranch2D TraceHalfBranch2D(const FaceNormalTable& table, const int* slots, i
         const double raw_ulp_cap = std::max(params.residual_tol, kRawInteriorJCap);
         bool resumed_raw = false;
 
+        auto project_cliff_u = [&](const double q_a[2], const double q_b[2], const double tau_a[2], double u,
+                                   double q_out[2], Eval2DJet2* e_out, double tau_out[2]) {
+          const double seg_len = std::hypot(q_b[0] - q_a[0], q_b[1] - q_a[1]);
+          const double drift_cap = std::max(2.0 * seg_len, 1e-4);
+          const double q_guess[2] = { q_a[0] + u * (q_b[0] - q_a[0]), q_a[1] + u * (q_b[1] - q_a[1]) };
+          const ProjectResult pm = ProjectOntoCaustic(table, slots, slot_count, refractive_index, sun_dir, manifold,
+                                                      ax0, ax1, q_guess, drift_cap, params, /*allow_ulp_cliff=*/true);
+          if (pm.outcome != ProjectOutcome::kConverged || pm.eval.grad_norm < params.grad_tol) {
+            return false;
+          }
+          TangentFromGrad(pm.eval.grad_j, pm.eval.grad_norm, dir_sign, tau_out);
+          if (tau_out[0] * tau_a[0] + tau_out[1] * tau_a[1] < 0.0) {
+            tau_out[0] = -tau_out[0];
+            tau_out[1] = -tau_out[1];
+          }
+          q_out[0] = pm.q[0];
+          q_out[1] = pm.q[1];
+          *e_out = pm.eval;
+          return true;
+        };
+
+        // Shared TIR detector along a cliff-march segment [q_a, q_b] on J_reg = 0.
+        auto detect_cliff_tir = [&](const double q_a[2], const Eval2DJet2& e_a, const double tau_a[2], double s_a,
+                                    const double q_b[2], const Eval2DJet2& e_b, double s_b) {
+          const double seg_ds = std::max(s_b - s_a, std::hypot(q_b[0] - q_a[0], q_b[1] - q_a[1]));
+          auto eval_tir_u = [&](double u, int k, double* disc_out) {
+            double qm[2];
+            Eval2DJet2 em;
+            double tm[2];
+            if (!project_cliff_u(q_a, q_b, tau_a, u, qm, &em, tm)) {
+              return false;
+            }
+            *disc_out = em.internal_disc[k];
+            return true;
+          };
+          auto emit_tir_u = [&](double u_tir, int k) {
+            double q_tir[2];
+            Eval2DJet2 e_tir;
+            double tau_tir[2];
+            if (project_cliff_u(q_a, q_b, tau_a, u_tir, q_tir, &e_tir, tau_tir)) {
+              const double s_tir = s_a + std::hypot(q_tir[0] - q_a[0], q_tir[1] - q_a[1]);
+              const PoseCurveNode n_tir = NodeFromEval2D(e_tir, ax0, ax1, tau_tir, arclen + (s_tir - s_pushed));
+              CurveEvent ev;
+              CopyNodeToEvent(n_tir, CurveEventKind::kTirOnset, k, &ev);
+              out.events.push_back(ev);
+            }
+          };
+          DetectStepTirOnsets(slot_count, e_a.internal_disc, e_b.internal_disc, seg_ds, margin_lip,
+                              params.bisection_iters, eval_tir_u, emit_tir_u);
+        };
+
         // Bisects a corridor_open transition on [q_a, q_b] along J_reg = 0, polishes the cutoff
-        // onto a float64 lattice pose satisfying raw |J| <= raw_ulp_cap, inserts it as a split
-        // node when raw-accurate so each side of the cutoff has its true segment corridor state,
-        // and emits kCorridorCutoff.
+        // onto a float64 lattice pose satisfying raw |J| <= raw_ulp_cap, and inserts it as a split
+        // node so every emitted kCorridorCutoff sits on an actual segment boundary separating open
+        // and closed states while keeping all interior nodes within raw_ulp_cap.
         auto record_cliff_corridor_flip = [&](const double q_a[2], const Eval2DJet2& e_a, const double tau_a[2],
                                               bool open_a, double s_a, const double q_b[2], const Eval2DJet2& e_b,
                                               const double tau_b[2], bool open_b, double s_b) {
@@ -2482,9 +2827,9 @@ HalfBranch2D TraceHalfBranch2D(const FaceNormalTable& table, const int* slots, i
             tau_cut[1] = tau_a[1];
             s_cut = s_a;
           }
-          // Polish q_cut onto the float64 lattice so raw |J| <= raw_ulp_cap before splitting.
+          // Wide Diophantine ULP polish along the float64 lattice so raw |J| <= raw_ulp_cap.
           PolishFinestCoordULP(table, slots, slot_count, refractive_index, sun_dir, manifold, ax0, ax1, raw_ulp_cap,
-                               params, q_cut, &e_cut);
+                               params, q_cut, &e_cut, /*max_coarse_ulps=*/128);
           if (e_cut.grad_norm >= params.grad_tol) {
             TangentFromGrad(e_cut.grad_j, e_cut.grad_norm, dir_sign, tau_cut);
             if (tau_cut[0] * tau_a[0] + tau_cut[1] * tau_a[1] < 0.0) {
@@ -2492,36 +2837,138 @@ HalfBranch2D TraceHalfBranch2D(const FaceNormalTable& table, const int* slots, i
               tau_cut[1] = -tau_cut[1];
             }
           }
+
+          // If extreme cliff conditioning prevents polishing q_cut directly within raw_ulp_cap,
+          // bisect along [q_pushed, q_cut] for the furthest raw-accurate pose on the open_a side
+          // so the segment is still cleanly split without violating |J| <= raw_ulp_cap.
+          if (std::fabs(e_cut.j_val) > raw_ulp_cap && s_cut - s_pushed > 1e-13) {
+            double ql[2] = { q_pushed[0], q_pushed[1] };
+            double qh[2] = { q_cut[0], q_cut[1] };
+            const double span_p = std::hypot(q_cut[0] - q_pushed[0], q_cut[1] - q_pushed[1]);
+            const double back_drift = std::max(2.0 * span_p, 1e-4);
+            bool found_back = false;
+            double q_best[2]{};
+            Eval2DJet2 e_best;
+            double tau_best[2]{};
+            double s_best = s_pushed;
+            for (int it = 0; it < 16; it++) {
+              const double qm_g[2] = { 0.5 * (ql[0] + qh[0]), 0.5 * (ql[1] + qh[1]) };
+              ProjectResult pm = ProjectOntoCaustic(table, slots, slot_count, refractive_index, sun_dir, manifold, ax0,
+                                                    ax1, qm_g, back_drift, params, /*allow_ulp_cliff=*/true);
+              if (pm.outcome != ProjectOutcome::kConverged || pm.eval.grad_norm < params.grad_tol) {
+                qh[0] = qm_g[0];
+                qh[1] = qm_g[1];
+                continue;
+              }
+              PolishFinestCoordULP(table, slots, slot_count, refractive_index, sun_dir, manifold, ax0, ax1, raw_ulp_cap,
+                                   params, pm.q, &pm.eval, /*max_coarse_ulps=*/128);
+              const bool raw_ok = std::fabs(pm.eval.j_val) <= raw_ulp_cap;
+              const bool side_ok = EvaluateCorridorOpen(corridor, pm.eval.pose, sun_dir, refractive_index) == open_a;
+              if (raw_ok && side_ok) {
+                ql[0] = pm.q[0];
+                ql[1] = pm.q[1];
+                q_best[0] = pm.q[0];
+                q_best[1] = pm.q[1];
+                e_best = pm.eval;
+                TangentFromGrad(pm.eval.grad_j, pm.eval.grad_norm, dir_sign, tau_best);
+                if (tau_best[0] * tau_a[0] + tau_best[1] * tau_a[1] < 0.0) {
+                  tau_best[0] = -tau_best[0];
+                  tau_best[1] = -tau_best[1];
+                }
+                s_best = s_pushed + std::hypot(pm.q[0] - q_pushed[0], pm.q[1] - q_pushed[1]);
+                found_back = true;
+              } else {
+                qh[0] = pm.q[0];
+                qh[1] = pm.q[1];
+              }
+            }
+            if (found_back && s_best - s_pushed > 1e-13) {
+              q_cut[0] = q_best[0];
+              q_cut[1] = q_best[1];
+              e_cut = e_best;
+              tau_cut[0] = tau_best[0];
+              tau_cut[1] = tau_best[1];
+              s_cut = s_best;
+            }
+          }
+
           const double ds_cut = s_cut - s_pushed;
           if (ds_cut > 1e-13 && std::fabs(e_cut.j_val) <= raw_ulp_cap) {
             arclen += ds_cut;
             push_node(e_cut, tau_cut, arclen, corr_pushed);
+            q_pushed[0] = q_cut[0];
+            q_pushed[1] = q_cut[1];
             s_pushed = s_cut;
             corr_pushed = open_b;
             CurveEvent ev;
             CopyNodeToEvent(out.nodes.back(), CurveEventKind::kCorridorCutoff, -1, &ev);
             out.events.push_back(ev);
-          } else {
-            const PoseCurveNode n_cut = NodeFromEval2D(e_cut, ax0, ax1, tau_cut, arclen + std::max(0.0, ds_cut));
+          } else if (ds_cut <= 1e-13 && out.nodes.size() >= 2) {
             CurveEvent ev;
-            CopyNodeToEvent(n_cut, CurveEventKind::kCorridorCutoff, -1, &ev);
+            CopyNodeToEvent(out.nodes.back(), CurveEventKind::kCorridorCutoff, -1, &ev);
             out.events.push_back(ev);
             corr_pushed = open_b;
+          } else {
+            // Never emit a kCorridorCutoff inside an unsplit single-state segment.
+            out.unresolved_singularities++;
+          }
+        };
+
+        auto handle_cliff_corridor_step = [&](const double q_a[2], const Eval2DJet2& e_a, const double tau_a[2],
+                                              bool open_a, double s_a, const double q_b[2], const Eval2DJet2& e_b,
+                                              const double tau_b[2], bool open_b, double s_b) {
+          if (corridor == nullptr) {
+            return;
+          }
+          if (open_a != open_b) {
+            record_cliff_corridor_flip(q_a, e_a, tau_a, open_a, s_a, q_b, e_b, tau_b, open_b, s_b);
+            return;
+          }
+          const double seg_ds = std::max(s_b - s_a, std::hypot(q_b[0] - q_a[0], q_b[1] - q_a[1]));
+          const double margin_a = EvaluateCorridorOverlapMargin(corridor, e_a.pose, sun_dir, refractive_index);
+          const double margin_b = EvaluateCorridorOverlapMargin(corridor, e_b.pose, sun_dir, refractive_index);
+          auto eval_corr_u = [&](double u, bool need_margin, bool* open_out, double* margin_out) {
+            double qm[2];
+            Eval2DJet2 em;
+            double tm[2];
+            if (!project_cliff_u(q_a, q_b, tau_a, u, qm, &em, tm)) {
+              return false;
+            }
+            EvaluateCorridorStateAndMargin(corridor, em.pose, sun_dir, refractive_index, need_margin, open_out,
+                                           margin_out);
+            return true;
+          };
+          double u_cuts[2] = { 0.0, 0.0 };
+          const int cut_cnt = FindStepCorridorCrossings(open_a, margin_a, open_b, margin_b, seg_ds,
+                                                        params.bisection_iters, eval_corr_u, u_cuts);
+          if (cut_cnt == 2) {
+            const double u_mid = 0.5 * (u_cuts[0] + u_cuts[1]);
+            double q_m[2];
+            Eval2DJet2 e_m;
+            double tau_m[2];
+            if (project_cliff_u(q_a, q_b, tau_a, u_mid, q_m, &e_m, tau_m)) {
+              const double s_m = s_a + std::hypot(q_m[0] - q_a[0], q_m[1] - q_a[1]);
+              record_cliff_corridor_flip(q_a, e_a, tau_a, open_a, s_a, q_m, e_m, tau_m, !open_a, s_m);
+              record_cliff_corridor_flip(q_m, e_m, tau_m, !open_a, s_m, q_b, e_b, tau_b, open_b, s_b);
+            }
           }
         };
 
         auto finish_cliff_endpoint = [&](const double q_end[2], Eval2DJet2 e_end, const double tau_end[2], double s_end,
                                          CurveEventKind kind, int detail_idx) {
+          detect_cliff_tir(q_c, e_c, tau_c, s_cliff, q_end, e_end, s_end);
           e_end.corridor_open = EvaluateCorridorOpen(corridor, e_end.pose, sun_dir, refractive_index);
-          if (corridor != nullptr && corr_c != e_end.corridor_open) {
-            record_cliff_corridor_flip(q_c, e_c, tau_c, corr_c, s_cliff, q_end, e_end, tau_end, e_end.corridor_open,
-                                       s_end);
-          }
+          handle_cliff_corridor_step(q_c, e_c, tau_c, corr_c, s_cliff, q_end, e_end, tau_end, e_end.corridor_open,
+                                     s_end);
           const double ds_rem = s_end - s_pushed;
           if (ds_rem > 1e-13 && e_end.grad_norm >= params.grad_tol) {
             arclen += ds_rem;
             push_node(e_end, tau_end, arclen, corr_pushed);
           }
+          const double max_s = out.nodes.back().arclength + 1e-12;
+          out.events.erase(std::remove_if(out.events.begin(), out.events.end(),
+                                          [max_s](const CurveEvent& ev) { return ev.arclength > max_s; }),
+                           out.events.end());
           CurveEvent ev;
           CopyNodeToEvent(out.nodes.back(), kind, detail_idx, &ev);
           out.events.push_back(ev);
@@ -2565,11 +3012,10 @@ HalfBranch2D TraceHalfBranch2D(const FaceNormalTable& table, const int* slots, i
           }
 
           if (c_accepted) {
+            detect_cliff_tir(q_c, e_c, tau_c, s_cliff, pr_c.q, pr_c.eval, s_cliff + adv_c);
             const bool corr_next = EvaluateCorridorOpen(corridor, pr_c.eval.pose, sun_dir, refractive_index);
-            if (corridor != nullptr && corr_c != corr_next) {
-              record_cliff_corridor_flip(q_c, e_c, tau_c, corr_c, s_cliff, pr_c.q, pr_c.eval, tau_c_next, corr_next,
-                                         s_cliff + adv_c);
-            }
+            handle_cliff_corridor_step(q_c, e_c, tau_c, corr_c, s_cliff, pr_c.q, pr_c.eval, tau_c_next, corr_next,
+                                       s_cliff + adv_c);
             s_cliff += adv_c;
             q_c[0] = pr_c.q[0];
             q_c[1] = pr_c.q[1];
@@ -3357,45 +3803,29 @@ CausticTraceResult TraceContinuousRank1AxisAligned(const FaceNormalTable& table,
         half.nodes[0].sky_speed = std::fabs(dt_s / ds) * e_curr.sky_speed;
       }
 
-      // Stationary point detection along the vary_ax derivative (sky depends only on vary_ax).
+      // Collect step-internal non-splitting events and flush only those within the committed
+      // arclength so truncation never leaves events past half.nodes.back().arclength.
+      std::vector<CurveEvent> step_events;
+
+      // Stationary point detection along the vary_ax derivative via shared helper.
+      const double rank1_stationary_tol = MakeFamily1DParams(params).stationary_tol;
       if (e_next.sky_speed > params.speed_tol) {
-        if (have_last_moving && so3::Dot3(last_moving_e.dx, e_next.dx) < 0.0) {
-          double ref[3] = { e_next.dx[0] - last_moving_e.dx[0], e_next.dx[1] - last_moving_e.dx[1],
-                            e_next.dx[2] - last_moving_e.dx[2] };
-          const double rn = so3::Norm3(ref);
-          if (rn > 0.0) {
-            ref[0] /= rn;
-            ref[1] /= rn;
-            ref[2] /= rn;
-            double ta = last_moving_t;
-            double tb = t_next;
-            double fa = so3::Dot3(last_moving_e.dx, ref);
-            for (int it = 0; it < params.bisection_iters; it++) {
-              const double tm = 0.5 * (ta + tb);
-              const double frac = (tm - last_moving_t) / (t_next - last_moving_t);
-              const Eval1D em = eval_at(tm, last_moving_f + frac * (f_next - last_moving_f), false);
-              if (!em.valid) {
-                break;
-              }
-              const double fm = so3::Dot3(em.dx, ref);
-              if ((fa <= 0.0 && fm <= 0.0) || (fa > 0.0 && fm > 0.0)) {
-                ta = tm;
-                fa = fm;
-              } else {
-                tb = tm;
-              }
-            }
-            const double t_stat = 0.5 * (ta + tb);
-            const double frac = (t_stat - last_moving_t) / (t_next - last_moving_t);
-            const double f_stat = last_moving_f + frac * (f_next - last_moving_f);
-            const Eval1D e_stat = eval_at(t_stat, f_stat, false);
-            if (e_stat.valid && e_stat.sky_speed <= 1e-4) {
-              const double s_stat = last_moving_arclen + std::hypot(t_stat - last_moving_t, f_stat - last_moving_f);
-              const PoseCurveNode n_stat = make_node(e_stat, dt_s, df_s, s_stat);
-              CurveEvent ev;
-              CopyNodeToEvent(n_stat, CurveEventKind::kStationaryPoint, -1, &ev);
-              half.events.push_back(ev);
-            }
+        if (have_last_moving) {
+          double u_stat = 0.0;
+          Eval1D e_stat;
+          auto eval_stat_u = [&](double u) {
+            return eval_at(last_moving_t + u * (t_next - last_moving_t), last_moving_f + u * (f_next - last_moving_f),
+                           false);
+          };
+          if (DetectStationaryPoint1D(last_moving_e, e_next, rank1_stationary_tol, params.bisection_iters, eval_stat_u,
+                                      &u_stat, &e_stat)) {
+            const double t_stat = last_moving_t + u_stat * (t_next - last_moving_t);
+            const double f_stat = last_moving_f + u_stat * (f_next - last_moving_f);
+            const double s_stat = last_moving_arclen + std::hypot(t_stat - last_moving_t, f_stat - last_moving_f);
+            const PoseCurveNode n_stat = make_node(e_stat, dt_s, df_s, s_stat);
+            CurveEvent ev;
+            CopyNodeToEvent(n_stat, CurveEventKind::kStationaryPoint, -1, &ev);
+            step_events.push_back(ev);
           }
         }
         have_last_moving = true;
@@ -3405,81 +3835,76 @@ CausticTraceResult TraceContinuousRank1AxisAligned(const FaceNormalTable& table,
         last_moving_arclen = arclen + ds;
       }
 
-      // Internal TIR onset along chord.
-      for (int k = 1; k < slot_count - 1; k++) {
-        const double da = e_curr.internal_disc[k];
-        const double db = e_next.internal_disc[k];
-        if ((da > 0.0) != (db > 0.0)) {
-          double ua = 0.0;
-          double ub = 1.0;
-          const bool pos_a = da > 0.0;
-          for (int it = 0; it < params.bisection_iters; it++) {
-            const double um = 0.5 * (ua + ub);
-            const Eval1D em = chord_eval(um, false);
-            if (!em.valid) {
-              break;
-            }
-            if ((em.internal_disc[k] > 0.0) == pos_a) {
-              ua = um;
-            } else {
-              ub = um;
-            }
-          }
-          const double u_tir = 0.5 * (ua + ub);
-          const Eval1D e_tir = chord_eval(u_tir, false);
-          if (e_tir.valid) {
-            const PoseCurveNode n_tir = make_node(e_tir, dt_s, df_s, arclen + u_tir * ds);
-            CurveEvent ev;
-            CopyNodeToEvent(n_tir, CurveEventKind::kTirOnset, k, &ev);
-            half.events.push_back(ev);
-          }
+      // Internal TIR onset along chord (single and interior double crossings) via shared helper.
+      auto eval_tir_u = [&](double u, int k, double* disc_out) {
+        const Eval1D em = chord_eval(u, false);
+        if (!em.valid) {
+          return false;
         }
-      }
-
-      // Corridor cutoff along chord.
-      if (track_corridor && e_curr.corridor_open != e_next.corridor_open) {
-        double ua = 0.0;
-        double ub = 1.0;
-        const bool open_a = e_curr.corridor_open;
-        for (int it = 0; it < params.bisection_iters; it++) {
-          const double um = 0.5 * (ua + ub);
-          const Eval1D em = chord_eval(um, true);
-          if (!em.valid) {
-            break;
-          }
-          if (em.corridor_open == open_a) {
-            ua = um;
-          } else {
-            ub = um;
-          }
-        }
-        const double u_cut = 0.5 * (ua + ub);
-        const Eval1D e_cut = chord_eval(u_cut, true);
-        if (e_cut.valid) {
-          const double ds1 = u_cut * ds;
-          if (ds1 > 1e-13) {
-            arclen += ds1;
-            push_nd(e_cut, dt_s, df_s, arclen, open_a);
-          }
+        *disc_out = em.internal_disc[k];
+        return true;
+      };
+      auto emit_tir_u = [&](double u_tir, int k) {
+        const Eval1D e_tir = chord_eval(u_tir, false);
+        if (e_tir.valid) {
+          const PoseCurveNode n_tir = make_node(e_tir, dt_s, df_s, arclen + u_tir * ds);
           CurveEvent ev;
-          CopyNodeToEvent(half.nodes.back(), CurveEventKind::kCorridorCutoff, -1, &ev);
-          half.events.push_back(ev);
-          const double ds2 = (1.0 - u_cut) * ds;
-          if (ds2 > 1e-13) {
-            arclen += ds2;
-            push_nd(e_next, dt_s, df_s, arclen, e_next.corridor_open);
+          CopyNodeToEvent(n_tir, CurveEventKind::kTirOnset, k, &ev);
+          step_events.push_back(ev);
+        }
+      };
+      DetectStepTirOnsets(slot_count, e_curr.internal_disc, e_next.internal_disc, ds, margin_lip,
+                          params.bisection_iters, eval_tir_u, emit_tir_u);
+
+      // Corridor cutoff along chord (single and continuous-margin interior double crossings) via
+      // shared helper.
+      int cut_cnt = 0;
+      double u_cuts[2] = { 0.0, 0.0 };
+      if (track_corridor) {
+        auto eval_corr_u = [&](double u, bool /*need_margin*/, bool* open_out, double* margin_out) {
+          const Eval1D em = chord_eval(u, true);
+          if (!em.valid) {
+            return false;
           }
-          t_curr = t_next;
-          f_curr = f_next;
-          e_curr = e_next;
-          steps_taken++;
-          h = shrunk ? std::max(step_min, step) : std::min(step_max, step * 1.25);
-          continue;
+          *open_out = em.corridor_open;
+          *margin_out = em.corridor_margin;
+          return true;
+        };
+        cut_cnt = FindStepCorridorCrossings(e_curr.corridor_open, e_curr.corridor_margin, e_next.corridor_open,
+                                            e_next.corridor_margin, ds, params.bisection_iters, eval_corr_u, u_cuts);
+      }
+
+      double u_prev_p = 0.0;
+      bool cur_open = e_curr.corridor_open;
+      for (int c = 0; c < cut_cnt; c++) {
+        const Eval1D e_cut = chord_eval(u_cuts[c], true);
+        if (!e_cut.valid) {
+          break;
+        }
+        const double ds_c = (u_cuts[c] - u_prev_p) * ds;
+        if (ds_c > 1e-13) {
+          arclen += ds_c;
+          push_nd(e_cut, dt_s, df_s, arclen, cur_open);
+          u_prev_p = u_cuts[c];
+        }
+        CurveEvent ev;
+        CopyNodeToEvent(half.nodes.back(), CurveEventKind::kCorridorCutoff, -1, &ev);
+        half.events.push_back(ev);
+        cur_open = !cur_open;
+      }
+      const double ds_rem = (1.0 - u_prev_p) * ds;
+      if (ds_rem > 1e-13) {
+        arclen += ds_rem;
+        push_nd(e_next, dt_s, df_s, arclen, cur_open);
+      }
+
+      const double max_s = half.nodes.back().arclength + 1e-12;
+      for (const CurveEvent& ev : step_events) {
+        if (ev.arclength <= max_s) {
+          half.events.push_back(ev);
         }
       }
 
-      arclen += ds;
-      push_nd(e_next, dt_s, df_s, arclen, e_curr.corridor_open);
       t_curr = t_next;
       f_curr = f_next;
       e_curr = e_next;

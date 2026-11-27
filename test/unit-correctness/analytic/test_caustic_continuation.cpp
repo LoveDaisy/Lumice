@@ -1409,12 +1409,12 @@ TEST(CausticContinuation, EdgeCaseRegressions) {
     EXPECT_LT(min_dist_target_deg, 1.0) << "Sun azimuth 5 deg missed lower C16 tail pose";
   }
 
-  // 9n. Cliff-march corridor cutoff: C16 Column {3, 5} with prism height 0.4461242675781 has
-  //     positive A_P at the penultimate nodes and empty A_P at both optical endpoints of the
-  //     upper tangent arc -> must emit kCorridorCutoff near both ends and mark terminal segments
-  //     corridor_open == false.
-  {
-    const PrismFixture f_short(0.4461242675781);
+  // 9n. Cliff-march corridor cutoff: C16 Column {3, 5} with prism heights 0.4461242675781 and
+  //     0.4461253675781 has positive A_P at the penultimate nodes and empty A_P at both optical
+  //     endpoints of the upper tangent arc -> must emit kCorridorCutoff on true segment splits
+  //     near both ends, match direct Corridor::Evaluate on each side, and keep raw |J| <= cap.
+  for (double short_h : { 0.4461242675781, 0.4461253675781 }) {
+    const PrismFixture f_short(short_h);
     int slots35[2];
     const int faces35[2] = { 3, 5 };
     f_short.Resolve(faces35, 2, slots35);
@@ -1447,18 +1447,31 @@ TEST(CausticContinuation, EdgeCaseRegressions) {
                 break;
               }
             }
-            EXPECT_TRUE(at_seg_split) << "Cliff kCorridorCutoff at s=" << ev.arclength
+            EXPECT_TRUE(at_seg_split) << "Cliff kCorridorCutoff at h=" << short_h << " s=" << ev.arclength
                                       << " did not split segment corridor_open states";
           }
         }
-        EXPECT_GE(cutoffs, 2) << "Upper arc cliff tails missed kCorridorCutoff events";
+        EXPECT_GE(cutoffs, 2) << "Upper arc cliff tails missed kCorridorCutoff events at h=" << short_h;
         if (c.segments.size() < 3u) {
-          ADD_FAILURE() << "Expected open middle segment flanked by closed cliff segments";
+          ADD_FAILURE() << "Expected open middle segment flanked by closed cliff segments at h=" << short_h;
           continue;
         }
         EXPECT_FALSE(c.segments.front().corridor_open);
         EXPECT_TRUE(c.segments[1].corridor_open);
         EXPECT_FALSE(c.segments.back().corridor_open);
+        // Verify direct Corridor::Evaluate agrees with segment corridor_open on both sides of the
+        // front and back cliff splits (midpoint of each terminal segment and interior of open seg).
+        auto eval_open_at_pose = [&](const double pose[9]) {
+          const double inc[3] = { -sun20[0], -sun20[1], -sun20[2] };
+          double s_body[3];
+          WorldToBody(pose, inc, s_body);
+          const EntryMeasure em = corr.Evaluate(s_body, n);
+          return em.status == EntryMeasureStatus::kOk && em.value > 0.0;
+        };
+        EXPECT_FALSE(eval_open_at_pose(c.nodes.front().pose));
+        EXPECT_FALSE(eval_open_at_pose(c.nodes.back().pose));
+        const int mid_open_idx = (c.segments[1].start_idx + c.segments[1].end_idx) / 2;
+        EXPECT_TRUE(eval_open_at_pose(c.nodes[static_cast<size_t>(mid_open_idx)].pose));
         // Verify raw |J| <= kRawInteriorJCap on every interior node including cliff cutoff splits.
         for (size_t i = 1; i + 1 < c.nodes.size(); i++) {
           double j_ind = 0.0;
@@ -1467,12 +1480,13 @@ TEST(CausticContinuation, EdgeCaseRegressions) {
             ADD_FAILURE() << "Independent evaluation invalid at short-prism node " << i;
             continue;
           }
-          EXPECT_LE(std::fabs(j_ind), kRawInteriorJCap) << "Short-prism interior node " << i << " |J|=" << j_ind;
+          EXPECT_LE(std::fabs(j_ind), kRawInteriorJCap)
+              << "Short-prism (h=" << short_h << ") interior node " << i << " |J|=" << j_ind;
         }
         found_upper_with_cutoffs = (cutoffs >= 2);
       }
     }
-    EXPECT_TRUE(found_upper_with_cutoffs);
+    EXPECT_TRUE(found_upper_with_cutoffs) << "Missing upper arc cutoffs at h=" << short_h;
   }
 
   // 9o. Compact-bounds Lowitz cusp preservation: Lowitz {3, 5} at 20 deg bounded to +-0.02 deg
@@ -1810,6 +1824,165 @@ TEST(CausticContinuation, EdgeCaseRegressions) {
       }
     }
     EXPECT_TRUE(saw_closed_single);
+  }
+
+  // 9aa. Continuous Corridor::OverlapMargin + ultra-narrow 1D double corridor cutoff:
+  //      Parry {3, 5}, roll 0 deg, sun 20 deg, prism height 0.0001 has A_P = 0 at 269.90 and
+  //      270.10 deg and A_P > 0 at 270.00 deg inside a single default step.
+  {
+    const PrismFixture f_ultra(0.0001);
+    int slots35[2];
+    const int faces35[2] = { 3, 5 };
+    f_ultra.Resolve(faces35, 2, slots35);
+    double sun20[3];
+    AltAzDegToSky(20.0, 0.0, sun20);
+    Corridor corr(f_ultra.normals, f_ultra.polygons, slots35, 2);
+
+    auto eval_margin_at = [&](double az_deg) {
+      double pose[9];
+      EulerPoseDeg(az_deg, 90.0, 0.0, pose);
+      const double inc[3] = { -sun20[0], -sun20[1], -sun20[2] };
+      double s_body[3];
+      WorldToBody(pose, inc, s_body);
+      return corr.OverlapMargin(s_body, n);
+    };
+    EXPECT_LT(eval_margin_at(269.90), 0.0);
+    EXPECT_GT(eval_margin_at(270.00), 0.0);
+    EXPECT_LT(eval_margin_at(270.10), 0.0);
+
+    // One-face external reflection OverlapMargin: positive when cos_i > 0, NaN on backface.
+    int slots1[1];
+    const int faces1[1] = { 1 };
+    f_ultra.Resolve(faces1, 1, slots1);
+    Corridor corr_ext(f_ultra.normals, f_ultra.polygons, slots1, 1);
+    const double s_down[3] = { 0.0, 0.0, -1.0 };
+    const double s_up[3] = { 0.0, 0.0, 1.0 };
+    EXPECT_GT(corr_ext.OverlapMargin(s_down, n), 0.5);
+    EXPECT_TRUE(std::isnan(corr_ext.OverlapMargin(s_up, n)));
+
+    const CausticTraceResult res =
+        TraceFamily1D(f_ultra.normals, slots35, 2, n, sun20, PoseManifold::Parry(0.0), &corr);
+    int cutoffs_near_270 = 0;
+    int open_segs_near_270 = 0;
+    for (const PoseCurve& c : res.curves) {
+      for (const CurveEvent& ev : c.events) {
+        if (ev.kind == CurveEventKind::kCorridorCutoff) {
+          const double az_d = WrapAngleDeg(ev.param[PoseManifold::kAxisAzimuth] * kRadToDeg);
+          if (std::fabs(AngleDiffDeg(az_d, 270.0)) < 1.0) {
+            cutoffs_near_270++;
+          }
+        }
+      }
+      for (const CurveSegment& seg : c.segments) {
+        if (seg.corridor_open) {
+          const double az_lo = WrapAngleDeg(c.nodes[static_cast<size_t>(seg.start_idx)].param[0] * kRadToDeg);
+          const double az_hi = WrapAngleDeg(c.nodes[static_cast<size_t>(seg.end_idx)].param[0] * kRadToDeg);
+          if (std::fabs(AngleDiffDeg(az_lo, 270.0)) < 1.0 && std::fabs(AngleDiffDeg(az_hi, 270.0)) < 1.0) {
+            open_segs_near_270++;
+          }
+        }
+      }
+    }
+    EXPECT_GE(cutoffs_near_270, 2) << "1D continuous-margin probe missed ultra-narrow corridor cutoffs";
+    EXPECT_GE(open_segs_near_270, 1) << "1D continuous-margin probe failed to split ultra-narrow open segment";
+  }
+
+  // 9ab. 2D rank-2 double corridor cutoff inside one accepted step: Column {3, 5}, sun 20 deg,
+  //      prism height 0.0034822892640643 opens around (az=269.94966 deg, roll=330.95808 deg)
+  //      inside a closed-to-closed step.
+  {
+    const PrismFixture f_2d_thin(0.0034822892640643);
+    int slots35[2];
+    const int faces35[2] = { 3, 5 };
+    f_2d_thin.Resolve(faces35, 2, slots35);
+    double sun20[3];
+    AltAzDegToSky(20.0, 0.0, sun20);
+    Corridor corr(f_2d_thin.normals, f_2d_thin.polygons, slots35, 2);
+    const CausticTraceResult res =
+        TraceCausticLocus(f_2d_thin.normals, slots35, 2, n, sun20, PoseManifold::Column(), &corr);
+    EXPECT_EQ(res.generic_rank, 2);
+    int cutoffs_near_target = 0;
+    bool found_open_near_target = false;
+    for (const PoseCurve& c : res.curves) {
+      for (const CurveEvent& ev : c.events) {
+        if (ev.kind == CurveEventKind::kCorridorCutoff) {
+          const double az_d = WrapAngleDeg(ev.param[PoseManifold::kAxisAzimuth] * kRadToDeg);
+          const double r_d = WrapAngleDeg(ev.param[PoseManifold::kAxisRoll] * kRadToDeg);
+          if (std::fabs(AngleDiffDeg(az_d, 269.95)) < 2.0 && std::fabs(AngleDiffDeg(r_d, 330.96)) < 5.0) {
+            cutoffs_near_target++;
+          }
+        }
+      }
+      for (const CurveSegment& seg : c.segments) {
+        if (!seg.corridor_open) {
+          continue;
+        }
+        for (int idx = seg.start_idx; idx <= seg.end_idx; idx++) {
+          const double az_d = WrapAngleDeg(c.nodes[static_cast<size_t>(idx)].param[0] * kRadToDeg);
+          const double r_d = WrapAngleDeg(c.nodes[static_cast<size_t>(idx)].param[2] * kRadToDeg);
+          if (std::fabs(AngleDiffDeg(az_d, 269.95)) < 2.0 && std::fabs(AngleDiffDeg(r_d, 330.96)) < 5.0) {
+            found_open_near_target = true;
+          }
+        }
+      }
+    }
+    EXPECT_GE(cutoffs_near_target, 2) << "2D rank-2 step skipped double corridor cutoff";
+    EXPECT_TRUE(found_open_near_target) << "2D rank-2 step failed to split narrow open corridor segment";
+  }
+
+  // 9ac. 2D rank-1 collapsed fiber double TIR onset inside one step: {3, 1, 6}, zenith=90 deg,
+  //      roll in [-0.2, 0.2] deg, sun altitude 32.027351 deg exercises the unified TIR detector on
+  //      TraceContinuousRank1AxisAligned.
+  {
+    int slots316[3];
+    const int faces316[3] = { 3, 1, 6 };
+    f.Resolve(faces316, 3, slots316);
+    double sun_tir[3];
+    AltAzDegToSky(32.027351, 0.0, sun_tir);
+    PoseManifold m;
+    m.axes[PoseManifold::kAxisAzimuth] = PoseAxis::FreeRad(0.0, 2.0 * kPi, true);
+    m.axes[PoseManifold::kAxisZenith] = PoseAxis::PinnedDeg(90.0);
+    m.axes[PoseManifold::kAxisRoll] = PoseAxis::FreeDeg(-0.2, 0.2, false);
+    const CausticTraceResult res = TraceCausticLocus(f.normals, slots316, 3, n, sun_tir, m);
+    EXPECT_EQ(res.generic_rank, 1);
+    int tir_in_window = 0;
+    for (const PoseCurve& c : res.curves) {
+      for (const CurveEvent& ev : c.events) {
+        if (ev.kind == CurveEventKind::kTirOnset && ev.detail_index == 1) {
+          const double az_d = WrapAngleDeg(ev.param[PoseManifold::kAxisAzimuth] * kRadToDeg);
+          if (az_d > 178.0 && az_d < 182.0) {
+            tir_in_window++;
+          }
+        }
+      }
+    }
+    EXPECT_GE(tir_in_window, 2) << "Rank-1 collapsed step skipped double internal TIR onset";
+  }
+
+  // 9ad. Node-budget truncation must never leave events past curve.nodes.back().arclength:
+  //      Parry {3, 1, 6}, roll 0 deg, sun 20 deg, height 0.4, max_nodes_per_branch = 25.
+  {
+    const PrismFixture f04(0.4);
+    int slots316[3];
+    const int faces316[3] = { 3, 1, 6 };
+    f04.Resolve(faces316, 3, slots316);
+    double sun20[3];
+    AltAzDegToSky(20.0, 0.0, sun20);
+    Corridor corr(f04.normals, f04.polygons, slots316, 3);
+    Family1DParams p25;
+    p25.max_nodes_per_branch = 25;
+    const CausticTraceResult res =
+        TraceFamily1D(f04.normals, slots316, 3, n, sun20, PoseManifold::Parry(0.0), &corr, p25);
+    ASSERT_FALSE(res.curves.empty());
+    for (const PoseCurve& c : res.curves) {
+      EXPECT_LE(c.nodes.size(), 25u);
+      const double max_s = c.nodes.back().arclength;
+      for (const CurveEvent& ev : c.events) {
+        EXPECT_GE(ev.arclength, -1e-12);
+        EXPECT_LE(ev.arclength, max_s + 1e-12)
+            << "Truncated branch emitted event at s=" << ev.arclength << " past final node s=" << max_s;
+      }
+    }
   }
 }
 

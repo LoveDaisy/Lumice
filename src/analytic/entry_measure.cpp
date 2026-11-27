@@ -109,6 +109,103 @@ int ClipHalfplane(const std::vector<double>& in, int count, const double a[2], c
   return static_cast<int>(out->size() / 2);
 }
 
+// Evaluates the entry/exit optical gates and constructs the right-handed orthonormal projection
+// basis (u, w, d) perpendicular to the corridor direction d_in (air-side s_body for one-face
+// external reflection; refracted internal direction otherwise). Shared by Evaluate and
+// OverlapMargin so both read the exact same gates and projection plane.
+bool ComputeCorridorProjectionBasis(bool external, const double entry_normal[3], const double exit_normal[3],
+                                    const double s_body[3], double refractive_index, double* cos_i_out,
+                                    double* cos_t_out, double u_out[3], double w_out[3],
+                                    EntryMeasureStatus* fail_status) {
+  // Entry gate: the incident side has no critical angle (LI entry_ok with cos_tc = 0, and cos_i > 0).
+  const double cos_i = -so3::Dot3(entry_normal, s_body);
+  if (!(cos_i > 0.0)) {
+    *fail_status = EntryMeasureStatus::kEntryBackface;
+    return false;
+  }
+  double d_in[3] = { s_body[0], s_body[1], s_body[2] };
+  double cos_t = cos_i;
+  if (!external) {
+    // LI refract_into_crystal. A single external face instead projects along the
+    // air-side incident line, without a fictitious internal segment or exit gate.
+    const double eta = 1.0 / refractive_index;
+    const double discriminant = 1.0 - eta * eta * (1.0 - cos_i * cos_i);
+    const double k = eta * cos_i - std::sqrt(discriminant);
+    for (int i = 0; i < 3; i++) {
+      d_in[i] = eta * s_body[i] + k * entry_normal[i];
+    }
+    cos_t = -so3::Dot3(entry_normal, d_in);
+    const double cos_critical = std::sqrt(1.0 - 1.0 / (refractive_index * refractive_index));
+    if (!(so3::Dot3(d_in, exit_normal) >= cos_critical)) {
+      *fail_status = EntryMeasureStatus::kExitCriticalAngle;
+      return false;
+    }
+  }
+
+  // LI perp_bases of d_in: (u, w, d) right-handed, helper +z unless |d_z| >= 0.9, then +x.
+  const double d_norm = std::sqrt(so3::Dot3(d_in, d_in));
+  const double d[3] = { d_in[0] / d_norm, d_in[1] / d_norm, d_in[2] / d_norm };
+  const double helper_z[3] = { 0.0, 0.0, 1.0 };
+  const double helper_x[3] = { 1.0, 0.0, 0.0 };
+  double u[3];
+  so3::Cross3(d, std::fabs(d[2]) >= 0.9 ? helper_x : helper_z, u);
+  const double u_norm = std::sqrt(so3::Dot3(u, u));
+  for (double& x : u) {
+    x /= u_norm;
+  }
+  double w[3];
+  so3::Cross3(d, u, w);
+
+  *cos_i_out = cos_i;
+  *cos_t_out = cos_t;
+  for (int i = 0; i < 3; i++) {
+    u_out[i] = u[i];
+    w_out[i] = w[i];
+  }
+  return true;
+}
+
+// Minimum 2D Separating-Axis-Theorem signed overlap between two projected convex polygons stored
+// as (x, y) pairs in [begin_a, end_a) and [begin_b, end_b). Positive when overlapping, zero when
+// touching, smoothly negative when disjoint.
+double PairwiseSatOverlap2D(const double* xy, int begin_a, int end_a, int begin_b, int end_b) {
+  double min_overlap = std::numeric_limits<double>::infinity();
+  auto test_edges = [&](int edge_begin, int edge_end) {
+    const int n = edge_end - edge_begin;
+    for (int i = 0; i < n; i++) {
+      const int vi = edge_begin + i;
+      const int vj = edge_begin + ((i + 1 < n) ? (i + 1) : 0);
+      const double ex = xy[2 * vj] - xy[2 * vi];
+      const double ey = xy[2 * vj + 1] - xy[2 * vi + 1];
+      const double len = std::hypot(ex, ey);
+      if (len <= 1e-15) {
+        continue;
+      }
+      const double nx = -ey / len;
+      const double ny = ex / len;
+      double min_a = std::numeric_limits<double>::infinity();
+      double max_a = -std::numeric_limits<double>::infinity();
+      for (int k = begin_a; k < end_a; k++) {
+        const double p = xy[2 * k] * nx + xy[2 * k + 1] * ny;
+        min_a = std::min(min_a, p);
+        max_a = std::max(max_a, p);
+      }
+      double min_b = std::numeric_limits<double>::infinity();
+      double max_b = -std::numeric_limits<double>::infinity();
+      for (int k = begin_b; k < end_b; k++) {
+        const double p = xy[2 * k] * nx + xy[2 * k + 1] * ny;
+        min_b = std::min(min_b, p);
+        max_b = std::max(max_b, p);
+      }
+      const double axis_overlap = std::min(max_a, max_b) - std::max(min_a, min_b);
+      min_overlap = std::min(min_overlap, axis_overlap);
+    }
+  };
+  test_edges(begin_a, end_a);
+  test_edges(begin_b, end_b);
+  return std::isfinite(min_overlap) ? min_overlap : std::numeric_limits<double>::quiet_NaN();
+}
+
 }  // namespace
 
 Corridor::Corridor(const FaceNormalTable& normals, const FacePolygonTable& polygons, const int* slots, int slot_count) {
@@ -213,44 +310,17 @@ EntryMeasure Corridor::Evaluate(const double s_body[3], double refractive_index,
   if (external) {
     m.area_perp_internal = std::numeric_limits<double>::quiet_NaN();
   }
-  // Entry gate: the incident side has no critical angle (LI entry_ok with cos_tc = 0, and cos_i > 0).
-  const double cos_i = -so3::Dot3(entry_normal_, s_body);
-  if (!(cos_i > 0.0)) {
-    m.status = EntryMeasureStatus::kEntryBackface;
+  // Entry and exit optical gates plus orthonormal projection basis (u, w).
+  double cos_i = 0.0;
+  double cos_t = 0.0;
+  double u[3];
+  double w[3];
+  EntryMeasureStatus gate_fail = EntryMeasureStatus::kEntryBackface;
+  if (!ComputeCorridorProjectionBasis(external, entry_normal_, exit_normal_, s_body, refractive_index, &cos_i, &cos_t,
+                                      u, w, &gate_fail)) {
+    m.status = gate_fail;
     return m;
   }
-  double d_in[3] = { s_body[0], s_body[1], s_body[2] };
-  double cos_t = cos_i;
-  if (!external) {
-    // LI refract_into_crystal. A single external face instead projects along the
-    // air-side incident line, without a fictitious internal segment or exit gate.
-    const double eta = 1.0 / refractive_index;
-    const double discriminant = 1.0 - eta * eta * (1.0 - cos_i * cos_i);
-    const double k = eta * cos_i - std::sqrt(discriminant);
-    for (int i = 0; i < 3; i++) {
-      d_in[i] = eta * s_body[i] + k * entry_normal_[i];
-    }
-    cos_t = -so3::Dot3(entry_normal_, d_in);
-    const double cos_critical = std::sqrt(1.0 - 1.0 / (refractive_index * refractive_index));
-    if (!(so3::Dot3(d_in, exit_normal_) >= cos_critical)) {
-      m.status = EntryMeasureStatus::kExitCriticalAngle;
-      return m;
-    }
-  }
-
-  // LI perp_bases of d_in: (u, w, d) right-handed, helper +z unless |d_z| >= 0.9, then +x.
-  const double d_norm = std::sqrt(so3::Dot3(d_in, d_in));
-  const double d[3] = { d_in[0] / d_norm, d_in[1] / d_norm, d_in[2] / d_norm };
-  const double helper_z[3] = { 0.0, 0.0, 1.0 };
-  const double helper_x[3] = { 1.0, 0.0, 0.0 };
-  double u[3];
-  so3::Cross3(d, std::fabs(d[2]) >= 0.9 ? helper_x : helper_z, u);
-  const double u_norm = std::sqrt(so3::Dot3(u, u));
-  for (double& x : u) {
-    x /= u_norm;
-  }
-  double w[3];
-  so3::Cross3(d, u, w);
 
   // LI corridor_intersection: project every polygon along d, then clip the first by each later one.
   auto project = [&](int poly, std::vector<double>* out, bool* reversed) {
@@ -310,6 +380,50 @@ EntryMeasure Corridor::Evaluate(const double s_body[3], double refractive_index,
   m.status = EntryMeasureStatus::kOk;
   m.value = external ? raw_area : raw_area * cos_i / cos_t;
   return m;
+}
+
+double Corridor::OverlapMargin(const double s_body[3], double refractive_index) const {
+  const bool external = offsets_.size() == 2;
+  double cos_i = 0.0;
+  double cos_t = 0.0;
+  double u[3];
+  double w[3];
+  EntryMeasureStatus gate_fail = EntryMeasureStatus::kEntryBackface;
+  if (!ComputeCorridorProjectionBasis(external, entry_normal_, exit_normal_, s_body, refractive_index, &cos_i, &cos_t,
+                                      u, w, &gate_fail)) {
+    return std::numeric_limits<double>::quiet_NaN();
+  }
+  if (external) {
+    return cos_i;
+  }
+
+  const int total_verts = static_cast<int>(points_.size() / 3);
+  constexpr int kStackVertCap = 128;
+  double stack_xy[2 * kStackVertCap];
+  std::vector<double> heap_xy;
+  double* xy = stack_xy;
+  if (total_verts > kStackVertCap) {
+    heap_xy.resize(static_cast<size_t>(2 * total_verts));
+    xy = heap_xy.data();
+  }
+  for (int v = 0; v < total_verts; v++) {
+    const double* p = &points_[3 * static_cast<size_t>(v)];
+    xy[2 * v] = so3::Dot3(p, u);
+    xy[2 * v + 1] = so3::Dot3(p, w);
+  }
+
+  const int polygon_count = static_cast<int>(offsets_.size()) - 1;
+  double min_margin = std::numeric_limits<double>::infinity();
+  for (int pa = 0; pa < polygon_count; pa++) {
+    for (int pb = pa + 1; pb < polygon_count; pb++) {
+      const double pair_m = PairwiseSatOverlap2D(xy, offsets_[pa], offsets_[pa + 1], offsets_[pb], offsets_[pb + 1]);
+      if (!std::isfinite(pair_m)) {
+        return std::numeric_limits<double>::quiet_NaN();
+      }
+      min_margin = std::min(min_margin, pair_m);
+    }
+  }
+  return std::isfinite(min_margin) ? min_margin : std::numeric_limits<double>::quiet_NaN();
 }
 
 namespace {
