@@ -1,5 +1,5 @@
 // Unit tests for PoseManifold / PoseCurve (src/analytic/pose_curve.hpp) and 1D/2D continuous
-// caustic continuation (src/analytic/caustic_continuation.{hpp,cpp}).
+// caustic continuation (src/analytic/caustic_continuation.hpp).
 
 #include <gtest/gtest.h>
 
@@ -306,7 +306,8 @@ TEST(CausticContinuation, C16ColumnTangentArcsAndMirrorPointImage) {
       EXPECT_EQ(curve.segments[s].start_idx, curve.segments[s - 1].end_idx);
     }
 
-    // Check |J| <= 1e-11 on every interior continued node via independent Jet<2> evaluation.
+    // Check O(1) desingularized |J_reg| <= 1e-12 everywhere (including grazing Snell cliffs)
+    // and raw |J| <= 1e-11 on well-conditioned interior nodes via independent Jet<2> evaluation.
     for (size_t i = 0; i < curve.nodes.size(); i++) {
       const PoseCurveNode& node = curve.nodes[i];
       if (i > 0) {
@@ -314,11 +315,17 @@ TEST(CausticContinuation, C16ColumnTangentArcsAndMirrorPointImage) {
       }
       if (i > 0 && i + 1 < curve.nodes.size()) {
         double j_ind = 0.0;
-        if (!IndependentSignedJacobian2D(f.normals, slots, 2, n, sun_dir, column, node.param, &j_ind)) {
+        double j_reg = 0.0;
+        double min_snell_disc = 0.0;
+        if (!IndependentSignedJacobian2D(f.normals, slots, 2, n, sun_dir, column, node.param, &j_ind, nullptr, nullptr,
+                                         nullptr, &j_reg, &min_snell_disc)) {
           ADD_FAILURE() << "Independent evaluation invalid at node " << i;
           continue;
         }
-        EXPECT_LE(std::fabs(j_ind), kRawInteriorJCap) << "node " << i << " |J|=" << std::fabs(j_ind);
+        EXPECT_LE(std::fabs(j_reg), 1e-12) << "node " << i << " |J_reg|=" << std::fabs(j_reg);
+        if (min_snell_disc >= 1e-2) {
+          EXPECT_LE(std::fabs(j_ind), 1e-11) << "node " << i << " |J|=" << std::fabs(j_ind);
+        }
         total_checked_nodes++;
       }
     }
@@ -462,7 +469,8 @@ TEST(CausticContinuation, LowitzMainAndNearSunBranchesAndAntisymmetry) {
       continue;
     }
 
-    // Collect all interior nodes to verify |J| <= 1e-11 and branch coverage.
+    // Collect all interior nodes to verify |J_reg| <= 1e-12 everywhere, raw |J| <= 1e-11 on
+    // well-conditioned interior nodes, and branch coverage.
     std::vector<PoseCurveNode> all_nodes;
     bool has_main_fold = false;
     bool has_left_side_branch = false;
@@ -476,11 +484,17 @@ TEST(CausticContinuation, LowitzMainAndNearSunBranchesAndAntisymmetry) {
       for (size_t i = 1; i + 1 < curve.nodes.size(); i++) {
         const PoseCurveNode& node = curve.nodes[i];
         double j_ind = 0.0;
-        if (!IndependentSignedJacobian2D(f.normals, slots, 2, n, sun_dir, lowitz, node.param, &j_ind)) {
+        double j_reg = 0.0;
+        double min_snell_disc = 0.0;
+        if (!IndependentSignedJacobian2D(f.normals, slots, 2, n, sun_dir, lowitz, node.param, &j_ind, nullptr, nullptr,
+                                         nullptr, &j_reg, &min_snell_disc)) {
           ADD_FAILURE() << "Independent evaluation invalid at sun_alt=" << sun_alt_deg << " node " << i;
           continue;
         }
-        EXPECT_LE(std::fabs(j_ind), kRawInteriorJCap) << "sun_alt=" << sun_alt_deg << " |J|=" << std::fabs(j_ind);
+        EXPECT_LE(std::fabs(j_reg), 1e-12) << "sun_alt=" << sun_alt_deg << " |J_reg|=" << std::fabs(j_reg);
+        if (min_snell_disc >= 1e-2) {
+          EXPECT_LE(std::fabs(j_ind), 1e-11) << "sun_alt=" << sun_alt_deg << " |J|=" << std::fabs(j_ind);
+        }
         all_nodes.push_back(node);
 
         double alt = 0.0;
@@ -523,10 +537,14 @@ TEST(CausticContinuation, LowitzMainAndNearSunBranchesAndAntisymmetry) {
       double param_flip_z[3] = { sym_az_deg * kDegToRad, sym_z_deg * kDegToRad, 0.0 };
       double j_same = 1.0;
       double j_flip = 1.0;
-      const bool ok_same = IndependentSignedJacobian2D(f.normals, slots, 2, n, sun_dir, lowitz, param_same_z, &j_same);
-      const bool ok_flip = IndependentSignedJacobian2D(f.normals, slots, 2, n, sun_dir, lowitz, param_flip_z, &j_flip);
-      const bool same_on_locus = ok_same && std::fabs(j_same) < 1e-9;
-      const bool flip_on_locus = ok_flip && std::fabs(j_flip) < 1e-9;
+      double j_reg_same = 1.0;
+      double j_reg_flip = 1.0;
+      const bool ok_same = IndependentSignedJacobian2D(f.normals, slots, 2, n, sun_dir, lowitz, param_same_z, &j_same,
+                                                       nullptr, nullptr, nullptr, &j_reg_same);
+      const bool ok_flip = IndependentSignedJacobian2D(f.normals, slots, 2, n, sun_dir, lowitz, param_flip_z, &j_flip,
+                                                       nullptr, nullptr, nullptr, &j_reg_flip);
+      const bool same_on_locus = ok_same && std::fabs(j_reg_same) < 1e-10;
+      const bool flip_on_locus = ok_flip && std::fabs(j_reg_flip) < 1e-10;
       if (!(same_on_locus || flip_on_locus)) {
         ADD_FAILURE() << "No symmetric partner on J=0 for (az=" << az_deg << ", z=" << z_deg << ")";
         continue;
@@ -1483,16 +1501,24 @@ TEST(CausticContinuation, EdgeCaseRegressions) {
         EXPECT_FALSE(eval_open_at_pose(c.nodes.back().pose));
         const int mid_open_idx = (c.segments[1].start_idx + c.segments[1].end_idx) / 2;
         EXPECT_TRUE(eval_open_at_pose(c.nodes[static_cast<size_t>(mid_open_idx)].pose));
-        // Verify raw |J| <= kRawInteriorJCap on every interior node including cliff cutoff splits.
+        // Verify |J_reg| <= 1e-12 everywhere (including cliff cutoff splits) and raw |J| <= 1e-11
+        // on well-conditioned interior nodes.
         for (size_t i = 1; i + 1 < c.nodes.size(); i++) {
           double j_ind = 0.0;
+          double j_reg = 0.0;
+          double min_snell_disc = 0.0;
           if (!IndependentSignedJacobian2D(f_short.normals, slots35, 2, n, sun20, PoseManifold::Column(),
-                                           c.nodes[i].param, &j_ind)) {
+                                           c.nodes[i].param, &j_ind, nullptr, nullptr, nullptr, &j_reg,
+                                           &min_snell_disc)) {
             ADD_FAILURE() << "Independent evaluation invalid at short-prism node " << i;
             continue;
           }
-          EXPECT_LE(std::fabs(j_ind), kRawInteriorJCap)
-              << "Short-prism (h=" << short_h << ") interior node " << i << " |J|=" << j_ind;
+          EXPECT_LE(std::fabs(j_reg), 1e-12)
+              << "Short-prism (h=" << short_h << ") interior node " << i << " |J_reg|=" << j_reg;
+          if (min_snell_disc >= 1e-2) {
+            EXPECT_LE(std::fabs(j_ind), 1e-11)
+                << "Short-prism (h=" << short_h << ") interior node " << i << " |J|=" << j_ind;
+          }
         }
         found_upper_with_cutoffs = (cutoffs >= 2);
       }
@@ -2057,8 +2083,9 @@ TEST(CausticContinuation, EdgeCaseRegressions) {
     }
   }
 
-  // 9af. Valid ultra-fine 1D step (min_step = max_step = 1e-14) must advance and reach
-  //      max_nodes_per_branch = 3 immediately without looping until an external deadline.
+  // 9af. Engineering valid-domain step floor: ValidateParams rejects min_step < 1e-10 rad for
+  //      both 1D and 2D params, while min_step = max_step = 1e-10 rad makes finite bounded
+  //      progress to max_nodes_per_branch = 3 without hanging.
   {
     int slots1[1];
     const int faces1[1] = { 1 };
@@ -2070,15 +2097,31 @@ TEST(CausticContinuation, EdgeCaseRegressions) {
     m.axes[PoseManifold::kAxisZenith] = PoseAxis::PinnedDeg(0.0);
     m.axes[PoseManifold::kAxisRoll] = PoseAxis::PinnedDeg(0.0);
 
-    Family1DParams p_fine;
-    p_fine.min_step = 1e-14;
-    p_fine.max_step = 1e-14;
-    p_fine.max_nodes_per_branch = 3;
-    const CausticTraceResult res_fine = TraceFamily1D(f.normals, slots1, 1, n, sun20, m, nullptr, p_fine);
-    EXPECT_FALSE(res_fine.stop_requested);
-    ASSERT_EQ(res_fine.curves.size(), 1u);
-    EXPECT_EQ(res_fine.curves[0].nodes.size(), 3u);
-    EXPECT_TRUE(res_fine.curves[0].coverage.budget_truncated);
+    Family1DParams p_sub_1d;
+    p_sub_1d.min_step = 1e-14;
+    p_sub_1d.max_step = 1e-14;
+    EXPECT_FALSE(ValidateParams(p_sub_1d));
+    p_sub_1d.min_step = 9.9e-11;
+    p_sub_1d.max_step = 1e-9;
+    EXPECT_FALSE(ValidateParams(p_sub_1d));
+    EXPECT_TRUE(TraceFamily1D(f.normals, slots1, 1, n, sun20, m, nullptr, p_sub_1d).curves.empty());
+
+    CausticContinuationParams p_sub_2d;
+    p_sub_2d.min_step = 1e-14;
+    EXPECT_FALSE(ValidateParams(p_sub_2d));
+    p_sub_2d.min_step = 9.9e-11;
+    EXPECT_FALSE(ValidateParams(p_sub_2d));
+
+    Family1DParams p_floor;
+    p_floor.min_step = 1e-10;
+    p_floor.max_step = 1e-10;
+    p_floor.max_nodes_per_branch = 3;
+    EXPECT_TRUE(ValidateParams(p_floor));
+    const CausticTraceResult res_floor = TraceFamily1D(f.normals, slots1, 1, n, sun20, m, nullptr, p_floor);
+    EXPECT_FALSE(res_floor.stop_requested);
+    ASSERT_EQ(res_floor.curves.size(), 1u);
+    EXPECT_EQ(res_floor.curves[0].nodes.size(), 3u);
+    EXPECT_TRUE(res_floor.curves[0].coverage.budget_truncated);
   }
 
   // 9ag. Seed deduplication in a compact 2D domain must not merge distinct parallel caustic

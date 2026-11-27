@@ -31,15 +31,22 @@ struct Family1DParams {
 };
 
 // Tuning parameters and budgets for 2D J(q) = 0 caustic continuation.
+//
+// The 2D Newton corrector and continuation loop operate on the Snell-desingularized defining
+// function J_reg(q) = w(q) * J(q), where w(q) = entry_disc * exit_disc for slot_count >= 2 (1 for
+// 1-face reflection). J_reg shares the exact zero set of J on the valid domain while keeping
+// ||grad J_reg|| = O(1) all the way to grazing Snell cliffs (exit_disc -> 0).
 struct CausticContinuationParams {
   int seed_grid_n = 36;                 // coarse Jet<2> pre-scan resolution per free axis
   double rank_tol = 1e-7;               // sigma2 <= rank_tol * sigma1 => collapsed (rank <= 1)
-  double residual_tol = 1e-13;          // |J(q)| target for orthogonal Newton corrector
-  double grad_tol = 1e-9;               // ||grad J|| floor (below => kLocusSingularity)
+  double residual_tol = 1e-12;          // O(1) normal parameter-space distance target
+                                        // |J_reg(q)| / ||grad J_reg(q)|| (radians); away from
+                                        // grazing cliffs (w = O(1)), implies raw |J| <= O(tol)
+  double grad_tol = 1e-9;               // ||grad J_reg|| floor (below => kLocusSingularity)
   double speed_tol = 1e-9;              // sky_speed <= speed_tol * sigma1 => point-image
   double pole_tol = 1e-9;               // ||omega_0 x omega_1|| floor (below => Euler pole boundary)
   double initial_step = 0.02;           // initial continuation step (radians)
-  double min_step = 1e-6;               // minimum step before boundary / singularity stop (radians)
+  double min_step = 1e-6;               // minimum step before boundary / singularity stop (radians, >= 1e-10)
   double max_step = 0.04;               // maximum continuation step (radians)
   double max_turning_angle = 0.15;      // tangent turning budget per step (radians)
   double event_slowdown_margin = 0.02;  // optical margin threshold for step slowdown
@@ -51,12 +58,9 @@ struct CausticContinuationParams {
   int bisection_iters = 52;             // exact event bisection iterations
 };
 
-// Raw |J(q)| ceiling enforced on every emitted interior node of a 2D J(q) = 0 caustic locus
-// (when params.residual_tol <= kRawInteriorJCap). Referenced by both the corrector and tests.
-constexpr double kRawInteriorJCap = 1e-11;
-
 // Validates that every field of Family1DParams / CausticContinuationParams is finite, positive
-// where required, and properly ordered (e.g. 0 < min_step <= initial_step <= max_step).
+// where required, within the engineering valid domain (min_step >= 1e-10 rad), and properly
+// ordered (e.g. 1e-10 <= min_step <= initial_step <= max_step).
 bool ValidateParams(const Family1DParams& params);
 bool ValidateParams(const CausticContinuationParams& params);
 
