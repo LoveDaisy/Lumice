@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795805362786,
+  "lastUpdate": 1795805365292,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -9620,50 +9620,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "c10466366a3f9d19d42a890a092389cebaade1b0",
-          "message": "Merge pull request #526 from LoveDaisy/feat/cl-exe-shared-ipo\n\nfeat(cmake): enable IPO for cl.exe shared Release trees",
-          "timestamp": "2026-10-20T12:57:03+08:00",
-          "tree_id": "38f1949b834ef1d5cd955ecb0db8f7a0c5e04fb2",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/c10466366a3f9d19d42a890a092389cebaade1b0"
-        },
-        "date": 1792472451084,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 102.8,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 100.3,
-            "unit": "%"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 99.3,
-            "unit": "%"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 92.8,
-            "unit": "%"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "0133b0e9825ce175d55d5cfcb43ed65fd904b519",
           "message": "Merge pull request #527 from LoveDaisy/feat/core-json-grid-import-notice\n\nfeat(gui): notice render[].grid refusal on core JSON import",
           "timestamp": "2026-10-20T15:49:47+08:00",
@@ -14003,6 +13959,50 @@ window.BENCHMARK_DATA = {
           {
             "name": "Windows MSVC x86_64",
             "value": 93.6,
+            "unit": "%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "db80d09847e73993c42c92dd86a70188c8154bf8",
+          "message": "Merge pull request #661 from LoveDaisy/goal/refactor-caustic-continuation-to-o-1-residual-co\n\nrefactor(analytic): switch caustic continuation to O(1) J_reg contract and split modules",
+          "timestamp": "2026-11-28T02:30:54+08:00",
+          "tree_id": "7d2b9b61cdb956630a349cb546570bdbeeea9683",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/db80d09847e73993c42c92dd86a70188c8154bf8"
+        },
+        "date": 1795805364615,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 97,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 100,
+            "unit": "%"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 97.4,
+            "unit": "%"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 93,
             "unit": "%"
           }
         ]
