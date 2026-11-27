@@ -151,6 +151,11 @@ struct PoseManifold {
       if (ax.free && !(ax.max_val > ax.min_val)) {
         return false;
       }
+      // A periodic Euler axis must span a full 2*pi rotation so min_val and max_val represent
+      // the same SO(3) pose for any literal face sequence.
+      if (ax.free && ax.periodic && std::fabs((ax.max_val - ax.min_val) - 2.0 * math::kPiD) > 1e-9) {
+        return false;
+      }
     }
     const PoseAxis& z = axes[kAxisZenith];
     if (z.free) {

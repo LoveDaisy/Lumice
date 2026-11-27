@@ -307,7 +307,7 @@ TEST(CausticContinuation, C16ColumnTangentArcsAndMirrorPointImage) {
           ADD_FAILURE() << "Independent evaluation invalid at node " << i;
           continue;
         }
-        EXPECT_LE(std::fabs(j_ind), 1e-11) << "node " << i << " |J|=" << std::fabs(j_ind);
+        EXPECT_LE(std::fabs(j_ind), kRawInteriorJCap) << "node " << i << " |J|=" << std::fabs(j_ind);
         total_checked_nodes++;
       }
     }
@@ -469,7 +469,7 @@ TEST(CausticContinuation, LowitzMainAndNearSunBranchesAndAntisymmetry) {
           ADD_FAILURE() << "Independent evaluation invalid at sun_alt=" << sun_alt_deg << " node " << i;
           continue;
         }
-        EXPECT_LE(std::fabs(j_ind), 1e-11) << "sun_alt=" << sun_alt_deg << " |J|=" << std::fabs(j_ind);
+        EXPECT_LE(std::fabs(j_ind), kRawInteriorJCap) << "sun_alt=" << sun_alt_deg << " |J|=" << std::fabs(j_ind);
         all_nodes.push_back(node);
 
         double alt = 0.0;
@@ -1367,6 +1367,231 @@ TEST(CausticContinuation, EdgeCaseRegressions) {
     EXPECT_FALSE(v.valid);
     EXPECT_EQ(v.failing_index, 2);
     EXPECT_FALSE(v.failing_is_snell) << "Internal incidence failure was misclassified as Snell failure";
+  }
+
+  // 9m. Sun-azimuth rotation invariance on C16 Column {3, 5} at sun (alt=20 deg, az=5 deg):
+  //     cliff-adjacent mixed-cell refinement must recover all 4 optical endpoints and both lower
+  //     cliff tails, including (az=163.122062 deg, roll=135.482907 deg).
+  {
+    int slots35[2];
+    const int faces35[2] = { 3, 5 };
+    f.Resolve(faces35, 2, slots35);
+    double sun_rot[3];
+    AltAzDegToSky(20.0, 5.0, sun_rot);
+    const CausticTraceResult res = TraceCausticLocus(f.normals, slots35, 2, n, sun_rot, PoseManifold::Column());
+    EXPECT_EQ(res.generic_rank, 2);
+
+    int total_opt_bnds = 0;
+    double min_dist_target_deg = 180.0;
+    const double target_az = 163.122062;
+    const double target_roll = 135.482907;
+    for (const PoseCurve& c : res.curves) {
+      for (const CurveEvent& ev : c.events) {
+        if (ev.kind == CurveEventKind::kOpticalBoundary) {
+          total_opt_bnds++;
+        }
+      }
+      for (size_t i = 0; i + 1 < c.nodes.size(); i++) {
+        const double a_az = c.nodes[i].param[PoseManifold::kAxisAzimuth] * kRadToDeg;
+        const double a_r = c.nodes[i].param[PoseManifold::kAxisRoll] * kRadToDeg;
+        const double b_az = c.nodes[i + 1].param[PoseManifold::kAxisAzimuth] * kRadToDeg;
+        const double b_r = c.nodes[i + 1].param[PoseManifold::kAxisRoll] * kRadToDeg;
+        const double sx = AngleDiffDeg(b_az, a_az);
+        const double sy = AngleDiffDeg(b_r, a_r);
+        const double px = AngleDiffDeg(target_az, a_az);
+        const double py = AngleDiffDeg(target_roll, a_r);
+        const double s2 = sx * sx + sy * sy;
+        const double t = (s2 > 0.0) ? std::clamp((px * sx + py * sy) / s2, 0.0, 1.0) : 0.0;
+        min_dist_target_deg = std::min(min_dist_target_deg, std::hypot(px - t * sx, py - t * sy));
+      }
+    }
+    EXPECT_GE(total_opt_bnds, 4) << "Sun azimuth 5 deg lost C16 lower optical endpoints";
+    EXPECT_LT(min_dist_target_deg, 1.0) << "Sun azimuth 5 deg missed lower C16 tail pose";
+  }
+
+  // 9n. Cliff-march corridor cutoff: C16 Column {3, 5} with prism height 0.4461242675781 has
+  //     positive A_P at the penultimate nodes and empty A_P at both optical endpoints of the
+  //     upper tangent arc -> must emit kCorridorCutoff near both ends and mark terminal segments
+  //     corridor_open == false.
+  {
+    const PrismFixture f_short(0.4461242675781);
+    int slots35[2];
+    const int faces35[2] = { 3, 5 };
+    f_short.Resolve(faces35, 2, slots35);
+    double sun20[3];
+    AltAzDegToSky(20.0, 0.0, sun20);
+    Corridor corr(f_short.normals, f_short.polygons, slots35, 2);
+    const CausticTraceResult res =
+        TraceCausticLocus(f_short.normals, slots35, 2, n, sun20, PoseManifold::Column(), &corr);
+    bool found_upper_with_cutoffs = false;
+    for (const PoseCurve& c : res.curves) {
+      double max_alt = -90.0;
+      for (const PoseCurveNode& nd : c.nodes) {
+        double alt = 0.0;
+        double az = 0.0;
+        SkyToAltAzDeg(nd.sky, &alt, &az);
+        max_alt = std::max(max_alt, alt);
+      }
+      if (max_alt > 40.0) {
+        int cutoffs = 0;
+        for (const CurveEvent& ev : c.events) {
+          if (ev.kind == CurveEventKind::kCorridorCutoff) {
+            cutoffs++;
+          }
+        }
+        EXPECT_GE(cutoffs, 2) << "Upper arc cliff tails missed kCorridorCutoff events";
+        if (c.segments.empty()) {
+          ADD_FAILURE() << "Upper arc has empty segments";
+          continue;
+        }
+        EXPECT_FALSE(c.segments.front().corridor_open);
+        EXPECT_FALSE(c.segments.back().corridor_open);
+        found_upper_with_cutoffs = (cutoffs >= 2);
+      }
+    }
+    EXPECT_TRUE(found_upper_with_cutoffs);
+  }
+
+  // 9o. Compact-bounds Lowitz cusp preservation: Lowitz {3, 5} at 20 deg bounded to +-0.02 deg
+  //     around the genuine cusp (197.81628321, 13.831146705) deg must emit kCusp.
+  {
+    int slots35[2];
+    const int faces35[2] = { 3, 5 };
+    f.Resolve(faces35, 2, slots35);
+    double sun20[3];
+    AltAzDegToSky(20.0, 0.0, sun20);
+    PoseManifold compact = PoseManifold::Lowitz(0.0);
+    compact.axes[PoseManifold::kAxisAzimuth] = PoseAxis::FreeDeg(197.81628321 - 0.02, 197.81628321 + 0.02, false);
+    compact.axes[PoseManifold::kAxisZenith] = PoseAxis::FreeDeg(13.831146705 - 0.02, 13.831146705 + 0.02, false);
+    const CausticTraceResult res = TraceCausticLocus(f.normals, slots35, 2, n, sun20, compact);
+    ASSERT_FALSE(res.curves.empty());
+    int cusp_cnt = 0;
+    for (const PoseCurve& c : res.curves) {
+      for (const CurveEvent& ev : c.events) {
+        if (ev.kind == CurveEventKind::kCusp) {
+          cusp_cnt++;
+        }
+      }
+    }
+    EXPECT_EQ(cusp_cnt, 1) << "Compact +-0.02 deg bounds suppressed a genuine Lowitz cusp";
+  }
+
+  // 9p. Narrow valid 1D branch between invalid scan samples: face {2}, zenith 20.000005 deg,
+  //     roll 0 deg, sun (20 deg, 0.6 deg) at default 360 scan samples must recover [180.558, 180.642] deg.
+  {
+    int slots2[1];
+    const int faces2[1] = { 2 };
+    f.Resolve(faces2, 1, slots2);
+    double sun_narrow[3];
+    AltAzDegToSky(20.0, 0.6, sun_narrow);
+    PoseManifold m;
+    m.axes[PoseManifold::kAxisAzimuth] = PoseAxis::FreeRad(0.0, 2.0 * kPi, true);
+    m.axes[PoseManifold::kAxisZenith] = PoseAxis::PinnedDeg(20.000005);
+    m.axes[PoseManifold::kAxisRoll] = PoseAxis::PinnedDeg(0.0);
+    const CausticTraceResult res = TraceFamily1D(f.normals, slots2, 1, n, sun_narrow, m);
+    ASSERT_EQ(res.curves.size(), 1u);
+    EXPECT_FALSE(res.curves[0].coverage.closed);
+    const double az_lo = res.curves[0].nodes.front().param[PoseManifold::kAxisAzimuth] * kRadToDeg;
+    const double az_hi = res.curves[0].nodes.back().param[PoseManifold::kAxisAzimuth] * kRadToDeg;
+    EXPECT_NEAR(az_lo, 180.558, 0.01);
+    EXPECT_NEAR(az_hi, 180.642, 0.01);
+    int opt_bnds = 0;
+    for (const CurveEvent& ev : res.curves[0].events) {
+      if (ev.kind == CurveEventKind::kOpticalBoundary) {
+        opt_bnds++;
+      }
+    }
+    EXPECT_EQ(opt_bnds, 2);
+  }
+
+  // 9q. Rank-one collapsed node sigma1 must match independent 2D manifold Jet<2> SVD even when
+  //     the representative roll slides (Column {3, 1, 6} at 20 deg).
+  {
+    int slots316[3];
+    const int faces316[3] = { 3, 1, 6 };
+    f.Resolve(faces316, 3, slots316);
+    double sun20[3];
+    AltAzDegToSky(20.0, 0.0, sun20);
+    const PoseManifold column = PoseManifold::Column();
+    const CausticTraceResult res = TraceCausticLocus(f.normals, slots316, 3, n, sun20, column);
+    EXPECT_EQ(res.generic_rank, 1);
+    ASSERT_FALSE(res.curves.empty());
+    for (const PoseCurve& c : res.curves) {
+      for (size_t i = 0; i < c.nodes.size(); i += std::max<size_t>(1, c.nodes.size() / 20)) {
+        const PoseCurveNode& nd = c.nodes[i];
+        double j_ind = 0.0;
+        double s1_ind = 0.0;
+        double s2_ind = 0.0;
+        if (!IndependentSignedJacobian2D(f.normals, slots316, 3, n, sun20, column, nd.param, &j_ind, &s1_ind,
+                                         &s2_ind)) {
+          ADD_FAILURE() << "Independent Jet<2> invalid on rank-1 node " << i;
+          continue;
+        }
+        EXPECT_NEAR(nd.sigma1, s1_ind, 1e-6) << "Rank-1 collapsed node sigma1 deviated from 2D manifold SVD";
+        EXPECT_NEAR(nd.sigma2, s2_ind, 1e-6);
+      }
+    }
+  }
+
+  // 9r. Collapsed rank-one continuation must obey params.max_steps_per_branch and report truncation.
+  {
+    int slots316[3];
+    const int faces316[3] = { 3, 1, 6 };
+    f.Resolve(faces316, 3, slots316);
+    double sun20[3];
+    AltAzDegToSky(20.0, 0.0, sun20);
+    CausticContinuationParams p_one;
+    p_one.max_steps_per_branch = 1;
+    const CausticTraceResult res =
+        TraceCausticLocus(f.normals, slots316, 3, n, sun20, PoseManifold::Column(), nullptr, p_one);
+    EXPECT_EQ(res.generic_rank, 1);
+    ASSERT_FALSE(res.curves.empty());
+    EXPECT_TRUE(res.coverage.budget_truncated);
+    for (const PoseCurve& c : res.curves) {
+      EXPECT_LE(c.nodes.size(), 3u) << "Collapsed branch ignored max_steps_per_branch=1";
+      EXPECT_TRUE(c.coverage.budget_truncated);
+    }
+  }
+
+  // 9s. Rank-one segment/interval deduplication: Column face {2} at 20 deg, az [120, 240] deg,
+  //     roll [0, 1] deg must emit 1 curve (no replay) and max_curves=1 must NOT falsely truncate.
+  {
+    int slots2[1];
+    const int faces2[1] = { 2 };
+    f.Resolve(faces2, 1, slots2);
+    double sun20[3];
+    AltAzDegToSky(20.0, 0.0, sun20);
+    PoseManifold m;
+    m.axes[PoseManifold::kAxisAzimuth] = PoseAxis::FreeDeg(120.0, 240.0, false);
+    m.axes[PoseManifold::kAxisZenith] = PoseAxis::PinnedDeg(90.0);
+    m.axes[PoseManifold::kAxisRoll] = PoseAxis::FreeDeg(0.0, 1.0, false);
+
+    const CausticTraceResult r_def = TraceCausticLocus(f.normals, slots2, 1, n, sun20, m);
+    EXPECT_EQ(r_def.generic_rank, 1);
+    EXPECT_EQ(r_def.curves.size(), 1u);
+    EXPECT_FALSE(r_def.coverage.budget_truncated);
+
+    CausticContinuationParams p1;
+    p1.max_curves = 1;
+    const CausticTraceResult r_one = TraceCausticLocus(f.normals, slots2, 1, n, sun20, m, nullptr, p1);
+    EXPECT_EQ(r_one.curves.size(), 1u);
+    EXPECT_FALSE(r_one.coverage.budget_truncated);
+  }
+
+  // 9t. Periodic span validation: a compact angular interval marked periodic (span != 2*pi) must
+  //     be rejected by PoseManifold::IsValid() before tracing.
+  {
+    PoseManifold bad_per = PoseManifold::Plate();
+    bad_per.axes[PoseManifold::kAxisAzimuth] = PoseAxis::FreeDeg(100.0, 120.0, true);
+    EXPECT_FALSE(bad_per.IsValid());
+
+    int slots1[1];
+    const int faces1[1] = { 1 };
+    f.Resolve(faces1, 1, slots1);
+    double sun20[3];
+    AltAzDegToSky(20.0, 0.0, sun20);
+    const CausticTraceResult res = TraceFamily1D(f.normals, slots1, 1, n, sun20, bad_per);
+    EXPECT_TRUE(res.curves.empty());
   }
 }
 

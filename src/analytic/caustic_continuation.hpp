@@ -51,6 +51,10 @@ struct CausticContinuationParams {
   int bisection_iters = 52;             // exact event bisection iterations
 };
 
+// Raw |J(q)| ceiling enforced on every emitted interior node of a 2D J(q) = 0 caustic locus
+// (when params.residual_tol <= kRawInteriorJCap). Referenced by both the corrector and tests.
+constexpr double kRawInteriorJCap = 1e-11;
+
 // Validates that every field of Family1DParams / CausticContinuationParams is finite, positive
 // where required, and properly ordered (e.g. 0 < min_step <= initial_step <= max_step).
 bool ValidateParams(const Family1DParams& params);
