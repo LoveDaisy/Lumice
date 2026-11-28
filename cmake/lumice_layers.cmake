@@ -136,6 +136,8 @@ set(LUMICE_LAYER_analytic_FILES
   analytic/path_chain.hpp
   analytic/path_evaluation.cpp
   analytic/path_evaluation.hpp
+  analytic/path_intrinsic.cpp
+  analytic/path_intrinsic.hpp
   analytic/diagnostic_capi.cpp
   analytic/diagnostic_batch.cpp
   analytic/diagnostic_batch.hpp
