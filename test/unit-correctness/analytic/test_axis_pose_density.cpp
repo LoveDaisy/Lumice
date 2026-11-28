@@ -500,10 +500,13 @@ TEST(AxisPoseDensity, UniformFastPathAndPoleTangentClosure) {
   for (double phi : { 0.1, 1.2, kHalfPi - 1e-9 }) {
     const auto r = Rotation(1.1, phi, 2.3);
     EXPECT_NEAR(density.LogDensity(r).value, density.LogDensityThirdRow(r[6], r[7], r[8]).value, 1e-13);
-    const double general = density.LatitudeFactor(phi, false).value * density.AzimuthFactor(1.1, false).value *
-                               density.RollFactor(2.3, false).value +
-                           density.LatitudeFactor(phi, true).value * density.AzimuthFactor(1.1, true).value *
-                               density.RollFactor(2.3, true).value;
+    // Independent general sum-of-images path: do not call the uniform fast-path accessors
+    // on BOTH sides of an equivalence assertion.
+    double general = 0;
+    for (int leaf = 0; leaf < 2; ++leaf) {
+      general += density.LatitudeFactor(phi, leaf != 0).value * (kTurn * WrappedPdf(d.azimuth_dist, 1.1 - leaf * kPi)) *
+                 (kTurn * WrappedPdf(d.roll_dist, 2.3 - leaf * kPi));
+    }
     EXPECT_NEAR(density.EvaluateAngles(nan, phi, nan).value / general, 1, 1e-13);
     EXPECT_FALSE(density.LogDensity(r).Has(AxisDensityFlag::kNearPole));
   }
@@ -527,6 +530,55 @@ TEST(AxisPoseDensity, HonestMarginalWindows) {
   ASSERT_EQ(roll.intervals.size(), 2u);
   const double peak = density.RollLogFactor(170 * kDeg).value;
   EXPECT_NEAR(density.RollLogFactor(roll.intervals[0][1]).value, peak - 72, 2e-10);
+  auto contains = [](const AxisDensityWindow& window, double point) {
+    return std::any_of(window.intervals.begin(), window.intervals.end(),
+                       [&](const auto& interval) { return interval[0] <= point && point <= interval[1]; });
+  };
+  // A tiny unflipped sheet is still above exp(-72), even when the flipped probability rounds
+  // to one. Compute its weight independently rather than subtracting it from that rounded one.
+  auto almost_flipped = Axis(DistributionType::kGaussian, 120, 3);
+  almost_flipped.azimuth_dist = { DistributionType::kGaussian, 0, 1 };
+  const AxisPoseDensity rare_sheet(almost_flipped);
+  const double unflipped_mass =
+      Native(almost_flipped.latitude_dist, [](double raw) { return std::cos(raw) > 0 ? std::cos(raw) : 0.0; }) /
+      Native(almost_flipped.latitude_dist, [](double raw) { return std::abs(std::cos(raw)); });
+  EXPECT_GT(std::log(unflipped_mass), -72);
+  EXPECT_TRUE(contains(rare_sheet.AzimuthWindow(), 0));
+
+  // An arbitrarily short secondary superlevel interval can lie wholly between mesh nodes.
+  // For this one-degree Laplace latitude the distant images are <exp(-200); the folded mass
+  // ratio has the independent closed form s*exp(-(pi/2-c)/s)/(2*cos(c)). Tune its log to -72
+  // plus 0.0005 using float input parameters, not the implementation's marginal probabilities.
+  auto short_lobe = Axis(DistributionType::kLaplacian, 20, 1);
+  const double scale = kDeg;
+  double lower = 10;
+  double upper = 40;
+  for (int i = 0; i < 48; ++i) {
+    const double center = (lower + upper) / 2;
+    const double log_ratio = std::log(scale / (2 * std::cos(center * kDeg))) - (kHalfPi - center * kDeg) / scale;
+    if (log_ratio < -72 + 0.0005) {
+      lower = center;
+    } else {
+      upper = center;
+    }
+  }
+  short_lobe.latitude_dist.center = static_cast<float>((lower + upper) / 2);
+  short_lobe.azimuth_dist = { DistributionType::kGaussian, 0.0625f, 1 };
+  const AxisPoseDensity tiny_interval(short_lobe);
+  const double gap = std::log(tiny_interval.FlipProbability()) + 72;
+  ASSERT_GT(gap, 0);
+  ASSERT_LT(gap, 0.001);
+  EXPECT_TRUE(contains(tiny_interval.AzimuthWindow(), (0.0625 - 180) * kDeg));
+
+  // A periodic maximum between the seam and the first mesh node must be refined too.
+  auto seam = Axis(DistributionType::kNoRandom, 0, 0);
+  seam.roll_dist = { DistributionType::kGaussian, 179.99f, 2 };
+  const AxisPoseDensity seam_density(seam);
+  const auto seam_window = seam_density.RollWindow();
+  ASSERT_EQ(seam_window.intervals.size(), 2u);
+  EXPECT_NEAR(seam_window.intervals[0][1], (seam.roll_dist.center + 24.0 - 360) * kDeg, 2e-13);
+  EXPECT_NEAR(seam_window.intervals[1][0], (seam.roll_dist.center - 24.0) * kDeg, 2e-13);
+
   const AxisPoseDensity zig(Axis(DistributionType::kZigzag));
   EXPECT_TRUE(zig.LatitudeWindow().intervals.empty());
   EXPECT_NE(zig.LatitudeWindow().flags & static_cast<uint32_t>(AxisDensityFlag::kUnboundedPeak), 0u);

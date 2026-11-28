@@ -4,6 +4,7 @@
 #include <cmath>
 #include <functional>
 #include <limits>
+#include <queue>
 #include <stdexcept>
 #include <utility>
 
@@ -127,31 +128,44 @@ double Quadrature(double lo, double hi, const std::array<double, N>& x, const st
 }
 
 template <class F>
-double Adaptive(double lo, double hi, const F& f, uint32_t& flags, double accuracy, int depth = 0,
-                double tolerance = -1, int* budget = nullptr) {
-  int remaining = 4096;
-  if (!budget) {
-    budget = &remaining;
-  }
+double Adaptive(double lo, double hi, const F& f, uint32_t& flags, double accuracy) {
+  struct Panel {
+    double lo, hi, value, error;
+    int depth;
+    bool operator<(const Panel& other) const { return error < other.error; }
+  };
   const auto& rule = Rule();
   double magnitude = 0;
   const double fine = Quadrature(lo, hi, rule.x32, rule.w32, f, &magnitude);
   const double coarse = Quadrature(lo, hi, rule.x16, rule.w16, f);
-  if (tolerance < 0) {
-    // Relative to this native interval's absolute mass, NOT an absolute probability floor.
-    // Otherwise a tiny but real flipped lobe would get an inaccurate marginal/window.
-    tolerance = accuracy * std::max({ magnitude, std::abs(coarse), hi - lo });
+  // One error-estimate budget for the WHOLE native interval, never one copy per child.
+  // Absolute mass scaling preserves tiny but real fold sheets without an absolute floor.
+  const double tolerance = accuracy * std::max({ magnitude, std::abs(coarse), hi - lo });
+  std::priority_queue<Panel> panels;
+  double error = std::abs(fine - coarse);
+  double value = fine;
+  panels.push({ lo, hi, fine, error, 0 });
+  for (int splits = 0; error > tolerance; ++splits) {
+    const auto parent = panels.top();
+    if (parent.depth == 64 || splits == 4096) {
+      flags |= Flag(AxisDensityFlag::kQuadratureAccuracy);
+      break;
+    }
+    panels.pop();
+    const double mid = parent.lo + (parent.hi - parent.lo) / 2;
+    double child_value = 0;
+    double child_error = 0;
+    for (const auto& bounds : { std::array<double, 2>{ parent.lo, mid }, { mid, parent.hi } }) {
+      const double v = Quadrature(bounds[0], bounds[1], rule.x32, rule.w32, f);
+      const double e = std::abs(v - Quadrature(bounds[0], bounds[1], rule.x16, rule.w16, f));
+      panels.push({ bounds[0], bounds[1], v, e, parent.depth + 1 });
+      child_value += v;
+      child_error += e;
+    }
+    value += child_value - parent.value;
+    error = std::max(0.0, error - parent.error) + child_error;
   }
-  if (std::abs(fine - coarse) <= tolerance) {
-    return fine;
-  }
-  if (depth == 48 || --*budget <= 0) {
-    flags |= Flag(AxisDensityFlag::kQuadratureAccuracy);
-    return fine;
-  }
-  const double mid = lo + (hi - lo) / 2;
-  return Adaptive(lo, mid, f, flags, accuracy, depth + 1, tolerance, budget) +
-         Adaptive(mid, hi, f, flags, accuracy, depth + 1, tolerance, budget);
+  return value;
 }
 
 // Integrate a function of the RAW draw in the sampling-native probability coordinate. Break
@@ -306,15 +320,17 @@ bool Match(double a, double b) {
 
 // Centered native moments, not E[X^2]-E[X]^2. Scaling removes narrow-law conditioning from
 // adaptive error estimates; the final radian scaling happens only after integration.
-double AngularVariance(const Distribution& d, double flip_probability, uint32_t& flags) {
+double AngularVariance(const Distribution& d, double unflipped_probability, double flip_probability, uint32_t& flags) {
   if (Uniform(d)) {
     return kPi * kPi / 3;
   }
   std::vector<double> breaks{ 0.0 };
-  const double re =
-      NativeExpectation(d, breaks, [](double x) { return std::cos(x); }, flags) * (1 - 2 * flip_probability);
-  const double im =
-      NativeExpectation(d, breaks, [](double x) { return std::sin(x); }, flags) * (1 - 2 * flip_probability);
+  const double re = NativeExpectation(
+                        d, breaks, [](double x) { return std::cos(x); }, flags) *
+                    (unflipped_probability - flip_probability);
+  const double im = NativeExpectation(
+                        d, breaks, [](double x) { return std::sin(x); }, flags) *
+                    (unflipped_probability - flip_probability);
   if (std::hypot(re, im) <= kRoundoff) {
     flags |= Flag(AxisDensityFlag::kCircularMeanUndefined);
     return kNaN;
@@ -329,7 +345,7 @@ double AngularVariance(const Distribution& d, double flip_probability, uint32_t&
              [&](double x) {
                const double a = Wrap(x - mean) / scale;
                const double b = Wrap(x + kPi - mean) / scale;
-               return (1 - flip_probability) * a * a + flip_probability * b * b;
+               return unflipped_probability * a * a + flip_probability * b * b;
              },
              flags) *
          scale * scale;
@@ -398,6 +414,7 @@ AxisPoseDensity::AxisPoseDensity(const AxisDistribution& d) : distribution_(d) {
     const double total = unflipped + flipped;
     normalization_ = area ? total * weight_scale : 1.0;
     flip_probability_ = flipped / total;
+    unflipped_probability_ = unflipped / total;
     const double first =
         NativeExpectation(
             lat, breaks, [&](double raw) { return weight(raw) * ((Fold(raw).latitude - anchor) / scale); },
@@ -413,8 +430,8 @@ AxisPoseDensity::AxisPoseDensity(const AxisDistribution& d) : distribution_(d) {
                           total;
     variances_.sigma2_lat = (second - first * first) * scale * scale;
   }
-  variances_.sigma2_az = AngularVariance(d.azimuth_dist, flip_probability_, moment_flags_);
-  variances_.sigma2_roll = AngularVariance(d.roll_dist, flip_probability_, moment_flags_);
+  variances_.sigma2_az = AngularVariance(d.azimuth_dist, unflipped_probability_, flip_probability_, moment_flags_);
+  variances_.sigma2_roll = AngularVariance(d.roll_dist, unflipped_probability_, flip_probability_, moment_flags_);
 }
 
 bool AxisPoseDensity::ReadsAzimuth() const {
@@ -578,7 +595,7 @@ AxisDensityWindow AxisPoseDensity::Window(int axis) const {
   const double lo = axis == 0 ? -kHalfPi : -kPi;
   const double hi = -lo;
   if (d.type == DistributionType::kNoRandom) {
-    if (axis == 0 || flip_probability_ < 1) {
+    if (axis == 0 || unflipped_probability_ > 0) {
       const double point = axis == 0 ? d.center * kDeg : Wrap(d.center * kDeg);
       result.intervals.push_back({ point, point });
     }
@@ -598,7 +615,7 @@ AxisDensityWindow AxisPoseDensity::Window(int axis) const {
     }
     const auto a = AngularLogFactor(d, x, false);
     const auto b = AngularLogFactor(d, x, true);
-    return LogAdd(flip_probability_ < 1 ? a.value + std::log1p(-flip_probability_) : kNegInf,
+    return LogAdd(unflipped_probability_ > 0 ? a.value + std::log(unflipped_probability_) : kNegInf,
                   flip_probability_ > 0 ? b.value + std::log(flip_probability_) : kNegInf);
   };
   const int n = static_cast<int>(std::ceil((hi - lo) / std::min(d.spread * kDeg / 8, (hi - lo) / 256)));
@@ -609,27 +626,51 @@ AxisDensityWindow AxisPoseDensity::Window(int axis) const {
     mesh.push_back(lo + (hi - lo) * i / n);
     peak = std::max(peak, log_marginal(mesh.back()));
   }
-  // Maximize each local bracket; finite Gaussian mixtures can peak between image centers.
-  for (int i = 1; i < n; ++i) {
-    if (log_marginal(mesh[i]) > log_marginal(mesh[i - 1]) && log_marginal(mesh[i]) >= log_marginal(mesh[i + 1])) {
-      double a = mesh[i - 1];
-      double b = mesh[i + 1];
-      for (int j = 0; j < 96 && b - a > kRoundoff; ++j) {
-        const double x = a + (b - a) / 3;
-        const double y = b - (b - a) / 3;
-        if (log_marginal(x) < log_marginal(y)) {
-          a = x;
-        } else {
-          b = y;
-        }
+  std::vector<double> values;
+  values.reserve(n + 1);
+  for (double x : mesh) {
+    values.push_back(log_marginal(x));
+  }
+  // Retain extrema as crossing nodes: a component can be arbitrarily shorter than the mesh
+  // when its local peak barely exceeds the global threshold. Minima likewise retain tiny gaps.
+  std::vector<double> extrema;
+  auto refine = [&](double a, double b, bool maximum) {
+    for (int j = 0; j < 96 && b - a > kRoundoff; ++j) {
+      const double x = a + (b - a) / 3;
+      const double y = b - (b - a) / 3;
+      if ((log_marginal(x) < log_marginal(y)) == maximum) {
+        a = x;
+      } else {
+        b = y;
       }
-      peak = std::max(peak, log_marginal((a + b) / 2));
+    }
+    const double x = (a + b) / 2;
+    peak = std::max(peak, log_marginal(x));
+    extrema.push_back(axis == 0 ? x : Wrap(x));
+  };
+  for (int i = 1; i < n; ++i) {
+    if (values[i] > values[i - 1] && values[i] >= values[i + 1]) {
+      refine(mesh[i - 1], mesh[i + 1], true);
+    } else if (values[i] < values[i - 1] && values[i] <= values[i + 1]) {
+      refine(mesh[i - 1], mesh[i + 1], false);
     }
   }
+  // Boundary brackets are necessary even if the endpoint itself beats its nearest node.
+  // Angular brackets cross the periodic seam; latitude uses one-sided domain brackets.
+  if (axis == 0) {
+    refine(mesh[0], mesh[1], true);
+    refine(mesh[n - 1], mesh[n], true);
+  } else {
+    refine(mesh[n - 1], mesh[1] + kTurn, true);
+    refine(mesh[n - 1], mesh[1] + kTurn, false);
+  }
+  mesh.insert(mesh.end(), extrema.begin(), extrema.end());
+  std::sort(mesh.begin(), mesh.end());
+  mesh.erase(std::unique(mesh.begin(), mesh.end()), mesh.end());
   const double threshold = peak - 72;
   bool inside = log_marginal(lo) > threshold;
   double start = lo;
-  for (int i = 1; i <= n; ++i) {
+  for (size_t i = 1; i < mesh.size(); ++i) {
     const bool next_inside = log_marginal(mesh[i]) > threshold;
     if (inside != next_inside) {
       double a = mesh[i - 1];

@@ -45,13 +45,18 @@ namespace lumice::analytic {
 // gradually underflow. Non-finite/out-of-domain chart inputs are invalid, not clipped.
 //
 // Normalization and moments use adaptive 16/32-point Gauss-Legendre in native U, Gaussian
-// Phi^-1(U) included, split at folds/absolute-value corners/circular seams. The local absolute
-// error target is 16*epsilon*max(1,(1+|center_rad|)/spread_rad) times each native interval's
-// max(panel probability, absolute quadrature mass), accounting for centered-moment subtraction.
-// Recursion is bounded at depth 48 and 4096 subdivisions per native interval; exhaustion reports
+// Phi^-1(U) included, split at folds/absolute-value corners/circular seams. Each native interval
+// has ONE summed 16/32 error-estimate budget: 16*epsilon*max(1,(1+|center_rad|)/spread_rad) times
+// max(interval probability, absolute quadrature mass), accounting for centered-moment subtraction.
+// The largest-error panel is bisected until the summed estimate meets that budget; this is an
+// error estimator, not a rigorous analytic bound. Depth 64 or 4096 subdivisions reports
 // kQuadratureAccuracy. Breakpoints below 1e-40 native probability are omitted to avoid subnormal
-// panels; the tail itself is still integrated. Gaussian/wrapped image sums drop only terms below exp(-40)
-// relative to the nearest image (well below log-domain roundoff); Laplace images sum analytically.
+// panels; the tail itself is still integrated. Latitude raw breakpoints cover [-164,164]*pi/2
+// (the admitted centers plus 40 maximum scales); angular seam breaks cover mean+[-164,164]*pi.
+// Gaussian lower-half quantiles use at most 64 bracketed Newton steps on [-40,0], stopping at
+// 4*epsilon*max(1,|z|). Gaussian/wrapped image sums drop only terms below exp(-40) relative to
+// the nearest image (well below log-domain roundoff); Laplace images sum analytically. The two
+// fold-sheet probabilities are integrated separately: a small sheet is NEVER computed as 1-p.
 //
 // Variances are rad^2. Latitude uses centered moments about fold(center), or fold(|center|)
 // for the rectified zigzag proposal. Angular variances
@@ -63,8 +68,10 @@ namespace lumice::analytic {
 // Windows are unions of marginal superlevel intervals (>exp(-72)*essential peak), on latitude
 // [-pi/2,pi/2], angles [-pi,pi]. Pinned windows are points. Zigzag and legacy latitude have
 // unbounded peaks and return kUnboundedPeak with NO intervals. Finite-peak windows use a mesh
-// <=min(spread/8,domain/256), bracketed peak maximization and 64-epsilon root accuracy; numerical
-// uncertainty remains visible in flags. Seam-straddling or folded laws can have multiple intervals.
+// <=min(spread/8,domain/256), bracketed extrema refinement (at most 96 ternary steps) including
+// periodic seam brackets, and 64-epsilon root accuracy (at most 64 bisections). Refined extrema
+// are crossing nodes, retaining components/gaps shorter than a mesh cell. Seam-straddling or
+// folded laws can have multiple intervals; inherited quadrature uncertainty remains flagged.
 
 enum class AxisDensityFlag : uint32_t {
   kNone = 0,
@@ -133,6 +140,7 @@ class AxisPoseDensity {
   AxisDistribution distribution_;
   double normalization_ = 1.0;
   double flip_probability_ = 0.0;
+  double unflipped_probability_ = 1.0;
   AxisPoseVariances variances_;
   uint32_t moment_flags_ = 0;
 };
