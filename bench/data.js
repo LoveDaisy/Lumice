@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795845379011,
+  "lastUpdate": 1795845384266,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -4818,54 +4818,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "d1b929b7a581fc70342002de9711cfb3760b2e62",
-          "message": "Merge pull request #529 from LoveDaisy/feat/lens-proj-recalibration\n\ntest(gui): recalibrate the lens_proj reference group (drift +1.2~+2.5 dB)",
-          "timestamp": "2026-10-20T20:41:06+08:00",
-          "tree_id": "8ec07448bbb5d138099669297f4ba99267172564",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/d1b929b7a581fc70342002de9711cfb3760b2e62"
-        },
-        "date": 1792500270185,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 996241.2,
-            "unit": "rays/sec",
-            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 1013210.5,
-            "unit": "rays/sec",
-            "extra": "CPU: Neoverse-N2\\nCores: 4"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 811459.9,
-            "unit": "rays/sec",
-            "extra": "CPU: Intel(R) Xeon(R) Platinum 8370C CPU @ 2.80GHz\\nCores: 4"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 584312.2,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "a4d56f0943b8fe3e078f72c8b136692f9692b114",
           "message": "Merge pull request #530 from LoveDaisy/feat/gap1-family-routing\n\nfeat(raypath): gap-1 measure-to-family routing (first wave 9/9)",
           "timestamp": "2026-10-20T22:27:14+08:00",
@@ -9602,6 +9554,54 @@ window.BENCHMARK_DATA = {
             "value": 586849,
             "unit": "rays/sec",
             "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "45ae9033274b82965bdb6ce727f413a1ee80ac2d",
+          "message": "Merge pull request #664 from LoveDaisy/goal/add-axisposedensity-exact-pose-density-for-all-a\n\nAdd AxisPoseDensity: exact pose density for all AxisDistribution types",
+          "timestamp": "2026-11-28T13:44:48+08:00",
+          "tree_id": "87de178a912fdc0dea12eaf3ddc139b17c8b8606",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/45ae9033274b82965bdb6ce727f413a1ee80ac2d"
+        },
+        "date": 1795845383616,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 901093.7,
+            "unit": "rays/sec",
+            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 1011275.5,
+            "unit": "rays/sec",
+            "extra": "CPU: Neoverse-N2\\nCores: 4"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 717866.6,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 7763 64-Core Processor\\nCores: 4"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 699285,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 9V74 80-Core Processor                \\nCores: 4"
           }
         ]
       }
