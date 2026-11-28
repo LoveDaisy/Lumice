@@ -232,7 +232,14 @@ TEST(AxisPoseDensity, ValidationChartAndHonestyFlags) {
   auto zig = Axis(DistributionType::kZigzag, 30, 10);
   const AxisPoseDensity cusp(zig);
   EXPECT_TRUE(cusp.LatitudeLogFactor(40 * kDeg).Has(AxisDensityFlag::kCusp));
-  EXPECT_TRUE(std::isinf(cusp.LatitudeLogFactor(40 * kDeg).value));
+  EXPECT_EQ(cusp.LatitudeLogFactor(40 * kDeg).value, std::numeric_limits<double>::infinity());
+  EXPECT_EQ(cusp.LatitudeLogFactor(20 * kDeg).value, std::numeric_limits<double>::infinity());
+  EXPECT_EQ(cusp.LatitudeFactor(40 * kDeg).value, std::numeric_limits<double>::infinity());
+  // Half-open uniform endpoints must not double-count a wrapped latitude image.
+  const AxisPoseDensity isotropic(Axis(DistributionType::kUniform, 0, 360));
+  for (double phi : { -0.1, 0.0, 0.1 }) {
+    EXPECT_NEAR(isotropic.EvaluateAngles(0, phi, 0).value, 1, 1e-13);
+  }
 }
 
 TEST(AxisPoseDensity, TierOneFineLutTarget) {
@@ -578,6 +585,16 @@ TEST(AxisPoseDensity, HonestMarginalWindows) {
   ASSERT_EQ(seam_window.intervals.size(), 2u);
   EXPECT_NEAR(seam_window.intervals[0][1], (seam.roll_dist.center + 24.0 - 360) * kDeg, 2e-13);
   EXPECT_NEAR(seam_window.intervals[1][0], (seam.roll_dist.center - 24.0) * kDeg, 2e-13);
+
+  // Exact uniform edges matter: equal-height lobes can hide a zero-density gap shorter than
+  // one mesh cell, leaving every sampled value on the same plateau.
+  auto uniform_gap = Axis(DistributionType::kGaussianLegacy, 90, 1);
+  uniform_gap.azimuth_dist = { DistributionType::kUniform, 0.3f, 179.99998f };
+  const AxisPoseDensity separated_uniforms(uniform_gap);
+  const auto gap_window = separated_uniforms.AzimuthWindow();
+  EXPECT_FALSE(contains(gap_window, (static_cast<double>(uniform_gap.azimuth_dist.center) + 90) * kDeg));
+  EXPECT_FALSE(contains(gap_window, (static_cast<double>(uniform_gap.azimuth_dist.center) - 90) * kDeg));
+  EXPECT_TRUE(contains(gap_window, uniform_gap.azimuth_dist.center * kDeg));
 
   const AxisPoseDensity zig(Axis(DistributionType::kZigzag));
   EXPECT_TRUE(zig.LatitudeWindow().intervals.empty());

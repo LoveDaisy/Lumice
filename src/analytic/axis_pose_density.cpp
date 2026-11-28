@@ -257,8 +257,11 @@ AxisDensityValue RawLog(const Distribution& d, double x) {
   const double c = d.center * kDeg;
   const double s = d.spread * kDeg;
   switch (d.type) {
-    case DistributionType::kUniform:
-      return { std::abs(x - c) <= s / 2 ? -std::log(s) : kNegInf, 0 };
+    case DistributionType::kUniform: {
+      const double lower = (static_cast<double>(d.center) - static_cast<double>(d.spread) / 2) * kDeg;
+      const double upper = (static_cast<double>(d.center) + static_cast<double>(d.spread) / 2) * kDeg;
+      return { x >= lower && x < upper ? -std::log(s) : kNegInf, 0 };
+    }
     case DistributionType::kGaussian:
     case DistributionType::kGaussianLegacy: {
       const double z = (x - c) / s;
@@ -271,16 +274,29 @@ AxisDensityValue RawLog(const Distribution& d, double x) {
         return { kNegInf, 0 };
       }
       AxisDensityValue result{ kNegInf, 0 };
+      const double lower = (static_cast<double>(d.center) - static_cast<double>(d.spread)) * kDeg;
+      const double upper = (static_cast<double>(d.center) + static_cast<double>(d.spread)) * kDeg;
       for (double raw : { x, -x }) {
-        const double delta = raw - c;
-        const double distance = s - std::abs(delta);
-        if (std::abs(distance) <= std::sqrt(kEps) * std::max({ 1.0, std::abs(c), s })) {
+        const double from_lower = raw - lower;
+        const double from_upper = upper - raw;
+        if (std::min(std::abs(from_lower), std::abs(from_upper)) <=
+            std::sqrt(kEps) * std::max({ 1.0, std::abs(c), s })) {
           result.flags |= Flag(AxisDensityFlag::kCusp);
         }
-        if (distance >= 0) {
-          // Product form retains the small distance to a cusp; no 1-t*t cancellation.
-          const double value = -std::log(kPi) - 0.5 * (std::log(distance) + std::log(s + std::abs(delta)));
-          result.value = LogAdd(result.value, value);
+        if (raw == lower || raw == upper) {
+          // Recognize the represented degree-space endpoint without an epsilon clamp.
+          result.value = std::numeric_limits<double>::infinity();
+        } else {
+          // Preserve the c/s proposal parameterization in the interior; converting endpoints
+          // separately would perturb the measure in ill-conditioned near-cusp importance ratios.
+          const long double delta = static_cast<long double>(raw) - c;
+          const long double distance = static_cast<long double>(s) - std::abs(delta);
+          if (distance >= 0) {
+            const double value = static_cast<double>(
+                -std::log(static_cast<long double>(kPi)) -
+                0.5L * (std::log(distance) + std::log(static_cast<long double>(s) + std::abs(delta))));
+            result.value = LogAdd(result.value, value);
+          }
         }
       }
       return result;
@@ -291,6 +307,9 @@ AxisDensityValue RawLog(const Distribution& d, double x) {
 }
 
 AxisDensityValue Images(const Distribution& d, double x) {
+  if (Uniform(d)) {
+    return { -std::log(kTurn), 0 };
+  }
   const double c = d.center * kDeg;
   const double s = d.spread * kDeg;
   if (d.type == DistributionType::kLaplacian) {
@@ -471,6 +490,7 @@ AxisDensityValue AxisPoseDensity::LatitudeLogFactor(double phi, bool flipped) co
     return { !flipped && std::abs(phi - d.center * kDeg) <= kRoundoff ? 0.0 : kNegInf, 0 };
   }
   auto result = Images(d, flipped ? kPi - phi : phi);
+  result.flags |= moment_flags_ & Flag(AxisDensityFlag::kQuadratureAccuracy);
   if (d.type == DistributionType::kGaussianLegacy && cosine < std::sqrt(kEps)) {
     result.flags |= Flag(AxisDensityFlag::kNearPole);
   }
@@ -618,6 +638,38 @@ AxisDensityWindow AxisPoseDensity::Window(int axis) const {
     return LogAdd(unflipped_probability_ > 0 ? a.value + std::log(unflipped_probability_) : kNegInf,
                   flip_probability_ > 0 ? b.value + std::log(flip_probability_) : kNegInf);
   };
+  if (d.type == DistributionType::kUniform) {
+    // Piecewise-constant laws need exact support partitions: an arbitrarily short gap can
+    // have no mesh node and no sampled extremum. No iterative root search is needed here.
+    std::vector<double> edges{ lo, hi };
+    for (double sign : { -1.0, 1.0 }) {
+      const double raw = (static_cast<double>(d.center) + sign * static_cast<double>(d.spread) / 2) * kDeg;
+      if (axis == 0) {
+        edges.push_back(Fold(raw).latitude);
+      } else {
+        edges.push_back(Wrap(raw));
+        edges.push_back(Wrap(raw + kPi));
+      }
+    }
+    std::sort(edges.begin(), edges.end());
+    edges.erase(std::unique(edges.begin(), edges.end()), edges.end());
+    std::vector<double> levels;
+    double peak = kNegInf;
+    for (size_t i = 1; i < edges.size(); ++i) {
+      levels.push_back(log_marginal(edges[i - 1] + (edges[i] - edges[i - 1]) / 2));
+      peak = std::max(peak, levels.back());
+    }
+    for (size_t i = 1; i < edges.size(); ++i) {
+      if (levels[i - 1] > peak - 72) {
+        if (!result.intervals.empty() && result.intervals.back()[1] == edges[i - 1]) {
+          result.intervals.back()[1] = edges[i];
+        } else {
+          result.intervals.push_back({ edges[i - 1], edges[i] });
+        }
+      }
+    }
+    return result;
+  }
   const int n = static_cast<int>(std::ceil((hi - lo) / std::min(d.spread * kDeg / 8, (hi - lo) / 256)));
   std::vector<double> mesh;
   mesh.reserve(n + 1);

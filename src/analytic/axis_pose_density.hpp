@@ -41,8 +41,10 @@ namespace lumice::analytic {
 // legacy's inverse-cos latitude factor carries the same warning even with uniform angles.
 // Zigzag is the rectified arcsine |center+spread*sin(2*pi*U)| on EVERY axis. Within
 // sqrt(epsilon)*max(1,|center_rad|,spread_rad) of a raw cusp, kCusp warns of ill conditioning;
-// at a cusp log density is +infinity, never clamped. Precision is on log density; exp may
-// gradually underflow. Non-finite/out-of-domain chart inputs are invalid, not clipped.
+// at a cusp log density is +infinity, never clamped. Support endpoints are computed in degrees
+// before conversion to radians; uniform intervals are half-open and full-turn image sums exact.
+// Precision is on log density; exp may gradually underflow. Non-finite/out-of-domain chart
+// inputs are invalid, not clipped. Latitude factors inherit any normalizer quadrature warning.
 //
 // Normalization and moments use adaptive 16/32-point Gauss-Legendre in native U, Gaussian
 // Phi^-1(U) included, split at folds/absolute-value corners/circular seams. Each native interval
@@ -67,7 +69,8 @@ namespace lumice::analytic {
 //
 // Windows are unions of marginal superlevel intervals (>exp(-72)*essential peak), on latitude
 // [-pi/2,pi/2], angles [-pi,pi]. Pinned windows are points. Zigzag and legacy latitude have
-// unbounded peaks and return kUnboundedPeak with NO intervals. Finite-peak windows use a mesh
+// unbounded peaks and return kUnboundedPeak with NO intervals. Uniform windows partition the
+// exact folded/wrapped support edges. Other finite-peak windows use a mesh
 // <=min(spread/8,domain/256), bracketed extrema refinement (at most 96 ternary steps) including
 // periodic seam brackets, and 64-epsilon root accuracy (at most 64 bisections). Refined extrema
 // are crossing nodes, retaining components/gaps shorter than a mesh cell. Seam-straddling or
