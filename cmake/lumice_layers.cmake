@@ -117,6 +117,8 @@ set(LUMICE_LAYER_analytic_FILES
   analytic/caustic_events.cpp
   analytic/caustic_internal.hpp
   analytic/collapsed_rank1_continuation.cpp
+  analytic/curve_profile.cpp
+  analytic/curve_profile.hpp
   analytic/discovery.cpp
   analytic/discovery.hpp
   analytic/entry_measure.cpp

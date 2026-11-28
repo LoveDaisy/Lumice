@@ -1049,6 +1049,7 @@ lumice_apply_engine_compile_options(lumice_foundation_obj)
 set(lumice_analytic_kernel_src
   "${PROJ_SRC_DIR}/analytic/path_evaluation.cpp"
   "${PROJ_SRC_DIR}/analytic/path_intrinsic.cpp"
+  "${PROJ_SRC_DIR}/analytic/curve_profile.cpp"
   "${PROJ_SRC_DIR}/analytic/fiber_continuation.cpp"
   "${PROJ_SRC_DIR}/analytic/path_fiber.cpp"
   "${PROJ_SRC_DIR}/analytic/entry_measure.cpp"

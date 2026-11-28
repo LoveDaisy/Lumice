@@ -281,6 +281,7 @@ add_executable(unit_correctness_test
   "${PROJ_TEST_DIR}/unit-correctness/analytic/test_family_rank.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/analytic/test_caustic_continuation.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/analytic/test_path_intrinsic.cpp"
+  "${PROJ_TEST_DIR}/unit-correctness/analytic/test_curve_profile.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/analytic/test_reflection_group.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/analytic/test_discovery.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/analytic/test_path_rank.cpp"
