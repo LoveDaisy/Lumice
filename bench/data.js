@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795842337769,
+  "lastUpdate": 1795842343635,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -4818,54 +4818,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "0133b0e9825ce175d55d5cfcb43ed65fd904b519",
-          "message": "Merge pull request #527 from LoveDaisy/feat/core-json-grid-import-notice\n\nfeat(gui): notice render[].grid refusal on core JSON import",
-          "timestamp": "2026-10-20T15:49:47+08:00",
-          "tree_id": "d94d4836689f7f76be563603c87a73e502fbd55c",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/0133b0e9825ce175d55d5cfcb43ed65fd904b519"
-        },
-        "date": 1792482787660,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 877317.5,
-            "unit": "rays/sec",
-            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 1014866,
-            "unit": "rays/sec",
-            "extra": "CPU: Neoverse-N2\\nCores: 4"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 1115403.1,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 9V45 96-Core Processor\\nCores: 4"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 582552.2,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "cb6c6b6a30094b1868d511ae523a9a244055462f",
           "message": "Merge pull request #528 from LoveDaisy/chore/rng-cross-stdlib-contract-doc\n\ndocs: state the cross-stdlib RNG contract instead of implying bit-exact replay",
           "timestamp": "2026-10-20T16:27:35+08:00",
@@ -9602,6 +9554,54 @@ window.BENCHMARK_DATA = {
             "value": 579958.6,
             "unit": "rays/sec",
             "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "6d2a8a79915f62a319ee93debc11f4f69a027dc5",
+          "message": "Merge pull request #663 from LoveDaisy/chore/duration-budget-unblock\n\nRaise ctest phase budgets: macOS 560->660, Ubuntu x86_64 360->420 (transitional)",
+          "timestamp": "2026-11-28T12:43:40+08:00",
+          "tree_id": "0b672b4dc85982dc426c9700348a861ed3cb42c9",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/6d2a8a79915f62a319ee93debc11f4f69a027dc5"
+        },
+        "date": 1795842343122,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 1213154.9,
+            "unit": "rays/sec",
+            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 1005251.8,
+            "unit": "rays/sec",
+            "extra": "CPU: Neoverse-N2\\nCores: 4"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 1033468.8,
+            "unit": "rays/sec",
+            "extra": "CPU: Intel(R) Xeon(R) 6975P-C\\nCores: 4"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 574837.2,
+            "unit": "rays/sec",
+            "extra": "CPU: INTEL(R) XEON(R) PLATINUM 8573C\\nCores: 4"
           }
         ]
       }
