@@ -333,6 +333,41 @@ AxisDensityValue Images(const Distribution& d, double x) {
   return result;
 }
 
+// Evaluate compact-law endpoints in the OUTPUT chart before an inverse half-turn/reflection
+// can lose their identity. These are exact represented-point comparisons, not epsilon clamps.
+AxisDensityValue ChartImages(const Distribution& d, double coordinate, bool latitude, bool flipped) {
+  if (!Uniform(d) && (d.type == DistributionType::kUniform || d.type == DistributionType::kZigzag)) {
+    const double extent = static_cast<double>(d.spread) * (d.type == DistributionType::kUniform ? 0.5 : 1.0);
+    for (bool upper : { false, true }) {
+      double endpoint = static_cast<double>(d.center) + (upper ? extent : -extent);
+      if (d.type == DistributionType::kZigzag) {
+        endpoint = std::abs(endpoint);
+      }
+      bool matches;
+      if (latitude) {
+        const double wrapped = std::remainder(endpoint, 360.0);
+        const bool endpoint_flipped = std::abs(wrapped) > 90;
+        if (endpoint_flipped != flipped) {
+          continue;
+        }
+        const double folded = wrapped > 90 ? 180 - wrapped : wrapped < -90 ? -180 - wrapped : wrapped;
+        matches = coordinate == folded * kDeg || coordinate == Fold(endpoint * kDeg).latitude;
+      } else {
+        const double shifted = endpoint + (flipped ? 180 : 0);
+        matches = coordinate == Wrap(shifted * kDeg) || coordinate == std::remainder(shifted, 360.0) * kDeg ||
+                  coordinate == Wrap(endpoint * kDeg + (flipped ? kPi : 0));
+      }
+      if (matches) {
+        if (d.type == DistributionType::kZigzag) {
+          return { std::numeric_limits<double>::infinity(), Flag(AxisDensityFlag::kCusp) };
+        }
+        return { upper ? kNegInf : -std::log(d.spread * kDeg), 0 };
+      }
+    }
+  }
+  return Images(d, latitude ? (flipped ? kPi - coordinate : coordinate) : Wrap(coordinate - (flipped ? kPi : 0)));
+}
+
 bool Match(double a, double b) {
   return std::abs(Wrap(a - b)) <= kRoundoff;
 }
@@ -434,6 +469,14 @@ AxisPoseDensity::AxisPoseDensity(const AxisDistribution& d) : distribution_(d) {
     normalization_ = area ? total * weight_scale : 1.0;
     flip_probability_ = flipped / total;
     unflipped_probability_ = unflipped / total;
+    // Every proposal is symmetric about its center before zigzag's rectification. Reflection
+    // about an odd multiple of 90 degrees swaps cos's sign and preserves |cos|. Rectification
+    // leaves both cos and |cos| unchanged, so these laws have EXACTLY equal fold-sheet masses.
+    // Retain that algebraic identity rather than turning eps/spread pole noise into a mean.
+    if (std::abs(std::remainder(static_cast<double>(lat.center), 180.0)) == 90 || Uniform(lat)) {
+      flip_probability_ = 0.5;
+      unflipped_probability_ = 0.5;
+    }
     const double first =
         NativeExpectation(
             lat, breaks, [&](double raw) { return weight(raw) * ((Fold(raw).latitude - anchor) / scale); },
@@ -468,11 +511,12 @@ AxisDensityValue AxisPoseDensity::AngularLogFactor(const Distribution& d, double
   if (!std::isfinite(angle)) {
     return Invalid(AxisDensityFlag::kInvalidPose);
   }
-  angle = Wrap(angle - (flipped ? kPi : 0));
+  // Reduce before subtracting pi: otherwise the shift vanishes for large finite inputs.
+  angle = Wrap(angle);
   if (d.type == DistributionType::kNoRandom) {
-    return { Match(angle, d.center * kDeg) ? 0.0 : kNegInf, 0 };
+    return { Match(Wrap(angle - (flipped ? kPi : 0)), d.center * kDeg) ? 0.0 : kNegInf, 0 };
   }
-  auto result = Images(d, angle);
+  auto result = ChartImages(d, angle, false, flipped);
   result.value += std::log(kTurn);
   return result;
 }
@@ -489,7 +533,7 @@ AxisDensityValue AxisPoseDensity::LatitudeLogFactor(double phi, bool flipped) co
   if (d.type == DistributionType::kNoRandom) {
     return { !flipped && std::abs(phi - d.center * kDeg) <= kRoundoff ? 0.0 : kNegInf, 0 };
   }
-  auto result = Images(d, flipped ? kPi - phi : phi);
+  auto result = ChartImages(d, phi, true, flipped);
   result.flags |= moment_flags_ & Flag(AxisDensityFlag::kQuadratureAccuracy);
   if (d.type == DistributionType::kGaussianLegacy && cosine < std::sqrt(kEps)) {
     result.flags |= Flag(AxisDensityFlag::kNearPole);
@@ -615,11 +659,12 @@ AxisDensityWindow AxisPoseDensity::Window(int axis) const {
   const double lo = axis == 0 ? -kHalfPi : -kPi;
   const double hi = -lo;
   if (d.type == DistributionType::kNoRandom) {
-    if (axis == 0 || unflipped_probability_ > 0) {
+    const double log_cutoff = std::log(std::max(unflipped_probability_, flip_probability_)) - 72;
+    if (axis == 0 || (unflipped_probability_ > 0 && std::log(unflipped_probability_) > log_cutoff)) {
       const double point = axis == 0 ? d.center * kDeg : Wrap(d.center * kDeg);
       result.intervals.push_back({ point, point });
     }
-    if (axis != 0 && flip_probability_ > 0) {
+    if (axis != 0 && flip_probability_ > 0 && std::log(flip_probability_) > log_cutoff) {
       const double shifted = Wrap(d.center * kDeg + kPi);
       result.intervals.push_back({ shifted, shifted });
     }

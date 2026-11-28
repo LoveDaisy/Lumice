@@ -42,7 +42,10 @@ namespace lumice::analytic {
 // Zigzag is the rectified arcsine |center+spread*sin(2*pi*U)| on EVERY axis. Within
 // sqrt(epsilon)*max(1,|center_rad|,spread_rad) of a raw cusp, kCusp warns of ill conditioning;
 // at a cusp log density is +infinity, never clamped. Support endpoints are computed in degrees
-// before conversion to radians; uniform intervals are half-open and full-turn image sums exact.
+// before conversion to radians; their folded/half-turned images are recognized in the output
+// chart BEFORE inverse transforms. Exact degree-fold/shift-then-convert and convert-then-wrap
+// representations are recognized, never an epsilon neighborhood. Uniform intervals are half-open
+// and full-turn image sums exact. Finite angles are reduced modulo 2*pi BEFORE half-turn shifts.
 // Precision is on log density; exp may gradually underflow. Non-finite/out-of-domain chart
 // inputs are invalid, not clipped. Latitude factors inherit any normalizer quadrature warning.
 //
@@ -65,10 +68,14 @@ namespace lumice::analytic {
 // are E[wrap(X-mu_circ)^2], mu_circ=arg E[exp(iX)], INCLUDING the pole-flip mixture. A full-turn
 // uniform has pi^2/3. Otherwise a circular resultant <=64*epsilon is undefined: the corresponding
 // variance is NaN with kCircularMeanUndefined (no invented mean). Moments use the same area
-// weighting/normalizer as the density; GaussianLegacy is unweighted.
+// weighting/normalizer as the density; GaussianLegacy is unweighted. At exact odd multiples of
+// 90 degrees every admitted stochastic latitude proposal has equal fold-sheet masses (zigzag
+// rectification preserves cos's sign); full-turn uniform latitude does too. Their half weights
+// are retained algebraically, not inferred from subtraction of ill-conditioned pole integrals.
 //
 // Windows are unions of marginal superlevel intervals (>exp(-72)*essential peak), on latitude
-// [-pi/2,pi/2], angles [-pi,pi]. Pinned windows are points. Zigzag and legacy latitude have
+// [-pi/2,pi/2], angles [-pi,pi]. Pinned angular windows apply the same strict relative cutoff to
+// each sheet's probability mass and return retained points. Zigzag and legacy latitude have
 // unbounded peaks and return kUnboundedPeak with NO intervals. Uniform windows partition the
 // exact folded/wrapped support edges. Other finite-peak windows use a mesh
 // <=min(spread/8,domain/256), bracketed extrema refinement (at most 96 ternary steps) including

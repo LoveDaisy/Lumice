@@ -242,6 +242,126 @@ TEST(AxisPoseDensity, ValidationChartAndHonestyFlags) {
   }
 }
 
+TEST(AxisPoseDensity, TransformedSupportEndpointsKeepTheirIdentity) {
+  auto d = Axis(DistributionType::kUniform, 120, 10);
+  d.azimuth_dist = { DistributionType::kUniform, 0, 40 };
+  const AxisPoseDensity folded(d);
+  EXPECT_GT(folded.EvaluateAngles(160 * kDeg, 60 * kDeg, 0).value, 0);
+  for (float center : { -300.0f, 0.0f, 300.0f }) {
+    d.azimuth_dist = { DistributionType::kUniform, center, 40 };
+    d.roll_dist = d.azimuth_dist;
+    const AxisPoseDensity density(d);
+    for (bool flip : { false, true }) {
+      const double lower = (static_cast<double>(center) - 20 + (flip ? 180 : 0)) * kDeg;
+      const double upper = (static_cast<double>(center) + 20 + (flip ? 180 : 0)) * kDeg;
+      EXPECT_NEAR(density.AzimuthFactor(lower, flip).value, 9, 1e-12);
+      EXPECT_NEAR(density.RollFactor(std::remainder(lower, kTurn), flip).value, 9, 1e-12);
+      EXPECT_EQ(density.AzimuthFactor(upper, flip).value, 0);
+      // Only represented endpoints are recognized; no neighborhood is clamped onto support.
+      EXPECT_EQ(density.AzimuthFactor(lower - 1e-9, flip).value, 0);
+      EXPECT_GT(density.AzimuthFactor(lower + 1e-9, flip).value, 0);
+      EXPECT_GT(density.RollFactor(upper - 1e-9, flip).value, 0);
+      EXPECT_EQ(density.RollFactor(upper + 1e-9, flip).value, 0);
+    }
+  }
+  for (float center : { -350.0f, -30.0f, 30.0f, 350.0f }) {
+    d.azimuth_dist = { DistributionType::kZigzag, center, 10 };
+    d.roll_dist = d.azimuth_dist;
+    const AxisPoseDensity density(d);
+    for (bool flip : { false, true }) {
+      for (double sign : { -1.0, 1.0 }) {
+        const double endpoint = (std::abs(static_cast<double>(center) + sign * 10) + (flip ? 180 : 0)) * kDeg;
+        const auto value = density.AzimuthLogFactor(endpoint, flip);
+        EXPECT_EQ(value.value, std::numeric_limits<double>::infinity());
+        EXPECT_TRUE(value.Has(AxisDensityFlag::kCusp));
+        EXPECT_EQ(density.RollLogFactor(std::remainder(endpoint, kTurn), flip).value,
+                  std::numeric_limits<double>::infinity());
+        EXPECT_NE(density.AzimuthLogFactor(endpoint + 1e-9, flip).value, std::numeric_limits<double>::infinity());
+      }
+    }
+  }
+  for (float center : { 120.0f, 300.0f }) {
+    const AxisPoseDensity latitude(Axis(DistributionType::kZigzag, center, 10));
+    for (double sign : { -1.0, 1.0 }) {
+      // Independent degree-space fold, not pi-phi reconstruction in the evaluator.
+      const double raw_deg = std::remainder(static_cast<double>(center) + sign * 10, 360.0);
+      const bool flip = raw_deg > 90;
+      const double phi = (flip ? 180 - raw_deg : raw_deg) * kDeg;
+      EXPECT_EQ(latitude.LatitudeLogFactor(phi, flip).value, std::numeric_limits<double>::infinity());
+    }
+  }
+  const AxisPoseDensity latitude_uniform(Axis(DistributionType::kUniform, 120, 10));
+  EXPECT_GT(latitude_uniform.LatitudeFactor(65 * kDeg, true).value, 0);
+  EXPECT_EQ(latitude_uniform.LatitudeFactor(55 * kDeg, true).value, 0);
+}
+
+TEST(AxisPoseDensity, LargeFiniteAnglesArePeriodicOnBothSheets) {
+  auto d = Axis(DistributionType::kGaussian, 170, 3);
+  d.azimuth_dist = { DistributionType::kGaussian, 0, 20 };
+  d.roll_dist = { DistributionType::kLaplacian, 30, 10 };
+  const AxisPoseDensity density(d);
+  for (double angle : { -std::numeric_limits<double>::max(), -1e20, 1e20, std::numeric_limits<double>::max() }) {
+    const double reduced = std::remainder(angle, kTurn);
+    for (bool flip : { false, true }) {
+      EXPECT_NEAR(density.AzimuthLogFactor(angle, flip).value, density.AzimuthLogFactor(reduced, flip).value, 1e-12);
+      EXPECT_NEAR(density.RollLogFactor(angle, flip).value, density.RollLogFactor(reduced, flip).value, 1e-12);
+    }
+    EXPECT_NEAR(density.LogDensityAngles(angle, 10 * kDeg, angle).value,
+                density.LogDensityAngles(reduced, 10 * kDeg, reduced).value, 1e-12);
+  }
+}
+
+TEST(AxisPoseDensity, ExactPoleReflectionHasNoCircularMean) {
+  for (auto type : { DistributionType::kUniform, DistributionType::kGaussian, DistributionType::kGaussianLegacy,
+                     DistributionType::kLaplacian, DistributionType::kZigzag }) {
+    for (float center : { -270.0f, -90.0f, 90.0f, 270.0f }) {
+      for (float spread : { 0.001f, 8.0f }) {
+        SCOPED_TRACE(static_cast<int>(type));
+        SCOPED_TRACE(center);
+        SCOPED_TRACE(spread);
+        auto d = Axis(type, center, spread);
+        d.azimuth_dist = { DistributionType::kNoRandom, 0, 0 };
+        d.roll_dist = { DistributionType::kGaussian, 20, 8 };
+        const AxisPoseDensity density(d);
+        EXPECT_NEAR(density.FlipProbability(), 0.5, 1e-14);
+        EXPECT_TRUE(std::isnan(density.Variances().sigma2_az));
+        EXPECT_TRUE(std::isnan(density.Variances().sigma2_roll));
+        EXPECT_NE(density.MomentFlags() & static_cast<uint32_t>(AxisDensityFlag::kCircularMeanUndefined), 0u);
+      }
+    }
+  }
+  auto d = Axis(DistributionType::kGaussian, std::nextafter(90.0f, 0.0f), 0.001f);
+  d.azimuth_dist = { DistributionType::kNoRandom, 0, 0 };
+  d.roll_dist = d.azimuth_dist;
+  const AxisPoseDensity asymmetric(d);
+  EXPECT_FALSE(std::isnan(asymmetric.Variances().sigma2_az));
+  EXPECT_FALSE(std::isnan(asymmetric.Variances().sigma2_roll));
+}
+
+TEST(AxisPoseDensity, PinnedWindowsApplyTheRelativeSheetCutoff) {
+  for (float center : { 30.0f, 150.0f }) {
+    auto d = Axis(DistributionType::kGaussian, center, 5);
+    d.azimuth_dist = { DistributionType::kNoRandom, 0, 0 };
+    d.roll_dist = d.azimuth_dist;
+    const AxisPoseDensity density(d);
+    const auto azimuth = density.AzimuthWindow();
+    const auto roll = density.RollWindow();
+    if (azimuth.intervals.size() != 1 || roll.intervals.size() != 1) {
+      ADD_FAILURE() << "Expected one retained point per axis; azimuth=" << azimuth.intervals.size()
+                    << ", roll=" << roll.intervals.size();
+      continue;
+    }
+    EXPECT_NEAR(azimuth.intervals[0][0], center < 90 ? 0 : kPi, 1e-13);
+    EXPECT_NEAR(roll.intervals[0][0], center < 90 ? 0 : kPi, 1e-13);
+  }
+  auto d = Axis(DistributionType::kGaussian, 30, 8);
+  d.azimuth_dist = { DistributionType::kNoRandom, 0, 0 };
+  d.roll_dist = d.azimuth_dist;
+  const AxisPoseDensity both_sheets(d);
+  EXPECT_EQ(both_sheets.AzimuthWindow().intervals.size(), 2u);
+  EXPECT_EQ(both_sheets.RollWindow().intervals.size(), 2u);
+}
+
 TEST(AxisPoseDensity, TierOneFineLutTarget) {
   // Reproduce the LUT builder's kFine=4096 mass target, NOT its resampled 257-node CDF.
   // Compare interior bin centers, away from a uniform edge, Laplace corner or arcsine cusp.
