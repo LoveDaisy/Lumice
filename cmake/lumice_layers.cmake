@@ -107,6 +107,8 @@ set(LUMICE_LAYER_analytic_FILES
   analytic/analytic_callback_sink.hpp
   analytic/analytic_capi.cpp
   analytic/analytic_lib.cpp
+  analytic/axis_pose_density.cpp
+  analytic/axis_pose_density.hpp
   analytic/band_sum.cpp
   analytic/band_sum.hpp
   analytic/capi_zero_pad.hpp

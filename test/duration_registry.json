@@ -2,6 +2,12 @@
   "version": 4,
   "entries": [
     {
+      "id": "LumiceUnitCorrectnessTest::AxisPoseDensity.TierTwoRealizedSamplerJointHistogram",
+      "job": "macOS ARM64",
+      "ci_seconds": 2,
+      "reason": "Two fixed-seed million-sample joint histograms distinguish area-LUT from legacy latitude and verify the coupled azimuth/roll pole flip; widths exceed the LUT resolution floor. Additive registration only, no phase budget increase."
+    },
+    {
       "id": "test/e2e-correctness/test_raypath_analysis_capi.py::test_adaptive_allocation_cuts_rare_row_noise_without_moving_the_means",
       "job": "E2E Slow (Ubuntu x86_64)",
       "ci_seconds": 40,

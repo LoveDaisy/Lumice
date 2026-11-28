@@ -1068,6 +1068,7 @@ set(lumice_analytic_kernel_src
   "${PROJ_SRC_DIR}/analytic/discovery.cpp"
   "${PROJ_SRC_DIR}/analytic/path_rank.cpp"
   "${PROJ_SRC_DIR}/analytic/pose_density.cpp"
+  "${PROJ_SRC_DIR}/analytic/axis_pose_density.cpp"
   "${PROJ_SRC_DIR}/analytic/band_sum.cpp"
   "${PROJ_SRC_DIR}/analytic/path_feature_discovery.cpp"
   "${PROJ_SRC_DIR}/analytic/diagnostic_batch.cpp"
