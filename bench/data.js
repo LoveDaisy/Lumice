@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795854305499,
+  "lastUpdate": 1795854308609,
   "repoUrl": "https://github.com/LoveDaisy/Lumice",
   "entries": {
     "Single-worker Throughput": [
@@ -4818,54 +4818,6 @@ window.BENCHMARK_DATA = {
             "username": "web-flow"
           },
           "distinct": true,
-          "id": "725018d33ad9a3d08ded65180c4f2d3272581cd7",
-          "message": "Merge pull request #531 from LoveDaisy/feat/free-dims-enum-cleanup\n\nrefactor(raypath): free_dims carries the dim enum",
-          "timestamp": "2026-10-21T00:02:56+08:00",
-          "tree_id": "280b8049e2f76e79f05bd54c0b9bc03c21e48818",
-          "url": "https://github.com/LoveDaisy/Lumice/commit/725018d33ad9a3d08ded65180c4f2d3272581cd7"
-        },
-        "date": 1792512394034,
-        "tool": "customBiggerIsBetter",
-        "benches": [
-          {
-            "name": "macOS ARM64",
-            "value": 874827.7,
-            "unit": "rays/sec",
-            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
-          },
-          {
-            "name": "Ubuntu ARM64",
-            "value": 1012568,
-            "unit": "rays/sec",
-            "extra": "CPU: Neoverse-N2\\nCores: 4"
-          },
-          {
-            "name": "Ubuntu x86_64",
-            "value": 720641.7,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 7763 64-Core Processor\\nCores: 4"
-          },
-          {
-            "name": "Windows MSVC x86_64",
-            "value": 537662.6,
-            "unit": "rays/sec",
-            "extra": "CPU: AMD EPYC 9V74 80-Core Processor                \\nCores: 4"
-          }
-        ]
-      },
-      {
-        "commit": {
-          "author": {
-            "email": "zhangjiajie043@gmail.com",
-            "name": "Jiajie Zhang",
-            "username": "LoveDaisy"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
           "id": "a7f8b4eaab29ae7dd4fb9f70c7b10040a958550d",
           "message": "Merge pull request #533 from LoveDaisy/feat/ci-ctest-budget-rebalance\n\ntest(ci): zero-sum ctest budget rebalance + the four survey structure cleanups",
           "timestamp": "2026-10-21T20:09:47+08:00",
@@ -9602,6 +9554,54 @@ window.BENCHMARK_DATA = {
             "value": 582759.8,
             "unit": "rays/sec",
             "extra": "CPU: AMD EPYC 7763 64-Core Processor                \\nCores: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zhangjiajie043@gmail.com",
+            "name": "Jiajie Zhang",
+            "username": "LoveDaisy"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "f887f0b8e61374964089b72fcd59f1fefebbf864",
+          "message": "Merge pull request #666 from LoveDaisy/goal/add-curveprofile-per-node-physical-profile-with\n\nAdd CurveProfile: per-node physical profile with multi-lambda TIR along PoseCurve",
+          "timestamp": "2026-11-28T16:08:37+08:00",
+          "tree_id": "23bdb5dbe2778cba8771517b6bb25802b5f446ee",
+          "url": "https://github.com/LoveDaisy/Lumice/commit/f887f0b8e61374964089b72fcd59f1fefebbf864"
+        },
+        "date": 1795854308365,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "macOS ARM64",
+            "value": 1033122,
+            "unit": "rays/sec",
+            "extra": "CPU: Apple M1 (Virtual)\\nCores: 3"
+          },
+          {
+            "name": "Ubuntu ARM64",
+            "value": 1006757.3,
+            "unit": "rays/sec",
+            "extra": "CPU: Neoverse-N2\\nCores: 4"
+          },
+          {
+            "name": "Ubuntu x86_64",
+            "value": 1031713.3,
+            "unit": "rays/sec",
+            "extra": "CPU: Intel(R) Xeon(R) 6975P-C\\nCores: 4"
+          },
+          {
+            "name": "Windows MSVC x86_64",
+            "value": 692730.4,
+            "unit": "rays/sec",
+            "extra": "CPU: AMD EPYC 9V74 80-Core Processor                \\nCores: 4"
           }
         ]
       }
