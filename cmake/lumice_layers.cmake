@@ -169,6 +169,8 @@ set(LUMICE_LAYER_analytic_FILES
   analytic/pose_density.hpp
   analytic/reflection_group.cpp
   analytic/reflection_group.hpp
+  analytic/sky_blur_field.cpp
+  analytic/sky_blur_field.hpp
   analytic/so3.hpp
   include/lumice_analytic.h
   include/lumice_analytic_core.h

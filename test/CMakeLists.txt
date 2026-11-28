@@ -286,6 +286,7 @@ add_executable(unit_correctness_test
   "${PROJ_TEST_DIR}/unit-correctness/analytic/test_path_rank.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/analytic/test_pose_density.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/analytic/test_axis_pose_density.cpp"
+  "${PROJ_TEST_DIR}/unit-correctness/analytic/test_sky_blur_field.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/analytic/test_band_sum.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/analytic/test_path_feature_discovery.cpp"
   "${PROJ_TEST_DIR}/unit-correctness/analytic/test_diagnostic_batch.cpp"
