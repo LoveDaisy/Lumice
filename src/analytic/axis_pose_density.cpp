@@ -496,6 +496,39 @@ AxisPoseDensity::AxisPoseDensity(const AxisDistribution& d) : distribution_(d) {
   variances_.sigma2_roll = AngularVariance(d.roll_dist, unflipped_probability_, flip_probability_, moment_flags_);
 }
 
+double AxisZenithPoleRawMoment(const AxisDistribution& d, bool north_pole) {
+  const char* error = AxisPoseDensityError(d);
+  if (*error) {
+    throw std::invalid_argument(error);
+  }
+  const auto& lat = d.latitude_dist;
+  const double pole = north_pole ? kHalfPi : -kHalfPi;
+  if (lat.type == DistributionType::kNoRandom) {
+    const double delta = lat.center * kDeg - pole;
+    return delta * delta;
+  }
+  const double scale = lat.spread * kDeg;
+  const double raw_anchor = lat.center * kDeg;
+  const double anchor = Fold(lat.type == DistributionType::kZigzag ? std::abs(raw_anchor) : raw_anchor).latitude;
+  const bool area = lat.type != DistributionType::kGaussianLegacy;
+  const double weight_scale = area ? std::max(std::abs(std::cos(anchor)), std::min(1.0, scale)) : 1.0;
+  const auto breaks = LatitudeBreaks();
+  uint32_t flags = 0;
+  auto weight = [&](double raw) { return area ? std::abs(std::cos(raw)) / weight_scale : 1.0; };
+  const double total = NativeExpectation(lat, breaks, weight, flags);
+  const double second = NativeExpectation(
+      lat, breaks,
+      [&](double raw) {
+        const double delta = (Fold(raw).latitude - pole) / scale;
+        return weight(raw) * delta * delta;
+      },
+      flags);
+  if (flags != 0 || !(total > 0) || !std::isfinite(second)) {
+    throw std::runtime_error("latitude_dist pole raw moment: quadrature accuracy unavailable");
+  }
+  return second / total * scale * scale;
+}
+
 bool AxisPoseDensity::ReadsAzimuth() const {
   return !Uniform(distribution_.azimuth_dist);
 }

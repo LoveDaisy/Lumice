@@ -115,6 +115,15 @@ struct AxisDensityWindow {
 
 const char* AxisPoseDensityError(const AxisDistribution& distribution);
 
+// E[(fold(latitude)-pole)^2], rad^2, in the SAME normalized continuum latitude measure
+// as AxisPoseDensity (area weighted except GaussianLegacy). north_pole selects +pi/2,
+// otherwise -pi/2. Unlike Variances().sigma2_lat this is a RAW moment: a uniformly
+// directed pole tilt has zero vector mean, even though its nonnegative magnitude does not.
+// For a narrow pole-centered GaussianLegacy it is sigma^2, not (1-2/pi)*sigma^2.
+// Same parameter validation as AxisPoseDensity; quadrature exhaustion throws runtime_error
+// rather than returning an unflagged moment. Pinned latitude is evaluated without quadrature.
+double AxisZenithPoleRawMoment(const AxisDistribution& distribution, bool north_pole);
+
 class AxisPoseDensity {
  public:
   explicit AxisPoseDensity(const AxisDistribution& distribution);
